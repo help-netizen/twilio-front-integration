@@ -9,9 +9,20 @@
  */
 
 // Get owned phone numbers from environment
-const OWNED_NUMBERS = process.env.OWNED_PHONE_NUMBERS 
+const OWNED_NUMBERS = process.env.OWNED_PHONE_NUMBERS
     ? process.env.OWNED_PHONE_NUMBERS.split(',').map(n => n.trim().replace(/[^\d+]/g, ''))
     : [];
+
+
+/**
+ * Check if a number is a SIP address
+ * @param {string} number - Phone number or SIP URI
+ * @returns {boolean}
+ */
+function isSIPAddress(number) {
+    if (!number) return false;
+    return number.toLowerCase().startsWith('sip:');
+}
 
 /**
  * Check if a number is an owned Twilio number
@@ -25,21 +36,22 @@ function isOwnedNumber(number) {
     return OWNED_NUMBERS.some(owned => {
         const ownedNormalized = owned.replace(/[^\d+]/g, '');
         // Compare with and without + prefix
-        return normalized === ownedNormalized || 
-               normalized === ownedNormalized.replace('+', '') ||
-               normalized.replace('+', '') === ownedNormalized.replace('+', '');
+        return normalized === ownedNormalized ||
+            normalized === ownedNormalized.replace('+', '') ||
+            normalized.replace('+', '') === ownedNormalized.replace('+', '');
     });
 }
 
-
 /**
- * Check if a number is a SIP address
- * @param {string} number - Phone number or SIP URI
+ * Check if a number is an owned Twilio number
+ * @param {string} number - Phone number to check
  * @returns {boolean}
  */
-function isSIPAddress(number) {
+function isOwnedNumber(number) {
     if (!number) return false;
-    return number.toLowerCase().startsWith('sip:');
+    // Normalize number for comparison
+    const normalized = number.replace(/[^\d+]/g, '');
+    return OWNED_NUMBERS.some(owned => normalized === owned || normalized === owned.replace('+', ''));
 }
 
 /**
@@ -143,17 +155,17 @@ class CallProcessor {
             externalNumber = callData.to;
             externalFormatted = callData.toFormatted;
         } else {
-            // 'external' direction: check which number is NOT owned
-            // This handles outbound-dial calls where neither number is SIP
+            // External: check which number is NOT owned
+            // If FROM is owned, use TO. If TO is owned, use FROM.
             const fromIsOwned = isOwnedNumber(callData.from);
             const toIsOwned = isOwnedNumber(callData.to);
-            
+
             if (fromIsOwned && !toIsOwned) {
-                // FROM is our number, TO is external → use TO (outbound call)
+                // FROM is our number, TO is external → use TO
                 externalNumber = callData.to;
                 externalFormatted = callData.toFormatted;
             } else if (!fromIsOwned && toIsOwned) {
-                // TO is our number, FROM is external → use FROM (inbound call)
+                // TO is our number, FROM is external → use FROM
                 externalNumber = callData.from;
                 externalFormatted = callData.fromFormatted;
             } else if (!fromIsOwned && !toIsOwned) {
