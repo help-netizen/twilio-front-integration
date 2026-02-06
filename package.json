@@ -1,0 +1,33 @@
+{
+  "name": "twilio-front-integration",
+  "version": "1.0.0",
+  "description": "Twilio-Front Integration Server for syncing call history",
+  "main": "src/server.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "axios": "^1.13.4",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "pg": "^8.18.0",
+    "twilio": "^5.12.0"
+  },
+  "devDependencies": {
+    "jest": "^30.2.0",
+    "nodemon": "^3.1.11"
+  }
+}

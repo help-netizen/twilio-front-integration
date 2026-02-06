@@ -1,0 +1,28 @@
+# fly.toml app configuration file  
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+
+app = 'abc-metrics'
+primary_region = 'ewr'
+
+[build]
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ['app']
+
+  [[http_service.http_checks]]
+    interval = "15s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+    protocol = "http"
+    timeout = "5s"
+
+[[vm]]
+  memory = '512mb'
+  cpu_kind = 'shared'
+  cpus = 1

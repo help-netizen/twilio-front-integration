@@ -1,0 +1,75 @@
+.app-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.app-header {
+  background-color: #fff;
+  border-bottom: 1px solid #E1E3E5;
+  padding: 0;
+  height: 60px;
+  flex-shrink: 0;
+}
+
+.header-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 100%;
+  padding: 0 20px;
+}
+
+.logo {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+  color: #202223;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.user-menu {
+  font-size: 14px;
+  color: #637381;
+  cursor: pointer;
+}
+
+.user-menu:hover {
+  color: #202223;
+}
+
+.refresh-button {
+  padding: 8px 16px;
+  background-color: #4CAF50;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background-color 0.2s ease;
+  white-space: nowrap;
+}
+
+.refresh-button:hover:not(:disabled) {
+  background-color: #45a049;
+}
+
+.refresh-button:disabled {
+  background-color: #cccccc;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.app-main {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
