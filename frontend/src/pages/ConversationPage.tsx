@@ -58,25 +58,21 @@ export const ConversationPage: React.FC = () => {
                 <div className="messages-area">
                     {messages?.map((message) => (
                         <div key={message.id} className="message-card">
-                            <div className="message-content">
-                                <div className="message-box">
-                                    <div className="message-header">
-                                        <CallIcon
-                                            direction={message.metadata.actual_direction || message.direction}
-                                            status={message.call?.status || 'unknown'}
-                                            metadata={message.metadata}
-                                        />
-                                        <div className="message-subject-text">
-                                            {message.subject}
-                                        </div>
-                                    </div>
-
-                                    <div
-                                        className="message-body"
-                                        dangerouslySetInnerHTML={{ __html: message.body.replace(/\n/g, '<br />') }}
-                                    />
+                            <div className="message-header">
+                                <CallIcon
+                                    direction={message.metadata.actual_direction || message.direction}
+                                    status={message.call?.status || 'unknown'}
+                                    metadata={message.metadata}
+                                />
+                                <div className="message-subject-text">
+                                    {message.subject}
                                 </div>
                             </div>
+
+                            <div
+                                className="message-body"
+                                dangerouslySetInnerHTML={{ __html: message.body.replace(/\n/g, '<br />') }}
+                            />
                         </div>
                     ))}
                 </div>
