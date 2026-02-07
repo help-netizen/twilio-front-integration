@@ -13,7 +13,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
     const handleRefresh = async () => {
         setIsRefreshing(true);
         try {
-            console.log('🔄 Refreshing today\'s calls...');
+            console.log('🔄 Refreshing last 3 days calls...');
             const response = await fetch('/api/sync/today', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' }
@@ -25,7 +25,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                 await queryClient.invalidateQueries({ queryKey: ['conversations'] });
                 await queryClient.invalidateQueries({ queryKey: ['messages'] });
 
-                alert(`✅ Synced ${data.synced} new calls from today (${data.total} total found)`);
+                alert(`✅ Synced ${data.synced} new calls from last 3 days (${data.total} total found)`);
             } else {
                 alert(`❌ Sync failed: ${data.error}`);
             }
@@ -47,7 +47,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                             onClick={handleRefresh}
                             disabled={isRefreshing}
                             className="refresh-button"
-                            title="Refresh today's calls from Twilio"
+                            title="Refresh calls from last 3 days from Twilio"
                         >
                             {isRefreshing ? '🔄 Refreshing...' : '🔄 Refresh'}
                         </button>

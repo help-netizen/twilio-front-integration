@@ -206,8 +206,9 @@ async function formatConversation(conv) {
 
     // ✅ FIX: Get last message from MERGED messages, not raw DB
     // This ensures we show the actual last visible call, not a hidden parent call
+    // IMPORTANT: Messages are sorted DESC by start_time, so [0] is most recent, not [length-1]
     const lastMessage = mergedMessages.length > 0
-        ? mergedMessages[mergedMessages.length - 1]  // Last merged message
+        ? mergedMessages[0]  // First element = most recent (DESC order)
         : null;
 
     // Format contact phone numbers from SIP URIs
@@ -223,7 +224,10 @@ async function formatConversation(conv) {
             call: {
                 status: lastMessage.status
             },
-            metadata: lastMessage.metadata || {}
+            metadata: {
+                ...lastMessage.metadata,  // Spread DB metadata first
+                status: lastMessage.status  // Then add status for CallIcon
+            }
         };
     }
 

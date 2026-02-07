@@ -13,7 +13,7 @@ router.post('/today', async (req, res) => {
 
         res.json({
             success: true,
-            message: `Synced ${result.synced} new calls from today`,
+            message: `Synced ${result.synced} new calls from last 3 days`,
             synced: result.synced,
             skipped: result.skipped,
             total: result.total

@@ -294,27 +294,27 @@ async function syncRecentCalls() {
 }
 
 /**
- * Sync today's calls (from 00:00 EST to now)
- * Fetches all calls from the start of the current day in EST timezone
+ * Sync recent calls (from last 3 days)
+ * Fetches all calls from the last 3 days
  */
 async function syncTodayCalls() {
     try {
-        // Get today's date at midnight in local time (EST)
-        // JavaScript Date automatically uses the system's timezone
-        const todayMidnight = new Date();
-        todayMidnight.setHours(0, 0, 0, 0);
+        // Get date 3 days ago
+        const threeDaysAgo = new Date();
+        threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+        threeDaysAgo.setHours(0, 0, 0, 0);
 
-        console.log(`📞 Syncing calls from today (${todayMidnight.toLocaleString('en-US', { timeZone: 'America/New_York' })} EST)...`);
-        console.log(`   UTC equivalent: ${todayMidnight.toISOString()}`);
+        console.log(`📞 Syncing calls from last 3 days (${threeDaysAgo.toLocaleString('en-US', { timeZone: 'America/New_York' })} EST)...`);
+        console.log(`   UTC equivalent: ${threeDaysAgo.toISOString()}`);
 
         // Twilio SDK handles timezone conversion automatically
         // We pass the Date object and it converts to UTC for the API
         const calls = await client.calls.list({
-            startTimeAfter: todayMidnight,
-            limit: 200  // Sufficient for one day's worth of calls
+            startTimeAfter: threeDaysAgo,
+            limit: 500  // Sufficient for 3 days worth of calls
         });
 
-        console.log(`📋 Found ${calls.length} calls from today`);
+        console.log(`📋 Found ${calls.length} calls from last 3 days`);
 
         // ✅ SORT: Process parent calls BEFORE child calls
         // This ensures parent exists in DB when child tries to find it
@@ -339,7 +339,7 @@ async function syncTodayCalls() {
             }
         }
 
-        console.log(`✅ Today's sync complete: ${synced} synced, ${skipped} skipped (${calls.length} total)`);
+        console.log(`✅ Last 3 days sync complete: ${synced} synced, ${skipped} skipped (${calls.length} total)`);
         return { synced, skipped, total: calls.length };
     } catch (error) {
         console.error('Error syncing today\'s calls:', error);

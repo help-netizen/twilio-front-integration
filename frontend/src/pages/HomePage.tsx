@@ -6,9 +6,6 @@ export const HomePage: React.FC = () => {
     return (
         <div className="home-page">
             <div className="inbox-sidebar">
-                <div className="inbox-header">
-                    <h2>Inbox</h2>
-                </div>
                 <ConversationList />
             </div>
 
