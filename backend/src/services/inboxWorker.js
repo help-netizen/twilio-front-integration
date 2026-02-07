@@ -349,6 +349,51 @@ async function processEvent(inboxEvent) {
 
         console.log(`[${traceId}] Event logged successfully`);
 
+        // 3.5. Enrich with Twilio API data on final statuses
+        // Twilio webhooks don't include price, endTime, queueTime, answeredBy
+        // We fetch these from the Twilio REST API after the call completes
+        const finalStatuses = ['completed', 'no-answer', 'busy', 'canceled', 'failed'];
+        if (finalStatuses.includes(normalized.event_status)) {
+            try {
+                const twilio = require('twilio');
+                const client = twilio(
+                    process.env.TWILIO_ACCOUNT_SID,
+                    process.env.TWILIO_AUTH_TOKEN
+                );
+
+                const callDetails = await client.calls(normalized.call_sid).fetch();
+
+                const enrichedMetadata = {
+                    ...(message.metadata || {}),
+                    answered_by: callDetails.answeredBy,
+                    queue_time: callDetails.queueTime,
+                    twilio_direction: callDetails.direction,
+                    actual_direction: normalized.direction,
+                    from_formatted: callDetails.fromFormatted,
+                    to_formatted: callDetails.toFormatted,
+                };
+
+                const queries = require('../db/queries');
+                await queries.updateMessage(message.id, {
+                    endTime: callDetails.endTime ? new Date(callDetails.endTime) : null,
+                    duration: parseInt(callDetails.duration) || normalized.duration,
+                    price: callDetails.price ? parseFloat(callDetails.price) : null,
+                    priceUnit: callDetails.priceUnit || 'USD',
+                    metadata: JSON.stringify(enrichedMetadata),
+                });
+
+                console.log(`[${traceId}] Enriched with Twilio API data`, {
+                    endTime: callDetails.endTime,
+                    price: callDetails.price,
+                    queueTime: callDetails.queueTime,
+                    duration: callDetails.duration
+                });
+            } catch (enrichError) {
+                // Non-critical: log but don't fail processing
+                console.warn(`[${traceId}] Failed to enrich from Twilio API:`, enrichError.message);
+            }
+        }
+
         // 4. Publish realtime event to connected clients
         try {
             const realtimeService = require('./realtimeService');

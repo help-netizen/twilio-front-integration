@@ -172,6 +172,14 @@ async function updateMessage(messageId, updates) {
         fields.push(`metadata = $${paramIndex++}`);
         values.push(updates.metadata);
     }
+    if (updates.price !== undefined) {
+        fields.push(`price = $${paramIndex++}`);
+        values.push(updates.price);
+    }
+    if (updates.priceUnit !== undefined) {
+        fields.push(`price_unit = $${paramIndex++}`);
+        values.push(updates.priceUnit);
+    }
 
     if (fields.length === 0) {
         return null; // Nothing to update
