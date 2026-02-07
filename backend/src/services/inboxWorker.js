@@ -1,5 +1,6 @@
 const db = require('../db/connection');
 const { isFinalStatus, validateTransition, applyTransition } = require('./stateMachine');
+const CallProcessor = require('./callProcessor');
 
 /**
  * Configuration
@@ -61,17 +62,8 @@ function normalizeVoiceEvent(payload) {
         // Call details
         from_number: From,
         to_number: To,
-        // Determine actual call direction
-        // Twilio's Direction field for dial-leg (child) is always 'outbound-dial',
-        // even for inbound calls. We detect the real direction from From/To:
-        // - If From is SIP → user initiated the call → outbound
-        // - If To is SIP → call came in from PSTN → inbound
-        // - Otherwise, fall back to Twilio's Direction field
-        direction: (From && From.startsWith('sip:'))
-            ? 'outbound'
-            : (To && To.startsWith('sip:'))
-                ? 'inbound'
-                : (Direction?.toLowerCase() || 'external'),
+        // Delegate direction detection to CallProcessor microservice
+        direction: CallProcessor.detectDirection({ from: From, to: To }),
         duration: parseInt(Duration || CallDuration || 0),
 
         // Parent reference
@@ -270,46 +262,28 @@ async function processEvent(inboxEvent) {
         // 2.5. Link message to conversation
         const queries = require('../db/queries');
 
-        // Determine phone number for contact (exclude SIP endpoints)
-        let phoneNumber = null;
-
-        // Helper to normalize and format phone numbers as +1 (XXX) XXX-XXXX
-        const normalizePhoneNumber = (num) => {
-            if (!num) return null;
-            // Strip all non-digit characters
-            const digits = num.replace(/\D/g, '');
-            // Handle US numbers (10 or 11 digits)
-            if (digits.length === 11 && digits.startsWith('1')) {
-                const area = digits.substring(1, 4);
-                const prefix = digits.substring(4, 7);
-                const line = digits.substring(7, 11);
-                return `+1 (${area}) ${prefix}-${line}`;
-            } else if (digits.length === 10) {
-                const area = digits.substring(0, 3);
-                const prefix = digits.substring(3, 6);
-                const line = digits.substring(6, 10);
-                return `+1 (${area}) ${prefix}-${line}`;
-            }
-            // Fallback: return with + prefix
-            return digits.startsWith('+') ? num : `+${digits}`;
+        // Delegate phone number identification to CallProcessor microservice
+        // CallProcessor knows about owned numbers, SIP endpoints, and direction
+        const callData = {
+            from: normalized.from_number,
+            to: normalized.to_number,
+            direction: normalized.direction,
+            status: normalized.event_status,
+            duration: normalized.duration,
+            parentCallSid: normalized.parent_call_sid,
         };
+        const processed = CallProcessor.processCall(callData);
+        const externalParty = processed.externalParty;
 
-        // Helper to check if it's a SIP endpoint
-        const isSipEndpoint = (num) => !num || num.startsWith('sip:') || !num.startsWith('+');
+        // Use the formatted phone number from CallProcessor
+        const phoneNumber = externalParty?.formatted || null;
 
-        // For inbound calls, use the caller (from_number)
-        // For dial-leg events, from/to might be SIP endpoints, so we need to find the real phone number
-        if (!isSipEndpoint(normalized.from_number)) {
-            phoneNumber = normalizePhoneNumber(normalized.from_number);
-        } else if (!isSipEndpoint(normalized.to_number)) {
-            phoneNumber = normalizePhoneNumber(normalized.to_number);
-        }
-
-        // Skip conversation linking if no valid phone number found (e.g., SIP-to-SIP internal calls)
-        if (!phoneNumber) {
-            console.log(`[${traceId}] Skipping conversation linking - no valid phone number found`, {
+        // Skip conversation linking if no valid phone number found
+        if (!phoneNumber || phoneNumber === '' || processed.direction === 'internal') {
+            console.log(`[${traceId}] Skipping conversation linking - no valid external party`, {
                 from: normalized.from_number,
-                to: normalized.to_number
+                to: normalized.to_number,
+                direction: processed.direction
             });
         } else {
             // Create or get contact
@@ -323,12 +297,12 @@ async function processEvent(inboxEvent) {
                 subject
             );
 
-            // Update message with conversation_id
+            // Update message with conversation_id and corrected direction
             await db.query(`
                 UPDATE messages 
-                SET conversation_id = $1, updated_at = NOW()
-                WHERE id = $2
-            `, [conversation.id, message.id]);
+                SET conversation_id = $1, direction = $2, updated_at = NOW()
+                WHERE id = $3
+            `, [conversation.id, processed.direction, message.id]);
 
             // Update conversation last_message_at timestamp
             await db.query(`
@@ -340,7 +314,8 @@ async function processEvent(inboxEvent) {
             console.log(`[${traceId}] Message linked to conversation`, {
                 conversationId: conversation.id,
                 contactId: contact.id,
-                phoneNumber
+                phoneNumber,
+                direction: processed.direction
             });
         }
 
