@@ -61,7 +61,17 @@ function normalizeVoiceEvent(payload) {
         // Call details
         from_number: From,
         to_number: To,
-        direction: Direction?.toLowerCase() || 'external',
+        // Determine actual call direction
+        // Twilio's Direction field for dial-leg (child) is always 'outbound-dial',
+        // even for inbound calls. We detect the real direction from From/To:
+        // - If From is SIP → user initiated the call → outbound
+        // - If To is SIP → call came in from PSTN → inbound
+        // - Otherwise, fall back to Twilio's Direction field
+        direction: (From && From.startsWith('sip:'))
+            ? 'outbound'
+            : (To && To.startsWith('sip:'))
+                ? 'inbound'
+                : (Direction?.toLowerCase() || 'external'),
         duration: parseInt(Duration || CallDuration || 0),
 
         // Parent reference
@@ -259,40 +269,80 @@ async function processEvent(inboxEvent) {
 
         // 2.5. Link message to conversation
         const queries = require('../db/queries');
-        const phoneNumber = normalized.direction === 'external'
-            ? normalized.from_number
-            : normalized.to_number;
 
-        // Create or get contact
-        const contact = await queries.findOrCreateContact(phoneNumber, phoneNumber);
+        // Determine phone number for contact (exclude SIP endpoints)
+        let phoneNumber = null;
 
-        // Create or get conversation
-        const subject = `Calls with ${phoneNumber}`;
-        const conversation = await queries.findOrCreateConversation(
-            contact.id,
-            phoneNumber,
-            subject
-        );
+        // Helper to normalize and format phone numbers as +1 (XXX) XXX-XXXX
+        const normalizePhoneNumber = (num) => {
+            if (!num) return null;
+            // Strip all non-digit characters
+            const digits = num.replace(/\D/g, '');
+            // Handle US numbers (10 or 11 digits)
+            if (digits.length === 11 && digits.startsWith('1')) {
+                const area = digits.substring(1, 4);
+                const prefix = digits.substring(4, 7);
+                const line = digits.substring(7, 11);
+                return `+1 (${area}) ${prefix}-${line}`;
+            } else if (digits.length === 10) {
+                const area = digits.substring(0, 3);
+                const prefix = digits.substring(3, 6);
+                const line = digits.substring(6, 10);
+                return `+1 (${area}) ${prefix}-${line}`;
+            }
+            // Fallback: return with + prefix
+            return digits.startsWith('+') ? num : `+${digits}`;
+        };
 
-        // Update message with conversation_id
-        await db.query(`
-            UPDATE messages 
-            SET conversation_id = $1, updated_at = NOW()
-            WHERE id = $2
-        `, [conversation.id, message.id]);
+        // Helper to check if it's a SIP endpoint
+        const isSipEndpoint = (num) => !num || num.startsWith('sip:') || !num.startsWith('+');
 
-        // Update conversation last_message_at timestamp
-        await db.query(`
-            UPDATE conversations
-            SET last_message_at = $1, updated_at = NOW()
-            WHERE id = $2
-        `, [normalized.event_time, conversation.id]);
+        // For inbound calls, use the caller (from_number)
+        // For dial-leg events, from/to might be SIP endpoints, so we need to find the real phone number
+        if (!isSipEndpoint(normalized.from_number)) {
+            phoneNumber = normalizePhoneNumber(normalized.from_number);
+        } else if (!isSipEndpoint(normalized.to_number)) {
+            phoneNumber = normalizePhoneNumber(normalized.to_number);
+        }
 
-        console.log(`[${traceId}] Message linked to conversation`, {
-            conversationId: conversation.id,
-            contactId: contact.id,
-            phoneNumber
-        });
+        // Skip conversation linking if no valid phone number found (e.g., SIP-to-SIP internal calls)
+        if (!phoneNumber) {
+            console.log(`[${traceId}] Skipping conversation linking - no valid phone number found`, {
+                from: normalized.from_number,
+                to: normalized.to_number
+            });
+        } else {
+            // Create or get contact
+            const contact = await queries.findOrCreateContact(phoneNumber, phoneNumber);
+
+            // Create or get conversation
+            const subject = `Calls with ${phoneNumber}`;
+            const conversation = await queries.findOrCreateConversation(
+                contact.id,
+                phoneNumber,
+                subject
+            );
+
+            // Update message with conversation_id
+            await db.query(`
+                UPDATE messages 
+                SET conversation_id = $1, updated_at = NOW()
+                WHERE id = $2
+            `, [conversation.id, message.id]);
+
+            // Update conversation last_message_at timestamp
+            await db.query(`
+                UPDATE conversations
+                SET last_message_at = $1, updated_at = NOW()
+                WHERE id = $2
+            `, [normalized.event_time, conversation.id]);
+
+            console.log(`[${traceId}] Message linked to conversation`, {
+                conversationId: conversation.id,
+                contactId: contact.id,
+                phoneNumber
+            });
+        }
 
         // 3. Append to immutable event log
         await appendCallEvent(normalized, 'webhook');

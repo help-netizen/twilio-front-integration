@@ -200,11 +200,13 @@ async function handleRecordingStatus(req, res) {
 }
 
 /**
- * Handle Twilio Voice URL webhook (new incoming call)
+ * Handle Twilio Voice URL webhook (new incoming/outgoing call)
  * POST /webhooks/twilio/voice-inbound
  * 
- * This is called when a NEW call arrives, BEFORE TwiML is returned.
- * We store the initial call record and return TwiML to handle the call.
+ * This is called when a NEW call arrives, BEFORE Tw iML is returned.
+ * Handles BOTH directions:
+ * - INBOUND: PSTN → Twilio → SIP (Bria)
+ * - OUTBOUND: SIP (Bria) → Twilio → PSTN
  */
 async function handleVoiceInbound(req, res) {
     const traceId = generateTraceId();
@@ -214,7 +216,8 @@ async function handleVoiceInbound(req, res) {
         callSid: req.body.CallSid,
         from: req.body.From,
         to: req.body.To,
-        callStatus: req.body.CallStatus
+        callStatus: req.body.CallStatus,
+        direction: req.body.Direction
     });
 
     try {
@@ -224,7 +227,7 @@ async function handleVoiceInbound(req, res) {
             return res.status(403).send('<Response><Reject/></Response>');
         }
 
-        // 2. Extract pa yload
+        // 2. Extract payload
         const { CallSid, From, To, CallStatus, Direction } = req.body;
 
         if (!CallSid) {
@@ -241,18 +244,52 @@ async function handleVoiceInbound(req, res) {
             ON CONFLICT (dedupe_key) DO NOTHING
         `, ['twilio_voice', 'call-inbound', CallSid, dedupeKey, req.body]);
 
-        console.log(`[${traceId}] New call stored, returning TwiML`);
-
-        // 4. Generate TwiML response dynamically
+        // 4. Determine call direction and generate appropriate TwiML
         const ngrokUrl = process.env.NGROK_URL || 'https://hyperrational-nonregressively-julissa.ngrok-free.dev';
-        const sipUser = process.env.SIP_USER || 'dispatcher';
-        const sipDomain = process.env.SIP_DOMAIN || 'abchomes.sip.us1.twilio.com';
-        const sipEndpoint = `sip:${sipUser}@${sipDomain}`;
-
         const statusCallbackUrl = `${ngrokUrl}/webhooks/twilio/voice-status`;
         const dialActionUrl = `${ngrokUrl}/webhooks/twilio/dial-action`;
 
-        const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+        let twiml;
+
+        // Check if this is an OUTBOUND call (from SIP to phone number)
+        const isOutbound = From && From.startsWith('sip:');
+
+        if (isOutbound) {
+            // OUTBOUND: SIP → PSTN
+            // Extract phone number from SIP URI
+            // To arrives as: sip:5085140320@abchomes.sip.us1.twilio.com:5061;user=phone
+            // Need to extract just the number part and add +1
+            let dialNumber = To;
+            if (To && To.startsWith('sip:')) {
+                const match = To.match(/^sip:(\+?\d+)@/);
+                if (match) {
+                    dialNumber = match[1].startsWith('+') ? match[1] : `+1${match[1]}`;
+                }
+            }
+
+            console.log(`[${traceId}] Outbound call: SIP → ${dialNumber} (raw To: ${To})`);
+
+            twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Dial timeout="30"
+          callerId="+16175006181"
+          action="${dialActionUrl}"
+          method="POST">
+        <Number statusCallback="${statusCallbackUrl}"
+                statusCallbackEvent="initiated ringing answered completed"
+                statusCallbackMethod="POST">${dialNumber}</Number>
+    </Dial>
+</Response>`;
+        } else {
+            // INBOUND: PSTN → SIP
+            // Dial to SIP endpoint (dispatcher)
+            console.log(`[${traceId}] Inbound call detected: ${From} → SIP`);
+
+            const sipUser = process.env.SIP_USER || 'dispatcher';
+            const sipDomain = process.env.SIP_DOMAIN || 'abchomes.sip.us1.twilio.com';
+            const sipEndpoint = `sip:${sipUser}@${sipDomain}`;
+
+            twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Dial timeout="30"
           action="${dialActionUrl}"
@@ -262,6 +299,9 @@ async function handleVoiceInbound(req, res) {
              statusCallbackMethod="POST">${sipEndpoint}</Sip>
     </Dial>
 </Response>`;
+        }
+
+        console.log(`[${traceId}] Returning TwiML for ${isOutbound ? 'outbound' : 'inbound'} call`);
 
         res.type('text/xml');
         res.send(twiml);
