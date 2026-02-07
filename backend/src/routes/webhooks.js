@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { handleVoiceStatus, handleRecordingStatus } = require('../webhooks/twilioWebhooks');
+const { handleVoiceStatus, handleRecordingStatus, handleVoiceInbound, handleDialAction } = require('../webhooks/twilioWebhooks');
 
 /**
  * POST /webhooks/twilio/voice-status
@@ -19,6 +19,23 @@ router.post('/twilio/voice-status', handleVoiceStatus);
  * - in-progress, completed, absent, failed
  */
 router.post('/twilio/recording-status', handleRecordingStatus);
+
+/**
+ * POST /webhooks/twilio/voice-inbound
+ * Receives NEW incoming call, stores initial record, returns TwiML
+ * 
+ * This is the Voice URL for SIP Domain (or phone numbers)
+ * Twilio calls this BEFORE connecting the call
+ */
+router.post('/twilio/voice-inbound', handleVoiceInbound);
+
+/**
+ * POST /webhooks/twilio/dial-action
+ * Receives final Dial result after <Dial> completes
+ * 
+ * Gets DialCallStatus: completed, busy, no-answer, failed, canceled
+ */
+router.post('/twilio/dial-action', handleDialAction);
 
 /**
  * GET /webhooks/health
