@@ -257,6 +257,43 @@ async function processEvent(inboxEvent) {
             status: message.status
         });
 
+        // 2.5. Link message to conversation
+        const queries = require('../db/queries');
+        const phoneNumber = normalized.direction === 'external'
+            ? normalized.from_number
+            : normalized.to_number;
+
+        // Create or get contact
+        const contact = await queries.findOrCreateContact(phoneNumber, phoneNumber);
+
+        // Create or get conversation
+        const subject = `Calls with ${phoneNumber}`;
+        const conversation = await queries.findOrCreateConversation(
+            contact.id,
+            phoneNumber,
+            subject
+        );
+
+        // Update message with conversation_id
+        await db.query(`
+            UPDATE messages 
+            SET conversation_id = $1, updated_at = NOW()
+            WHERE id = $2
+        `, [conversation.id, message.id]);
+
+        // Update conversation last_message_at timestamp
+        await db.query(`
+            UPDATE conversations
+            SET last_message_at = $1, updated_at = NOW()
+            WHERE id = $2
+        `, [normalized.event_time, conversation.id]);
+
+        console.log(`[${traceId}] Message linked to conversation`, {
+            conversationId: conversation.id,
+            contactId: contact.id,
+            phoneNumber
+        });
+
         // 3. Append to immutable event log
         await appendCallEvent(normalized, 'webhook');
 

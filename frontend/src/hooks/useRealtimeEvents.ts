@@ -108,6 +108,17 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
                 statsRef.current.eventsReceived++;
                 statsRef.current.lastEventAt = new Date();
 
+                // Dispatch custom event for notification system
+                window.dispatchEvent(new CustomEvent('sse-event-received', {
+                    detail: {
+                        call_sid: data.call_sid,
+                        status: data.status,
+                        from: data.from,
+                        to: data.to,
+                        timestamp: new Date().toISOString()
+                    }
+                }));
+
                 onCallUpdate?.(data);
             });
 
@@ -118,6 +129,17 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
 
                 statsRef.current.eventsReceived++;
                 statsRef.current.lastEventAt = new Date();
+
+                // Dispatch custom event for notification system
+                window.dispatchEvent(new CustomEvent('sse-event-received', {
+                    detail: {
+                        call_sid: data.call_sid,
+                        status: data.status,
+                        from: data.from,
+                        to: data.to,
+                        timestamp: new Date().toISOString()
+                    }
+                }));
 
                 onCallCreated?.(data);
             });

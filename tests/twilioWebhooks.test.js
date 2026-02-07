@@ -1,4 +1,4 @@
-const { handleVoiceStatus, validateTwilioSignature } = require('../src/webhooks/twilioWebhooks');
+const { handleVoiceStatus, validateTwilioSignature } = require('../backend/src/webhooks/twilioWebhooks');
 
 describe('Twilio Webhook Handlers', () => {
     let mockReq;
@@ -79,7 +79,7 @@ describe('Twilio Webhook Handlers', () => {
             delete mockReq.body.CallSid;
 
             // Skip signature validation for this test
-            jest.spyOn(require('../src/webhooks/twilioWebhooks'), 'validateTwilioSignature')
+            jest.spyOn(require('../backend/src/webhooks/twilioWebhooks'), 'validateTwilioSignature')
                 .mockReturnValue(true);
 
             await handleVoiceStatus(mockReq, mockRes);
@@ -92,11 +92,11 @@ describe('Twilio Webhook Handlers', () => {
 
         it('should insert event into inbox on valid webhook', async () => {
             // Skip signature validation
-            jest.spyOn(require('../src/webhooks/twilioWebhooks'), 'validateTwilioSignature')
+            jest.spyOn(require('../backend/src/webhooks/twilioWebhooks'), 'validateTwilioSignature')
                 .mockReturnValue(true);
 
             // Mock successful DB insert
-            const mockDbModule = require('../src/db/connection');
+            const mockDbModule = require('../backend/src/db/connection');
             mockDbModule.query = jest.fn().mockResolvedValue({
                 rows: [{ id: 123 }]
             });
@@ -110,11 +110,11 @@ describe('Twilio Webhook Handlers', () => {
 
         it('should handle duplicate events gracefully', async () => {
             // Skip signature validation
-            jest.spyOn(require('../src/webhooks/twilioWebhooks'), 'validateTwilioSignature')
+            jest.spyOn(require('../backend/src/webhooks/twilioWebhooks'), 'validateTwilioSignature')
                 .mockReturnValue(true);
 
             // Mock DB conflict (duplicate)
-            const mockDbModule = require('../src/db/connection');
+            const mockDbModule = require('../backend/src/db/connection');
             mockDbModule.query = jest.fn().mockResolvedValue({
                 rows: [] // ON CONFLICT DO NOTHING returns empty
             });
@@ -127,11 +127,11 @@ describe('Twilio Webhook Handlers', () => {
 
         it('should return 500 on database error', async () => {
             // Skip signature validation
-            jest.spyOn(require('../src/webhooks/twilioWebhooks'), 'validateTwilioSignature')
+            jest.spyOn(require('../backend/src/webhooks/twilioWebhooks'), 'validateTwilioSignature')
                 .mockReturnValue(true);
 
             // Mock DB error
-            const mockDbModule = require('../src/db/connection');
+            const mockDbModule = require('../backend/src/db/connection');
             mockDbModule.query = jest.fn().mockRejectedValue(
                 new Error('Database connection failed')
             );
@@ -145,10 +145,10 @@ describe('Twilio Webhook Handlers', () => {
         });
 
         it('should generate unique dedupe keys', async () => {
-            jest.spyOn(require('../src/webhooks/twilioWebhooks'), 'validateTwilioSignature')
+            jest.spyOn(require('../backend/src/webhooks/twilioWebhooks'), 'validateTwilioSignature')
                 .mockReturnValue(true);
 
-            const mockDbModule = require('../src/db/connection');
+            const mockDbModule = require('../backend/src/db/connection');
             const querySpy = jest.fn().mockResolvedValue({ rows: [{ id: 1 }] });
             mockDbModule.query = querySpy;
 

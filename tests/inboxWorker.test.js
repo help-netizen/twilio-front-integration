@@ -4,7 +4,7 @@ const {
     isFinalStatus,
     upsertMessage,
     processEvent
-} = require('../src/services/inboxWorker');
+} = require('../backend/src/services/inboxWorker');
 
 describe('Inbox Worker', () => {
     describe('normalizeVoiceEvent', () => {

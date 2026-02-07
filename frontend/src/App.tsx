@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AppLayout } from './components/layout/AppLayout';
 import { HomePage } from './pages/HomePage';
 import { ConversationPage } from './pages/ConversationPage';
+import { EventNotification } from './components/EventNotification';
 import './App.css';
 
 const queryClient = new QueryClient({
@@ -24,6 +25,7 @@ function App() {
             <Route path="/conversations/:id" element={<ConversationPage />} />
           </Routes>
         </AppLayout>
+        <EventNotification />
       </BrowserRouter>
     </QueryClientProvider>
   );
