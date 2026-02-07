@@ -1,0 +1,17 @@
+# Reconciliation Jobs - Cron Schedule
+
+# Hot Reconcile - Active calls (every 1 minute)
+# Polls non-final calls to catch status changes
+*/1 * * * * cd /path/to/twilio-front-integration && node backend/src/cli/reconcileHot.js >> logs/reconcile-hot.log 2>&1
+
+# Warm Reconcile - Recent final calls (every 15 minutes)
+# Verifies final calls within 6-hour cooldown period
+*/15 * * * * cd /path/to/twilio-front-integration && node backend/src/cli/reconcileWarm.js >> logs/reconcile-warm.log 2>&1
+
+# Freeze Job - Move old final calls to frozen state (hourly)
+# Excludes old calls from active reconciliation
+0 * * * * cd /path/to/twilio-front-integration && node backend/src/scripts/freezeJob.js >> logs/freeze.log 2>&1
+
+# Cold Reconcile - Historical backfill (on-demand only)
+# Use manually when needed:
+# node backend/src/cli/reconcileCold.js --days 7
