@@ -245,9 +245,9 @@ async function handleVoiceInbound(req, res) {
         `, ['twilio_voice', 'call-inbound', CallSid, dedupeKey, req.body]);
 
         // 4. Determine call direction and generate appropriate TwiML
-        const ngrokUrl = process.env.NGROK_URL || 'https://hyperrational-nonregressively-julissa.ngrok-free.dev';
-        const statusCallbackUrl = `${ngrokUrl}/webhooks/twilio/voice-status`;
-        const dialActionUrl = `${ngrokUrl}/webhooks/twilio/dial-action`;
+        const baseUrl = process.env.WEBHOOK_BASE_URL || 'https://abc-metrics.fly.dev';
+        const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
+        const dialActionUrl = `${baseUrl}/webhooks/twilio/dial-action`;
 
         let twiml;
 

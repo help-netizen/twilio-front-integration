@@ -9,8 +9,8 @@ const router = express.Router();
  * 2. Sends status callbacks for ALL call events
  */
 router.post('/voice', (req, res) => {
-    const ngrokUrl = process.env.NGROK_URL || 'https://hyperrational-nonregressively-julissa.ngrok-free.dev';
-    const statusCallbackUrl = `${ngrokUrl}/webhooks/twilio/voice-status`;
+    const baseUrl = process.env.WEBHOOK_BASE_URL || 'https://abc-metrics.fly.dev';
+    const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
 
     // Twilio SIP domain - connects to Bria softphone
     // Using dispatcher user from Bria config: dispatcher@abchomes.sip.us1.twilio.com
@@ -19,7 +19,7 @@ router.post('/voice', (req, res) => {
     const sipEndpoint = `sip:${sipUser}@${sipDomain}`;
 
     // Dial action callback - gets final DialCallStatus
-    const dialActionUrl = `${ngrokUrl}/webhooks/twilio/dial-action`;
+    const dialActionUrl = `${baseUrl}/webhooks/twilio/dial-action`;
 
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
