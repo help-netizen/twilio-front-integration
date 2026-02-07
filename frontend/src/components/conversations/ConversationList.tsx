@@ -90,6 +90,7 @@ export const ConversationList: React.FC = () => {
                         backgroundColor: connected ? '#10b981' : '#6b7280',
                         display: 'inline-block',
                         marginLeft: '8px',
+                        marginTop: '4px',
                         verticalAlign: 'middle'
                     }}
                 />

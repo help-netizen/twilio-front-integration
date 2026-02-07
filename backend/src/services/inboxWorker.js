@@ -116,13 +116,6 @@ function normalizeRecordingEvent(payload) {
     };
 }
 
-/**
- * Determine if call status is final
- */
-function isFinalStatus(status) {
-    const finalStatuses = ['completed', 'busy', 'no-answer', 'canceled', 'failed'];
-    return finalStatuses.includes(status.toLowerCase());
-}
 
 /**
  * Upsert message in database
