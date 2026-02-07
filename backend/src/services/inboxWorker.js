@@ -267,8 +267,15 @@ async function processEvent(inboxEvent) {
 
         console.log(`[${traceId}] Event logged successfully`);
 
-        // 4. TODO: Publish realtime event (TASK-RT-1)
-        // await publishRealtimeEvent('call.updated', { call_sid: normalized.call_sid });
+        // 4. Publish realtime event to connected clients
+        try {
+            const realtimeService = require('./realtimeService');
+            realtimeService.publishCallUpdate(message);
+            console.log(`[${traceId}] Realtime event published`);
+        } catch (error) {
+            // Non-critical: log but don't fail processing
+            console.warn(`[${traceId}] Failed to publish realtime event:`, error.message);
+        }
 
         return { success: true };
 

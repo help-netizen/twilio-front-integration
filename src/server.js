@@ -5,6 +5,7 @@ const webhooksRouter = require('../backend/src/routes/webhooks'); // Updated to 
 const healthRouter = require('./routes/health');
 const conversationsRouter = require('../backend/src/routes/conversations');
 const syncRouter = require('../backend/src/routes/sync');
+const eventsRouter = require('../backend/src/routes/events');
 const db = require('../backend/src/db/connection');
 
 const app = express();
@@ -25,6 +26,7 @@ app.use('/health', healthRouter);
 app.use('/webhooks', webhooksRouter);
 app.use('/api/conversations', conversationsRouter);
 app.use('/api/sync', syncRouter);
+app.use('/events', eventsRouter);
 
 // Serve static files from React app (production only)
 if (process.env.NODE_ENV === 'production') {
