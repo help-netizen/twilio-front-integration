@@ -10,6 +10,8 @@ export interface SSECallEvent {
     updated_at?: string;
     from_number?: string;
     to_number?: string;
+    from?: string;
+    to?: string;
     created_at?: string;
 }
 
