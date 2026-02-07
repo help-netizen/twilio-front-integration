@@ -1,12 +1,27 @@
 import React, { useState } from 'react';
 import { useConversations } from '../../hooks/useConversations';
+import { useRealtimeEvents } from '../../hooks/useRealtimeEvents';
 import { ConversationListItem } from './ConversationListItem';
 import { normalizePhoneNumber } from '../../utils/formatters';
 import './ConversationList.css';
 
 export const ConversationList: React.FC = () => {
-    const { data: conversations, isLoading, error } = useConversations();
+    const { data: conversations, isLoading, error, refetch } = useConversations();
     const [searchQuery, setSearchQuery] = useState('');
+
+    // Subscribe to real-time events
+    const { connected } = useRealtimeEvents({
+        onCallUpdate: (event) => {
+            console.log('[ConversationList] Call updated:', event.call_sid, event.status);
+            // Refetch conversations to get latest data
+            refetch();
+        },
+        onCallCreated: (event) => {
+            console.log('[ConversationList] Call created:', event.call_sid);
+            // Refetch conversations to include new call
+            refetch();
+        }
+    });
 
     const handleSearch = () => {
         // Search is handled by filtering below, this just ensures UI updates
@@ -64,6 +79,20 @@ export const ConversationList: React.FC = () => {
         <div className="conversation-list-container">
             <div className="inbox-header">
                 <h2>Inbox</h2>
+                {/* Real-time connection indicator */}
+                <div
+                    className="connection-indicator"
+                    title={connected ? 'Real-time updates active' : 'Connecting...'}
+                    style={{
+                        width: '8px',
+                        height: '8px',
+                        borderRadius: '50%',
+                        backgroundColor: connected ? '#10b981' : '#6b7280',
+                        display: 'inline-block',
+                        marginLeft: '8px',
+                        verticalAlign: 'middle'
+                    }}
+                />
                 <div className="search-container">
                     <input
                         type="text"

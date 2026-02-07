@@ -1,12 +1,26 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { conversationsApi } from '../services/api';
+import { useCallback } from 'react';
 
 export const useConversations = () => {
-    return useQuery({
+    const queryClient = useQueryClient();
+
+    const query = useQuery({
         queryKey: ['conversations'],
         queryFn: conversationsApi.getAll,
-        refetchInterval: 10000  // Poll every 10 seconds for new calls
+        // Removed polling - will use SSE events for updates
+        staleTime: 60000 // Consider data fresh for 1 minute
     });
+
+    // Manual refetch function for SSE events
+    const refetch = useCallback(() => {
+        queryClient.invalidateQueries({ queryKey: ['conversations'] });
+    }, [queryClient]);
+
+    return {
+        ...query,
+        refetch
+    };
 };
 
 export const useConversation = (id: string) => {
