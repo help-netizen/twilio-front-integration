@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
-const webhooksRouter = require('./routes/webhooks');
+const webhooksRouter = require('../backend/src/routes/webhooks'); // Updated to use new webhook router
 const healthRouter = require('./routes/health');
 const conversationsRouter = require('../backend/src/routes/conversations');
 const syncRouter = require('../backend/src/routes/sync');
