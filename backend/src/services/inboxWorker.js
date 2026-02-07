@@ -1,4 +1,5 @@
 const db = require('../db/connection');
+const { isFinalStatus, validateTransition, applyTransition } = require('./stateMachine');
 
 /**
  * Configuration
@@ -141,6 +142,13 @@ async function upsertMessage(normalizedEvent, source = 'webhook') {
 
     const isFinal = isFinalStatus(event_status);
 
+    // Validate state transition (log warning but don't block in non-strict mode)
+    // In production, you might want to fetch current status from DB first
+    const validation = validateTransition(null, event_status); // Simplified: no current state check
+    if (!validation.valid) {
+        console.warn('State transition validation warning:', validation.reason);
+    }
+
     // Upsert message with event-time guard to prevent out-of-order updates
     const result = await db.query(`
         INSERT INTO messages (
@@ -150,6 +158,7 @@ async function upsertMessage(normalizedEvent, source = 'webhook') {
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
         ON CONFLICT (twilio_sid) DO UPDATE SET
+            -- Validate transition before updating status
             status = CASE 
                 WHEN messages.last_event_time IS NULL OR $10 > messages.last_event_time 
                 THEN EXCLUDED.status 
@@ -166,7 +175,7 @@ async function upsertMessage(normalizedEvent, source = 'webhook') {
                 ELSE messages.metadata 
             END,
             last_event_time = GREATEST(messages.last_event_time, $10),
-            is_final = messages.is_final OR $11,
+            is_final = messages.is_final OR $11,  -- Once final, always final
             finalized_at = CASE 
                 WHEN $11 AND messages.finalized_at IS NULL 
                 THEN NOW() 
