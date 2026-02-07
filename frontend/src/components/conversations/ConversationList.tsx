@@ -84,14 +84,7 @@ export const ConversationList: React.FC = () => {
                     className="connection-indicator"
                     title={connected ? 'Real-time updates active' : 'Connecting...'}
                     style={{
-                        width: '8px',
-                        height: '8px',
-                        borderRadius: '50%',
-                        backgroundColor: connected ? '#10b981' : '#6b7280',
-                        display: 'inline-block',
-                        marginLeft: '8px',
-                        marginTop: '4px',
-                        verticalAlign: 'middle'
+                        backgroundColor: connected ? '#10b981' : '#6b7280'
                     }}
                 />
                 <div className="search-container">
