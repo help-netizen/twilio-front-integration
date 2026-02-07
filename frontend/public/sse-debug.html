@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSE Events Debug Monitor</title>
+    <style>
+        body {
+            font-family: monospace;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            margin: 0;
+        }
+
+        .header {
+            background: #2d2d30;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+
+        .status {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status.connected {
+            background: #4ec9b0;
+        }
+
+        .status.disconnected {
+            background: #f48771;
+        }
+
+        .status.connecting {
+            background: #dcdcaa;
+        }
+
+        .controls {
+            margin: 10px 0;
+        }
+
+        button {
+            background: #0e639c;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 8px;
+        }
+
+        button:hover {
+            background: #1177bb;
+        }
+
+        button.danger {
+            background: #f48771;
+        }
+
+        button.danger:hover {
+            background: #f14c4c;
+        }
+
+        .events {
+            background: #252526;
+            border-radius: 4px;
+            padding: 15px;
+            max-height: 70vh;
+            overflow-y: auto;
+        }
+
+        .event {
+            border-left: 3px solid #4ec9b0;
+            padding: 10px;
+            margin-bottom: 10px;
+            background: #2d2d30;
+            border-radius: 2px;
+        }
+
+        .event.error {
+            border-left-color: #f48771;
+        }
+
+        .event-time {
+            color: #608b4e;
+            font-weight: bold;
+        }
+
+        .event-type {
+            color: #4ec9b0;
+            font-weight: bold;
+        }
+
+        .event-data {
+            margin-top: 8px;
+            padding: 8px;
+            background: #1e1e1e;
+            border-radius: 2px;
+            overflow-x: auto;
+        }
+
+        pre {
+            margin: 0;
+            white-space: pre-wrap;
+        }
+
+        .stats {
+            display: flex;
+            gap: 20px;
+            margin: 10px 0;
+        }
+
+        .stat {
+            background: #2d2d30;
+            padding: 8px 12px;
+            border-radius: 4px;
+        }
+
+        .stat-value {
+            color: #4ec9b0;
+            font-weight: bold;
+            font-size: 1.2em;
+        }
+
+        .stat-label {
+            color: #858585;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <h1>🔴 SSE Events Monitor</h1>
+        <div>
+            <span class="status connecting" id="status"></span>
+            <span id="statusText">Connecting...</span>
+        </div>
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-value" id="eventCount">0</div>
+                <div class="stat-label">Events Received</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" id="connectionId">-</div>
+                <div class="stat-label">Connection ID</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" id="uptime">0s</div>
+                <div class="stat-label">Connected For</div>
+            </div>
+        </div>
+        <div class="controls">
+            <button onclick="reconnect()">🔄 Reconnect</button>
+            <button onclick="clearEvents()" class="danger">🗑️ Clear</button>
+            <button onclick="toggleAutoScroll()" id="autoScrollBtn">📜 Auto-scroll: ON</button>
+        </div>
+    </div>
+
+    <div class="events" id="events">
+        <div style="color: #608b4e; text-align: center; padding: 20px;">
+            Waiting for events... Make a call to see SSE updates in real-time!
+        </div>
+    </div>
+
+    <script>
+        let eventSource = null;
+        let eventCount = 0;
+        let connectionStartTime = null;
+        let autoScroll = true;
+        let uptimeInterval = null;
+
+        function connect() {
+            const url = 'http://localhost:3000/events/calls';
+            console.log('[SSE Debug] Connecting to:', url);
+
+            eventSource = new EventSource(url);
+
+            eventSource.onopen = () => {
+                console.log('[SSE Debug] Connected');
+                updateStatus('connected', 'Connected');
+                connectionStartTime = Date.now();
+                startUptimeCounter();
+            };
+
+            eventSource.onmessage = (event) => {
+                console.log('[SSE Debug] Message received:', event);
+                handleEvent('message', event.data);
+            };
+
+            eventSource.addEventListener('connected', (event) => {
+                console.log('[SSE Debug] Connected event:', event);
+                const data = JSON.parse(event.data);
+                document.getElementById('connectionId').textContent = data.connectionId;
+                handleEvent('connected', event.data);
+            });
+
+            eventSource.addEventListener('call.updated', (event) => {
+                console.log('[SSE Debug] Call updated:', event);
+                handleEvent('call.updated', event.data);
+            });
+
+            eventSource.onerror = (error) => {
+                console.error('[SSE Debug] Error:', error);
+                updateStatus('disconnected', 'Disconnected (retrying...)');
+                addEvent('error', 'Connection error', error);
+                stopUptimeCounter();
+            };
+        }
+
+        function handleEvent(type, data) {
+            eventCount++;
+            document.getElementById('eventCount').textContent = eventCount;
+
+            let parsedData;
+            try {
+                parsedData = JSON.parse(data);
+            } catch (e) {
+                parsedData = data;
+            }
+
+            addEvent(type, parsedData);
+        }
+
+        function addEvent(type, data, error = null) {
+            const eventsDiv = document.getElementById('events');
+
+            // Clear placeholder
+            if (eventCount === 1) {
+                eventsDiv.innerHTML = '';
+            }
+
+            const eventDiv = document.createElement('div');
+            eventDiv.className = 'event' + (error ? ' error' : '');
+
+            const time = new Date().toLocaleTimeString('en-US', { hour12: false });
+
+            eventDiv.innerHTML = `
+                <div>
+                    <span class="event-time">[${time}]</span>
+                    <span class="event-type">${type}</span>
+                </div>
+                <div class="event-data">
+                    <pre>${JSON.stringify(data, null, 2)}</pre>
+                </div>
+            `;
+
+            eventsDiv.insertBefore(eventDiv, eventsDiv.firstChild);
+
+            if (autoScroll) {
+                eventDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+
+        function updateStatus(status, text) {
+            const statusEl = document.getElementById('status');
+            statusEl.className = 'status ' + status;
+            document.getElementById('statusText').textContent = text;
+        }
+
+        function reconnect() {
+            if (eventSource) {
+                eventSource.close();
+            }
+            stopUptimeCounter();
+            eventCount = 0;
+            document.getElementById('eventCount').textContent = '0';
+            document.getElementById('connectionId').textContent = '-';
+            document.getElementById('uptime').textContent = '0s';
+            updateStatus('connecting', 'Reconnecting...');
+            setTimeout(connect, 100);
+        }
+
+        function clearEvents() {
+            document.getElementById('events').innerHTML = `
+                <div style="color: #608b4e; text-align: center; padding: 20px;">
+                    Events cleared. Waiting for new events...
+                </div>
+            `;
+            eventCount = 0;
+            document.getElementById('eventCount').textContent = '0';
+        }
+
+        function toggleAutoScroll() {
+            autoScroll = !autoScroll;
+            document.getElementById('autoScrollBtn').textContent =
+                `📜 Auto-scroll: ${autoScroll ? 'ON' : 'OFF'}`;
+        }
+
+        function startUptimeCounter() {
+            uptimeInterval = setInterval(() => {
+                if (connectionStartTime) {
+                    const seconds = Math.floor((Date.now() - connectionStartTime) / 1000);
+                    const mins = Math.floor(seconds / 60);
+                    const secs = seconds % 60;
+                    document.getElementById('uptime').textContent =
+                        mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+                }
+            }, 1000);
+        }
+
+        function stopUptimeCounter() {
+            if (uptimeInterval) {
+                clearInterval(uptimeInterval);
+                uptimeInterval = null;
+            }
+        }
+
+        // Auto-connect on load
+        connect();
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (eventSource) {
+                eventSource.close();
+            }
+            stopUptimeCounter();
+        });
+    </script>
+</body>
+
+</html>

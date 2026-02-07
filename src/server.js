@@ -108,6 +108,14 @@ app.listen(PORT, async () => {
     if (!dbConnected) {
         console.error('⚠️  Database connection failed!');
     }
+
+    // Start inbox worker as background task (same process)
+    // This ensures worker shares the same realtimeService singleton as the server
+    const { startWorker } = require('../backend/src/services/inboxWorker');
+    console.log('🔄 Starting inbox worker...');
+    startWorker().catch(error => {
+        console.error('❌ Worker error:', error);
+    });
 });
 
 module.exports = app;
