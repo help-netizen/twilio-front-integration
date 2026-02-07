@@ -54,7 +54,9 @@ function normalizeVoiceEvent(payload) {
         call_sid: CallSid,
         event_type: 'call.status_changed',
         event_status: CallStatus.toLowerCase(),
-        event_time: new Date(parseInt(Timestamp) * 1000),
+        event_time: Timestamp && !isNaN(parseInt(Timestamp))
+            ? new Date(parseInt(Timestamp) * 1000)
+            : new Date(),
 
         // Call details
         from_number: From,
