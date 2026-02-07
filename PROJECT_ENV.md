@@ -160,7 +160,13 @@ npm test
 
 **Port:** 3000  
 **Access:** http://localhost:3000  
-**Health Check:** http://localhost:3000/health
+**Health Check:** http://localhost:3000/health  
+**SSE Debug:** http://localhost:3001/sse-debug.html (when frontend is running)
+
+**Services Running:**
+- Express API server
+- SSE real-time events endpoint (`/events/calls`)
+- Inbox worker (polls `twilio_webhook_inbox` table every 1s)
 
 #### Frontend Development Server
 ```bash
@@ -217,9 +223,11 @@ cd frontend && npm run dev  # Frontend (terminal 2)
 #### Quick Restart
 ```bash
 # Just restart processes (Ctrl+C and re-run commands)
-npm run dev          # Backend
+npm run dev          # Backend (includes inbox worker)
 cd frontend && npm run dev  # Frontend
 ```
+
+**Note:** The inbox worker runs automatically within the backend server process. No separate worker process is needed.
 
 ### Verifying Services
 
