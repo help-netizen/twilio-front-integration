@@ -396,7 +396,7 @@ https://api.twilio.com/2010-04-01/Accounts/{AccountSid}/Recordings/{RecordingSid
 ```json
 {
   "sid": "CA5bef499f976fd46ea521f3da237abf27",
-  "accountSid": "AC_REDACTED",
+  "accountSid": "AC_YOUR_ACCOUNT_SID",
   "parentCallSid": "CAe4616d11d7f38afcfaf0bb73a0c55820",
   "from": "+16175006181",
   "fromFormatted": "(617) 500-6181",
