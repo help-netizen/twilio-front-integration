@@ -124,6 +124,12 @@ app.listen(PORT, '0.0.0.0', async () => {
     startWorker().catch(error => {
         console.error('❌ Worker error:', error);
     });
+
+    // Start transcription worker (Variant B post-call pipeline)
+    const { startTranscriptionWorker } = require('../backend/src/services/transcriptionWorker');
+    startTranscriptionWorker().catch(error => {
+        console.error('❌ Transcription worker error:', error);
+    });
 });
 
 module.exports = app;

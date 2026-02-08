@@ -1,4 +1,5 @@
 const queries = require('../db/queries');
+const db = require('../db/connection');
 const { isFinalStatus } = require('./stateMachine');
 const CallProcessor = require('./callProcessor');
 
@@ -239,6 +240,39 @@ async function processRecordingEvent(payload, traceId) {
     // Publish realtime event
     if (normalized.status === 'completed') {
         publishRealtimeEvent('recording.ready', recording, traceId);
+
+        // Variant B: enqueue post-call transcription
+        try {
+            await queries.upsertTranscript({
+                transcriptionSid: null,
+                callSid: normalized.callSid,
+                recordingSid: normalized.recordingSid,
+                mode: 'post-call',
+                status: 'processing',
+                languageCode: null,
+                confidence: null,
+                text: null,
+                isFinal: false,
+                rawPayload: { enqueued_by: 'recording-status-handler' },
+            });
+
+            await db.query(
+                `INSERT INTO transcription_jobs(call_sid, recording_sid, status)
+                 VALUES ($1, $2, 'queued')
+                 ON CONFLICT DO NOTHING`,
+                [normalized.callSid, normalized.recordingSid]
+            );
+
+            publishRealtimeEvent('transcript.processing', {
+                callSid: normalized.callSid,
+                recordingSid: normalized.recordingSid,
+                status: 'processing',
+            }, traceId);
+
+            console.log(`[${traceId}] Transcription job enqueued for ${normalized.callSid}`);
+        } catch (err) {
+            console.error(`[${traceId}] Failed to enqueue transcription:`, err.message);
+        }
     }
 }
 

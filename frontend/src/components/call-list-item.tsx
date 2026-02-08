@@ -40,6 +40,7 @@ export interface CallData {
     audioUrl?: string;
     summary?: string;
     transcription?: string;
+    transcriptStatus?: 'processing' | 'completed' | 'failed';
 }
 
 interface CallListItemProps {
@@ -91,6 +92,7 @@ export function CallListItem({ call }: CallListItemProps) {
     };
 
     const formatAudioTime = (seconds: number) => {
+        if (!isFinite(seconds) || isNaN(seconds)) return '0:00';
         const mins = Math.floor(seconds / 60);
         const secs = Math.floor(seconds % 60);
         return `${mins}:${secs.toString().padStart(2, '0')}`;
@@ -125,16 +127,20 @@ export function CallListItem({ call }: CallListItemProps) {
         if (!audio) return;
 
         const updateTime = () => setCurrentTime(audio.currentTime);
-        const updateDuration = () => setDuration(audio.duration);
+        const updateDuration = () => {
+            if (isFinite(audio.duration)) setDuration(audio.duration);
+        };
         const handleEnded = () => setIsPlaying(false);
 
         audio.addEventListener('timeupdate', updateTime);
         audio.addEventListener('loadedmetadata', updateDuration);
+        audio.addEventListener('durationchange', updateDuration);
         audio.addEventListener('ended', handleEnded);
 
         return () => {
             audio.removeEventListener('timeupdate', updateTime);
             audio.removeEventListener('loadedmetadata', updateDuration);
+            audio.removeEventListener('durationchange', updateDuration);
             audio.removeEventListener('ended', handleEnded);
         };
     }, []);
@@ -226,7 +232,7 @@ export function CallListItem({ call }: CallListItemProps) {
                                         </button>
                                     )}
 
-                                    {call.transcription && (
+                                    {(call.transcription || call.transcriptStatus) && (
                                         <button
                                             onClick={() => setActiveSection(activeSection === 'transcription' ? null : 'transcription')}
                                             className={`text-xs transition-colors ${activeSection === 'transcription'
@@ -234,7 +240,7 @@ export function CallListItem({ call }: CallListItemProps) {
                                                 : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
                                                 }`}
                                         >
-                                            Transcript
+                                            {call.transcriptStatus === 'processing' ? 'Transcribing…' : 'Transcript'}
                                         </button>
                                     )}
                                 </div>
@@ -299,12 +305,18 @@ export function CallListItem({ call }: CallListItemProps) {
                             )}
 
                             {/* Transcription - Show only when active */}
-                            {activeSection === 'transcription' && call.transcription && (
+                            {activeSection === 'transcription' && (call.transcription || call.transcriptStatus) && (
                                 <div className="pt-2">
                                     <ScrollArea className="h-48 bg-gray-50 p-3 rounded-md">
-                                        <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
-                                            {call.transcription}
-                                        </p>
+                                        {call.transcriptStatus === 'processing' ? (
+                                            <p className="text-sm text-gray-500 italic animate-pulse">Transcribing audio…</p>
+                                        ) : call.transcriptStatus === 'failed' ? (
+                                            <p className="text-sm text-red-500">Transcription failed</p>
+                                        ) : (
+                                            <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                                                {call.transcription}
+                                            </p>
+                                        )}
                                     </ScrollArea>
                                 </div>
                             )}

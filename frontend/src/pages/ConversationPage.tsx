@@ -40,6 +40,7 @@ function callToCallData(call: Call): CallData {
         twilioDirection: call.direction,
         audioUrl: call.recording?.playback_url || undefined,
         transcription: call.transcript?.text || undefined,
+        transcriptStatus: call.transcript?.status as CallData['transcriptStatus'] || undefined,
     };
 }
 
