@@ -61,8 +61,8 @@ export const ConversationListItem: React.FC<ConversationListItemProps> = ({ call
                     )}
                 </div>
                 <div className="conversation-time">
-                    <div className="time-relative">{formatRelativeTime(new Date(displayTime).getTime() / 1000)}</div>
-                    <div className="time-absolute">{formatAbsoluteTime(new Date(displayTime).getTime() / 1000)}</div>
+                    <div className="time-relative">{formatRelativeTime(new Date(displayTime).getTime())}</div>
+                    <div className="time-absolute">{formatAbsoluteTime(new Date(displayTime).getTime())}</div>
                 </div>
             </div>
         </div>
