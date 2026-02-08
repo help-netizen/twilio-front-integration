@@ -98,6 +98,40 @@ async function syncCall(twilioCall) {
         // ✅ USE MICROSERVICE for processing
         const processed = CallProcessor.processCall(callData);
 
+        // ═══ SKIP FILTERS: Prevent bad data from being synced ═══
+
+        // 1. Skip internal SIP-to-SIP calls (e.g. sip:dispatcher → sip:508514@...)
+        //    These are internal routing calls, not real customer conversations
+        if (processed.direction === 'internal') {
+            console.log(`  ⏭️  Skipping internal SIP call: ${twilioCall.sid}`);
+            return false;
+        }
+
+        // 2. Skip calls with no valid external phone number
+        //    Prevents "Unknown" contacts and empty-number conversations
+        const extNum = processed.externalParty?.number;
+        if (!extNum || extNum === '' || extNum === 'Unknown') {
+            console.log(`  ⏭️  Skipping call with no external number: ${twilioCall.sid}`);
+            return false;
+        }
+
+        // 3. Skip calls with malformed phone numbers (not E.164 format)
+        //    Valid: +15085140320 (country code + 10 digits)
+        //    Invalid: +7475085140320 (wrong country code / extra digits)
+        const cleanNum = extNum.replace(/[^\d]/g, '');
+        if (cleanNum.length > 11 || cleanNum.length < 10) {
+            console.log(`  ⏭️  Skipping call with malformed number: ${twilioCall.sid} (${extNum})`);
+            return false;
+        }
+
+        // 4. Skip calls with no start time (would create epoch-dated entries)
+        if (!callData.startTime) {
+            console.log(`  ⏭️  Skipping call with no start time: ${twilioCall.sid}`);
+            return false;
+        }
+
+        // ═══ END SKIP FILTERS ═══
+
         // Check if already exists
         const existing = await queries.findMessageByTwilioSid(twilioCall.sid);
 
