@@ -23,7 +23,7 @@ router.post('/voice', (req, res) => {
 
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Dial timeout="30"
+    <Dial timeout="60"
           action="${dialActionUrl}"
           method="POST">
         <Sip statusCallback="${statusCallbackUrl}"

@@ -271,7 +271,7 @@ async function handleVoiceInbound(req, res) {
 
             twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Dial timeout="30"
+    <Dial timeout="60"
           callerId="+16175006181"
           action="${dialActionUrl}"
           method="POST">
@@ -291,7 +291,7 @@ async function handleVoiceInbound(req, res) {
 
             twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Dial timeout="30"
+    <Dial timeout="60"
           action="${dialActionUrl}"
           method="POST">
         <Sip statusCallback="${statusCallbackUrl}"
