@@ -9,7 +9,7 @@
  */
 
 // Get owned phone numbers from environment
-const OWNED_NUMBERS = process.env.OWNED_PHONE_NUMBERS 
+const OWNED_NUMBERS = process.env.OWNED_PHONE_NUMBERS
     ? process.env.OWNED_PHONE_NUMBERS.split(',').map(n => n.trim().replace(/[^\d+]/g, ''))
     : [];
 
@@ -25,9 +25,9 @@ function isOwnedNumber(number) {
     return OWNED_NUMBERS.some(owned => {
         const ownedNormalized = owned.replace(/[^\d+]/g, '');
         // Compare with and without + prefix
-        return normalized === ownedNormalized || 
-               normalized === ownedNormalized.replace('+', '') ||
-               normalized.replace('+', '') === ownedNormalized.replace('+', '');
+        return normalized === ownedNormalized ||
+            normalized === ownedNormalized.replace('+', '') ||
+            normalized.replace('+', '') === ownedNormalized.replace('+', '');
     });
 }
 
@@ -115,8 +115,21 @@ class CallProcessor {
             // Internal call between SIP endpoints (forwarding/transfer)
             return 'internal';
         } else {
-            // Both external (shouldn't happen, fallback)
-            return 'external';
+            // Neither is SIP (e.g. Twilio API sync data has plain phone numbers)
+            // Use owned-number detection as fallback
+            const fromIsOwned = isOwnedNumber(callData.from);
+            const toIsOwned = isOwnedNumber(callData.to);
+
+            if (fromIsOwned && !toIsOwned) {
+                // FROM is our number → we called out → OUTBOUND
+                return 'outbound';
+            } else if (!fromIsOwned && toIsOwned) {
+                // TO is our number → customer called in → INBOUND
+                return 'inbound';
+            } else {
+                // Both owned or neither owned → can't determine
+                return 'external';
+            }
         }
     }
 
@@ -147,7 +160,7 @@ class CallProcessor {
             // This handles outbound-dial calls where neither number is SIP
             const fromIsOwned = isOwnedNumber(callData.from);
             const toIsOwned = isOwnedNumber(callData.to);
-            
+
             if (fromIsOwned && !toIsOwned) {
                 // FROM is our number, TO is external → use TO (outbound call)
                 externalNumber = callData.to;
