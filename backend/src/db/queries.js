@@ -159,6 +159,12 @@ async function getCallsByContact({ limit = 20, offset = 0 } = {}) {
          FROM calls c
          LEFT JOIN contacts co ON c.contact_id = co.id
          WHERE c.contact_id IS NOT NULL
+           -- Exclude contacts that ONLY have failed/canceled calls
+           AND EXISTS (
+               SELECT 1 FROM calls c3
+               WHERE c3.contact_id = c.contact_id
+                 AND c3.status NOT IN ('failed', 'canceled')
+           )
          ORDER BY c.contact_id, c.started_at DESC NULLS LAST
          LIMIT $1 OFFSET $2`,
         [limit, offset]
@@ -171,7 +177,13 @@ async function getCallsByContact({ limit = 20, offset = 0 } = {}) {
  */
 async function getContactsWithCallsCount() {
     const result = await db.query(
-        `SELECT COUNT(DISTINCT contact_id) FROM calls WHERE contact_id IS NOT NULL`
+        `SELECT COUNT(DISTINCT contact_id) FROM calls
+         WHERE contact_id IS NOT NULL
+           AND EXISTS (
+               SELECT 1 FROM calls c2
+               WHERE c2.contact_id = calls.contact_id
+                 AND c2.status NOT IN ('failed', 'canceled')
+           )`
     );
     return parseInt(result.rows[0].count, 10);
 }
