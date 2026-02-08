@@ -1,63 +1,49 @@
 import React, { useState } from 'react';
-import { useConversations } from '../../hooks/useConversations';
+import { useCallsByContact } from '../../hooks/useConversations';
 import { useRealtimeEvents } from '../../hooks/useRealtimeEvents';
 import { ConversationListItem } from './ConversationListItem';
 import { normalizePhoneNumber } from '../../utils/formatters';
 import './ConversationList.css';
 
 export const ConversationList: React.FC = () => {
-    const { data: conversations, isLoading, error, refetch } = useConversations();
+    const { data, isLoading, error, refetch } = useCallsByContact();
     const [searchQuery, setSearchQuery] = useState('');
 
     // Subscribe to real-time events
     const { connected } = useRealtimeEvents({
         onCallUpdate: (event) => {
-            console.log('[ConversationList] Call updated:', event.call_sid, event.status);
-            // Refetch conversations to get latest data
+            console.log('[CallList] Call updated:', event.call_sid, event.status);
             refetch();
         },
         onCallCreated: (event) => {
-            console.log('[ConversationList] Call created:', event.call_sid);
-            // Refetch conversations to include new call
+            console.log('[CallList] Call created:', event.call_sid);
             refetch();
         }
     });
 
-    const handleSearch = () => {
-        // Search is handled by filtering below, this just ensures UI updates
-        console.log('Searching for:', searchQuery);
-    };
-
     const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
         if (e.key === 'Enter') {
-            handleSearch();
+            console.log('Searching for:', searchQuery);
         }
     };
 
-    // Filter conversations based on normalized phone number search
-    const filteredConversations = React.useMemo(() => {
-        if (!conversations || !searchQuery.trim()) {
-            return conversations || [];
-        }
+    // Filter by phone number search
+    const calls = data?.conversations || [];
+    const filteredCalls = React.useMemo(() => {
+        if (!searchQuery.trim()) return calls;
 
         const normalizedQuery = normalizePhoneNumber(searchQuery);
-
-        return conversations.filter(conv => {
-            const phoneNumber = conv.contact.handle || conv.external_id;
-            const normalizedPhone = normalizePhoneNumber(phoneNumber);
-            return normalizedPhone.includes(normalizedQuery);
+        return calls.filter(call => {
+            const phone = call.from_number || call.to_number || '';
+            return normalizePhoneNumber(phone).includes(normalizedQuery);
         });
-    }, [conversations, searchQuery]);
+    }, [calls, searchQuery]);
 
     if (isLoading) {
         return (
             <div className="conversation-list-container">
-                <div className="inbox-header">
-                    <h2>Inbox</h2>
-                </div>
-                <div className="conversation-list-loading">
-                    <p>Loading conversations...</p>
-                </div>
+                <div className="inbox-header"><h2>Inbox</h2></div>
+                <div className="conversation-list-loading"><p>Loading calls...</p></div>
             </div>
         );
     }
@@ -65,12 +51,8 @@ export const ConversationList: React.FC = () => {
     if (error) {
         return (
             <div className="conversation-list-container">
-                <div className="inbox-header">
-                    <h2>Inbox</h2>
-                </div>
-                <div className="conversation-list-error">
-                    <p>Error loading conversations</p>
-                </div>
+                <div className="inbox-header"><h2>Inbox</h2></div>
+                <div className="conversation-list-error"><p>Error loading calls</p></div>
             </div>
         );
     }
@@ -79,13 +61,10 @@ export const ConversationList: React.FC = () => {
         <div className="conversation-list-container">
             <div className="inbox-header">
                 <h2>Inbox</h2>
-                {/* Real-time connection indicator */}
                 <div
                     className="connection-indicator"
                     title={connected ? 'Real-time updates active' : 'Connecting...'}
-                    style={{
-                        backgroundColor: connected ? '#10b981' : '#6b7280'
-                    }}
+                    style={{ backgroundColor: connected ? '#10b981' : '#6b7280' }}
                 />
                 <div className="search-container">
                     <input
@@ -96,24 +75,15 @@ export const ConversationList: React.FC = () => {
                         onChange={(e) => setSearchQuery(e.target.value)}
                         onKeyPress={handleKeyPress}
                     />
-                    <button
-                        className="search-button"
-                        onClick={handleSearch}
-                        title="Search"
-                    >
-                        🔍
-                    </button>
+                    <button className="search-button" title="Search">🔍</button>
                 </div>
             </div>
             <div className="conversation-list">
-                {filteredConversations.length === 0 ? (
-                    <div className="no-results">No conversations found</div>
+                {filteredCalls.length === 0 ? (
+                    <div className="no-results">No calls found</div>
                 ) : (
-                    filteredConversations.map((conversation) => (
-                        <ConversationListItem
-                            key={conversation.id}
-                            conversation={conversation}
-                        />
+                    filteredCalls.map((call) => (
+                        <ConversationListItem key={call.id} call={call} />
                     ))
                 )}
             </div>

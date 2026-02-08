@@ -1,41 +1,67 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { conversationsApi } from '../services/api';
+import { callsApi } from '../services/api';
 import { useCallback } from 'react';
 
-export const useConversations = () => {
+/**
+ * Hook: list of calls grouped by contact (sidebar / conversations list)
+ */
+export const useCallsByContact = () => {
     const queryClient = useQueryClient();
 
     const query = useQuery({
-        queryKey: ['conversations'],
-        queryFn: conversationsApi.getAll,
-        // Removed polling - will use SSE events for updates
-        staleTime: 60000 // Consider data fresh for 1 minute
+        queryKey: ['calls-by-contact'],
+        queryFn: () => callsApi.getByContact(100),
+        staleTime: 60000,
     });
 
-    // Manual refetch function for SSE events
     const refetch = useCallback(() => {
-        queryClient.invalidateQueries({ queryKey: ['conversations'] });
+        queryClient.invalidateQueries({ queryKey: ['calls-by-contact'] });
     }, [queryClient]);
 
-    return {
-        ...query,
-        refetch
-    };
+    return { ...query, refetch };
 };
 
-export const useConversation = (id: string) => {
+/**
+ * Hook: all calls for a specific contact
+ */
+export const useContactCalls = (contactId: number) => {
     return useQuery({
-        queryKey: ['conversation', id],
-        queryFn: () => conversationsApi.getById(id),
-        enabled: !!id
+        queryKey: ['contact-calls', contactId],
+        queryFn: () => callsApi.getByContactId(contactId),
+        enabled: !!contactId,
+        refetchInterval: 5000,
     });
 };
 
-export const useConversationMessages = (conversationId: string) => {
+/**
+ * Hook: active (non-final) calls
+ */
+export const useActiveCalls = () => {
     return useQuery({
-        queryKey: ['messages', conversationId],
-        queryFn: () => conversationsApi.getMessages(conversationId),
-        enabled: !!conversationId,
-        refetchInterval: 5000  // Poll every 5 seconds for new messages
+        queryKey: ['active-calls'],
+        queryFn: callsApi.getActive,
+        refetchInterval: 3000,
+    });
+};
+
+/**
+ * Hook: single call by call_sid
+ */
+export const useCall = (callSid: string) => {
+    return useQuery({
+        queryKey: ['call', callSid],
+        queryFn: () => callsApi.getByCallSid(callSid),
+        enabled: !!callSid,
+    });
+};
+
+/**
+ * Hook: media (recordings + transcripts) for a call
+ */
+export const useCallMedia = (callSid: string) => {
+    return useQuery({
+        queryKey: ['call-media', callSid],
+        queryFn: () => callsApi.getMedia(callSid),
+        enabled: !!callSid,
     });
 };

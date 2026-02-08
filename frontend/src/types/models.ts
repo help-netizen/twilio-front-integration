@@ -1,101 +1,97 @@
-// Front-compatible data models
+// V3 data models — calls-first architecture
 
 export type CallStatus = 'completed' | 'busy' | 'no-answer' | 'canceled' | 'failed' | 'in-progress' | 'ringing' | 'initiated' | 'queued';
-export type CallDirection = 'inbound' | 'outbound' | 'inbound-api' | 'outbound-api';
+export type CallDirection = 'inbound' | 'outbound' | 'outbound-dial' | 'outbound-api' | 'internal';
 
 export interface Contact {
-    id: string;
-    handle: string;                   // Phone number
-    name?: string;
-    avatar_url?: string;
-
-    metadata: {
-        formatted_number: string;       // "+1 (415) 555-1234"
-        country_code?: string;
-        is_mobile?: boolean;
-    };
-
-    created_at: number;
-    updated_at: number;
+    id: number;
+    phone_e164: string;
+    full_name: string | null;
+    email: string | null;
+    created_at: string;
+    updated_at: string;
 }
 
 export interface Call {
-    sid: string;
-    from: string;
-    to: string;
-    duration: number;                 // seconds
+    id: number;
+    call_sid: string;
+    parent_call_sid: string | null;
+    direction: CallDirection;
+    from_number: string;
+    to_number: string;
     status: CallStatus;
-    direction: CallDirection;
-    recording_url?: string;
-    price?: string;
-    answered_by?: string;
-    start_time: string;
-    end_time?: string;
+    is_final: boolean;
+    started_at: string | null;
+    answered_at: string | null;
+    ended_at: string | null;
+    duration_sec: number | null;
+    price: string | null;
+    price_unit: string | null;
+    created_at: string;
+    updated_at: string;
+    contact?: Contact;
+    call_count?: number;  // present in by-contact response
 }
 
-export interface Message {
-    id: string;
-    external_id: string;              // Twilio Call SID
-    type: 'call';
-    direction: CallDirection;
-    created_at: number;
-
-    // Call-specific fields
-    call: Call;
-
-    // Display fields
-    subject: string;
-    body: string;
-    blurb: string;
-
-    // Relations
-    conversation_id: string;
-    contact: Contact;
-
-    // Metadata with call status and details
-    metadata: {
-        call_sid: string;
-        duration: number;
-        status: CallStatus;
-        recording_url?: string;
-        from_number: string;
-        to_number: string;
-        parent_call_sid?: string;
-        total_duration?: number;
-        talk_time?: number;
-        wait_time?: number;
-        merged_from_parent?: boolean;
-        [key: string]: any;
-    };
+export interface Recording {
+    id: number;
+    recording_sid: string;
+    call_sid: string;
+    status: string;
+    recording_url: string | null;
+    duration_sec: number | null;
+    created_at: string;
 }
 
-export interface Conversation {
-    id: string;
-    external_id: string;              // Phone number
-    subject: string;
-    status: 'active' | 'archived';
-    last_message: Message | null;
-    last_message_at: number;
-    unread_count: number;
-    contact: Contact;
+export interface Transcript {
+    id: number;
+    transcription_sid: string | null;
+    call_sid: string | null;
+    status: string;
+    text: string | null;
+    confidence: number | null;
+    language_code: string | null;
+    created_at: string;
+}
 
-    metadata: {
-        total_calls: number;
-        total_duration: number;
-        last_call_direction: CallDirection;
-    };
+export interface CallEvent {
+    id: number;
+    call_sid: string;
+    event_type: string;
+    event_time: string;
+    payload: Record<string, any>;
+    created_at: string;
+}
 
-    created_at: number;
-    updated_at: number;
+export interface CallMedia {
+    recordings: Recording[];
+    transcripts: Transcript[];
 }
 
 // API Response types
-export interface ConversationsResponse {
-    conversations: Conversation[];
-    total: number;
+export interface CallsResponse {
+    calls: Call[];
+    next_cursor: number | null;
+    count: number;
 }
 
-export interface MessagesResponse {
-    messages: Message[];
+export interface ActiveCallsResponse {
+    active_calls: Call[];
+    count: number;
+}
+
+export interface ByContactResponse {
+    conversations: Call[];
     total: number;
+    limit: number;
+    offset: number;
+}
+
+export interface CallEventsResponse {
+    events: CallEvent[];
+    count: number;
+}
+
+export interface CallMediaResponse {
+    media: CallMedia;
 }

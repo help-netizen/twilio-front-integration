@@ -22,7 +22,8 @@ function App() {
         <AppLayout>
           <Routes>
             <Route path="/" element={<HomePage />} />
-            <Route path="/conversations/:id" element={<ConversationPage />} />
+            <Route path="/contact/:id" element={<ConversationPage />} />
+            <Route path="/calls/:callSid" element={<ConversationPage />} />
           </Routes>
         </AppLayout>
         <EventNotification />

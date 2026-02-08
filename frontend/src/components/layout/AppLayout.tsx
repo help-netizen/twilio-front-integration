@@ -22,8 +22,8 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
 
             if (data.success) {
                 // Invalidate all queries to refetch fresh data
-                await queryClient.invalidateQueries({ queryKey: ['conversations'] });
-                await queryClient.invalidateQueries({ queryKey: ['messages'] });
+                await queryClient.invalidateQueries({ queryKey: ['calls-by-contact'] });
+                await queryClient.invalidateQueries({ queryKey: ['contact-calls'] });
 
                 alert(`✅ Synced ${data.synced} new calls from last 3 days (${data.total} total found)`);
             } else {
