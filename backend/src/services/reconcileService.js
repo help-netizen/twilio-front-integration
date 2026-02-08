@@ -111,6 +111,21 @@ async function reconcileCall(twilioPayload, source) {
         { ...normalized, source }
     );
 
+    // Publish SSE event for real-time UI updates
+    if (call) {
+        try {
+            const realtimeService = require('./realtimeService');
+            realtimeService.publishCallUpdate({
+                eventType: 'call.updated',
+                call_sid: call.call_sid,
+                status: call.status,
+                is_final: call.is_final,
+            });
+        } catch (e) {
+            // SSE publish is best-effort
+        }
+    }
+
     return call;
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 
 /**
  * SSE Event Types
@@ -35,38 +35,32 @@ interface UseRealtimeEventsOptions {
 /**
  * Custom hook for subscribing to Server-Sent Events
  * 
- * Usage:
- * ```tsx
- * const { connected, stats } = useRealtimeEvents({
- *   onCallUpdate: (event) => {
- *     console.log('Call updated:', event);
- *     // Update state, refresh UI, etc.
- *   }
- * });
- * ```
+ * Uses refs for callbacks to avoid reconnecting on every render.
  */
 export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
     const {
-        onCallUpdate,
-        onCallCreated,
-        onConnected,
-        onError,
         autoReconnect = true,
         reconnectDelay = 3000
     } = options;
 
+    // Store callbacks in refs so changes don't trigger reconnect
+    const onCallUpdateRef = useRef(options.onCallUpdate);
+    const onCallCreatedRef = useRef(options.onCallCreated);
+    const onConnectedRef = useRef(options.onConnected);
+    const onErrorRef = useRef(options.onError);
+
+    // Keep refs current
+    onCallUpdateRef.current = options.onCallUpdate;
+    onCallCreatedRef.current = options.onCallCreated;
+    onConnectedRef.current = options.onConnected;
+    onErrorRef.current = options.onError;
+
     const eventSourceRef = useRef<EventSource | null>(null);
     const reconnectTimeoutRef = useRef<number | null>(null);
     const isManuallyClosedRef = useRef(false);
+    const reconnectAttemptsRef = useRef(0);
 
-    // Stats
-    const statsRef = useRef({
-        connected: false,
-        connectionId: null as number | null,
-        eventsReceived: 0,
-        lastEventAt: null as Date | null,
-        reconnectAttempts: 0
-    });
+    const [connected, setConnected] = useState(false);
 
     /**
      * Connect to SSE endpoint
@@ -78,7 +72,6 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
             eventSourceRef.current = null;
         }
 
-        // Clear reconnect timeout
         if (reconnectTimeoutRef.current) {
             clearTimeout(reconnectTimeoutRef.current);
             reconnectTimeoutRef.current = null;
@@ -94,12 +87,9 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
             eventSource.addEventListener('connected', (e) => {
                 const data = JSON.parse(e.data) as SSEConnectionEvent;
                 console.log('[SSE] Connected:', data);
-
-                statsRef.current.connected = true;
-                statsRef.current.connectionId = data.connectionId;
-                statsRef.current.reconnectAttempts = 0;
-
-                onConnected?.(data);
+                setConnected(true);
+                reconnectAttemptsRef.current = 0;
+                onConnectedRef.current?.(data);
             });
 
             // Call updated event
@@ -107,21 +97,17 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
                 const data = JSON.parse(e.data) as SSECallEvent;
                 console.log('[SSE] Call updated:', data.call_sid, data.status);
 
-                statsRef.current.eventsReceived++;
-                statsRef.current.lastEventAt = new Date();
-
-                // Dispatch custom event for notification system
                 window.dispatchEvent(new CustomEvent('sse-event-received', {
                     detail: {
                         call_sid: data.call_sid,
                         status: data.status,
-                        from: data.from,
-                        to: data.to,
+                        from: data.from_number,
+                        to: data.to_number,
                         timestamp: new Date().toISOString()
                     }
                 }));
 
-                onCallUpdate?.(data);
+                onCallUpdateRef.current?.(data);
             });
 
             // Call created event
@@ -129,51 +115,43 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
                 const data = JSON.parse(e.data) as SSECallEvent;
                 console.log('[SSE] Call created:', data.call_sid);
 
-                statsRef.current.eventsReceived++;
-                statsRef.current.lastEventAt = new Date();
-
-                // Dispatch custom event for notification system
                 window.dispatchEvent(new CustomEvent('sse-event-received', {
                     detail: {
                         call_sid: data.call_sid,
                         status: data.status,
-                        from: data.from,
-                        to: data.to,
+                        from: data.from_number,
+                        to: data.to_number,
                         timestamp: new Date().toISOString()
                     }
                 }));
 
-                onCallCreated?.(data);
+                onCallCreatedRef.current?.(data);
             });
 
             // Error handling
             eventSource.onerror = () => {
                 console.error('[SSE] Connection error');
-                statsRef.current.connected = false;
-
-                // Close the connection
+                setConnected(false);
                 eventSource.close();
 
-                // Auto-reconnect if not manually closed
                 if (autoReconnect && !isManuallyClosedRef.current) {
-                    statsRef.current.reconnectAttempts++;
-                    const delay = reconnectDelay * Math.min(statsRef.current.reconnectAttempts, 5); // Max 5x delay
+                    reconnectAttemptsRef.current++;
+                    const delay = reconnectDelay * Math.min(reconnectAttemptsRef.current, 5);
+                    console.log(`[SSE] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current})...`);
 
-                    console.log(`[SSE] Reconnecting in ${delay}ms (attempt ${statsRef.current.reconnectAttempts})...`);
-
-                    reconnectTimeoutRef.current = setTimeout(() => {
+                    reconnectTimeoutRef.current = window.setTimeout(() => {
                         connect();
                     }, delay);
                 }
 
-                onError?.(new Error('SSE connection error'));
+                onErrorRef.current?.(new Error('SSE connection error'));
             };
 
         } catch (error) {
             console.error('[SSE] Failed to create EventSource:', error);
-            onError?.(error as Error);
+            onErrorRef.current?.(error as Error);
         }
-    }, [onCallUpdate, onCallCreated, onConnected, onError, autoReconnect, reconnectDelay]);
+    }, [autoReconnect, reconnectDelay]); // Only reconnect config in deps, NOT callbacks
 
     /**
      * Disconnect from SSE
@@ -192,7 +170,7 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
             eventSourceRef.current = null;
         }
 
-        statsRef.current.connected = false;
+        setConnected(false);
     }, []);
 
     /**
@@ -203,22 +181,17 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
         connect();
     }, [connect]);
 
-    // Auto-connect on mount
+    // Auto-connect on mount, disconnect on unmount
     useEffect(() => {
         isManuallyClosedRef.current = false;
         connect();
-
-        // Cleanup on unmount
-        return () => {
-            disconnect();
-        };
+        return () => { disconnect(); };
     }, [connect, disconnect]);
 
     return {
-        connected: statsRef.current.connected,
-        connectionId: statsRef.current.connectionId,
-        stats: statsRef.current,
+        connected,
         disconnect,
         reconnect
     };
 }
+
