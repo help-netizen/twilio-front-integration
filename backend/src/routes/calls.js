@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const queries = require('../db/queries');
+const fetch = require('node-fetch');
 
 // =============================================================================
 // GET /api/calls — list calls with cursor pagination
@@ -109,12 +110,78 @@ router.get('/:callSid', async (req, res) => {
 });
 
 // =============================================================================
-// GET /api/calls/:callSid/media — recordings + transcripts
+// GET /api/calls/:callSid/recording.mp3 — proxy audio from Twilio
+// =============================================================================
+router.get('/:callSid/recording.mp3', async (req, res) => {
+    try {
+        const media = await queries.getCallMedia(req.params.callSid);
+        const recording = media.recordings?.[0];
+
+        if (!recording || recording.status !== 'completed') {
+            return res.status(404).json({ error: 'Recording not available' });
+        }
+
+        const accountSid = process.env.TWILIO_ACCOUNT_SID;
+        const authToken = process.env.TWILIO_AUTH_TOKEN;
+
+        if (!accountSid || !authToken) {
+            return res.status(500).json({ error: 'Twilio credentials not configured' });
+        }
+
+        // Twilio REST API for recording media
+        const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Recordings/${recording.recording_sid}.mp3`;
+        const authHeader = 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+
+        const twilioRes = await fetch(twilioUrl, {
+            headers: { 'Authorization': authHeader },
+            redirect: 'follow',
+        });
+
+        if (!twilioRes.ok) {
+            console.error(`Twilio recording fetch failed: ${twilioRes.status}`);
+            return res.status(502).json({ error: 'Failed to fetch recording from Twilio' });
+        }
+
+        res.set('Content-Type', 'audio/mpeg');
+        res.set('Accept-Ranges', 'bytes');
+        if (twilioRes.headers.get('content-length')) {
+            res.set('Content-Length', twilioRes.headers.get('content-length'));
+        }
+
+        twilioRes.body.pipe(res);
+    } catch (error) {
+        console.error('Error proxying recording:', error);
+        res.status(500).json({ error: 'Failed to proxy recording' });
+    }
+});
+
+// =============================================================================
+// GET /api/calls/:callSid/media — recordings + transcripts (structured)
 // =============================================================================
 router.get('/:callSid/media', async (req, res) => {
     try {
-        const media = await queries.getCallMedia(req.params.callSid);
-        res.json({ media });
+        const callSid = req.params.callSid;
+        const media = await queries.getCallMedia(callSid);
+        const recording = media.recordings?.[0];
+        const transcript = media.transcripts?.[0];
+
+        res.json({
+            callSid,
+            recording: recording ? {
+                recordingSid: recording.recording_sid,
+                status: recording.status,
+                playbackUrl: recording.status === 'completed' ? `/api/calls/${callSid}/recording.mp3` : null,
+                durationSec: recording.duration_sec,
+                channels: recording.channels,
+            } : null,
+            transcript: transcript ? {
+                status: transcript.status,
+                text: transcript.text,
+                confidence: transcript.confidence,
+                languageCode: transcript.language_code,
+                updatedAt: transcript.updated_at,
+            } : null,
+        });
     } catch (error) {
         console.error('Error fetching call media:', error);
         res.status(500).json({ error: 'Failed to fetch call media' });
@@ -169,6 +236,24 @@ function formatCall(row) {
         created_at: row.created_at,
         updated_at: row.updated_at,
     };
+
+    // Include recording data if joined
+    if (row.recording_sid) {
+        call.recording = {
+            recording_sid: row.recording_sid,
+            status: row.recording_status,
+            playback_url: row.recording_status === 'completed' ? `/api/calls/${row.call_sid}/recording.mp3` : null,
+            duration_sec: row.recording_duration_sec,
+        };
+    }
+
+    // Include transcript data if joined
+    if (row.transcript_status) {
+        call.transcript = {
+            status: row.transcript_status,
+            text: row.transcript_text,
+        };
+    }
 
     // Include contact if joined
     if (row.contact) {

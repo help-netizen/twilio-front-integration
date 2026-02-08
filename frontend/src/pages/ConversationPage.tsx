@@ -38,6 +38,8 @@ function callToCallData(call: Call): CallData {
         queueTime: 0,
         parentCall: call.parent_call_sid || undefined,
         twilioDirection: call.direction,
+        audioUrl: call.recording?.playback_url || undefined,
+        transcription: call.transcript?.text || undefined,
     };
 }
 

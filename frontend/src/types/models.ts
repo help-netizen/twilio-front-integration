@@ -31,6 +31,16 @@ export interface Call {
     updated_at: string;
     contact?: Contact;
     call_count?: number;  // present in by-contact response
+    recording?: {
+        recording_sid: string;
+        status: string;
+        playback_url: string | null;
+        duration_sec: number | null;
+    };
+    transcript?: {
+        status: string;
+        text: string | null;
+    };
 }
 
 export interface Recording {

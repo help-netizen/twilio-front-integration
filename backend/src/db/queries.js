@@ -189,13 +189,29 @@ async function getContactsWithCallsCount() {
 }
 
 /**
- * Get calls for a specific contact
+ * Get calls for a specific contact (with recording + transcript data)
  */
 async function getCallsByContactId(contactId) {
     const result = await db.query(
-        `SELECT c.*, to_json(co) as contact
+        `SELECT c.*, to_json(co) as contact,
+            r.recording_sid, r.status as recording_status, r.duration_sec as recording_duration_sec,
+            t.status as transcript_status, t.text as transcript_text
          FROM calls c
          LEFT JOIN contacts co ON c.contact_id = co.id
+         LEFT JOIN LATERAL (
+             SELECT recording_sid, status, duration_sec
+             FROM recordings
+             WHERE recordings.call_sid = c.call_sid
+             ORDER BY completed_at DESC NULLS LAST, updated_at DESC
+             LIMIT 1
+         ) r ON true
+         LEFT JOIN LATERAL (
+             SELECT status, text
+             FROM transcripts
+             WHERE transcripts.call_sid = c.call_sid
+             ORDER BY updated_at DESC
+             LIMIT 1
+         ) t ON true
          WHERE c.contact_id = $1
          ORDER BY c.started_at DESC NULLS LAST`,
         [contactId]

@@ -21,11 +21,17 @@ router.post('/voice', (req, res) => {
     // Dial action callback - gets final DialCallStatus
     const dialActionUrl = `${baseUrl}/webhooks/twilio/dial-action`;
 
+    // Recording status callback
+    const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;
+
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Dial timeout="60"
           action="${dialActionUrl}"
-          method="POST">
+          method="POST"
+          record="record-from-answer-dual"
+          recordingStatusCallback="${recordingStatusUrl}"
+          recordingStatusCallbackMethod="POST">
         <Sip statusCallback="${statusCallbackUrl}"
              statusCallbackEvent="initiated ringing answered completed"
              statusCallbackMethod="POST">${sipEndpoint}</Sip>
