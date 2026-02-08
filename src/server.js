@@ -3,7 +3,7 @@ const express = require('express');
 const path = require('path');
 const webhooksRouter = require('../backend/src/routes/webhooks'); // Updated to use new webhook router
 const healthRouter = require('./routes/health');
-const conversationsRouter = require('../backend/src/routes/conversations');
+const callsRouter = require('../backend/src/routes/calls');
 const syncRouter = require('../backend/src/routes/sync');
 const eventsRouter = require('../backend/src/routes/events');
 const twimlRouter = require('../backend/src/routes/twiml');
@@ -40,7 +40,7 @@ app.use((req, res, next) => {
 app.use('/health', healthRouter);
 app.use('/webhooks', webhooksRouter);
 app.use('/twiml', twimlRouter);
-app.use('/api/conversations', conversationsRouter);
+app.use('/api/calls', callsRouter);
 app.use('/api/sync', syncRouter);
 app.use('/events', eventsRouter);
 
@@ -69,14 +69,20 @@ if (process.env.NODE_ENV === 'production') {
             status: 'running',
             endpoints: {
                 health: '/health',
-                webhooks_front: '/webhooks/front/channel',
-                webhooks_twilio: '/webhooks/twilio/status',
-                api_conversations: '/api/conversations',
-                api_messages: '/api/conversations/:id/messages',
+                api_calls: '/api/calls',
+                api_calls_detail: '/api/calls/:callSid',
+                api_calls_media: '/api/calls/:callSid/media',
+                api_calls_events: '/api/calls/:callSid/events',
+                api_calls_active: '/api/calls/active',
+                api_calls_by_contact: '/api/calls/by-contact',
+                api_sync_health: '/api/calls/health/sync',
+                webhooks_voice: '/webhooks/twilio/voice-status',
+                webhooks_recording: '/webhooks/twilio/recording-status',
+                webhooks_transcription: '/webhooks/twilio/transcription-status',
+                webhooks_inbound: '/webhooks/twilio/voice-inbound',
+                webhooks_dial: '/webhooks/twilio/dial-action',
                 sync_today: 'POST /api/sync/today',
-                sync_recent: 'POST /api/sync/recent',
-                zenbooker_health: '/zenbooker-backend/health',
-                zenbooker_lookup: 'POST /zenbooker-backend/customer-lookup'
+                events_sse: '/events/calls'
             }
         });
     });

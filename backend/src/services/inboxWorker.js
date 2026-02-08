@@ -1,525 +1,394 @@
-const db = require('../db/connection');
-const { isFinalStatus, validateTransition, applyTransition } = require('./stateMachine');
+const queries = require('../db/queries');
+const { isFinalStatus } = require('./stateMachine');
 const CallProcessor = require('./callProcessor');
 
 /**
  * Configuration
  */
 const CONFIG = {
-    BATCH_SIZE: 10,              // Events to process per cycle
-    POLL_INTERVAL_MS: 1000,      // Poll every 1 second
-    MAX_RETRIES: 3,              // Max retry attempts before dead-letter
-    RETRY_DELAY_MS: 5000,        // Delay before retry (exponential backoff)
-    PROCESSING_TIMEOUT_MS: 30000 // Max time for event processing
+    BATCH_SIZE: 10,
+    POLL_INTERVAL_MS: 1000,
+    MAX_RETRIES: 10,
 };
 
-/**
- * Event normalization - transform Twilio webhook payload to canonical format
- */
+// =============================================================================
+// Event normalizers — transform Twilio payload → canonical form
+// =============================================================================
+
 function normalizeVoiceEvent(payload) {
     const {
-        CallSid,
-        CallStatus,
-        Timestamp,
-        From,
-        To,
-        Direction,
-        Duration,
-        CallDuration,
-
-        // Parent call reference
-        ParentCallSid,
-
-        // Extended fields
-        AnsweredBy,
-        CallerName,
-        FromCity,
-        FromState,
-        FromCountry,
-        ToCity,
-        ToState,
-        ToCountry,
-        Price,
-        PriceUnit,
-
-        // Queue fields
+        CallSid, CallStatus, Timestamp, From, To, Direction,
+        Duration, CallDuration, ParentCallSid,
+        AnsweredBy, CallerName, Price, PriceUnit,
+        FromCity, FromState, FromCountry,
+        ToCity, ToState, ToCountry,
+        RecordingUrl, RecordingSid, RecordingDuration,
         QueueTime,
-
-        // Recording
-        RecordingUrl,
-        RecordingSid,
-        RecordingDuration
     } = payload;
 
+    const eventTime = Timestamp && !isNaN(parseInt(Timestamp))
+        ? new Date(parseInt(Timestamp) * 1000)
+        : new Date();
+
+    // Direction detection via CallProcessor
+    const direction = CallProcessor.detectDirection({ from: From, to: To });
+
     return {
-        call_sid: CallSid,
-        event_type: 'call.status_changed',
-        event_status: CallStatus.toLowerCase(),
-        event_time: Timestamp && !isNaN(parseInt(Timestamp))
-            ? new Date(parseInt(Timestamp) * 1000)
-            : new Date(),
-
-        // Call details
-        from_number: From,
-        to_number: To,
-        // Delegate direction detection to CallProcessor microservice
-        direction: CallProcessor.detectDirection({ from: From, to: To }),
-        duration: parseInt(Duration || CallDuration || 0),
-
-        // Parent reference
-        parent_call_sid: ParentCallSid || null,
-
-        // Metadata
+        callSid: CallSid,
+        eventType: 'call.status_changed',
+        eventStatus: (CallStatus || '').toLowerCase(),
+        eventTime,
+        fromNumber: From,
+        toNumber: To,
+        direction,
+        durationSec: parseInt(Duration || CallDuration || 0),
+        parentCallSid: ParentCallSid || null,
+        price: Price ? parseFloat(Price) : null,
+        priceUnit: PriceUnit || null,
         metadata: {
             answered_by: AnsweredBy,
             caller_name: CallerName,
-            from_location: {
-                city: FromCity,
-                state: FromState,
-                country: FromCountry
-            },
-            to_location: {
-                city: ToCity,
-                state: ToState,
-                country: ToCountry
-            },
-            price: Price,
-            price_unit: PriceUnit,
             queue_time: QueueTime,
+            from_location: { city: FromCity, state: FromState, country: FromCountry },
+            to_location: { city: ToCity, state: ToState, country: ToCountry },
             recording_url: RecordingUrl,
             recording_sid: RecordingSid,
-            recording_duration: RecordingDuration
-        }
+            recording_duration: RecordingDuration,
+        },
     };
 }
 
-/**
- * Event normalization for recording events
- */
 function normalizeRecordingEvent(payload) {
     const {
-        RecordingSid,
-        CallSid,
-        RecordingStatus,
-        RecordingDuration,
-        RecordingUrl,
-        Timestamp
+        RecordingSid, CallSid, RecordingStatus,
+        RecordingDuration, RecordingUrl, RecordingChannels,
+        RecordingTrack, RecordingSource,
+        Timestamp,
     } = payload;
 
     return {
-        call_sid: CallSid,
-        event_type: 'recording.status_changed',
-        event_status: RecordingStatus.toLowerCase(),
-        event_time: new Date(parseInt(Timestamp) * 1000),
-
-        metadata: {
-            recording_sid: RecordingSid,
-            recording_duration: RecordingDuration,
-            recording_url: RecordingUrl
-        }
+        recordingSid: RecordingSid,
+        callSid: CallSid,
+        status: (RecordingStatus || '').toLowerCase(),
+        recordingUrl: RecordingUrl,
+        durationSec: RecordingDuration ? parseInt(RecordingDuration) : null,
+        channels: RecordingChannels ? parseInt(RecordingChannels) : null,
+        track: RecordingTrack || null,
+        source: RecordingSource || null,
+        eventTime: Timestamp && !isNaN(parseInt(Timestamp))
+            ? new Date(parseInt(Timestamp) * 1000)
+            : new Date(),
     };
 }
 
-
-/**
- * Upsert message in database
- */
-async function upsertMessage(normalizedEvent, source = 'webhook') {
+function normalizeTranscriptionEvent(payload) {
     const {
-        call_sid,
-        event_status,
-        event_time,
-        from_number,
-        to_number,
-        direction,
-        duration,
-        parent_call_sid,
-        metadata
-    } = normalizedEvent;
+        TranscriptionSid, TranscriptionStatus, TranscriptionText,
+        RecordingSid, CallSid,
+        LanguageCode, Confidence,
+    } = payload;
 
-    const isFinal = isFinalStatus(event_status);
-
-    // Validate state transition (log warning but don't block in non-strict mode)
-    // In production, you might want to fetch current status from DB first
-    const validation = validateTransition(null, event_status); // Simplified: no current state check
-    if (!validation.valid) {
-        console.warn('State transition validation warning:', validation.reason);
-    }
-
-    // Upsert message with event-time guard to prevent out-of-order updates
-    const result = await db.query(`
-        INSERT INTO messages (
-            twilio_sid, status, from_number, to_number, direction,
-            duration, start_time, parent_call_sid, metadata,
-            last_event_time, is_final, finalized_at, updated_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
-        ON CONFLICT (twilio_sid) DO UPDATE SET
-            -- Validate transition before updating status
-            status = CASE 
-                WHEN messages.last_event_time IS NULL OR $10 > messages.last_event_time 
-                THEN EXCLUDED.status 
-                ELSE messages.status 
-            END,
-            duration = CASE 
-                WHEN messages.last_event_time IS NULL OR $10 > messages.last_event_time 
-                THEN EXCLUDED.duration 
-                ELSE messages.duration 
-            END,
-            metadata = CASE 
-                WHEN messages.last_event_time IS NULL OR $10 > messages.last_event_time 
-                THEN EXCLUDED.metadata 
-                ELSE messages.metadata 
-            END,
-            last_event_time = GREATEST(messages.last_event_time, $10),
-            is_final = messages.is_final OR $11,  -- Once final, always final
-            finalized_at = CASE 
-                WHEN $11 AND messages.finalized_at IS NULL 
-                THEN NOW() 
-                ELSE messages.finalized_at 
-            END,
-            updated_at = NOW()
-        RETURNING id, twilio_sid, status
-    `, [
-        call_sid,
-        event_status,
-        from_number,
-        to_number,
-        direction,
-        duration,
-        event_time,
-        parent_call_sid,
-        metadata,
-        event_time, // last_event_time
-        isFinal,
-        event_time  // For GREATEST comparison
-    ]);
-
-    return result.rows[0];
+    return {
+        transcriptionSid: TranscriptionSid,
+        callSid: CallSid,
+        recordingSid: RecordingSid,
+        status: (TranscriptionStatus || '').toLowerCase(),
+        text: TranscriptionText || null,
+        languageCode: LanguageCode || null,
+        confidence: Confidence ? parseFloat(Confidence) : null,
+        eventTime: new Date(),
+    };
 }
 
-/**
- * Append event to call_events log
- */
-async function appendCallEvent(normalizedEvent, source = 'webhook') {
-    const {
-        call_sid,
-        event_type,
-        event_status,
-        event_time,
-        metadata
-    } = normalizedEvent;
+// =============================================================================
+// Process a single inbox event
+// =============================================================================
 
-    await db.query(`
-        INSERT INTO call_events (
-            call_sid, event_type, event_status, event_time, source, payload
-        )
-        VALUES ($1, $2, $3, $4, $5, $6)
-    `, [
-        call_sid,
-        event_type,
-        event_status,
-        event_time,
-        source,
-        { ...normalizedEvent, metadata }
-    ]);
-}
-
-/**
- * Process a single inbox event
- */
 async function processEvent(inboxEvent) {
     const { id, source, event_type, payload } = inboxEvent;
-    const traceId = `worker_${id}_${Date.now()}`;
+    const traceId = `worker_${id}`;
 
-    console.log(`[${traceId}] Processing event`, {
-        inboxId: id,
-        source,
-        eventType: event_type,
-        callSid: payload.CallSid
-    });
+    console.log(`[${traceId}] Processing`, { source, event_type, callSid: payload.CallSid });
 
     try {
-        // 1. Normalize event based on source
-        let normalized;
-        if (source === 'twilio_voice') {
-            normalized = normalizeVoiceEvent(payload);
-        } else if (source === 'twilio_recording') {
-            normalized = normalizeRecordingEvent(payload);
+        if (source === 'voice' || source === 'dial') {
+            await processVoiceEvent(payload, event_type, traceId);
+        } else if (source === 'recording') {
+            await processRecordingEvent(payload, traceId);
+        } else if (source === 'transcription') {
+            await processTranscriptionEvent(payload, traceId);
         } else {
-            throw new Error(`Unknown event source: ${source}`);
-        }
-
-        // 2. Upsert message snapshot
-        const message = await upsertMessage(normalized, 'webhook');
-
-        console.log(`[${traceId}] Message upserted`, {
-            messageId: message.id,
-            callSid: message.twilio_sid,
-            status: message.status
-        });
-
-        // 2.5. Link message to conversation
-        const queries = require('../db/queries');
-
-        // Delegate phone number identification to CallProcessor microservice
-        // CallProcessor knows about owned numbers, SIP endpoints, and direction
-        const callData = {
-            from: normalized.from_number,
-            to: normalized.to_number,
-            direction: normalized.direction,
-            status: normalized.event_status,
-            duration: normalized.duration,
-            parentCallSid: normalized.parent_call_sid,
-        };
-        const processed = CallProcessor.processCall(callData);
-        const externalParty = processed.externalParty;
-
-        // Use the formatted phone number from CallProcessor
-        const phoneNumber = externalParty?.formatted || null;
-
-        // Skip conversation linking if no valid phone number found
-        if (!phoneNumber || phoneNumber === '' || processed.direction === 'internal') {
-            console.log(`[${traceId}] Skipping conversation linking - no valid external party`, {
-                from: normalized.from_number,
-                to: normalized.to_number,
-                direction: processed.direction
-            });
-        } else {
-            // Create or get contact
-            const contact = await queries.findOrCreateContact(phoneNumber, phoneNumber);
-
-            // Create or get conversation
-            const subject = `Calls with ${phoneNumber}`;
-            const conversation = await queries.findOrCreateConversation(
-                contact.id,
-                phoneNumber,
-                subject
-            );
-
-            // Update message with conversation_id and corrected direction
-            await db.query(`
-                UPDATE messages 
-                SET conversation_id = $1, direction = $2, updated_at = NOW()
-                WHERE id = $3
-            `, [conversation.id, processed.direction, message.id]);
-
-            // Update conversation last_message_at timestamp
-            await db.query(`
-                UPDATE conversations
-                SET last_message_at = $1, updated_at = NOW()
-                WHERE id = $2
-            `, [normalized.event_time, conversation.id]);
-
-            console.log(`[${traceId}] Message linked to conversation`, {
-                conversationId: conversation.id,
-                contactId: contact.id,
-                phoneNumber,
-                direction: processed.direction
-            });
-        }
-
-        // 3. Append to immutable event log
-        await appendCallEvent(normalized, 'webhook');
-
-        console.log(`[${traceId}] Event logged successfully`);
-
-        // 3.5. Enrich with Twilio API data on final statuses
-        // Twilio webhooks don't include price, endTime, queueTime, answeredBy
-        // We fetch these from the Twilio REST API after the call completes
-        const finalStatuses = ['completed', 'no-answer', 'busy', 'canceled', 'failed'];
-        if (finalStatuses.includes(normalized.event_status)) {
-            try {
-                const twilio = require('twilio');
-                const client = twilio(
-                    process.env.TWILIO_ACCOUNT_SID,
-                    process.env.TWILIO_AUTH_TOKEN
-                );
-
-                const callDetails = await client.calls(normalized.call_sid).fetch();
-
-                const enrichedMetadata = {
-                    ...(message.metadata || {}),
-                    answered_by: callDetails.answeredBy,
-                    queue_time: callDetails.queueTime,
-                    twilio_direction: callDetails.direction,
-                    actual_direction: normalized.direction,
-                    from_formatted: callDetails.fromFormatted,
-                    to_formatted: callDetails.toFormatted,
-                };
-
-                const queries = require('../db/queries');
-                await queries.updateMessage(message.id, {
-                    endTime: callDetails.endTime ? new Date(callDetails.endTime) : null,
-                    duration: parseInt(callDetails.duration) || normalized.duration,
-                    price: callDetails.price ? parseFloat(callDetails.price) : null,
-                    priceUnit: callDetails.priceUnit || 'USD',
-                    metadata: JSON.stringify(enrichedMetadata),
-                });
-
-                console.log(`[${traceId}] Enriched with Twilio API data`, {
-                    endTime: callDetails.endTime,
-                    price: callDetails.price,
-                    queueTime: callDetails.queueTime,
-                    duration: callDetails.duration
-                });
-            } catch (enrichError) {
-                // Non-critical: log but don't fail processing
-                console.warn(`[${traceId}] Failed to enrich from Twilio API:`, enrichError.message);
-            }
-        }
-
-        // 4. Publish realtime event to connected clients
-        try {
-            const realtimeService = require('./realtimeService');
-            realtimeService.publishCallUpdate(message);
-            console.log(`[${traceId}] Realtime event published`);
-        } catch (error) {
-            // Non-critical: log but don't fail processing
-            console.warn(`[${traceId}] Failed to publish realtime event:`, error.message);
+            throw new Error(`Unknown source: ${source}`);
         }
 
         return { success: true };
-
     } catch (error) {
-        console.error(`[${traceId}] Error processing event`, {
-            error: error.message,
-            stack: error.stack
-        });
+        console.error(`[${traceId}] Error:`, error.message);
         throw error;
     }
 }
 
-/**
- * Claim and process inbox events
- */
-async function claimAndProcessEvents() {
-    const client = await db.pool.connect();
+// =============================================================================
+// Voice event → upsert call + resolve contact
+// =============================================================================
 
+async function processVoiceEvent(payload, eventType, traceId) {
+    const normalized = normalizeVoiceEvent(payload);
+
+    // Resolve external party via CallProcessor
+    const callData = {
+        from: normalized.fromNumber,
+        to: normalized.toNumber,
+        direction: normalized.direction,
+        status: normalized.eventStatus,
+        duration: normalized.durationSec,
+        parentCallSid: normalized.parentCallSid,
+    };
+    const processed = CallProcessor.processCall(callData);
+    const externalParty = processed.externalParty;
+
+    // Resolve contact
+    let contactId = null;
+    if (externalParty?.formatted && processed.direction !== 'internal') {
+        const contact = await queries.findOrCreateContact(
+            externalParty.formatted,
+            externalParty.formatted
+        );
+        contactId = contact.id;
+    }
+
+    const isFinal = isFinalStatus(normalized.eventStatus);
+
+    // Upsert call snapshot
+    const call = await queries.upsertCall({
+        callSid: normalized.callSid,
+        parentCallSid: normalized.parentCallSid,
+        contactId,
+        direction: processed.direction,   // Use CallProcessor's direction
+        fromNumber: normalized.fromNumber,
+        toNumber: normalized.toNumber,
+        status: normalized.eventStatus,
+        isFinal,
+        startedAt: normalized.eventTime,
+        answeredAt: normalized.eventStatus === 'in-progress' ? normalized.eventTime : null,
+        endedAt: isFinal ? normalized.eventTime : null,
+        durationSec: normalized.durationSec || null,
+        price: normalized.price,
+        priceUnit: normalized.priceUnit,
+        lastEventTime: normalized.eventTime,
+        rawLastPayload: payload,
+    });
+
+    if (call) {
+        console.log(`[${traceId}] Call upserted`, { callSid: call.call_sid, status: call.status });
+    } else {
+        console.log(`[${traceId}] Call not updated (out-of-order event)`, { callSid: normalized.callSid });
+    }
+
+    // Append immutable event
+    await queries.appendCallEvent(
+        normalized.callSid,
+        eventType || 'call.status_changed',
+        normalized.eventTime,
+        { ...normalized, raw: payload }
+    );
+
+    // Enrich from Twilio API on final status
+    if (isFinal) {
+        await enrichFromTwilioApi(normalized.callSid, call, traceId);
+    }
+
+    // Publish realtime event
+    publishRealtimeEvent('call.updated', call || { call_sid: normalized.callSid, status: normalized.eventStatus }, traceId);
+}
+
+// =============================================================================
+// Recording event → upsert recording
+// =============================================================================
+
+async function processRecordingEvent(payload, traceId) {
+    const normalized = normalizeRecordingEvent(payload);
+
+    const recording = await queries.upsertRecording({
+        recordingSid: normalized.recordingSid,
+        callSid: normalized.callSid,
+        status: normalized.status,
+        recordingUrl: normalized.recordingUrl,
+        durationSec: normalized.durationSec,
+        channels: normalized.channels,
+        track: normalized.track,
+        source: normalized.source,
+        startedAt: normalized.status === 'in-progress' ? normalized.eventTime : null,
+        completedAt: normalized.status === 'completed' ? normalized.eventTime : null,
+        rawPayload: payload,
+    });
+
+    console.log(`[${traceId}] Recording upserted`, {
+        recordingSid: recording.recording_sid,
+        status: recording.status
+    });
+
+    // Append immutable event
+    await queries.appendCallEvent(
+        normalized.callSid,
+        'recording.updated',
+        normalized.eventTime,
+        { ...normalized, raw: payload }
+    );
+
+    // Publish realtime event
+    if (normalized.status === 'completed') {
+        publishRealtimeEvent('recording.ready', recording, traceId);
+    }
+}
+
+// =============================================================================
+// Transcription event → upsert transcript
+// =============================================================================
+
+async function processTranscriptionEvent(payload, traceId) {
+    const normalized = normalizeTranscriptionEvent(payload);
+
+    const transcript = await queries.upsertTranscript({
+        transcriptionSid: normalized.transcriptionSid,
+        callSid: normalized.callSid,
+        recordingSid: normalized.recordingSid,
+        mode: 'post-call',
+        status: normalized.status,
+        languageCode: normalized.languageCode,
+        confidence: normalized.confidence,
+        text: normalized.text,
+        isFinal: true,
+        rawPayload: payload,
+    });
+
+    console.log(`[${traceId}] Transcript upserted`, {
+        transcriptionSid: transcript.transcription_sid,
+        status: transcript.status
+    });
+
+    // Append immutable event
+    await queries.appendCallEvent(
+        normalized.callSid,
+        'transcript.updated',
+        normalized.eventTime,
+        { ...normalized, raw: payload }
+    );
+
+    // Publish realtime event
+    if (normalized.status === 'completed') {
+        publishRealtimeEvent('transcript.ready', transcript, traceId);
+    }
+}
+
+// =============================================================================
+// Twilio API enrichment on final call status
+// =============================================================================
+
+async function enrichFromTwilioApi(callSid, existingCall, traceId) {
     try {
-        // Begin transaction
-        await client.query('BEGIN');
+        const twilio = require('twilio');
+        const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+        const details = await client.calls(callSid).fetch();
 
-        // Claim events using SKIP LOCKED for concurrency
-        const result = await client.query(`
-            UPDATE twilio_webhook_inbox
-            SET processing_status = 'processing'
-            WHERE id IN (
-                SELECT id FROM twilio_webhook_inbox
-                WHERE processing_status = 'pending'
-                ORDER BY received_at
-                LIMIT $1
-                FOR UPDATE SKIP LOCKED
-            )
-            RETURNING *
-        `, [CONFIG.BATCH_SIZE]);
+        // Update call with enriched data
+        await queries.upsertCall({
+            callSid,
+            parentCallSid: details.parentCallSid || null,
+            contactId: existingCall?.contact_id || null,
+            direction: existingCall?.direction || details.direction,
+            fromNumber: details.from,
+            toNumber: details.to,
+            status: existingCall?.status || details.status,
+            isFinal: true,
+            startedAt: details.startTime ? new Date(details.startTime) : null,
+            answeredAt: details.startTime ? new Date(details.startTime) : null,
+            endedAt: details.endTime ? new Date(details.endTime) : null,
+            durationSec: parseInt(details.duration) || null,
+            price: details.price ? parseFloat(details.price) : null,
+            priceUnit: details.priceUnit || 'USD',
+            lastEventTime: details.dateUpdated ? new Date(details.dateUpdated) : new Date(),
+            rawLastPayload: existingCall?.raw_last_payload || {},
+        });
 
-        await client.query('COMMIT');
-
-        const events = result.rows;
-
-        if (events.length === 0) {
-            return { processed: 0, failed: 0 };
-        }
-
-        console.log(`Claimed ${events.length} events for processing`);
-
-        // Process each event
-        let processed = 0;
-        let failed = 0;
-
-        for (const event of events) {
-            try {
-                await processEvent(event);
-
-                // Mark as completed
-                await db.query(`
-                    UPDATE twilio_webhook_inbox
-                    SET processing_status = 'completed',
-                        processed_at = NOW(),
-                        error = NULL
-                    WHERE id = $1
-                `, [event.id]);
-
-                processed++;
-
-            } catch (error) {
-                failed++;
-
-                // Increment retry count
-                const newRetryCount = (event.retry_count || 0) + 1;
-                const status = newRetryCount >= CONFIG.MAX_RETRIES
-                    ? 'dead_letter'
-                    : 'pending';
-
-                await db.query(`
-                    UPDATE twilio_webhook_inbox
-                    SET processing_status = $1,
-                        retry_count = $2,
-                        error = $3
-                    WHERE id = $4
-                `, [status, newRetryCount, error.message, event.id]);
-
-                if (status === 'dead_letter') {
-                    console.error(`Event ${event.id} moved to dead letter after ${newRetryCount} retries`);
-                } else {
-                    console.warn(`Event ${event.id} retry ${newRetryCount}/${CONFIG.MAX_RETRIES}`);
-                }
-            }
-        }
-
-        return { processed, failed };
-
+        console.log(`[${traceId}] Enriched from Twilio API`, {
+            price: details.price,
+            duration: details.duration,
+            endTime: details.endTime
+        });
     } catch (error) {
-        await client.query('ROLLBACK');
-        console.error('Error claiming events:', error);
-        throw error;
-    } finally {
-        client.release();
+        console.warn(`[${traceId}] Failed to enrich from Twilio API:`, error.message);
     }
 }
 
-/**
- * Worker main loop
- */
+// =============================================================================
+// Realtime SSE publishing
+// =============================================================================
+
+function publishRealtimeEvent(eventType, data, traceId) {
+    try {
+        const realtimeService = require('./realtimeService');
+        realtimeService.publishCallUpdate({ eventType, ...data });
+        console.log(`[${traceId}] SSE event: ${eventType}`);
+    } catch (error) {
+        console.warn(`[${traceId}] SSE publish failed:`, error.message);
+    }
+}
+
+// =============================================================================
+// Worker: claim → process → mark
+// =============================================================================
+
+async function claimAndProcessEvents() {
+    const events = await queries.claimInboxEvents(CONFIG.BATCH_SIZE);
+
+    if (events.length === 0) return { processed: 0, failed: 0 };
+
+    console.log(`Claimed ${events.length} events`);
+
+    let processed = 0;
+    let failed = 0;
+
+    for (const event of events) {
+        try {
+            await processEvent(event);
+            await queries.markInboxProcessed(event.id);
+            processed++;
+        } catch (error) {
+            await queries.markInboxFailed(event.id, error.message);
+            failed++;
+        }
+    }
+
+    return { processed, failed };
+}
+
+// =============================================================================
+// Worker main loop
+// =============================================================================
+
 async function startWorker() {
-    console.log('🔄 Inbox worker started');
-    console.log(`   Batch size: ${CONFIG.BATCH_SIZE}`);
-    console.log(`   Poll interval: ${CONFIG.POLL_INTERVAL_MS}ms`);
-    console.log(`   Max retries: ${CONFIG.MAX_RETRIES}`);
+    console.log('🔄 Inbox worker started (v3)');
+    console.log(`   Batch: ${CONFIG.BATCH_SIZE} | Poll: ${CONFIG.POLL_INTERVAL_MS}ms | Retries: ${CONFIG.MAX_RETRIES}`);
 
     let isRunning = true;
-
-    // Graceful shutdown
-    process.on('SIGTERM', () => {
-        console.log('Received SIGTERM, stopping worker...');
-        isRunning = false;
-    });
-
-    process.on('SIGINT', () => {
-        console.log('Received SIGINT, stopping worker...');
-        isRunning = false;
-    });
+    process.on('SIGTERM', () => { isRunning = false; });
+    process.on('SIGINT', () => { isRunning = false; });
 
     while (isRunning) {
         try {
             const { processed, failed } = await claimAndProcessEvents();
-
             if (processed > 0 || failed > 0) {
                 console.log(`Processed: ${processed}, Failed: ${failed}`);
             }
-
-            // Wait before next poll
-            await new Promise(resolve => setTimeout(resolve, CONFIG.POLL_INTERVAL_MS));
-
+            await new Promise(r => setTimeout(r, CONFIG.POLL_INTERVAL_MS));
         } catch (error) {
             console.error('Worker loop error:', error);
-            // Wait longer on error
-            await new Promise(resolve => setTimeout(resolve, CONFIG.POLL_INTERVAL_MS * 5));
+            await new Promise(r => setTimeout(r, CONFIG.POLL_INTERVAL_MS * 5));
         }
     }
 
-    console.log('✅ Inbox worker stopped');
+    console.log('✅ Worker stopped');
     process.exit(0);
 }
 
@@ -528,8 +397,7 @@ module.exports = {
     processEvent,
     normalizeVoiceEvent,
     normalizeRecordingEvent,
-    upsertMessage,
-    appendCallEvent,
+    normalizeTranscriptionEvent,
     isFinalStatus,
-    CONFIG
+    CONFIG,
 };

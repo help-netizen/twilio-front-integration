@@ -1,292 +1,500 @@
 const db = require('./connection');
 
-/**
- * Contact operations
- */
+// =============================================================================
+// Contact operations
+// =============================================================================
 
-// Find contact by phone number
-async function findContactByPhone(phoneNumber) {
+async function findContactByPhone(phoneE164) {
     const result = await db.query(
-        'SELECT * FROM contacts WHERE phone_number = $1',
-        [phoneNumber]
+        'SELECT * FROM contacts WHERE phone_e164 = $1',
+        [phoneE164]
     );
     return result.rows[0];
 }
 
-// Create new contact
-async function createContact(phoneNumber, formattedNumber, displayName = null) {
+async function createContact(phoneE164, fullName = null) {
     const result = await db.query(
-        `INSERT INTO contacts (phone_number, formatted_number, display_name)
-     VALUES ($1, $2, $3)
-     RETURNING *`,
-        [phoneNumber, formattedNumber, displayName || formattedNumber]
+        `INSERT INTO contacts (phone_e164, full_name)
+         VALUES ($1, $2)
+         ON CONFLICT (phone_e164) WHERE phone_e164 IS NOT NULL
+         DO UPDATE SET full_name = COALESCE(EXCLUDED.full_name, contacts.full_name)
+         RETURNING *`,
+        [phoneE164, fullName || phoneE164]
     );
     return result.rows[0];
 }
 
-// Find or create contact
-async function findOrCreateContact(phoneNumber, formattedNumber) {
-    let contact = await findContactByPhone(phoneNumber);
+async function findOrCreateContact(phoneE164, fullName = null) {
+    let contact = await findContactByPhone(phoneE164);
     if (!contact) {
-        contact = await createContact(phoneNumber, formattedNumber);
+        contact = await createContact(phoneE164, fullName);
     }
     return contact;
 }
 
-/**
- * Conversation operations
- */
-
-// Get all conversations with pagination
-async function getConversations(limit = 20, offset = 0) {
-    const result = await db.query(
-        `SELECT c.*, 
-            to_json(co) as contact
-     FROM conversations c
-     JOIN contacts co ON c.contact_id = co.id
-     ORDER BY c.last_message_at DESC NULLS LAST
-     LIMIT $1 OFFSET $2`,
-        [limit, offset]
-    );
-    return result.rows;
-}
-
-// Get total conversation count
-async function getConversationsCount() {
-    const result = await db.query('SELECT COUNT(*) FROM conversations');
-    return parseInt(result.rows[0].count, 10);
-}
-
-// Get conversation by ID
-async function getConversationById(id) {
-    const result = await db.query(
-        `SELECT c.*, 
-            to_json(co) as contact
-     FROM conversations c
-     JOIN contacts co ON c.contact_id = co.id
-     WHERE c.id = $1`,
-        [id]
-    );
-    return result.rows[0];
-}
-
-// Find conversation by external ID (phone number)
-async function findConversationByExternalId(externalId) {
-    const result = await db.query(
-        'SELECT * FROM conversations WHERE external_id = $1',
-        [externalId]
-    );
-    return result.rows[0];
-}
-
-// Create new conversation
-async function createConversation(contactId, externalId, subject) {
-    const result = await db.query(
-        `INSERT INTO conversations (contact_id, external_id, subject)
-     VALUES ($1, $2, $3)
-     RETURNING *`,
-        [contactId, externalId, subject]
-    );
-    return result.rows[0];
-}
-
-// Find or create conversation for contact
-async function findOrCreateConversation(contactId, externalId, subject) {
-    let conversation = await findConversationByExternalId(externalId);
-    if (!conversation) {
-        conversation = await createConversation(contactId, externalId, subject);
-    }
-    return conversation;
-}
-
-// Update conversation last_message_at
-async function updateConversationLastMessage(conversationId, timestamp) {
-    const result = await db.query(
-        `UPDATE conversations 
-     SET last_message_at = $2,
-         metadata = jsonb_set(
-           COALESCE(metadata, '{}'),
-           '{total_calls}',
-           to_jsonb(COALESCE((metadata->>'total_calls')::int, 0) + 1)
-         )
-     WHERE id = $1
-     RETURNING *`,
-        [conversationId, timestamp]
-    );
-    return result.rows[0];
-}
+// =============================================================================
+// Call operations (snapshot model)
+// =============================================================================
 
 /**
- * Message operations
+ * Upsert a call record — INSERT or UPDATE the snapshot.
+ * Guards against out-of-order events via last_event_time.
  */
-
-// Get messages for conversation
-async function getMessagesByConversation(conversationId) {
-    const result = await db.query(
-        `SELECT * FROM messages
-     WHERE conversation_id = $1
-     ORDER BY start_time DESC`,
-        [conversationId]
-    );
-    return result.rows;
-}
-
-// Get message count for conversation
-async function getMessageCountByConversation(conversationId) {
-    const result = await db.query(
-        'SELECT COUNT(*) FROM messages WHERE conversation_id = $1',
-        [conversationId]
-    );
-    return parseInt(result.rows[0].count, 10);
-}
-
-// Find message by Twilio SID
-async function findMessageByTwilioSid(twilioSid) {
-    const result = await db.query(
-        'SELECT * FROM messages WHERE twilio_sid = $1',
-        [twilioSid]
-    );
-    return result.rows[0];
-}
-
-// Update existing message (for status changes from ringing -> completed)
-async function updateMessage(messageId, updates) {
-    const fields = [];
-    const values = [];
-    let paramIndex = 1;
-
-    // Build dynamic UPDATE query
-    if (updates.status !== undefined) {
-        fields.push(`status = $${paramIndex++}`);
-        values.push(updates.status);
-    }
-    if (updates.duration !== undefined) {
-        fields.push(`duration = $${paramIndex++}`);
-        values.push(updates.duration);
-    }
-    if (updates.endTime !== undefined) {
-        fields.push(`end_time = $${paramIndex++}`);
-        values.push(updates.endTime);
-    }
-    if (updates.metadata !== undefined) {
-        fields.push(`metadata = $${paramIndex++}`);
-        values.push(updates.metadata);
-    }
-    if (updates.price !== undefined) {
-        fields.push(`price = $${paramIndex++}`);
-        values.push(updates.price);
-    }
-    if (updates.priceUnit !== undefined) {
-        fields.push(`price_unit = $${paramIndex++}`);
-        values.push(updates.priceUnit);
-    }
-
-    if (fields.length === 0) {
-        return null; // Nothing to update
-    }
-
-    values.push(messageId);
-    const result = await db.query(
-        `UPDATE messages 
-         SET ${fields.join(', ')}
-         WHERE id = $${paramIndex}
-         RETURNING *`,
-        values
-    );
-    return result.rows[0];
-}
-
-// Create new message
-async function createMessage(messageData) {
+async function upsertCall(data) {
     const {
-        conversationId,
-        twilioSid,
-        direction,
-        status,
-        fromNumber,
-        toNumber,
-        duration,
-        price,
-        priceUnit,
-        startTime,
-        endTime,
-        recordingUrl,
-        parentCallSid,
-        metadata,
-    } = messageData;
+        callSid, parentCallSid, contactId, direction,
+        fromNumber, toNumber, status, isFinal,
+        startedAt, answeredAt, endedAt, durationSec,
+        price, priceUnit, lastEventTime, rawLastPayload
+    } = data;
 
     const result = await db.query(
-        `INSERT INTO messages (
-      conversation_id, twilio_sid, direction, status,
-      from_number, to_number, duration, price, price_unit,
-      start_time, end_time, recording_url, parent_call_sid, metadata
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-    RETURNING *`,
+        `INSERT INTO calls (
+            call_sid, parent_call_sid, contact_id, direction,
+            from_number, to_number, status, is_final,
+            started_at, answered_at, ended_at, duration_sec,
+            price, price_unit, last_event_time, raw_last_payload
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+        ON CONFLICT (call_sid) DO UPDATE SET
+            parent_call_sid   = COALESCE(EXCLUDED.parent_call_sid, calls.parent_call_sid),
+            contact_id        = COALESCE(EXCLUDED.contact_id, calls.contact_id),
+            direction         = EXCLUDED.direction,
+            from_number       = EXCLUDED.from_number,
+            to_number         = EXCLUDED.to_number,
+            status            = EXCLUDED.status,
+            is_final          = EXCLUDED.is_final,
+            started_at        = COALESCE(EXCLUDED.started_at, calls.started_at),
+            answered_at       = COALESCE(EXCLUDED.answered_at, calls.answered_at),
+            ended_at          = COALESCE(EXCLUDED.ended_at, calls.ended_at),
+            duration_sec      = COALESCE(EXCLUDED.duration_sec, calls.duration_sec),
+            price             = COALESCE(EXCLUDED.price, calls.price),
+            price_unit        = COALESCE(EXCLUDED.price_unit, calls.price_unit),
+            last_event_time   = EXCLUDED.last_event_time,
+            raw_last_payload  = EXCLUDED.raw_last_payload
+        WHERE EXCLUDED.last_event_time >= COALESCE(calls.last_event_time, '1970-01-01'::timestamptz)
+        RETURNING *`,
         [
-            conversationId,
-            twilioSid,
-            direction,
-            status,
-            fromNumber,
-            toNumber,
-            duration,
-            price,
-            priceUnit,
-            startTime,
-            endTime,
-            recordingUrl,
-            parentCallSid,
-            JSON.stringify(metadata || {}),
+            callSid, parentCallSid, contactId, direction,
+            fromNumber, toNumber, status, isFinal,
+            startedAt, answeredAt, endedAt, durationSec,
+            price, priceUnit, lastEventTime,
+            JSON.stringify(rawLastPayload || {})
         ]
     );
     return result.rows[0];
 }
 
-// Get last message for conversation
-async function getLastMessageByConversation(conversationId) {
+/**
+ * Get a single call by CallSid
+ */
+async function getCallByCallSid(callSid) {
     const result = await db.query(
-        `SELECT * FROM messages
-     WHERE conversation_id = $1
-     ORDER BY start_time DESC
-     LIMIT 1`,
-        [conversationId]
+        `SELECT c.*, to_json(co) as contact
+         FROM calls c
+         LEFT JOIN contacts co ON c.contact_id = co.id
+         WHERE c.call_sid = $1`,
+        [callSid]
     );
     return result.rows[0];
 }
 
-// Get active calls (calls that are currently in progress)
-async function getActiveCalls() {
+/**
+ * Get calls with cursor-based pagination and optional filters.
+ * Cursor is the last seen `id`.
+ */
+async function getCalls({ cursor, limit = 50, status, hasRecording, hasTranscript, contactId } = {}) {
+    const conditions = [];
+    const params = [];
+    let paramIdx = 1;
+
+    if (cursor) {
+        conditions.push(`c.id < $${paramIdx++}`);
+        params.push(cursor);
+    }
+    if (status) {
+        conditions.push(`c.status = $${paramIdx++}`);
+        params.push(status);
+    }
+    if (contactId) {
+        conditions.push(`c.contact_id = $${paramIdx++}`);
+        params.push(contactId);
+    }
+    if (hasRecording === true) {
+        conditions.push(`EXISTS (SELECT 1 FROM recordings r WHERE r.call_sid = c.call_sid AND r.status = 'completed')`);
+    }
+    if (hasTranscript === true) {
+        conditions.push(`EXISTS (SELECT 1 FROM transcripts t WHERE t.call_sid = c.call_sid AND t.status = 'completed')`);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    params.push(limit);
+
     const result = await db.query(
-        `SELECT m.*, c.id as conversation_id, c.external_id as conversation_external_id
-     FROM messages m
-     JOIN conversations c ON m.conversation_id = c.id
-     WHERE m.status IN ('queued', 'initiated', 'ringing', 'in-progress')
-     ORDER BY m.start_time DESC`
+        `SELECT c.*, to_json(co) as contact
+         FROM calls c
+         LEFT JOIN contacts co ON c.contact_id = co.id
+         ${whereClause}
+         ORDER BY c.id DESC
+         LIMIT $${paramIdx}`,
+        params
+    );
+
+    const rows = result.rows;
+    const nextCursor = rows.length === limit ? rows[rows.length - 1].id : null;
+
+    return { calls: rows, nextCursor };
+}
+
+/**
+ * Get calls grouped by contact (replaces old "conversations" listing).
+ * Returns latest call per contact with call count.
+ */
+async function getCallsByContact({ limit = 20, offset = 0 } = {}) {
+    const result = await db.query(
+        `SELECT DISTINCT ON (c.contact_id)
+            c.*,
+            to_json(co) as contact,
+            (SELECT COUNT(*) FROM calls c2 WHERE c2.contact_id = c.contact_id) as call_count
+         FROM calls c
+         LEFT JOIN contacts co ON c.contact_id = co.id
+         WHERE c.contact_id IS NOT NULL
+         ORDER BY c.contact_id, c.started_at DESC NULLS LAST
+         LIMIT $1 OFFSET $2`,
+        [limit, offset]
     );
     return result.rows;
 }
 
+/**
+ * Get total contacts with calls count
+ */
+async function getContactsWithCallsCount() {
+    const result = await db.query(
+        `SELECT COUNT(DISTINCT contact_id) FROM calls WHERE contact_id IS NOT NULL`
+    );
+    return parseInt(result.rows[0].count, 10);
+}
+
+/**
+ * Get calls for a specific contact
+ */
+async function getCallsByContactId(contactId) {
+    const result = await db.query(
+        `SELECT c.*, to_json(co) as contact
+         FROM calls c
+         LEFT JOIN contacts co ON c.contact_id = co.id
+         WHERE c.contact_id = $1
+         ORDER BY c.started_at DESC NULLS LAST`,
+        [contactId]
+    );
+    return result.rows;
+}
+
+/**
+ * Get active (non-final) calls
+ */
+async function getActiveCalls() {
+    const result = await db.query(
+        `SELECT c.*, to_json(co) as contact
+         FROM calls c
+         LEFT JOIN contacts co ON c.contact_id = co.id
+         WHERE c.is_final = false
+         ORDER BY c.started_at DESC NULLS LAST`
+    );
+    return result.rows;
+}
+
+/**
+ * Get non-final calls (for reconcile)
+ */
+async function getNonFinalCalls(windowHours = 6) {
+    const result = await db.query(
+        `SELECT * FROM calls
+         WHERE is_final = false
+           AND created_at >= now() - interval '1 hour' * $1
+         ORDER BY created_at ASC`,
+        [windowHours]
+    );
+    return result.rows;
+}
+
+// =============================================================================
+// Recording operations
+// =============================================================================
+
+async function upsertRecording(data) {
+    const {
+        recordingSid, callSid, status, recordingUrl,
+        durationSec, channels, track, source,
+        startedAt, completedAt, rawPayload
+    } = data;
+
+    const result = await db.query(
+        `INSERT INTO recordings (
+            recording_sid, call_sid, status, recording_url,
+            duration_sec, channels, track, source,
+            started_at, completed_at, raw_payload
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        ON CONFLICT (recording_sid) DO UPDATE SET
+            status        = EXCLUDED.status,
+            recording_url = COALESCE(EXCLUDED.recording_url, recordings.recording_url),
+            duration_sec  = COALESCE(EXCLUDED.duration_sec, recordings.duration_sec),
+            channels      = COALESCE(EXCLUDED.channels, recordings.channels),
+            track         = COALESCE(EXCLUDED.track, recordings.track),
+            source        = COALESCE(EXCLUDED.source, recordings.source),
+            started_at    = COALESCE(EXCLUDED.started_at, recordings.started_at),
+            completed_at  = COALESCE(EXCLUDED.completed_at, recordings.completed_at),
+            raw_payload   = EXCLUDED.raw_payload
+        RETURNING *`,
+        [
+            recordingSid, callSid, status, recordingUrl,
+            durationSec, channels || null, track || null, source || null,
+            startedAt, completedAt,
+            JSON.stringify(rawPayload || {})
+        ]
+    );
+    return result.rows[0];
+}
+
+async function getRecordingsByCallSid(callSid) {
+    const result = await db.query(
+        `SELECT * FROM recordings WHERE call_sid = $1 ORDER BY started_at DESC`,
+        [callSid]
+    );
+    return result.rows;
+}
+
+// =============================================================================
+// Transcript operations
+// =============================================================================
+
+async function upsertTranscript(data) {
+    const {
+        transcriptionSid, callSid, recordingSid, mode,
+        status, languageCode, confidence, text,
+        isFinal, sequenceNo, rawPayload
+    } = data;
+
+    const result = await db.query(
+        `INSERT INTO transcripts (
+            transcription_sid, call_sid, recording_sid, mode,
+            status, language_code, confidence, text,
+            is_final, sequence_no, raw_payload
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        ON CONFLICT (transcription_sid) DO UPDATE SET
+            status        = EXCLUDED.status,
+            text          = COALESCE(EXCLUDED.text, transcripts.text),
+            confidence    = COALESCE(EXCLUDED.confidence, transcripts.confidence),
+            is_final      = EXCLUDED.is_final,
+            raw_payload   = EXCLUDED.raw_payload
+        RETURNING *`,
+        [
+            transcriptionSid, callSid, recordingSid, mode || 'post-call',
+            status, languageCode, confidence, text,
+            isFinal !== undefined ? isFinal : true,
+            sequenceNo,
+            JSON.stringify(rawPayload || {})
+        ]
+    );
+    return result.rows[0];
+}
+
+async function getTranscriptsByCallSid(callSid) {
+    const result = await db.query(
+        `SELECT * FROM transcripts WHERE call_sid = $1 ORDER BY sequence_no ASC NULLS LAST, created_at ASC`,
+        [callSid]
+    );
+    return result.rows;
+}
+
+// =============================================================================
+// Call events (immutable log)
+// =============================================================================
+
+async function appendCallEvent(callSid, eventType, eventTime, payload) {
+    const result = await db.query(
+        `INSERT INTO call_events (call_sid, event_type, event_time, payload)
+         VALUES ($1, $2, $3, $4)
+         RETURNING *`,
+        [callSid, eventType, eventTime, JSON.stringify(payload)]
+    );
+    return result.rows[0];
+}
+
+async function getCallEvents(callSid) {
+    const result = await db.query(
+        `SELECT * FROM call_events WHERE call_sid = $1 ORDER BY event_time DESC`,
+        [callSid]
+    );
+    return result.rows;
+}
+
+// =============================================================================
+// Webhook inbox
+// =============================================================================
+
+async function insertInboxEvent(data) {
+    const {
+        eventKey, source, eventType, eventTime,
+        callSid, recordingSid, transcriptionSid,
+        payload, headers
+    } = data;
+
+    const result = await db.query(
+        `INSERT INTO webhook_inbox (
+            event_key, source, event_type, event_time,
+            call_sid, recording_sid, transcription_sid,
+            payload, headers
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        ON CONFLICT (event_key) DO NOTHING
+        RETURNING *`,
+        [
+            eventKey, source, eventType, eventTime,
+            callSid, recordingSid, transcriptionSid,
+            JSON.stringify(payload), JSON.stringify(headers || {})
+        ]
+    );
+    return result.rows[0]; // null if duplicate
+}
+
+async function claimInboxEvents(batchSize = 10) {
+    const result = await db.query(
+        `UPDATE webhook_inbox
+         SET status = 'processing', attempts = attempts + 1
+         WHERE id IN (
+             SELECT id FROM webhook_inbox
+             WHERE status = 'received'
+             ORDER BY received_at ASC
+             LIMIT $1
+             FOR UPDATE SKIP LOCKED
+         )
+         RETURNING *`,
+        [batchSize]
+    );
+    return result.rows;
+}
+
+async function markInboxProcessed(id) {
+    await db.query(
+        `UPDATE webhook_inbox SET status = 'processed', processed_at = now() WHERE id = $1`,
+        [id]
+    );
+}
+
+async function markInboxFailed(id, errorText) {
+    const result = await db.query(
+        `UPDATE webhook_inbox
+         SET status = CASE WHEN attempts >= 10 THEN 'dead' ELSE 'received' END,
+             error_text = $2
+         WHERE id = $1
+         RETURNING *`,
+        [id, errorText]
+    );
+    return result.rows[0];
+}
+
+// =============================================================================
+// Sync state
+// =============================================================================
+
+async function getSyncState(jobName) {
+    const result = await db.query(
+        'SELECT * FROM sync_state WHERE job_name = $1',
+        [jobName]
+    );
+    return result.rows[0];
+}
+
+async function upsertSyncState(jobName, cursor, error = null) {
+    const result = await db.query(
+        `INSERT INTO sync_state (job_name, cursor, last_success_at)
+         VALUES ($1, $2, CASE WHEN $3::text IS NULL THEN now() ELSE NULL END)
+         ON CONFLICT (job_name) DO UPDATE SET
+             cursor = EXCLUDED.cursor,
+             last_success_at = CASE WHEN $3::text IS NULL THEN now() ELSE sync_state.last_success_at END,
+             last_error_at = CASE WHEN $3::text IS NOT NULL THEN now() ELSE sync_state.last_error_at END,
+             last_error = $3
+         RETURNING *`,
+        [jobName, JSON.stringify(cursor), error]
+    );
+    return result.rows[0];
+}
+
+// =============================================================================
+// Media aggregation (recordings + transcripts for a call)
+// =============================================================================
+
+async function getCallMedia(callSid) {
+    const [recordings, transcripts] = await Promise.all([
+        getRecordingsByCallSid(callSid),
+        getTranscriptsByCallSid(callSid),
+    ]);
+    return { recordings, transcripts };
+}
+
+// =============================================================================
+// Health check for sync
+// =============================================================================
+
+async function getSyncHealth() {
+    const result = await db.query(
+        `SELECT * FROM sync_state ORDER BY job_name`
+    );
+    const inbox = await db.query(
+        `SELECT status, COUNT(*) as count
+         FROM webhook_inbox
+         GROUP BY status`
+    );
+    return {
+        jobs: result.rows,
+        inbox: inbox.rows.reduce((acc, r) => { acc[r.status] = parseInt(r.count); return acc; }, {}),
+    };
+}
+
+// =============================================================================
+// Exports
+// =============================================================================
+
 module.exports = {
-    // Contact operations
+    // Contacts
     findContactByPhone,
     createContact,
     findOrCreateContact,
 
-    // Conversation operations
-    getConversations,
-    getConversationsCount,
-    getConversationById,
-    findConversationByExternalId,
-    createConversation,
-    findOrCreateConversation,
-    updateConversationLastMessage,
-
-    // Message operations
-    getMessagesByConversation,
-    getMessageCountByConversation,
-    findMessageByTwilioSid,
-    updateMessage,  // Added for updating call status
-    createMessage,
-    getLastMessageByConversation,
+    // Calls
+    upsertCall,
+    getCallByCallSid,
+    getCalls,
+    getCallsByContact,
+    getContactsWithCallsCount,
+    getCallsByContactId,
     getActiveCalls,
+    getNonFinalCalls,
+
+    // Recordings
+    upsertRecording,
+    getRecordingsByCallSid,
+
+    // Transcripts
+    upsertTranscript,
+    getTranscriptsByCallSid,
+
+    // Call events
+    appendCallEvent,
+    getCallEvents,
+
+    // Webhook inbox
+    insertInboxEvent,
+    claimInboxEvents,
+    markInboxProcessed,
+    markInboxFailed,
+
+    // Sync state
+    getSyncState,
+    upsertSyncState,
+
+    // Aggregation
+    getCallMedia,
+    getSyncHealth,
 };

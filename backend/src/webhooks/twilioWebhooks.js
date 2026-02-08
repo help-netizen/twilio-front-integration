@@ -1,13 +1,8 @@
 const twilio = require('twilio');
-const db = require('../db/connection');
-
-// Import TwiML generator for voice-inbound response
-const twimlRouter = require('../routes/twiml');
+const queries = require('../db/queries');
 
 /**
  * Validate Twilio webhook signature
- * @param {Object} req - Express request object
- * @returns {boolean} - True if signature is valid
  */
 function validateTwilioSignature(req) {
     const signature = req.headers['x-twilio-signature'];
@@ -18,7 +13,6 @@ function validateTwilioSignature(req) {
         return false;
     }
 
-    // Construct full URL
     const protocol = req.headers['x-forwarded-proto'] || req.protocol;
     const host = req.headers['x-forwarded-host'] || req.get('host');
     const url = `${protocol}://${host}${req.originalUrl}`;
@@ -32,233 +26,203 @@ function validateTwilioSignature(req) {
 }
 
 /**
- * Generate dedupe key for webhook event
- * @param {Object} payload - Twilio webhook payload
- * @returns {string} - Unique dedupe key
+ * Generate event_key for deduplication.
+ * Uses I-Twilio-Idempotency-Token if available, else builds a canonical key.
  */
-function generateDedupeKey(payload) {
-    const { CallSid, CallStatus, Timestamp } = payload;
-    return `call:${CallSid}:${CallStatus}:${Timestamp}`;
+function generateEventKey(source, payload, req) {
+    const idempotencyToken = req.headers['i-twilio-idempotency-token'];
+    if (idempotencyToken) return idempotencyToken;
+
+    const { CallSid, CallStatus, RecordingSid, RecordingStatus, TranscriptionSid, TranscriptionStatus, Timestamp } = payload;
+
+    switch (source) {
+        case 'voice':
+            return `voice:${CallSid}:${CallStatus}:${Timestamp || Date.now()}`;
+        case 'dial':
+            return `dial:${CallSid}:${payload.DialCallStatus}:${Date.now()}`;
+        case 'recording':
+            return `recording:${RecordingSid}:${RecordingStatus}:${Timestamp || Date.now()}`;
+        case 'transcription':
+            return `transcription:${TranscriptionSid}:${TranscriptionStatus}:${Date.now()}`;
+        default:
+            return `${source}:${CallSid}:${Date.now()}`;
+    }
 }
 
-/**
- * Generate unique trace ID for request tracking
- * @returns {string} - Trace ID
- */
 function generateTraceId() {
     return `trace_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
 /**
- * Handle Twilio voice status webhook
- * POST /webhooks/twilio/voice-status
+ * Generic webhook handler that pushes to webhook_inbox
  */
-async function handleVoiceStatus(req, res) {
-    const traceId = generateTraceId();
-    const startTime = Date.now();
+async function ingestToInbox({ source, eventType, payload, req, traceId }) {
+    const eventKey = generateEventKey(source, payload, req);
+    const eventTime = payload.Timestamp && !isNaN(parseInt(payload.Timestamp))
+        ? new Date(parseInt(payload.Timestamp) * 1000)
+        : new Date();
 
-    console.log(`[${traceId}] Voice status webhook received`, {
-        callSid: req.body.CallSid,
-        status: req.body.CallStatus
+    const result = await queries.insertInboxEvent({
+        eventKey,
+        source,
+        eventType,
+        eventTime,
+        callSid: payload.CallSid || null,
+        recordingSid: payload.RecordingSid || null,
+        transcriptionSid: payload.TranscriptionSid || null,
+        payload,
+        headers: {
+            'x-twilio-signature': req.headers['x-twilio-signature'],
+            'i-twilio-idempotency-token': req.headers['i-twilio-idempotency-token'],
+        },
     });
 
+    if (result) {
+        console.log(`[${traceId}] Event stored in inbox`, { id: result.id, eventKey });
+    } else {
+        console.log(`[${traceId}] Duplicate event ignored`, { eventKey });
+    }
+
+    return result;
+}
+
+// =============================================================================
+// POST /webhooks/twilio/voice-status
+// =============================================================================
+async function handleVoiceStatus(req, res) {
+    const traceId = generateTraceId();
+    console.log(`[${traceId}] Voice status webhook`, { callSid: req.body.CallSid, status: req.body.CallStatus });
+
     try {
-        // 1. Validate X-Twilio-Signature (skip in development for testing)
         if (process.env.NODE_ENV !== 'development' && !validateTwilioSignature(req)) {
-            console.warn(`[${traceId}] Invalid Twilio signature`);
             return res.status(403).json({ error: 'Invalid signature' });
         }
 
-        if (process.env.NODE_ENV === 'development') {
-            console.log(`[${traceId}] ⚠️  DEV MODE: Skipping signature validation`);
-        }
-
-        // 2. Extract payload
-        const payload = req.body;
-        const { CallSid, CallStatus, Timestamp } = payload;
-
+        const { CallSid, CallStatus } = req.body;
         if (!CallSid || !CallStatus) {
-            console.error(`[${traceId}] Missing required fields`, { payload });
             return res.status(400).json({ error: 'Missing CallSid or CallStatus' });
         }
 
-        // 3. Generate dedupe key
-        const dedupeKey = generateDedupeKey(payload);
-
-        // 4. Insert into inbox (idempotent - ON CONFLICT DO NOTHING)
-        const result = await db.query(`
-            INSERT INTO twilio_webhook_inbox 
-                (source, event_type, call_sid, dedupe_key, payload)
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (dedupe_key) DO NOTHING
-            RETURNING id
-        `, ['twilio_voice', 'call-status', CallSid, dedupeKey, payload]);
-
-        const elapsed = Date.now() - startTime;
-
-        if (result.rows.length > 0) {
-            console.log(`[${traceId}] Event stored in inbox`, {
-                inboxId: result.rows[0].id,
-                callSid: CallSid,
-                status: CallStatus,
-                elapsed: `${elapsed}ms`
-            });
-        } else {
-            console.log(`[${traceId}] Duplicate event ignored`, {
-                callSid: CallSid,
-                status: CallStatus,
-                dedupeKey,
-                elapsed: `${elapsed}ms`
-            });
-        }
-
-        // 5. Return 200 quickly
-        res.status(200).send('OK');
-
-    } catch (error) {
-        const elapsed = Date.now() - startTime;
-        console.error(`[${traceId}] Error processing voice status webhook`, {
-            error: error.message,
-            stack: error.stack,
-            elapsed: `${elapsed}ms`
+        await ingestToInbox({
+            source: 'voice',
+            eventType: 'call.status_changed',
+            payload: req.body,
+            req,
+            traceId
         });
+
+        res.status(204).send();
+    } catch (error) {
+        console.error(`[${traceId}] Error:`, error.message);
         res.status(500).json({ error: 'Internal server error' });
     }
 }
 
-/**
- * Handle Twilio recording status webhook
- * POST /webhooks/twilio/recording-status
- */
+// =============================================================================
+// POST /webhooks/twilio/recording-status
+// =============================================================================
 async function handleRecordingStatus(req, res) {
     const traceId = generateTraceId();
-    const startTime = Date.now();
-
-    console.log(`[${traceId}] Recording status webhook received`, {
-        recordingSid: req.body.RecordingSid,
-        status: req.body.RecordingStatus
-    });
+    console.log(`[${traceId}] Recording status webhook`, { recordingSid: req.body.RecordingSid, status: req.body.RecordingStatus });
 
     try {
-        // 1. Validate X-Twilio-Signature
-        if (!validateTwilioSignature(req)) {
-            console.warn(`[${traceId}] Invalid Twilio signature`);
+        if (process.env.NODE_ENV !== 'development' && !validateTwilioSignature(req)) {
             return res.status(403).json({ error: 'Invalid signature' });
         }
 
-        // 2. Extract payload
-        const payload = req.body;
-        const { RecordingSid, CallSid, RecordingStatus, Timestamp } = payload;
-
+        const { RecordingSid, CallSid } = req.body;
         if (!RecordingSid || !CallSid) {
-            console.error(`[${traceId}] Missing required fields`, { payload });
             return res.status(400).json({ error: 'Missing RecordingSid or CallSid' });
         }
 
-        // 3. Generate dedupe key
-        const dedupeKey = `recording:${RecordingSid}:${RecordingStatus}:${Timestamp}`;
-
-        // 4. Insert into inbox (idempotent)
-        const result = await db.query(`
-            INSERT INTO twilio_webhook_inbox 
-                (source, event_type, call_sid, recording_sid, dedupe_key, payload)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (dedupe_key) DO NOTHING
-            RETURNING id
-        `, ['twilio_recording', 'recording-status', CallSid, RecordingSid, dedupeKey, payload]);
-
-        const elapsed = Date.now() - startTime;
-
-        if (result.rows.length > 0) {
-            console.log(`[${traceId}] Recording event stored in inbox`, {
-                inboxId: result.rows[0].id,
-                recordingSid: RecordingSid,
-                callSid: CallSid,
-                status: RecordingStatus,
-                elapsed: `${elapsed}ms`
-            });
-        } else {
-            console.log(`[${traceId}] Duplicate recording event ignored`, {
-                recordingSid: RecordingSid,
-                dedupeKey,
-                elapsed: `${elapsed}ms`
-            });
-        }
-
-        // 5. Return 200 quickly
-        res.status(200).send('OK');
-
-    } catch (error) {
-        const elapsed = Date.now() - startTime;
-        console.error(`[${traceId}] Error processing recording status webhook`, {
-            error: error.message,
-            stack: error.stack,
-            elapsed: `${elapsed}ms`
+        await ingestToInbox({
+            source: 'recording',
+            eventType: 'recording.updated',
+            payload: req.body,
+            req,
+            traceId
         });
+
+        res.status(204).send();
+    } catch (error) {
+        console.error(`[${traceId}] Error:`, error.message);
         res.status(500).json({ error: 'Internal server error' });
     }
 }
 
-/**
- * Handle Twilio Voice URL webhook (new incoming/outgoing call)
- * POST /webhooks/twilio/voice-inbound
- * 
- * This is called when a NEW call arrives, BEFORE Tw iML is returned.
- * Handles BOTH directions:
- * - INBOUND: PSTN → Twilio → SIP (Bria)
- * - OUTBOUND: SIP (Bria) → Twilio → PSTN
- */
-async function handleVoiceInbound(req, res) {
+// =============================================================================
+// POST /webhooks/twilio/transcription-status  (NEW)
+// =============================================================================
+async function handleTranscriptionStatus(req, res) {
     const traceId = generateTraceId();
-    const startTime = Date.now();
-
-    console.log(`[${traceId}] Voice inbound webhook - NEW CALL`, {
-        callSid: req.body.CallSid,
-        from: req.body.From,
-        to: req.body.To,
-        callStatus: req.body.CallStatus,
-        direction: req.body.Direction
+    console.log(`[${traceId}] Transcription status webhook`, {
+        transcriptionSid: req.body.TranscriptionSid,
+        status: req.body.TranscriptionStatus
     });
 
     try {
-        // 1. Validate signature (skip in dev)
         if (process.env.NODE_ENV !== 'development' && !validateTwilioSignature(req)) {
-            console.warn(`[${traceId}] Invalid Twilio signature`);
+            return res.status(403).json({ error: 'Invalid signature' });
+        }
+
+        const { TranscriptionSid, TranscriptionStatus } = req.body;
+        if (!TranscriptionSid || !TranscriptionStatus) {
+            return res.status(400).json({ error: 'Missing TranscriptionSid or TranscriptionStatus' });
+        }
+
+        await ingestToInbox({
+            source: 'transcription',
+            eventType: 'transcript.updated',
+            payload: req.body,
+            req,
+            traceId
+        });
+
+        res.status(204).send();
+    } catch (error) {
+        console.error(`[${traceId}] Error:`, error.message);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+}
+
+// =============================================================================
+// POST /webhooks/twilio/voice-inbound (TwiML response)
+// =============================================================================
+async function handleVoiceInbound(req, res) {
+    const traceId = generateTraceId();
+    console.log(`[${traceId}] Voice inbound - NEW CALL`, {
+        callSid: req.body.CallSid, from: req.body.From, to: req.body.To
+    });
+
+    try {
+        if (process.env.NODE_ENV !== 'development' && !validateTwilioSignature(req)) {
             return res.status(403).send('<Response><Reject/></Response>');
         }
 
-        // 2. Extract payload
-        const { CallSid, From, To, CallStatus, Direction } = req.body;
-
+        const { CallSid, From, To } = req.body;
         if (!CallSid) {
-            console.error(`[${traceId}] Missing CallSid`);
             return res.status(400).send('<Response><Reject/></Response>');
         }
 
-        // 3. Store initial call notification in inbox
-        const dedupeKey = `call-inbound:${CallSid}:${Date.now()}`;
-        await db.query(`
-            INSERT INTO twilio_webhook_inbox 
-                (source, event_type, call_sid, dedupe_key, payload)
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (dedupe_key) DO NOTHING
-        `, ['twilio_voice', 'call-inbound', CallSid, dedupeKey, req.body]);
+        // Store initial call in inbox
+        await ingestToInbox({
+            source: 'voice',
+            eventType: 'call.inbound',
+            payload: req.body,
+            req,
+            traceId
+        });
 
-        // 4. Determine call direction and generate appropriate TwiML
+        // Determine direction and return TwiML
         const baseUrl = process.env.WEBHOOK_BASE_URL || 'https://abc-metrics.fly.dev';
         const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
         const dialActionUrl = `${baseUrl}/webhooks/twilio/dial-action`;
+        const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;
 
+        const isOutbound = From && From.startsWith('sip:');
         let twiml;
 
-        // Check if this is an OUTBOUND call (from SIP to phone number)
-        const isOutbound = From && From.startsWith('sip:');
-
         if (isOutbound) {
-            // OUTBOUND: SIP → PSTN
-            // Extract phone number from SIP URI
-            // To arrives as: sip:5085140320@abchomes.sip.us1.twilio.com:5061;user=phone
-            // Need to extract just the number part and add +1
             let dialNumber = To;
             if (To && To.startsWith('sip:')) {
                 const match = To.match(/^sip:(\+?\d+)@/);
@@ -266,25 +230,24 @@ async function handleVoiceInbound(req, res) {
                     dialNumber = match[1].startsWith('+') ? match[1] : `+1${match[1]}`;
                 }
             }
-
-            console.log(`[${traceId}] Outbound call: SIP → ${dialNumber} (raw To: ${To})`);
+            console.log(`[${traceId}] Outbound: SIP → ${dialNumber}`);
 
             twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Dial timeout="60"
           callerId="+16175006181"
           action="${dialActionUrl}"
-          method="POST">
+          method="POST"
+          record="record-from-answer-dual"
+          recordingStatusCallback="${recordingStatusUrl}"
+          recordingStatusCallbackMethod="POST">
         <Number statusCallback="${statusCallbackUrl}"
                 statusCallbackEvent="initiated ringing answered completed"
                 statusCallbackMethod="POST">${dialNumber}</Number>
     </Dial>
 </Response>`;
         } else {
-            // INBOUND: PSTN → SIP
-            // Dial to SIP endpoint (dispatcher)
-            console.log(`[${traceId}] Inbound call detected: ${From} → SIP`);
-
+            console.log(`[${traceId}] Inbound: ${From} → SIP`);
             const sipUser = process.env.SIP_USER || 'dispatcher';
             const sipDomain = process.env.SIP_DOMAIN || 'abchomes.sip.us1.twilio.com';
             const sipEndpoint = `sip:${sipUser}@${sipDomain}`;
@@ -293,7 +256,10 @@ async function handleVoiceInbound(req, res) {
 <Response>
     <Dial timeout="60"
           action="${dialActionUrl}"
-          method="POST">
+          method="POST"
+          record="record-from-answer-dual"
+          recordingStatusCallback="${recordingStatusUrl}"
+          recordingStatusCallbackMethod="POST">
         <Sip statusCallback="${statusCallbackUrl}"
              statusCallbackEvent="initiated ringing answered completed"
              statusCallbackMethod="POST">${sipEndpoint}</Sip>
@@ -301,68 +267,45 @@ async function handleVoiceInbound(req, res) {
 </Response>`;
         }
 
-        console.log(`[${traceId}] Returning TwiML for ${isOutbound ? 'outbound' : 'inbound'} call`);
-
         res.type('text/xml');
         res.send(twiml);
-
     } catch (error) {
-        console.error(`[${traceId}] Error handling voice inbound:`, error);
+        console.error(`[${traceId}] Error:`, error);
         res.status(500).send('<Response><Reject/></Response>');
     }
 }
 
-/**
- * Handle Dial action callback (final Dial result)
- * POST /webhooks/twilio/dial-action
- * 
- * This is called AFTER <Dial> completes with final DialCallStatus
- */
+// =============================================================================
+// POST /webhooks/twilio/dial-action
+// =============================================================================
 async function handleDialAction(req, res) {
     const traceId = generateTraceId();
-    const startTime = Date.now();
-
-    console.log(`[${traceId}] Dial action webhook - DIAL COMPLETE`, {
-        callSid: req.body.CallSid,
-        dialCallStatus: req.body.DialCallStatus,
-        dialCallDuration: req.body.DialCallDuration
+    console.log(`[${traceId}] Dial action`, {
+        callSid: req.body.CallSid, dialStatus: req.body.DialCallStatus
     });
 
     try {
-        // 1. Validate signature (skip in dev)
         if (process.env.NODE_ENV !== 'development' && !validateTwilioSignature(req)) {
-            console.warn(`[${traceId}] Invalid Twilio signature`);
             return res.status(403).send('<Response></Response>');
         }
 
-        // 2. Extract payload
-        const { CallSid, DialCallStatus, DialCallDuration } = req.body;
-
+        const { CallSid } = req.body;
         if (!CallSid) {
-            console.error(`[${traceId}] Missing CallSid`);
             return res.status(400).send('<Response></Response>');
         }
 
-        // 3. Store dial action result in inbox
-        const dedupeKey = `dial-action:${CallSid}:${Date.now()}`;
-        await db.query(`
-            INSERT INTO twilio_webhook_inbox 
-                (source, event_type, call_sid, dedupe_key, payload)
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (dedupe_key) DO NOTHING
-        `, ['twilio_voice', 'dial-action', CallSid, dedupeKey, req.body]);
-
-        console.log(`[${traceId}] Dial action stored`, {
-            dialCallStatus: DialCallStatus,
-            duration: DialCallDuration
+        await ingestToInbox({
+            source: 'dial',
+            eventType: 'dial.action',
+            payload: req.body,
+            req,
+            traceId
         });
 
-        // 4. Return empty TwiML (call already ended)
         res.type('text/xml');
         res.send('<Response></Response>');
-
     } catch (error) {
-        console.error(`[${traceId}] Error handling dial action:`, error);
+        console.error(`[${traceId}] Error:`, error);
         res.status(500).send('<Response></Response>');
     }
 }
@@ -370,6 +313,7 @@ async function handleDialAction(req, res) {
 module.exports = {
     handleVoiceStatus,
     handleRecordingStatus,
+    handleTranscriptionStatus,
     handleVoiceInbound,
     handleDialAction,
     validateTwilioSignature

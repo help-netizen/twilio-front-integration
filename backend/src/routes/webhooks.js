@@ -1,50 +1,33 @@
 const express = require('express');
 const router = express.Router();
-const { handleVoiceStatus, handleRecordingStatus, handleVoiceInbound, handleDialAction } = require('../webhooks/twilioWebhooks');
+const {
+    handleVoiceStatus,
+    handleRecordingStatus,
+    handleTranscriptionStatus,
+    handleVoiceInbound,
+    handleDialAction,
+} = require('../webhooks/twilioWebhooks');
 
-/**
- * POST /webhooks/twilio/voice-status
- * Receives Twilio voice status callbacks
- * 
- * Twilio sends this webhook for call status changes:
- * - queued, initiated, ringing, in-progress, completed, busy, no-answer, failed, canceled
- */
+// POST /webhooks/twilio/voice-status — call status changes
 router.post('/twilio/voice-status', handleVoiceStatus);
 
-/**
- * POST /webhooks/twilio/recording-status
- * Receives Twilio recording status callbacks
- * 
- * Twilio sends this webhook when recordings are ready:
- * - in-progress, completed, absent, failed
- */
+// POST /webhooks/twilio/recording-status — recording lifecycle
 router.post('/twilio/recording-status', handleRecordingStatus);
 
-/**
- * POST /webhooks/twilio/voice-inbound
- * Receives NEW incoming call, stores initial record, returns TwiML
- * 
- * This is the Voice URL for SIP Domain (or phone numbers)
- * Twilio calls this BEFORE connecting the call
- */
+// POST /webhooks/twilio/transcription-status — transcription lifecycle (NEW v3)
+router.post('/twilio/transcription-status', handleTranscriptionStatus);
+
+// POST /webhooks/twilio/voice-inbound — new call TwiML
 router.post('/twilio/voice-inbound', handleVoiceInbound);
 
-/**
- * POST /webhooks/twilio/dial-action
- * Receives final Dial result after <Dial> completes
- * 
- * Gets DialCallStatus: completed, busy, no-answer, failed, canceled
- */
+// POST /webhooks/twilio/dial-action — Dial result
 router.post('/twilio/dial-action', handleDialAction);
 
-/**
- * GET /webhooks/health
- * Health check endpoint
- */
+// GET /webhooks/health
 router.get('/health', (req, res) => {
     res.status(200).json({
         status: 'ok',
-        service: 'twilio-webhooks',
+        service: 'twilio-webhooks-v3',
         timestamp: new Date().toISOString()
     });
 });

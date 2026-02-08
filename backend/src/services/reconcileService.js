@@ -1,336 +1,224 @@
 const twilio = require('twilio');
-const db = require('../db/connection');
-const { normalizeVoiceEvent, upsertMessage, appendCallEvent } = require('./inboxWorker');
+const queries = require('../db/queries');
+const { normalizeVoiceEvent } = require('./inboxWorker');
+const CallProcessor = require('./callProcessor');
 
 /**
- * Reconciliation Service
+ * Reconciliation Service (v3)
  * 
  * Polls Twilio API to reconcile call states and catch missed webhooks.
- * Three strategies:
- * - Hot: Active calls (non-final) - poll every 1-5min
- * - Warm: Recent final calls (last 6h) - poll every 15min-1h
- * - Cold: Historical calls - one-time backfill on demand
+ * - Hot:  Active (non-final) calls — poll every 1min
+ * - Warm: Recent final calls (last 6h) — poll every 15min
+ * - Cold: Historical backfill — on demand
  */
 
-// Initialize Twilio client
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
 const twilioClient = twilio(accountSid, authToken);
 
-/**
- * Configuration
- */
 const RECONCILE_CONFIG = {
     HOT: {
-        INTERVAL_MS: 60000,        // 1 minute
-        BATCH_SIZE: 50,            // Calls to process per run
-        MAX_AGE_HOURS: 24          // Only reconcile calls < 24h old
+        INTERVAL_MS: 60000,
+        BATCH_SIZE: 50,
+        MAX_AGE_HOURS: 24,
     },
     WARM: {
-        INTERVAL_MS: 900000,       // 15 minutes
+        INTERVAL_MS: 900000,
         BATCH_SIZE: 100,
-        COOLDOWN_HOURS: 6          // Final calls within 6h
+        COOLDOWN_HOURS: 6,
     },
     COLD: {
         BATCH_SIZE: 200,
-        LOOKBACK_DAYS: 90          // Default lookback period
-    }
+        LOOKBACK_DAYS: 90,
+    },
 };
 
 /**
- * Fetch call details from Twilio API
+ * Fetch call details from Twilio API and return normalized payload
  */
-async function fetchCallFromTwilio(callSid) {
-    try {
-        const call = await twilioClient.calls(callSid).fetch();
+function twilioCallToPayload(call) {
+    return {
+        CallSid: call.sid,
+        CallStatus: call.status,
+        Timestamp: Math.floor(new Date(call.dateCreated).getTime() / 1000).toString(),
+        From: call.from,
+        To: call.to,
+        Direction: call.direction,
+        Duration: call.duration?.toString() || '0',
+        ParentCallSid: call.parentCallSid,
+        AnsweredBy: call.answeredBy,
+        Price: call.price,
+        PriceUnit: call.priceUnit,
+    };
+}
 
-        return {
-            CallSid: call.sid,
-            CallStatus: call.status,
-            Timestamp: Math.floor(new Date(call.dateCreated).getTime() / 1000).toString(),
-            From: call.from,
-            To: call.to,
-            Direction: call.direction,
-            Duration: call.duration?.toString() || '0',
-            ParentCallSid: call.parentCallSid,
-            AnsweredBy: call.answeredBy,
-            Price: call.price,
-            PriceUnit: call.priceUnit
-        };
-    } catch (error) {
-        console.error(`Failed to fetch call ${callSid}:`, error.message);
-        throw error;
-    }
+async function fetchCallFromTwilio(callSid) {
+    const call = await twilioClient.calls(callSid).fetch();
+    return twilioCallToPayload(call);
 }
 
 /**
- * Hot Reconcile - Active calls only
- * Fetches non-final calls from DB and polls Twilio for updates
+ * Reconcile a single call from Twilio API data
  */
-async function hotReconcile() {
-    console.log('🔥 Starting hot reconcile...');
+async function reconcileCall(twilioPayload, source) {
+    const normalized = normalizeVoiceEvent(twilioPayload);
 
+    // Resolve contact
+    const callData = {
+        from: normalized.fromNumber,
+        to: normalized.toNumber,
+        direction: normalized.direction,
+        status: normalized.eventStatus,
+        duration: normalized.durationSec,
+        parentCallSid: normalized.parentCallSid,
+    };
+    const processed = CallProcessor.processCall(callData);
+    const externalParty = processed.externalParty;
+
+    let contactId = null;
+    if (externalParty?.formatted && processed.direction !== 'internal') {
+        const contact = await queries.findOrCreateContact(externalParty.formatted);
+        contactId = contact.id;
+    }
+
+    const { isFinalStatus } = require('./stateMachine');
+    const isFinal = isFinalStatus(normalized.eventStatus);
+
+    const call = await queries.upsertCall({
+        callSid: normalized.callSid,
+        parentCallSid: normalized.parentCallSid,
+        contactId,
+        direction: processed.direction,
+        fromNumber: normalized.fromNumber,
+        toNumber: normalized.toNumber,
+        status: normalized.eventStatus,
+        isFinal,
+        startedAt: normalized.eventTime,
+        answeredAt: normalized.eventStatus === 'in-progress' ? normalized.eventTime : null,
+        endedAt: isFinal ? normalized.eventTime : null,
+        durationSec: normalized.durationSec || null,
+        price: normalized.price,
+        priceUnit: normalized.priceUnit,
+        lastEventTime: normalized.eventTime,
+        rawLastPayload: twilioPayload,
+    });
+
+    // Append immutable event
+    await queries.appendCallEvent(
+        normalized.callSid,
+        'call.status_changed',
+        normalized.eventTime,
+        { ...normalized, source }
+    );
+
+    return call;
+}
+
+// =============================================================================
+// Hot Reconcile — active (non-final) calls
+// =============================================================================
+
+async function hotReconcile() {
+    console.log('🔥 Hot reconcile...');
     const startTime = Date.now();
-    let processed = 0;
-    let updated = 0;
-    let errors = 0;
+    let processed = 0, updated = 0, errors = 0;
 
     try {
-        // Get active (non-final) calls from DB
-        const result = await db.query(`
-            SELECT twilio_sid, status, updated_at
-            FROM messages
-            WHERE is_final = false
-              AND start_time > NOW() - INTERVAL '${RECONCILE_CONFIG.HOT.MAX_AGE_HOURS} hours'
-              AND (sync_state IS NULL OR sync_state = 'active')
-            ORDER BY updated_at DESC
-            LIMIT $1
-        `, [RECONCILE_CONFIG.HOT.BATCH_SIZE]);
+        const calls = await queries.getNonFinalCalls(RECONCILE_CONFIG.HOT.MAX_AGE_HOURS);
+        console.log(`   ${calls.length} active calls`);
 
-        const calls = result.rows;
-        console.log(`   Found ${calls.length} active calls to reconcile`);
-
-        for (const call of calls) {
+        for (const dbCall of calls) {
             try {
-                // Fetch from Twilio
-                const twilioData = await fetchCallFromTwilio(call.twilio_sid);
+                const twilioPayload = await fetchCallFromTwilio(dbCall.call_sid);
+                const result = await reconcileCall(twilioPayload, 'reconcile_hot');
 
-                // Normalize and upsert
-                const normalized = normalizeVoiceEvent(twilioData);
-                const updatedMessage = await upsertMessage(normalized, 'reconcile_hot');
-
-                // Append to event log
-                await appendCallEvent(normalized, 'reconcile_hot');
-
-                // Check if status changed
-                if (updatedMessage.status !== call.status) {
-                    console.log(`   ✓ ${call.twilio_sid}: ${call.status} → ${updatedMessage.status}`);
+                if (result && result.status !== dbCall.status) {
+                    console.log(`   ✓ ${dbCall.call_sid}: ${dbCall.status} → ${result.status}`);
                     updated++;
                 }
-
                 processed++;
-
-                // Rate limiting: 10 requests/second max
-                await new Promise(resolve => setTimeout(resolve, 100));
-
+                await new Promise(r => setTimeout(r, 100));
             } catch (error) {
-                console.error(`   ✗ Error reconciling ${call.twilio_sid}:`, error.message);
+                console.error(`   ✗ ${dbCall.call_sid}:`, error.message);
                 errors++;
             }
         }
 
         const elapsed = Date.now() - startTime;
-        console.log(`✅ Hot reconcile complete: ${processed} processed, ${updated} updated, ${errors} errors (${elapsed}ms)`);
+        console.log(`✅ Hot: ${processed}/${updated}/${errors} (${elapsed}ms)`);
 
-        // Update sync state cursor
-        await updateSyncCursor('hot_reconcile', new Date());
-
+        await queries.upsertSyncState('reconcile_hot', { last_run: new Date() });
         return { processed, updated, errors };
-
     } catch (error) {
         console.error('❌ Hot reconcile failed:', error);
+        await queries.upsertSyncState('reconcile_hot', {}, error.message);
         throw error;
     }
 }
 
-/**
- * Warm Reconcile - Recent final calls
- * Double-checks final calls within cooldown period
- */
-async function warmReconcile() {
-    console.log('🌡️  Starting warm reconcile...');
+// =============================================================================
+// Cold Reconcile — historical backfill
+// =============================================================================
 
-    const startTime = Date.now();
-    let processed = 0;
-    let updated = 0;
-    let errors = 0;
-
-    try {
-        // Get final calls within cooldown period
-        const result = await db.query(`
-            SELECT twilio_sid, status, finalized_at
-            FROM messages
-            WHERE is_final = true
-              AND finalized_at IS NOT NULL
-              AND finalized_at > NOW() - INTERVAL '${RECONCILE_CONFIG.WARM.COOLDOWN_HOURS} hours'
-              AND (sync_state IS NULL OR sync_state = 'active')
-            ORDER BY finalized_at DESC
-            LIMIT $1
-        `, [RECONCILE_CONFIG.WARM.BATCH_SIZE]);
-
-        const calls = result.rows;
-        console.log(`   Found ${calls.length} warm calls to reconcile`);
-
-        for (const call of calls) {
-            try {
-                const twilioData = await fetchCallFromTwilio(call.twilio_sid);
-                const normalized = normalizeVoiceEvent(twilioData);
-                const updatedMessage = await upsertMessage(normalized, 'reconcile_warm');
-
-                await appendCallEvent(normalized, 'reconcile_warm');
-
-                if (updatedMessage.status !== call.status) {
-                    console.log(`   ⚠️  Final call status changed: ${call.twilio_sid}: ${call.status} → ${updatedMessage.status}`);
-                    updated++;
-                }
-
-                processed++;
-                await new Promise(resolve => setTimeout(resolve, 100));
-
-            } catch (error) {
-                console.error(`   ✗ Error reconciling ${call.twilio_sid}:`, error.message);
-                errors++;
-            }
-        }
-
-        const elapsed = Date.now() - startTime;
-        console.log(`✅ Warm reconcile complete: ${processed} processed, ${updated} updated, ${errors} errors (${elapsed}ms)`);
-
-        await updateSyncCursor('warm_reconcile', new Date());
-
-        return { processed, updated, errors };
-
-    } catch (error) {
-        console.error('❌ Warm reconcile failed:', error);
-        throw error;
-    }
-}
-
-/**
- * Cold Reconcile - Historical backfill
- * Polls Twilio API for calls in date range (used for initial sync or recovering from outages)
- */
 async function coldReconcile(startDate, endDate, pageSize = RECONCILE_CONFIG.COLD.BATCH_SIZE) {
-    console.log('❄️  Starting cold reconcile...');
-    console.log(`   Date range: ${startDate.toISOString()} → ${endDate.toISOString()}`);
-
-    let processed = 0;
-    let created = 0;
-    let updated = 0;
-    let errors = 0;
+    console.log(`❄️  Cold reconcile: ${startDate.toISOString()} → ${endDate.toISOString()}`);
+    let processed = 0, created = 0, updated = 0, errors = 0;
 
     try {
-        // Fetch calls from Twilio with pagination
         let page = 0;
         let hasMore = true;
 
         while (hasMore) {
-            console.log(`   Fetching page ${page + 1}...`);
-
+            console.log(`   Page ${page + 1}...`);
             const calls = await twilioClient.calls.list({
                 startTimeAfter: startDate,
                 startTimeBefore: endDate,
-                pageSize: pageSize,
-                page: page
+                pageSize,
+                page,
             });
 
-            if (calls.length === 0) {
-                hasMore = false;
-                break;
-            }
+            if (calls.length === 0) { hasMore = false; break; }
 
             for (const call of calls) {
                 try {
-                    const twilioData = {
-                        CallSid: call.sid,
-                        CallStatus: call.status,
-                        Timestamp: Math.floor(new Date(call.dateCreated).getTime() / 1000).toString(),
-                        From: call.from,
-                        To: call.to,
-                        Direction: call.direction,
-                        Duration: call.duration?.toString() || '0',
-                        ParentCallSid: call.parentCallSid,
-                        AnsweredBy: call.answeredBy,
-                        Price: call.price,
-                        PriceUnit: call.priceUnit
-                    };
+                    const twilioPayload = twilioCallToPayload(call);
+                    const existing = await queries.getCallByCallSid(call.sid);
+                    await reconcileCall(twilioPayload, 'reconcile_cold');
 
-                    const normalized = normalizeVoiceEvent(twilioData);
-
-                    // Check if call exists
-                    const existing = await db.query(
-                        'SELECT id, status FROM messages WHERE twilio_sid = $1',
-                        [call.sid]
-                    );
-
-                    const isNew = existing.rows.length === 0;
-
-                    await upsertMessage(normalized, 'reconcile_cold');
-                    await appendCallEvent(normalized, 'reconcile_cold');
-
-                    if (isNew) {
-                        created++;
-                    } else {
-                        updated++;
-                    }
-
+                    if (existing) { updated++; } else { created++; }
                     processed++;
 
                     if (processed % 50 === 0) {
-                        console.log(`   Progress: ${processed} calls processed`);
+                        console.log(`   Progress: ${processed}`);
                     }
-
-                    // Rate limiting
-                    await new Promise(resolve => setTimeout(resolve, 100));
-
+                    await new Promise(r => setTimeout(r, 100));
                 } catch (error) {
-                    console.error(`   ✗ Error processing call ${call.sid}:`, error.message);
+                    console.error(`   ✗ ${call.sid}:`, error.message);
                     errors++;
                 }
             }
 
             page++;
-
-            // Safety: max 10 pages to avoid infinite loop
             if (page >= 10) {
-                console.warn('   ⚠️  Reached max page limit (10), stopping');
+                console.warn('   ⚠️  Max pages reached');
                 hasMore = false;
             }
         }
 
-        console.log(`✅ Cold reconcile complete: ${processed} processed (${created} created, ${updated} updated, ${errors} errors)`);
-
-        await updateSyncCursor('cold_reconcile', endDate);
-
+        console.log(`✅ Cold: ${processed} (${created} new, ${updated} updated, ${errors} errors)`);
+        await queries.upsertSyncState('reconcile_cold', { last_date: endDate });
         return { processed, created, updated, errors };
-
     } catch (error) {
         console.error('❌ Cold reconcile failed:', error);
+        await queries.upsertSyncState('reconcile_cold', {}, error.message);
         throw error;
     }
 }
 
-/**
- * Update sync state cursor
- */
-async function updateSyncCursor(jobType, lastSync) {
-    await db.query(`
-        INSERT INTO sync_state (job_type, last_sync, status)
-        VALUES ($1, $2, 'completed')
-        ON CONFLICT (job_type) DO UPDATE SET
-            last_sync = EXCLUDED.last_sync,
-            status = EXCLUDED.status,
-            updated_at = NOW()
-    `, [jobType, lastSync]);
-}
-
-/**
- * Get last sync time for job type
- */
-async function getLastSync(jobType) {
-    const result = await db.query(
-        'SELECT last_sync FROM sync_state WHERE job_type = $1',
-        [jobType]
-    );
-    return result.rows[0]?.last_sync || null;
-}
-
 module.exports = {
     hotReconcile,
-    warmReconcile,
     coldReconcile,
     fetchCallFromTwilio,
-    updateSyncCursor,
-    getLastSync,
-    RECONCILE_CONFIG
+    reconcileCall,
+    RECONCILE_CONFIG,
 };

@@ -129,12 +129,13 @@ class RealtimeService extends EventEmitter {
     /**
      * Publish call update event
      */
-    publishCallUpdate(call) {
-        this.broadcast('call.updated', {
-            call_sid: call.twilio_sid,
-            status: call.status,
-            is_final: call.is_final,
-            updated_at: call.updated_at
+    publishCallUpdate(data) {
+        const eventType = data.eventType || 'call.updated';
+        this.broadcast(eventType, {
+            call_sid: data.call_sid,
+            status: data.status,
+            is_final: data.is_final,
+            updated_at: data.updated_at || new Date(),
         });
     }
 
@@ -143,11 +144,11 @@ class RealtimeService extends EventEmitter {
      */
     publishCallCreated(call) {
         this.broadcast('call.created', {
-            call_sid: call.twilio_sid,
+            call_sid: call.call_sid,
             status: call.status,
             from_number: call.from_number,
             to_number: call.to_number,
-            created_at: call.start_time
+            created_at: call.started_at || call.created_at
         });
     }
 
