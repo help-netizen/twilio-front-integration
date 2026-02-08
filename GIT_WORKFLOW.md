@@ -1,39 +1,105 @@
-# Git Version Control & Rollback Guide
+# GitHub Flow + Feature Flags — Git Version Control & Rollback Guide
 
 ## 📋 Overview
 
-This document describes the Git versioning strategy and rollback procedures for the Twilio Call Viewer project.
+This document describes a **safe Git workflow (GitHub Flow)** and **rollback procedures** for the Twilio Call Viewer project.
+It is designed to let multiple features be developed in parallel with minimal conflicts and a stable `main` branch.
 
 ## 🎯 Purpose
 
 - **Safe Development:** Enable quick rollback if changes break functionality
 - **Version Tracking:** Maintain clear history of changes
 - **Debugging Safety:** Prevent regressions during AI-assisted development
-- **Change Isolation:** Keep commits focused and reversible
+- **Change Isolation:** Keep commits focused, reviewable, and reversible
+- **Parallel Work:** Multiple feature branches without stepping on each other
+
+---
 
 ## 🏗️ Repository Setup
 
-### Initial Commit
+### Default Branch
 
+- Default branch: `main` (stable, deployable)
+- Direct commits to `main`: **NOT allowed** (PR/MR only)
+
+> If your repo currently uses `master`, rename it to `main` to match this guide.
+
+### Recommended Branch Protection (GitHub Settings)
+
+Enable on `main`:
+- Require PR before merging
+- Require status checks to pass (tests/linters)
+- Require linear history (optional but recommended if you use rebase/squash)
+- Restrict who can push to `main`
+- Require signed commits (optional)
+
+---
+
+## 🌿 Branching Model (GitHub Flow)
+
+### Rule 1 — One feature/fix = one branch
+
+Create a branch from `main` for every task:
+
+Naming conventions:
+- `feature/<short-name>`
+- `fix/<short-name>`
+- `chore/<short-name>`
+- `refactor/<short-name>`
+
+Examples:
+- `feature/customer-create`
+- `feature/zenbooker-sync`
+- `fix/pagination-null-cursor`
+
+Commands:
 ```bash
-Commit: 9163155
-Message: feat: Phase 1 - Initial project setup with React frontend and backend infrastructure
-Files: 41 files, 2388 insertions
+git checkout main
+git pull
+git checkout -b feature/customer-create
 ```
 
-**This commit includes:**
-- ✅ Backend infrastructure (Express server, services, webhooks)
-- ✅ Frontend React app (UI components, routing, state management)
-- ✅ Test suite (27 passing tests)
-- ✅ Configuration files (.gitignore, package.json, vite.config.ts)
+### Rule 2 — Keep branches small and short-lived
 
-### Current Status
+- Prefer PRs that can be merged within **1–3 days**
+- Avoid “mega-PRs” that touch many unrelated files
+- If a feature is large, split into multiple PRs behind a **feature flag**
 
+---
+
+## 🚦 Feature Flags (recommended for big features)
+
+Feature flags let you merge work safely even if the feature is not fully ready yet.
+
+### What to flag
+
+- New UI screens or flows
+- Risky refactors that change behavior
+- Integrations (e.g., Zenbooker sync, Twilio ingestion changes)
+
+### Simple implementation patterns
+
+**Frontend (React):**
+- `.env` flag: `VITE_FEATURE_ZENBOOKER_SYNC=true`
+- Toggle in code:
+```ts
+const ENABLE_ZENBOOKER_SYNC = import.meta.env.VITE_FEATURE_ZENBOOKER_SYNC === "true";
 ```
-Branch: master
-Commit: 9163155
-Status: Clean working tree ✅
+
+**Backend (Node/Express):**
+- `.env` flag: `FEATURE_ZENBOOKER_SYNC=true`
+- Toggle in code:
+```js
+const ENABLE_ZENBOOKER_SYNC = process.env.FEATURE_ZENBOOKER_SYNC === "true";
 ```
+
+### Rules for flags
+
+- Default to **OFF** in production unless explicitly enabled
+- Name flags consistently: `FEATURE_<NAME>` / `VITE_FEATURE_<NAME>`
+- Remove flags when the feature is fully rolled out
+
+---
 
 ## 📝 Commit Guidelines
 
@@ -73,320 +139,266 @@ Related to: Phase 2 - Database Integration"
 1. **Scope:** Each commit should address ONE logical change
 2. **Size:** Keep commits small and focused
 3. **Description:** Message must reference the task/issue
-4. **Working Tree:** Ensure working tree is clean before starting new work
-5. **Frequency:** Commit after completing each meaningful unit of work
+4. **Working Tree:** Ensure working tree is clean before switching tasks
+5. **Frequency:** Commit after each meaningful unit of work
 
-## 🔄 Development Workflow
+---
+
+## 🔄 Development Workflow (GitHub Flow)
 
 ### Before Starting New Work
 
 ```bash
-# 1. Check current status
-git status
+# 1. Ensure you're up to date
+git checkout main
+git pull
 
-# 2. Ensure working tree is clean
-# If changes exist, commit or stash them:
-git add .
-git commit -m "feat: description of changes"
-
-# OR stash for later:
-git stash push -m "WIP: description"
-
-# 3. Create checkpoint tag (optional)
-git tag phase-1-complete
+# 2. Create a new branch for the task
+git checkout -b feature/<short-name>
 ```
 
-### During Development
+### During Development (daily loop)
 
 ```bash
-# 1. Make changes to files
-# ... edit code ...
+# 1. Edit code
+# ... make changes ...
 
-# 2. Check what changed
+# 2. Inspect changes
 git status
 git diff
 
-# 3. Stage changes
-git add <file1> <file2>
-# OR stage all:
+# 3. Run tests (or at least lint)
+npm test
+
+# 4. Commit a small, logical chunk
 git add .
+git commit -m "feat: Add conversation API endpoints"
 
-# 4. Commit with descriptive message
-git commit -m "feat: Add conversation API endpoints
-
-- Implement GET /api/conversations
-- Implement GET /api/conversations/:id
-- Add error handling and validation
-
-Related to: Phase 2 - Backend API"
+# 5. Push your branch
+git push -u origin feature/<short-name>
 ```
 
-### After Completing a Task
+### Keep Your Branch Updated (avoid conflicts)
 
+**Option A (recommended for clean history): rebase onto latest `main`**
 ```bash
-# 1. Verify all changes are committed
-git status
-# Should show: "nothing to commit, working tree clean"
-
-# 2. Review commit history
-git log --oneline -5
-
-# 3. Create a tag for major milestones
-git tag -a v0.2.0 -m "Phase 2: Backend API Complete"
+git fetch origin
+git rebase origin/main
 ```
 
-## ⏪ Rollback Procedures
+If your branch is shared with someone else, prefer **merge** instead:
+
+**Option B: merge latest `main`**
+```bash
+git fetch origin
+git merge origin/main
+```
+
+### Open a Pull Request (PR)
+
+PR checklist:
+- ✅ Tests/linters pass
+- ✅ Changes are limited to a single scope
+- ✅ Feature flag used if feature is incomplete/risky
+- ✅ No secrets (API keys) committed
+- ✅ Clear PR description + screenshots/logs if relevant
+
+### Merge Strategy
+
+Pick ONE merge strategy for consistency:
+
+- **Squash & merge (recommended):** one clean commit per PR
+- **Rebase & merge:** linear history, also clean
+- **Merge commit:** ok, but can get noisy
+
+After merge:
+- Delete the feature branch (GitHub option)
+- Pull latest `main`
+
+---
+
+## ⏪ Rollback Procedures (safe + GitHub Flow)
+
+> Key principle: **If it’s already merged/pushed to shared `main`, use `git revert`.**
+> Use `reset --hard` only on local or private branches.
 
 ### Scenario 1: Uncommitted Changes (Not Working)
 
-**Problem:** Made changes that broke something, changes NOT committed yet
+**Problem:** You made changes that broke something, not committed yet.
 
-**Solution: Discard uncommitted changes**
+**Solution: discard or stash**
 ```bash
-# Option A: Discard ALL uncommitted changes
+# Discard all uncommitted changes
 git reset --hard HEAD
 
-# Option B: Discard specific file
-git checkout -- <filename>
-
-# Option C: Discard all changes but keep new files
-git reset --hard
+# Remove untracked files (careful!)
 git clean -fd
+
+# OR stash changes to recover later
+git stash push -m "WIP: <short-note>"
 ```
 
-### Scenario 2: Last Commit Broke Something
+### Scenario 2: Last Commit on Your Feature Branch Broke Something
 
-**Problem:** Just committed changes that broke functionality
+**Problem:** You committed broken code on your feature branch.
 
-**Solution: Undo last commit**
+**Solution A: undo last commit but keep changes**
 ```bash
-# Option A: Undo commit but keep changes (can fix and recommit)
 git reset --soft HEAD~1
+```
 
-# Option B: Undo commit and discard changes completely
+**Solution B: undo last commit and discard changes**
+```bash
 git reset --hard HEAD~1
 ```
 
-**Example:**
+### Scenario 3: PR Merged into `main` and Broke Production
+
+**Problem:** Bad change is already in `main`.
+
+**Solution (recommended): revert the merge commit or bad commit**
 ```bash
-# Before (broken state)
-$ git log --oneline
-abc1234 (HEAD -> master) feat: Add broken database queries
-9163155 feat: Phase 1 - Initial project setup
-
-# Rollback
-$ git reset --hard HEAD~1
-
-# After (working state restored)
-$ git log --oneline
-9163155 (HEAD -> master) feat: Phase 1 - Initial project setup
+git checkout main
+git pull
+git revert <bad-commit-hash>
+git push origin main
 ```
 
-### Scenario 3: Multiple Commits Ago
+This creates a NEW commit that safely undoes the change without rewriting history.
 
-**Problem:** Changes from several commits ago broke things
+### Scenario 4: Need to Roll Back to a Known Good State (Local/Private)
 
-**Solution: Reset to specific commit**
+**Problem:** You need to jump back to a known good commit (local only).
+
 ```bash
-# 1. Find the good commit
 git log --oneline
-
-# 2. Reset to that commit
-git reset --hard <commit-hash>
-
-# Example:
-git reset --hard 9163155
+git reset --hard <good-commit-hash>
 ```
 
-### Scenario 4: Need to Keep Some Recent Changes
+> Avoid force-pushing this to shared branches. If `main` is shared, use **revert**.
 
-**Problem:** Want to rollback but preserve some files
+### Scenario 5: Preserve Some Work While Rolling Back
 
-**Solution: Cherry-pick approach**
 ```bash
-# 1. Save current state
-git stash
+# Save your current work
+git stash push -m "WIP: before rollback"
 
-# 2. Reset to good state
-git reset --hard <good-commit>
+# Reset to good commit
+git reset --hard <good-commit-hash>
 
-# 3. Restore specific files from stash
+# Restore only selected files
 git checkout stash@{0} -- <file1> <file2>
 
-# 4. Review and commit
+# Commit restored pieces
 git add <files>
-git commit -m "fix: Restore working files after rollback"
+git commit -m "fix: Restore selected files after rollback"
 ```
 
-### Scenario 5: Already Pushed to Remote
+---
 
-**Problem:** Bad commit already pushed to remote repository
+## 🏷️ Tags & Releases (optional, but helpful)
 
-**Solution: Revert (safer) or Force push**
+Use tags for major milestones/releases:
+
 ```bash
-# Option A: Create revert commit (RECOMMENDED)
-git revert <bad-commit-hash>
-# This creates a NEW commit that undoes the bad one
-
-# Option B: Force push (USE WITH CAUTION)
-git reset --hard <good-commit>
-git push --force origin master
-# ⚠️ Only if you're sure no one else has pulled the bad commit
+git tag -a v0.2.0 -m "Phase 2 complete"
+git push --tags
 ```
+
+Recommended tag naming:
+- `v0.1.0`, `v0.2.0` … for releases
+- `phase-2-start`, `phase-2-api`, `phase-2-sync` … for internal milestones
+
+---
 
 ## 📋 Quick Reference Commands
 
-### Check Status
+### Daily essentials
 ```bash
-# Current status
 git status
-
-# View recent commits
 git log --oneline -10
-
-# View all tags
-git tag -l
-
-# See what changed
 git diff
-git diff HEAD~1  # Compare with previous commit
 ```
 
-### Safe Rollback (Most Common)
+### Start a new feature (GitHub Flow)
 ```bash
-# Undo last commit, keep changes
-git reset --soft HEAD~1
-
-# Undo last commit, discard changes
-git reset --hard HEAD~1
-
-# Return to specific commit
-git reset --hard <commit-hash>
-
-# Return to Phase 1
-git reset --hard 9163155
+git checkout main
+git pull
+git checkout -b feature/<short-name>
 ```
 
-### Create Checkpoints
+### Update your branch
 ```bash
-# Create named tag
-git tag phase-2-start
-git tag phase-2-database-complete
-
-# View all tags
-git tag -l
-
-# Return to tagged version
-git checkout phase-1-complete
+git fetch origin
+git rebase origin/main   # recommended
+# or:
+git merge origin/main
 ```
 
-## 🛡️ Best Practices
+### Safe rollback
+```bash
+git revert <commit>         # safe for shared main
+git reset --hard HEAD~1     # local/private branches only
+```
+
+---
+
+## 🛡️ Best Practices (what actually prevents conflicts)
 
 ### DO:
-✅ Commit frequently (after each logical change)  
-✅ Write descriptive commit messages  
-✅ Check `git status` before and after commits  
-✅ Create tags for major milestones  
-✅ Test before committing  
-✅ Keep commits focused and small  
+✅ Keep PRs small (merge frequently)  
+✅ Rebase/merge from `main` daily  
+✅ Use feature flags for large/risky features  
+✅ Split refactors into a separate PR before feature work  
+✅ Avoid having two branches heavily edit the same file/module  
+✅ Add tests around bug fixes (so the bug can’t return silently)  
 
 ### DON'T:
-❌ Mix unrelated changes in one commit  
-❌ Commit broken code (unless WIP branch)  
-❌ Leave working tree dirty before new work  
-❌ Force push to shared branches  
-❌ Commit sensitive data (API keys, passwords)  
+❌ Commit directly to `main`  
+❌ Keep long-lived branches for weeks  
+❌ Force-push shared branches  
+❌ Mix refactor + feature + formatting in one PR  
+❌ Store secrets in git history  
 
-## 📊 Project Milestones & Tags
+---
 
-Current milestones:
-
-```
-v0.1.0 (9163155) - Phase 1 Complete
-├── Backend infrastructure
-├── Frontend React app
-└── Test suite (27 tests)
-
-[Next: v0.2.0 - Phase 2: Backend API]
-```
-
-Planned tags:
-- `phase-2-database` - Database schema complete
-- `phase-2-api` - API endpoints complete
-- `phase-2-sync` - Twilio sync service complete
-- `v0.2.0` - Phase 2 complete
-
-## 🚨 Emergency Rollback
-
-If everything is broken and you're not sure what to do:
+## 📝 Workflow Example (parallel features)
 
 ```bash
-# 1. Stop and check where you are
-git status
-git log --oneline -5
+# Feature A: customer create
+git checkout main && git pull
+git checkout -b feature/customer-create
+# ... work, commit, push, PR ...
 
-# 2. Return to last known good state (Phase 1)
-git reset --hard 9163155
+# Feature B: pagination fixes (in parallel)
+git checkout main && git pull
+git checkout -b fix/pagination-null-cursor
+# ... work, commit, push, PR ...
 
-# 3. Verify it works
-npm run dev  # Backend
-cd frontend && npm run dev  # Frontend
-
-# 4. Start over from clean state
+# Keep both branches up to date:
+git fetch origin
+git rebase origin/main
 ```
 
-## 📝 Workflow Example
+---
 
-Complete example of safe development cycle:
+## 🚨 Emergency “Stop the Bleeding” (shared main)
 
+If `main` is broken after a merge:
+1) Identify the bad commit in GitHub/CI
+2) Run:
 ```bash
-# === Starting Phase 2 ===
-
-# 1. Verify clean state
-$ git status
-On branch master
-nothing to commit, working tree clean ✅
-
-# 2. Tag starting point
-$ git tag phase-2-start
-
-# 3. Make changes (e.g., add database schema)
-$ nano backend/src/db/schema.sql
-$ nano backend/src/db/queries.js
-
-# 4. Test changes
-$ npm test
-
-# 5. Commit if working
-$ git add backend/src/db/
-$ git commit -m "feat: Add PostgreSQL database schema
-
-- Create contacts table with phone number handling
-- Create conversations table with metadata
-- Create messages table for call records
-- Add indexes for performance
-
-Related to: Phase 2 - Database Integration"
-
-# 6. Continue with next feature (API endpoints)
-$ nano backend/src/routes/conversations.js
-
-# 7. If this breaks something:
-$ git reset --hard HEAD~1  # Rollback to database commit
-# OR
-$ git reset --hard phase-2-start  # Rollback to start of Phase 2
+git checkout main
+git pull
+git revert <bad-commit-hash>
+git push origin main
 ```
+3) Open a follow-up PR to fix properly behind a feature flag if needed
+
+---
 
 ## 🔗 Useful Resources
 
 - [Git Documentation](https://git-scm.com/doc)
 - [How to Write a Git Commit Message](https://chris.beams.io/posts/git-commit/)
 - [Git Cheat Sheet](https://education.github.com/git-cheat-sheet-education.pdf)
-
----
-
-**Current State:**
-- Repository: Initialized ✅
-- Phase 1: Committed (9163155) ✅
-- Working Tree: Clean ✅
-- Ready for: Phase 2 Development ✅
