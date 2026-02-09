@@ -39,6 +39,7 @@ function callToCallData(call: Call): CallData {
         parentCall: call.parent_call_sid || undefined,
         twilioDirection: call.direction,
         audioUrl: call.recording?.playback_url || undefined,
+        recordingDuration: call.recording?.duration_sec || undefined,
         transcription: call.transcript?.text || undefined,
         transcriptStatus: call.transcript?.status as CallData['transcriptStatus'] || undefined,
     };

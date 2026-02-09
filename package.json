@@ -9,6 +9,10 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
+    "dev:local": "./scripts/dev-start.sh",
+    "dev:backend": "./scripts/dev-start.sh --backend-only",
+    "deploy:prod": "./scripts/prod-deploy.sh",
+    "webhooks:prod": "./scripts/prod-deploy.sh --webhooks-only",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage"

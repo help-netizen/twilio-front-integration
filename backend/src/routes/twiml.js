@@ -9,7 +9,7 @@ const router = express.Router();
  * 2. Sends status callbacks for ALL call events
  */
 router.post('/voice', (req, res) => {
-    const baseUrl = process.env.WEBHOOK_BASE_URL || 'https://abc-metrics.fly.dev';
+    const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
     const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
 
     // Twilio SIP domain - connects to Bria softphone

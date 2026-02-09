@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { formatPhoneNumber } from '@/utils/formatters';
 
 export interface CallData {
     id: string;
@@ -38,6 +39,7 @@ export interface CallData {
     parentCall?: string;
     twilioDirection: string;
     audioUrl?: string;
+    recordingDuration?: number;
     summary?: string;
     transcription?: string;
     transcriptStatus?: 'processing' | 'completed' | 'failed';
@@ -54,7 +56,7 @@ export function CallListItem({ call }: CallListItemProps) {
     // Audio player state
     const [isPlaying, setIsPlaying] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
-    const [duration, setDuration] = useState(0);
+    const [duration, setDuration] = useState(call.recordingDuration || call.totalDuration || call.duration || 0);
     const audioRef = useRef<HTMLAudioElement>(null);
 
     const getStatusColor = (status: string) => {
@@ -177,8 +179,11 @@ export function CallListItem({ call }: CallListItemProps) {
                     {/* Call Details */}
                     <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-2">
-                            <div>
-                                <p className="text-sm text-gray-900 font-mono font-semibold">{otherPartyNumber}</p>
+                            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
+                                <p className="text-sm text-gray-900 font-mono font-semibold">{formatPhoneNumber(otherPartyNumber)}</p>
+                                {(call.totalDuration || call.duration) ? (
+                                    <span style={{ fontSize: '0.75rem', color: '#9ca3af' }}>{formatDuration(call.totalDuration || call.duration)}</span>
+                                ) : null}
                             </div>
                             {/* Date and System Info toggle in top right corner */}
                             <div className="flex items-center gap-2">
@@ -210,76 +215,129 @@ export function CallListItem({ call }: CallListItemProps) {
 
             {/* Always Visible Content */}
             <div className="bg-gray-50/50">
-                {/* Audio Player - Parent Component */}
+                {/* Audio Player */}
                 {call.audioUrl && (
                     <div className="px-4 pb-4 bg-white">
-                        <audio ref={audioRef} src={call.audioUrl} />
+                        <audio ref={audioRef} src={call.audioUrl} preload="metadata" />
 
                         <div className="space-y-3">
-                            {/* Action buttons and Controls in one row */}
-                            <div className="flex items-center gap-3">
-                                {/* Summary and Transcription buttons on the left */}
-                                <div className="flex items-center gap-3 shrink-0">
-                                    {call.summary && (
-                                        <button
-                                            onClick={() => setActiveSection(activeSection === 'summary' ? null : 'summary')}
-                                            className={`text-xs transition-colors ${activeSection === 'summary'
-                                                ? 'text-gray-700 border-b-2 border-gray-700'
-                                                : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
-                                                }`}
-                                        >
-                                            Summary
-                                        </button>
-                                    )}
-
-                                    {(call.transcription || call.transcriptStatus) && (
-                                        <button
-                                            onClick={() => setActiveSection(activeSection === 'transcription' ? null : 'transcription')}
-                                            className={`text-xs transition-colors ${activeSection === 'transcription'
-                                                ? 'text-gray-700 border-b-2 border-gray-700'
-                                                : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
-                                                }`}
-                                        >
-                                            {call.transcriptStatus === 'processing' ? 'Transcribing…' : 'Transcript'}
-                                        </button>
-                                    )}
+                            {/* Single row: [Summary][Transcript] | [⟲10][▶][⟳10] | 0:00 ━━●── 3:45 */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                {/* LEFT: Summary/Transcript buttons */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
+                                    <button
+                                        onClick={() => setActiveSection(activeSection === 'summary' ? null : 'summary')}
+                                        style={{
+                                            fontSize: '0.75rem',
+                                            lineHeight: '1rem',
+                                            background: 'transparent',
+                                            border: 'none',
+                                            borderBottom: activeSection === 'summary' ? '2px solid #374151' : '1px dashed #9ca3af',
+                                            borderRadius: 0,
+                                            padding: 0,
+                                            paddingBottom: '1px',
+                                            cursor: 'pointer',
+                                            color: activeSection === 'summary' ? '#374151' : '#6b7280',
+                                            outline: 'none',
+                                            transition: 'color 150ms, border-color 150ms',
+                                        }}
+                                    >
+                                        Summary
+                                    </button>
+                                    <button
+                                        onClick={() => setActiveSection(activeSection === 'transcription' ? null : 'transcription')}
+                                        style={{
+                                            fontSize: '0.75rem',
+                                            lineHeight: '1rem',
+                                            background: 'transparent',
+                                            border: 'none',
+                                            borderBottom: activeSection === 'transcription' ? '2px solid #374151' : '1px dashed #9ca3af',
+                                            borderRadius: 0,
+                                            padding: 0,
+                                            paddingBottom: '1px',
+                                            cursor: 'pointer',
+                                            color: activeSection === 'transcription' ? '#374151' : '#6b7280',
+                                            outline: 'none',
+                                            transition: 'color 150ms, border-color 150ms',
+                                        }}
+                                    >
+                                        {call.transcriptStatus === 'processing' ? 'Transcribing...' : 'Transcript'}
+                                    </button>
                                 </div>
 
-                                {/* Audio Controls */}
-                                <div className="flex items-center gap-1 shrink-0">
+                                {/* CENTER: Audio Controls */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', flexShrink: 0 }}>
                                     <button
                                         onClick={() => handleSkip(-10)}
                                         title="Rewind 10 seconds"
-                                        className="h-7 w-7 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors relative"
+                                        style={{
+                                            height: '2rem',
+                                            width: '2rem',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            background: 'transparent',
+                                            border: 'none',
+                                            padding: 0,
+                                            cursor: 'pointer',
+                                            color: '#6b7280',
+                                            position: 'relative',
+                                            transition: 'color 150ms',
+                                        }}
                                     >
-                                        <RotateCcw className="w-3.5 h-3.5" />
-                                        <span className="absolute text-[9px] font-semibold">10</span>
+                                        <RotateCcw style={{ width: 20, height: 20, minWidth: 20, stroke: '#6b7280', fill: 'none' }} />
+                                        <span style={{ position: 'absolute', fontSize: '7px', fontWeight: 700, color: '#6b7280', lineHeight: 1 }}>10</span>
                                     </button>
 
                                     <button
                                         onClick={handlePlayPause}
-                                        className="h-7 w-7 flex items-center justify-center text-gray-500 hover:text-gray-700 transition-colors"
+                                        style={{
+                                            height: '2rem',
+                                            width: '2rem',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            background: 'transparent',
+                                            border: 'none',
+                                            padding: 0,
+                                            cursor: 'pointer',
+                                            color: '#6b7280',
+                                            transition: 'color 150ms',
+                                        }}
                                     >
                                         {isPlaying ? (
-                                            <Pause className="w-3.5 h-3.5" />
+                                            <Pause style={{ width: 20, height: 20, minWidth: 20, stroke: '#6b7280', fill: 'none' }} />
                                         ) : (
-                                            <Play className="w-3.5 h-3.5" />
+                                            <Play style={{ width: 20, height: 20, minWidth: 20, stroke: '#6b7280', fill: 'none' }} />
                                         )}
                                     </button>
 
                                     <button
                                         onClick={() => handleSkip(10)}
                                         title="Forward 10 seconds"
-                                        className="h-7 w-7 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors relative"
+                                        style={{
+                                            height: '2rem',
+                                            width: '2rem',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            background: 'transparent',
+                                            border: 'none',
+                                            padding: 0,
+                                            cursor: 'pointer',
+                                            color: '#6b7280',
+                                            position: 'relative',
+                                            transition: 'color 150ms',
+                                        }}
                                     >
-                                        <RotateCw className="w-3.5 h-3.5" />
-                                        <span className="absolute text-[9px] font-semibold">10</span>
+                                        <RotateCw style={{ width: 20, height: 20, minWidth: 20, stroke: '#6b7280', fill: 'none' }} />
+                                        <span style={{ position: 'absolute', fontSize: '7px', fontWeight: 700, color: '#6b7280', lineHeight: 1 }}>10</span>
                                     </button>
                                 </div>
 
-                                {/* Timeline on the right */}
-                                <div className="flex-1 flex items-center gap-2">
-                                    <span className="text-xs text-gray-400 shrink-0 w-10 text-right">
+                                {/* RIGHT: Timeline (stretches) */}
+                                <div style={{ flex: '1 1 0%', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <span style={{ fontSize: '0.75rem', lineHeight: '1rem', color: '#9ca3af', flexShrink: 0, width: '2.5rem', textAlign: 'right' }}>
                                         {formatAudioTime(currentTime)}
                                     </span>
                                     <Slider
@@ -289,33 +347,41 @@ export function CallListItem({ call }: CallListItemProps) {
                                         onValueChange={handleSliderChange}
                                         className="flex-1"
                                     />
-                                    <span className="text-xs text-gray-400 shrink-0 w-10">
+                                    <span style={{ fontSize: '0.75rem', lineHeight: '1rem', color: '#9ca3af', flexShrink: 0, width: '2.5rem' }}>
                                         {formatAudioTime(duration)}
                                     </span>
                                 </div>
                             </div>
 
                             {/* Summary - Show only when active */}
-                            {activeSection === 'summary' && call.summary && (
+                            {activeSection === 'summary' && (
                                 <div className="pt-2">
-                                    <p className="text-sm text-gray-700 leading-relaxed bg-blue-50 p-3 rounded-md">
-                                        {call.summary}
-                                    </p>
+                                    {call.summary ? (
+                                        <p className="text-sm text-gray-700 leading-relaxed bg-blue-50 p-3 rounded-md">
+                                            {call.summary}
+                                        </p>
+                                    ) : (
+                                        <p className="text-sm text-gray-400 italic bg-gray-50 p-3 rounded-md">
+                                            No summary available
+                                        </p>
+                                    )}
                                 </div>
                             )}
 
                             {/* Transcription - Show only when active */}
-                            {activeSection === 'transcription' && (call.transcription || call.transcriptStatus) && (
+                            {activeSection === 'transcription' && (
                                 <div className="pt-2">
                                     <ScrollArea className="h-48 bg-gray-50 p-3 rounded-md">
                                         {call.transcriptStatus === 'processing' ? (
-                                            <p className="text-sm text-gray-500 italic animate-pulse">Transcribing audio…</p>
+                                            <p className="text-sm text-gray-500 italic animate-pulse">Transcribing audio...</p>
                                         ) : call.transcriptStatus === 'failed' ? (
                                             <p className="text-sm text-red-500">Transcription failed</p>
-                                        ) : (
+                                        ) : call.transcription ? (
                                             <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
                                                 {call.transcription}
                                             </p>
+                                        ) : (
+                                            <p className="text-sm text-gray-400 italic">No transcript available</p>
                                         )}
                                     </ScrollArea>
                                 </div>

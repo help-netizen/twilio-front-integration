@@ -152,20 +152,23 @@ async function getCalls({ cursor, limit = 50, status, hasRecording, hasTranscrip
  */
 async function getCallsByContact({ limit = 20, offset = 0 } = {}) {
     const result = await db.query(
-        `SELECT DISTINCT ON (c.contact_id)
-            c.*,
-            to_json(co) as contact,
-            (SELECT COUNT(*) FROM calls c2 WHERE c2.contact_id = c.contact_id) as call_count
-         FROM calls c
-         LEFT JOIN contacts co ON c.contact_id = co.id
-         WHERE c.contact_id IS NOT NULL
-           -- Exclude contacts that ONLY have failed/canceled calls
-           AND EXISTS (
-               SELECT 1 FROM calls c3
-               WHERE c3.contact_id = c.contact_id
-                 AND c3.status NOT IN ('failed', 'canceled')
-           )
-         ORDER BY c.contact_id, c.started_at DESC NULLS LAST
+        `SELECT * FROM (
+            SELECT DISTINCT ON (c.contact_id)
+                c.*,
+                to_json(co) as contact,
+                (SELECT COUNT(*) FROM calls c2 WHERE c2.contact_id = c.contact_id) as call_count
+             FROM calls c
+             LEFT JOIN contacts co ON c.contact_id = co.id
+             WHERE c.contact_id IS NOT NULL
+               -- Exclude contacts that ONLY have failed/canceled calls
+               AND EXISTS (
+                   SELECT 1 FROM calls c3
+                   WHERE c3.contact_id = c.contact_id
+                     AND c3.status NOT IN ('failed', 'canceled')
+               )
+             ORDER BY c.contact_id, c.started_at DESC NULLS LAST
+         ) sub
+         ORDER BY sub.started_at DESC NULLS LAST
          LIMIT $1 OFFSET $2`,
         [limit, offset]
     );

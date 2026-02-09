@@ -195,12 +195,18 @@ async function processVoiceEvent(payload, eventType, traceId) {
     );
 
     // Enrich from Twilio API on final status
+    let enrichedCall = call;
     if (isFinal) {
         await enrichFromTwilioApi(normalized.callSid, call, traceId);
+        // Re-read from DB to get enriched data for SSE broadcast
+        try {
+            const freshCall = await queries.getCallByCallSid(normalized.callSid);
+            if (freshCall) enrichedCall = freshCall;
+        } catch (e) { /* use original call if re-read fails */ }
     }
 
-    // Publish realtime event
-    publishRealtimeEvent('call.updated', call || { call_sid: normalized.callSid, status: normalized.eventStatus }, traceId);
+    // Publish realtime event (after enrichment so frontend gets correct duration)
+    publishRealtimeEvent('call.updated', enrichedCall || { call_sid: normalized.callSid, status: normalized.eventStatus }, traceId);
 }
 
 // =============================================================================
@@ -324,26 +330,33 @@ async function enrichFromTwilioApi(callSid, existingCall, traceId) {
         const twilio = require('twilio');
         const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
         const details = await client.calls(callSid).fetch();
+        const db = require('../db/connection');
 
-        // Update call with enriched data
-        await queries.upsertCall({
-            callSid,
-            parentCallSid: details.parentCallSid || null,
-            contactId: existingCall?.contact_id || null,
-            direction: existingCall?.direction || details.direction,
-            fromNumber: details.from,
-            toNumber: details.to,
-            status: existingCall?.status || details.status,
-            isFinal: true,
-            startedAt: details.startTime ? new Date(details.startTime) : null,
-            answeredAt: details.startTime ? new Date(details.startTime) : null,
-            endedAt: details.endTime ? new Date(details.endTime) : null,
-            durationSec: parseInt(details.duration) || null,
-            price: details.price ? parseFloat(details.price) : null,
-            priceUnit: details.priceUnit || 'USD',
-            lastEventTime: details.dateUpdated ? new Date(details.dateUpdated) : new Date(),
-            rawLastPayload: existingCall?.raw_last_payload || {},
-        });
+        // Direct UPDATE bypassing the timestamp guard in upsertCall
+        // The enrichment should always overwrite with authoritative Twilio API data
+        await db.query(
+            `UPDATE calls SET
+                parent_call_sid = COALESCE($2, parent_call_sid),
+                direction       = COALESCE(direction, $3),
+                started_at      = COALESCE($4, started_at),
+                answered_at     = COALESCE($5, answered_at),
+                ended_at        = COALESCE($6, ended_at),
+                duration_sec    = COALESCE($7, duration_sec),
+                price           = COALESCE($8, price),
+                price_unit      = COALESCE($9, price_unit)
+             WHERE call_sid = $1`,
+            [
+                callSid,
+                details.parentCallSid || null,
+                existingCall?.direction || details.direction,
+                details.startTime ? new Date(details.startTime) : null,
+                details.startTime ? new Date(details.startTime) : null,
+                details.endTime ? new Date(details.endTime) : null,
+                parseInt(details.duration) || null,
+                details.price ? parseFloat(details.price) : null,
+                details.priceUnit || 'USD',
+            ]
+        );
 
         console.log(`[${traceId}] Enriched from Twilio API`, {
             price: details.price,

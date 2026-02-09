@@ -214,7 +214,7 @@ async function handleVoiceInbound(req, res) {
         });
 
         // Determine direction and return TwiML
-        const baseUrl = process.env.WEBHOOK_BASE_URL || 'https://abc-metrics.fly.dev';
+        const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
         const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
         const dialActionUrl = `${baseUrl}/webhooks/twilio/dial-action`;
         const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;
