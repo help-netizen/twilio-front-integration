@@ -217,7 +217,7 @@ router.post('/:uuid/unassign', async (req, res) => {
 router.post('/:uuid/convert', async (req, res) => {
     const reqId = requestId();
     try {
-        const result = await leadsService.convertLead(req.params.uuid);
+        const result = await leadsService.convertLead(req.params.uuid, req.body || {});
         res.json(successResponse(result, reqId));
     } catch (err) {
         handleError(err, reqId, res);

@@ -146,6 +146,51 @@ async function createJobFromLead(lead) {
     return res.data;
 }
 
+// ─── Scheduling methods (for custom booking flow) ─────────────────────────────
+
+/**
+ * Check if a postal code is in a service area.
+ * Returns { in_service_area, service_territory, customer_location }
+ */
+async function checkServiceArea(postalCode) {
+    const res = await retryRequest(() =>
+        getClient().get('/scheduling/service_area_check', { params: { postal_code: postalCode } })
+    );
+    return res.data;
+}
+
+/**
+ * Get available timeslots for a territory.
+ * @param {Object} params - { territory, date, duration, days?, lat?, lng? }
+ */
+async function getTimeslots(params) {
+    const res = await retryRequest(() =>
+        getClient().get('/scheduling/timeslots', { params })
+    );
+    return res.data;
+}
+
+/**
+ * Get service catalog.
+ */
+async function getServices() {
+    const res = await retryRequest(() =>
+        getClient().get('/services', { params: { is_visible: true } })
+    );
+    return res.data;
+}
+
+/**
+ * Create a job with a direct payload (from booking dialog).
+ * Unlike createJobFromLead, this takes a pre-built Zenbooker payload.
+ */
+async function createJob(payload) {
+    console.log('[Zenbooker] Creating job (direct):', JSON.stringify(payload, null, 2));
+    const res = await retryRequest(() => getClient().post('/jobs', payload));
+    console.log('[Zenbooker] Job created:', res.data.job_id);
+    return res.data;
+}
+
 // ─── Retry helper ─────────────────────────────────────────────────────────────
 
 async function retryRequest(requestFn, maxRetries = 3) {
@@ -171,6 +216,11 @@ async function retryRequest(requestFn, maxRetries = 3) {
 
 module.exports = {
     createJobFromLead,
+    createJob,
     getTerritories,
     findTerritoryByPostalCode,
+    checkServiceArea,
+    getTimeslots,
+    getServices,
 };
+

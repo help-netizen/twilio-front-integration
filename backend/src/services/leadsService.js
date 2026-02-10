@@ -415,7 +415,7 @@ async function unassignUser(uuid, userName) {
 // =============================================================================
 // Convert Lead to Job
 // =============================================================================
-async function convertLead(uuid) {
+async function convertLead(uuid, overrides = {}) {
     // 1. Fetch full lead to get address/contact info for Zenbooker
     const { rows: leadRows } = await db.query(
         'SELECT * FROM leads WHERE uuid = $1', [uuid]
@@ -425,24 +425,30 @@ async function convertLead(uuid) {
     }
     const lead = rowToLead(leadRows[0]);
 
-    // 2. Create job in Zenbooker
-    let zenbookerJobId = null;
-    try {
-        const zbResult = await zenbookerClient.createJobFromLead(lead);
-        zenbookerJobId = zbResult.job_id;
-        console.log(`[ConvertLead] Zenbooker job created: ${zenbookerJobId}`);
-    } catch (err) {
-        // If Zenbooker API key not configured, skip silently
-        if (err.message === 'ZENBOOKER_API_KEY is not configured') {
-            console.warn('[ConvertLead] Zenbooker not configured, skipping job creation');
-        } else {
-            console.error('[ConvertLead] Zenbooker error:', err.response?.data || err.message);
-            throw new LeadsServiceError(
-                'ZENBOOKER_ERROR',
-                `Failed to create Zenbooker job: ${err.response?.data?.error?.message || err.message}`,
-                502
-            );
+    // 2. Create job in Zenbooker (or use pre-created job_id from booking dialog)
+    let zenbookerJobId = overrides.zenbooker_job_id || null;
+
+    if (!zenbookerJobId) {
+        // No pre-created job — call Zenbooker auto-create
+        try {
+            const zbResult = await zenbookerClient.createJobFromLead(lead);
+            zenbookerJobId = zbResult.job_id;
+            console.log(`[ConvertLead] Zenbooker job created: ${zenbookerJobId}`);
+        } catch (err) {
+            // If Zenbooker API key not configured, skip silently
+            if (err.message === 'ZENBOOKER_API_KEY is not configured') {
+                console.warn('[ConvertLead] Zenbooker not configured, skipping job creation');
+            } else {
+                console.error('[ConvertLead] Zenbooker error:', err.response?.data || err.message);
+                throw new LeadsServiceError(
+                    'ZENBOOKER_ERROR',
+                    `Failed to create Zenbooker job: ${err.response?.data?.error?.message || err.message}`,
+                    502
+                );
+            }
         }
+    } else {
+        console.log(`[ConvertLead] Using pre-created Zenbooker job: ${zenbookerJobId}`);
     }
 
     // 3. Mark lead as converted and save Zenbooker job ID

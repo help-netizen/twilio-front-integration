@@ -6,6 +6,7 @@ import { LeadDetailPanel } from '../components/leads/LeadDetailPanel';
 import { CreateLeadDialog } from '../components/leads/CreateLeadDialog';
 import { EditLeadDialog } from '../components/leads/EditLeadDialog';
 import { ColumnSettingsDialog } from '../components/leads/ColumnSettingsDialog';
+import { ConvertToJobDialog } from '../components/leads/ConvertToJobDialog';
 import { Button } from '../components/ui/button';
 import { Plus, Settings } from 'lucide-react';
 import * as leadsApi from '../services/leadsApi';
@@ -20,6 +21,7 @@ export function LeadsPage() {
     const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
     const [editingLead, setEditingLead] = useState<Lead | null>(null);
     const [createDialogOpen, setCreateDialogOpen] = useState(false);
+    const [convertingLead, setConvertingLead] = useState<Lead | null>(null);
     const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
 
     // Column settings state
@@ -139,17 +141,26 @@ export function LeadsPage() {
         }
     };
 
-    const handleConvert = async (uuid: string) => {
-        try {
-            await leadsApi.convertLead(uuid);
-            const detail = await leadsApi.getLeadByUUID(uuid);
-            const updated = detail.data.lead;
-            setLeads(prev => prev.map(l => l.UUID === uuid ? updated : l));
-            if (selectedLead?.UUID === uuid) setSelectedLead(updated);
-            toast.success('Lead converted to job');
-        } catch (error) {
-            toast.error('Failed to convert lead');
+    const handleConvert = (uuid: string) => {
+        // Find the lead and open the booking dialog
+        const lead = leads.find(l => l.UUID === uuid) || selectedLead;
+        if (lead) {
+            setConvertingLead(lead);
         }
+    };
+
+    const handleConvertSuccess = async (updatedLead: Lead) => {
+        // Refresh the lead from server
+        try {
+            const detail = await leadsApi.getLeadByUUID(updatedLead.UUID);
+            const freshLead = detail.data.lead;
+            setLeads(prev => prev.map(l => l.UUID === freshLead.UUID ? freshLead : l));
+            if (selectedLead?.UUID === freshLead.UUID) setSelectedLead(freshLead);
+        } catch {
+            // Fallback: use the lead data we have
+            setLeads(prev => prev.map(l => l.UUID === updatedLead.UUID ? updatedLead : l));
+        }
+        setConvertingLead(null);
     };
 
     const handleUpdateComments = async (uuid: string, comments: string) => {
@@ -296,6 +307,15 @@ export function LeadsPage() {
                 columns={columns}
                 onSave={handleSaveColumns}
             />
+
+            {convertingLead && (
+                <ConvertToJobDialog
+                    lead={convertingLead}
+                    open={!!convertingLead}
+                    onOpenChange={(open) => !open && setConvertingLead(null)}
+                    onSuccess={handleConvertSuccess}
+                />
+            )}
         </div>
     );
 }

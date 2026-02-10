@@ -133,9 +133,9 @@ export async function unassignLead(uuid: string, user: string): Promise<LeadMuta
 /**
  * Convert lead to job
  */
-export async function convertLead(uuid: string): Promise<LeadMutationResponse> {
+export async function convertLead(uuid: string, body: Record<string, unknown> = {}): Promise<LeadMutationResponse> {
     return request<LeadMutationResponse>(`${API_BASE}/${encodeURIComponent(uuid)}/convert`, {
         method: 'POST',
-        body: '{}',
+        body: JSON.stringify(body),
     });
 }
