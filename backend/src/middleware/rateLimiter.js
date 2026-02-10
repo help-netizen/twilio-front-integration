@@ -64,9 +64,11 @@ function rateLimiterMiddleware(req, res, next) {
     // Check IP limit
     const ipResult = check(`ip:${ip}`);
     if (!ipResult.allowed) {
+        const retryAfter = Math.ceil((ipResult.resetAt - Date.now()) / 1000);
+        res.setHeader('Retry-After', retryAfter);
         return res.status(429).json({
             success: false,
-            code: 'RATE_LIMIT_EXCEEDED',
+            code: 'RATE_LIMITED',
             message: 'Too many requests from this IP',
             request_id: req.requestId,
         });
@@ -79,9 +81,11 @@ function rateLimiterMiddleware(req, res, next) {
         res.setHeader('X-RateLimit-Remaining', keyResult.remaining);
         res.setHeader('X-RateLimit-Reset', Math.ceil(keyResult.resetAt / 1000));
         if (!keyResult.allowed) {
+            const retryAfter = Math.ceil((keyResult.resetAt - Date.now()) / 1000);
+            res.setHeader('Retry-After', retryAfter);
             return res.status(429).json({
                 success: false,
-                code: 'RATE_LIMIT_EXCEEDED',
+                code: 'RATE_LIMITED',
                 message: 'Too many requests for this API key',
                 request_id: req.requestId,
             });

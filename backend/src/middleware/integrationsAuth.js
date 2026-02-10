@@ -129,7 +129,7 @@ async function authenticateIntegration(req, res, next) {
             console.warn(`[Auth] Invalid key_id: ${masked}`);
             return res.status(401).json({
                 success: false,
-                code: 'AUTH_KEY_INVALID',
+                code: 'AUTH_KEY_NOT_FOUND',
                 message: 'Invalid API key.',
                 request_id: req.requestId,
             });
@@ -141,7 +141,7 @@ async function authenticateIntegration(req, res, next) {
         if (integration.revoked_at) {
             return res.status(401).json({
                 success: false,
-                code: 'AUTH_CREDENTIALS_INACTIVE',
+                code: 'AUTH_KEY_REVOKED',
                 message: 'This integration has been revoked.',
                 request_id: req.requestId,
             });
@@ -151,7 +151,7 @@ async function authenticateIntegration(req, res, next) {
         if (integration.expires_at && new Date(integration.expires_at) < new Date()) {
             return res.status(401).json({
                 success: false,
-                code: 'AUTH_CREDENTIALS_INACTIVE',
+                code: 'AUTH_KEY_EXPIRED',
                 message: 'This integration has expired.',
                 request_id: req.requestId,
             });
