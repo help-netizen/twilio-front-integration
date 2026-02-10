@@ -8,7 +8,9 @@ const syncRouter = require('../backend/src/routes/sync');
 const eventsRouter = require('../backend/src/routes/events');
 const twimlRouter = require('../backend/src/routes/twiml');
 const leadsRouter = require('../backend/src/routes/leads');
-const workizCompatRouter = require('../backend/src/routes/workiz-compat');
+const integrationsLeadsRouter = require('../backend/src/routes/integrations-leads');
+const integrationsAdminRouter = require('../backend/src/routes/integrations-admin');
+const requestId = require('../backend/src/middleware/requestId');
 const db = require('../backend/src/db/connection');
 
 const app = express();
@@ -18,7 +20,7 @@ const PORT = process.env.PORT || 3000;
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', 'http://localhost:3001');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-BLANC-API-KEY, X-BLANC-API-SECRET');
     res.header('Access-Control-Allow-Credentials', 'true');
 
     // Handle preflight
@@ -31,6 +33,7 @@ app.use((req, res, next) => {
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(requestId);
 
 // Logging middleware
 app.use((req, res, next) => {
@@ -51,11 +54,11 @@ if (process.env.FEATURE_LEADS_TAB !== 'false') {
     app.use('/api/leads', leadsRouter);
 }
 
-// Workiz-compatible external API (for lead generators)
-if (process.env.BLANC_API_KEY) {
-    app.use('/api/v1/:apiKey', workizCompatRouter);
-    console.log('🔗 Workiz-compatible API enabled at /api/v1/:apiKey/lead/*');
-}
+// BLANC Integrations API (secured header-based auth)
+app.use('/api/v1/integrations', integrationsLeadsRouter);
+app.use('/api/admin/integrations', integrationsAdminRouter);
+console.log('🔐 BLANC Integrations API enabled at /api/v1/integrations/leads');
+
 
 // Serve static files from React app (production only)
 if (process.env.NODE_ENV === 'production') {

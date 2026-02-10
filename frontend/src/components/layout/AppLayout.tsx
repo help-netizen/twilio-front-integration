@@ -2,7 +2,13 @@ import React, { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
-import { Phone, Users } from 'lucide-react';
+import {
+    DropdownMenu,
+    DropdownMenuTrigger,
+    DropdownMenuContent,
+    DropdownMenuItem,
+} from '../ui/dropdown-menu';
+import { Phone, Users, Settings, Key, BookOpen } from 'lucide-react';
 import './AppLayout.css';
 
 interface AppLayoutProps {
@@ -15,7 +21,9 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
     const location = useLocation();
     const navigate = useNavigate();
 
-    const activeTab = location.pathname.startsWith('/leads') ? 'leads' : 'calls';
+    const activeTab = location.pathname.startsWith('/leads') ? 'leads'
+        : location.pathname.startsWith('/settings') ? 'settings'
+            : 'calls';
 
     const handleRefresh = async () => {
         setIsRefreshing(true);
@@ -80,7 +88,33 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                                 {isRefreshing ? '🔄 Refreshing...' : '🔄 Refresh'}
                             </button>
                         )}
-                        <span className="user-menu">Settings</span>
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <button
+                                    className="user-menu"
+                                    style={{ cursor: 'pointer', fontWeight: activeTab === 'settings' ? 600 : 400 }}
+                                >
+                                    <Settings className="size-4" style={{ display: 'inline', verticalAlign: 'middle', marginRight: '4px' }} />
+                                    Settings
+                                </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-48">
+                                <DropdownMenuItem
+                                    className="flex items-center gap-2 cursor-pointer"
+                                    onClick={() => navigate('/settings/integrations')}
+                                >
+                                    <Key className="size-4" />
+                                    Integrations
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                    className="flex items-center gap-2 cursor-pointer"
+                                    onClick={() => navigate('/settings/api-docs')}
+                                >
+                                    <BookOpen className="size-4" />
+                                    API Docs
+                                </DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
                     </div>
                 </div>
             </header>

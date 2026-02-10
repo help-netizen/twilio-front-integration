@@ -4,6 +4,8 @@ import { AppLayout } from './components/layout/AppLayout';
 import { HomePage } from './pages/HomePage';
 import { ConversationPage } from './pages/ConversationPage';
 import { LeadsPage } from './pages/LeadsPage';
+import { IntegrationsPage } from './pages/IntegrationsPage';
+import ApiDocsPage from './pages/ApiDocsPage';
 import { EventNotification } from './components/EventNotification';
 import { Toaster } from './components/ui/sonner';
 import './App.css';
@@ -28,6 +30,9 @@ function App() {
             <Route path="/contact/:id" element={<ConversationPage />} />
             <Route path="/calls/:callSid" element={<ConversationPage />} />
             <Route path="/leads" element={<LeadsPage />} />
+            <Route path="/settings" element={<Navigate to="/settings/integrations" replace />} />
+            <Route path="/settings/integrations" element={<IntegrationsPage />} />
+            <Route path="/settings/api-docs" element={<ApiDocsPage />} />
           </Routes>
         </AppLayout>
         <EventNotification />
