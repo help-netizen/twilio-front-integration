@@ -6,6 +6,7 @@
  */
 
 const db = require('../db/connection');
+const zenbookerClient = require('./zenbookerClient');
 
 // =============================================================================
 // UUID Generation (Workiz-style 6-char alphanumeric)
@@ -415,19 +416,49 @@ async function unassignUser(uuid, userName) {
 // Convert Lead to Job
 // =============================================================================
 async function convertLead(uuid) {
-    const sql = `
-        UPDATE leads SET converted_to_job = true, status = 'Converted'
+    // 1. Fetch full lead to get address/contact info for Zenbooker
+    const { rows: leadRows } = await db.query(
+        'SELECT * FROM leads WHERE uuid = $1', [uuid]
+    );
+    if (leadRows.length === 0) {
+        throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
+    }
+    const lead = rowToLead(leadRows[0]);
+
+    // 2. Create job in Zenbooker
+    let zenbookerJobId = null;
+    try {
+        const zbResult = await zenbookerClient.createJobFromLead(lead);
+        zenbookerJobId = zbResult.job_id;
+        console.log(`[ConvertLead] Zenbooker job created: ${zenbookerJobId}`);
+    } catch (err) {
+        // If Zenbooker API key not configured, skip silently
+        if (err.message === 'ZENBOOKER_API_KEY is not configured') {
+            console.warn('[ConvertLead] Zenbooker not configured, skipping job creation');
+        } else {
+            console.error('[ConvertLead] Zenbooker error:', err.response?.data || err.message);
+            throw new LeadsServiceError(
+                'ZENBOOKER_ERROR',
+                `Failed to create Zenbooker job: ${err.response?.data?.error?.message || err.message}`,
+                502
+            );
+        }
+    }
+
+    // 3. Mark lead as converted and save Zenbooker job ID
+    const updateSql = `
+        UPDATE leads
+        SET converted_to_job = true, status = 'Converted',
+            zenbooker_job_id = COALESCE($2, zenbooker_job_id)
         WHERE uuid = $1
         RETURNING uuid, id
     `;
-    const { rows } = await db.query(sql, [uuid]);
-    if (rows.length === 0) {
-        throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
-    }
+    const { rows } = await db.query(updateSql, [uuid, zenbookerJobId]);
 
     return {
         UUID: rows[0].uuid,
         ClientId: String(rows[0].id),
+        zenbooker_job_id: zenbookerJobId,
         link: null,
     };
 }
