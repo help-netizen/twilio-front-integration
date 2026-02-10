@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -15,12 +15,22 @@ interface CreateLeadDialogProps {
     onSuccess: (lead: Lead) => void;
 }
 
+interface CustomFieldDef {
+    id: string;
+    display_name: string;
+    api_name: string;
+    field_type: string;
+    is_system: boolean;
+    sort_order: number;
+}
+
 const JOB_TYPES = ['Plumbing', 'HVAC', 'Electrical', 'Carpentry', 'Landscaping', 'Painting', 'Roofing'];
 const JOB_SOURCES = ['Website', 'Referral', 'Google Ads', 'Facebook', 'Yelp', 'Direct Call', 'Email'];
 const US_STATES = ['NY', 'CA', 'IL', 'TX', 'AZ', 'PA', 'FL', 'OH', 'NC', 'GA'];
 
 export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDialogProps) {
     const [loading, setLoading] = useState(false);
+    const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
     const [formData, setFormData] = useState<CreateLeadInput>({
         FirstName: '',
         LastName: '',
@@ -35,7 +45,24 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
         JobSource: '',
         LeadNotes: '',
         Status: 'Submitted',
+        Metadata: {},
     });
+
+    // Fetch custom fields when dialog opens
+    useEffect(() => {
+        if (!open) return;
+        fetch('/api/settings/lead-form')
+            .then((r) => r.json())
+            .then((data) => {
+                if (data.success) {
+                    const userFields = data.customFields.filter(
+                        (f: CustomFieldDef) => !f.is_system
+                    );
+                    setCustomFields(userFields);
+                }
+            })
+            .catch(() => { });
+    }, [open]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -67,6 +94,7 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                 JobSource: '',
                 LeadNotes: '',
                 Status: 'Submitted',
+                Metadata: {},
             });
         } catch (error) {
             toast.error('Failed to create lead', {
@@ -75,6 +103,13 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
         } finally {
             setLoading(false);
         }
+    };
+
+    const updateMetadata = (apiName: string, value: string) => {
+        setFormData((prev) => ({
+            ...prev,
+            Metadata: { ...(prev.Metadata || {}), [apiName]: value },
+        }));
     };
 
     return (
@@ -252,6 +287,37 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                             />
                         </div>
                     </div>
+
+                    {/* Custom Metadata Fields */}
+                    {customFields.length > 0 && (
+                        <div className="space-y-4">
+                            <h3 className="font-medium">Metadata</h3>
+                            <div className="grid grid-cols-2 gap-4">
+                                {customFields.map((field) => (
+                                    <div key={field.id} className={field.field_type === 'textarea' || field.field_type === 'richtext' ? 'col-span-2' : ''}>
+                                        <Label htmlFor={`meta-${field.api_name}`} className="mb-2">
+                                            {field.display_name}
+                                        </Label>
+                                        {field.field_type === 'textarea' || field.field_type === 'richtext' ? (
+                                            <Textarea
+                                                id={`meta-${field.api_name}`}
+                                                value={formData.Metadata?.[field.api_name] || ''}
+                                                onChange={(e) => updateMetadata(field.api_name, e.target.value)}
+                                                rows={3}
+                                            />
+                                        ) : (
+                                            <Input
+                                                id={`meta-${field.api_name}`}
+                                                type={field.field_type === 'number' ? 'number' : 'text'}
+                                                value={formData.Metadata?.[field.api_name] || ''}
+                                                onChange={(e) => updateMetadata(field.api_name, e.target.value)}
+                                            />
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
 
                     <DialogFooter>
                         <Button

@@ -87,7 +87,35 @@ function rowToLead(row) {
         Tags: row.tags || null,
         Team: row.team || null, // populated via JOIN
         WorkizLink: null, // no external link for self-hosted
+        Metadata: row.metadata || {},
+        // Flatten custom metadata as top-level keys for API convenience
+        ...(row.metadata || {}),
     };
+}
+
+// =============================================================================
+// Extract custom metadata fields from flat request body
+// Looks up registered api_names in lead_custom_fields, picks matching keys
+// =============================================================================
+async function extractCustomMetadata(fields) {
+    const { rows: registeredFields } = await db.query(
+        `SELECT api_name FROM lead_custom_fields WHERE is_system = false`
+    );
+    const apiNames = new Set(registeredFields.map(r => r.api_name));
+
+    // Start with explicit Metadata object if provided
+    const meta = (fields.Metadata && typeof fields.Metadata === 'object')
+        ? { ...fields.Metadata }
+        : {};
+
+    // Pick flat top-level keys that match registered custom field api_names
+    for (const key of Object.keys(fields)) {
+        if (apiNames.has(key)) {
+            meta[key] = String(fields[key]);
+        }
+    }
+
+    return Object.keys(meta).length > 0 ? meta : null;
 }
 
 // =============================================================================
@@ -230,6 +258,12 @@ async function createLead(fields) {
     // Always set uuid
     columns.uuid = uuid;
 
+    // Handle custom metadata fields (flat api_name keys + Metadata object)
+    const meta = await extractCustomMetadata(fields);
+    if (meta) {
+        columns.metadata = JSON.stringify(meta);
+    }
+
     const colNames = Object.keys(columns);
     const values = Object.values(columns);
     const placeholders = values.map((_, i) => `$${i + 1}`);
@@ -254,6 +288,18 @@ async function createLead(fields) {
 // =============================================================================
 async function updateLead(uuid, fields) {
     const columns = mapFieldsToColumns(fields);
+
+    // Handle custom metadata fields (flat api_name keys + Metadata object)
+    // For updates, merge with existing metadata to avoid overwriting unset fields
+    const meta = await extractCustomMetadata(fields);
+    if (meta) {
+        // Merge with existing metadata
+        const { rows: existing } = await db.query(
+            'SELECT metadata FROM leads WHERE uuid = $1', [uuid]
+        );
+        const existingMeta = existing.length > 0 ? (existing[0].metadata || {}) : {};
+        columns.metadata = JSON.stringify({ ...existingMeta, ...meta });
+    }
 
     if (Object.keys(columns).length === 0) {
         throw new LeadsServiceError('VALIDATION_ERROR', 'At least one field must be provided', 400);

@@ -10,6 +10,7 @@ const twimlRouter = require('../backend/src/routes/twiml');
 const leadsRouter = require('../backend/src/routes/leads');
 const integrationsLeadsRouter = require('../backend/src/routes/integrations-leads');
 const integrationsAdminRouter = require('../backend/src/routes/integrations-admin');
+const leadFormSettingsRouter = require('../backend/src/routes/lead-form-settings');
 const requestId = require('../backend/src/middleware/requestId');
 const db = require('../backend/src/db/connection');
 
@@ -57,6 +58,7 @@ if (process.env.FEATURE_LEADS_TAB !== 'false') {
 // BLANC Integrations API (secured header-based auth)
 app.use('/api/v1/integrations', integrationsLeadsRouter);
 app.use('/api/admin/integrations', integrationsAdminRouter);
+app.use('/api/settings/lead-form', leadFormSettingsRouter);
 console.log('🔐 BLANC Integrations API enabled at /api/v1/integrations/leads');
 
 

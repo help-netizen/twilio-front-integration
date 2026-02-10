@@ -8,7 +8,7 @@ import {
     DropdownMenuContent,
     DropdownMenuItem,
 } from '../ui/dropdown-menu';
-import { Phone, Users, Settings, Key, BookOpen } from 'lucide-react';
+import { Phone, Users, Settings, Key, BookOpen, FileText } from 'lucide-react';
 import './AppLayout.css';
 
 interface AppLayoutProps {
@@ -105,6 +105,13 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                                 >
                                     <Key className="size-4" />
                                     Integrations
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                    className="flex items-center gap-2 cursor-pointer"
+                                    onClick={() => navigate('/settings/lead-form')}
+                                >
+                                    <FileText className="size-4" />
+                                    Lead Form
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
                                     className="flex items-center gap-2 cursor-pointer"

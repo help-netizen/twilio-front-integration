@@ -4,10 +4,10 @@ document:
   title: "Требования: перевод Lead Processing с Workiz на BLANC"
   language: "ru"
   format: "YAML+Markdown"
-  version: "1.0.0"
-  status: "draft"
+  version: "1.1.0"
+  status: "active"
   owner: "BLANC / Lead Integrations"
-  updated_at: "2026-02-09"
+  updated_at: "2026-02-10"
   timezone: "America/New_York"
 
 business_goal: >
@@ -79,8 +79,8 @@ architecture_change:
     - "Lead Processing transport client: WorkizClient -> BlancClient"
   adapter_contract:
     input: "Существующий нормализованный Lead DTO (без изменения структуры)"
-    output_success: "{ success: true, lead_id, request_id }"
-    output_error: "{ success: false, code, message, request_id? }"
+    output_success: "{ success: true, lead_id, serial_id, request_id }"
+    output_error: "{ success: false, code, message, request_id }"
 
 field_mapping_policy:
   rule: "1:1 перенос текущего normalized payload в BLANC body без изменения parser-логики."
@@ -229,9 +229,13 @@ issue_task_requirements_section:
 {
   "success": true,
   "lead_id": "4AB4IK",
+  "serial_id": 7,
   "request_id": "490336c8-03ce-4d91-9c7a-2c71fd674031"
 }
 ```
+
+- `lead_id` — 6-символьный UUID лида (колонка `uuid` в БД)
+- `serial_id` — порядковый номер лида (колонка `serial_id` в БД, auto-increment)
 
 ### Ошибки, которые обязательно обрабатывать
 - `401`: AUTH_HEADERS_REQUIRED, AUTH_KEY_NOT_FOUND, AUTH_KEY_REVOKED, AUTH_KEY_EXPIRED, AUTH_SECRET_INVALID, AUTH_LEGACY_REJECTED
@@ -275,3 +279,210 @@ BLANC_API_KEY=<to_be_provided_during_development>
 BLANC_API_SECRET=<to_be_provided_during_development>
 BLANC_TIMEOUT_MS=30000
 ```
+
+---
+
+# Приложение A: Полная документация BLANC API
+
+## A.1) Среда
+
+| Параметр | Значение |
+|---|---|
+| Production URL | `https://abc-metrics.fly.dev` |
+| API Docs UI | `https://abc-metrics.fly.dev/settings/api-docs` |
+| Integrations UI | `https://abc-metrics.fly.dev/settings/integrations` |
+| Deploy | Fly.io (`fly deploy`) |
+| Database | PostgreSQL (Fly.io managed) |
+
+## A.2) Аутентификация
+
+Все запросы к `POST /api/v1/integrations/leads` аутентифицируются через HTTP-заголовки:
+
+```http
+X-BLANC-API-KEY: blanc_<24_hex_chars>
+X-BLANC-API-SECRET: <48_hex_chars>
+```
+
+- Секрет показывается **только один раз** при создании интеграции.
+- Секрет хранится на сервере как `SHA-256(secret + BLANC_SERVER_PEPPER)`.
+- Сравнение выполняется через `crypto.timingSafeEqual` (constant-time).
+- Legacy-авторизация (`api_key` в query params, `auth_secret` в body) — отклоняется с `401 AUTH_LEGACY_REJECTED`.
+
+## A.3) Эндпоинты
+
+### A.3.1) POST /api/v1/integrations/leads — Создание лида
+
+**Scope:** `leads:create`
+
+#### Заголовки
+| Заголовок | Обязательный | Описание |
+|---|---|---|
+| `X-BLANC-API-KEY` | ✅ | API ключ (начинается с `blanc_`) |
+| `X-BLANC-API-SECRET` | ✅ | API секрет |
+| `Content-Type` | ✅ | `application/json` |
+
+#### Поля тела запроса (все опциональные, но минимум одно из FirstName/LastName/Phone/Email обязательно)
+
+| Поле API (PascalCase) | Тип | Колонка в БД (snake_case) | Описание |
+|---|---|---|---|
+| `FirstName` | string | `first_name` | Имя контакта |
+| `LastName` | string | `last_name` | Фамилия контакта |
+| `Phone` | string | `phone` | Основной телефон (рекомендуется E.164) |
+| `PhoneExt` | string | `phone_ext` | Добавочный номер |
+| `SecondPhone` | string | `second_phone` | Второй телефон |
+| `SecondPhoneExt` | string | `second_phone_ext` | Добавочный второго телефона |
+| `Email` | string | `email` | Email контакта |
+| `Company` | string | `company` | Название компании |
+| `Address` | string | `address` | Адрес |
+| `Unit` | string | `unit` | Квартира / офис |
+| `City` | string | `city` | Город |
+| `State` | string | `state` | Штат / регион |
+| `PostalCode` | string | `postal_code` | Почтовый индекс |
+| `Country` | string | `country` | Страна (ISO 3166-1) |
+| `Latitude` | number | `latitude` | Широта |
+| `Longitude` | number | `longitude` | Долгота |
+| `JobType` | string | `job_type` | Тип работы (Plumbing, HVAC, Electrical...) |
+| `JobSource` | string | `job_source` | Источник лида (Google Ads, Yelp...) |
+| `ReferralCompany` | string | `referral_company` | Реферальная компания |
+| `Timezone` | string | `timezone` | Часовой пояс (America/New_York) |
+| `LeadNotes` | string | `lead_notes` | Внутренние заметки |
+| `Comments` | string | `comments` | Комментарии для клиента |
+| `Tags` | string[] | `tags` | Теги (JSON array, NOT comma-separated string) |
+| `LeadDateTime` | ISO 8601 | `lead_date_time` | Дата/время лида |
+| `LeadEndDateTime` | ISO 8601 | `lead_end_date_time` | Дата/время окончания |
+| `Status` | string | `status` | Статус лида (default: "Submitted") |
+| `SubStatus` | string | `sub_status` | Подстатус |
+| `PaymentDueDate` | ISO 8601 | `payment_due_date` | Дата оплаты |
+
+#### Ответ (201 Created)
+```json
+{
+  "success": true,
+  "lead_id": "MWMS4T",
+  "serial_id": 4,
+  "request_id": "8ca18cee-64ac-4aa5-91bb-2e158b357e53"
+}
+```
+
+#### Коды ошибок
+| HTTP | Код | Описание |
+|---|---|---|
+| 401 | `AUTH_HEADERS_REQUIRED` | Нет заголовков X-BLANC-API-KEY / X-BLANC-API-SECRET |
+| 401 | `AUTH_KEY_NOT_FOUND` | Ключ не найден в системе |
+| 401 | `AUTH_KEY_REVOKED` | Ключ отозван |
+| 401 | `AUTH_KEY_EXPIRED` | Ключ истёк |
+| 401 | `AUTH_SECRET_INVALID` | Неверный секрет |
+| 401 | `AUTH_LEGACY_REJECTED` | Использован legacy-способ авторизации |
+| 403 | `SCOPE_INSUFFICIENT` | У ключа нет scope `leads:create` |
+| 400 | `PAYLOAD_INVALID` | Нет обязательных полей / невалидные данные |
+| 429 | `RATE_LIMITED` | Превышен лимит запросов (заголовок `Retry-After`) |
+
+#### Пример curl
+```bash
+curl -X POST https://abc-metrics.fly.dev/api/v1/integrations/leads \
+  -H "Content-Type: application/json" \
+  -H "X-BLANC-API-KEY: blanc_e34540fce903196c8eeb4461" \
+  -H "X-BLANC-API-SECRET: <your_secret>" \
+  -d '{
+    "FirstName": "Maria",
+    "LastName": "Garcia",
+    "Phone": "+16175551001",
+    "Email": "maria.garcia@example.com",
+    "Address": "456 Oak Avenue",
+    "City": "Boston",
+    "State": "MA",
+    "PostalCode": "02101",
+    "JobType": "Plumbing",
+    "JobSource": "Google Ads",
+    "LeadNotes": "Kitchen sink leaking"
+  }'
+```
+
+### A.3.2) GET /api/admin/integrations — Список интеграций
+
+Возвращает все зарегистрированные API интеграции. Внутренний эндпоинт (без JWT).
+
+```bash
+curl https://abc-metrics.fly.dev/api/admin/integrations
+```
+
+### A.3.3) POST /api/admin/integrations — Создание интеграции
+
+Создаёт новые API credentials. **Секрет возвращается один раз!**
+
+```bash
+curl -X POST https://abc-metrics.fly.dev/api/admin/integrations \
+  -H "Content-Type: application/json" \
+  -d '{"client_name": "Service Direct", "scopes": ["leads:create"]}'
+```
+
+Ответ:
+```json
+{
+  "success": true,
+  "integration": {
+    "id": "1",
+    "client_name": "Service Direct",
+    "key_id": "blanc_a9571f66ee3e...",
+    "secret": "b8e7e3074e07e21b74da...",
+    "scopes": ["leads:create"],
+    "created_at": "2026-02-10T02:50:12.000Z",
+    "expires_at": null
+  }
+}
+```
+
+### A.3.4) DELETE /api/admin/integrations/:keyId — Отзыв интеграции
+
+```bash
+curl -X DELETE https://abc-metrics.fly.dev/api/admin/integrations/blanc_e8055f58c35d
+```
+
+## A.4) Схема БД
+
+### Таблица `leads`
+| Колонка | Тип | Default | Описание |
+|---|---|---|---|
+| `id` | BIGSERIAL PK | auto | Внутренний ID (для JOIN) |
+| `uuid` | VARCHAR NOT NULL | — | 6-символьный публичный ID (`lead_id` в API) |
+| `serial_id` | SERIAL | auto | Порядковый номер (`serial_id` в API) |
+| `status` | VARCHAR | 'Submitted' | Статус лида |
+| `sub_status` | VARCHAR | NULL | Подстатус |
+| `lead_lost` | BOOLEAN | false | Лид потерян |
+| `first_name` .. `payment_due_date` | — | — | 26 полей данных (см. field mapping выше) |
+| `converted_to_job` | BOOLEAN | false | Конвертирован в работу |
+| `created_at` | TIMESTAMPTZ | now() | Дата создания |
+| `updated_at` | TIMESTAMPTZ | now() | Дата обновления (trigger) |
+
+### Таблица `api_integrations`
+| Колонка | Тип | Описание |
+|---|---|---|
+| `id` | BIGSERIAL PK | Внутренний ID |
+| `client_name` | TEXT NOT NULL | Имя клиента |
+| `key_id` | TEXT UNIQUE | Публичный ключ (`X-BLANC-API-KEY`) |
+| `secret_hash` | TEXT | SHA-256(secret + pepper) |
+| `scopes` | JSONB | Разрешения `["leads:create"]` |
+| `created_at` | TIMESTAMPTZ | Дата создания |
+| `expires_at` | TIMESTAMPTZ | Дата истечения (NULL = бессрочно) |
+| `revoked_at` | TIMESTAMPTZ | Дата отзыва (NULL = активен) |
+| `last_used_at` | TIMESTAMPTZ | Последнее использование |
+
+## A.5) Протестированные сценарии (Production, 2026-02-10)
+
+| # | Тест | Ожидание | Результат |
+|---|---|---|---|
+| 1 | Без заголовков | `AUTH_HEADERS_REQUIRED` | ✅ PASS |
+| 2 | Неверный ключ | `AUTH_KEY_NOT_FOUND` | ✅ PASS |
+| 3 | Неверный секрет | `AUTH_SECRET_INVALID` | ✅ PASS |
+| 4 | Legacy auth | `AUTH_LEGACY_REJECTED` | ✅ PASS |
+| 5 | Пустой payload | `PAYLOAD_INVALID` | ✅ PASS |
+| 6-10 | Создание 5 лидов | `success: true` | ✅ PASS |
+
+Созданные тестовые лиды:
+| serial_id | lead_id | Имя | JobType | JobSource |
+|---|---|---|---|---|
+| 4 | `MWMS4T` | Robert Kim | Plumbing | Google Ads |
+| 5 | `EQC8HR` | Emily Santos | HVAC | Service Direct |
+| 6 | `RP4VBX` | David Patel | Electrical | Yelp |
+| 7 | `TY1MPO` | Lisa Thompson | Appliance Repair | Elocal |
+| 8 | `1NNMJ2` | Michael O'Brien | Plumbing | Google Ads |

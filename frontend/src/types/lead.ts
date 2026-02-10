@@ -44,6 +44,7 @@ export type Lead = {
     Tags?: string[] | null;
     Team?: Array<{ id: string | number; name: string }> | null;
     WorkizLink?: string | null;
+    Metadata?: Record<string, string> | null;
 };
 
 export type LeadsListParams = {
@@ -128,6 +129,7 @@ export type CreateLeadInput = {
     LeadNotes?: string;
     Status?: string;
     Tags?: string[];
+    Metadata?: Record<string, string>;
 };
 
 export type UpdateLeadInput = Partial<Omit<CreateLeadInput, 'FirstName' | 'LastName' | 'Phone'>> & {

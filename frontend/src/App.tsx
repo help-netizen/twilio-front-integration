@@ -6,6 +6,7 @@ import { ConversationPage } from './pages/ConversationPage';
 import { LeadsPage } from './pages/LeadsPage';
 import { IntegrationsPage } from './pages/IntegrationsPage';
 import ApiDocsPage from './pages/ApiDocsPage';
+import LeadFormSettingsPage from './pages/LeadFormSettingsPage';
 import { EventNotification } from './components/EventNotification';
 import { Toaster } from './components/ui/sonner';
 import './App.css';
@@ -33,6 +34,7 @@ function App() {
             <Route path="/settings" element={<Navigate to="/settings/integrations" replace />} />
             <Route path="/settings/integrations" element={<IntegrationsPage />} />
             <Route path="/settings/api-docs" element={<ApiDocsPage />} />
+            <Route path="/settings/lead-form" element={<LeadFormSettingsPage />} />
           </Routes>
         </AppLayout>
         <EventNotification />
