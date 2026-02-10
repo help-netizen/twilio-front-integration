@@ -61,7 +61,7 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
     const [serviceName, setServiceName] = useState('');
     const [serviceDescription, setServiceDescription] = useState('');
     const [servicePrice, setServicePrice] = useState('0');
-    const [serviceDuration, setServiceDuration] = useState('60');
+    const [serviceDuration, setServiceDuration] = useState('120');
 
     // Step 3 — timeslot
     const [selectedDate, setSelectedDate] = useState('');
@@ -89,7 +89,7 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
             setServiceName(lead.JobType || 'General Service');
             setServiceDescription(lead.LeadNotes || lead.Comments || '');
             setServicePrice('0');
-            setServiceDuration('60');
+            setServiceDuration('120');
 
             setTerritoryResult(null);
             setTerritoryError('');
@@ -153,7 +153,7 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
             const result = await zenbookerApi.getTimeslots({
                 territory: territoryId,
                 date: selectedDate,
-                duration: Number(serviceDuration) || 60,
+                duration: Number(serviceDuration) || 120,
                 days: 7,
                 lat: coords?.lat,
                 lng: coords?.lng,
@@ -207,7 +207,7 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
                             name: serviceName || 'General Service',
                             description: serviceDescription || '',
                             price: Number(servicePrice) || 0,
-                            duration: Number(serviceDuration) || 60,
+                            duration: Number(serviceDuration) || 120,
                             taxable: false,
                         },
                     },
@@ -248,10 +248,10 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
                 <div key={s} className="flex items-center gap-1">
                     <div
                         className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${s === step
-                                ? 'bg-primary text-primary-foreground'
-                                : s < step
-                                    ? 'bg-primary/20 text-primary'
-                                    : 'bg-muted text-muted-foreground'
+                            ? 'bg-primary text-primary-foreground'
+                            : s < step
+                                ? 'bg-primary/20 text-primary'
+                                : 'bg-muted text-muted-foreground'
                             }`}
                     >
                         {s < step ? '✓' : s}
@@ -399,8 +399,8 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
                                         type="button"
                                         onClick={() => setSelectedTimeslot(slot)}
                                         className={`p-2 rounded-md border text-sm text-left transition-colors ${selectedTimeslot?.id === slot.id
-                                                ? 'border-primary bg-primary/10 font-medium'
-                                                : 'border-border hover:border-primary/50 hover:bg-muted/50'
+                                            ? 'border-primary bg-primary/10 font-medium'
+                                            : 'border-border hover:border-primary/50 hover:bg-muted/50'
                                             }`}
                                     >
                                         {slot.formatted}
