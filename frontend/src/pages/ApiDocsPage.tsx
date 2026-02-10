@@ -37,7 +37,7 @@ const ENDPOINTS: Endpoint[] = [
         method: 'POST',
         path: '/api/v1/integrations/leads',
         title: 'Create a Lead',
-        description: 'Creates a new lead in the system. Requires the `leads:create` scope. At least one identifying field (FirstName, LastName, Phone, or Email) must be provided.',
+        description: 'Creates a new lead in the system. Requires the `leads:create` scope. At least one identifying field (FirstName, LastName, Phone, or Email) must be provided. Custom metadata fields configured in Lead Form Settings can be passed as top-level keys using their api_name (e.g. lead_note, custom_field_1).',
         scope: 'leads:create',
         headers: [
             { name: 'X-BLANC-API-KEY', type: 'string', required: true, description: 'Your API key (starts with blanc_)' },
@@ -73,6 +73,8 @@ const ENDPOINTS: Endpoint[] = [
             { name: 'Status', type: 'string', required: false, description: 'Lead status (default: "Submitted")' },
             { name: 'SubStatus', type: 'string', required: false, description: 'Sub-status for custom workflows' },
             { name: 'PaymentDueDate', type: 'ISO 8601', required: false, description: 'Payment due date' },
+            { name: 'Metadata', type: 'object', required: false, description: 'Custom fields as key-value pairs: { "api_name": "value" }' },
+            { name: '{custom_field}', type: 'string', required: false, description: 'Any custom field api_name (e.g. lead_note) can be passed as a top-level key' },
         ],
         response: `{
   "success": true,
@@ -106,7 +108,9 @@ const ENDPOINTS: Endpoint[] = [
     "PostalCode": "92101",
     "JobType": "Plumbing",
     "JobSource": "Google Ads",
-    "LeadNotes": "Urgent — water leak"
+    "LeadNotes": "Urgent — water leak",
+    "lead_note": "Custom field value",
+    "one_more_text": "Another custom value"
   }'`,
     },
     {
