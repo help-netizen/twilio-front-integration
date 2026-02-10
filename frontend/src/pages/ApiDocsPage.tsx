@@ -77,6 +77,7 @@ const ENDPOINTS: Endpoint[] = [
         response: `{
   "success": true,
   "lead_id": "4AB4IK",
+  "serial_id": 7,
   "request_id": "490336c8-03ce-4d91-9c7a-2c71fd674031"
 }`,
         errors: [
@@ -113,10 +114,8 @@ const ENDPOINTS: Endpoint[] = [
         method: 'GET',
         path: '/api/admin/integrations',
         title: 'List Integrations',
-        description: 'Returns all registered API integrations. Admin-only endpoint protected by JWT authentication.',
-        headers: [
-            { name: 'Authorization', type: 'string', required: true, description: 'Bearer <JWT token>' },
-        ],
+        description: 'Returns all registered API integrations. Internal admin endpoint.',
+        headers: [],
         response: `{
   "success": true,
   "integrations": [
@@ -132,17 +131,15 @@ const ENDPOINTS: Endpoint[] = [
     }
   ]
 }`,
-        curl: `curl https://your-domain/api/admin/integrations \\
-  -H "Authorization: Bearer <token>"`,
+        curl: `curl https://your-domain/api/admin/integrations`,
     },
     {
         id: 'create-integration',
         method: 'POST',
         path: '/api/admin/integrations',
         title: 'Create Integration',
-        description: 'Registers a new API integration and generates credentials. The API secret is returned **once** in this response and is never stored in plaintext. Admin-only.',
+        description: 'Registers a new API integration and generates credentials. The API secret is returned **once** in this response and is never stored in plaintext.',
         headers: [
-            { name: 'Authorization', type: 'string', required: true, description: 'Bearer <JWT token>' },
             { name: 'Content-Type', type: 'string', required: true, description: 'Must be application/json' },
         ],
         body: [
@@ -166,7 +163,6 @@ const ENDPOINTS: Endpoint[] = [
             { code: 'VALIDATION', http: 400, description: 'client_name is required' },
         ],
         curl: `curl -X POST https://your-domain/api/admin/integrations \\
-  -H "Authorization: Bearer <token>" \\
   -H "Content-Type: application/json" \\
   -d '{"client_name": "Service Direct", "scopes": ["leads:create"]}'`,
     },
@@ -175,10 +171,8 @@ const ENDPOINTS: Endpoint[] = [
         method: 'DELETE',
         path: '/api/admin/integrations/:keyId',
         title: 'Revoke Integration',
-        description: 'Permanently revokes an API integration. The key can no longer be used for authentication after this call. Admin-only.',
-        headers: [
-            { name: 'Authorization', type: 'string', required: true, description: 'Bearer <JWT token>' },
-        ],
+        description: 'Permanently revokes an API integration. The key can no longer be used for authentication after this call.',
+        headers: [],
         response: `{
   "success": true,
   "revoked": {
@@ -190,8 +184,7 @@ const ENDPOINTS: Endpoint[] = [
         errors: [
             { code: 'NOT_FOUND', http: 404, description: 'Integration with this key_id not found' },
         ],
-        curl: `curl -X DELETE https://your-domain/api/admin/integrations/blanc_e8055f58c35d \\
-  -H "Authorization: Bearer <token>"`,
+        curl: `curl -X DELETE https://your-domain/api/admin/integrations/blanc_e8055f58c35d`,
     },
 ];
 
