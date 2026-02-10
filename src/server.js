@@ -150,10 +150,15 @@ app.listen(PORT, '0.0.0.0', async () => {
     });
 
     // Start transcription worker (Variant B post-call pipeline)
-    const { startTranscriptionWorker } = require('../backend/src/services/transcriptionWorker');
-    startTranscriptionWorker().catch(error => {
-        console.error('❌ Transcription worker error:', error);
-    });
+    if (process.env.FEATURE_TRANSCRIPTION_WORKER === 'true') {
+        const { startTranscriptionWorker } = require('../backend/src/services/transcriptionWorker');
+        startTranscriptionWorker().catch(error => {
+            console.error('❌ Transcription worker error:', error);
+        });
+        console.log('🎙️ Transcription worker started');
+    } else {
+        console.log('🎙️ Transcription worker disabled (set FEATURE_TRANSCRIPTION_WORKER=true to enable)');
+    }
 });
 
 module.exports = app;

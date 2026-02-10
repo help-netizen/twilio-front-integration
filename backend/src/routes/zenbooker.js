@@ -14,15 +14,43 @@ router.get('/service-area-check', async (req, res) => {
         if (!postal_code) {
             return res.status(400).json({ ok: false, error: 'postal_code is required' });
         }
-        const data = await zenbookerClient.checkServiceArea(postal_code);
-        res.json({ ok: true, data });
+
+        // Try the scheduling endpoint first
+        try {
+            const data = await zenbookerClient.checkServiceArea(postal_code);
+            return res.json({ ok: true, data });
+        } catch (primaryErr) {
+            console.warn('[Zenbooker] service_area_check failed, trying territory fallback:', primaryErr.response?.data?.error?.message || primaryErr.message);
+        }
+
+        // Fallback: use our territory postal-code matching
+        try {
+            const territoryId = await zenbookerClient.findTerritoryByPostalCode(postal_code);
+            const territories = await zenbookerClient.getTerritories();
+            const territory = territories.find(t => t.id === territoryId);
+            return res.json({
+                ok: true,
+                data: {
+                    in_service_area: true,
+                    service_territory: {
+                        id: territoryId,
+                        name: territory?.name || 'Service Territory',
+                        timezone: 'America/New_York',
+                    },
+                    customer_location: null,
+                    _fallback: true,
+                },
+            });
+        } catch (fallbackErr) {
+            // Both failed
+            return res.json({
+                ok: true,
+                data: { in_service_area: false, service_territory: null, customer_location: null },
+            });
+        }
     } catch (err) {
-        console.error('[Zenbooker] service-area-check error:', err.response?.data || err.message);
-        const status = err.response?.status || 500;
-        res.status(status).json({
-            ok: false,
-            error: err.response?.data?.error?.message || err.message,
-        });
+        console.error('[Zenbooker] service-area-check error:', err.message);
+        res.status(500).json({ ok: false, error: err.message });
     }
 });
 
