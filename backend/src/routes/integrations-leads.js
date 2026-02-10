@@ -59,6 +59,7 @@ router.post('/leads', async (req, res) => {
         res.status(201).json({
             success: true,
             lead_id: result.UUID,
+            serial_id: result.SerialId,
             request_id: req.requestId,
         });
     } catch (err) {

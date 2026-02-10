@@ -243,6 +243,7 @@ async function createLead(fields) {
     const { rows } = await db.query(sql, values);
     return {
         UUID: rows[0].uuid,
+        SerialId: rows[0].serial_id,
         ClientId: String(rows[0].id),
         link: null,
     };
