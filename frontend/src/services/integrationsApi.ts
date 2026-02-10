@@ -19,8 +19,10 @@ export interface CreateIntegrationPayload {
     expires_at?: string | null;
 }
 
+import { authedFetch } from './apiClient';
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
-    const res = await fetch(url, {
+    const res = await authedFetch(url, {
         headers: { 'Content-Type': 'application/json' },
         ...options,
     });

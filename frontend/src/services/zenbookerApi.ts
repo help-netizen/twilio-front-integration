@@ -3,10 +3,12 @@
  * Frontend fetch wrapper for /api/zenbooker/* proxy endpoints.
  */
 
+import { authedFetch } from './apiClient';
+
 const ZB_BASE = '/api/zenbooker';
 
 async function zbRequest<T>(url: string, options?: RequestInit): Promise<T> {
-    const res = await fetch(url, {
+    const res = await authedFetch(url, {
         headers: { 'Content-Type': 'application/json' },
         ...options,
     });

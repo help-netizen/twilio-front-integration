@@ -13,6 +13,7 @@ const integrationsLeadsRouter = require('../backend/src/routes/integrations-lead
 const integrationsAdminRouter = require('../backend/src/routes/integrations-admin');
 const leadFormSettingsRouter = require('../backend/src/routes/lead-form-settings');
 const requestId = require('../backend/src/middleware/requestId');
+const { authenticate } = require('../backend/src/middleware/keycloakAuth');
 const db = require('../backend/src/db/connection');
 
 const app = express();
@@ -47,17 +48,19 @@ app.use((req, res, next) => {
 app.use('/health', healthRouter);
 app.use('/webhooks', webhooksRouter);
 app.use('/twiml', twimlRouter);
-app.use('/api/calls', callsRouter);
-app.use('/api/sync', syncRouter);
 app.use('/events', eventsRouter);
+
+// Auth middleware for CRM API routes (behind FEATURE_AUTH flag)
+app.use('/api/calls', authenticate, callsRouter);
+app.use('/api/sync', authenticate, syncRouter);
 
 // Leads API (behind feature flag)
 if (process.env.FEATURE_LEADS_TAB !== 'false') {
-    app.use('/api/leads', leadsRouter);
+    app.use('/api/leads', authenticate, leadsRouter);
 }
 
 // Zenbooker scheduling proxy
-app.use('/api/zenbooker', zenbookerRouter);
+app.use('/api/zenbooker', authenticate, zenbookerRouter);
 
 // BLANC Integrations API (secured header-based auth)
 app.use('/api/v1/integrations', integrationsLeadsRouter);
