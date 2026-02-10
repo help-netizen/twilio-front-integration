@@ -7,6 +7,8 @@ const callsRouter = require('../backend/src/routes/calls');
 const syncRouter = require('../backend/src/routes/sync');
 const eventsRouter = require('../backend/src/routes/events');
 const twimlRouter = require('../backend/src/routes/twiml');
+const leadsRouter = require('../backend/src/routes/leads');
+const workizCompatRouter = require('../backend/src/routes/workiz-compat');
 const db = require('../backend/src/db/connection');
 
 const app = express();
@@ -15,7 +17,7 @@ const PORT = process.env.PORT || 3000;
 // CORS middleware - allow frontend origin
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', 'http://localhost:3001');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     res.header('Access-Control-Allow-Credentials', 'true');
 
@@ -44,6 +46,17 @@ app.use('/api/calls', callsRouter);
 app.use('/api/sync', syncRouter);
 app.use('/events', eventsRouter);
 
+// Leads API (behind feature flag)
+if (process.env.FEATURE_LEADS_TAB !== 'false') {
+    app.use('/api/leads', leadsRouter);
+}
+
+// Workiz-compatible external API (for lead generators)
+if (process.env.BLANC_API_KEY) {
+    app.use('/api/v1/:apiKey', workizCompatRouter);
+    console.log('🔗 Workiz-compatible API enabled at /api/v1/:apiKey/lead/*');
+}
+
 // Serve static files from React app (production only)
 if (process.env.NODE_ENV === 'production') {
     const publicPath = path.join(__dirname, '../public');
@@ -55,6 +68,8 @@ if (process.env.NODE_ENV === 'production') {
         if (req.path.startsWith('/api') ||
             req.path.startsWith('/webhooks') ||
             req.path.startsWith('/health') ||
+            req.path.startsWith('/twiml') ||
+            req.path.startsWith('/events') ||
             req.path.startsWith('/zenbooker-backend')) {
             return next();
         }
