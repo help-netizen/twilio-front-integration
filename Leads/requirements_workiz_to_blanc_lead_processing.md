@@ -273,5 +273,5 @@ issue_task_requirements_section:
 BLANC_BASE_URL=https://your-domain
 BLANC_API_KEY=<to_be_provided_during_development>
 BLANC_API_SECRET=<to_be_provided_during_development>
-BLANC_TIMEOUT_MS=10000
+BLANC_TIMEOUT_MS=30000
 ```

@@ -11,10 +11,6 @@
 const express = require('express');
 const router = express.Router();
 const integrationsService = require('../services/integrationsService');
-const { adminAuth } = require('../middleware/adminAuth');
-
-// All admin routes require JWT (or dev fallback)
-router.use(adminAuth);
 
 // =============================================================================
 // GET / — List all integrations
