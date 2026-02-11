@@ -42,16 +42,24 @@ function generateSecret() {
  * @param {string|null} expiresAt  ISO date or null
  * @returns {{ key_id, secret, client_name, scopes, created_at, expires_at }}
  */
-async function createIntegration(clientName, scopes = ['leads:create'], expiresAt = null) {
+async function createIntegration(clientName, scopes = ['leads:create'], expiresAt = null, companyId = null) {
     const keyId = generateKeyId();
     const secret = generateSecret();
     const secretHash = hashSecret(secret);
 
+    const cols = ['client_name', 'key_id', 'secret_hash', 'scopes', 'expires_at'];
+    const vals = [clientName, keyId, secretHash, JSON.stringify(scopes), expiresAt];
+    if (companyId) {
+        cols.push('company_id');
+        vals.push(companyId);
+    }
+    const placeholders = vals.map((_, i) => `$${i + 1}`);
+
     const result = await db.query(
-        `INSERT INTO api_integrations (client_name, key_id, secret_hash, scopes, expires_at)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO api_integrations (${cols.join(', ')})
+         VALUES (${placeholders.join(', ')})
          RETURNING id, client_name, key_id, scopes, created_at, expires_at`,
-        [clientName, keyId, secretHash, JSON.stringify(scopes), expiresAt]
+        vals
     );
 
     const row = result.rows[0];
@@ -71,11 +79,15 @@ async function createIntegration(clientName, scopes = ['leads:create'], expiresA
 // List Integrations (no secret_hash exposed)
 // =============================================================================
 
-async function listIntegrations() {
+async function listIntegrations(companyId = null) {
+    const where = companyId ? `WHERE company_id = $1` : '';
+    const params = companyId ? [companyId] : [];
     const result = await db.query(
         `SELECT id, client_name, key_id, scopes, created_at, expires_at, revoked_at, last_used_at, updated_at
          FROM api_integrations
-         ORDER BY created_at DESC`
+         ${where}
+         ORDER BY created_at DESC`,
+        params
     );
     return result.rows;
 }
@@ -88,11 +100,17 @@ async function listIntegrations() {
  * Revoke an integration by setting revoked_at.
  * @param {string} keyId
  */
-async function revokeIntegration(keyId) {
+async function revokeIntegration(keyId, companyId = null) {
+    const conditions = ['key_id = $1', 'revoked_at IS NULL'];
+    const params = [keyId];
+    if (companyId) {
+        conditions.push(`company_id = $2`);
+        params.push(companyId);
+    }
     const result = await db.query(
-        `UPDATE api_integrations SET revoked_at = now() WHERE key_id = $1 AND revoked_at IS NULL
+        `UPDATE api_integrations SET revoked_at = now() WHERE ${conditions.join(' AND ')}
          RETURNING id, key_id, revoked_at`,
-        [keyId]
+        params
     );
 
     if (result.rows.length === 0) {

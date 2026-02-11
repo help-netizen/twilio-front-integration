@@ -17,7 +17,7 @@ const integrationsService = require('../services/integrationsService');
 // =============================================================================
 router.get('/', async (req, res) => {
     try {
-        const integrations = await integrationsService.listIntegrations();
+        const integrations = await integrationsService.listIntegrations(req.companyFilter?.company_id);
         res.json({ success: true, integrations });
     } catch (err) {
         console.error('[IntegrationsAdmin] List error:', err.message);
@@ -47,7 +47,8 @@ router.post('/', async (req, res) => {
         const result = await integrationsService.createIntegration(
             client_name.trim(),
             scopes || ['leads:create'],
-            expires_at || null
+            expires_at || null,
+            req.companyFilter?.company_id
         );
 
         // ⚠️ This response contains the plaintext secret — shown ONCE
@@ -70,7 +71,7 @@ router.post('/', async (req, res) => {
 // =============================================================================
 router.delete('/:keyId', async (req, res) => {
     try {
-        const result = await integrationsService.revokeIntegration(req.params.keyId);
+        const result = await integrationsService.revokeIntegration(req.params.keyId, req.companyFilter?.company_id);
         res.json({ success: true, revoked: result });
     } catch (err) {
         if (err.status === 404) {

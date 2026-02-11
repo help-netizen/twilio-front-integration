@@ -64,6 +64,7 @@ router.get('/', async (req, res) => {
             records: records ? Number(records) : 100,
             only_open: only_open !== 'false',
             status: status ? (Array.isArray(status) ? status : [status]) : undefined,
+            companyId: req.companyFilter?.company_id,
         };
 
         const result = await leadsService.listLeads(params);
@@ -93,7 +94,7 @@ router.get('/:uuid', async (req, res) => {
             return res.status(400).json(errorResponse('INVALID_UUID', 'UUID is required', reqId));
         }
 
-        const lead = await leadsService.getLeadByUUID(uuid);
+        const lead = await leadsService.getLeadByUUID(uuid, req.companyFilter?.company_id);
         res.json(successResponse({ lead }, reqId));
     } catch (err) {
         handleError(err, reqId, res);
@@ -118,7 +119,7 @@ router.post('/', async (req, res) => {
             return res.status(400).json(errorResponse('VALIDATION_ERROR', errors.join('; '), reqId));
         }
 
-        const result = await leadsService.createLead(body);
+        const result = await leadsService.createLead(body, req.companyFilter?.company_id);
         res.status(201).json(successResponse(result, reqId));
     } catch (err) {
         handleError(err, reqId, res);
@@ -144,7 +145,7 @@ router.patch('/:uuid', async (req, res) => {
             return res.status(400).json(errorResponse('VALIDATION_ERROR', 'At least one field must be provided', reqId));
         }
 
-        const result = await leadsService.updateLead(uuid, fields);
+        const result = await leadsService.updateLead(uuid, fields, req.companyFilter?.company_id);
         res.json(successResponse(result, reqId));
     } catch (err) {
         handleError(err, reqId, res);
@@ -157,7 +158,7 @@ router.patch('/:uuid', async (req, res) => {
 router.post('/:uuid/mark-lost', async (req, res) => {
     const reqId = requestId();
     try {
-        const result = await leadsService.markLost(req.params.uuid);
+        const result = await leadsService.markLost(req.params.uuid, req.companyFilter?.company_id);
         res.json(successResponse(result, reqId));
     } catch (err) {
         handleError(err, reqId, res);
@@ -170,7 +171,7 @@ router.post('/:uuid/mark-lost', async (req, res) => {
 router.post('/:uuid/activate', async (req, res) => {
     const reqId = requestId();
     try {
-        const result = await leadsService.activateLead(req.params.uuid);
+        const result = await leadsService.activateLead(req.params.uuid, req.companyFilter?.company_id);
         res.json(successResponse(result, reqId));
     } catch (err) {
         handleError(err, reqId, res);
@@ -204,7 +205,7 @@ router.post('/:uuid/unassign', async (req, res) => {
         if (!User) {
             return res.status(400).json(errorResponse('VALIDATION_ERROR', 'User is required', reqId));
         }
-        const result = await leadsService.unassignUser(req.params.uuid, User);
+        const result = await leadsService.unassignUser(req.params.uuid, User, req.companyFilter?.company_id);
         res.json(successResponse(result, reqId));
     } catch (err) {
         handleError(err, reqId, res);
@@ -217,7 +218,7 @@ router.post('/:uuid/unassign', async (req, res) => {
 router.post('/:uuid/convert', async (req, res) => {
     const reqId = requestId();
     try {
-        const result = await leadsService.convertLead(req.params.uuid, req.body || {});
+        const result = await leadsService.convertLead(req.params.uuid, req.body || {}, req.companyFilter?.company_id);
         res.json(successResponse(result, reqId));
     } catch (err) {
         handleError(err, reqId, res);

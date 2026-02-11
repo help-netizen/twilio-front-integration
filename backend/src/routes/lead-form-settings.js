@@ -4,11 +4,14 @@ const db = require('../db/connection');
 const router = express.Router();
 
 // ─── GET /api/settings/lead-form ────────────────────────────────────────────
-router.get('/', async (_req, res) => {
+router.get('/', async (req, res) => {
     try {
+        const companyId = req.companyFilter?.company_id;
+        const companyWhere = companyId ? `WHERE company_id = $1` : '';
+        const params = companyId ? [companyId] : [];
         const [jobTypesResult, fieldsResult] = await Promise.all([
-            db.query('SELECT id, name, sort_order FROM lead_job_types ORDER BY sort_order, id'),
-            db.query('SELECT id, display_name, api_name, field_type, is_system, sort_order FROM lead_custom_fields ORDER BY sort_order, id'),
+            db.query(`SELECT id, name, sort_order FROM lead_job_types ${companyWhere} ORDER BY sort_order, id`, params),
+            db.query(`SELECT id, display_name, api_name, field_type, is_system, sort_order FROM lead_custom_fields ${companyWhere} ORDER BY sort_order, id`, params),
         ]);
 
         res.json({
@@ -25,6 +28,7 @@ router.get('/', async (_req, res) => {
 // ─── PUT /api/settings/lead-form ────────────────────────────────────────────
 router.put('/', async (req, res) => {
     const { jobTypes, customFields } = req.body;
+    const companyId = req.companyFilter?.company_id;
     const client = await db.pool.connect();
 
     try {
@@ -32,14 +36,25 @@ router.put('/', async (req, res) => {
 
         // ── Job Types: full replace ──
         if (Array.isArray(jobTypes)) {
-            await client.query('DELETE FROM lead_job_types');
+            if (companyId) {
+                await client.query('DELETE FROM lead_job_types WHERE company_id = $1', [companyId]);
+            } else {
+                await client.query('DELETE FROM lead_job_types');
+            }
             for (let i = 0; i < jobTypes.length; i++) {
                 const name = String(jobTypes[i]).trim();
                 if (!name) continue;
-                await client.query(
-                    'INSERT INTO lead_job_types (name, sort_order) VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET sort_order = $2',
-                    [name, i],
-                );
+                if (companyId) {
+                    await client.query(
+                        'INSERT INTO lead_job_types (name, sort_order, company_id) VALUES ($1, $2, $3) ON CONFLICT (name) DO UPDATE SET sort_order = $2',
+                        [name, i, companyId],
+                    );
+                } else {
+                    await client.query(
+                        'INSERT INTO lead_job_types (name, sort_order) VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET sort_order = $2',
+                        [name, i],
+                    );
+                }
             }
         }
 
@@ -95,9 +110,11 @@ router.put('/', async (req, res) => {
         await client.query('COMMIT');
 
         // Return updated data
+        const companyWhere = companyId ? `WHERE company_id = $1` : '';
+        const returnParams = companyId ? [companyId] : [];
         const [jobTypesResult, fieldsResult] = await Promise.all([
-            db.query('SELECT id, name, sort_order FROM lead_job_types ORDER BY sort_order, id'),
-            db.query('SELECT id, display_name, api_name, field_type, is_system, sort_order FROM lead_custom_fields ORDER BY sort_order, id'),
+            db.query(`SELECT id, name, sort_order FROM lead_job_types ${companyWhere} ORDER BY sort_order, id`, returnParams),
+            db.query(`SELECT id, display_name, api_name, field_type, is_system, sort_order FROM lead_custom_fields ${companyWhere} ORDER BY sort_order, id`, returnParams),
         ]);
 
         res.json({

@@ -87,13 +87,19 @@ async function upsertCall(data) {
 /**
  * Get a single call by CallSid
  */
-async function getCallByCallSid(callSid) {
+async function getCallByCallSid(callSid, companyId = null) {
+    const conditions = ['c.call_sid = $1'];
+    const params = [callSid];
+    if (companyId) {
+        conditions.push(`c.company_id = $2`);
+        params.push(companyId);
+    }
     const result = await db.query(
         `SELECT c.*, to_json(co) as contact
          FROM calls c
          LEFT JOIN contacts co ON c.contact_id = co.id
-         WHERE c.call_sid = $1`,
-        [callSid]
+         WHERE ${conditions.join(' AND ')}`,
+        params
     );
     return result.rows[0];
 }
@@ -102,11 +108,15 @@ async function getCallByCallSid(callSid) {
  * Get calls with cursor-based pagination and optional filters.
  * Cursor is the last seen `id`.
  */
-async function getCalls({ cursor, limit = 50, status, hasRecording, hasTranscript, contactId } = {}) {
+async function getCalls({ cursor, limit = 50, status, hasRecording, hasTranscript, contactId, companyId } = {}) {
     const conditions = [];
     const params = [];
     let paramIdx = 1;
 
+    if (companyId) {
+        conditions.push(`c.company_id = $${paramIdx++}`);
+        params.push(companyId);
+    }
     if (cursor) {
         conditions.push(`c.id < $${paramIdx++}`);
         params.push(cursor);
@@ -150,27 +160,34 @@ async function getCalls({ cursor, limit = 50, status, hasRecording, hasTranscrip
  * Get calls grouped by contact (replaces old "conversations" listing).
  * Returns latest call per contact with call count.
  */
-async function getCallsByContact({ limit = 20, offset = 0 } = {}) {
+async function getCallsByContact({ limit = 20, offset = 0, companyId = null } = {}) {
+    const companyFilter = companyId ? `AND c.company_id = $3` : '';
+    const companyFilter2 = companyId ? `AND c2.company_id = $3` : '';
+    const companyFilter3 = companyId ? `AND c3.company_id = $3` : '';
+    const params = [limit, offset];
+    if (companyId) params.push(companyId);
+
     const result = await db.query(
         `SELECT * FROM (
             SELECT DISTINCT ON (c.contact_id)
                 c.*,
                 to_json(co) as contact,
-                (SELECT COUNT(*) FROM calls c2 WHERE c2.contact_id = c.contact_id) as call_count
+                (SELECT COUNT(*) FROM calls c2 WHERE c2.contact_id = c.contact_id ${companyFilter2}) as call_count
              FROM calls c
              LEFT JOIN contacts co ON c.contact_id = co.id
              WHERE c.contact_id IS NOT NULL
-               -- Exclude contacts that ONLY have failed/canceled calls
+               ${companyFilter}
                AND EXISTS (
                    SELECT 1 FROM calls c3
                    WHERE c3.contact_id = c.contact_id
                      AND c3.status NOT IN ('failed', 'canceled')
+                     ${companyFilter3}
                )
              ORDER BY c.contact_id, c.started_at DESC NULLS LAST
          ) sub
          ORDER BY sub.started_at DESC NULLS LAST
          LIMIT $1 OFFSET $2`,
-        [limit, offset]
+        params
     );
     return result.rows;
 }
@@ -178,15 +195,21 @@ async function getCallsByContact({ limit = 20, offset = 0 } = {}) {
 /**
  * Get total contacts with calls count
  */
-async function getContactsWithCallsCount() {
+async function getContactsWithCallsCount(companyId = null) {
+    const companyFilter = companyId ? `AND calls.company_id = $1` : '';
+    const companyFilter2 = companyId ? `AND c2.company_id = $1` : '';
+    const params = companyId ? [companyId] : [];
     const result = await db.query(
         `SELECT COUNT(DISTINCT contact_id) FROM calls
          WHERE contact_id IS NOT NULL
+           ${companyFilter}
            AND EXISTS (
                SELECT 1 FROM calls c2
                WHERE c2.contact_id = calls.contact_id
                  AND c2.status NOT IN ('failed', 'canceled')
-           )`
+                 ${companyFilter2}
+           )`,
+        params
     );
     return parseInt(result.rows[0].count, 10);
 }
@@ -225,13 +248,16 @@ async function getCallsByContactId(contactId) {
 /**
  * Get active (non-final) calls
  */
-async function getActiveCalls() {
+async function getActiveCalls(companyId = null) {
+    const companyFilter = companyId ? `AND c.company_id = $1` : '';
+    const params = companyId ? [companyId] : [];
     const result = await db.query(
         `SELECT c.*, to_json(co) as contact
          FROM calls c
          LEFT JOIN contacts co ON c.contact_id = co.id
-         WHERE c.is_final = false
-         ORDER BY c.started_at DESC NULLS LAST`
+         WHERE c.is_final = false ${companyFilter}
+         ORDER BY c.started_at DESC NULLS LAST`,
+        params
     );
     return result.rows;
 }

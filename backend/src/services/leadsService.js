@@ -167,10 +167,16 @@ function mapFieldsToColumns(fields) {
 // =============================================================================
 // List Leads
 // =============================================================================
-async function listLeads({ start_date, offset = 0, records = 100, only_open = true, status } = {}) {
+async function listLeads({ start_date, offset = 0, records = 100, only_open = true, status, companyId } = {}) {
     const conditions = [];
     const params = [];
     let paramIdx = 0;
+
+    if (companyId) {
+        paramIdx++;
+        conditions.push(`l.company_id = $${paramIdx}`);
+        params.push(companyId);
+    }
 
     if (only_open) {
         conditions.push('l.lead_lost = false AND l.converted_to_job = false');
@@ -229,7 +235,13 @@ async function listLeads({ start_date, offset = 0, records = 100, only_open = tr
 // =============================================================================
 // Get Lead by UUID
 // =============================================================================
-async function getLeadByUUID(uuid) {
+async function getLeadByUUID(uuid, companyId = null) {
+    const conditions = ['l.uuid = $1'];
+    const params = [uuid];
+    if (companyId) {
+        conditions.push(`l.company_id = $2`);
+        params.push(companyId);
+    }
     const sql = `
         SELECT l.*,
             COALESCE(
@@ -238,11 +250,11 @@ async function getLeadByUUID(uuid) {
             ) AS team
         FROM leads l
         LEFT JOIN lead_team_assignments lta ON lta.lead_id = l.id
-        WHERE l.uuid = $1
+        WHERE ${conditions.join(' AND ')}
         GROUP BY l.id
     `;
 
-    const { rows } = await db.query(sql, [uuid]);
+    const { rows } = await db.query(sql, params);
     if (rows.length === 0) {
         throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
     }
@@ -252,12 +264,17 @@ async function getLeadByUUID(uuid) {
 // =============================================================================
 // Create Lead
 // =============================================================================
-async function createLead(fields) {
+async function createLead(fields, companyId = null) {
     const uuid = await generateUniqueUUID();
     const columns = mapFieldsToColumns(fields);
 
     // Always set uuid
     columns.uuid = uuid;
+
+    // Set company_id if provided
+    if (companyId) {
+        columns.company_id = companyId;
+    }
 
     // Handle custom metadata fields (flat api_name keys + Metadata object)
     const meta = await extractCustomMetadata(fields);
@@ -287,7 +304,7 @@ async function createLead(fields) {
 // =============================================================================
 // Update Lead
 // =============================================================================
-async function updateLead(uuid, fields) {
+async function updateLead(uuid, fields, companyId = null) {
     const columns = mapFieldsToColumns(fields);
 
     // Handle custom metadata fields (flat api_name keys + Metadata object)
@@ -318,10 +335,17 @@ async function updateLead(uuid, fields) {
 
     idx++;
     values.push(uuid);
+    const conditions = [`uuid = $${idx}`];
+
+    if (companyId) {
+        idx++;
+        conditions.push(`company_id = $${idx}`);
+        values.push(companyId);
+    }
 
     const sql = `
         UPDATE leads SET ${setClauses.join(', ')}
-        WHERE uuid = $${idx}
+        WHERE ${conditions.join(' AND ')}
         RETURNING uuid, id
     `;
 
@@ -340,13 +364,19 @@ async function updateLead(uuid, fields) {
 // =============================================================================
 // Mark Lost
 // =============================================================================
-async function markLost(uuid) {
+async function markLost(uuid, companyId = null) {
+    const conditions = ['uuid = $1'];
+    const params = [uuid];
+    if (companyId) {
+        conditions.push(`company_id = $2`);
+        params.push(companyId);
+    }
     const sql = `
         UPDATE leads SET lead_lost = true, status = 'Lost'
-        WHERE uuid = $1
+        WHERE ${conditions.join(' AND ')}
         RETURNING uuid
     `;
-    const { rows } = await db.query(sql, [uuid]);
+    const { rows } = await db.query(sql, params);
     if (rows.length === 0) {
         throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
     }
@@ -356,13 +386,19 @@ async function markLost(uuid) {
 // =============================================================================
 // Activate Lead
 // =============================================================================
-async function activateLead(uuid) {
+async function activateLead(uuid, companyId = null) {
+    const conditions = ['uuid = $1'];
+    const params = [uuid];
+    if (companyId) {
+        conditions.push(`company_id = $2`);
+        params.push(companyId);
+    }
     const sql = `
         UPDATE leads SET lead_lost = false, status = 'Submitted'
-        WHERE uuid = $1
+        WHERE ${conditions.join(' AND ')}
         RETURNING uuid
     `;
-    const { rows } = await db.query(sql, [uuid]);
+    const { rows } = await db.query(sql, params);
     if (rows.length === 0) {
         throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
     }
@@ -372,9 +408,17 @@ async function activateLead(uuid) {
 // =============================================================================
 // Assign User
 // =============================================================================
-async function assignUser(uuid, userName) {
+async function assignUser(uuid, userName, companyId = null) {
     // Get lead ID
-    const { rows: leadRows } = await db.query('SELECT id FROM leads WHERE uuid = $1', [uuid]);
+    const conditions = ['uuid = $1'];
+    const params = [uuid];
+    if (companyId) {
+        conditions.push(`company_id = $2`);
+        params.push(companyId);
+    }
+    const { rows: leadRows } = await db.query(
+        `SELECT id FROM leads WHERE ${conditions.join(' AND ')}`, params
+    );
     if (leadRows.length === 0) {
         throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
     }
@@ -394,8 +438,16 @@ async function assignUser(uuid, userName) {
 // =============================================================================
 // Unassign User
 // =============================================================================
-async function unassignUser(uuid, userName) {
-    const { rows: leadRows } = await db.query('SELECT id FROM leads WHERE uuid = $1', [uuid]);
+async function unassignUser(uuid, userName, companyId = null) {
+    const conditions = ['uuid = $1'];
+    const params = [uuid];
+    if (companyId) {
+        conditions.push(`company_id = $2`);
+        params.push(companyId);
+    }
+    const { rows: leadRows } = await db.query(
+        `SELECT id FROM leads WHERE ${conditions.join(' AND ')}`, params
+    );
     if (leadRows.length === 0) {
         throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
     }
@@ -415,10 +467,16 @@ async function unassignUser(uuid, userName) {
 // =============================================================================
 // Convert Lead to Job
 // =============================================================================
-async function convertLead(uuid, overrides = {}) {
+async function convertLead(uuid, overrides = {}, companyId = null) {
     // 1. Fetch full lead to get address/contact info for Zenbooker
+    const conditions = ['uuid = $1'];
+    const params = [uuid];
+    if (companyId) {
+        conditions.push(`company_id = $2`);
+        params.push(companyId);
+    }
     const { rows: leadRows } = await db.query(
-        'SELECT * FROM leads WHERE uuid = $1', [uuid]
+        `SELECT * FROM leads WHERE ${conditions.join(' AND ')}`, params
     );
     if (leadRows.length === 0) {
         throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
@@ -452,14 +510,20 @@ async function convertLead(uuid, overrides = {}) {
     }
 
     // 3. Mark lead as converted and save Zenbooker job ID
+    const updateConditions = ['uuid = $1'];
+    const updateParams = [uuid, zenbookerJobId];
+    if (companyId) {
+        updateConditions.push(`company_id = $3`);
+        updateParams.push(companyId);
+    }
     const updateSql = `
         UPDATE leads
         SET converted_to_job = true, status = 'Converted',
             zenbooker_job_id = COALESCE($2, zenbooker_job_id)
-        WHERE uuid = $1
+        WHERE ${updateConditions.join(' AND ')}
         RETURNING uuid, id
     `;
-    const { rows } = await db.query(updateSql, [uuid, zenbookerJobId]);
+    const { rows } = await db.query(updateSql, updateParams);
 
     return {
         UUID: rows[0].uuid,

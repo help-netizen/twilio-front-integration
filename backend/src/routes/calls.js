@@ -17,6 +17,7 @@ router.get('/', async (req, res) => {
             contact_id,
         } = req.query;
 
+        const companyId = req.companyFilter?.company_id;
         const result = await queries.getCalls({
             cursor: cursor ? parseInt(cursor) : undefined,
             limit: Math.min(parseInt(limit) || 50, 200),
@@ -24,6 +25,7 @@ router.get('/', async (req, res) => {
             hasRecording: has_recording === 'true' ? true : undefined,
             hasTranscript: has_transcript === 'true' ? true : undefined,
             contactId: contact_id ? parseInt(contact_id) : undefined,
+            companyId,
         });
 
         res.json({
@@ -42,7 +44,7 @@ router.get('/', async (req, res) => {
 // =============================================================================
 router.get('/active', async (req, res) => {
     try {
-        const calls = await queries.getActiveCalls();
+        const calls = await queries.getActiveCalls(req.companyFilter?.company_id);
         res.json({
             active_calls: calls.map(formatCall),
             count: calls.length,
@@ -59,11 +61,13 @@ router.get('/active', async (req, res) => {
 router.get('/by-contact', async (req, res) => {
     try {
         const { limit = 20, offset = 0 } = req.query;
+        const companyId = req.companyFilter?.company_id;
         const calls = await queries.getCallsByContact({
             limit: parseInt(limit),
             offset: parseInt(offset),
+            companyId,
         });
-        const total = await queries.getContactsWithCallsCount();
+        const total = await queries.getContactsWithCallsCount(companyId);
 
         res.json({
             conversations: calls.map(c => ({
@@ -98,7 +102,7 @@ router.get('/contact/:contactId', async (req, res) => {
 // =============================================================================
 router.get('/:callSid', async (req, res) => {
     try {
-        const call = await queries.getCallByCallSid(req.params.callSid);
+        const call = await queries.getCallByCallSid(req.params.callSid, req.companyFilter?.company_id);
         if (!call) {
             return res.status(404).json({ error: 'Call not found' });
         }
