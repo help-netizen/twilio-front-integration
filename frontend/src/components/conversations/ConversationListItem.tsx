@@ -9,18 +9,22 @@ interface ConversationListItemProps {
     call: Call;
 }
 
+const STATUS_ICON_COLORS: Record<string, string> = {
+    'completed': '#16a34a',
+    'no-answer': '#ca8a04',
+    'busy': '#ea580c',
+    'failed': '#dc2626',
+    'canceled': '#dc2626',
+};
+
 function DirectionIcon({ direction, status }: { direction: string; status: string }) {
-    const isMissed = ['no-answer', 'busy', 'canceled', 'failed'].includes(status?.toLowerCase() || '');
     const isInbound = direction === 'inbound';
     const isInternal = direction === 'internal';
+    const color = STATUS_ICON_COLORS[status?.toLowerCase() || ''] || '#16a34a';
 
-    const colorClass = isMissed
-        ? 'text-destructive'
-        : 'text-muted-foreground';
-
-    if (isInternal) return <ArrowLeftRight className={cn('size-4', colorClass)} />;
-    if (isInbound) return <PhoneIncoming className={cn('size-4', colorClass)} />;
-    return <PhoneOutgoing className={cn('size-4', colorClass)} />;
+    if (isInternal) return <ArrowLeftRight className="size-4" style={{ color }} />;
+    if (isInbound) return <PhoneIncoming className="size-4" style={{ color }} />;
+    return <PhoneOutgoing className="size-4" style={{ color }} />;
 }
 
 export const ConversationListItem: React.FC<ConversationListItemProps> = ({ call }) => {
