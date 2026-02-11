@@ -212,6 +212,7 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
                         },
                     },
                 ],
+                assignment_method: 'auto',
                 sms_notifications: true,
                 email_notifications: true,
             };
