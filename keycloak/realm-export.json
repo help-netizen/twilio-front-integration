@@ -29,11 +29,26 @@
   "eventsExpiration": 7776000,
   "roles": {
     "realm": [
-      { "name": "owner_admin", "description": "Full access to all CRM features" },
-      { "name": "dispatcher", "description": "Manage calls, jobs, customers" },
-      { "name": "technician", "description": "View jobs, update own assignments" },
-      { "name": "accountant", "description": "Access billing and invoices" },
-      { "name": "viewer", "description": "Read-only access" }
+      {
+        "name": "owner_admin",
+        "description": "Full access to all CRM features"
+      },
+      {
+        "name": "dispatcher",
+        "description": "Manage calls, jobs, customers"
+      },
+      {
+        "name": "technician",
+        "description": "View jobs, update own assignments"
+      },
+      {
+        "name": "accountant",
+        "description": "Access billing and invoices"
+      },
+      {
+        "name": "viewer",
+        "description": "Read-only access"
+      }
     ]
   },
   "clients": [
@@ -43,7 +58,7 @@
       "enabled": true,
       "publicClient": true,
       "standardFlowEnabled": true,
-      "directAccessGrantsEnabled": false,
+      "directAccessGrantsEnabled": true,
       "implicitFlowEnabled": false,
       "serviceAccountsEnabled": false,
       "protocol": "openid-connect",
@@ -58,7 +73,7 @@
         "http://localhost:3001",
         "http://localhost:3000"
       ],
-      "fullScopeAllowed": false,
+      "fullScopeAllowed": true,
       "defaultClientScopes": [
         "web-origins",
         "acr",

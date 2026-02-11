@@ -64,8 +64,8 @@ app.use('/api/zenbooker', authenticate, zenbookerRouter);
 
 // BLANC Integrations API (secured header-based auth)
 app.use('/api/v1/integrations', integrationsLeadsRouter);
-app.use('/api/admin/integrations', integrationsAdminRouter);
-app.use('/api/settings/lead-form', leadFormSettingsRouter);
+app.use('/api/admin/integrations', authenticate, integrationsAdminRouter);
+app.use('/api/settings/lead-form', authenticate, leadFormSettingsRouter);
 console.log('🔐 BLANC Integrations API enabled at /api/v1/integrations/leads');
 
 

@@ -107,7 +107,7 @@ else
       "name": "CRM Web Application",
       "enabled": true,
       "protocol": "openid-connect",
-      "publicClient": false,
+      "publicClient": true,
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": true,
       "implicitFlowEnabled": false,
@@ -156,7 +156,7 @@ curl -s -X POST "${KC_URL}/admin/realms/${REALM}/clients/${CLIENT_UUID}/protocol
     "protocolMapper": "oidc-usermodel-realm-role-mapper",
     "config": {
       "multivalued": "true",
-      "claim.name": "realm_access.roles",
+      "claim.name": "realm_roles",
       "jsonType.label": "String",
       "id.token.claim": "true",
       "access.token.claim": "true",
