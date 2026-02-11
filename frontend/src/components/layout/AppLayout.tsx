@@ -32,8 +32,6 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
 
     const handleRefresh = async () => {
         setIsRefreshing(true);
-        // Suppress SSE toast notifications during manual refresh
-        window.__suppressSSENotifications = true;
         try {
             console.log('🔄 Refreshing last 3 days calls...');
             const response = await authedFetch('/api/sync/today', {
@@ -54,8 +52,6 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
             alert('❌ Failed to refresh calls. Check console for details.');
         } finally {
             setIsRefreshing(false);
-            // Re-enable SSE notifications after a short delay (SSE events from sync may still arrive)
-            setTimeout(() => { window.__suppressSSENotifications = false; }, 3000);
         }
     };
 

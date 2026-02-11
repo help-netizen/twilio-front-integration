@@ -104,18 +104,6 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
                 const data = JSON.parse(e.data) as SSECallEvent;
                 console.log('[SSE] Call updated:', data.call_sid, data.status);
 
-                if (!window.__suppressSSENotifications) {
-                    window.dispatchEvent(new CustomEvent('sse-event-received', {
-                        detail: {
-                            call_sid: data.call_sid,
-                            status: data.status,
-                            from: data.from_number,
-                            to: data.to_number,
-                            timestamp: new Date().toISOString()
-                        }
-                    }));
-                }
-
                 onCallUpdateRef.current?.(data);
             });
 
@@ -123,18 +111,6 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
             eventSource.addEventListener('call.created', (e) => {
                 const data = JSON.parse(e.data) as SSECallEvent;
                 console.log('[SSE] Call created:', data.call_sid);
-
-                if (!window.__suppressSSENotifications) {
-                    window.dispatchEvent(new CustomEvent('sse-event-received', {
-                        detail: {
-                            call_sid: data.call_sid,
-                            status: data.status,
-                            from: data.from_number,
-                            to: data.to_number,
-                            timestamp: new Date().toISOString()
-                        }
-                    }));
-                }
 
                 onCallCreatedRef.current?.(data);
             });
