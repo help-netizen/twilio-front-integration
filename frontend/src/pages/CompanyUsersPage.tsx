@@ -91,14 +91,14 @@ export default function CompanyUsersPage() {
 
             const res = await fetch(`${API_BASE}/users?${params}`, { headers });
             if (res.status === 403) {
-                toast.error('Отказано в доступе');
+                toast.error('Access denied');
                 return;
             }
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const json: PaginatedResponse = await res.json();
             setData(json);
         } catch (e: any) {
-            toast.error('Не удалось загрузить пользователей', { description: e.message });
+            toast.error('Failed to load users', { description: e.message });
         } finally {
             setLoading(false);
         }
@@ -120,7 +120,7 @@ export default function CompanyUsersPage() {
 
     const handleCreate = async () => {
         if (!createForm.full_name || !createForm.email) {
-            toast.error('Заполните обязательные поля');
+            toast.error('Please fill in the required fields');
             return;
         }
         setCreating(true);
@@ -133,19 +133,19 @@ export default function CompanyUsersPage() {
             const json = await res.json();
             if (!res.ok) {
                 if (json.code === 'USER_EXISTS') {
-                    toast.error('Пользователь с таким email уже существует');
+                    toast.error('A user with this email already exists');
                 } else if (json.code === 'VALIDATION_ERROR') {
                     toast.error(json.message);
                 } else {
-                    toast.error('Не удалось создать пользователя');
+                    toast.error('Failed to create user');
                 }
                 return;
             }
             setTempPassword(json.temporary_password);
-            toast.success('Пользователь создан');
+            toast.success('User created');
             fetchUsers();
         } catch {
-            toast.error('Ошибка подключения');
+            toast.error('Connection error');
         } finally {
             setCreating(false);
         }
@@ -164,15 +164,15 @@ export default function CompanyUsersPage() {
             });
             const json = await res.json();
             if (res.status === 409 && json.code === 'LAST_ADMIN_REQUIRED') {
-                toast.error('Нельзя убрать последнего администратора компании');
+                toast.error('Cannot remove the last company admin');
             } else if (!res.ok) {
-                toast.error(json.message || 'Не удалось изменить роль');
+                toast.error(json.message || 'Failed to change role');
             } else {
-                toast.success('Роль изменена');
+                toast.success('Role updated');
                 fetchUsers();
             }
         } catch {
-            toast.error('Ошибка подключения');
+            toast.error('Connection error');
         } finally {
             setActionLoading(null);
             setRoleDialog({ open: false, user: null, newRole: '' });
@@ -193,15 +193,15 @@ export default function CompanyUsersPage() {
             });
             const json = await res.json();
             if (res.status === 409 && json.code === 'LAST_ADMIN_REQUIRED') {
-                toast.error('Нельзя деактивировать последнего администратора компании');
+                toast.error('Cannot disable the last company admin');
             } else if (!res.ok) {
-                toast.error(json.message || 'Не удалось изменить статус');
+                toast.error(json.message || 'Failed to change status');
             } else {
-                toast.success(isActive ? 'Пользователь деактивирован' : 'Пользователь активирован');
+                toast.success(isActive ? 'User disabled' : 'User enabled');
                 fetchUsers();
             }
         } catch {
-            toast.error('Ошибка подключения');
+            toast.error('Connection error');
         } finally {
             setActionLoading(null);
         }

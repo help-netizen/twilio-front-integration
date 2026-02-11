@@ -290,7 +290,7 @@ describe('requireRole', () => {
         expect(mockRes.json).toHaveBeenCalledWith(
             expect.objectContaining({
                 code: 'ACCESS_DENIED',
-                message: 'Отказано в доступе',
+                message: 'Access denied',
             })
         );
     });

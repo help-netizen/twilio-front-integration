@@ -179,7 +179,7 @@ function requireRole(...allowedRoles) {
 
             return res.status(403).json({
                 code: 'ACCESS_DENIED',
-                message: 'Отказано в доступе',
+                message: 'Access denied',
                 trace_id: req.traceId,
             });
         }
