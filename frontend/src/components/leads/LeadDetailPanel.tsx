@@ -1,3 +1,4 @@
+import { authedFetch } from '../../services/apiClient';
 import {
     X,
     Phone,
@@ -45,7 +46,7 @@ function MetadataSection({ lead }: { lead: Lead }) {
     const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
 
     useEffect(() => {
-        fetch('/api/settings/lead-form')
+        authedFetch('/api/settings/lead-form')
             .then((r) => r.json())
             .then((data) => {
                 if (data.success) {

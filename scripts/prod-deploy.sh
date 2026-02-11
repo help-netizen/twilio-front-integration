@@ -15,11 +15,10 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 PROD_URL="https://abc-metrics.fly.dev"
 
-# Twilio phone number SIDs
+# Twilio phone number SIDs (prod only — +16179927291 reserved for dev/testing)
 PHONE_SIDS=(
     "PNd4a275cf0cd02292bc69df105b4e6b7d"  # +1 (877) 419-4983
     "PNec159049f9d2a07f464d9d0b9fe9c30a"  # +1 (617) 500-6181
-    "PN334757241793e249e3f73c62cb88accc"  # +1 (617) 992-7291
 )
 
 # Colors

@@ -1,0 +1,36 @@
+app = 'abc-keycloak'
+primary_region = 'ewr'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  KC_DB = 'postgres'
+  KC_DB_URL = 'jdbc:postgresql://pgbouncer.q49ypo4w4mpr17ln.flympg.net:5432/fly-db?prepareThreshold=0'
+  KC_DB_USERNAME = 'fly-user'
+  KC_PROXY_HEADERS = 'xforwarded'
+  KC_HTTP_ENABLED = 'true'
+  KC_HOSTNAME = 'abc-keycloak.fly.dev'
+  KC_HOSTNAME_STRICT = 'false'
+  KC_HEALTH_ENABLED = 'true'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ['app']
+
+  [[http_service.http_checks]]
+    interval = '30s'
+    grace_period = '120s'
+    method = 'GET'
+    path = '/health/ready'
+    protocol = 'http'
+    timeout = '10s'
+
+[[vm]]
+  memory = '1024mb'
+  cpu_kind = 'shared'
+  cpus = 1

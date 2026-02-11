@@ -232,10 +232,11 @@ async function handleVoiceInbound(req, res) {
             }
             console.log(`[${traceId}] Outbound: SIP → ${dialNumber}`);
 
+            const outboundCallerId = process.env.OUTBOUND_CALLER_ID || '+16175006181';
             twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Dial timeout="60"
-          callerId="+16175006181"
+          callerId="${outboundCallerId}"
           action="${dialActionUrl}"
           method="POST"
           record="record-from-answer-dual"
@@ -248,9 +249,14 @@ async function handleVoiceInbound(req, res) {
 </Response>`;
         } else {
             console.log(`[${traceId}] Inbound: ${From} → SIP`);
-            const sipUser = process.env.SIP_USER || 'dispatcher';
             const sipDomain = process.env.SIP_DOMAIN || 'abchomes.sip.us1.twilio.com';
-            const sipEndpoint = `sip:${sipUser}@${sipDomain}`;
+            // Support multiple SIP users (ring all simultaneously)
+            const sipUsers = (process.env.SIP_USERS || process.env.SIP_USER || 'dispatcher').split(',').map(u => u.trim());
+            const sipEndpoints = sipUsers.map(user =>
+                `        <Sip statusCallback="${statusCallbackUrl}"
+             statusCallbackEvent="initiated ringing answered completed"
+             statusCallbackMethod="POST">sip:${user}@${sipDomain}</Sip>`
+            ).join('\n');
 
             twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -260,9 +266,7 @@ async function handleVoiceInbound(req, res) {
           record="record-from-answer-dual"
           recordingStatusCallback="${recordingStatusUrl}"
           recordingStatusCallbackMethod="POST">
-        <Sip statusCallback="${statusCallbackUrl}"
-             statusCallbackEvent="initiated ringing answered completed"
-             statusCallbackMethod="POST">${sipEndpoint}</Sip>
+${sipEndpoints}
     </Dial>
 </Response>`;
         }

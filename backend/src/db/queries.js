@@ -1,5 +1,8 @@
 const db = require('./connection');
 
+// Default company ID for single-tenant mode (Boston Masters)
+const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
+
 // =============================================================================
 // Contact operations
 // =============================================================================
@@ -12,14 +15,14 @@ async function findContactByPhone(phoneE164) {
     return result.rows[0];
 }
 
-async function createContact(phoneE164, fullName = null) {
+async function createContact(phoneE164, fullName = null, companyId = null) {
     const result = await db.query(
-        `INSERT INTO contacts (phone_e164, full_name)
-         VALUES ($1, $2)
+        `INSERT INTO contacts (phone_e164, full_name, company_id)
+         VALUES ($1, $2, $3)
          ON CONFLICT (phone_e164) WHERE phone_e164 IS NOT NULL
          DO UPDATE SET full_name = COALESCE(EXCLUDED.full_name, contacts.full_name)
          RETURNING *`,
-        [phoneE164, fullName || phoneE164]
+        [phoneE164, fullName || phoneE164, companyId || DEFAULT_COMPANY_ID]
     );
     return result.rows[0];
 }
@@ -53,8 +56,9 @@ async function upsertCall(data) {
             call_sid, parent_call_sid, contact_id, direction,
             from_number, to_number, status, is_final,
             started_at, answered_at, ended_at, duration_sec,
-            price, price_unit, last_event_time, raw_last_payload
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+            price, price_unit, last_event_time, raw_last_payload,
+            company_id
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
         ON CONFLICT (call_sid) DO UPDATE SET
             parent_call_sid   = COALESCE(EXCLUDED.parent_call_sid, calls.parent_call_sid),
             contact_id        = COALESCE(EXCLUDED.contact_id, calls.contact_id),
@@ -78,7 +82,8 @@ async function upsertCall(data) {
             fromNumber, toNumber, status, isFinal,
             startedAt, answeredAt, endedAt, durationSec,
             price, priceUnit, lastEventTime,
-            JSON.stringify(rawLastPayload || {})
+            JSON.stringify(rawLastPayload || {}),
+            data.companyId || DEFAULT_COMPANY_ID
         ]
     );
     return result.rows[0];
@@ -291,8 +296,8 @@ async function upsertRecording(data) {
         `INSERT INTO recordings (
             recording_sid, call_sid, status, recording_url,
             duration_sec, channels, track, source,
-            started_at, completed_at, raw_payload
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+            started_at, completed_at, raw_payload, company_id
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
         ON CONFLICT (recording_sid) DO UPDATE SET
             status        = EXCLUDED.status,
             recording_url = COALESCE(EXCLUDED.recording_url, recordings.recording_url),
@@ -308,7 +313,8 @@ async function upsertRecording(data) {
             recordingSid, callSid, status, recordingUrl,
             durationSec, channels || null, track || null, source || null,
             startedAt, completedAt,
-            JSON.stringify(rawPayload || {})
+            JSON.stringify(rawPayload || {}),
+            data.companyId || DEFAULT_COMPANY_ID
         ]
     );
     return result.rows[0];
@@ -337,8 +343,8 @@ async function upsertTranscript(data) {
         `INSERT INTO transcripts (
             transcription_sid, call_sid, recording_sid, mode,
             status, language_code, confidence, text,
-            is_final, sequence_no, raw_payload
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+            is_final, sequence_no, raw_payload, company_id
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
         ON CONFLICT (transcription_sid) DO UPDATE SET
             status        = EXCLUDED.status,
             text          = COALESCE(EXCLUDED.text, transcripts.text),
@@ -351,7 +357,8 @@ async function upsertTranscript(data) {
             status, languageCode, confidence, text,
             isFinal !== undefined ? isFinal : true,
             sequenceNo,
-            JSON.stringify(rawPayload || {})
+            JSON.stringify(rawPayload || {}),
+            data.companyId || DEFAULT_COMPANY_ID
         ]
     );
     return result.rows[0];
@@ -369,12 +376,12 @@ async function getTranscriptsByCallSid(callSid) {
 // Call events (immutable log)
 // =============================================================================
 
-async function appendCallEvent(callSid, eventType, eventTime, payload) {
+async function appendCallEvent(callSid, eventType, eventTime, payload, companyId = null) {
     const result = await db.query(
-        `INSERT INTO call_events (call_sid, event_type, event_time, payload)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO call_events (call_sid, event_type, event_time, payload, company_id)
+         VALUES ($1, $2, $3, $4, $5)
          RETURNING *`,
-        [callSid, eventType, eventTime, JSON.stringify(payload)]
+        [callSid, eventType, eventTime, JSON.stringify(payload), companyId || DEFAULT_COMPANY_ID]
     );
     return result.rows[0];
 }
@@ -402,14 +409,15 @@ async function insertInboxEvent(data) {
         `INSERT INTO webhook_inbox (
             event_key, source, event_type, event_time,
             call_sid, recording_sid, transcription_sid,
-            payload, headers
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+            payload, headers, company_id
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
         ON CONFLICT (event_key) DO NOTHING
         RETURNING *`,
         [
             eventKey, source, eventType, eventTime,
             callSid, recordingSid, transcriptionSid,
-            JSON.stringify(payload), JSON.stringify(headers || {})
+            JSON.stringify(payload), JSON.stringify(headers || {}),
+            data.companyId || DEFAULT_COMPANY_ID
         ]
     );
     return result.rows[0]; // null if duplicate

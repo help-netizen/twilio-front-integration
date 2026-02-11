@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { authedFetch } from '../services/apiClient';
 import './LeadFormSettingsPage.css';
 import { toast } from 'sonner';
 import {
@@ -136,7 +137,7 @@ export default function LeadFormSettingsPage() {
     // ── Load ──
     const load = useCallback(async () => {
         try {
-            const res = await fetch('/api/settings/lead-form');
+            const res = await authedFetch('/api/settings/lead-form');
             const data = await res.json();
             if (data.success) {
                 setJobTypes(data.jobTypes);
@@ -157,7 +158,7 @@ export default function LeadFormSettingsPage() {
     const handleSave = async () => {
         setSaving(true);
         try {
-            const res = await fetch('/api/settings/lead-form', {
+            const res = await authedFetch('/api/settings/lead-form', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

@@ -13,10 +13,14 @@ router.post('/voice', (req, res) => {
     const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
 
     // Twilio SIP domain - connects to Bria softphone
-    // Using dispatcher user from Bria config: dispatcher@abchomes.sip.us1.twilio.com
-    const sipUser = process.env.SIP_USER || 'dispatcher';
+    // Support multiple SIP users (ring all simultaneously)
     const sipDomain = process.env.SIP_DOMAIN || 'abchomes.sip.us1.twilio.com';
-    const sipEndpoint = `sip:${sipUser}@${sipDomain}`;
+    const sipUsers = (process.env.SIP_USERS || process.env.SIP_USER || 'dispatcher').split(',').map(u => u.trim());
+    const sipEndpoints = sipUsers.map(user =>
+        `        <Sip statusCallback="${statusCallbackUrl}"
+             statusCallbackEvent="initiated ringing answered completed"
+             statusCallbackMethod="POST">sip:${user}@${sipDomain}</Sip>`
+    ).join('\n');
 
     // Dial action callback - gets final DialCallStatus
     const dialActionUrl = `${baseUrl}/webhooks/twilio/dial-action`;
@@ -32,9 +36,7 @@ router.post('/voice', (req, res) => {
           record="record-from-answer-dual"
           recordingStatusCallback="${recordingStatusUrl}"
           recordingStatusCallbackMethod="POST">
-        <Sip statusCallback="${statusCallbackUrl}"
-             statusCallbackEvent="initiated ringing answered completed"
-             statusCallbackMethod="POST">${sipEndpoint}</Sip>
+${sipEndpoints}
     </Dial>
 </Response>`;
 

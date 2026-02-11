@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { authedFetch } from '../../services/apiClient';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -51,7 +52,7 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
     // Fetch custom fields when dialog opens
     useEffect(() => {
         if (!open) return;
-        fetch('/api/settings/lead-form')
+        authedFetch('/api/settings/lead-form')
             .then((r) => r.json())
             .then((data) => {
                 if (data.success) {
