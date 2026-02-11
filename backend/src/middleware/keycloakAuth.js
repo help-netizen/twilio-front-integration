@@ -83,7 +83,7 @@ function authenticate(req, res, next) {
             email: 'dev@localhost',
             name: 'Dev User',
             roles: ['company_admin'],
-            company_id: '00000000-0000-0000-0000-000000000001',
+            company_id: null,
             is_super_admin: false,
             _devMode: true,
         };
