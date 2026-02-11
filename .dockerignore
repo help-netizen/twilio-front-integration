@@ -10,6 +10,8 @@ frontend/dist/
 .env
 .env.local
 .env.*.local
+frontend/.env
+frontend/.env.local
 *.log
 npm-debug.log*
 
