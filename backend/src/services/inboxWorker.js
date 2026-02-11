@@ -212,6 +212,13 @@ async function processVoiceEvent(payload, eventType, traceId) {
     if (normalized.parentCallSid && isFinal) {
         await reconcileInboundParent(normalized.parentCallSid, traceId);
     }
+
+    // Also reconcile if THIS is the parent call reaching final status (inbound only)
+    // Twilio marks parent as 'completed' even when no agent answered (caller hung up)
+    // so we must re-check children and override with the correct business status
+    if (!normalized.parentCallSid && isFinal && processed.direction === 'inbound') {
+        await reconcileInboundParent(normalized.callSid, traceId);
+    }
 }
 
 // =============================================================================
