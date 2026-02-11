@@ -543,6 +543,7 @@ module.exports = {
     normalizeVoiceEvent,
     normalizeRecordingEvent,
     normalizeTranscriptionEvent,
+    reconcileInboundParent,
     isFinalStatus,
     CONFIG,
 };
