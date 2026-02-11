@@ -338,17 +338,21 @@ async function enrichFromTwilioApi(callSid, existingCall, traceId) {
             `UPDATE calls SET
                 parent_call_sid = COALESCE($2, parent_call_sid),
                 direction       = COALESCE(direction, $3),
-                started_at      = COALESCE($4, started_at),
-                answered_at     = COALESCE($5, answered_at),
-                ended_at        = COALESCE($6, ended_at),
-                duration_sec    = COALESCE($7, duration_sec),
-                price           = COALESCE($8, price),
-                price_unit      = COALESCE($9, price_unit)
+                status          = COALESCE($4, status),
+                is_final        = COALESCE($5, is_final),
+                started_at      = COALESCE($6, started_at),
+                answered_at     = COALESCE($7, answered_at),
+                ended_at        = COALESCE($8, ended_at),
+                duration_sec    = COALESCE($9, duration_sec),
+                price           = COALESCE($10, price),
+                price_unit      = COALESCE($11, price_unit)
              WHERE call_sid = $1`,
             [
                 callSid,
                 details.parentCallSid || null,
                 existingCall?.direction || details.direction,
+                details.status || null,
+                isFinalStatus(details.status) || false,
                 details.startTime ? new Date(details.startTime) : null,
                 details.startTime ? new Date(details.startTime) : null,
                 details.endTime ? new Date(details.endTime) : null,
