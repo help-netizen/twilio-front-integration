@@ -80,7 +80,8 @@ router.post('/', async (req, res) => {
         });
     } catch (err) {
         console.error('[Users] Create failed:', err.message);
-        if (err.message.includes('duplicate key') || err.code === '23505') {
+        if (err.message.includes('duplicate key') || err.code === '23505' ||
+            err.message.includes('User exists with same')) {
             return res.status(409).json({
                 code: 'USER_EXISTS',
                 message: 'User with this email already exists',
