@@ -15,11 +15,14 @@ import {
     Timer
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatPhoneNumber } from '@/utils/formatters';
+import { cn } from '@/lib/utils';
 
 export interface CallData {
     id: string;
@@ -49,6 +52,13 @@ interface CallListItemProps {
     call: CallData;
 }
 
+const STATUS_BADGE_MAP: Record<string, { variant: 'default' | 'secondary' | 'destructive' | 'outline'; label: string }> = {
+    'completed': { variant: 'default', label: 'completed' },
+    'no-answer': { variant: 'secondary', label: 'no answer' },
+    'busy': { variant: 'outline', label: 'busy' },
+    'failed': { variant: 'destructive', label: 'failed' },
+};
+
 export function CallListItem({ call }: CallListItemProps) {
     const [showSystemInfo, setShowSystemInfo] = useState(false);
     const [activeSection, setActiveSection] = useState<'summary' | 'transcription' | null>(null);
@@ -58,21 +68,6 @@ export function CallListItem({ call }: CallListItemProps) {
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(call.recordingDuration || call.totalDuration || call.duration || 0);
     const audioRef = useRef<HTMLAudioElement>(null);
-
-    const getStatusColor = (status: string) => {
-        switch (status) {
-            case 'completed':
-                return 'bg-green-500/10 text-green-700 border-green-200';
-            case 'no-answer':
-                return 'bg-yellow-500/10 text-yellow-700 border-yellow-200';
-            case 'busy':
-                return 'bg-orange-500/10 text-orange-700 border-orange-200';
-            case 'failed':
-                return 'bg-red-500/10 text-red-700 border-red-200';
-            default:
-                return 'bg-gray-500/10 text-gray-700 border-gray-200';
-        }
-    };
 
     const formatDuration = (seconds: number | null) => {
         if (seconds === null || seconds === 0) return 'N/A';
@@ -149,25 +144,26 @@ export function CallListItem({ call }: CallListItemProps) {
 
     const otherPartyNumber = call.direction === 'incoming' ? call.from : call.to;
     const directionLabel = call.direction === 'incoming' ? 'Incoming Call' : 'Outgoing Call';
+    const statusInfo = STATUS_BADGE_MAP[call.status] || STATUS_BADGE_MAP['completed'];
 
     return (
-        <Card className="overflow-hidden border border-gray-200 hover:shadow-md transition-shadow">
+        <Card className="overflow-hidden border hover:border-primary/40 transition-colors">
             {/* Main Call Info */}
             <div className="p-4 pb-2">
                 <div className="flex items-center gap-3">
-                    {/* Combined Direction Icon and Status */}
+                    {/* Direction + Status Badge */}
                     <TooltipProvider>
                         <Tooltip>
                             <TooltipTrigger asChild>
-                                <div className={`flex items-center gap-2 px-3 py-2 rounded-full border ${getStatusColor(call.status)}`}>
+                                <div className="flex items-center gap-1.5 shrink-0">
                                     {call.direction === 'incoming' ? (
-                                        <PhoneIncoming className="w-4 h-4" />
+                                        <PhoneIncoming className="size-4 text-muted-foreground" />
                                     ) : (
-                                        <PhoneOutgoing className="w-4 h-4" />
+                                        <PhoneOutgoing className="size-4 text-muted-foreground" />
                                     )}
-                                    <span className="text-xs font-medium">
-                                        {call.status.replace('-', ' ')}
-                                    </span>
+                                    <Badge variant={statusInfo.variant} className="text-xs">
+                                        {statusInfo.label}
+                                    </Badge>
                                 </div>
                             </TooltipTrigger>
                             <TooltipContent>
@@ -179,17 +175,17 @@ export function CallListItem({ call }: CallListItemProps) {
                     {/* Call Details */}
                     <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-2">
-                            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
-                                <p className="text-sm text-gray-900 font-mono font-semibold">{formatPhoneNumber(otherPartyNumber)}</p>
+                            <div className="flex items-baseline gap-2">
+                                <p className="text-sm font-mono font-semibold">{formatPhoneNumber(otherPartyNumber)}</p>
                                 {(call.totalDuration || call.duration) ? (
-                                    <span style={{ fontSize: '0.75rem', color: '#9ca3af' }}>{formatDuration(call.totalDuration || call.duration)}</span>
+                                    <span className="text-xs text-muted-foreground">{formatDuration(call.totalDuration || call.duration)}</span>
                                 ) : null}
                             </div>
-                            {/* Date and System Info toggle in top right corner */}
+                            {/* Date and System Info toggle */}
                             <div className="flex items-center gap-2">
-                                <div className="text-xs text-gray-500">
+                                <span className="text-xs text-muted-foreground">
                                     {formatTime(call.startTime)}
-                                </div>
+                                </span>
                                 <TooltipProvider>
                                     <Tooltip>
                                         <TooltipTrigger asChild>
@@ -197,9 +193,9 @@ export function CallListItem({ call }: CallListItemProps) {
                                                 variant="ghost"
                                                 size="icon"
                                                 onClick={() => setShowSystemInfo(!showSystemInfo)}
-                                                className="h-6 w-6 hover:bg-gray-100"
+                                                className="size-6"
                                             >
-                                                <Settings2 className={`w-4 h-4 transition-transform ${showSystemInfo ? 'rotate-90' : ''}`} />
+                                                <Settings2 className={cn('size-4 transition-transform', showSystemInfo && 'rotate-90')} />
                                             </Button>
                                         </TooltipTrigger>
                                         <TooltipContent>
@@ -214,130 +210,82 @@ export function CallListItem({ call }: CallListItemProps) {
             </div>
 
             {/* Always Visible Content */}
-            <div className="bg-gray-50/50">
+            <div>
                 {/* Audio Player */}
                 {call.audioUrl && (
-                    <div className="px-4 pb-4 bg-white">
+                    <div className="px-4 pb-4">
                         <audio ref={audioRef} src={call.audioUrl} preload="metadata" />
 
                         <div className="space-y-3">
                             {/* Single row: [Summary][Transcript] | [⟲10][▶][⟳10] | 0:00 ━━●── 3:45 */}
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                            <div className="flex items-center gap-3">
                                 {/* LEFT: Summary/Transcript buttons */}
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
+                                <div className="flex items-center gap-3 shrink-0">
                                     <button
                                         onClick={() => setActiveSection(activeSection === 'summary' ? null : 'summary')}
-                                        style={{
-                                            fontSize: '0.75rem',
-                                            lineHeight: '1rem',
-                                            background: 'transparent',
-                                            border: 'none',
-                                            borderBottom: activeSection === 'summary' ? '2px solid #374151' : '1px dashed #9ca3af',
-                                            borderRadius: 0,
-                                            padding: 0,
-                                            paddingBottom: '1px',
-                                            cursor: 'pointer',
-                                            color: activeSection === 'summary' ? '#374151' : '#6b7280',
-                                            outline: 'none',
-                                            transition: 'color 150ms, border-color 150ms',
-                                        }}
+                                        className={cn(
+                                            'text-xs bg-transparent border-0 border-b pb-px cursor-pointer outline-none transition-colors',
+                                            activeSection === 'summary'
+                                                ? 'text-foreground border-b-2 border-foreground'
+                                                : 'text-muted-foreground border-dashed border-muted-foreground hover:text-foreground'
+                                        )}
                                     >
                                         Summary
                                     </button>
                                     <button
                                         onClick={() => setActiveSection(activeSection === 'transcription' ? null : 'transcription')}
-                                        style={{
-                                            fontSize: '0.75rem',
-                                            lineHeight: '1rem',
-                                            background: 'transparent',
-                                            border: 'none',
-                                            borderBottom: activeSection === 'transcription' ? '2px solid #374151' : '1px dashed #9ca3af',
-                                            borderRadius: 0,
-                                            padding: 0,
-                                            paddingBottom: '1px',
-                                            cursor: 'pointer',
-                                            color: activeSection === 'transcription' ? '#374151' : '#6b7280',
-                                            outline: 'none',
-                                            transition: 'color 150ms, border-color 150ms',
-                                        }}
+                                        className={cn(
+                                            'text-xs bg-transparent border-0 border-b pb-px cursor-pointer outline-none transition-colors',
+                                            activeSection === 'transcription'
+                                                ? 'text-foreground border-b-2 border-foreground'
+                                                : 'text-muted-foreground border-dashed border-muted-foreground hover:text-foreground'
+                                        )}
                                     >
                                         {call.transcriptStatus === 'processing' ? 'Transcribing...' : 'Transcript'}
                                     </button>
                                 </div>
 
                                 {/* CENTER: Audio Controls */}
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', flexShrink: 0 }}>
-                                    <button
+                                <div className="flex items-center gap-0.5 shrink-0">
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="size-8 relative"
                                         onClick={() => handleSkip(-10)}
                                         title="Rewind 10 seconds"
-                                        style={{
-                                            height: '2rem',
-                                            width: '2rem',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                            background: 'transparent',
-                                            border: 'none',
-                                            padding: 0,
-                                            cursor: 'pointer',
-                                            color: '#6b7280',
-                                            position: 'relative',
-                                            transition: 'color 150ms',
-                                        }}
                                     >
-                                        <RotateCcw style={{ width: 20, height: 20, minWidth: 20, stroke: '#6b7280', fill: 'none' }} />
-                                        <span style={{ position: 'absolute', fontSize: '7px', fontWeight: 700, color: '#6b7280', lineHeight: 1 }}>10</span>
-                                    </button>
+                                        <RotateCcw className="size-5 text-muted-foreground" />
+                                        <span className="absolute text-[7px] font-bold text-muted-foreground leading-none">10</span>
+                                    </Button>
 
-                                    <button
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="size-8"
                                         onClick={handlePlayPause}
-                                        style={{
-                                            height: '2rem',
-                                            width: '2rem',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                            background: 'transparent',
-                                            border: 'none',
-                                            padding: 0,
-                                            cursor: 'pointer',
-                                            color: '#6b7280',
-                                            transition: 'color 150ms',
-                                        }}
                                     >
                                         {isPlaying ? (
-                                            <Pause style={{ width: 20, height: 20, minWidth: 20, stroke: '#6b7280', fill: 'none' }} />
+                                            <Pause className="size-5 text-muted-foreground" />
                                         ) : (
-                                            <Play style={{ width: 20, height: 20, minWidth: 20, stroke: '#6b7280', fill: 'none' }} />
+                                            <Play className="size-5 text-muted-foreground" />
                                         )}
-                                    </button>
+                                    </Button>
 
-                                    <button
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="size-8 relative"
                                         onClick={() => handleSkip(10)}
                                         title="Forward 10 seconds"
-                                        style={{
-                                            height: '2rem',
-                                            width: '2rem',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                            background: 'transparent',
-                                            border: 'none',
-                                            padding: 0,
-                                            cursor: 'pointer',
-                                            color: '#6b7280',
-                                            position: 'relative',
-                                            transition: 'color 150ms',
-                                        }}
                                     >
-                                        <RotateCw style={{ width: 20, height: 20, minWidth: 20, stroke: '#6b7280', fill: 'none' }} />
-                                        <span style={{ position: 'absolute', fontSize: '7px', fontWeight: 700, color: '#6b7280', lineHeight: 1 }}>10</span>
-                                    </button>
+                                        <RotateCw className="size-5 text-muted-foreground" />
+                                        <span className="absolute text-[7px] font-bold text-muted-foreground leading-none">10</span>
+                                    </Button>
                                 </div>
 
                                 {/* RIGHT: Timeline (stretches) */}
-                                <div style={{ flex: '1 1 0%', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                    <span style={{ fontSize: '0.75rem', lineHeight: '1rem', color: '#9ca3af', flexShrink: 0, width: '2.5rem', textAlign: 'right' }}>
+                                <div className="flex-1 flex items-center gap-2">
+                                    <span className="text-xs text-muted-foreground shrink-0 w-10 text-right">
                                         {formatAudioTime(currentTime)}
                                     </span>
                                     <Slider
@@ -347,7 +295,7 @@ export function CallListItem({ call }: CallListItemProps) {
                                         onValueChange={handleSliderChange}
                                         className="flex-1"
                                     />
-                                    <span style={{ fontSize: '0.75rem', lineHeight: '1rem', color: '#9ca3af', flexShrink: 0, width: '2.5rem' }}>
+                                    <span className="text-xs text-muted-foreground shrink-0 w-10">
                                         {formatAudioTime(duration)}
                                     </span>
                                 </div>
@@ -357,11 +305,11 @@ export function CallListItem({ call }: CallListItemProps) {
                             {activeSection === 'summary' && (
                                 <div className="pt-2">
                                     {call.summary ? (
-                                        <p className="text-sm text-gray-700 leading-relaxed bg-blue-50 p-3 rounded-md">
+                                        <p className="text-sm leading-relaxed bg-muted/50 p-3 rounded-md">
                                             {call.summary}
                                         </p>
                                     ) : (
-                                        <p className="text-sm text-gray-400 italic bg-gray-50 p-3 rounded-md">
+                                        <p className="text-sm text-muted-foreground italic bg-muted/30 p-3 rounded-md">
                                             No summary available
                                         </p>
                                     )}
@@ -371,17 +319,17 @@ export function CallListItem({ call }: CallListItemProps) {
                             {/* Transcription - Show only when active */}
                             {activeSection === 'transcription' && (
                                 <div className="pt-2">
-                                    <ScrollArea className="h-48 bg-gray-50 p-3 rounded-md">
+                                    <ScrollArea className="h-48 bg-muted/30 p-3 rounded-md">
                                         {call.transcriptStatus === 'processing' ? (
-                                            <p className="text-sm text-gray-500 italic animate-pulse">Transcribing audio...</p>
+                                            <p className="text-sm text-muted-foreground italic animate-pulse">Transcribing audio...</p>
                                         ) : call.transcriptStatus === 'failed' ? (
-                                            <p className="text-sm text-red-500">Transcription failed</p>
+                                            <p className="text-sm text-destructive">Transcription failed</p>
                                         ) : call.transcription ? (
-                                            <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                                            <p className="text-sm leading-relaxed whitespace-pre-wrap">
                                                 {call.transcription}
                                             </p>
                                         ) : (
-                                            <p className="text-sm text-gray-400 italic">No transcript available</p>
+                                            <p className="text-sm text-muted-foreground italic">No transcript available</p>
                                         )}
                                     </ScrollArea>
                                 </div>
@@ -394,19 +342,19 @@ export function CallListItem({ call }: CallListItemProps) {
                 {!call.audioUrl && (
                     <>
                         {call.summary && (
-                            <div className="p-4 bg-white border-t border-gray-200">
-                                <h4 className="font-semibold text-gray-900 mb-2">Summary</h4>
-                                <p className="text-sm text-gray-700 leading-relaxed bg-blue-50 p-3 rounded-md">
+                            <div className="px-4 pb-4 border-t">
+                                <h4 className="font-medium text-sm mt-3 mb-2">Summary</h4>
+                                <p className="text-sm leading-relaxed bg-muted/50 p-3 rounded-md">
                                     {call.summary}
                                 </p>
                             </div>
                         )}
 
                         {call.transcription && (
-                            <div className="p-4 bg-white border-t border-gray-200">
-                                <h4 className="font-semibold text-gray-900 mb-2">Transcription</h4>
-                                <ScrollArea className="h-48 bg-gray-50 p-3 rounded-md">
-                                    <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                            <div className="px-4 pb-4 border-t">
+                                <h4 className="font-medium text-sm mt-3 mb-2">Transcription</h4>
+                                <ScrollArea className="h-48 bg-muted/30 p-3 rounded-md">
+                                    <p className="text-sm leading-relaxed whitespace-pre-wrap">
                                         {call.transcription}
                                     </p>
                                 </ScrollArea>
@@ -417,75 +365,78 @@ export function CallListItem({ call }: CallListItemProps) {
 
                 {/* System Information */}
                 {showSystemInfo && (
-                    <div className="p-4 pt-0 space-y-2 text-sm bg-gray-50">
-                        <div className="flex items-center gap-2">
-                            <Clock className="w-4 h-4 text-gray-400" />
-                            <span className="text-gray-600">Duration:</span>
-                            <span className="font-mono text-gray-900">
-                                {formatDuration(call.totalDuration || call.duration)}
-                            </span>
-                        </div>
-
-                        {call.talkTime !== undefined && (
+                    <>
+                        <Separator />
+                        <div className="p-4 space-y-2 text-sm bg-muted/30">
                             <div className="flex items-center gap-2">
-                                <Timer className="w-4 h-4 text-gray-400" />
-                                <span className="text-gray-600">Talk:</span>
-                                <span className="font-mono text-gray-900">
-                                    {formatDuration(call.talkTime)}
+                                <Clock className="size-4 text-muted-foreground" />
+                                <span className="text-muted-foreground">Duration:</span>
+                                <span className="font-mono">
+                                    {formatDuration(call.totalDuration || call.duration)}
                                 </span>
                             </div>
-                        )}
 
-                        {call.waitTime !== undefined && (
+                            {call.talkTime !== undefined && (
+                                <div className="flex items-center gap-2">
+                                    <Timer className="size-4 text-muted-foreground" />
+                                    <span className="text-muted-foreground">Talk:</span>
+                                    <span className="font-mono">
+                                        {formatDuration(call.talkTime)}
+                                    </span>
+                                </div>
+                            )}
+
+                            {call.waitTime !== undefined && (
+                                <div className="flex items-center gap-2">
+                                    <Clock className="size-4 text-muted-foreground" />
+                                    <span className="text-muted-foreground">Wait:</span>
+                                    <span className="font-mono">
+                                        {formatDuration(call.waitTime)}
+                                    </span>
+                                </div>
+                            )}
+
+                            {call.cost !== undefined && (
+                                <div className="flex items-center gap-2">
+                                    <DollarSign className="size-4 text-muted-foreground" />
+                                    <span className="text-muted-foreground">Cost:</span>
+                                    <span className="font-mono">
+                                        ${call.cost.toFixed(4)} USD
+                                    </span>
+                                </div>
+                            )}
+
                             <div className="flex items-center gap-2">
-                                <Clock className="w-4 h-4 text-gray-400" />
-                                <span className="text-gray-600">Wait:</span>
-                                <span className="font-mono text-gray-900">
-                                    {formatDuration(call.waitTime)}
-                                </span>
-                            </div>
-                        )}
-
-                        {call.cost !== undefined && (
-                            <div className="flex items-center gap-2">
-                                <DollarSign className="w-4 h-4 text-gray-400" />
-                                <span className="text-gray-600">Cost:</span>
-                                <span className="font-mono text-gray-900">
-                                    ${call.cost.toFixed(4)} USD
-                                </span>
-                            </div>
-                        )}
-
-                        <div className="flex items-center gap-2">
-                            <Hash className="w-4 h-4 text-gray-400" />
-                            <span className="text-gray-600">Call SID:</span>
-                            <code className="text-xs bg-gray-200 px-2 py-1 rounded font-mono text-gray-800">
-                                {call.callSid}
-                            </code>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                            <Clock className="w-4 h-4 text-gray-400" />
-                            <span className="text-gray-600">Queue Time:</span>
-                            <span className="font-mono text-gray-900">{call.queueTime}s</span>
-                        </div>
-
-                        {call.parentCall && (
-                            <div className="flex items-center gap-2">
-                                <GitBranch className="w-4 h-4 text-gray-400" />
-                                <span className="text-gray-600">Parent Call:</span>
-                                <code className="text-xs bg-gray-200 px-2 py-1 rounded font-mono text-gray-800">
-                                    {call.parentCall}
+                                <Hash className="size-4 text-muted-foreground" />
+                                <span className="text-muted-foreground">Call SID:</span>
+                                <code className="text-xs bg-muted px-2 py-1 rounded font-mono">
+                                    {call.callSid}
                                 </code>
                             </div>
-                        )}
 
-                        <div className="flex items-center gap-2">
-                            <Navigation className="w-4 h-4 text-gray-400" />
-                            <span className="text-gray-600">Twilio Direction:</span>
-                            <span className="font-mono text-gray-900">{call.twilioDirection}</span>
+                            <div className="flex items-center gap-2">
+                                <Clock className="size-4 text-muted-foreground" />
+                                <span className="text-muted-foreground">Queue Time:</span>
+                                <span className="font-mono">{call.queueTime}s</span>
+                            </div>
+
+                            {call.parentCall && (
+                                <div className="flex items-center gap-2">
+                                    <GitBranch className="size-4 text-muted-foreground" />
+                                    <span className="text-muted-foreground">Parent Call:</span>
+                                    <code className="text-xs bg-muted px-2 py-1 rounded font-mono">
+                                        {call.parentCall}
+                                    </code>
+                                </div>
+                            )}
+
+                            <div className="flex items-center gap-2">
+                                <Navigation className="size-4 text-muted-foreground" />
+                                <span className="text-muted-foreground">Twilio Direction:</span>
+                                <span className="font-mono">{call.twilioDirection}</span>
+                            </div>
                         </div>
-                    </div>
+                    </>
                 )}
             </div>
         </Card>

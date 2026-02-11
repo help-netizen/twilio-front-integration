@@ -3,9 +3,11 @@ import { useParams } from 'react-router-dom';
 import { useContactCalls } from '../hooks/useConversations';
 import { ConversationList } from '../components/conversations/ConversationList';
 import { CallListItem, type CallData } from '../components/call-list-item';
-import { createPhoneLink } from '../utils/formatters';
+import { formatPhoneNumber } from '../utils/formatters';
+import { Badge } from '../components/ui/badge';
+import { Skeleton } from '../components/ui/skeleton';
+import { Phone, PhoneOff } from 'lucide-react';
 import type { Call } from '../types/models';
-import './ConversationPage.css';
 
 function callToCallData(call: Call): CallData {
     const direction: CallData['direction'] =
@@ -52,12 +54,15 @@ export const ConversationPage: React.FC = () => {
 
     if (isLoading) {
         return (
-            <div className="home-page">
-                <div className="inbox-sidebar">
+            <div className="flex h-full overflow-hidden">
+                <div className="w-[360px] shrink-0 border-r flex flex-col bg-background">
                     <ConversationList />
                 </div>
-                <div className="conversation-area">
-                    <div className="loading">Loading...</div>
+                <div className="flex-1 flex flex-col bg-background p-6 space-y-4">
+                    <Skeleton className="h-10 w-64" />
+                    {[...Array(3)].map((_, i) => (
+                        <Skeleton key={i} className="h-32 w-full" />
+                    ))}
                 </div>
             </div>
         );
@@ -65,12 +70,20 @@ export const ConversationPage: React.FC = () => {
 
     if (!calls || calls.length === 0) {
         return (
-            <div className="home-page">
-                <div className="inbox-sidebar">
+            <div className="flex h-full overflow-hidden">
+                <div className="w-[360px] shrink-0 border-r flex flex-col bg-background">
                     <ConversationList />
                 </div>
-                <div className="conversation-area">
-                    <div className="error">No calls found for this contact</div>
+                <div className="flex-1 flex flex-col bg-background">
+                    <div className="flex-1 flex items-center justify-center">
+                        <div className="text-center">
+                            <PhoneOff className="size-12 mx-auto mb-3 opacity-20" />
+                            <p className="text-lg mb-2">No calls found</p>
+                            <p className="text-sm text-muted-foreground">
+                                No calls found for this contact
+                            </p>
+                        </div>
+                    </div>
                 </div>
             </div>
         );
@@ -81,25 +94,27 @@ export const ConversationPage: React.FC = () => {
     const displayName = contact?.full_name || contact?.phone_e164 || calls[0]?.from_number || calls[0]?.to_number;
 
     return (
-        <div className="home-page">
-            <div className="inbox-sidebar">
+        <div className="flex h-full overflow-hidden">
+            <div className="w-[360px] shrink-0 border-r flex flex-col bg-background">
                 <ConversationList />
             </div>
 
-            <div className="conversation-area">
-                <div className="conversation-header">
-                    <div className="header-left">
-                        <h2 dangerouslySetInnerHTML={{
-                            __html: createPhoneLink(displayName || 'Unknown')
-                        }} />
-                        <div className="conversation-stats">
-                            {calls.length} calls
-                        </div>
+            <div className="flex-1 flex flex-col bg-background overflow-hidden">
+                <div className="border-b p-4">
+                    <div className="flex items-center gap-3">
+                        <Phone className="size-5 text-muted-foreground" />
+                        <h2
+                            className="text-xl font-semibold"
+                            dangerouslySetInnerHTML={{
+                                __html: formatPhoneNumber(displayName || 'Unknown')
+                            }}
+                        />
+                        <Badge variant="secondary">{calls.length} calls</Badge>
                     </div>
                 </div>
 
-                <div className="messages-area">
-                    <div className="space-y-4">
+                <div className="flex-1 overflow-y-auto p-5">
+                    <div className="space-y-4 max-w-3xl">
                         {calls.map((call) => (
                             <CallListItem
                                 key={call.id}
