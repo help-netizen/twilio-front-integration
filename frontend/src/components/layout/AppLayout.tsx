@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { useAuth } from '../../auth/AuthProvider';
+import { authedFetch } from '../../services/apiClient';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
@@ -25,11 +27,13 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
         : location.pathname.startsWith('/settings') ? 'settings'
             : 'calls';
 
+    const { accessDeniedMessage, clearAccessDenied } = useAuth();
+
     const handleRefresh = async () => {
         setIsRefreshing(true);
         try {
             console.log('🔄 Refreshing last 3 days calls...');
-            const response = await fetch('/api/sync/today', {
+            const response = await authedFetch('/api/sync/today', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' }
             });
@@ -127,6 +131,36 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
             </header>
 
             <main className="app-main">
+                {accessDeniedMessage && (
+                    <div style={{
+                        position: 'fixed',
+                        top: '72px',
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        zIndex: 9999,
+                        background: '#dc2626',
+                        color: '#fff',
+                        padding: '12px 24px',
+                        borderRadius: '8px',
+                        fontWeight: 500,
+                        fontSize: '14px',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px',
+                    }}>
+                        <span>🚫 {accessDeniedMessage}</span>
+                        <button
+                            onClick={clearAccessDenied}
+                            style={{
+                                background: 'none', border: 'none', color: '#fff',
+                                cursor: 'pointer', fontSize: '16px', padding: 0,
+                            }}
+                        >
+                            ×
+                        </button>
+                    </div>
+                )}
                 {children}
             </main>
         </div>

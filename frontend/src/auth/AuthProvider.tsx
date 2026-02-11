@@ -17,6 +17,8 @@ interface AuthContextType {
     loading: boolean;
     hasRole: (...roles: string[]) => boolean;
     logout: () => void;
+    accessDeniedMessage: string | null;
+    clearAccessDenied: () => void;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -26,6 +28,8 @@ const AuthContext = createContext<AuthContextType>({
     loading: true,
     hasRole: () => false,
     logout: () => { },
+    accessDeniedMessage: null,
+    clearAccessDenied: () => { },
 });
 
 // ─── Feature flag ─────────────────────────────────────────────────────────────
@@ -80,6 +84,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     );
     const [token, setToken] = useState<string | null>(null);
     const [loading, setLoading] = useState(FEATURE_AUTH);
+    const [accessDeniedMessage, setAccessDeniedMessage] = useState<string | null>(null);
+
+    // Listen for 401/403 events dispatched by API interceptors
+    useEffect(() => {
+        const handleSessionExpired = () => {
+            if (FEATURE_AUTH) {
+                getKeycloak().login();
+            }
+        };
+        const handleAccessDenied = (e: Event) => {
+            const detail = (e as CustomEvent).detail;
+            setAccessDeniedMessage(detail?.message || 'Access denied');
+            // Auto-clear after 5 seconds
+            setTimeout(() => setAccessDeniedMessage(null), 5000);
+        };
+
+        window.addEventListener('auth:session-expired', handleSessionExpired);
+        window.addEventListener('auth:access-denied', handleAccessDenied);
+        return () => {
+            window.removeEventListener('auth:session-expired', handleSessionExpired);
+            window.removeEventListener('auth:access-denied', handleAccessDenied);
+        };
+    }, []);
 
     useEffect(() => {
         if (!FEATURE_AUTH) return;
@@ -141,6 +168,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
     }, []);
 
+    const clearAccessDenied = useCallback(() => setAccessDeniedMessage(null), []);
+
     // Loading screen
     if (loading) {
         return (
@@ -162,7 +191,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     return (
-        <AuthContext.Provider value={{ authenticated, user, token, loading, hasRole, logout }}>
+        <AuthContext.Provider value={{ authenticated, user, token, loading, hasRole, logout, accessDeniedMessage, clearAccessDenied }}>
             {children}
         </AuthContext.Provider>
     );

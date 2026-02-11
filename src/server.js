@@ -70,6 +70,10 @@ app.use('/api/settings/lead-form', authenticate, requireRole('company_admin'), r
 
 // User management API (§5, §6)
 app.use('/api/users', authenticate, requireRole('company_admin'), requireCompanyAccess, usersRouter);
+
+// Session & auth-policy management (§9, super_admin only)
+const sessionsRouter = require('../backend/src/routes/sessions');
+app.use('/api/admin/sessions', authenticate, requireRole('super_admin'), sessionsRouter);
 console.log('🔐 BLANC Integrations API enabled at /api/v1/integrations/leads');
 
 

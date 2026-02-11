@@ -3,6 +3,7 @@ import type {
     Call, CallsResponse, ActiveCallsResponse, ByContactResponse,
     CallEventsResponse, CallMedia,
 } from '../types/models';
+import { getAuthHeaders } from '../auth/AuthProvider';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -10,6 +11,33 @@ const apiClient = axios.create({
     baseURL: API_BASE_URL,
     headers: { 'Content-Type': 'application/json' },
 });
+
+// Inject Keycloak Bearer token into every request when auth is enabled
+apiClient.interceptors.request.use((config) => {
+    const authHeaders = getAuthHeaders();
+    if (authHeaders.Authorization) {
+        config.headers.Authorization = authHeaders.Authorization;
+    }
+    return config;
+});
+
+// Handle 401 (expired/invalid token) and 403 (insufficient permissions)
+apiClient.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        if (error.response?.status === 401) {
+            // Session expired → redirect to login
+            console.warn('[API] 401 — session expired, redirecting to login');
+            window.dispatchEvent(new CustomEvent('auth:session-expired'));
+        } else if (error.response?.status === 403) {
+            // Access denied → notify UI
+            const message = error.response?.data?.message || 'Access denied';
+            console.warn('[API] 403 — access denied:', message);
+            window.dispatchEvent(new CustomEvent('auth:access-denied', { detail: { message } }));
+        }
+        return Promise.reject(error);
+    }
+);
 
 // Calls API (v3)
 export const callsApi = {
