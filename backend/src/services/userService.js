@@ -160,7 +160,7 @@ async function enableUser(userId, companyId) {
  * @param {{ email: string, fullName: string, keycloakSub: string, companyId: string, role: string }} data
  */
 async function createUserWithMembership(data) {
-    const client = await db.connect();
+    const client = await db.pool.connect();
     try {
         await client.query('BEGIN');
 
