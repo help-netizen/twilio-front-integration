@@ -52,11 +52,11 @@ interface CallListItemProps {
     call: CallData;
 }
 
-const STATUS_BADGE_MAP: Record<string, { variant: 'default' | 'secondary' | 'destructive' | 'outline'; label: string }> = {
-    'completed': { variant: 'default', label: 'completed' },
-    'no-answer': { variant: 'secondary', label: 'no answer' },
-    'busy': { variant: 'outline', label: 'busy' },
-    'failed': { variant: 'destructive', label: 'failed' },
+const STATUS_CONFIG: Record<string, { label: string; iconColor: string; iconBg: string; badgeBg: string; badgeText: string }> = {
+    'completed': { label: 'completed', iconColor: '#16a34a', iconBg: '#dcfce7', badgeBg: '#dcfce7', badgeText: '#15803d' },
+    'no-answer': { label: 'no answer', iconColor: '#ca8a04', iconBg: '#fef9c3', badgeBg: '#fef9c3', badgeText: '#a16207' },
+    'busy': { label: 'busy', iconColor: '#ea580c', iconBg: '#ffedd5', badgeBg: '#ffedd5', badgeText: '#c2410c' },
+    'failed': { label: 'failed', iconColor: '#dc2626', iconBg: '#fee2e2', badgeBg: '#fee2e2', badgeText: '#b91c1c' },
 };
 
 export function CallListItem({ call }: CallListItemProps) {
@@ -144,26 +144,34 @@ export function CallListItem({ call }: CallListItemProps) {
 
     const otherPartyNumber = call.direction === 'incoming' ? call.from : call.to;
     const directionLabel = call.direction === 'incoming' ? 'Incoming Call' : 'Outgoing Call';
-    const statusInfo = STATUS_BADGE_MAP[call.status] || STATUS_BADGE_MAP['completed'];
+    const statusCfg = STATUS_CONFIG[call.status] || STATUS_CONFIG['completed'];
 
     return (
         <Card className="overflow-hidden border hover:border-primary/40 transition-colors">
             {/* Main Call Info */}
             <div className="p-4 pb-2">
                 <div className="flex items-center gap-3">
-                    {/* Direction + Status Badge */}
+                    {/* Direction Icon with colored background + Status Badge */}
                     <TooltipProvider>
                         <Tooltip>
                             <TooltipTrigger asChild>
                                 <div className="flex items-center gap-1.5 shrink-0">
-                                    {call.direction === 'incoming' ? (
-                                        <PhoneIncoming className="size-4 text-muted-foreground" />
-                                    ) : (
-                                        <PhoneOutgoing className="size-4 text-muted-foreground" />
-                                    )}
-                                    <Badge variant={statusInfo.variant} className="text-xs">
-                                        {statusInfo.label}
-                                    </Badge>
+                                    <div
+                                        className="flex items-center justify-center size-7 rounded-full"
+                                        style={{ backgroundColor: statusCfg.iconBg }}
+                                    >
+                                        {call.direction === 'incoming' ? (
+                                            <PhoneIncoming className="size-4" style={{ color: statusCfg.iconColor }} />
+                                        ) : (
+                                            <PhoneOutgoing className="size-4" style={{ color: statusCfg.iconColor }} />
+                                        )}
+                                    </div>
+                                    <span
+                                        className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium"
+                                        style={{ backgroundColor: statusCfg.badgeBg, color: statusCfg.badgeText }}
+                                    >
+                                        {statusCfg.label}
+                                    </span>
                                 </div>
                             </TooltipTrigger>
                             <TooltipContent>
