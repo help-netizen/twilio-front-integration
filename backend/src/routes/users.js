@@ -97,12 +97,20 @@ router.post('/', async (req, res) => {
 
 /**
  * GET / — List users for the company
+ * Query: ?search=&role=&status=&page=&limit=
  */
 router.get('/', async (req, res) => {
     try {
         const companyId = req.user.is_super_admin ? null : req.user.company_id;
-        const users = await userService.listUsers(companyId);
-        res.json({ ok: true, users });
+        const { search, role, status, page, limit } = req.query;
+        const result = await userService.listUsers(companyId, {
+            search,
+            role,
+            status,
+            page: page ? parseInt(page, 10) : 1,
+            limit: limit ? parseInt(limit, 10) : 25,
+        });
+        res.json({ ok: true, ...result });
     } catch (err) {
         console.error('[Users] List failed:', err.message);
         res.status(500).json({
@@ -174,13 +182,19 @@ router.put('/:id/disable', async (req, res) => {
         const userId = req.params.id;
         const companyId = req.user.company_id;
 
-        // Check last-admin invariant at API level (§7)
+        // Check last-admin invariant: if user is company_admin and they're the only one
         const adminCount = await userService.countCompanyAdmins(companyId);
-        // TODO: also check if the user being disabled is an admin
         if (adminCount <= 1) {
-            // Check if this user is actually a company_admin
-            const existing = await userService.getUserBySub(null);
-            // Let the DB trigger handle it
+            // Check if the target user is actually one of the admins
+            const targetUsers = await userService.listUsers(companyId, { role: 'company_admin', status: 'active' });
+            const isTargetAdmin = targetUsers.users.some(u => u.id === userId);
+            if (isTargetAdmin) {
+                return res.status(409).json({
+                    code: 'LAST_ADMIN_REQUIRED',
+                    message: 'Cannot disable the last company admin',
+                    trace_id: req.traceId,
+                });
+            }
         }
 
         const membership = await userService.disableUser(userId, companyId);
@@ -209,6 +223,38 @@ router.put('/:id/disable', async (req, res) => {
         res.status(500).json({
             code: 'INTERNAL_ERROR',
             message: 'Failed to disable user',
+            trace_id: req.traceId,
+        });
+    }
+});
+
+/**
+ * PUT /:id/enable — Enable (re-activate) a user
+ */
+router.put('/:id/enable', async (req, res) => {
+    try {
+        const userId = req.params.id;
+        const companyId = req.user.company_id;
+
+        await userService.enableUser(userId, companyId);
+
+        await auditService.log({
+            actor_id: req.user.crmUser?.id,
+            actor_email: req.user.email,
+            actor_ip: req.ip,
+            action: 'user_enabled',
+            target_type: 'user',
+            target_id: userId,
+            company_id: companyId,
+            trace_id: req.traceId,
+        });
+
+        res.json({ ok: true, message: 'User enabled' });
+    } catch (err) {
+        console.error('[Users] Enable failed:', err.message);
+        res.status(500).json({
+            code: 'INTERNAL_ERROR',
+            message: 'Failed to enable user',
             trace_id: req.traceId,
         });
     }

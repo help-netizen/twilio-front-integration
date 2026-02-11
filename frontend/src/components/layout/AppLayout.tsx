@@ -125,6 +125,13 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                                     <BookOpen className="size-4" />
                                     API Docs
                                 </DropdownMenuItem>
+                                <DropdownMenuItem
+                                    className="flex items-center gap-2 cursor-pointer"
+                                    onClick={() => navigate('/settings/users')}
+                                >
+                                    <Users className="size-4" />
+                                    Users
+                                </DropdownMenuItem>
                                 {hasRole('super_admin') && (
                                     <>
                                         <DropdownMenuSeparator />

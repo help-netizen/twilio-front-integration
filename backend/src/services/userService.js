@@ -77,29 +77,82 @@ async function getUserBySub(sub) {
 }
 
 /**
- * List users for a company.
+ * List users for a company with search, filter, and pagination.
  * @param {string|null} companyId - if null, returns all (super_admin)
+ * @param {{ search?: string, role?: string, status?: string, page?: number, limit?: number }} opts
+ * @returns {Promise<{ users: Object[], total: number, page: number, limit: number }>}
  */
-async function listUsers(companyId) {
+async function listUsers(companyId, opts = {}) {
+    const { search, role, status, page = 1, limit = 25 } = opts;
+    const conditions = [];
+    const params = [];
+    let i = 1;
+
     if (companyId) {
-        const { rows } = await db.query(
-            `SELECT u.*, m.role as membership_role, m.status as membership_status
-             FROM crm_users u
-             JOIN company_memberships m ON m.user_id = u.id
-             WHERE m.company_id = $1
-             ORDER BY u.created_at DESC`,
-            [companyId]
-        );
-        return rows;
+        conditions.push(`m.company_id = $${i++}`);
+        params.push(companyId);
     }
-    // Super admin — all users
-    const { rows } = await db.query(
-        `SELECT u.*, m.role as membership_role, m.company_id
-         FROM crm_users u
-         LEFT JOIN company_memberships m ON m.user_id = u.id
-         ORDER BY u.created_at DESC`
+    if (search) {
+        conditions.push(`(u.full_name ILIKE $${i} OR u.email ILIKE $${i})`);
+        params.push(`%${search}%`);
+        i++;
+    }
+    if (role) {
+        conditions.push(`m.role = $${i++}`);
+        params.push(role);
+    }
+    if (status) {
+        conditions.push(`m.status = $${i++}`);
+        params.push(status);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const offset = (page - 1) * limit;
+
+    const join = companyId
+        ? 'JOIN company_memberships m ON m.user_id = u.id'
+        : 'LEFT JOIN company_memberships m ON m.user_id = u.id';
+
+    // Count
+    const countRes = await db.query(
+        `SELECT COUNT(*) as total FROM crm_users u ${join} ${where}`,
+        params
     );
-    return rows;
+    const total = parseInt(countRes.rows[0].total, 10);
+
+    // Data
+    const { rows } = await db.query(
+        `SELECT u.id, u.email, u.full_name, u.last_login_at, u.created_at,
+                m.role as membership_role, m.status as membership_status,
+                m.company_id
+         FROM crm_users u ${join} ${where}
+         ORDER BY u.created_at DESC
+         LIMIT $${i++} OFFSET $${i++}`,
+        [...params, limit, offset]
+    );
+
+    return { users: rows, total, page, limit };
+}
+
+/**
+ * Enable (re-activate) a user in a company.
+ */
+async function enableUser(userId, companyId) {
+    const { rows } = await db.query(
+        `UPDATE company_memberships
+         SET status = 'active', updated_at = NOW()
+         WHERE user_id = $1 AND company_id = $2
+         RETURNING *`,
+        [userId, companyId]
+    );
+    if (rows.length === 0) throw new Error('Membership not found');
+
+    await db.query(
+        `UPDATE crm_users SET status = 'active', updated_at = NOW() WHERE id = $1`,
+        [userId]
+    );
+
+    return rows[0];
 }
 
 /**
@@ -198,6 +251,7 @@ module.exports = {
     createUserWithMembership,
     changeUserRole,
     disableUser,
+    enableUser,
     countCompanyAdmins,
     ROLE_HIERARCHY,
 };
