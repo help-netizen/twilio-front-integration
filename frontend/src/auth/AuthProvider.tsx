@@ -42,6 +42,7 @@ const KEYCLOAK_CLIENT_ID = import.meta.env.VITE_KEYCLOAK_CLIENT_ID || 'crm-web';
 // ─── Keycloak instance (singleton) ───────────────────────────────────────────
 
 let keycloakInstance: Keycloak | null = null;
+let kcInitialized = false;
 
 function getKeycloak(): Keycloak {
     if (!keycloakInstance) {
@@ -80,7 +81,7 @@ function extractRoles(kc: Keycloak): string[] {
 export function AuthProvider({ children }: { children: ReactNode }) {
     const [authenticated, setAuthenticated] = useState(!FEATURE_AUTH);
     const [user, setUser] = useState<AuthUser | null>(
-        FEATURE_AUTH ? null : { sub: 'dev', email: 'dev@localhost', name: 'Dev User', roles: ['owner_admin'] }
+        FEATURE_AUTH ? null : { sub: 'dev', email: 'dev@localhost', name: 'Dev User', roles: ['super_admin', 'company_admin'] }
     );
     const [token, setToken] = useState<string | null>(null);
     const [loading, setLoading] = useState(FEATURE_AUTH);
@@ -88,8 +89,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // Listen for 401/403 events dispatched by API interceptors
     useEffect(() => {
+        let loginPending = false;
         const handleSessionExpired = () => {
-            if (FEATURE_AUTH) {
+            if (FEATURE_AUTH && !loginPending) {
+                loginPending = true;
                 getKeycloak().login();
             }
         };
@@ -110,6 +113,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     useEffect(() => {
         if (!FEATURE_AUTH) return;
+        // Guard against double-init (React Strict Mode)
+        if (kcInitialized) return;
+        kcInitialized = true;
 
         const kc = getKeycloak();
 

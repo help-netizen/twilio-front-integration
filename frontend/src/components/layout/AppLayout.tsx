@@ -9,8 +9,9 @@ import {
     DropdownMenuTrigger,
     DropdownMenuContent,
     DropdownMenuItem,
+    DropdownMenuSeparator,
 } from '../ui/dropdown-menu';
-import { Phone, Users, Settings, Key, BookOpen, FileText } from 'lucide-react';
+import { Phone, Users, Settings, Key, BookOpen, FileText, LogOut, Shield } from 'lucide-react';
 import './AppLayout.css';
 
 interface AppLayoutProps {
@@ -27,7 +28,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
         : location.pathname.startsWith('/settings') ? 'settings'
             : 'calls';
 
-    const { accessDeniedMessage, clearAccessDenied } = useAuth();
+    const { accessDeniedMessage, clearAccessDenied, logout, hasRole } = useAuth();
 
     const handleRefresh = async () => {
         setIsRefreshing(true);
@@ -123,6 +124,26 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                                 >
                                     <BookOpen className="size-4" />
                                     API Docs
+                                </DropdownMenuItem>
+                                {hasRole('super_admin') && (
+                                    <>
+                                        <DropdownMenuSeparator />
+                                        <DropdownMenuItem
+                                            className="flex items-center gap-2 cursor-pointer"
+                                            onClick={() => navigate('/settings/admin')}
+                                        >
+                                            <Shield className="size-4" />
+                                            Super Admin
+                                        </DropdownMenuItem>
+                                    </>
+                                )}
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                    className="flex items-center gap-2 cursor-pointer text-red-600"
+                                    onClick={logout}
+                                >
+                                    <LogOut className="size-4" />
+                                    Log Out
                                 </DropdownMenuItem>
                             </DropdownMenuContent>
                         </DropdownMenu>

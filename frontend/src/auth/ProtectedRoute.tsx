@@ -18,7 +18,7 @@ export function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
         return null; // AuthProvider handles redirect
     }
 
-    if (roles && roles.length > 0 && !hasRole(...roles)) {
+    if (roles && roles.length > 0 && !hasRole('super_admin', ...roles)) {
         return (
             <div style={{
                 display: 'flex',

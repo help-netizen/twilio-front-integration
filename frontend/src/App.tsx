@@ -9,6 +9,7 @@ import { LeadsPage } from './pages/LeadsPage';
 import { IntegrationsPage } from './pages/IntegrationsPage';
 import ApiDocsPage from './pages/ApiDocsPage';
 import LeadFormSettingsPage from './pages/LeadFormSettingsPage';
+import SuperAdminPage from './pages/SuperAdminPage';
 import { EventNotification } from './components/EventNotification';
 import { Toaster } from './components/ui/sonner';
 import './App.css';
@@ -36,18 +37,23 @@ function App() {
               <Route path="/leads" element={<LeadsPage />} />
               <Route path="/settings" element={<Navigate to="/settings/integrations" replace />} />
               <Route path="/settings/integrations" element={
-                <ProtectedRoute roles={['owner_admin']}>
+                <ProtectedRoute roles={['company_admin']}>
                   <IntegrationsPage />
                 </ProtectedRoute>
               } />
               <Route path="/settings/api-docs" element={
-                <ProtectedRoute roles={['owner_admin']}>
+                <ProtectedRoute roles={['company_admin']}>
                   <ApiDocsPage />
                 </ProtectedRoute>
               } />
               <Route path="/settings/lead-form" element={
-                <ProtectedRoute roles={['owner_admin', 'dispatcher']}>
+                <ProtectedRoute roles={['company_admin', 'company_member']}>
                   <LeadFormSettingsPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/settings/admin" element={
+                <ProtectedRoute roles={['super_admin']}>
+                  <SuperAdminPage />
                 </ProtectedRoute>
               } />
             </Routes>
