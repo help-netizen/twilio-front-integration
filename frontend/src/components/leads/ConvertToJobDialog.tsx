@@ -98,10 +98,9 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
             setTimeslotsError('');
             setCoords(null);
 
-            // Default date = tomorrow
-            const tomorrow = new Date();
-            tomorrow.setDate(tomorrow.getDate() + 1);
-            setSelectedDate(tomorrow.toISOString().split('T')[0]);
+            // Default date = today
+            const today = new Date();
+            setSelectedDate(today.toISOString().split('T')[0]);
         }
     }, [open, lead]);
 

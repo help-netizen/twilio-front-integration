@@ -25,9 +25,9 @@ interface CustomFieldDef {
     sort_order: number;
 }
 
-const JOB_TYPES = ['Plumbing', 'HVAC', 'Electrical', 'Carpentry', 'Landscaping', 'Painting', 'Roofing'];
-const JOB_SOURCES = ['Website', 'Referral', 'Google Ads', 'Facebook', 'Yelp', 'Direct Call', 'Email'];
-const US_STATES = ['NY', 'CA', 'IL', 'TX', 'AZ', 'PA', 'FL', 'OH', 'NC', 'GA'];
+const JOB_TYPES = ['COD Service', 'COD Repair', 'Warranty', 'INS Service', 'INS Repair'];
+const JOB_SOURCES = ['eLocals', 'ServiceDirect', 'Inquirly', 'Rely', 'LHG', 'NSA', 'Other'];
+const US_STATES = ['MA', 'RI', 'NH'];
 
 export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDialogProps) {
     const [loading, setLoading] = useState(false);
@@ -40,9 +40,9 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
         Company: '',
         Address: '',
         City: '',
-        State: '',
+        State: 'MA',
         PostalCode: '',
-        JobType: '',
+        JobType: 'COD Service',
         JobSource: '',
         LeadNotes: '',
         Status: 'Submitted',
@@ -89,9 +89,9 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                 Company: '',
                 Address: '',
                 City: '',
-                State: '',
+                State: 'MA',
                 PostalCode: '',
-                JobType: '',
+                JobType: 'COD Service',
                 JobSource: '',
                 LeadNotes: '',
                 Status: 'Submitted',
