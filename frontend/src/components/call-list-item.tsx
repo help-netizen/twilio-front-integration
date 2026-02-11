@@ -32,7 +32,7 @@ export interface CallData {
     totalDuration?: number;
     talkTime?: number;
     waitTime?: number;
-    status: 'completed' | 'no-answer' | 'busy' | 'failed';
+    status: 'completed' | 'no-answer' | 'busy' | 'failed' | 'ringing' | 'in-progress';
     startTime: Date;
     endTime: Date;
     cost?: number;
@@ -56,6 +56,8 @@ const STATUS_CONFIG: Record<string, { label: string; iconColor: string; iconBg: 
     'no-answer': { label: 'no answer', iconColor: '#ca8a04', iconBg: '#fef9c3', badgeBg: '#fef9c3', badgeText: '#a16207' },
     'busy': { label: 'busy', iconColor: '#ea580c', iconBg: '#ffedd5', badgeBg: '#ffedd5', badgeText: '#c2410c' },
     'failed': { label: 'failed', iconColor: '#dc2626', iconBg: '#fee2e2', badgeBg: '#fee2e2', badgeText: '#b91c1c' },
+    'ringing': { label: 'ringing', iconColor: '#2563eb', iconBg: '#dbeafe', badgeBg: '#dbeafe', badgeText: '#1d4ed8' },
+    'in-progress': { label: 'in progress', iconColor: '#7c3aed', iconBg: '#ede9fe', badgeBg: '#ede9fe', badgeText: '#6d28d9' },
 };
 
 export function CallListItem({ call }: CallListItemProps) {

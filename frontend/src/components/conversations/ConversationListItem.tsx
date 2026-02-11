@@ -15,6 +15,10 @@ const STATUS_ICON_COLORS: Record<string, string> = {
     'busy': '#ea580c',
     'failed': '#dc2626',
     'canceled': '#dc2626',
+    'ringing': '#2563eb',
+    'in-progress': '#7c3aed',
+    'queued': '#2563eb',
+    'initiated': '#2563eb',
 };
 
 function DirectionIcon({ direction, status }: { direction: string; status: string }) {

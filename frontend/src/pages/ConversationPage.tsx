@@ -20,6 +20,10 @@ function callToCallData(call: Call): CallData {
         'busy': 'busy',
         'failed': 'failed',
         'canceled': 'failed',
+        'ringing': 'ringing',
+        'in-progress': 'in-progress',
+        'queued': 'ringing',
+        'initiated': 'ringing',
     };
     const status = statusMap[rawStatus] || 'completed';
 
