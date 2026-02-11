@@ -164,6 +164,7 @@ async function getCalls({ cursor, limit = 50, status, hasRecording, hasTranscrip
 /**
  * Get calls grouped by contact (replaces old "conversations" listing).
  * Returns latest call per contact with call count.
+ * Filters out inbound child legs (parent_call_sid IS NULL) so only root calls appear.
  */
 async function getCallsByContact({ limit = 20, offset = 0, companyId = null } = {}) {
     const companyFilter = companyId ? `AND c.company_id = $3` : '';
@@ -177,14 +178,19 @@ async function getCallsByContact({ limit = 20, offset = 0, companyId = null } = 
             SELECT DISTINCT ON (c.contact_id)
                 c.*,
                 to_json(co) as contact,
-                (SELECT COUNT(*) FROM calls c2 WHERE c2.contact_id = c.contact_id ${companyFilter2}) as call_count
+                (SELECT COUNT(*) FROM calls c2
+                 WHERE c2.contact_id = c.contact_id
+                   AND c2.parent_call_sid IS NULL
+                   ${companyFilter2}) as call_count
              FROM calls c
              LEFT JOIN contacts co ON c.contact_id = co.id
              WHERE c.contact_id IS NOT NULL
+               AND c.parent_call_sid IS NULL
                ${companyFilter}
                AND EXISTS (
                    SELECT 1 FROM calls c3
                    WHERE c3.contact_id = c.contact_id
+                     AND c3.parent_call_sid IS NULL
                      AND c3.status NOT IN ('failed', 'canceled')
                      ${companyFilter3}
                )
@@ -207,10 +213,12 @@ async function getContactsWithCallsCount(companyId = null) {
     const result = await db.query(
         `SELECT COUNT(DISTINCT contact_id) FROM calls
          WHERE contact_id IS NOT NULL
+           AND parent_call_sid IS NULL
            ${companyFilter}
            AND EXISTS (
                SELECT 1 FROM calls c2
                WHERE c2.contact_id = calls.contact_id
+                 AND c2.parent_call_sid IS NULL
                  AND c2.status NOT IN ('failed', 'canceled')
                  ${companyFilter2}
            )`,
@@ -220,15 +228,21 @@ async function getContactsWithCallsCount(companyId = null) {
 }
 
 /**
- * Get calls for a specific contact (with recording + transcript data)
+ * Get calls for a specific contact (with recording + transcript data).
+ * Filters out inbound child legs. For parent calls, also searches child legs
+ * for recordings and transcripts (since media is often on the winner child).
  */
 async function getCallsByContactId(contactId) {
     const result = await db.query(
         `SELECT c.*, to_json(co) as contact,
-            r.recording_sid, r.status as recording_status, r.duration_sec as recording_duration_sec,
-            t.status as transcript_status, t.text as transcript_text
+            COALESCE(r.recording_sid, cr.recording_sid) as recording_sid,
+            COALESCE(r.status, cr.status) as recording_status,
+            COALESCE(r.duration_sec, cr.duration_sec) as recording_duration_sec,
+            COALESCE(t.status, ct.status) as transcript_status,
+            COALESCE(t.text, ct.text) as transcript_text
          FROM calls c
          LEFT JOIN contacts co ON c.contact_id = co.id
+         -- Direct recording on this call
          LEFT JOIN LATERAL (
              SELECT recording_sid, status, duration_sec
              FROM recordings
@@ -236,6 +250,16 @@ async function getCallsByContactId(contactId) {
              ORDER BY completed_at DESC NULLS LAST, updated_at DESC
              LIMIT 1
          ) r ON true
+         -- Fallback: recording on child legs (for parent inbound calls)
+         LEFT JOIN LATERAL (
+             SELECT rec.recording_sid, rec.status, rec.duration_sec
+             FROM calls child
+             JOIN recordings rec ON rec.call_sid = child.call_sid
+             WHERE child.parent_call_sid = c.call_sid
+             ORDER BY rec.completed_at DESC NULLS LAST, rec.updated_at DESC
+             LIMIT 1
+         ) cr ON r.recording_sid IS NULL
+         -- Direct transcript on this call
          LEFT JOIN LATERAL (
              SELECT status, text
              FROM transcripts
@@ -243,7 +267,17 @@ async function getCallsByContactId(contactId) {
              ORDER BY updated_at DESC
              LIMIT 1
          ) t ON true
+         -- Fallback: transcript on child legs
+         LEFT JOIN LATERAL (
+             SELECT tr.status, tr.text
+             FROM calls child
+             JOIN transcripts tr ON tr.call_sid = child.call_sid
+             WHERE child.parent_call_sid = c.call_sid
+             ORDER BY tr.updated_at DESC
+             LIMIT 1
+         ) ct ON t.status IS NULL
          WHERE c.contact_id = $1
+           AND c.parent_call_sid IS NULL
          ORDER BY c.started_at DESC NULLS LAST`,
         [contactId]
     );
@@ -491,10 +525,30 @@ async function upsertSyncState(jobName, cursor, error = null) {
 // =============================================================================
 
 async function getCallMedia(callSid) {
-    const [recordings, transcripts] = await Promise.all([
+    let [recordings, transcripts] = await Promise.all([
         getRecordingsByCallSid(callSid),
         getTranscriptsByCallSid(callSid),
     ]);
+
+    // Fallback: if no media on this call, check child legs
+    if (recordings.length === 0 || transcripts.length === 0) {
+        const childResult = await db.query(
+            `SELECT call_sid FROM calls WHERE parent_call_sid = $1`,
+            [callSid]
+        );
+        for (const child of childResult.rows) {
+            if (recordings.length === 0) {
+                const childRecs = await getRecordingsByCallSid(child.call_sid);
+                if (childRecs.length > 0) recordings = childRecs;
+            }
+            if (transcripts.length === 0) {
+                const childTrans = await getTranscriptsByCallSid(child.call_sid);
+                if (childTrans.length > 0) transcripts = childTrans;
+            }
+            if (recordings.length > 0 && transcripts.length > 0) break;
+        }
+    }
+
     return { recordings, transcripts };
 }
 

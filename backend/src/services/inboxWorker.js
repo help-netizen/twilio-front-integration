@@ -207,6 +207,93 @@ async function processVoiceEvent(payload, eventType, traceId) {
 
     // Publish realtime event (after enrichment so frontend gets correct duration)
     publishRealtimeEvent('call.updated', enrichedCall || { call_sid: normalized.callSid, status: normalized.eventStatus }, traceId);
+
+    // Reconcile parent call if this is a child leg that reached final status
+    if (normalized.parentCallSid && isFinal) {
+        await reconcileInboundParent(normalized.parentCallSid, traceId);
+    }
+}
+
+// =============================================================================
+// Reconcile inbound parent call from child legs
+// When child legs complete, update the parent with the winner's metadata
+// =============================================================================
+
+async function reconcileInboundParent(parentCallSid, traceId) {
+    try {
+        // Get all child legs for this parent
+        const childResult = await db.query(
+            `SELECT call_sid, status, duration_sec, started_at, ended_at, is_final
+             FROM calls WHERE parent_call_sid = $1
+             ORDER BY duration_sec DESC NULLS LAST`,
+            [parentCallSid]
+        );
+        const children = childResult.rows;
+
+        if (children.length === 0) return;
+
+        // Check if all children are final
+        const allFinal = children.every(c => c.is_final);
+
+        // Determine winner: completed child with longest duration
+        const winner = children.find(c =>
+            c.status === 'completed' && c.duration_sec && c.duration_sec > 0
+        );
+
+        // Determine parent status from children
+        let parentStatus;
+        let parentIsFinal = false;
+        let parentDuration = null;
+        let parentAnsweredAt = null;
+        let parentEndedAt = null;
+
+        if (winner) {
+            parentStatus = 'completed';
+            parentIsFinal = true;
+            parentDuration = winner.duration_sec;
+            parentAnsweredAt = winner.started_at;
+            parentEndedAt = winner.ended_at;
+        } else if (allFinal) {
+            // No winner — determine status from children
+            const statuses = children.map(c => c.status);
+            if (statuses.includes('busy')) {
+                parentStatus = 'busy';
+            } else if (statuses.includes('failed')) {
+                parentStatus = 'failed';
+            } else {
+                parentStatus = 'no-answer';
+            }
+            parentIsFinal = true;
+            parentEndedAt = children.reduce((latest, c) =>
+                c.ended_at && (!latest || new Date(c.ended_at) > new Date(latest)) ? c.ended_at : latest
+                , null);
+        } else {
+            // Some children still active — parent stays in-progress
+            parentStatus = 'in-progress';
+        }
+
+        // Update parent call with reconciled data
+        await db.query(
+            `UPDATE calls SET
+                status = $2,
+                is_final = $3,
+                duration_sec = COALESCE($4, duration_sec),
+                answered_at = COALESCE($5, answered_at),
+                ended_at = COALESCE($6, ended_at)
+             WHERE call_sid = $1`,
+            [parentCallSid, parentStatus, parentIsFinal, parentDuration, parentAnsweredAt, parentEndedAt]
+        );
+
+        console.log(`[${traceId}] Reconciled parent ${parentCallSid}: status=${parentStatus}, winner=${winner?.call_sid || 'none'}`);
+
+        // Publish update for parent so frontend refreshes
+        const parentCall = await queries.getCallByCallSid(parentCallSid);
+        if (parentCall) {
+            publishRealtimeEvent('call.updated', parentCall, traceId);
+        }
+    } catch (error) {
+        console.error(`[${traceId}] Failed to reconcile parent ${parentCallSid}:`, error.message);
+    }
 }
 
 // =============================================================================
