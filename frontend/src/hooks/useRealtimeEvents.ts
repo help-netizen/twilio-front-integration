@@ -1,5 +1,12 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 
+// Extend Window to support SSE notification suppression flag
+declare global {
+    interface Window {
+        __suppressSSENotifications?: boolean;
+    }
+}
+
 /**
  * SSE Event Types
  */
@@ -97,15 +104,17 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
                 const data = JSON.parse(e.data) as SSECallEvent;
                 console.log('[SSE] Call updated:', data.call_sid, data.status);
 
-                window.dispatchEvent(new CustomEvent('sse-event-received', {
-                    detail: {
-                        call_sid: data.call_sid,
-                        status: data.status,
-                        from: data.from_number,
-                        to: data.to_number,
-                        timestamp: new Date().toISOString()
-                    }
-                }));
+                if (!window.__suppressSSENotifications) {
+                    window.dispatchEvent(new CustomEvent('sse-event-received', {
+                        detail: {
+                            call_sid: data.call_sid,
+                            status: data.status,
+                            from: data.from_number,
+                            to: data.to_number,
+                            timestamp: new Date().toISOString()
+                        }
+                    }));
+                }
 
                 onCallUpdateRef.current?.(data);
             });
@@ -115,15 +124,17 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
                 const data = JSON.parse(e.data) as SSECallEvent;
                 console.log('[SSE] Call created:', data.call_sid);
 
-                window.dispatchEvent(new CustomEvent('sse-event-received', {
-                    detail: {
-                        call_sid: data.call_sid,
-                        status: data.status,
-                        from: data.from_number,
-                        to: data.to_number,
-                        timestamp: new Date().toISOString()
-                    }
-                }));
+                if (!window.__suppressSSENotifications) {
+                    window.dispatchEvent(new CustomEvent('sse-event-received', {
+                        detail: {
+                            call_sid: data.call_sid,
+                            status: data.status,
+                            from: data.from_number,
+                            to: data.to_number,
+                            timestamp: new Date().toISOString()
+                        }
+                    }));
+                }
 
                 onCallCreatedRef.current?.(data);
             });
