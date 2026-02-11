@@ -1,7 +1,7 @@
 import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import type { Call } from '../../types/models';
-import { PhoneIncoming, PhoneOutgoing, ArrowLeftRight, ArrowUpRight } from 'lucide-react';
+import { PhoneIncoming, PhoneOutgoing, ArrowLeftRight } from 'lucide-react';
 import { formatPhoneNumber, formatRelativeTime, formatAbsoluteTime } from '../../utils/formatters';
 import { cn } from '../../lib/utils';
 
