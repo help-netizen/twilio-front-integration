@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useAuth } from '../auth/AuthProvider';
+import { authedFetch } from '../services/apiClient';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
@@ -47,8 +47,6 @@ interface PaginatedResponse {
 /* ───────────────────────────── Page ─────────────────────────────── */
 
 export default function CompanyUsersPage() {
-    const { token } = useAuth();
-    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
     // List state
     const [data, setData] = useState<PaginatedResponse | null>(null);
@@ -89,7 +87,7 @@ export default function CompanyUsersPage() {
             params.set('page', String(page));
             params.set('limit', String(limit));
 
-            const res = await fetch(`${API_BASE}/users?${params}`, { headers });
+            const res = await authedFetch(`${API_BASE}/users?${params}`);
             if (res.status === 403) {
                 toast.error('Access denied');
                 return;
@@ -125,9 +123,9 @@ export default function CompanyUsersPage() {
         }
         setCreating(true);
         try {
-            const res = await fetch(`${API_BASE}/users`, {
+            const res = await authedFetch(`${API_BASE}/users`, {
                 method: 'POST',
-                headers,
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(createForm),
             });
             const json = await res.json();
@@ -157,9 +155,9 @@ export default function CompanyUsersPage() {
         if (!roleDialog.user) return;
         setActionLoading(roleDialog.user.id);
         try {
-            const res = await fetch(`${API_BASE}/users/${roleDialog.user.id}/role`, {
+            const res = await authedFetch(`${API_BASE}/users/${roleDialog.user.id}/role`, {
                 method: 'PUT',
-                headers,
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ role: roleDialog.newRole }),
             });
             const json = await res.json();
@@ -187,9 +185,8 @@ export default function CompanyUsersPage() {
 
         setActionLoading(user.id);
         try {
-            const res = await fetch(`${API_BASE}/users/${user.id}/${endpoint}`, {
+            const res = await authedFetch(`${API_BASE}/users/${user.id}/${endpoint}`, {
                 method: 'PUT',
-                headers,
             });
             const json = await res.json();
             if (res.status === 409 && json.code === 'LAST_ADMIN_REQUIRED') {
