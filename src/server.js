@@ -12,8 +12,9 @@ const zenbookerRouter = require('../backend/src/routes/zenbooker');
 const integrationsLeadsRouter = require('../backend/src/routes/integrations-leads');
 const integrationsAdminRouter = require('../backend/src/routes/integrations-admin');
 const leadFormSettingsRouter = require('../backend/src/routes/lead-form-settings');
+const usersRouter = require('../backend/src/routes/users');
 const requestId = require('../backend/src/middleware/requestId');
-const { authenticate } = require('../backend/src/middleware/keycloakAuth');
+const { authenticate, requireRole, requireCompanyAccess } = require('../backend/src/middleware/keycloakAuth');
 const db = require('../backend/src/db/connection');
 
 const app = express();
@@ -50,22 +51,25 @@ app.use('/webhooks', webhooksRouter);
 app.use('/twiml', twimlRouter);
 app.use('/events', eventsRouter);
 
-// Auth middleware for CRM API routes (behind FEATURE_AUTH flag)
-app.use('/api/calls', authenticate, callsRouter);
-app.use('/api/sync', authenticate, syncRouter);
+// Auth + tenant-scoped CRM API routes
+app.use('/api/calls', authenticate, requireCompanyAccess, callsRouter);
+app.use('/api/sync', authenticate, requireCompanyAccess, syncRouter);
 
 // Leads API (behind feature flag)
 if (process.env.FEATURE_LEADS_TAB !== 'false') {
-    app.use('/api/leads', authenticate, leadsRouter);
+    app.use('/api/leads', authenticate, requireCompanyAccess, leadsRouter);
 }
 
 // Zenbooker scheduling proxy
-app.use('/api/zenbooker', authenticate, zenbookerRouter);
+app.use('/api/zenbooker', authenticate, requireCompanyAccess, zenbookerRouter);
 
 // BLANC Integrations API (secured header-based auth)
 app.use('/api/v1/integrations', integrationsLeadsRouter);
-app.use('/api/admin/integrations', authenticate, integrationsAdminRouter);
-app.use('/api/settings/lead-form', authenticate, leadFormSettingsRouter);
+app.use('/api/admin/integrations', authenticate, requireRole('company_admin'), requireCompanyAccess, integrationsAdminRouter);
+app.use('/api/settings/lead-form', authenticate, requireRole('company_admin'), requireCompanyAccess, leadFormSettingsRouter);
+
+// User management API (§5, §6)
+app.use('/api/users', authenticate, requireRole('company_admin'), requireCompanyAccess, usersRouter);
 console.log('🔐 BLANC Integrations API enabled at /api/v1/integrations/leads');
 
 

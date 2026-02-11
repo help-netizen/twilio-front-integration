@@ -14,8 +14,15 @@ jest.mock('../backend/src/services/userService', () => ({
         keycloak_sub: 'kc-sub-123',
         email: 'test@crm.local',
         full_name: 'Test User',
-        role: 'owner_admin',
+        role: 'company_admin',
+        company_id: '00000000-0000-0000-0000-000000000001',
     }),
+}));
+
+// Mock auditService before requiring the module
+jest.mock('../backend/src/services/auditService', () => ({
+    log: jest.fn().mockResolvedValue(undefined),
+    query: jest.fn().mockResolvedValue([]),
 }));
 
 // Mock jwks-rsa
@@ -59,8 +66,9 @@ describe('keycloakAuth — dev mode (FEATURE_AUTH_ENABLED=false)', () => {
         expect(req.user.sub).toBe('dev-user');
         expect(req.user.email).toBe('dev@localhost');
         expect(req.user.name).toBe('Dev User');
-        expect(req.user.roles).toContain('owner_admin');
+        expect(req.user.roles).toContain('company_admin');
         expect(req.user._devMode).toBe(true);
+        expect(req.user.company_id).toBe('00000000-0000-0000-0000-000000000001');
     });
 
     test('requireRole bypasses check in dev mode', () => {
@@ -70,7 +78,7 @@ describe('keycloakAuth — dev mode (FEATURE_AUTH_ENABLED=false)', () => {
         const res = {};
         const next = jest.fn();
 
-        const middleware = requireRole('owner_admin');
+        const middleware = requireRole('company_admin');
         middleware(req, res, next);
 
         expect(next).toHaveBeenCalledTimes(1);
@@ -89,9 +97,12 @@ describe('keycloakAuth — auth enabled (FEATURE_AUTH_ENABLED=true)', () => {
 
         jest.resetModules();
         jest.mock('../backend/src/services/userService', () => ({
-            findOrCreateUser: jest.fn().mockResolvedValue({ id: 'kc-uuid' }),
+            findOrCreateUser: jest.fn().mockResolvedValue({ id: 'kc-uuid', company_id: '00000000-0000-0000-0000-000000000001' }),
         }));
         jest.mock('jwks-rsa', () => jest.fn().mockReturnValue({ getSigningKey: jest.fn() }));
+        jest.mock('../backend/src/services/auditService', () => ({
+            log: jest.fn().mockResolvedValue(undefined),
+        }));
 
         const keycloakAuth = require('../backend/src/middleware/keycloakAuth');
         authenticate = keycloakAuth.authenticate;
@@ -115,8 +126,8 @@ describe('keycloakAuth — auth enabled (FEATURE_AUTH_ENABLED=true)', () => {
         expect(mockRes.status).toHaveBeenCalledWith(401);
         expect(mockRes.json).toHaveBeenCalledWith(
             expect.objectContaining({
-                ok: false,
-                error: expect.objectContaining({ code: 'AUTH_REQUIRED' }),
+                code: 'AUTH_REQUIRED',
+                message: 'Bearer token required',
             })
         );
     });
@@ -223,9 +234,12 @@ describe('requireRole', () => {
 
         jest.resetModules();
         jest.mock('../backend/src/services/userService', () => ({
-            findOrCreateUser: jest.fn().mockResolvedValue({ id: 'kc-uuid' }),
+            findOrCreateUser: jest.fn().mockResolvedValue({ id: 'kc-uuid', company_id: '00000000-0000-0000-0000-000000000001' }),
         }));
         jest.mock('jwks-rsa', () => jest.fn().mockReturnValue({ getSigningKey: jest.fn() }));
+        jest.mock('../backend/src/services/auditService', () => ({
+            log: jest.fn().mockResolvedValue(undefined),
+        }));
 
         requireRole = require('../backend/src/middleware/keycloakAuth').requireRole;
     });
@@ -238,39 +252,45 @@ describe('requireRole', () => {
     });
 
     test('allows access when user has exact required role', () => {
-        const req = { user: { email: 'admin@crm.local', roles: ['owner_admin'] } };
+        const req = { user: { email: 'admin@crm.local', roles: ['company_admin'] } };
         const next = jest.fn();
 
-        requireRole('owner_admin')(req, mockRes, next);
+        requireRole('company_admin')(req, mockRes, next);
 
         expect(next).toHaveBeenCalledTimes(1);
         expect(mockRes.status).not.toHaveBeenCalled();
     });
 
     test('allows access when user has one of multiple required roles', () => {
-        const req = { user: { email: 'disp@crm.local', roles: ['dispatcher'] } };
+        const req = { user: { email: 'member@crm.local', roles: ['company_member'] } };
         const next = jest.fn();
 
-        requireRole('owner_admin', 'dispatcher')(req, mockRes, next);
+        requireRole('company_admin', 'company_member')(req, mockRes, next);
+
+        expect(next).toHaveBeenCalledTimes(1);
+    });
+
+    test('allows access for super_admin regardless of required roles', () => {
+        const req = { user: { email: 'super@crm.local', roles: ['super_admin'], is_super_admin: true } };
+        const next = jest.fn();
+
+        requireRole('company_admin')(req, mockRes, next);
 
         expect(next).toHaveBeenCalledTimes(1);
     });
 
     test('denies access when user lacks required role (403)', () => {
-        const req = { user: { email: 'viewer@crm.local', roles: ['viewer'] } };
+        const req = { user: { email: 'member@crm.local', roles: ['company_member'] } };
         const next = jest.fn();
 
-        requireRole('owner_admin')(req, mockRes, next);
+        requireRole('company_admin')(req, mockRes, next);
 
         expect(next).not.toHaveBeenCalled();
         expect(mockRes.status).toHaveBeenCalledWith(403);
         expect(mockRes.json).toHaveBeenCalledWith(
             expect.objectContaining({
-                ok: false,
-                error: expect.objectContaining({
-                    code: 'FORBIDDEN',
-                    required_roles: ['owner_admin'],
-                }),
+                code: 'ACCESS_DENIED',
+                message: 'Отказано в доступе',
             })
         );
     });
@@ -279,7 +299,7 @@ describe('requireRole', () => {
         const req = { user: { email: 'noroles@crm.local', roles: [] } };
         const next = jest.fn();
 
-        requireRole('owner_admin')(req, mockRes, next);
+        requireRole('company_admin')(req, mockRes, next);
 
         expect(next).not.toHaveBeenCalled();
         expect(mockRes.status).toHaveBeenCalledWith(403);
@@ -289,7 +309,7 @@ describe('requireRole', () => {
         const req = {};
         const next = jest.fn();
 
-        requireRole('owner_admin')(req, mockRes, next);
+        requireRole('company_admin')(req, mockRes, next);
 
         expect(next).not.toHaveBeenCalled();
         expect(mockRes.status).toHaveBeenCalledWith(403);
@@ -299,7 +319,7 @@ describe('requireRole', () => {
         const req = { user: { roles: [], _devMode: true } };
         const next = jest.fn();
 
-        requireRole('owner_admin')(req, mockRes, next);
+        requireRole('company_admin')(req, mockRes, next);
 
         expect(next).toHaveBeenCalledTimes(1);
     });
@@ -308,36 +328,29 @@ describe('requireRole', () => {
 // ─── userService (findOrCreateUser) role hierarchy tests ──────────────────────
 
 describe('userService — role hierarchy logic', () => {
-    // Test the role hierarchy logic used in findOrCreateUser
-    // This is a standalone function test (no DB needed)
-
-    const roleHierarchy = ['owner_admin', 'dispatcher', 'accountant', 'technician', 'viewer'];
+    const roleHierarchy = ['super_admin', 'company_admin', 'company_member'];
 
     function determinePrimaryRole(realmRoles) {
-        return roleHierarchy.find(r => realmRoles.includes(r)) || 'viewer';
+        return roleHierarchy.find(r => realmRoles.includes(r)) || 'company_member';
     }
 
-    test('selects owner_admin as highest role', () => {
-        expect(determinePrimaryRole(['viewer', 'owner_admin'])).toBe('owner_admin');
+    test('selects super_admin as highest role', () => {
+        expect(determinePrimaryRole(['company_member', 'super_admin'])).toBe('super_admin');
     });
 
-    test('selects dispatcher when no owner_admin', () => {
-        expect(determinePrimaryRole(['viewer', 'dispatcher'])).toBe('dispatcher');
+    test('selects company_admin when no super_admin', () => {
+        expect(determinePrimaryRole(['company_member', 'company_admin'])).toBe('company_admin');
     });
 
-    test('selects accountant correctly', () => {
-        expect(determinePrimaryRole(['viewer', 'accountant'])).toBe('accountant');
+    test('selects company_member as lowest CRM role', () => {
+        expect(determinePrimaryRole(['company_member'])).toBe('company_member');
     });
 
-    test('selects technician over viewer', () => {
-        expect(determinePrimaryRole(['viewer', 'technician'])).toBe('technician');
+    test('defaults to company_member when no CRM roles', () => {
+        expect(determinePrimaryRole(['uma_authorization', 'default-roles-crm-prod'])).toBe('company_member');
     });
 
-    test('defaults to viewer when no CRM roles', () => {
-        expect(determinePrimaryRole(['uma_authorization', 'default-roles-crm-prod'])).toBe('viewer');
-    });
-
-    test('defaults to viewer for empty roles array', () => {
-        expect(determinePrimaryRole([])).toBe('viewer');
+    test('defaults to company_member for empty roles array', () => {
+        expect(determinePrimaryRole([])).toBe('company_member');
     });
 });
