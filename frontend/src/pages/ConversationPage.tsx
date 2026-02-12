@@ -101,7 +101,7 @@ export const ConversationPage: React.FC = () => {
                 <ConversationList />
             </div>
 
-            <div className="flex-1 flex flex-col bg-background overflow-hidden">
+            <div className="flex-1 flex flex-col bg-background overflow-y-auto">
                 <div className="p-4">
                     <LeadCard
                         phone={contact?.phone_e164 || calls[0]?.from_number || calls[0]?.to_number || ''}
@@ -109,7 +109,7 @@ export const ConversationPage: React.FC = () => {
                     />
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-5">
+                <div className="p-5 pt-0">
                     <div className="space-y-4 max-w-3xl">
                         {calls.map((call) => (
                             <CallListItem
