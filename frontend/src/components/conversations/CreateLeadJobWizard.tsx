@@ -539,7 +539,14 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
 
             {/* ── Address ── */}
             <div className="wizard__review-section">
-                <h4 className="wizard__review-title"><MapPin className="w-3.5" /> Address</h4>
+                <h4 className="wizard__review-title">
+                    <MapPin className="w-3.5" /> Address
+                    {territoryResult?.in_service_area && (
+                        <Badge variant="default" className="bg-green-600 ml-auto text-[10px]">
+                            ✓ {territoryResult.service_territory?.name}
+                        </Badge>
+                    )}
+                </h4>
                 <div className="wizard__field">
                     <Label htmlFor="wz4-street">Street Address</Label>
                     <Input id="wz4-street" value={streetAddress} onChange={(e) => setStreetAddress(e.target.value)} placeholder="123 Main St" />
@@ -567,11 +574,6 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
                         <Input id="wz4-zip" value={postalCode} onChange={(e) => setPostalCode(e.target.value)} />
                     </div>
                 </div>
-                {territoryResult?.in_service_area && (
-                    <Badge variant="default" className="bg-green-600 mt-1">
-                        ✓ {territoryResult.service_territory?.name}
-                    </Badge>
-                )}
             </div>
 
             {/* ── Service ── */}
