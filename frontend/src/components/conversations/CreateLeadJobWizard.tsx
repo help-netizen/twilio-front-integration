@@ -198,8 +198,8 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
                         ...(email && { email }),
                     },
                     address: {
-                        ...(streetAddress && { street: streetAddress }),
-                        ...(city && { city }),
+                        line1: streetAddress || 'N/A',
+                        city: city || 'N/A',
                         ...(state && { state }),
                         ...(postalCode && { postal_code: postalCode }),
                         country: 'US',
