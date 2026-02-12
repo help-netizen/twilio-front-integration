@@ -91,15 +91,19 @@ function authenticate(req, res, next) {
     }
 
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    // Fallback: accept ?token= query param for browser-native requests
+    // (e.g. <audio src="...?token=xxx"> can't send Authorization headers)
+    const token = (authHeader && authHeader.startsWith('Bearer '))
+        ? authHeader.slice(7)
+        : req.query.token;
+
+    if (!token) {
         return res.status(401).json({
             code: 'AUTH_REQUIRED',
             message: 'Bearer token required',
             trace_id: req.traceId,
         });
     }
-
-    const token = authHeader.slice(7);
 
     jwt.verify(token, getKey, {
         algorithms: ['RS256'],

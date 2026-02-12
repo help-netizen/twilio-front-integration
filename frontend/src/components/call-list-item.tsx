@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { useAuth } from '@/auth/AuthProvider';
 import {
     PhoneIncoming,
     PhoneOutgoing,
@@ -61,6 +62,7 @@ const STATUS_CONFIG: Record<string, { label: string; iconColor: string; iconBg: 
 };
 
 export function CallListItem({ call }: CallListItemProps) {
+    const { token } = useAuth();
     const [showSystemInfo, setShowSystemInfo] = useState(false);
     const [activeSection, setActiveSection] = useState<'summary' | 'transcription' | null>(null);
 
@@ -223,7 +225,7 @@ export function CallListItem({ call }: CallListItemProps) {
                 {/* Audio Player */}
                 {call.audioUrl && (
                     <div className="px-4 pb-4">
-                        <audio ref={audioRef} src={call.audioUrl} preload="metadata" />
+                        <audio ref={audioRef} src={token ? `${call.audioUrl}?token=${encodeURIComponent(token)}` : call.audioUrl} preload="metadata" />
 
                         <div className="space-y-3">
                             {/* Single row: [Summary][Transcript] | [⟲10][▶][⟳10] | 0:00 ━━●── 3:45 */}
