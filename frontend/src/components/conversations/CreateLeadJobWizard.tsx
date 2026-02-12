@@ -50,6 +50,7 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
     const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
 
     // Customer info (editable, pre-filled where possible)
+    const [phoneNumber, setPhoneNumber] = useState(phone);
     const [firstName, setFirstName] = useState('');
     const [lastName, setLastName] = useState('');
     const [email, setEmail] = useState('');
@@ -165,7 +166,7 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
             const leadInput: Record<string, unknown> = {
                 FirstName: firstName || 'Unknown',
                 LastName: lastName || '',
-                Phone: phone,
+                Phone: phoneNumber,
                 Email: email || undefined,
                 Address: streetAddress || undefined,
                 City: city || undefined,
@@ -194,7 +195,7 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
                     territory_id: territoryId,
                     customer: {
                         name: [firstName, lastName].filter(Boolean).join(' ') || 'Unknown',
-                        ...(phone && { phone }),
+                        ...(phoneNumber && { phone: phoneNumber }),
                         ...(email && { email }),
                     },
                     address: {
@@ -342,7 +343,7 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
             <div className="wizard__row">
                 <div className="wizard__field wizard__field--wide">
                     <Label htmlFor="wz-phone">Phone</Label>
-                    <Input id="wz-phone" value={formatPhone(phone)} disabled className="wizard__input--disabled" />
+                    <Input id="wz-phone" value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} placeholder="+16175001234" />
                 </div>
                 <div className="wizard__field wizard__field--wide">
                     <Label htmlFor="wz-email">Email</Label>
@@ -528,7 +529,7 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
                 <div className="wizard__row">
                     <div className="wizard__field wizard__field--wide">
                         <Label htmlFor="wz4-phone">Phone</Label>
-                        <Input id="wz4-phone" value={formatPhone(phone)} disabled className="wizard__input--disabled" />
+                        <Input id="wz4-phone" value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)} placeholder="+16175001234" />
                     </div>
                     <div className="wizard__field wizard__field--wide">
                         <Label htmlFor="wz4-email">Email</Label>
