@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import type { Call } from '../../types/models';
 import { PhoneIncoming, PhoneOutgoing, ArrowLeftRight } from 'lucide-react';
 import { formatPhoneNumber, formatRelativeTime, formatAbsoluteTime } from '../../utils/formatters';
+import { useLeadByPhone } from '../../hooks/useLeadByPhone';
 import { cn } from '../../lib/utils';
 
 interface ConversationListItemProps {
@@ -47,11 +48,16 @@ export const ConversationListItem: React.FC<ConversationListItemProps> = ({ call
     };
 
     // Determine display phone number
-    const displayPhone = call.contact?.full_name
-        || call.contact?.phone_e164
+    const rawPhone = call.contact?.phone_e164
         || call.from_number
         || call.to_number
         || call.call_sid;
+
+    // Fetch lead by phone for name
+    const { lead } = useLeadByPhone(rawPhone);
+    const leadName = lead
+        ? [lead.FirstName, lead.LastName].filter(Boolean).join(' ')
+        : null;
 
     // Determine time for display
     const displayTime = call.started_at || call.created_at;
@@ -74,15 +80,24 @@ export const ConversationListItem: React.FC<ConversationListItemProps> = ({ call
             <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
                     <DirectionIcon direction={iconDirection} status={call.status} />
-                    <span
-                        className="text-sm font-medium truncate"
-                        dangerouslySetInnerHTML={{
-                            __html: formatPhoneNumber(displayPhone)
-                        }}
-                    />
-                    {call.call_count && call.call_count > 1 && (
-                        <span className="text-xs text-muted-foreground">({call.call_count})</span>
-                    )}
+                    <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                            <span className="text-sm font-medium truncate">
+                                {leadName || formatPhoneNumber(rawPhone)}
+                            </span>
+                            {call.call_count && call.call_count > 1 && (
+                                <span className="text-xs text-muted-foreground">({call.call_count})</span>
+                            )}
+                        </div>
+                        {leadName && (
+                            <span
+                                className="text-xs text-muted-foreground/70 truncate block"
+                                dangerouslySetInnerHTML={{
+                                    __html: formatPhoneNumber(rawPhone)
+                                }}
+                            />
+                        )}
+                    </div>
                 </div>
                 <div className="flex flex-col items-end shrink-0">
                     <div className="text-xs text-muted-foreground font-medium">
