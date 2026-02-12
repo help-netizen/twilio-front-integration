@@ -84,6 +84,24 @@ router.get('/', async (req, res) => {
 });
 
 // =============================================================================
+// GET /api/leads/by-phone/:phone — Find newest lead by phone number
+// =============================================================================
+router.get('/by-phone/:phone', async (req, res) => {
+    const reqId = requestId();
+    try {
+        const { phone } = req.params;
+        if (!phone || phone.length < 5) {
+            return res.status(400).json(errorResponse('INVALID_PHONE', 'Phone number is required (min 5 chars)', reqId));
+        }
+
+        const lead = await leadsService.getLeadByPhone(phone, req.companyFilter?.company_id);
+        res.json(successResponse({ lead }, reqId));
+    } catch (err) {
+        handleError(err, reqId, res);
+    }
+});
+
+// =============================================================================
 // GET /api/leads/:uuid — Get lead details
 // =============================================================================
 router.get('/:uuid', async (req, res) => {
@@ -119,7 +137,8 @@ router.post('/', async (req, res) => {
             return res.status(400).json(errorResponse('VALIDATION_ERROR', errors.join('; '), reqId));
         }
 
-        const result = await leadsService.createLead(body, req.companyFilter?.company_id);
+        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
+        const result = await leadsService.createLead(body, companyId);
         res.status(201).json(successResponse(result, reqId));
     } catch (err) {
         handleError(err, reqId, res);

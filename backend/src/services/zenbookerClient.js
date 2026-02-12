@@ -53,7 +53,7 @@ async function getTerritories() {
 
 /**
  * Find a territory that covers the given postal code.
- * Falls back to first available territory if no match.
+ * Returns the territory ID if matched, otherwise throws.
  */
 async function findTerritoryByPostalCode(postalCode) {
     const territories = await getTerritories();
@@ -62,9 +62,7 @@ async function findTerritoryByPostalCode(postalCode) {
         const match = territories.find(t => t.postal_codes.includes(zip));
         if (match) return match.id;
     }
-    // Fallback — first territory
-    if (territories.length > 0) return territories[0].id;
-    throw new Error('No Zenbooker territories found');
+    throw new Error('Postal code is not in any service territory');
 }
 
 // ─── Create Job ───────────────────────────────────────────────────────────────

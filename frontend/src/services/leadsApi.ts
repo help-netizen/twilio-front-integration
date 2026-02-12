@@ -141,3 +141,10 @@ export async function convertLead(uuid: string, body: Record<string, unknown> = 
         body: JSON.stringify(body),
     });
 }
+
+/**
+ * Find the newest lead by phone number (returns lead or null)
+ */
+export async function getLeadByPhone(phone: string): Promise<LeadDetailResponse> {
+    return request<LeadDetailResponse>(`${API_BASE}/by-phone/${encodeURIComponent(phone)}`);
+}

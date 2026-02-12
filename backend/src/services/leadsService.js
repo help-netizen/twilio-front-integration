@@ -534,11 +534,46 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
 }
 
 // =============================================================================
+// Get Lead by Phone (newest match)
+// =============================================================================
+async function getLeadByPhone(phone, companyId = null) {
+    // Normalize: strip everything except digits, keep last 10 for US numbers
+    const digits = (phone || '').replace(/\D/g, '');
+    const last10 = digits.length >= 10 ? digits.slice(-10) : digits;
+    if (!last10) return null;
+
+    const conditions = [`RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10) = $1`];
+    const params = [last10];
+    if (companyId) {
+        conditions.push(`l.company_id = $2`);
+        params.push(companyId);
+    }
+
+    const sql = `
+        SELECT l.*,
+            COALESCE(
+                json_agg(json_build_object('id', lta.id, 'name', lta.user_name))
+                FILTER (WHERE lta.id IS NOT NULL), '[]'
+            ) AS team
+        FROM leads l
+        LEFT JOIN lead_team_assignments lta ON lta.lead_id = l.id
+        WHERE ${conditions.join(' AND ')}
+        GROUP BY l.id
+        ORDER BY l.id DESC
+        LIMIT 1
+    `;
+
+    const { rows } = await db.query(sql, params);
+    return rows.length > 0 ? rowToLead(rows[0]) : null;
+}
+
+// =============================================================================
 // Exports
 // =============================================================================
 module.exports = {
     listLeads,
     getLeadByUUID,
+    getLeadByPhone,
     createLead,
     updateLead,
     markLost,

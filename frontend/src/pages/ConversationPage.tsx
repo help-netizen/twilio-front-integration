@@ -3,10 +3,9 @@ import { useParams } from 'react-router-dom';
 import { useContactCalls } from '../hooks/useConversations';
 import { ConversationList } from '../components/conversations/ConversationList';
 import { CallListItem, type CallData } from '../components/call-list-item';
-import { formatPhoneNumber } from '../utils/formatters';
-import { Badge } from '../components/ui/badge';
+import { LeadCard } from '../components/conversations/LeadCard';
 import { Skeleton } from '../components/ui/skeleton';
-import { Phone, PhoneOff } from 'lucide-react';
+import { PhoneOff } from 'lucide-react';
 import type { Call } from '../types/models';
 
 function callToCallData(call: Call): CallData {
@@ -95,7 +94,6 @@ export const ConversationPage: React.FC = () => {
 
     // Derive contact info from the first call
     const contact = calls[0]?.contact;
-    const displayName = contact?.full_name || contact?.phone_e164 || calls[0]?.from_number || calls[0]?.to_number;
 
     return (
         <div className="flex h-full overflow-hidden">
@@ -104,17 +102,11 @@ export const ConversationPage: React.FC = () => {
             </div>
 
             <div className="flex-1 flex flex-col bg-background overflow-hidden">
-                <div className="border-b p-4">
-                    <div className="flex items-center gap-3">
-                        <Phone className="size-5 text-muted-foreground" />
-                        <h2
-                            className="text-xl font-semibold"
-                            dangerouslySetInnerHTML={{
-                                __html: formatPhoneNumber(displayName || 'Unknown')
-                            }}
-                        />
-                        <Badge variant="secondary">{calls.length} calls</Badge>
-                    </div>
+                <div className="p-4">
+                    <LeadCard
+                        phone={contact?.phone_e164 || calls[0]?.from_number || calls[0]?.to_number || ''}
+                        callCount={calls.length}
+                    />
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-5">
