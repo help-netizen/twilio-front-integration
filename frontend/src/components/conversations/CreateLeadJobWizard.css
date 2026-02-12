@@ -281,43 +281,41 @@
     margin-left: auto;
 }
 
-/* ── Summary (Step 4) ─────────────────────────────────────────────────── */
+/* ── Review sections (Step 4 — editable) ────────────────────────────── */
 
-.wizard__summary {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    margin-top: 8px;
-}
-
-.wizard__summary-block {
+.wizard__review-section {
     background: #f9fafb;
     border-radius: 8px;
-    padding: 10px 14px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
 }
 
-.wizard__summary-block h4 {
+.wizard__review-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     font-size: 12px;
     font-weight: 700;
     color: #374151;
-    margin-bottom: 4px;
+    margin-bottom: 8px;
 }
 
-.wizard__summary-block p {
-    font-size: 13px;
-    color: #4b5563;
-    line-height: 1.5;
+.wizard__select {
+    display: block;
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    font-size: 14px;
+    background: #fff;
+    color: #374151;
+    outline: none;
+    transition: border-color 0.15s;
 }
 
-.wizard__summary-block p span {
-    color: #9ca3af;
-    font-weight: 500;
-}
-
-.wizard__summary-desc {
-    max-height: 40px;
-    overflow: hidden;
-    text-overflow: ellipsis;
+.wizard__select:focus {
+    border-color: #4f46e5;
+    box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.15);
 }
 
 /* ── Action buttons (Step 4) ──────────────────────────────────────────── */

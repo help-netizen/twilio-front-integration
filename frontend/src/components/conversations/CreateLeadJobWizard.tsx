@@ -54,6 +54,11 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
     const [lastName, setLastName] = useState('');
     const [email, setEmail] = useState('');
 
+    // Address
+    const [streetAddress, setStreetAddress] = useState('');
+    const [city, setCity] = useState('');
+    const [state, setState] = useState('MA');
+
     // Step 2 — service
     const [jobType, setJobType] = useState('');
     const [description, setDescription] = useState('');
@@ -162,6 +167,9 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
                 LastName: lastName || '',
                 Phone: phone,
                 Email: email || undefined,
+                Address: streetAddress || undefined,
+                City: city || undefined,
+                State: state || undefined,
                 PostalCode: postalCode || undefined,
                 JobType: jobType || undefined,
                 LeadNotes: description || undefined,
@@ -190,6 +198,9 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
                         ...(email && { email }),
                     },
                     address: {
+                        ...(streetAddress && { street: streetAddress }),
+                        ...(city && { city }),
+                        ...(state && { state }),
                         ...(postalCode && { postal_code: postalCode }),
                         country: 'US',
                     },
@@ -490,59 +501,116 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
     );
 
     // ══════════════════════════════════════════════════════════════════════════
-    // STEP 4 — Review & Create
+    // STEP 4 — Review & Create (all fields editable)
     // ══════════════════════════════════════════════════════════════════════════
     const renderStep4 = () => (
         <div className="wizard__body">
             <div className="wizard__section-title">
                 <CheckCircle2 className="w-4" /> Review & Create
             </div>
+            <p className="wizard__hint">Review and edit all fields before creating.</p>
 
-            <div className="wizard__summary">
-                <div className="wizard__summary-block">
-                    <h4><User className="w-3.5 inline mr-1" />Customer</h4>
-                    <p><span>Name:</span> {[firstName, lastName].filter(Boolean).join(' ') || 'Unknown'}</p>
-                    <p><span>Phone:</span> {formatPhone(phone)}</p>
-                    {email && <p><span>Email:</span> {email}</p>}
+            {/* ── Customer ── */}
+            <div className="wizard__review-section">
+                <h4 className="wizard__review-title"><User className="w-3.5" /> Customer</h4>
+                <div className="wizard__row">
+                    <div className="wizard__field">
+                        <Label htmlFor="wz4-fname">First Name</Label>
+                        <Input id="wz4-fname" value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="John" />
+                    </div>
+                    <div className="wizard__field">
+                        <Label htmlFor="wz4-lname">Last Name</Label>
+                        <Input id="wz4-lname" value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Doe" />
+                    </div>
                 </div>
-
-                <div className="wizard__summary-block">
-                    <h4><MapPin className="w-3.5 inline mr-1" />Territory</h4>
-                    <p>
-                        <span>Zip:</span> {postalCode}
-                        {territoryResult?.in_service_area && (
-                            <Badge variant="default" className="bg-green-600 ml-2 text-[10px]">
-                                ✓ {territoryResult.service_territory?.name}
-                            </Badge>
-                        )}
-                    </p>
-                </div>
-
-                <div className="wizard__summary-block">
-                    <h4><Briefcase className="w-3.5 inline mr-1" />Service</h4>
-                    <p><span>Job Type:</span> {jobType || 'General Service'}</p>
-                    {description && <p className="wizard__summary-desc"><span>Description:</span> {description}</p>}
-                    <p>
-                        <span>Duration:</span> {duration} min &nbsp;•&nbsp;
-                        <span>Price:</span> ${price}
-                    </p>
-                </div>
-
-                <div className="wizard__summary-block">
-                    <h4><Calendar className="w-3.5 inline mr-1" />Schedule</h4>
-                    {selectedTimeslot ? (
-                        <p>
-                            {selectedTimeslot.formatted} —{' '}
-                            {new Date(selectedTimeslot.start).toLocaleDateString('en-US', {
-                                weekday: 'short', month: 'short', day: 'numeric',
-                            })}
-                        </p>
-                    ) : (
-                        <p className="text-amber-600">No timeslot selected (lead only)</p>
-                    )}
+                <div className="wizard__row">
+                    <div className="wizard__field wizard__field--wide">
+                        <Label htmlFor="wz4-phone">Phone</Label>
+                        <Input id="wz4-phone" value={formatPhone(phone)} disabled className="wizard__input--disabled" />
+                    </div>
+                    <div className="wizard__field wizard__field--wide">
+                        <Label htmlFor="wz4-email">Email</Label>
+                        <Input id="wz4-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@example.com" />
+                    </div>
                 </div>
             </div>
 
+            {/* ── Address ── */}
+            <div className="wizard__review-section">
+                <h4 className="wizard__review-title"><MapPin className="w-3.5" /> Address</h4>
+                <div className="wizard__field">
+                    <Label htmlFor="wz4-street">Street Address</Label>
+                    <Input id="wz4-street" value={streetAddress} onChange={(e) => setStreetAddress(e.target.value)} placeholder="123 Main St" />
+                </div>
+                <div className="wizard__row">
+                    <div className="wizard__field wizard__field--wide">
+                        <Label htmlFor="wz4-city">City</Label>
+                        <Input id="wz4-city" value={city} onChange={(e) => setCity(e.target.value)} placeholder="Boston" />
+                    </div>
+                    <div className="wizard__field">
+                        <Label htmlFor="wz4-state">State</Label>
+                        <select
+                            id="wz4-state"
+                            value={state}
+                            onChange={(e) => setState(e.target.value)}
+                            className="wizard__select"
+                        >
+                            <option value="MA">MA</option>
+                            <option value="RI">RI</option>
+                            <option value="NH">NH</option>
+                        </select>
+                    </div>
+                    <div className="wizard__field">
+                        <Label htmlFor="wz4-zip">Postal Code</Label>
+                        <Input id="wz4-zip" value={postalCode} onChange={(e) => setPostalCode(e.target.value)} />
+                    </div>
+                </div>
+                {territoryResult?.in_service_area && (
+                    <Badge variant="default" className="bg-green-600 mt-1">
+                        ✓ {territoryResult.service_territory?.name}
+                    </Badge>
+                )}
+            </div>
+
+            {/* ── Service ── */}
+            <div className="wizard__review-section">
+                <h4 className="wizard__review-title"><Briefcase className="w-3.5" /> Service</h4>
+                <div className="wizard__field">
+                    <Label htmlFor="wz4-jobtype">Job Type</Label>
+                    <Input id="wz4-jobtype" value={jobType} onChange={(e) => setJobType(e.target.value)} placeholder="e.g. Plumbing Repair" />
+                </div>
+                <div className="wizard__field">
+                    <Label htmlFor="wz4-desc">Description</Label>
+                    <Textarea id="wz4-desc" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} placeholder="Service details…" />
+                </div>
+                <div className="wizard__row">
+                    <div className="wizard__field">
+                        <Label htmlFor="wz4-dur"><Clock className="w-3 inline mr-1" />Duration (min)</Label>
+                        <Input id="wz4-dur" type="number" min="15" step="15" value={duration} onChange={(e) => setDuration(e.target.value)} />
+                    </div>
+                    <div className="wizard__field">
+                        <Label htmlFor="wz4-price"><DollarSign className="w-3 inline mr-1" />Price ($)</Label>
+                        <Input id="wz4-price" type="number" min="0" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} />
+                    </div>
+                </div>
+            </div>
+
+            {/* ── Schedule (read-only summary) ── */}
+            <div className="wizard__review-section">
+                <h4 className="wizard__review-title"><Calendar className="w-3.5" /> Schedule</h4>
+                {selectedTimeslot ? (
+                    <p className="text-sm">
+                        {selectedTimeslot.formatted} —{' '}
+                        {new Date(selectedTimeslot.start).toLocaleDateString('en-US', {
+                            weekday: 'short', month: 'short', day: 'numeric',
+                        })}
+                    </p>
+                ) : (
+                    <p className="text-sm text-amber-600">No timeslot selected (lead only)</p>
+                )}
+            </div>
+
+            {/* ── Action buttons ── */}
             <div className="wizard__actions">
                 <Button
                     variant="outline"
