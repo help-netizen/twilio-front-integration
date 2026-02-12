@@ -127,28 +127,48 @@ class RealtimeService extends EventEmitter {
     }
 
     /**
-     * Publish call update event
+     * Publish call update event — sends full call data so frontend can update cache inline
      */
     publishCallUpdate(data) {
         const eventType = data.eventType || 'call.updated';
+        // Forward all available fields from the call record
         this.broadcast(eventType, {
+            id: data.id,
             call_sid: data.call_sid,
+            parent_call_sid: data.parent_call_sid,
+            direction: data.direction,
+            from_number: data.from_number,
+            to_number: data.to_number,
             status: data.status,
             is_final: data.is_final,
+            started_at: data.started_at,
+            answered_at: data.answered_at,
+            ended_at: data.ended_at,
+            duration_sec: data.duration_sec,
+            contact_id: data.contact_id,
+            contact: data.contact ? (typeof data.contact === 'string' ? JSON.parse(data.contact) : data.contact) : undefined,
             updated_at: data.updated_at || new Date(),
+            created_at: data.created_at,
         });
     }
 
     /**
-     * Publish call created event
+     * Publish call created event — sends full call data
      */
     publishCallCreated(call) {
         this.broadcast('call.created', {
+            id: call.id,
             call_sid: call.call_sid,
-            status: call.status,
+            parent_call_sid: call.parent_call_sid,
+            direction: call.direction,
             from_number: call.from_number,
             to_number: call.to_number,
-            created_at: call.started_at || call.created_at
+            status: call.status,
+            is_final: call.is_final,
+            started_at: call.started_at,
+            contact_id: call.contact_id,
+            contact: call.contact ? (typeof call.contact === 'string' ? JSON.parse(call.contact) : call.contact) : undefined,
+            created_at: call.started_at || call.created_at,
         });
     }
 

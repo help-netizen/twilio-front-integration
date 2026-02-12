@@ -218,3 +218,11 @@ export function getAuthHeaders(): Record<string, string> {
     }
     return {};
 }
+
+/**
+ * Get raw JWT token string (for EventSource URL query params, etc.)
+ */
+export function getAuthToken(): string | null {
+    const kc = FEATURE_AUTH ? getKeycloak() : null;
+    return kc?.token || null;
+}

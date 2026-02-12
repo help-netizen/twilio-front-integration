@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
+import { getAuthToken } from '../auth/AuthProvider';
 
 // Extend Window to support SSE notification suppression flag
 declare global {
@@ -8,17 +9,28 @@ declare global {
 }
 
 /**
- * SSE Event Types
+ * SSE Event Types — enriched with full call data for cache updates
  */
 export interface SSECallEvent {
+    id?: number;
     call_sid: string;
-    status: string;
-    is_final?: boolean;
-    updated_at?: string;
+    parent_call_sid?: string;
+    direction?: string;
     from_number?: string;
     to_number?: string;
-    from?: string;
-    to?: string;
+    status: string;
+    is_final?: boolean;
+    started_at?: string;
+    answered_at?: string;
+    ended_at?: string;
+    duration_sec?: number;
+    contact_id?: number;
+    contact?: {
+        id: number;
+        phone_e164: string;
+        full_name?: string;
+    };
+    updated_at?: string;
     created_at?: string;
 }
 
@@ -43,6 +55,7 @@ interface UseRealtimeEventsOptions {
  * Custom hook for subscribing to Server-Sent Events
  * 
  * Uses refs for callbacks to avoid reconnecting on every render.
+ * Appends ?token= to the SSE URL for authentication (EventSource can't send headers).
  */
 export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
     const {
@@ -70,7 +83,7 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
     const [connected, setConnected] = useState(false);
 
     /**
-     * Connect to SSE endpoint
+     * Connect to SSE endpoint with auth token
      */
     const connect = useCallback(() => {
         // Clean up existing connection
@@ -84,10 +97,16 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
             reconnectTimeoutRef.current = null;
         }
 
-        console.log('[SSE] Connecting to /events/calls...');
+        // Build SSE URL with auth token
+        const token = getAuthToken();
+        const sseUrl = token
+            ? `/events/calls?token=${encodeURIComponent(token)}`
+            : '/events/calls';
+
+        console.log('[SSE] Connecting to', sseUrl.replace(/token=.*/, 'token=***'));
 
         try {
-            const eventSource = new EventSource('/events/calls');
+            const eventSource = new EventSource(sseUrl);
             eventSourceRef.current = eventSource;
 
             // Connection opened
@@ -103,7 +122,6 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
             eventSource.addEventListener('call.updated', (e) => {
                 const data = JSON.parse(e.data) as SSECallEvent;
                 console.log('[SSE] Call updated:', data.call_sid, data.status);
-
                 onCallUpdateRef.current?.(data);
             });
 
@@ -111,7 +129,6 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
             eventSource.addEventListener('call.created', (e) => {
                 const data = JSON.parse(e.data) as SSECallEvent;
                 console.log('[SSE] Call created:', data.call_sid);
-
                 onCallCreatedRef.current?.(data);
             });
 
@@ -181,4 +198,3 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
         reconnect
     };
 }
-

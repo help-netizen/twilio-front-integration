@@ -1,25 +1,67 @@
 import React, { useState } from 'react';
 import { useCallsByContact } from '../../hooks/useConversations';
-import { useRealtimeEvents } from '../../hooks/useRealtimeEvents';
+import { useRealtimeEvents, type SSECallEvent } from '../../hooks/useRealtimeEvents';
+import { useQueryClient } from '@tanstack/react-query';
 import { ConversationListItem } from './ConversationListItem';
 import { normalizePhoneNumber } from '../../utils/formatters';
 import { Input } from '../ui/input';
 import { Skeleton } from '../ui/skeleton';
 import { Search, PhoneOff } from 'lucide-react';
+import type { ByContactResponse } from '../../types/models';
 
 export const ConversationList: React.FC = () => {
     const { data, isLoading, error, refetch } = useCallsByContact();
     const [searchQuery, setSearchQuery] = useState('');
+    const queryClient = useQueryClient();
+
+    /**
+     * Update a call in the react-query cache inline from SSE data.
+     * If the call is found, update it; if not, refetch the list.
+     */
+    const updateCacheFromSSE = (event: SSECallEvent) => {
+        const updated = queryClient.setQueryData<ByContactResponse>(
+            ['calls-by-contact'],
+            (old) => {
+                if (!old) return old;
+                const idx = old.conversations.findIndex(
+                    (c) => c.call_sid === event.call_sid || c.contact?.id === event.contact?.id
+                );
+                if (idx === -1) return old; // not in list — trigger refetch below
+
+                const updatedConversations = [...old.conversations];
+                updatedConversations[idx] = {
+                    ...updatedConversations[idx],
+                    status: event.status as any,
+                    is_final: event.is_final ?? updatedConversations[idx].is_final,
+                    duration_sec: event.duration_sec ?? updatedConversations[idx].duration_sec,
+                    ended_at: event.ended_at ?? updatedConversations[idx].ended_at,
+                    updated_at: event.updated_at ?? updatedConversations[idx].updated_at,
+                };
+                return { ...old, conversations: updatedConversations };
+            }
+        );
+        // If the call wasn't found in cache, refetch to pick it up
+        if (!updated || !updated.conversations.some(c => c.call_sid === event.call_sid || c.contact?.id === event.contact?.id)) {
+            refetch();
+        }
+    };
 
     // Subscribe to real-time events
     const { connected } = useRealtimeEvents({
         onCallUpdate: (event) => {
             console.log('[CallList] Call updated:', event.call_sid, event.status);
-            refetch();
+            // Skip child legs — they don't appear in the by-contact list
+            if (event.parent_call_sid) return;
+            updateCacheFromSSE(event);
+            // Also invalidate contact-calls cache if viewing details
+            if (event.contact_id) {
+                queryClient.invalidateQueries({ queryKey: ['contact-calls', event.contact_id] });
+            }
         },
         onCallCreated: (event) => {
             console.log('[CallList] Call created:', event.call_sid);
-            refetch();
+            if (event.parent_call_sid) return;
+            refetch(); // New call — refetch to add to list
         }
     });
 

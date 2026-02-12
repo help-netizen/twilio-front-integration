@@ -23,13 +23,13 @@ export const useCallsByContact = () => {
 
 /**
  * Hook: all calls for a specific contact
+ * Updates are driven by SSE events invalidating the cache key.
  */
 export const useContactCalls = (contactId: number) => {
     return useQuery({
         queryKey: ['contact-calls', contactId],
         queryFn: () => callsApi.getByContactId(contactId),
         enabled: !!contactId,
-        refetchInterval: 5000,
     });
 };
 

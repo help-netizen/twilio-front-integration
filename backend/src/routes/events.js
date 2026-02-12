@@ -1,10 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const realtimeService = require('../services/realtimeService');
+const { authenticate } = require('../middleware/keycloakAuth');
 
 /**
  * SSE endpoint for call updates
- * GET /events/calls
+ * GET /events/calls?token=<jwt>
+ * 
+ * Authenticated via query param (EventSource API can't send headers).
+ * keycloakAuth.authenticate already supports ?token= fallback.
  * 
  * Clients connect and receive real-time updates:
  * - call.created: New call detected
@@ -12,14 +16,11 @@ const realtimeService = require('../services/realtimeService');
  * - connected: Initial connection confirmation
  * - keepalive: Heartbeat (every 30s)
  */
-router.get('/calls', (req, res) => {
-    console.log('[Events] New SSE connection request');
+router.get('/calls', authenticate, (req, res) => {
+    console.log(`[Events] SSE connection from user ${req.user?.sub || 'unknown'}`);
 
     // Add client to realtime service
     const connectionId = realtimeService.addClient(req, res);
-
-    // Send initial state (optional: could send recent calls here)
-    // For now, client will fetch via REST API on connect
 });
 
 /**
@@ -32,3 +33,4 @@ router.get('/stats', (req, res) => {
 });
 
 module.exports = router;
+
