@@ -627,9 +627,9 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
                 </Button>
                 <Button
                     onClick={() => handleCreate(true)}
-                    disabled={submitting || !selectedTimeslot}
+                    disabled={submitting || !selectedTimeslot || !streetAddress.trim() || !city.trim()}
                     className="wizard__action-btn wizard__action-btn--primary"
-                    title={!selectedTimeslot ? 'Select a timeslot on Step 3 to create a job' : ''}
+                    title={!streetAddress.trim() || !city.trim() ? 'Street address and city are required to create a job' : !selectedTimeslot ? 'Select a timeslot on Step 3 to create a job' : ''}
                 >
                     <CheckCircle2 className="w-4 mr-1.5" />
                     {submitting ? 'Creating…' : 'Create Lead and Job'}
