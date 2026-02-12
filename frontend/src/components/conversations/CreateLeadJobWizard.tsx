@@ -295,30 +295,32 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
             </div>
             <p className="wizard__hint">Enter the customer's zip code to verify the area is serviced.</p>
 
-            <div className="wizard__field">
-                <Label htmlFor="wz-zip">Zip Code *</Label>
-                <Input
-                    id="wz-zip"
-                    value={postalCode}
-                    onChange={(e) => setPostalCode(e.target.value)}
-                    placeholder="e.g. 02101"
-                    maxLength={10}
-                    className="wizard__input--short"
-                />
-            </div>
+            <div className="wizard__row wizard__row--align-end">
+                <div className="wizard__field" style={{ marginBottom: 0 }}>
+                    <Label htmlFor="wz-zip">Zip Code *</Label>
+                    <Input
+                        id="wz-zip"
+                        value={postalCode}
+                        onChange={(e) => setPostalCode(e.target.value)}
+                        placeholder="e.g. 02101"
+                        maxLength={10}
+                        className="wizard__input--short"
+                    />
+                </div>
 
-            <div className="wizard__territory-status">
-                {territoryLoading && (
-                    <span className="text-sm text-muted-foreground animate-pulse">Checking service area…</span>
-                )}
-                {territoryResult?.in_service_area && (
-                    <Badge variant="default" className="bg-green-600">
-                        ✓ {territoryResult.service_territory?.name || 'In service area'}
-                    </Badge>
-                )}
-                {territoryError && !territoryLoading && (
-                    <Badge variant="destructive">✗ {territoryError}</Badge>
-                )}
+                <div className="wizard__territory-status">
+                    {territoryLoading && (
+                        <span className="text-sm text-muted-foreground animate-pulse">Checking…</span>
+                    )}
+                    {territoryResult?.in_service_area && (
+                        <Badge variant="default" className="bg-green-600">
+                            ✓ {territoryResult.service_territory?.name || 'In service area'}
+                        </Badge>
+                    )}
+                    {territoryError && !territoryLoading && (
+                        <Badge variant="destructive">✗ {territoryError}</Badge>
+                    )}
+                </div>
             </div>
 
             <div className="wizard__divider" />
