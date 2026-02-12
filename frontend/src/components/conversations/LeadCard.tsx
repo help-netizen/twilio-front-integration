@@ -2,6 +2,7 @@ import React from 'react';
 import { User, Phone, Mail, MapPin, Briefcase, Calendar, Tag, FileText } from 'lucide-react';
 import { useLeadByPhone } from '../../hooks/useLeadByPhone';
 import { Skeleton } from '../ui/skeleton';
+import { CreateLeadJobWizard } from './CreateLeadJobWizard';
 import type { Lead } from '../../types/lead';
 import './LeadCard.css';
 
@@ -71,7 +72,7 @@ export function LeadCard({ phone, callCount }: LeadCardProps) {
     }
 
     if (!lead) {
-        return <EmptyLeadCard phone={phone} callCount={callCount} />;
+        return <CreateLeadJobWizard phone={phone} callCount={callCount} />;
     }
 
     const displayName = [lead.FirstName, lead.LastName].filter(Boolean).join(' ') || 'Unknown';
@@ -181,39 +182,3 @@ function InfoItem({
     );
 }
 
-/* ── Empty state ───────────────────────────────────────────────────────── */
-
-function EmptyLeadCard({ phone, callCount }: { phone: string; callCount?: number }) {
-    const displayPhone = formatPhoneDisplay(phone);
-
-    return (
-        <div className="lead-card lead-card--empty">
-            <div className="lead-card__header">
-                <div className="lead-card__header-content">
-                    <div className="lead-card__header-left">
-                        <div className="lead-card__avatar">
-                            <User className="lead-card__avatar-icon" />
-                        </div>
-                        <div>
-                            <div className="lead-card__name">Lead does not exist yet</div>
-                            <div className="lead-card__phone-row">
-                                <Phone className="lead-card__phone-icon" />
-                                <span className="lead-card__phone-number">{displayPhone}</span>
-                            </div>
-                            <div className="lead-card__empty-text">
-                                No lead found for this phone number
-                            </div>
-                        </div>
-                    </div>
-
-                    {callCount !== undefined && (
-                        <div className="lead-card__badge">
-                            <div className="lead-card__badge-number">{callCount}</div>
-                            <div className="lead-card__badge-label">Calls</div>
-                        </div>
-                    )}
-                </div>
-            </div>
-        </div>
-    );
-}

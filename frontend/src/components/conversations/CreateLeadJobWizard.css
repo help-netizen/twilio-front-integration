@@ -1,0 +1,362 @@
+/* ── Wizard container ──────────────────────────────────────────────────── */
+
+.wizard {
+    overflow: hidden;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    background: #fff;
+}
+
+/* ── Header ───────────────────────────────────────────────────────────── */
+
+.wizard__header {
+    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+    color: #fff;
+    padding: 16px 20px;
+}
+
+.wizard__header-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.wizard__header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.wizard__avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.wizard__avatar-icon {
+    width: 24px;
+    height: 24px;
+    color: #fff;
+}
+
+.wizard__title {
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.wizard__phone-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.wizard__badge {
+    text-align: center;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    padding: 6px 14px;
+}
+
+.wizard__badge-number {
+    font-size: 20px;
+    font-weight: 700;
+}
+
+.wizard__badge-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: rgba(255, 255, 255, 0.75);
+}
+
+/* ── Step indicator ───────────────────────────────────────────────────── */
+
+.wizard__steps {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 12px 20px;
+    border-bottom: 1px solid #f3f4f6;
+}
+
+.wizard__step-item {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.wizard__step-circle {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 600;
+    background: #f3f4f6;
+    color: #9ca3af;
+    transition: all 0.2s ease;
+}
+
+.wizard__step-circle--active {
+    background: #4f46e5;
+    color: #fff;
+}
+
+.wizard__step-circle--done {
+    background: rgba(79, 70, 229, 0.15);
+    color: #4f46e5;
+}
+
+.wizard__step-line {
+    width: 24px;
+    height: 2px;
+    background: #e5e7eb;
+    transition: background 0.2s;
+}
+
+.wizard__step-line--done {
+    background: rgba(79, 70, 229, 0.3);
+}
+
+.wizard__step-label {
+    margin-left: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #6b7280;
+}
+
+/* ── Body ─────────────────────────────────────────────────────────────── */
+
+.wizard__body {
+    padding: 16px 20px;
+}
+
+.wizard__section-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #374151;
+    margin-bottom: 4px;
+}
+
+.wizard__hint {
+    font-size: 12px;
+    color: #9ca3af;
+    margin-bottom: 12px;
+}
+
+.wizard__field {
+    margin-bottom: 10px;
+}
+
+.wizard__field label {
+    font-size: 12px;
+    font-weight: 500;
+    color: #6b7280;
+    margin-bottom: 3px;
+    display: block;
+}
+
+.wizard__field--wide {
+    flex: 1;
+}
+
+.wizard__input--short {
+    max-width: 160px;
+}
+
+.wizard__input--disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.wizard__row {
+    display: flex;
+    gap: 12px;
+}
+
+.wizard__row--align-end {
+    align-items: flex-end;
+}
+
+.wizard__territory-status {
+    min-height: 28px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.wizard__divider {
+    height: 1px;
+    background: #f3f4f6;
+    margin: 14px 0;
+}
+
+/* ── Timeslots ────────────────────────────────────────────────────────── */
+
+.wizard__timeslots {
+    max-height: 240px;
+    overflow-y: auto;
+    margin-top: 8px;
+    padding-right: 4px;
+}
+
+.wizard__day {
+    margin-bottom: 10px;
+}
+
+.wizard__day-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #9ca3af;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.wizard__slots-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+}
+
+.wizard__slot {
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid #e5e7eb;
+    font-size: 13px;
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.15s ease;
+    background: #fff;
+}
+
+.wizard__slot:hover {
+    border-color: rgba(79, 70, 229, 0.5);
+    background: rgba(79, 70, 229, 0.03);
+}
+
+.wizard__slot--selected {
+    border-color: #4f46e5;
+    background: rgba(79, 70, 229, 0.08);
+    font-weight: 600;
+    color: #4f46e5;
+}
+
+/* ── Skip confirmation ────────────────────────────────────────────────── */
+
+.wizard__skip-btn {
+    width: 100%;
+    justify-content: center;
+    color: #6b7280;
+}
+
+.wizard__skip-confirm {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 6px;
+}
+
+.wizard__skip-confirm-btns {
+    display: flex;
+    gap: 6px;
+    margin-left: auto;
+}
+
+/* ── Summary (Step 4) ─────────────────────────────────────────────────── */
+
+.wizard__summary {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 8px;
+}
+
+.wizard__summary-block {
+    background: #f9fafb;
+    border-radius: 8px;
+    padding: 10px 14px;
+}
+
+.wizard__summary-block h4 {
+    font-size: 12px;
+    font-weight: 700;
+    color: #374151;
+    margin-bottom: 4px;
+}
+
+.wizard__summary-block p {
+    font-size: 13px;
+    color: #4b5563;
+    line-height: 1.5;
+}
+
+.wizard__summary-block p span {
+    color: #9ca3af;
+    font-weight: 500;
+}
+
+.wizard__summary-desc {
+    max-height: 40px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ── Action buttons (Step 4) ──────────────────────────────────────────── */
+
+.wizard__actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+}
+
+.wizard__action-btn {
+    flex: 1;
+    padding: 10px 16px !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    border-radius: 8px !important;
+}
+
+.wizard__action-btn--primary {
+    background: linear-gradient(135deg, #4f46e5, #7c3aed) !important;
+    color: #fff !important;
+    border: none !important;
+}
+
+.wizard__action-btn--primary:hover:not(:disabled) {
+    opacity: 0.92;
+}
+
+.wizard__action-btn--primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* ── Nav bar ──────────────────────────────────────────────────────────── */
+
+.wizard__nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 20px;
+    border-top: 1px solid #f3f4f6;
+}
