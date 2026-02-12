@@ -2,6 +2,7 @@ const queries = require('../db/queries');
 const db = require('../db/connection');
 const { isFinalStatus } = require('./stateMachine');
 const CallProcessor = require('./callProcessor');
+const { reconcileStaleCalls } = require('./reconcileStale');
 
 /**
  * Configuration
@@ -10,6 +11,7 @@ const CONFIG = {
     BATCH_SIZE: 10,
     POLL_INTERVAL_MS: 1000,
     MAX_RETRIES: 10,
+    STALE_CHECK_INTERVAL_MS: 5 * 60 * 1000, // 5 minutes
 };
 
 // =============================================================================
@@ -513,10 +515,12 @@ async function claimAndProcessEvents() {
 // =============================================================================
 
 async function startWorker() {
-    console.log('🔄 Inbox worker started (v3)');
+    console.log('🔄 Inbox worker started (v4 + stale reconciliation)');
     console.log(`   Batch: ${CONFIG.BATCH_SIZE} | Poll: ${CONFIG.POLL_INTERVAL_MS}ms | Retries: ${CONFIG.MAX_RETRIES}`);
+    console.log(`   Stale check: every ${CONFIG.STALE_CHECK_INTERVAL_MS / 1000}s`);
 
     let isRunning = true;
+    let lastStaleCheck = 0;
     process.on('SIGTERM', () => { isRunning = false; });
     process.on('SIGINT', () => { isRunning = false; });
 
@@ -526,6 +530,18 @@ async function startWorker() {
             if (processed > 0 || failed > 0) {
                 console.log(`Processed: ${processed}, Failed: ${failed}`);
             }
+
+            // Periodic stale call reconciliation
+            const now = Date.now();
+            if (now - lastStaleCheck >= CONFIG.STALE_CHECK_INTERVAL_MS) {
+                lastStaleCheck = now;
+                try {
+                    await reconcileStaleCalls();
+                } catch (err) {
+                    console.error('Stale reconciliation error:', err.message);
+                }
+            }
+
             await new Promise(r => setTimeout(r, CONFIG.POLL_INTERVAL_MS));
         } catch (error) {
             console.error('Worker loop error:', error);

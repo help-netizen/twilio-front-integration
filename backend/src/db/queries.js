@@ -76,6 +76,7 @@ async function upsertCall(data) {
             last_event_time   = EXCLUDED.last_event_time,
             raw_last_payload  = EXCLUDED.raw_last_payload
         WHERE EXCLUDED.last_event_time >= COALESCE(calls.last_event_time, '1970-01-01'::timestamptz)
+          AND (NOT calls.is_final OR EXCLUDED.is_final)
         RETURNING *`,
         [
             callSid, parentCallSid, contactId, direction,
