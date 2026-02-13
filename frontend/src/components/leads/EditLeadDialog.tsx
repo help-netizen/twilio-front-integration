@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
+import { PhoneInput, toE164, formatUSPhone } from '../ui/PhoneInput';
 import { Textarea } from '../ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { toast } from 'sonner';
@@ -50,7 +51,7 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
     const [formData, setFormData] = useState<UpdateLeadInput>({
         FirstName: lead.FirstName || '',
         LastName: lead.LastName || '',
-        Phone: lead.Phone || '',
+        Phone: formatUSPhone(lead.Phone || ''),
         Email: lead.Email || '',
         Company: lead.Company || '',
         Address: lead.Address || '',
@@ -84,7 +85,7 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
         setFormData({
             FirstName: lead.FirstName || '',
             LastName: lead.LastName || '',
-            Phone: lead.Phone || '',
+            Phone: formatUSPhone(lead.Phone || ''),
             Email: lead.Email || '',
             Company: lead.Company || '',
             Address: lead.Address || '',
@@ -108,7 +109,8 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
 
         setLoading(true);
         try {
-            await leadsApi.updateLead(lead.UUID, formData);
+            const submitData = { ...formData, Phone: toE164(formData.Phone) };
+            await leadsApi.updateLead(lead.UUID, submitData);
             // Fetch updated lead
             const detail = await leadsApi.getLeadByUUID(lead.UUID);
             onSuccess(detail.data.lead);
@@ -172,11 +174,10 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
                                 <Label htmlFor="phone" className="mb-2">
                                     Phone <span className="text-destructive">*</span>
                                 </Label>
-                                <Input
+                                <PhoneInput
                                     id="phone"
-                                    type="tel"
-                                    value={formData.Phone}
-                                    onChange={(e) => setFormData({ ...formData, Phone: e.target.value })}
+                                    value={formData.Phone || ''}
+                                    onChange={(formatted) => setFormData({ ...formData, Phone: formatted })}
                                     required
                                 />
                             </div>

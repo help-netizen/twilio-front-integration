@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
+import { PhoneInput, toE164 } from '../ui/PhoneInput';
 import { Textarea } from '../ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { toast } from 'sonner';
@@ -75,7 +76,8 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
 
         setLoading(true);
         try {
-            const result = await leadsApi.createLead(formData);
+            const submitData = { ...formData, Phone: toE164(formData.Phone) };
+            const result = await leadsApi.createLead(submitData);
             // Fetch the created lead to get full details
             const detail = await leadsApi.getLeadByUUID(result.data.UUID!);
             onSuccess(detail.data.lead);
@@ -155,12 +157,10 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                                 <Label htmlFor="phone" className="mb-2">
                                     Phone <span className="text-destructive">*</span>
                                 </Label>
-                                <Input
+                                <PhoneInput
                                     id="phone"
-                                    type="tel"
                                     value={formData.Phone}
-                                    onChange={(e) => setFormData({ ...formData, Phone: e.target.value })}
-                                    placeholder="+1 234 567 8900"
+                                    onChange={(formatted) => setFormData({ ...formData, Phone: formatted })}
                                     required
                                 />
                             </div>
