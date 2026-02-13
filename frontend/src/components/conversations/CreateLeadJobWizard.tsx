@@ -242,6 +242,11 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
 
                 toast.success('Lead & Job created', {
                     description: `Job ID: ${zbResult.job_id}`,
+                    duration: 10000,
+                    action: {
+                        label: 'Open Job on Zenbooker',
+                        onClick: () => window.open(`https://zenbooker.com/app?view=sched&view-job=${zbResult.job_id}`, '_blank'),
+                    },
                 });
             } else {
                 toast.success('Lead created', {
