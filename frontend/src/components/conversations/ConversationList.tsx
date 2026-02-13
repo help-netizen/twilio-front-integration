@@ -55,7 +55,7 @@ export const ConversationList: React.FC = () => {
             updateCacheFromSSE(event);
             // Also invalidate contact-calls cache if viewing details
             if (event.contact_id) {
-                queryClient.invalidateQueries({ queryKey: ['contact-calls', event.contact_id] });
+                queryClient.invalidateQueries({ queryKey: ['contact-calls', Number(event.contact_id)] });
             }
         },
         onCallCreated: (event) => {
