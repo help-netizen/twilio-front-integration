@@ -148,7 +148,9 @@ export function LeadsTable({
             case 'location':
                 return (
                     <TableCell key={key}>
-                        {lead.City && lead.State ? `${lead.City}, ${lead.State}` : '-'}
+                        {(lead.City || lead.State || lead.PostalCode)
+                            ? [lead.City, lead.State, lead.PostalCode].filter(Boolean).join(', ')
+                            : '-'}
                     </TableCell>
                 );
             case 'jobType':

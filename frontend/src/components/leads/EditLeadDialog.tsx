@@ -43,7 +43,7 @@ const JOB_SOURCES = [
     'Yelp',
 ];
 
-const US_STATES = ['NY', 'CA', 'IL', 'TX', 'AZ', 'PA', 'FL', 'OH', 'NC', 'GA'];
+import { US_STATES } from './leadConstants';
 
 export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLeadDialogProps) {
     const [loading, setLoading] = useState(false);

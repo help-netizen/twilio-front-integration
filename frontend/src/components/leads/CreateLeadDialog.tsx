@@ -28,7 +28,7 @@ interface CustomFieldDef {
 
 const JOB_TYPES = ['COD Service', 'COD Repair', 'Warranty', 'INS Service', 'INS Repair'];
 const JOB_SOURCES = ['eLocals', 'ServiceDirect', 'Inquirly', 'Rely', 'LHG', 'NSA', 'Other'];
-const US_STATES = ['MA', 'RI', 'NH'];
+import { US_STATES } from './leadConstants';
 
 export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDialogProps) {
     const [loading, setLoading] = useState(false);
