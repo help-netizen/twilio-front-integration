@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { Input } from './input';
 
 // ── Utilities ────────────────────────────────────────────────────────────────
@@ -22,21 +22,28 @@ export function toE164(raw: string): string {
 }
 
 /**
- * Format for display:
+ * Format raw digits for display:
  *   10 digits → +1 (XXX) XXX-XXXX
  *   11 digits starting with 1 → +1 (XXX) XXX-XXXX
- *   incomplete → partial format as you type
+ *   fewer digits → partial format as you type
  */
-export function formatUSPhone(raw: string): string {
-    let d = digitsOnly(raw);
-    // Strip leading 1 for uniform handling
-    if (d.length === 11 && d[0] === '1') d = d.slice(1);
+function formatDigits(digits: string): string {
+    let d = digits;
+    // Strip leading country code 1 for uniform handling
+    if (d.length >= 11 && d[0] === '1') d = d.slice(1);
     if (d.length > 10) d = d.slice(0, 10);
 
     if (d.length === 0) return '';
     if (d.length <= 3) return `+1 (${d}`;
     if (d.length <= 6) return `+1 (${d.slice(0, 3)}) ${d.slice(3)}`;
     return `+1 (${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
+}
+
+/**
+ * Format any phone string (E.164, raw digits, or already-formatted) for display.
+ */
+export function formatUSPhone(raw: string): string {
+    return formatDigits(digitsOnly(raw));
 }
 
 /** Check if the phone has exactly 10 digits (or 11 starting with 1) */
@@ -53,75 +60,63 @@ interface PhoneInputProps {
     value: string;
     /** Called with display-formatted value */
     onChange: (formatted: string) => void;
-    /** Called with E.164 value (for API/DB) — optional optimisation */
-    onChangeE164?: (e164: string) => void;
     placeholder?: string;
     required?: boolean;
     disabled?: boolean;
     className?: string;
 }
 
+/**
+ * Phone input that auto-formats US numbers as +1 (XXX) XXX-XXXX.
+ *
+ * Internally we track only the *digits* the user has entered (without
+ * the US country-code "1" that we add ourselves).  The parent's
+ * `value` is always re-parsed to digits on render so there is no
+ * double-formatting loop.
+ */
 export function PhoneInput({
     id,
     value,
     onChange,
-    onChangeE164,
     placeholder = '+1 (___) ___-____',
     required,
     disabled,
     className,
 }: PhoneInputProps) {
     const [focused, setFocused] = useState(false);
-    const inputRef = useRef<HTMLInputElement>(null);
+
+    // Always derive digits & display from the canonical value
+    const allDigits = digitsOnly(value);
+    // Strip the leading country-code 1 so we only count the local 10 digits
+    const localDigits = (allDigits.length >= 11 && allDigits[0] === '1')
+        ? allDigits.slice(1)
+        : (allDigits[0] === '1' && allDigits.length === 11) ? allDigits.slice(1) : allDigits;
+    const displayValue = formatDigits(allDigits);
 
     const valid = isValidUSPhone(value);
-    const hasDigits = digitsOnly(value).length > 0;
+    const hasDigits = allDigits.length > 0;
     const showWarning = focused && hasDigits && !valid;
-
-    // Format the display value
-    const displayValue = formatUSPhone(value);
 
     const handleChange = useCallback(
         (e: React.ChangeEvent<HTMLInputElement>) => {
+            // Extract only digits from whatever the user typed / pasted
             const raw = e.target.value;
-            const formatted = formatUSPhone(raw);
-            onChange(formatted);
-            onChangeE164?.(toE164(raw));
+            const d = digitsOnly(raw);
+            // Format and send up
+            onChange(formatDigits(d));
         },
-        [onChange, onChangeE164],
+        [onChange],
     );
-
-    // On blur, also format (in case user pastes something odd)
-    const handleBlur = useCallback(() => {
-        setFocused(false);
-        // Re-format on blur
-        const formatted = formatUSPhone(value);
-        if (formatted !== value) {
-            onChange(formatted);
-        }
-    }, [value, onChange]);
-
-    // Preserve cursor position after formatting
-    useEffect(() => {
-        const el = inputRef.current;
-        if (!el || !focused) return;
-        // Move cursor to end after format
-        const len = displayValue.length;
-        requestAnimationFrame(() => {
-            el.setSelectionRange(len, len);
-        });
-    }, [displayValue, focused]);
 
     return (
         <div className="phone-input-wrapper" style={{ position: 'relative' }}>
             <Input
-                ref={inputRef}
                 id={id}
                 type="tel"
                 value={displayValue}
                 onChange={handleChange}
                 onFocus={() => setFocused(true)}
-                onBlur={handleBlur}
+                onBlur={() => setFocused(false)}
                 placeholder={placeholder}
                 required={required}
                 disabled={disabled}
