@@ -2,6 +2,7 @@ const queries = require('../db/queries');
 const db = require('../db/connection');
 const { isFinalStatus } = require('./stateMachine');
 const CallProcessor = require('./callProcessor');
+const { extractPhoneFromSIP } = require('./callProcessor');
 const { reconcileStaleCalls } = require('./reconcileStale');
 
 /**
@@ -168,8 +169,8 @@ async function processVoiceEvent(payload, eventType, traceId) {
         parentCallSid: normalized.parentCallSid,
         contactId,
         direction: processed.direction,   // Use CallProcessor's direction
-        fromNumber: normalized.fromNumber,
-        toNumber: normalized.toNumber,
+        fromNumber: extractPhoneFromSIP(normalized.fromNumber),
+        toNumber: extractPhoneFromSIP(normalized.toNumber),
         status: normalized.eventStatus,
         isFinal,
         startedAt: normalized.eventTime,

@@ -43,6 +43,29 @@ function isSIPAddress(number) {
 }
 
 /**
+ * Extract phone number from SIP URI, return raw value for non-SIP numbers.
+ * sip:5085140320@domain → +15085140320
+ * sip:+15085140320@domain → +15085140320
+ * sip:dispatcher@domain → sip:dispatcher@domain (not a phone, keep as-is)
+ * +15085140320 → +15085140320
+ */
+function extractPhoneFromSIP(number) {
+    if (!number) return number;
+    if (!isSIPAddress(number)) return number;
+    const match = number.match(/^sip:(\+?\d+)@/i);
+    if (match) {
+        let phone = match[1];
+        // Normalize to E.164
+        if (!phone.startsWith('+')) {
+            if (phone.length === 10) phone = '+1' + phone;
+            else if (phone.length === 11 && phone.startsWith('1')) phone = '+' + phone;
+        }
+        return phone;
+    }
+    return number; // SIP username, not a phone number
+}
+
+/**
  * Format phone number for display
  * Extracts number from SIP URI if needed and formats as E.164
  * 
@@ -276,3 +299,4 @@ class CallProcessor {
 }
 
 module.exports = CallProcessor;
+module.exports.extractPhoneFromSIP = extractPhoneFromSIP;

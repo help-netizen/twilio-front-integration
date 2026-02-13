@@ -2,6 +2,7 @@ const twilio = require('twilio');
 const queries = require('../db/queries');
 const { normalizeVoiceEvent } = require('./inboxWorker');
 const CallProcessor = require('./callProcessor');
+const { extractPhoneFromSIP } = require('./callProcessor');
 
 /**
  * Reconciliation Service (v3)
@@ -89,8 +90,8 @@ async function reconcileCall(twilioPayload, source) {
         parentCallSid: normalized.parentCallSid,
         contactId,
         direction: processed.direction,
-        fromNumber: normalized.fromNumber,
-        toNumber: normalized.toNumber,
+        fromNumber: extractPhoneFromSIP(normalized.fromNumber),
+        toNumber: extractPhoneFromSIP(normalized.toNumber),
         status: normalized.eventStatus,
         isFinal,
         startedAt: normalized.eventTime,
