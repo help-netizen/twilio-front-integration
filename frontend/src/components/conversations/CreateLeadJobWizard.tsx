@@ -337,11 +337,11 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
             <p className="wizard__hint">Phone is pre-filled from the call. Name & email are optional.</p>
 
             <div className="wizard__row">
-                <div className="wizard__field">
+                <div className="wizard__field wizard__field--wide">
                     <Label htmlFor="wz-fname">First Name</Label>
                     <Input id="wz-fname" value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="John" />
                 </div>
-                <div className="wizard__field">
+                <div className="wizard__field wizard__field--wide">
                     <Label htmlFor="wz-lname">Last Name</Label>
                     <Input id="wz-lname" value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Doe" />
                 </div>
@@ -425,9 +425,11 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
                         min={new Date().toISOString().split('T')[0]}
                     />
                 </div>
-                <Button size="sm" variant="outline" onClick={fetchTimeslots} disabled={timeslotsLoading}>
-                    {timeslotsLoading ? 'Loading…' : 'Refresh'}
-                </Button>
+                <div className="wizard__field" style={{ justifyContent: 'flex-end' }}>
+                    <Button size="sm" variant="outline" onClick={fetchTimeslots} disabled={timeslotsLoading}>
+                        {timeslotsLoading ? 'Loading…' : 'Refresh'}
+                    </Button>
+                </div>
             </div>
 
             {timeslotsLoading && (
@@ -523,11 +525,11 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
             <div className="wizard__review-section">
                 <h4 className="wizard__review-title"><User className="w-3.5" /> Customer</h4>
                 <div className="wizard__row">
-                    <div className="wizard__field">
+                    <div className="wizard__field wizard__field--wide">
                         <Label htmlFor="wz4-fname">First Name</Label>
                         <Input id="wz4-fname" value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="John" />
                     </div>
-                    <div className="wizard__field">
+                    <div className="wizard__field wizard__field--wide">
                         <Label htmlFor="wz4-lname">Last Name</Label>
                         <Input id="wz4-lname" value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Doe" />
                     </div>

@@ -54,7 +54,7 @@ router.post('/leads', async (req, res) => {
         }
 
         // Create lead
-        const result = await leadsService.createLead(payload);
+        const result = await leadsService.createLead(payload, req.integrationCompanyId);
 
         res.status(201).json({
             success: true,

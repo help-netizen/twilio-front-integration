@@ -119,7 +119,7 @@ async function authenticateIntegration(req, res, next) {
 
         // Look up integration by key_id
         const result = await db.query(
-            'SELECT id, key_id, secret_hash, scopes, expires_at, revoked_at FROM api_integrations WHERE key_id = $1',
+            'SELECT id, key_id, secret_hash, scopes, company_id, expires_at, revoked_at FROM api_integrations WHERE key_id = $1',
             [apiKey]
         );
 
@@ -172,6 +172,7 @@ async function authenticateIntegration(req, res, next) {
         req.integrationKeyId = integration.key_id;
         req.integrationId = integration.id;
         req.integrationScopes = integration.scopes;
+        req.integrationCompanyId = integration.company_id;
 
         // Update last_used_at in background (don't block response)
         db.query(
