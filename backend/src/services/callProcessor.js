@@ -112,7 +112,13 @@ class CallProcessor {
             // Example: sip:dispatcher@... → +1 (508) 514-0320
             return 'outbound';
         } else if (fromIsSIP && toIsSIP) {
-            // Internal call between SIP endpoints (forwarding/transfer)
+            // Both SIP — but check if To contains a phone number
+            // Pattern: sip:DIGITS@domain means outbound dialing via SIP trunk
+            const toPhoneMatch = callData.to.match(/^sip:(\+?\d+)@/i);
+            if (toPhoneMatch) {
+                return 'outbound';  // SIP user dialing a phone number
+            }
+            // True internal call between SIP endpoints (forwarding/transfer)
             return 'internal';
         } else {
             // Neither is SIP (e.g. Twilio API sync data has plain phone numbers)

@@ -212,27 +212,27 @@ async function processVoiceEvent(payload, eventType, traceId) {
 
     // Reconcile parent call if this is a child leg that reached final status
     if (normalized.parentCallSid && isFinal) {
-        await reconcileInboundParent(normalized.parentCallSid, traceId);
+        await reconcileParentCall(normalized.parentCallSid, traceId);
     }
 
-    // Also reconcile if THIS is the parent call reaching final status (inbound only)
-    // Twilio marks parent as 'completed' even when no agent answered (caller hung up)
-    // so we must re-check children and override with the correct business status
-    if (!normalized.parentCallSid && isFinal && processed.direction === 'inbound') {
-        await reconcileInboundParent(normalized.callSid, traceId);
+    // Also reconcile if THIS is the parent call reaching final status
+    // For inbound: Twilio marks parent as 'completed' even when no agent answered
+    // For outbound: parent call needs child leg data for accurate status/duration
+    if (!normalized.parentCallSid && isFinal) {
+        await reconcileParentCall(normalized.callSid, traceId);
     }
 }
 
 // =============================================================================
-// Reconcile inbound parent call from child legs
+// Reconcile parent call from child legs
 // When child legs complete, update the parent with the winner's metadata
 // =============================================================================
 
-async function reconcileInboundParent(parentCallSid, traceId) {
+async function reconcileParentCall(parentCallSid, traceId) {
     try {
         // Get all child legs for this parent
         const childResult = await db.query(
-            `SELECT call_sid, status, duration_sec, started_at, ended_at, is_final
+            `SELECT call_sid, status, duration_sec, started_at, ended_at, is_final, contact_id
              FROM calls WHERE parent_call_sid = $1
              ORDER BY duration_sec DESC NULLS LAST`,
             [parentCallSid]
@@ -248,6 +248,10 @@ async function reconcileInboundParent(parentCallSid, traceId) {
         const winner = children.find(c =>
             c.status === 'completed' && c.duration_sec && c.duration_sec > 0
         );
+
+        // Get contact_id from winner or first child that has one
+        // (for outbound SIP calls where parent may not have contact_id)
+        const childContactId = winner?.contact_id || children.find(c => c.contact_id)?.contact_id || null;
 
         // Determine parent status from children
         let parentStatus;
@@ -281,16 +285,17 @@ async function reconcileInboundParent(parentCallSid, traceId) {
             parentStatus = 'in-progress';
         }
 
-        // Update parent call with reconciled data
+        // Update parent call with reconciled data + propagate contact_id from child
         await db.query(
             `UPDATE calls SET
                 status = $2,
                 is_final = $3,
                 duration_sec = COALESCE($4, duration_sec),
                 answered_at = COALESCE($5, answered_at),
-                ended_at = COALESCE($6, ended_at)
+                ended_at = COALESCE($6, ended_at),
+                contact_id = COALESCE(calls.contact_id, $7)
              WHERE call_sid = $1`,
-            [parentCallSid, parentStatus, parentIsFinal, parentDuration, parentAnsweredAt, parentEndedAt]
+            [parentCallSid, parentStatus, parentIsFinal, parentDuration, parentAnsweredAt, parentEndedAt, childContactId]
         );
 
         console.log(`[${traceId}] Reconciled parent ${parentCallSid}: status=${parentStatus}, winner=${winner?.call_sid || 'none'}`);
@@ -559,7 +564,7 @@ module.exports = {
     normalizeVoiceEvent,
     normalizeRecordingEvent,
     normalizeTranscriptionEvent,
-    reconcileInboundParent,
+    reconcileParentCall,
     isFinalStatus,
     CONFIG,
 };

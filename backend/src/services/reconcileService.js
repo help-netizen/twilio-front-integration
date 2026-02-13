@@ -127,13 +127,13 @@ async function reconcileCall(twilioPayload, source) {
     }
 
     // Reconcile parent call from child legs (same logic as inboxWorker)
-    const { reconcileInboundParent } = require('./inboxWorker');
+    const { reconcileParentCall } = require('./inboxWorker');
     if (normalized.parentCallSid && isFinal) {
-        await reconcileInboundParent(normalized.parentCallSid, source);
+        await reconcileParentCall(normalized.parentCallSid, source);
     }
-    // Also reconcile if THIS is the parent reaching final (inbound only)
-    if (!normalized.parentCallSid && isFinal && processed.direction === 'inbound') {
-        await reconcileInboundParent(normalized.callSid, source);
+    // Also reconcile if THIS is the parent reaching final
+    if (!normalized.parentCallSid && isFinal) {
+        await reconcileParentCall(normalized.callSid, source);
     }
 
     return call;

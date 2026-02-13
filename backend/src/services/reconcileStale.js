@@ -54,7 +54,7 @@ async function reconcileStaleCalls() {
 async function reconcileOneCall(call, traceId) {
     const { call_sid, parent_call_sid } = call;
 
-    // Strategy 1: Parent call with children — re-run reconcileInboundParent
+    // Strategy 1: Parent call with children — re-run reconcileParentCall
     if (!parent_call_sid) {
         const childResult = await db.query(
             `SELECT call_sid, status, is_final FROM calls WHERE parent_call_sid = $1`,
@@ -70,8 +70,8 @@ async function reconcileOneCall(call, traceId) {
             }
 
             // Now reconcile the parent based on updated children
-            const { reconcileInboundParent } = require('./inboxWorker');
-            await reconcileInboundParent(call_sid, traceId);
+            const { reconcileParentCall } = require('./inboxWorker');
+            await reconcileParentCall(call_sid, traceId);
 
             const updated = await queries.getCallByCallSid(call_sid);
             if (updated && updated.is_final) {
