@@ -10,37 +10,33 @@ function digitsOnly(value: string): string {
 
 /**
  * Normalise to E.164 for storage:  +1XXXXXXXXXX
- * Accepts both 10-digit (without country code) and 11-digit (with leading 1).
- * For anything else returns the raw digits prefixed with +.
+ * Only applied on save — never during typing.
  */
 export function toE164(raw: string): string {
     const d = digitsOnly(raw);
     if (d.length === 10) return `+1${d}`;
     if (d.length === 11 && d[0] === '1') return `+${d}`;
-    // non-standard — just prefix with +
     return d.length > 0 ? `+${d}` : '';
 }
 
 /**
- * Format raw digits for display:
- *   10 digits → +1 (XXX) XXX-XXXX
- *   11 digits starting with 1 → +1 (XXX) XXX-XXXX
- *   fewer digits → partial format as you type
+ * Format digits for display: (XXX) XXX-XXXX
+ * No country code prefix — shown raw as user types.
  */
 function formatDigits(digits: string): string {
     let d = digits;
-    // Strip leading country code 1 for uniform handling
-    if (d.length >= 11 && d[0] === '1') d = d.slice(1);
+    // If user pasted/loaded with leading country code 1, strip it
+    if (d.length === 11 && d[0] === '1') d = d.slice(1);
     if (d.length > 10) d = d.slice(0, 10);
 
     if (d.length === 0) return '';
-    if (d.length <= 3) return `+1 (${d}`;
-    if (d.length <= 6) return `+1 (${d.slice(0, 3)}) ${d.slice(3)}`;
-    return `+1 (${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
+    if (d.length <= 3) return `(${d}`;
+    if (d.length <= 6) return `(${d.slice(0, 3)}) ${d.slice(3)}`;
+    return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
 }
 
 /**
- * Format any phone string (E.164, raw digits, or already-formatted) for display.
+ * Format any phone string for display.
  */
 export function formatUSPhone(raw: string): string {
     return formatDigits(digitsOnly(raw));
@@ -56,9 +52,7 @@ export function isValidUSPhone(raw: string): boolean {
 
 interface PhoneInputProps {
     id?: string;
-    /** Controlled value — can be E.164, formatted, or raw digits */
     value: string;
-    /** Called with display-formatted value */
     onChange: (formatted: string) => void;
     placeholder?: string;
     required?: boolean;
@@ -66,26 +60,17 @@ interface PhoneInputProps {
     className?: string;
 }
 
-/**
- * Phone input that auto-formats US numbers as +1 (XXX) XXX-XXXX.
- *
- * Internally we track only the *digits* the user has entered (without
- * the US country-code "1" that we add ourselves).  The parent's
- * `value` is always re-parsed to digits on render so there is no
- * double-formatting loop.
- */
 export function PhoneInput({
     id,
     value,
     onChange,
-    placeholder = '+1 (___) ___-____',
+    placeholder = '(___) ___-____',
     required,
     disabled,
     className,
 }: PhoneInputProps) {
     const [focused, setFocused] = useState(false);
 
-    // Always derive digits & display from the canonical value
     const allDigits = digitsOnly(value);
     const displayValue = formatDigits(allDigits);
 
@@ -95,10 +80,7 @@ export function PhoneInput({
 
     const handleChange = useCallback(
         (e: React.ChangeEvent<HTMLInputElement>) => {
-            // Extract only digits from whatever the user typed / pasted
-            const raw = e.target.value;
-            const d = digitsOnly(raw);
-            // Format and send up
+            const d = digitsOnly(e.target.value);
             onChange(formatDigits(d));
         },
         [onChange],
