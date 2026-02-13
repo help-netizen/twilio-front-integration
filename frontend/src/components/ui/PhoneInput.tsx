@@ -87,10 +87,6 @@ export function PhoneInput({
 
     // Always derive digits & display from the canonical value
     const allDigits = digitsOnly(value);
-    // Strip the leading country-code 1 so we only count the local 10 digits
-    const localDigits = (allDigits.length >= 11 && allDigits[0] === '1')
-        ? allDigits.slice(1)
-        : (allDigits[0] === '1' && allDigits.length === 11) ? allDigits.slice(1) : allDigits;
     const displayValue = formatDigits(allDigits);
 
     const valid = isValidUSPhone(value);
