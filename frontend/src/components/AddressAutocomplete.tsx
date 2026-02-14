@@ -1,10 +1,9 @@
 /// <reference types="google.maps" />
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import usePlacesAutocomplete, { getDetails } from "use-places-autocomplete";
 
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
-import { Checkbox } from "./ui/checkbox";
 import {
     Select,
     SelectContent,
@@ -12,16 +11,9 @@ import {
     SelectTrigger,
     SelectValue,
 } from "./ui/select";
-import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
-} from "./ui/card";
-import { MapPin, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
-/* Simple spinner using Lucide Loader2 icon */
+/* Simple spinner */
 function Spinner() {
     return <Loader2 className="size-4 animate-spin" />;
 }
@@ -36,7 +28,7 @@ const US_STATES = [
     "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY", "DC",
 ] as const;
 
-interface AddressFields {
+export interface AddressFields {
     street: string;
     apt: string;
     city: string;
@@ -44,7 +36,7 @@ interface AddressFields {
     zip: string;
 }
 
-const EMPTY_ADDRESS: AddressFields = { street: "", apt: "", city: "", state: "", zip: "" };
+export const EMPTY_ADDRESS: AddressFields = { street: "", apt: "", city: "", state: "", zip: "" };
 
 /* ─── Helpers ─────────────────────────────────────────────────── */
 
@@ -107,20 +99,36 @@ type SuggestionItem = {
     description: string;
 };
 
+/* ─── Props ───────────────────────────────────────────────────── */
+
+interface AddressAutocompleteProps {
+    /** Current address value */
+    value: AddressFields;
+    /** Called when any field changes */
+    onChange: (fields: AddressFields) => void;
+    /** Optional id prefix for inputs (default: "addr") */
+    idPrefix?: string;
+    /** Optional label for street field (default: "Street Address") */
+    streetLabel?: string;
+}
+
 /* ─── Component ───────────────────────────────────────────────── */
 
-export function AddressAutocomplete() {
+export function AddressAutocomplete({
+    value: address,
+    onChange,
+    idPrefix = "addr",
+    streetLabel = "Street Address",
+}: AddressAutocompleteProps) {
     const [gateReady, setGateReady] = useState(false);
     const [activeIndex, setActiveIndex] = useState(-1);
-    const [address, setAddress] = useState<AddressFields>(EMPTY_ADDRESS);
     const [detailsLoading, setDetailsLoading] = useState(false);
-    const [useDetails, setUseDetails] = useState(false);
 
     const {
         ready,
-        value,
+        value: searchValue,
         suggestions: { loading, status, data },
-        setValue,
+        setValue: setSearchValue,
         clearSuggestions,
     } = usePlacesAutocomplete({
         debounce: 200,
@@ -133,6 +141,14 @@ export function AddressAutocomplete() {
             ),
         },
     });
+
+    // Keep search input in sync with street value from props
+    useEffect(() => {
+        // Only sync when not actively searching
+        if (!gateReady && address.street !== searchValue) {
+            setSearchValue(address.street, false);
+        }
+    }, [address.street]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const suggestions = useMemo(() => {
         return (data || []).slice(0, 8).map((item: google.maps.places.AutocompletePrediction) => ({
@@ -151,35 +167,31 @@ export function AddressAutocomplete() {
             setGateReady(false);
             setActiveIndex(-1);
             clearSuggestions();
-            setValue(next, false);
+            setSearchValue(next, false);
+            onChange({ ...address, street: next });
             return;
         }
 
         if (!gateReady) setGateReady(true);
-        setValue(next, true);
+        setSearchValue(next, true);
+        onChange({ ...address, street: next });
     }
 
     const selectSuggestion = useCallback(
         async (item: SuggestionItem) => {
             clearSuggestions();
             setActiveIndex(-1);
-
-            if (!useDetails) {
-                const parsed = parseDescription(item.description);
-                setAddress(parsed);
-                setValue(parsed.street, false);
-                return;
-            }
+            setGateReady(false);
 
             if (!item.place_id) {
                 const parsed = parseDescription(item.description);
-                setAddress(parsed);
-                setValue(parsed.street, false);
+                onChange(parsed);
+                setSearchValue(parsed.street, false);
                 return;
             }
 
-            // Temporarily show full description while loading details
-            setValue(item.description, false);
+            // Try Place Details for better accuracy
+            setSearchValue(item.description, false);
             setDetailsLoading(true);
             try {
                 const result = await getDetails({
@@ -194,24 +206,23 @@ export function AddressAutocomplete() {
                     result.address_components
                 ) {
                     const parsed = parseAddressComponents(result.address_components);
-                    setAddress(parsed);
-                    setValue(parsed.street, false);
+                    onChange(parsed);
+                    setSearchValue(parsed.street, false);
                 } else {
-                    // Fallback to description parsing
                     const parsed = parseDescription(item.description);
-                    setAddress(parsed);
-                    setValue(parsed.street, false);
+                    onChange(parsed);
+                    setSearchValue(parsed.street, false);
                 }
             } catch (err) {
                 console.error("Place Details error:", err);
                 const parsed = parseDescription(item.description);
-                setAddress(parsed);
-                setValue(parsed.street, false);
+                onChange(parsed);
+                setSearchValue(parsed.street, false);
             } finally {
                 setDetailsLoading(false);
             }
         },
-        [setValue, clearSuggestions, useDetails]
+        [setSearchValue, clearSuggestions, onChange]
     );
 
     function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -235,7 +246,7 @@ export function AddressAutocomplete() {
     }
 
     function handleFieldChange(field: keyof AddressFields, val: string) {
-        setAddress((prev) => ({ ...prev, [field]: val }));
+        onChange({ ...address, [field]: val });
     }
 
     const showDropdown =
@@ -244,163 +255,125 @@ export function AddressAutocomplete() {
     /* ─── Render ────────────────────────────────────────────────── */
 
     return (
-        <Card>
-            <CardHeader>
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <div className="flex size-10 items-center justify-center rounded-lg bg-gray-100 text-gray-600">
-                            <MapPin className="size-5" />
-                        </div>
-                        <div>
-                            <CardTitle>Address Autocomplete</CardTitle>
-                            <CardDescription>Google Places address search</CardDescription>
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <Checkbox
-                            id="use-details"
-                            checked={useDetails}
-                            onCheckedChange={(checked: boolean) => setUseDetails(checked)}
-                        />
-                        <Label htmlFor="use-details">
-                            <span className="text-xs text-muted-foreground">
-                                Place Details API
-                                <span className="text-[10px] ml-1 opacity-60">(increase precise)</span>
-                            </span>
-                        </Label>
-                    </div>
-                </div>
-            </CardHeader>
+        <div className="space-y-3">
+            {/* ── Street Address (search + display) */}
+            <div className="relative">
+                <Label htmlFor={`${idPrefix}-street`} className="mb-1.5">
+                    {streetLabel}
+                </Label>
 
-            <CardContent className="space-y-4">
-                {/* ── Street Address (search + display) ────────────── */}
-                <div className="relative">
-                    <Label htmlFor="address-input" className="mb-1.5">
-                        Street Address
-                    </Label>
+                <Input
+                    id={`${idPrefix}-street`}
+                    value={searchValue}
+                    onChange={handleInputChange}
+                    onKeyDown={handleKeyDown}
+                    disabled={!ready}
+                    placeholder="Start typing address…"
+                    autoComplete="off"
+                />
 
-                    <Input
-                        id="address-input"
-                        value={value}
-                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                            handleInputChange(e);
-                            // Keep address.street in sync with typed value
-                            setAddress((prev) => ({ ...prev, street: e.target.value }));
-                        }}
-                        onKeyDown={handleKeyDown}
-                        disabled={!ready}
-                        placeholder="Start typing: '12 Main St ...'"
-                        autoComplete="off"
-                    />
-
-                    {!ready && (
-                        <div className="mt-1.5 flex items-center gap-1.5">
-                            <Spinner />
-                            <span className="text-xs text-muted-foreground">Loading Google Maps…</span>
-                        </div>
-                    )}
-
-                    {showDropdown && (
-                        <div
-                            role="listbox"
-                            className="absolute z-50 mt-1 w-full rounded-md border border-gray-200 bg-[#f3f3f5] shadow-md overflow-hidden"
-                        >
-                            {loading && (
-                                <div className="px-3 py-2 flex items-center gap-2 text-sm text-muted-foreground">
-                                    <Spinner />
-                                    Loading…
-                                </div>
-                            )}
-
-                            {!loading &&
-                                suggestions.map((item, idx) => (
-                                    <div
-                                        key={`${item.place_id || item.description}-${idx}`}
-                                        role="option"
-                                        aria-selected={idx === activeIndex}
-                                        onMouseDown={(ev) => {
-                                            ev.preventDefault();
-                                            selectSuggestion(item);
-                                        }}
-                                        onMouseEnter={() => setActiveIndex(idx)}
-                                        className={`cursor-pointer px-3 py-2 text-sm transition-colors
-                                            ${idx === activeIndex
-                                                ? "bg-accent text-accent-foreground"
-                                                : "hover:bg-accent/50"
-                                            }`}
-                                    >
-                                        {item.description}
-                                    </div>
-                                ))}
-                        </div>
-                    )}
-                </div>
-
-                {/* ── Loading indicator ─────────────────────────────── */}
-                {detailsLoading && (
-                    <div className="flex items-center gap-2">
+                {!ready && (
+                    <div className="mt-1.5 flex items-center gap-1.5">
                         <Spinner />
-                        <span className="text-xs text-muted-foreground">Loading address details…</span>
+                        <span className="text-xs text-muted-foreground">Loading Google Maps…</span>
                     </div>
                 )}
 
-                {/* ── Address fields ───────────────────────────────── */}
-                <div className="flex flex-col sm:flex-row gap-3">
+                {showDropdown && (
+                    <div
+                        role="listbox"
+                        className="absolute z-50 mt-1 w-full rounded-md border border-gray-200 bg-[#f3f3f5] shadow-md overflow-hidden"
+                    >
+                        {loading && (
+                            <div className="px-3 py-2 flex items-center gap-2 text-sm text-muted-foreground">
+                                <Spinner />
+                                Loading…
+                            </div>
+                        )}
 
-                    {/* City — widest */}
-                    <div className="flex-[2] space-y-1.5 min-w-0">
-                        <Label htmlFor="field-city">City</Label>
-                        <Input
-                            id="field-city"
-                            value={address.city}
-                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleFieldChange("city", e.target.value)}
-                            placeholder="Boston"
-                        />
+                        {!loading &&
+                            suggestions.map((item, idx) => (
+                                <div
+                                    key={`${item.place_id || item.description}-${idx}`}
+                                    role="option"
+                                    aria-selected={idx === activeIndex}
+                                    onMouseDown={(ev) => {
+                                        ev.preventDefault();
+                                        selectSuggestion(item);
+                                    }}
+                                    onMouseEnter={() => setActiveIndex(idx)}
+                                    className={`cursor-pointer px-3 py-2 text-sm transition-colors
+                                        ${idx === activeIndex
+                                            ? "bg-accent text-accent-foreground"
+                                            : "hover:bg-accent/50"
+                                        }`}
+                                >
+                                    {item.description}
+                                </div>
+                            ))}
                     </div>
+                )}
+            </div>
 
-                    {/* Apt/Unit/Floor — half-width */}
-                    <div className="flex-1 space-y-1.5 min-w-0">
-                        <Label htmlFor="field-apt">Apt/Unit</Label>
-                        <Input
-                            id="field-apt"
-                            value={address.apt}
-                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleFieldChange("apt", e.target.value)}
-                            placeholder="4B"
-                        />
-                    </div>
-
-                    {/* State — compact */}
-                    <div className="w-[72px] shrink-0 space-y-1.5">
-                        <Label>State</Label>
-                        <Select
-                            value={address.state}
-                            onValueChange={(val: string) => handleFieldChange("state", val)}
-                        >
-                            <SelectTrigger className="px-2 bg-[#f3f3f5]">
-                                <SelectValue placeholder="ST" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {US_STATES.map((st) => (
-                                    <SelectItem key={st} value={st}>
-                                        {st}
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    </div>
-
-                    {/* Zip Code */}
-                    <div className="flex-1 space-y-1.5 min-w-0">
-                        <Label htmlFor="field-zip">Zip</Label>
-                        <Input
-                            id="field-zip"
-                            value={address.zip}
-                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleFieldChange("zip", e.target.value)}
-                            placeholder="02101"
-                        />
-                    </div>
+            {/* ── Loading indicator */}
+            {detailsLoading && (
+                <div className="flex items-center gap-2">
+                    <Spinner />
+                    <span className="text-xs text-muted-foreground">Loading address details…</span>
                 </div>
-            </CardContent>
-        </Card>
+            )}
+
+            {/* ── City / Apt / State / Zip row */}
+            <div className="grid grid-cols-[2fr_1fr_72px_1fr] gap-3">
+                <div className="space-y-1.5 min-w-0">
+                    <Label htmlFor={`${idPrefix}-city`}>City</Label>
+                    <Input
+                        id={`${idPrefix}-city`}
+                        value={address.city}
+                        onChange={(e) => handleFieldChange("city", e.target.value)}
+                        placeholder="Boston"
+                    />
+                </div>
+
+                <div className="space-y-1.5 min-w-0">
+                    <Label htmlFor={`${idPrefix}-apt`}>Apt/Unit</Label>
+                    <Input
+                        id={`${idPrefix}-apt`}
+                        value={address.apt}
+                        onChange={(e) => handleFieldChange("apt", e.target.value)}
+                        placeholder="4B"
+                    />
+                </div>
+
+                <div className="space-y-1.5">
+                    <Label>State</Label>
+                    <Select
+                        value={address.state}
+                        onValueChange={(val: string) => handleFieldChange("state", val)}
+                    >
+                        <SelectTrigger className="px-2 bg-[#f3f3f5]">
+                            <SelectValue placeholder="ST" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {US_STATES.map((st) => (
+                                <SelectItem key={st} value={st}>
+                                    {st}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </div>
+
+                <div className="space-y-1.5 min-w-0">
+                    <Label htmlFor={`${idPrefix}-zip`}>Zip</Label>
+                    <Input
+                        id={`${idPrefix}-zip`}
+                        value={address.zip}
+                        onChange={(e) => handleFieldChange("zip", e.target.value)}
+                        placeholder="02101"
+                    />
+                </div>
+            </div>
+        </div>
     );
 }

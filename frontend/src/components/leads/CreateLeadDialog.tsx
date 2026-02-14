@@ -28,7 +28,7 @@ interface CustomFieldDef {
 
 const JOB_TYPES = ['COD Service', 'COD Repair', 'Warranty', 'INS Service', 'INS Repair'];
 const JOB_SOURCES = ['eLocals', 'ServiceDirect', 'Inquirly', 'Rely', 'LHG', 'NSA', 'Other'];
-import { US_STATES } from './leadConstants';
+import { AddressAutocomplete } from '../AddressAutocomplete';
 
 export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDialogProps) {
     const [loading, setLoading] = useState(false);
@@ -188,51 +188,23 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                     {/* Address */}
                     <div className="space-y-4">
                         <h3 className="font-medium">Address</h3>
-                        <div>
-                            <Label htmlFor="address" className="mb-2">Street Address</Label>
-                            <Input
-                                id="address"
-                                value={formData.Address}
-                                onChange={(e) => setFormData({ ...formData, Address: e.target.value })}
-                            />
-                        </div>
-
-                        <div className="grid grid-cols-3 gap-4">
-                            <div>
-                                <Label htmlFor="city" className="mb-2">City</Label>
-                                <Input
-                                    id="city"
-                                    value={formData.City}
-                                    onChange={(e) => setFormData({ ...formData, City: e.target.value })}
-                                />
-                            </div>
-                            <div>
-                                <Label htmlFor="state" className="mb-2">State</Label>
-                                <Select
-                                    value={formData.State}
-                                    onValueChange={(value) => setFormData({ ...formData, State: value })}
-                                >
-                                    <SelectTrigger id="state">
-                                        <SelectValue placeholder="Select state" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {US_STATES.map((state) => (
-                                            <SelectItem key={state} value={state}>
-                                                {state}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div>
-                                <Label htmlFor="postalCode" className="mb-2">Postal Code</Label>
-                                <Input
-                                    id="postalCode"
-                                    value={formData.PostalCode}
-                                    onChange={(e) => setFormData({ ...formData, PostalCode: e.target.value })}
-                                />
-                            </div>
-                        </div>
+                        <AddressAutocomplete
+                            idPrefix="create-lead"
+                            value={{
+                                street: formData.Address || '',
+                                apt: '',
+                                city: formData.City || '',
+                                state: formData.State || '',
+                                zip: formData.PostalCode || '',
+                            }}
+                            onChange={(addr) => setFormData({
+                                ...formData,
+                                Address: addr.street,
+                                City: addr.city,
+                                State: addr.state,
+                                PostalCode: addr.zip,
+                            })}
+                        />
                     </div>
 
                     {/* Job Details */}

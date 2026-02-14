@@ -16,6 +16,7 @@ import {
     AlertTriangle, User, Phone, FileText,
 } from 'lucide-react';
 import './CreateLeadJobWizard.css';
+import { AddressAutocomplete } from '../AddressAutocomplete';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -556,33 +557,22 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
                         </Badge>
                     )}
                 </h4>
-                <div className="wizard__field">
-                    <Label htmlFor="wz4-street">Street Address</Label>
-                    <Input id="wz4-street" value={streetAddress} onChange={(e) => setStreetAddress(e.target.value)} placeholder="123 Main St" />
-                </div>
-                <div className="wizard__row">
-                    <div className="wizard__field wizard__field--wide">
-                        <Label htmlFor="wz4-city">City</Label>
-                        <Input id="wz4-city" value={city} onChange={(e) => setCity(e.target.value)} placeholder="Boston" />
-                    </div>
-                    <div className="wizard__field">
-                        <Label htmlFor="wz4-state">State</Label>
-                        <select
-                            id="wz4-state"
-                            value={state}
-                            onChange={(e) => setState(e.target.value)}
-                            className="wizard__select"
-                        >
-                            <option value="MA">MA</option>
-                            <option value="RI">RI</option>
-                            <option value="NH">NH</option>
-                        </select>
-                    </div>
-                    <div className="wizard__field">
-                        <Label htmlFor="wz4-zip">Postal Code</Label>
-                        <Input id="wz4-zip" value={postalCode} onChange={(e) => setPostalCode(e.target.value)} />
-                    </div>
-                </div>
+                <AddressAutocomplete
+                    idPrefix="wz4"
+                    value={{
+                        street: streetAddress,
+                        apt: '',
+                        city: city,
+                        state: state,
+                        zip: postalCode,
+                    }}
+                    onChange={(addr) => {
+                        setStreetAddress(addr.street);
+                        setCity(addr.city);
+                        setState(addr.state);
+                        setPostalCode(addr.zip);
+                    }}
+                />
             </div>
 
             {/* ── Service ── */}
