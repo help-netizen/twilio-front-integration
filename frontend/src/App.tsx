@@ -11,6 +11,7 @@ import ApiDocsPage from './pages/ApiDocsPage';
 import LeadFormSettingsPage from './pages/LeadFormSettingsPage';
 import SuperAdminPage from './pages/SuperAdminPage';
 import CompanyUsersPage from './pages/CompanyUsersPage';
+import AutocompletePage from './pages/AutocompletePage';
 import { EventNotification } from './components/EventNotification';
 import { Toaster } from './components/ui/sonner';
 import './App.css';
@@ -62,6 +63,7 @@ function App() {
                   <SuperAdminPage />
                 </ProtectedRoute>
               } />
+              <Route path="/autocomplete" element={<AutocompletePage />} />
             </Routes>
           </AppLayout>
           <EventNotification />
