@@ -14,6 +14,10 @@ RUN npm ci
 # Copy frontend source
 COPY frontend/ ./
 
+# Accept Google Maps API key at build time (Vite embeds VITE_ vars at build)
+ARG VITE_GOOGLE_MAPS_API_KEY
+ENV VITE_GOOGLE_MAPS_API_KEY=$VITE_GOOGLE_MAPS_API_KEY
+
 # Build frontend for production
 RUN npm run build
 

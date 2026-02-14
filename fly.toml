@@ -5,6 +5,8 @@ app = 'abc-metrics'
 primary_region = 'ewr'
 
 [build]
+  [build.args]
+    VITE_GOOGLE_MAPS_API_KEY = "AIzaSyD0cGFXDhTVk81gx2UqyWeZUREcKn0uaVI"
 
 [http_service]
   internal_port = 3000
