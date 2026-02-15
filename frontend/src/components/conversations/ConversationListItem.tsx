@@ -12,7 +12,7 @@ interface ConversationListItemProps {
 
 const STATUS_ICON_COLORS: Record<string, string> = {
     'completed': '#16a34a',
-    'no-answer': '#ca8a04',
+    'no-answer': '#dc2626',
     'busy': '#ea580c',
     'failed': '#dc2626',
     'canceled': '#dc2626',

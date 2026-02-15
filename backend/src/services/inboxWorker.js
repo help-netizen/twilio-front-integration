@@ -269,13 +269,15 @@ async function reconcileParentCall(parentCallSid, traceId) {
             parentEndedAt = winner.ended_at;
         } else if (allFinal) {
             // No winner — determine status from children
+            // Priority: busy > no-answer > failed
+            // (failed only if ALL children failed; any no-answer means the call rang but wasn't picked up)
             const statuses = children.map(c => c.status);
             if (statuses.includes('busy')) {
                 parentStatus = 'busy';
-            } else if (statuses.includes('failed')) {
-                parentStatus = 'failed';
-            } else {
+            } else if (statuses.includes('no-answer')) {
                 parentStatus = 'no-answer';
+            } else {
+                parentStatus = 'failed';
             }
             parentIsFinal = true;
             parentEndedAt = children.reduce((latest, c) =>

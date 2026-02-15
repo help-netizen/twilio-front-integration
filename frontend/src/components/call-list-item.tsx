@@ -54,9 +54,9 @@ interface CallListItemProps {
 
 const STATUS_CONFIG: Record<string, { label: string; iconColor: string; iconBg: string; badgeBg: string; badgeText: string }> = {
     'completed': { label: 'completed', iconColor: '#16a34a', iconBg: '#dcfce7', badgeBg: '#dcfce7', badgeText: '#15803d' },
-    'no-answer': { label: 'no answer', iconColor: '#ca8a04', iconBg: '#fef9c3', badgeBg: '#fef9c3', badgeText: '#a16207' },
+    'no-answer': { label: 'missed', iconColor: '#dc2626', iconBg: '#fee2e2', badgeBg: '#fee2e2', badgeText: '#b91c1c' },
     'busy': { label: 'busy', iconColor: '#ea580c', iconBg: '#ffedd5', badgeBg: '#ffedd5', badgeText: '#c2410c' },
-    'failed': { label: 'failed', iconColor: '#dc2626', iconBg: '#fee2e2', badgeBg: '#fee2e2', badgeText: '#b91c1c' },
+    'failed': { label: 'missed', iconColor: '#dc2626', iconBg: '#fee2e2', badgeBg: '#fee2e2', badgeText: '#b91c1c' },
     'ringing': { label: 'ringing', iconColor: '#2563eb', iconBg: '#dbeafe', badgeBg: '#dbeafe', badgeText: '#1d4ed8' },
     'in-progress': { label: 'in progress', iconColor: '#7c3aed', iconBg: '#ede9fe', badgeBg: '#ede9fe', badgeText: '#6d28d9' },
 };

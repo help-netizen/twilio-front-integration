@@ -81,8 +81,8 @@ export const getCallStatusColor = (status: string): 'success' | 'error' | 'warni
         case 'completed':
             return 'success';
         case 'busy':
-        case 'no-answer':
             return 'warning';
+        case 'no-answer':
         case 'failed':
         case 'canceled':
             return 'error';

@@ -7,10 +7,10 @@ const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
     'initiated': { label: 'Calling', color: 'bg-blue-400' },
     'queued': { label: 'Queued', color: 'bg-gray-400' },
     'completed': { label: 'Completed', color: 'bg-gray-600' },
-    'no-answer': { label: 'No Answer', color: 'bg-yellow-500' },
+    'no-answer': { label: 'Missed', color: 'bg-red-500' },
     'busy': { label: 'Busy', color: 'bg-orange-500' },
     'canceled': { label: 'Canceled', color: 'bg-gray-500' },
-    'failed': { label: 'Failed', color: 'bg-red-500' }
+    'failed': { label: 'Missed', color: 'bg-red-500' }
 };
 
 interface StatusBadgeProps {
