@@ -1,6 +1,8 @@
 import React from 'react';
 import { useParams } from 'react-router-dom';
 import { useContactCalls } from '../hooks/useConversations';
+import { useRealtimeEvents, type SSECallEvent } from '../hooks/useRealtimeEvents';
+import { useQueryClient } from '@tanstack/react-query';
 import { ConversationList } from '../components/conversations/ConversationList';
 import { CallListItem, type CallData } from '../components/call-list-item';
 import { LeadCard } from '../components/conversations/LeadCard';
@@ -54,6 +56,43 @@ export const ConversationPage: React.FC = () => {
     const { id } = useParams<{ id: string }>();
     const contactId = parseInt(id || '0');
     const { data: calls, isLoading } = useContactCalls(contactId);
+    const queryClient = useQueryClient();
+
+    // Subscribe to SSE events — update contact-calls cache inline
+    // so duration, status, and other fields update in real-time
+    useRealtimeEvents({
+        onCallUpdate: (event: SSECallEvent) => {
+            if (event.parent_call_sid) return; // skip child legs
+
+            // Only process events for this contact
+            if (event.contact_id && event.contact_id !== contactId) return;
+
+            queryClient.setQueryData<Call[]>(
+                ['contact-calls', contactId],
+                (old) => {
+                    if (!old) return old;
+                    const idx = old.findIndex(c => c.call_sid === event.call_sid);
+                    if (idx === -1) return old;
+
+                    const updated = [...old];
+                    updated[idx] = {
+                        ...updated[idx],
+                        status: (event.status as Call['status']) ?? updated[idx].status,
+                        is_final: event.is_final ?? updated[idx].is_final,
+                        duration_sec: event.duration_sec ?? updated[idx].duration_sec,
+                        ended_at: event.ended_at ?? updated[idx].ended_at,
+                    };
+                    return updated;
+                }
+            );
+        },
+        onCallCreated: (event: SSECallEvent) => {
+            if (event.parent_call_sid) return;
+            if (event.contact_id && event.contact_id === contactId) {
+                queryClient.invalidateQueries({ queryKey: ['contact-calls', contactId] });
+            }
+        },
+    });
 
     if (isLoading) {
         return (
