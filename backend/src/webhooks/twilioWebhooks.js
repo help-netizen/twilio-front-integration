@@ -318,8 +318,8 @@ async function handleDialAction(req, res) {
         if (toVoicemail) {
             const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
             const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;
-            const vmLanguage = process.env.VM_LANGUAGE || 'ru-RU';
-            const vmGreeting = process.env.VM_GREETING || 'Все менеджеры сейчас заняты. Мы перезвоним вам. Пожалуйста, оставьте голосовое сообщение после сигнала.';
+            const vmLanguage = process.env.VM_LANGUAGE || 'en-US';
+            const vmGreeting = process.env.VM_GREETING || 'All managers are currently busy. We will call you back. Please leave a voice message after the beep.';
             const vmMaxLen = Number(process.env.VM_MAXLEN || 180);
             const vmSilenceTimeout = Number(process.env.VM_SILENCE_TIMEOUT || 5);
             const vmFinishOnKey = process.env.VM_FINISH_ON_KEY || '#';
