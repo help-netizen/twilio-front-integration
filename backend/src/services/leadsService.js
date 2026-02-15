@@ -179,7 +179,7 @@ async function listLeads({ start_date, offset = 0, records = 100, only_open = tr
     }
 
     if (only_open) {
-        conditions.push('l.lead_lost = false AND l.converted_to_job = false');
+        conditions.push(`l.status NOT IN ('Lost', 'Converted')`);
     }
 
     if (start_date) {
@@ -214,7 +214,7 @@ async function listLeads({ start_date, offset = 0, records = 100, only_open = tr
         LEFT JOIN lead_team_assignments lta ON lta.lead_id = l.id
         ${whereClause}
         GROUP BY l.id
-        ORDER BY l.lead_date_time DESC NULLS LAST, l.created_at DESC
+        ORDER BY l.created_at DESC
         LIMIT $${limitParam} OFFSET $${offsetParam}
     `;
 
