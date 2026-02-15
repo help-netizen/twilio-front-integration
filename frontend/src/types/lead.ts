@@ -122,6 +122,8 @@ export type CreateLeadInput = {
     State?: string;
     PostalCode?: string;
     Country?: string;
+    Latitude?: number | null;
+    Longitude?: number | null;
     JobType?: string;
     JobSource?: string;
     ReferralCompany?: string;

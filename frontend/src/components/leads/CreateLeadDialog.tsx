@@ -204,6 +204,8 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                                 City: addr.city,
                                 State: addr.state,
                                 PostalCode: addr.zip,
+                                Latitude: addr.lat ?? null,
+                                Longitude: addr.lng ?? null,
                             })}
                         />
                     </div>

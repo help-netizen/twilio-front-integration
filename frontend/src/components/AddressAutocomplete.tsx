@@ -35,9 +35,11 @@ export interface AddressFields {
     city: string;
     state: string;
     zip: string;
+    lat?: number | null;
+    lng?: number | null;
 }
 
-export const EMPTY_ADDRESS: AddressFields = { street: "", apt: "", city: "", state: "", zip: "" };
+export const EMPTY_ADDRESS: AddressFields = { street: "", apt: "", city: "", state: "", zip: "", lat: null, lng: null };
 
 /* ─── Helpers ─────────────────────────────────────────────────── */
 
@@ -48,7 +50,8 @@ function hasFirstSpaceGate(value: string): boolean {
 
 /** Extract structured address fields from Place Details result */
 function parseAddressComponents(
-    components: google.maps.GeocoderAddressComponent[]
+    components: google.maps.GeocoderAddressComponent[],
+    geometry?: google.maps.places.PlaceResult["geometry"]
 ): AddressFields {
     let streetNumber = "";
     let route = "";
@@ -66,12 +69,17 @@ function parseAddressComponents(
         else if (t === "postal_code") zip = c.long_name;
     }
 
+    const lat = geometry?.location?.lat() ?? null;
+    const lng = geometry?.location?.lng() ?? null;
+
     return {
         street: [streetNumber, route].filter(Boolean).join(" "),
         apt: "",
         city,
         state,
         zip,
+        lat,
+        lng,
     };
 }
 
@@ -216,7 +224,7 @@ export function AddressAutocomplete({
             try {
                 const result = await getDetails({
                     placeId: item.place_id,
-                    fields: ["address_components"],
+                    fields: ["address_components", "geometry"],
                 });
 
                 if (
@@ -225,7 +233,7 @@ export function AddressAutocomplete({
                     "address_components" in result &&
                     result.address_components
                 ) {
-                    const parsed = parseAddressComponents(result.address_components);
+                    const parsed = parseAddressComponents(result.address_components, result.geometry);
                     onChange(parsed);
                     setSearchValue(parsed.street, false);
                 } else {

@@ -66,6 +66,7 @@ router.get('/timeslots', async (req, res) => {
         if (lat) params.lat = Number(lat);
         if (lng) params.lng = Number(lng);
 
+        console.log('[Zenbooker] timeslots request params:', JSON.stringify(params));
         const data = await zenbookerClient.getTimeslots(params);
         res.json({ ok: true, data });
     } catch (err) {

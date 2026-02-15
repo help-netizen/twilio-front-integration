@@ -96,7 +96,10 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
             setTimeslotDays([]);
             setSelectedTimeslot(null);
             setTimeslotsError('');
-            setCoords(null);
+            // Initialize coords from lead if available (fallback for when Zenbooker service area check doesn't return coordinates)
+            const leadLat = lead.Latitude != null ? Number(lead.Latitude) : null;
+            const leadLng = lead.Longitude != null ? Number(lead.Longitude) : null;
+            setCoords(leadLat && leadLng ? { lat: leadLat, lng: leadLng } : null);
 
             // Default date = today
             const today = new Date();
@@ -223,6 +226,11 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
 
             toast.success('Job created in Zenbooker', {
                 description: `Job ID: ${zbResult.job_id}`,
+                duration: 10000,
+                action: {
+                    label: 'Open Job on Zenbooker',
+                    onClick: () => window.open(`https://zenbooker.com/app?view=sched&view-job=${zbResult.job_id}`, '_blank'),
+                },
             });
 
             onSuccess({ ...lead, Status: 'Converted' });

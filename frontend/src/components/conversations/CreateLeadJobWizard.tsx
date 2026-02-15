@@ -181,6 +181,8 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
                 City: city || undefined,
                 State: state || undefined,
                 PostalCode: postalCode || undefined,
+                Latitude: coords?.lat || undefined,
+                Longitude: coords?.lng || undefined,
                 JobType: jobType || undefined,
                 Description: description || undefined,
                 Status: withJob ? 'Converted' : 'Submitted',
@@ -580,6 +582,9 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
                         setCity(addr.city);
                         setState(addr.state);
                         setPostalCode(addr.zip);
+                        if (addr.lat != null && addr.lng != null) {
+                            setCoords({ lat: addr.lat, lng: addr.lng });
+                        }
                     }}
                 />
             </div>
