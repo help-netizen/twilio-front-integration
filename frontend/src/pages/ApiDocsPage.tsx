@@ -65,7 +65,7 @@ const ENDPOINTS: Endpoint[] = [
             { name: 'JobSource', type: 'string', required: false, description: 'Lead source (e.g. "Google Ads", "Website")' },
             { name: 'ReferralCompany', type: 'string', required: false, description: 'Referring company name' },
             { name: 'Timezone', type: 'string', required: false, description: 'Timezone (e.g. "America/New_York")' },
-            { name: 'LeadNotes', type: 'string', required: false, description: 'Internal notes about the lead' },
+            { name: 'Description', type: 'string', required: false, description: 'Description of the problem / service needed' },
             { name: 'Comments', type: 'string', required: false, description: 'Customer-facing comments' },
             { name: 'Tags', type: 'string', required: false, description: 'Comma-separated tags' },
             { name: 'LeadDateTime', type: 'ISO 8601', required: false, description: 'Scheduled date/time for the lead' },
@@ -108,7 +108,7 @@ const ENDPOINTS: Endpoint[] = [
     "PostalCode": "92101",
     "JobType": "Plumbing",
     "JobSource": "Google Ads",
-    "LeadNotes": "Urgent — water leak",
+    "Description": "Urgent — water leak",
     "lead_note": "Custom field value",
     "one_more_text": "Another custom value"
   }'`,

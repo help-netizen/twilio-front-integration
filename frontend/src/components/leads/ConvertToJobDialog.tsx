@@ -87,7 +87,7 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
             setPostalCode(lead.PostalCode || '');
 
             setServiceName(lead.JobType || 'General Service');
-            setServiceDescription(lead.LeadNotes || lead.Comments || '');
+            setServiceDescription(lead.Description || lead.Comments || '');
             setServicePrice('0');
             setServiceDuration('120');
 

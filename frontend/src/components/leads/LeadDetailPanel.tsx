@@ -279,6 +279,12 @@ export function LeadDetailPanel({
                             {(comments.trim() || isEditingComments) ? (
                                 <div className="relative bg-rose-50 rounded-lg border border-rose-100 py-1 px-2">
                                     <textarea
+                                        ref={(el) => {
+                                            if (el) {
+                                                el.style.height = 'auto';
+                                                el.style.height = `${el.scrollHeight}px`;
+                                            }
+                                        }}
                                         className="w-full text-sm resize-none bg-transparent border-none outline-none min-h-[24px] pr-16 leading-6"
                                         value={comments}
                                         onChange={(e) => setComments(e.target.value)}
@@ -431,7 +437,7 @@ export function LeadDetailPanel({
                             <div>
                                 <Label className="text-xs text-muted-foreground">Description</Label>
                                 <div className="text-sm mt-1 whitespace-pre-wrap">
-                                    {lead.LeadNotes || <span className="text-muted-foreground">N/A</span>}
+                                    {lead.Description || <span className="text-muted-foreground">N/A</span>}
                                 </div>
                             </div>
                         </div>

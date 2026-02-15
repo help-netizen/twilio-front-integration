@@ -82,7 +82,7 @@ function rowToLead(row) {
         ReferralCompany: row.referral_company || null,
         Timezone: row.timezone || null,
         JobSource: row.job_source || null,
-        LeadNotes: row.lead_notes || null,
+        Description: row.lead_notes || null,
         Comments: row.comments || null,
 
         Tags: row.tags || null,
@@ -145,7 +145,7 @@ const FIELD_MAP = {
     JobSource: 'job_source',
     ReferralCompany: 'referral_company',
     Timezone: 'timezone',
-    LeadNotes: 'lead_notes',
+    Description: 'lead_notes',
     Comments: 'comments',
     Tags: 'tags',
     Status: 'status',

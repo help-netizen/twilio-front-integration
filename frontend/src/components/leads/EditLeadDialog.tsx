@@ -60,7 +60,7 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
         PostalCode: lead.PostalCode || '',
         JobType: lead.JobType || '',
         JobSource: lead.JobSource || '',
-        LeadNotes: lead.LeadNotes || '',
+        Description: lead.Description || '',
         Metadata: lead.Metadata || {},
     });
 
@@ -94,7 +94,7 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
             PostalCode: lead.PostalCode || '',
             JobType: lead.JobType || '',
             JobSource: lead.JobSource || '',
-            LeadNotes: lead.LeadNotes || '',
+            Description: lead.Description || '',
             Metadata: lead.Metadata || {},
         });
     }, [lead]);
@@ -204,9 +204,10 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
 
                     {/* Address */}
                     <div className="space-y-4">
-                        <h3 className="font-medium">Address</h3>
                         <AddressAutocomplete
+                            header={<h3 className="font-medium">Address</h3>}
                             idPrefix="edit-lead"
+                            defaultUseDetails={true}
                             value={{
                                 street: formData.Address || '',
                                 apt: '',
@@ -270,8 +271,8 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
                             <Label htmlFor="leadNotes" className="mb-2">Description</Label>
                             <Textarea
                                 id="leadNotes"
-                                value={formData.LeadNotes}
-                                onChange={(e) => setFormData({ ...formData, LeadNotes: e.target.value })}
+                                value={formData.Description}
+                                onChange={(e) => setFormData({ ...formData, Description: e.target.value })}
                                 rows={4}
                                 className="min-h-[80px] resize-y"
                                 placeholder="Enter job description..."

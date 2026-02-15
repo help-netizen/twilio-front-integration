@@ -45,7 +45,7 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
         PostalCode: '',
         JobType: 'COD Service',
         JobSource: '',
-        LeadNotes: '',
+        Description: '',
         Status: 'Submitted',
         Metadata: {},
     });
@@ -95,7 +95,7 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                 PostalCode: '',
                 JobType: 'COD Service',
                 JobSource: '',
-                LeadNotes: '',
+                Description: '',
                 Status: 'Submitted',
                 Metadata: {},
             });
@@ -187,9 +187,10 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
 
                     {/* Address */}
                     <div className="space-y-4">
-                        <h3 className="font-medium">Address</h3>
                         <AddressAutocomplete
+                            header={<h3 className="font-medium">Address</h3>}
                             idPrefix="create-lead"
+                            defaultUseDetails={true}
                             value={{
                                 street: formData.Address || '',
                                 apt: '',
@@ -250,11 +251,11 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                         </div>
 
                         <div>
-                            <Label htmlFor="leadNotes" className="mb-2">Lead Notes</Label>
+                            <Label htmlFor="leadNotes" className="mb-2">Description</Label>
                             <Textarea
                                 id="leadNotes"
-                                value={formData.LeadNotes}
-                                onChange={(e) => setFormData({ ...formData, LeadNotes: e.target.value })}
+                                value={formData.Description}
+                                onChange={(e) => setFormData({ ...formData, Description: e.target.value })}
                                 rows={3}
                                 placeholder="Additional notes about this lead..."
                             />

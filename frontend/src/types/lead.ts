@@ -38,7 +38,7 @@ export type Lead = {
     ReferralCompany?: string | null;
     Timezone?: string | null;
     JobSource?: string | null;
-    LeadNotes?: string | null;
+    Description?: string | null;
     Comments?: string | null;
 
     Tags?: string[] | null;
@@ -126,7 +126,7 @@ export type CreateLeadInput = {
     JobSource?: string;
     ReferralCompany?: string;
     Timezone?: string;
-    LeadNotes?: string;
+    Description?: string;
     Status?: string;
     Tags?: string[];
     Metadata?: Record<string, string>;

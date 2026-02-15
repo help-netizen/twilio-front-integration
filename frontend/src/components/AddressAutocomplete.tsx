@@ -11,6 +11,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from "./ui/select";
+import { Checkbox } from "./ui/checkbox";
 import { Loader2 } from "lucide-react";
 
 /* Simple spinner */
@@ -110,6 +111,10 @@ interface AddressAutocompleteProps {
     idPrefix?: string;
     /** Optional label for street field (default: "Street Address") */
     streetLabel?: string;
+    /** Optional header content (e.g. <h3>Address</h3>). Checkbox renders right-aligned next to it. */
+    header?: React.ReactNode;
+    /** Initial state of Place Details checkbox (default: false) */
+    defaultUseDetails?: boolean;
 }
 
 /* ─── Component ───────────────────────────────────────────────── */
@@ -119,10 +124,14 @@ export function AddressAutocomplete({
     onChange,
     idPrefix = "addr",
     streetLabel = "Street Address",
+    header,
+    defaultUseDetails = false,
 }: AddressAutocompleteProps) {
     const [gateReady, setGateReady] = useState(false);
     const [activeIndex, setActiveIndex] = useState(-1);
     const [detailsLoading, setDetailsLoading] = useState(false);
+    const [useDetails, setUseDetails] = useState(defaultUseDetails);
+    const [cyrillicWarning, setCyrillicWarning] = useState(false);
 
     const {
         ready,
@@ -161,6 +170,17 @@ export function AddressAutocomplete({
 
     function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
         const next = e.target.value;
+
+        // Cyrillic detection
+        const hasCyrillic = /[\u0400-\u04FF]/.test(next);
+        setCyrillicWarning(hasCyrillic);
+        if (hasCyrillic) {
+            clearSuggestions();
+            setSearchValue(next, false);
+            onChange({ ...address, street: next });
+            return;
+        }
+
         const gateNow = hasFirstSpaceGate(next);
 
         if (!gateNow) {
@@ -183,14 +203,14 @@ export function AddressAutocomplete({
             setActiveIndex(-1);
             setGateReady(false);
 
-            if (!item.place_id) {
+            if (!item.place_id || !useDetails) {
                 const parsed = parseDescription(item.description);
                 onChange(parsed);
                 setSearchValue(parsed.street, false);
                 return;
             }
 
-            // Try Place Details for better accuracy
+            // Use Place Details API for better accuracy
             setSearchValue(item.description, false);
             setDetailsLoading(true);
             try {
@@ -222,7 +242,7 @@ export function AddressAutocomplete({
                 setDetailsLoading(false);
             }
         },
-        [setSearchValue, clearSuggestions, onChange]
+        [setSearchValue, clearSuggestions, onChange, useDetails]
     );
 
     function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -256,6 +276,24 @@ export function AddressAutocomplete({
 
     return (
         <div className="space-y-3">
+            {/* Header row: heading (left) + Place Details checkbox (right) */}
+            <div className="flex items-center justify-between">
+                <div>{header}</div>
+                <div className="flex items-center gap-2">
+                    <Checkbox
+                        id={`${idPrefix}-use-details`}
+                        checked={useDetails}
+                        onCheckedChange={(checked: boolean) => setUseDetails(checked)}
+                    />
+                    <Label htmlFor={`${idPrefix}-use-details`}>
+                        <span className="text-xs text-muted-foreground">
+                            Place Details API
+                            <span className="text-[10px] ml-1 opacity-60">(more precise)</span>
+                        </span>
+                    </Label>
+                </div>
+            </div>
+
             {/* ── Street Address (search + display) */}
             <div className="relative">
                 <Label htmlFor={`${idPrefix}-street`} className="mb-1.5">
@@ -267,6 +305,10 @@ export function AddressAutocomplete({
                     value={searchValue}
                     onChange={handleInputChange}
                     onKeyDown={handleKeyDown}
+                    onFocus={(e) => {
+                        const len = e.target.value.length;
+                        e.target.setSelectionRange(len, len);
+                    }}
                     disabled={!ready}
                     placeholder="Start typing address…"
                     autoComplete="off"
@@ -279,7 +321,13 @@ export function AddressAutocomplete({
                     </div>
                 )}
 
-                {showDropdown && (
+                {cyrillicWarning && (
+                    <div className="absolute z-50 mt-1 w-full rounded-md border border-amber-300 bg-amber-50 shadow-md px-3 py-2 text-sm text-amber-800">
+                        ⚠️ English only — please delete Cyrillic characters
+                    </div>
+                )}
+
+                {showDropdown && !cyrillicWarning && (
                     <div
                         role="listbox"
                         className="absolute z-50 mt-1 w-full rounded-md border border-gray-200 bg-[#f3f3f5] shadow-md overflow-hidden"

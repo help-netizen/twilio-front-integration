@@ -65,7 +65,7 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
     // Step 2 — service
     const [jobType, setJobType] = useState('');
     const [description, setDescription] = useState('');
-    const [duration, setDuration] = useState('120');
+    const [duration, setDuration] = useState('60');
     const [price, setPrice] = useState('95');
 
     // Step 3 — timeslots
@@ -81,6 +81,13 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
         const today = new Date();
         setSelectedDate(today.toISOString().split('T')[0]);
     }, []);
+
+    // Pre-fill street with zip code when entering step 4
+    useEffect(() => {
+        if (step === 4 && postalCode && !streetAddress) {
+            setStreetAddress(postalCode + ' ');
+        }
+    }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ── Territory check (debounced) ──
     const checkTerritory = useCallback(async (zip: string) => {
@@ -175,7 +182,7 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
                 State: state || undefined,
                 PostalCode: postalCode || undefined,
                 JobType: jobType || undefined,
-                LeadNotes: description || undefined,
+                Description: description || undefined,
                 Status: withJob ? 'Converted' : 'Submitted',
                 JobSource: 'Phone Call',
             };
@@ -549,15 +556,17 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
 
             {/* ── Address ── */}
             <div className="wizard__review-section">
-                <h4 className="wizard__review-title">
-                    <MapPin className="w-3.5" /> Address
-                    {territoryResult?.in_service_area && (
-                        <Badge variant="default" className="bg-green-600 ml-auto text-[10px]">
-                            ✓ {territoryResult.service_territory?.name}
-                        </Badge>
-                    )}
-                </h4>
                 <AddressAutocomplete
+                    header={
+                        <h4 className="wizard__review-title" style={{ margin: 0 }}>
+                            <MapPin className="w-3.5" /> Address
+                            {territoryResult?.in_service_area && (
+                                <Badge variant="default" className="bg-green-600 ml-2 text-[10px]">
+                                    ✓ {territoryResult.service_territory?.name}
+                                </Badge>
+                            )}
+                        </h4>
+                    }
                     idPrefix="wz4"
                     value={{
                         street: streetAddress,
