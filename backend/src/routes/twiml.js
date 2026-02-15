@@ -7,6 +7,7 @@ const router = express.Router();
  * Generates TwiML that:
  * 1. Dials to Twilio SIP domain (connects to Bria)
  * 2. Sends status callbacks for ALL call events
+ * 3. Routes to voice-dial-action for voicemail on no-answer
  */
 router.post('/voice', (req, res) => {
     const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
@@ -22,15 +23,18 @@ router.post('/voice', (req, res) => {
              statusCallbackMethod="POST">sip:${user}@${sipDomain}</Sip>`
     ).join('\n');
 
-    // Dial action callback - gets final DialCallStatus
-    const dialActionUrl = `${baseUrl}/webhooks/twilio/dial-action`;
+    // Dial action callback - gets final DialCallStatus + voicemail
+    const dialActionUrl = `${baseUrl}/webhooks/twilio/voice-dial-action`;
 
     // Recording status callback
     const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;
 
+    const dialTimeout = Number(process.env.DIAL_TIMEOUT || 25);
+
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Dial timeout="60"
+    <Dial timeout="${dialTimeout}"
+          answerOnBridge="true"
           action="${dialActionUrl}"
           method="POST"
           record="record-from-answer-dual"
@@ -43,9 +47,9 @@ ${sipEndpoints}
     console.log('[TwiML] Generated voice response:', {
         statusCallbackUrl,
         dialActionUrl,
-        sipEndpoint,
-        sipUser,
+        sipUsers,
         sipDomain,
+        dialTimeout,
         from: req.body.From,
         to: req.body.To || req.body.Called,
         callSid: req.body.CallSid

@@ -216,7 +216,7 @@ async function handleVoiceInbound(req, res) {
         // Determine direction and return TwiML
         const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
         const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
-        const dialActionUrl = `${baseUrl}/webhooks/twilio/dial-action`;
+        const dialActionUrl = `${baseUrl}/webhooks/twilio/voice-dial-action`;
         const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;
 
         const isOutbound = From && From.startsWith('sip:');
@@ -233,9 +233,11 @@ async function handleVoiceInbound(req, res) {
             console.log(`[${traceId}] Outbound: SIP → ${dialNumber}`);
 
             const outboundCallerId = process.env.OUTBOUND_CALLER_ID || '+16175006181';
+            const outboundTimeout = Number(process.env.DIAL_TIMEOUT || 25);
             twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Dial timeout="60"
+    <Dial timeout="${outboundTimeout}"
+          answerOnBridge="true"
           callerId="${outboundCallerId}"
           action="${dialActionUrl}"
           method="POST"
@@ -258,9 +260,11 @@ async function handleVoiceInbound(req, res) {
              statusCallbackMethod="POST">sip:${user}@${sipDomain}</Sip>`
             ).join('\n');
 
+            const inboundTimeout = Number(process.env.DIAL_TIMEOUT || 25);
             twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Dial timeout="60"
+    <Dial timeout="${inboundTimeout}"
+          answerOnBridge="true"
           action="${dialActionUrl}"
           method="POST"
           record="record-from-answer-dual"
@@ -280,12 +284,14 @@ ${sipEndpoints}
 }
 
 // =============================================================================
-// POST /webhooks/twilio/dial-action
+// POST /webhooks/twilio/voice-dial-action
+// Voicemail logic: if no one answered, play greeting + record voicemail
 // =============================================================================
 async function handleDialAction(req, res) {
     const traceId = generateTraceId();
+    const dialStatus = String(req.body.DialCallStatus || '').toLowerCase();
     console.log(`[${traceId}] Dial action`, {
-        callSid: req.body.CallSid, dialStatus: req.body.DialCallStatus
+        callSid: req.body.CallSid, dialStatus, from: req.body.From
     });
 
     try {
@@ -306,12 +312,84 @@ async function handleDialAction(req, res) {
             traceId
         });
 
+        const toVoicemail = ['no-answer', 'busy', 'failed', 'canceled'].includes(dialStatus);
+
+        let twiml;
+        if (toVoicemail) {
+            const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
+            const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;
+            const vmLanguage = process.env.VM_LANGUAGE || 'ru-RU';
+            const vmGreeting = process.env.VM_GREETING || 'Все менеджеры сейчас заняты. Мы перезвоним вам. Пожалуйста, оставьте голосовое сообщение после сигнала.';
+            const vmMaxLen = Number(process.env.VM_MAXLEN || 180);
+            const vmSilenceTimeout = Number(process.env.VM_SILENCE_TIMEOUT || 5);
+            const vmFinishOnKey = process.env.VM_FINISH_ON_KEY || '#';
+
+            console.log(`[${traceId}] No answer (${dialStatus}) → voicemail`);
+
+            twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say language="${vmLanguage}">${vmGreeting}</Say>
+    <Record maxLength="${vmMaxLen}"
+            timeout="${vmSilenceTimeout}"
+            finishOnKey="${vmFinishOnKey}"
+            playBeep="true"
+            transcribe="false"
+            recordingStatusCallback="${recordingStatusUrl}"
+            recordingStatusCallbackMethod="POST" />
+    <Hangup />
+</Response>`;
+        } else {
+            console.log(`[${traceId}] Call completed (${dialStatus}) → hangup`);
+            twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Hangup />
+</Response>`;
+        }
+
         res.type('text/xml');
-        res.send('<Response></Response>');
+        res.send(twiml);
     } catch (error) {
         console.error(`[${traceId}] Error:`, error);
-        res.status(500).send('<Response></Response>');
+        res.status(500).send('<Response><Hangup /></Response>');
     }
+}
+
+// =============================================================================
+// POST /webhooks/twilio/voice-fallback
+// Emergency fallback when voice-inbound fails (500/timeout)
+// =============================================================================
+async function handleVoiceFallback(req, res) {
+    const traceId = generateTraceId();
+    console.error(`[${traceId}] ⚠️ VOICE FALLBACK triggered`, {
+        callSid: req.body.CallSid,
+        from: req.body.From,
+        to: req.body.To,
+        errorCode: req.body.ErrorCode,
+        errorUrl: req.body.ErrorUrl
+    });
+
+    try {
+        // Store fallback event in inbox for monitoring
+        await ingestToInbox({
+            source: 'voice',
+            eventType: 'call.fallback',
+            payload: req.body,
+            req,
+            traceId
+        });
+    } catch (e) {
+        console.error(`[${traceId}] Fallback inbox error:`, e.message);
+    }
+
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say language="en-US">We are experiencing technical difficulties. Please try again later.</Say>
+    <Say language="ru-RU">В данный момент наблюдаются технические проблемы. Пожалуйста, перезвоните позже.</Say>
+    <Hangup />
+</Response>`;
+
+    res.type('text/xml');
+    res.send(twiml);
 }
 
 module.exports = {
@@ -320,5 +398,6 @@ module.exports = {
     handleTranscriptionStatus,
     handleVoiceInbound,
     handleDialAction,
+    handleVoiceFallback,
     validateTwilioSignature
 };

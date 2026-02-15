@@ -6,6 +6,7 @@ const {
     handleTranscriptionStatus,
     handleVoiceInbound,
     handleDialAction,
+    handleVoiceFallback,
 } = require('../webhooks/twilioWebhooks');
 
 // POST /webhooks/twilio/voice-status — call status changes
@@ -20,8 +21,14 @@ router.post('/twilio/transcription-status', handleTranscriptionStatus);
 // POST /webhooks/twilio/voice-inbound — new call TwiML
 router.post('/twilio/voice-inbound', handleVoiceInbound);
 
-// POST /webhooks/twilio/dial-action — Dial result
+// POST /webhooks/twilio/voice-dial-action — Dial result + voicemail
+router.post('/twilio/voice-dial-action', handleDialAction);
+
+// POST /webhooks/twilio/dial-action — Legacy route (keep for compatibility)
 router.post('/twilio/dial-action', handleDialAction);
+
+// POST /webhooks/twilio/voice-fallback — Emergency fallback
+router.post('/twilio/voice-fallback', handleVoiceFallback);
 
 // GET /webhooks/health
 router.get('/health', (req, res) => {
