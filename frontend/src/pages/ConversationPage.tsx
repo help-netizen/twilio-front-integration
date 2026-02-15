@@ -67,6 +67,7 @@ export const ConversationPage: React.FC = () => {
             // Only process events for this contact
             if (event.contact_id && event.contact_id !== contactId) return;
 
+            // Inline update for instant duration/status feedback
             queryClient.setQueryData<Call[]>(
                 ['contact-calls', contactId],
                 (old) => {
@@ -85,6 +86,12 @@ export const ConversationPage: React.FC = () => {
                     return updated;
                 }
             );
+
+            // Also refetch full data so recordings/transcripts appear
+            // (they arrive via separate events not included in call SSE payload)
+            if (event.is_final) {
+                queryClient.invalidateQueries({ queryKey: ['contact-calls', contactId] });
+            }
         },
         onCallCreated: (event: SSECallEvent) => {
             if (event.parent_call_sid) return;
