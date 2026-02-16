@@ -6,6 +6,7 @@ import { AppLayout } from './components/layout/AppLayout';
 import { HomePage } from './pages/HomePage';
 import { ConversationPage } from './pages/ConversationPage';
 import { LeadsPage } from './pages/LeadsPage';
+import { PulsePage } from './pages/PulsePage';
 import { MessagesPage } from './pages/MessagesPage';
 import { IntegrationsPage } from './pages/IntegrationsPage';
 import ApiDocsPage from './pages/ApiDocsPage';
@@ -32,7 +33,9 @@ function App() {
         <BrowserRouter>
           <AppLayout>
             <Routes>
-              <Route path="/" element={<Navigate to="/calls" replace />} />
+              <Route path="/" element={<Navigate to="/pulse" replace />} />
+              <Route path="/pulse" element={<PulsePage />} />
+              <Route path="/pulse/contact/:id" element={<PulsePage />} />
               <Route path="/calls" element={<HomePage />} />
               <Route path="/contact/:id" element={<ConversationPage />} />
               <Route path="/calls/:callSid" element={<ConversationPage />} />

@@ -1,0 +1,47 @@
+.pulse-page {
+    display: flex;
+    height: 100%;
+    overflow: hidden;
+}
+
+.pulse-sidebar {
+    width: 360px;
+    flex-shrink: 0;
+    border-right: 1px solid #e5e7eb;
+    display: flex;
+    flex-direction: column;
+    background: #ffffff;
+}
+
+.pulse-timeline-column {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: #fafafa;
+    overflow: hidden;
+}
+
+.pulse-timeline-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0;
+}
+
+.pulse-empty-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Spinner animation for loading/sending states */
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+
+    to {
+        transform: rotate(360deg);
+    }
+}

@@ -11,7 +11,7 @@ import {
     DropdownMenuItem,
     DropdownMenuSeparator,
 } from '../ui/dropdown-menu';
-import { Phone, MessageSquare, Users, Settings, Key, BookOpen, FileText, LogOut, Shield } from 'lucide-react';
+import { Phone, MessageSquare, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity } from 'lucide-react';
 import './AppLayout.css';
 
 interface AppLayoutProps {
@@ -24,10 +24,12 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
     const location = useLocation();
     const navigate = useNavigate();
 
-    const activeTab = location.pathname.startsWith('/messages') ? 'messages'
-        : location.pathname.startsWith('/leads') ? 'leads'
-            : location.pathname.startsWith('/settings') ? 'settings'
-                : 'calls';
+    const activeTab = location.pathname.startsWith('/pulse') ? 'pulse'
+        : location.pathname.startsWith('/messages') ? 'messages'
+            : location.pathname.startsWith('/leads') ? 'leads'
+                : location.pathname.startsWith('/settings') ? 'settings'
+                    : location.pathname.startsWith('/calls') || location.pathname.startsWith('/contact/') ? 'calls'
+                        : 'pulse';
 
     const { accessDeniedMessage, clearAccessDenied, logout, hasRole } = useAuth();
 
@@ -64,6 +66,14 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                         <h1 className="text-2xl font-semibold" style={{ margin: 0, color: '#202223' }}>Blanc</h1>
                         <Tabs value={activeTab} className="w-auto">
                             <TabsList>
+                                <TabsTrigger
+                                    value="pulse"
+                                    className="flex items-center gap-2"
+                                    onClick={() => navigate('/pulse')}
+                                >
+                                    <Activity className="size-4" />
+                                    Pulse
+                                </TabsTrigger>
                                 <TabsTrigger
                                     value="calls"
                                     className="flex items-center gap-2"
