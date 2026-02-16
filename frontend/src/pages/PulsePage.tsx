@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useCallsByContact } from '../hooks/useConversations';
@@ -12,7 +12,7 @@ import { LeadDetailPanel } from '../components/leads/LeadDetailPanel';
 import { CreateLeadJobWizard } from '../components/conversations/CreateLeadJobWizard';
 import { EditLeadDialog } from '../components/leads/EditLeadDialog';
 import { ConvertToJobDialog } from '../components/leads/ConvertToJobDialog';
-import { normalizePhoneNumber, formatPhoneNumber } from '../utils/formatters';
+import { formatPhoneNumber } from '../utils/formatters';
 import { useLeadByPhone } from '../hooks/useLeadByPhone';
 import { Input } from '../components/ui/input';
 import { Skeleton } from '../components/ui/skeleton';
@@ -159,9 +159,21 @@ export const PulsePage: React.FC = () => {
     const contactId = parseInt(id || '0');
     const location = useLocation();
 
-    // Contact list
-    const { data: contactData, isLoading: contactsLoading, refetch: refetchContacts } = useCallsByContact();
+    // Search with debounce (server-side search)
     const [searchQuery, setSearchQuery] = useState('');
+    const [debouncedSearch, setDebouncedSearch] = useState('');
+    const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    useEffect(() => {
+        if (debounceTimer.current) clearTimeout(debounceTimer.current);
+        debounceTimer.current = setTimeout(() => {
+            setDebouncedSearch(searchQuery.trim());
+        }, 300);
+        return () => { if (debounceTimer.current) clearTimeout(debounceTimer.current); };
+    }, [searchQuery]);
+
+    // Contact list
+    const { data: contactData, isLoading: contactsLoading, refetch: refetchContacts } = useCallsByContact(debouncedSearch || undefined);
 
     // Timeline data
     const { data: timelineData, isLoading: timelineLoading, refetch: refetchTimeline } = usePulseTimeline(contactId);
@@ -178,16 +190,7 @@ export const PulsePage: React.FC = () => {
         onCallCreated: () => refetchContacts(),
     });
 
-    // Filter contacts
-    const calls = contactData?.conversations || [];
-    const filteredCalls = useMemo(() => {
-        if (!searchQuery.trim()) return calls;
-        const normalizedQuery = normalizePhoneNumber(searchQuery);
-        return calls.filter(call => {
-            const phone = call.from_number || call.to_number || '';
-            return normalizePhoneNumber(phone).includes(normalizedQuery);
-        });
-    }, [calls, searchQuery]);
+    const filteredCalls = contactData?.conversations || [];
 
     // Transform calls to CallData for timeline
     const callDataItems = useMemo(() => {
@@ -301,9 +304,8 @@ export const PulsePage: React.FC = () => {
         <div className="pulse-page">
             {/* Left sidebar: contact list */}
             <div className="pulse-sidebar">
-                <div className="flex items-center p-3 border-b gap-3">
-                    <h2 className="text-lg font-semibold shrink-0">Pulse</h2>
-                    <div className="relative flex-1 min-w-0">
+                <div className="p-3 border-b">
+                    <div className="relative">
                         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
                         <Input
                             placeholder="Search phone..."

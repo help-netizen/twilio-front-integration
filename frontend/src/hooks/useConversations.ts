@@ -5,12 +5,12 @@ import { useCallback } from 'react';
 /**
  * Hook: list of calls grouped by contact (sidebar / conversations list)
  */
-export const useCallsByContact = () => {
+export const useCallsByContact = (search?: string) => {
     const queryClient = useQueryClient();
 
     const query = useQuery({
-        queryKey: ['calls-by-contact'],
-        queryFn: () => callsApi.getByContact(100),
+        queryKey: ['calls-by-contact', search || ''],
+        queryFn: () => callsApi.getByContact(100, 0, search || undefined),
         staleTime: 60000,
     });
 

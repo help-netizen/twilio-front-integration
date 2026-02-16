@@ -167,12 +167,27 @@ async function getCalls({ cursor, limit = 50, status, hasRecording, hasTranscrip
  * Returns latest call per contact with call count.
  * Filters out inbound child legs (parent_call_sid IS NULL) so only root calls appear.
  */
-async function getCallsByContact({ limit = 20, offset = 0, companyId = null } = {}) {
+async function getCallsByContact({ limit = 20, offset = 0, companyId = null, search = null } = {}) {
     const companyFilter = companyId ? `AND c.company_id = $3` : '';
     const companyFilter2 = companyId ? `AND c2.company_id = $3` : '';
     const companyFilter3 = companyId ? `AND c3.company_id = $3` : '';
     const params = [limit, offset];
     if (companyId) params.push(companyId);
+
+    // Search filter: match digits against contact phone or call from/to numbers
+    let searchFilter = '';
+    if (search) {
+        const digits = search.replace(/\D/g, '');
+        if (digits.length > 0) {
+            const searchIdx = params.length + 1;
+            params.push(`%${digits}%`);
+            searchFilter = `AND (
+                regexp_replace(co.phone_e164, '\\D', '', 'g') LIKE $${searchIdx}
+                OR regexp_replace(c.from_number, '\\D', '', 'g') LIKE $${searchIdx}
+                OR regexp_replace(c.to_number, '\\D', '', 'g') LIKE $${searchIdx}
+            )`;
+        }
+    }
 
     const result = await db.query(
         `SELECT * FROM (
@@ -188,6 +203,7 @@ async function getCallsByContact({ limit = 20, offset = 0, companyId = null } = 
              WHERE c.contact_id IS NOT NULL
                AND c.parent_call_sid IS NULL
                ${companyFilter}
+               ${searchFilter}
                AND EXISTS (
                    SELECT 1 FROM calls c3
                    WHERE c3.contact_id = c.contact_id

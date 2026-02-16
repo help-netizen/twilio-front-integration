@@ -56,9 +56,11 @@ export const callsApi = {
     },
 
     /** Calls grouped by contact (conversations replacement) */
-    getByContact: async (limit = 50, offset = 0): Promise<ByContactResponse> => {
+    getByContact: async (limit = 50, offset = 0, search?: string): Promise<ByContactResponse> => {
+        const params: Record<string, any> = { limit, offset };
+        if (search) params.search = search;
         const response = await apiClient.get<ByContactResponse>('/calls/by-contact', {
-            params: { limit, offset },
+            params,
         });
         return response.data;
     },

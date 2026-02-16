@@ -60,12 +60,13 @@ router.get('/active', async (req, res) => {
 // =============================================================================
 router.get('/by-contact', async (req, res) => {
     try {
-        const { limit = 20, offset = 0 } = req.query;
+        const { limit = 20, offset = 0, search } = req.query;
         const companyId = req.companyFilter?.company_id;
         const calls = await queries.getCallsByContact({
             limit: parseInt(limit),
             offset: parseInt(offset),
             companyId,
+            search: search || null,
         });
         const total = await queries.getContactsWithCallsCount(companyId);
 
