@@ -26,7 +26,17 @@ router.get('/timeline/:contactId', async (req, res) => {
         }
 
         const contact = callRows[0].contact ? (typeof callRows[0].contact === 'string' ? JSON.parse(callRows[0].contact) : callRows[0].contact) : null;
-        const phoneE164 = contact?.phone_e164;
+        const rawPhone = contact?.phone_e164;
+
+        // Normalize to E.164: strip everything except digits and leading +
+        const normalizedPhone = rawPhone ? '+' + rawPhone.replace(/\D/g, '') : null;
+
+        // Also collect unique phone numbers from call rows (from/to)
+        const callPhones = new Set();
+        for (const row of callRows) {
+            if (row.from_number) callPhones.add(row.from_number);
+            if (row.to_number) callPhones.add(row.to_number);
+        }
 
         // 2) Format calls (reuse same format as calls route)
         const calls = callRows.map(formatCall);
@@ -34,10 +44,17 @@ router.get('/timeline/:contactId', async (req, res) => {
         // 3) Get SMS conversations matching the contact's phone
         let messages = [];
         let conversations = [];
-        if (phoneE164) {
+
+        // Build a set of phones to search (normalized contact phone + call phones)
+        const phonesToSearch = new Set();
+        if (normalizedPhone) phonesToSearch.add(normalizedPhone);
+        for (const p of callPhones) phonesToSearch.add(p);
+
+        if (phonesToSearch.size > 0) {
+            const phoneArray = [...phonesToSearch];
             const convResult = await db.query(
-                `SELECT * FROM sms_conversations WHERE customer_e164 = $1 ORDER BY last_message_at DESC NULLS LAST`,
-                [phoneE164]
+                `SELECT * FROM sms_conversations WHERE customer_e164 = ANY($1) ORDER BY last_message_at DESC NULLS LAST`,
+                [phoneArray]
             );
             conversations = convResult.rows;
 
