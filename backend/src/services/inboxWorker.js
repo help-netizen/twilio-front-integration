@@ -163,25 +163,41 @@ async function processVoiceEvent(payload, eventType, traceId) {
 
     const isFinal = isFinalStatus(normalized.eventStatus);
 
+    // Guard: don't overwrite voicemail statuses with Twilio's generic completed/no-answer
+    const VOICEMAIL_STATUSES = ['voicemail_recording', 'voicemail_left'];
+    let skipUpsert = false;
+    if (!normalized.parentCallSid) {
+        try {
+            const existing = await queries.getCallByCallSid(normalized.callSid);
+            if (existing && VOICEMAIL_STATUSES.includes(existing.status)) {
+                console.log(`[${traceId}] Skipping upsert — call is in ${existing.status} status`);
+                skipUpsert = true;
+            }
+        } catch (e) { /* proceed with upsert if check fails */ }
+    }
+
     // Upsert call snapshot
-    const call = await queries.upsertCall({
-        callSid: normalized.callSid,
-        parentCallSid: normalized.parentCallSid,
-        contactId,
-        direction: processed.direction,   // Use CallProcessor's direction
-        fromNumber: extractPhoneFromSIP(normalized.fromNumber),
-        toNumber: extractPhoneFromSIP(normalized.toNumber),
-        status: normalized.eventStatus,
-        isFinal,
-        startedAt: normalized.eventTime,
-        answeredAt: normalized.eventStatus === 'in-progress' ? normalized.eventTime : null,
-        endedAt: isFinal ? normalized.eventTime : null,
-        durationSec: normalized.durationSec || null,
-        price: normalized.price,
-        priceUnit: normalized.priceUnit,
-        lastEventTime: normalized.eventTime,
-        rawLastPayload: payload,
-    });
+    let call;
+    if (!skipUpsert) {
+        call = await queries.upsertCall({
+            callSid: normalized.callSid,
+            parentCallSid: normalized.parentCallSid,
+            contactId,
+            direction: processed.direction,   // Use CallProcessor's direction
+            fromNumber: extractPhoneFromSIP(normalized.fromNumber),
+            toNumber: extractPhoneFromSIP(normalized.toNumber),
+            status: normalized.eventStatus,
+            isFinal,
+            startedAt: normalized.eventTime,
+            answeredAt: normalized.eventStatus === 'in-progress' ? normalized.eventTime : null,
+            endedAt: isFinal ? normalized.eventTime : null,
+            durationSec: normalized.durationSec || null,
+            price: normalized.price,
+            priceUnit: normalized.priceUnit,
+            lastEventTime: normalized.eventTime,
+            rawLastPayload: payload,
+        });
+    }
 
     if (call) {
         console.log(`[${traceId}] Call upserted`, { callSid: call.call_sid, status: call.status });
@@ -197,9 +213,9 @@ async function processVoiceEvent(payload, eventType, traceId) {
         { ...normalized, raw: payload }
     );
 
-    // Enrich from Twilio API on final status
+    // Enrich from Twilio API on final status (skip if voicemail — we manage those statuses ourselves)
     let enrichedCall = call;
-    if (isFinal) {
+    if (isFinal && !skipUpsert) {
         await enrichFromTwilioApi(normalized.callSid, call, traceId);
         // Re-read from DB to get enriched data for SSE broadcast
         try {
@@ -209,7 +225,9 @@ async function processVoiceEvent(payload, eventType, traceId) {
     }
 
     // Publish realtime event (after enrichment so frontend gets correct duration)
-    publishRealtimeEvent('call.updated', enrichedCall || { call_sid: normalized.callSid, status: normalized.eventStatus }, traceId);
+    if (!skipUpsert) {
+        publishRealtimeEvent('call.updated', enrichedCall || { call_sid: normalized.callSid, status: normalized.eventStatus }, traceId);
+    }
 
     // Reconcile parent call if this is a child leg that reached final status
     if (normalized.parentCallSid && isFinal) {
@@ -231,6 +249,16 @@ async function processVoiceEvent(payload, eventType, traceId) {
 
 async function reconcileParentCall(parentCallSid, traceId) {
     try {
+        // Guard: don't overwrite voicemail statuses
+        const parentCheck = await db.query(
+            `SELECT status FROM calls WHERE call_sid = $1`, [parentCallSid]
+        );
+        const parentCurrentStatus = parentCheck.rows[0]?.status;
+        if (['voicemail_recording', 'voicemail_left'].includes(parentCurrentStatus)) {
+            console.log(`[${traceId}] Skipping reconciliation — parent is ${parentCurrentStatus}`);
+            return;
+        }
+
         // Get all child legs for this parent
         const childResult = await db.query(
             `SELECT call_sid, status, duration_sec, started_at, ended_at, is_final, contact_id
