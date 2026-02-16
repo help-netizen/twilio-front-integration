@@ -191,7 +191,7 @@ export function LeadDetailPanel({
     }
 
     return (
-        <div className="fixed inset-0 z-50 bg-background md:relative md:inset-auto md:z-auto md:w-[400px] md:min-w-[240px] md:border-l flex flex-col md:bg-background shrink-0">
+        <div className="fixed inset-0 z-50 bg-background md:relative md:inset-auto md:z-auto md:w-[400px] md:min-w-[240px] md:border-l md:h-full flex flex-col md:bg-background shrink-0">
             {/* Header */}
             <div className="p-4 border-b">
                 <div className="flex items-start justify-between mb-3">
