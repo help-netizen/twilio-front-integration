@@ -30,7 +30,18 @@ export const messagingApi = {
         return response.data;
     },
 
-    sendMessage: async (conversationId: string, data: SendMessageRequest): Promise<Message> => {
+    sendMessage: async (conversationId: string, data: SendMessageRequest, file?: File): Promise<Message> => {
+        if (file) {
+            const formData = new FormData();
+            if (data.body) formData.append('body', data.body);
+            formData.append('file', file);
+            const response = await apiClient.post<{ message: Message }>(
+                `/messaging/${conversationId}/messages`,
+                formData,
+                { headers: { 'Content-Type': 'multipart/form-data' } }
+            );
+            return response.data.message;
+        }
         const response = await apiClient.post<{ message: Message }>(`/messaging/${conversationId}/messages`, data);
         return response.data.message;
     },

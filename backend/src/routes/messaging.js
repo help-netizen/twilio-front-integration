@@ -5,8 +5,12 @@
  */
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
 const convQueries = require('../db/conversationsQueries');
 const conversationsService = require('../services/conversationsService');
+
+// Multer: memory storage, 10 MB max
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 // GET /api/messaging — list conversations
 router.get('/', async (req, res) => {
@@ -55,17 +59,29 @@ router.get('/:id/messages', async (req, res) => {
     }
 });
 
-// POST /api/messaging/:id/messages — send a message
-router.post('/:id/messages', async (req, res) => {
+// POST /api/messaging/:id/messages — send a message (supports file attachment)
+router.post('/:id/messages', upload.single('file'), async (req, res) => {
     try {
-        const { body, mediaUrl, author } = req.body;
-        if (!body && !mediaUrl) {
-            return res.status(400).json({ error: 'body or mediaUrl required' });
+        const body = req.body.body || '';
+        const file = req.file;
+        if (!body && !file) {
+            return res.status(400).json({ error: 'body or file required' });
         }
-        const message = await conversationsService.sendMessage(req.params.id, { body, author, mediaUrl });
+
+        let mediaSid = null;
+        if (file) {
+            mediaSid = await conversationsService.uploadMediaToMCS(
+                file.buffer, file.mimetype, file.originalname
+            );
+        }
+
+        const message = await conversationsService.sendMessage(req.params.id, { body: body || null, mediaSid });
         res.json({ message });
     } catch (err) {
         console.error('[Messaging] POST /:id/messages error:', err);
+        if (err.code === 'LIMIT_FILE_SIZE') {
+            return res.status(413).json({ error: 'File too large (max 10 MB)' });
+        }
         res.status(500).json({ error: err.message || 'Failed to send message' });
     }
 });

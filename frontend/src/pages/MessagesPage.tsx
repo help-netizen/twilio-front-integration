@@ -130,10 +130,10 @@ export function MessagesPage() {
         }
     };
 
-    const handleSendMessage = async (body: string) => {
+    const handleSendMessage = async (body: string, file?: File) => {
         if (!selectedConversation) return;
         try {
-            const message = await messagingApi.sendMessage(selectedConversation.id, { body });
+            const message = await messagingApi.sendMessage(selectedConversation.id, { body }, file);
             setMessages(prev => [...prev, message]);
         } catch (err: any) {
             console.error('Failed to send message:', err);

@@ -1,11 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, FileText, Download } from 'lucide-react';
+import { Send, FileText, Download, Paperclip, X } from 'lucide-react';
 import type { Message, MessageMedia } from '../../types/messaging';
 
 interface MessageThreadProps {
     messages: Message[];
     loading: boolean;
-    onSend: (body: string) => Promise<void>;
+    onSend: (body: string, file?: File) => Promise<void>;
 }
 
 function formatMessageTime(dateStr: string | null): string {
@@ -77,12 +77,25 @@ function MediaPreviewInline({ media }: { media: MessageMedia }) {
 export function MessageThread({ messages, loading, onSend }: MessageThreadProps) {
     const [inputValue, setInputValue] = useState('');
     const [sending, setSending] = useState(false);
+    const [attachedFile, setAttachedFile] = useState<File | null>(null);
+    const [filePreview, setFilePreview] = useState<string | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
+
+    // Generate preview URL for images
+    useEffect(() => {
+        if (attachedFile && attachedFile.type.startsWith('image/')) {
+            const url = URL.createObjectURL(attachedFile);
+            setFilePreview(url);
+            return () => URL.revokeObjectURL(url);
+        }
+        setFilePreview(null);
+    }, [attachedFile]);
 
     const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         setInputValue(e.target.value);
@@ -92,17 +105,39 @@ export function MessageThread({ messages, loading, onSend }: MessageThreadProps)
 
     const handleSend = async () => {
         const body = inputValue.trim();
-        if (!body || sending) return;
+        if ((!body && !attachedFile) || sending) return;
         setSending(true);
         try {
-            await onSend(body);
+            await onSend(body, attachedFile || undefined);
             setInputValue('');
+            setAttachedFile(null);
             if (textareaRef.current) textareaRef.current.style.height = 'auto';
         } catch { /* logged in parent */ } finally { setSending(false); }
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
+    };
+
+    const handleAttachClick = () => {
+        fileInputRef.current?.click();
+    };
+
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            if (file.size > 10 * 1024 * 1024) {
+                alert('File too large. Maximum size is 10 MB.');
+                return;
+            }
+            setAttachedFile(file);
+        }
+        // Reset input so same file can be re-selected
+        e.target.value = '';
+    };
+
+    const handleRemoveFile = () => {
+        setAttachedFile(null);
     };
 
     if (loading) {
@@ -137,9 +172,47 @@ export function MessageThread({ messages, loading, onSend }: MessageThreadProps)
                 )}
                 <div ref={messagesEndRef} />
             </div>
+
+            {/* Attachment preview strip */}
+            {attachedFile && (
+                <div className="msg-attach-preview">
+                    {filePreview ? (
+                        <img src={filePreview} alt="Preview" className="msg-attach-preview__image" />
+                    ) : (
+                        <div className="msg-attach-preview__file-icon">
+                            <FileText size={20} />
+                        </div>
+                    )}
+                    <div className="msg-attach-preview__info">
+                        <span className="msg-attach-preview__name">{attachedFile.name}</span>
+                        <span className="msg-attach-preview__size">{formatFileSize(attachedFile.size)}</span>
+                    </div>
+                    <button className="msg-attach-preview__remove" onClick={handleRemoveFile} title="Remove attachment">
+                        <X size={16} />
+                    </button>
+                </div>
+            )}
+
             <div className="msg-sendbox">
+                <input
+                    ref={fileInputRef}
+                    type="file"
+                    className="msg-sendbox__file-input"
+                    onChange={handleFileChange}
+                    accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip"
+                />
+                <button
+                    className="msg-sendbox__attach"
+                    onClick={handleAttachClick}
+                    disabled={sending}
+                    title="Attach file"
+                >
+                    <Paperclip size={18} />
+                </button>
                 <textarea ref={textareaRef} className="msg-sendbox__input" placeholder="Type a message..." value={inputValue} onChange={handleInput} onKeyDown={handleKeyDown} rows={1} disabled={sending} />
-                <button className="msg-sendbox__send" onClick={handleSend} disabled={!inputValue.trim() || sending} title="Send message"><Send size={18} /></button>
+                <button className="msg-sendbox__send" onClick={handleSend} disabled={(!inputValue.trim() && !attachedFile) || sending} title="Send message">
+                    {sending ? <div className="msg-sendbox__spinner" /> : <Send size={18} />}
+                </button>
             </div>
         </div>
     );

@@ -49,14 +49,48 @@ async function getOrCreateConversation(customerE164, proxyE164, companyId) {
 }
 
 /**
+ * Upload media to Twilio MCS (Media Content Service).
+ * Returns the Media SID for attachment to a message.
+ */
+async function uploadMediaToMCS(buffer, contentType, filename) {
+    const url = `https://mcs.us1.twilio.com/v1/Services/${SERVICE_SID}/Media`;
+    const FormData = (await import('form-data')).default;
+    const form = new FormData();
+    form.append('Media', buffer, { filename, contentType });
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Authorization': 'Basic ' + Buffer.from(
+                `${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`
+            ).toString('base64'),
+            ...form.getHeaders(),
+        },
+        body: form,
+    });
+
+    if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`MCS upload failed (${response.status}): ${errText}`);
+    }
+
+    const data = await response.json();
+    console.log(`[ConvService] Uploaded media to MCS: ${data.sid} (${contentType}, ${buffer.length} bytes)`);
+    return data.sid;
+}
+
+/**
  * Send a message in a conversation.
  */
-async function sendMessage(conversationId, { body, author = 'agent', mediaUrl }) {
+async function sendMessage(conversationId, { body, author = 'agent', mediaSid }) {
     const conv = await convQueries.getConversationById(conversationId);
     if (!conv) throw new Error(`Conversation ${conversationId} not found`);
 
-    const params = { author, body };
-    if (mediaUrl) params.mediaSid = mediaUrl;
+    const params = { author };
+    if (body) params.body = body;
+    if (mediaSid) {
+        params.mediaSid = mediaSid;
+    }
 
     const twilioMsg = await client.conversations.v1
         .services(SERVICE_SID)
@@ -374,6 +408,7 @@ async function getMediaTemporaryUrl(mediaId, forceRefresh = false) {
 module.exports = {
     getOrCreateConversation,
     sendMessage,
+    uploadMediaToMCS,
     processWebhookEvent,
     getMediaTemporaryUrl,
 };
