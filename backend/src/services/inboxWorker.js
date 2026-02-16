@@ -163,15 +163,23 @@ async function processVoiceEvent(payload, eventType, traceId) {
 
     const isFinal = isFinalStatus(normalized.eventStatus);
 
-    // Guard: don't overwrite voicemail statuses with Twilio's generic completed/no-answer
-    const VOICEMAIL_STATUSES = ['voicemail_recording', 'voicemail_left'];
+    // Guard: don't let non-final events overwrite a final status
+    // (e.g. dial.action sends "in-progress" after call is already "completed")
     let skipUpsert = false;
     if (!normalized.parentCallSid) {
         try {
             const existing = await queries.getCallByCallSid(normalized.callSid);
-            if (existing && VOICEMAIL_STATUSES.includes(existing.status)) {
-                console.log(`[${traceId}] Skipping upsert — call is in ${existing.status} status`);
-                skipUpsert = true;
+            if (existing) {
+                const existingIsFinal = isFinalStatus(existing.status) ||
+                    ['voicemail_recording', 'voicemail_left'].includes(existing.status);
+                if (existingIsFinal && !isFinal) {
+                    console.log(`[${traceId}] Skipping upsert — call is final (${existing.status}), ignoring non-final ${normalized.eventStatus}`);
+                    skipUpsert = true;
+                }
+                if (['voicemail_recording', 'voicemail_left'].includes(existing.status)) {
+                    console.log(`[${traceId}] Skipping upsert — call is in ${existing.status} status`);
+                    skipUpsert = true;
+                }
             }
         } catch (e) { /* proceed with upsert if check fails */ }
     }
