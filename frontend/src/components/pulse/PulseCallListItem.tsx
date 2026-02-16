@@ -124,12 +124,12 @@ export function PulseCallListItem({ call }: { call: CallData }) {
 
     const otherPartyNumber = call.direction === 'incoming' ? call.from : call.to;
     const directionLabel = call.direction === 'incoming' ? 'Incoming Call' : 'Outgoing Call';
-    const hasContentBelow = !!(call.audioUrl || call.summary || call.transcription);
+    // Tabs always render, so there's always content below the header
 
     return (
         <Card className="overflow-hidden border border-gray-200 hover:shadow-md transition-shadow">
             {/* ─── Header ─── */}
-            <div className={`p-4 ${hasContentBelow ? 'pb-0' : ''}`}>
+            <div className="p-4 pb-0">
                 <div className="flex items-center gap-3">
                     {/* Direction Icon with Status Color (w-9 h-9 rounded-full border) */}
                     <TooltipProvider>
@@ -197,29 +197,25 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                             <div className="flex items-center gap-3">
                                 {/* Summary and Transcription tabs on the left */}
                                 <div className="flex items-center gap-3 shrink-0">
-                                    {call.summary && (
-                                        <button
-                                            onClick={() => setActiveSection(activeSection === 'summary' ? null : 'summary')}
-                                            className={`text-xs transition-colors ${activeSection === 'summary'
-                                                ? 'text-gray-700 border-b-2 border-gray-700'
-                                                : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
-                                                }`}
-                                        >
-                                            Summary
-                                        </button>
-                                    )}
+                                    <button
+                                        onClick={() => setActiveSection(activeSection === 'summary' ? null : 'summary')}
+                                        className={`text-xs transition-colors ${activeSection === 'summary'
+                                            ? 'text-gray-700 border-b-2 border-gray-700'
+                                            : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
+                                            }`}
+                                    >
+                                        Summary
+                                    </button>
 
-                                    {call.transcription && (
-                                        <button
-                                            onClick={() => setActiveSection(activeSection === 'transcription' ? null : 'transcription')}
-                                            className={`text-xs transition-colors ${activeSection === 'transcription'
-                                                ? 'text-gray-700 border-b-2 border-gray-700'
-                                                : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
-                                                }`}
-                                        >
-                                            {call.transcriptStatus === 'processing' ? 'Transcribing...' : 'Transcript'}
-                                        </button>
-                                    )}
+                                    <button
+                                        onClick={() => setActiveSection(activeSection === 'transcription' ? null : 'transcription')}
+                                        className={`text-xs transition-colors ${activeSection === 'transcription'
+                                            ? 'text-gray-700 border-b-2 border-gray-700'
+                                            : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
+                                            }`}
+                                    >
+                                        {call.transcriptStatus === 'processing' ? 'Transcribing...' : 'Transcript'}
+                                    </button>
                                 </div>
 
                                 {/* Audio Controls */}
@@ -286,31 +282,27 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                 )}
 
                 {/* No Audio: Summary/Transcription with tab-style buttons */}
-                {!call.audioUrl && (call.summary || call.transcription) && (
+                {!call.audioUrl && (
                     <div className="p-4 bg-white border-t border-gray-200">
                         <div className="flex items-center gap-3 mb-3">
-                            {call.summary && (
-                                <button
-                                    onClick={() => setActiveSection(activeSection === 'summary' ? null : 'summary')}
-                                    className={`text-xs transition-colors pb-1 ${activeSection === 'summary'
-                                        ? 'text-gray-700 border-b-2 border-gray-700'
-                                        : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
-                                        }`}
-                                >
-                                    Summary
-                                </button>
-                            )}
-                            {call.transcription && (
-                                <button
-                                    onClick={() => setActiveSection(activeSection === 'transcription' ? null : 'transcription')}
-                                    className={`text-xs transition-colors pb-1 ${activeSection === 'transcription'
-                                        ? 'text-gray-700 border-b-2 border-gray-700'
-                                        : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
-                                        }`}
-                                >
-                                    {call.transcriptStatus === 'processing' ? 'Transcribing...' : 'Transcript'}
-                                </button>
-                            )}
+                            <button
+                                onClick={() => setActiveSection(activeSection === 'summary' ? null : 'summary')}
+                                className={`text-xs transition-colors pb-1 ${activeSection === 'summary'
+                                    ? 'text-gray-700 border-b-2 border-gray-700'
+                                    : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
+                                    }`}
+                            >
+                                Summary
+                            </button>
+                            <button
+                                onClick={() => setActiveSection(activeSection === 'transcription' ? null : 'transcription')}
+                                className={`text-xs transition-colors pb-1 ${activeSection === 'transcription'
+                                    ? 'text-gray-700 border-b-2 border-gray-700'
+                                    : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
+                                    }`}
+                            >
+                                {call.transcriptStatus === 'processing' ? 'Transcribing...' : 'Transcript'}
+                            </button>
                         </div>
 
                         {activeSection === 'summary' && call.summary && (
