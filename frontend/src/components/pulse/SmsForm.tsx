@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Send, Wand2, ChevronDown, Paperclip, X } from 'lucide-react';
+import { Send, ChevronDown, Paperclip, X } from 'lucide-react';
 
 interface SmsFormProps {
     onSend: (message: string, file?: File) => void;
