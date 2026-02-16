@@ -180,132 +180,154 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                 </div>
             </div>
 
-            {/* ─── Audio Player (px-4 pb-4 bg-white) ─── */}
-            {call.audioUrl && (
-                <div className="px-4 pb-4 bg-white">
-                    <audio
-                        ref={audioRef}
-                        src={token ? `${call.audioUrl}?token=${encodeURIComponent(token)}` : call.audioUrl}
-                        preload="metadata"
-                    />
+            {/* ─── Content wrapper (bg-gray-50/50) ─── */}
+            <div className="bg-gray-50/50">
+                {/* Audio Player (px-4 pb-4 bg-white) */}
+                {call.audioUrl && (
+                    <div className="px-4 pb-4 bg-white">
+                        <audio
+                            ref={audioRef}
+                            src={token ? `${call.audioUrl}?token=${encodeURIComponent(token)}` : call.audioUrl}
+                            preload="metadata"
+                        />
 
-                    <div className="space-y-3">
-                        {/* Action buttons and Controls in one row */}
-                        <div className="flex items-center gap-3">
-                            {/* Summary and Transcription tabs on the left */}
-                            <div className="flex items-center gap-3 shrink-0">
-                                {call.summary && (
-                                    <button
-                                        onClick={() => setActiveSection(activeSection === 'summary' ? null : 'summary')}
-                                        className={`text-xs transition-colors ${activeSection === 'summary'
-                                            ? 'text-gray-700 border-b-2 border-gray-700'
-                                            : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
-                                            }`}
-                                    >
-                                        Summary
-                                    </button>
-                                )}
-
-                                {call.transcription && (
-                                    <button
-                                        onClick={() => setActiveSection(activeSection === 'transcription' ? null : 'transcription')}
-                                        className={`text-xs transition-colors ${activeSection === 'transcription'
-                                            ? 'text-gray-700 border-b-2 border-gray-700'
-                                            : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
-                                            }`}
-                                    >
-                                        {call.transcriptStatus === 'processing' ? 'Transcribing...' : 'Transcript'}
-                                    </button>
-                                )}
-                            </div>
-
-                            {/* Audio Controls */}
-                            <div className="flex items-center gap-1 shrink-0">
-                                <button
-                                    onClick={() => handleSkip(-10)}
-                                    title="Rewind 10 seconds"
-                                    className="h-7 w-7 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors relative"
-                                >
-                                    <RotateCcw className="w-3.5 h-3.5" />
-                                    <span className="absolute text-[9px] font-semibold">10</span>
-                                </button>
-
-                                <button
-                                    onClick={handlePlayPause}
-                                    className="h-7 w-7 flex items-center justify-center text-gray-500 hover:text-gray-700 transition-colors"
-                                >
-                                    {isPlaying ? (
-                                        <Pause className="w-3.5 h-3.5" />
-                                    ) : (
-                                        <Play className="w-3.5 h-3.5" />
+                        <div className="space-y-3">
+                            {/* Action buttons and Controls in one row */}
+                            <div className="flex items-center gap-3">
+                                {/* Summary and Transcription tabs on the left */}
+                                <div className="flex items-center gap-3 shrink-0">
+                                    {call.summary && (
+                                        <button
+                                            onClick={() => setActiveSection(activeSection === 'summary' ? null : 'summary')}
+                                            className={`text-xs transition-colors ${activeSection === 'summary'
+                                                ? 'text-gray-700 border-b-2 border-gray-700'
+                                                : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
+                                                }`}
+                                        >
+                                            Summary
+                                        </button>
                                     )}
-                                </button>
 
+                                    {call.transcription && (
+                                        <button
+                                            onClick={() => setActiveSection(activeSection === 'transcription' ? null : 'transcription')}
+                                            className={`text-xs transition-colors ${activeSection === 'transcription'
+                                                ? 'text-gray-700 border-b-2 border-gray-700'
+                                                : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
+                                                }`}
+                                        >
+                                            {call.transcriptStatus === 'processing' ? 'Transcribing...' : 'Transcript'}
+                                        </button>
+                                    )}
+                                </div>
+
+                                {/* Audio Controls */}
+                                <div className="flex items-center gap-1 shrink-0">
+                                    <button
+                                        onClick={() => handleSkip(-10)}
+                                        title="Rewind 10 seconds"
+                                        className="h-7 w-7 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors relative"
+                                    >
+                                        <RotateCcw className="w-3.5 h-3.5" />
+                                        <span className="absolute text-[9px] font-semibold">10</span>
+                                    </button>
+
+                                    <button
+                                        onClick={handlePlayPause}
+                                        className="h-7 w-7 flex items-center justify-center text-gray-500 hover:text-gray-700 transition-colors"
+                                    >
+                                        {isPlaying ? (
+                                            <Pause className="w-3.5 h-3.5" />
+                                        ) : (
+                                            <Play className="w-3.5 h-3.5" />
+                                        )}
+                                    </button>
+
+                                    <button
+                                        onClick={() => handleSkip(10)}
+                                        title="Forward 10 seconds"
+                                        className="h-7 w-7 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors relative"
+                                    >
+                                        <RotateCw className="w-3.5 h-3.5" />
+                                        <span className="absolute text-[9px] font-semibold">10</span>
+                                    </button>
+                                </div>
+
+                                {/* Time Display */}
+                                <div className="flex items-center">
+                                    <span className="text-xs text-gray-500 font-mono">
+                                        {formatAudioTime(currentTime)} / {formatAudioTime(duration)}
+                                    </span>
+                                </div>
+                            </div>
+
+                            {/* Summary - Show only when active */}
+                            {activeSection === 'summary' && call.summary && (
+                                <div className="pt-2">
+                                    <p className="text-sm text-gray-700 leading-relaxed">
+                                        {call.summary}
+                                    </p>
+                                </div>
+                            )}
+
+                            {/* Transcription - Show only when active */}
+                            {activeSection === 'transcription' && call.transcription && (
+                                <div className="pt-2">
+                                    <ScrollArea className="h-48 bg-gray-50 p-3 rounded-md">
+                                        <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                                            {call.transcription}
+                                        </p>
+                                    </ScrollArea>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {/* No Audio: Summary/Transcription with tab-style buttons */}
+                {!call.audioUrl && (call.summary || call.transcription) && (
+                    <div className="p-4 bg-white border-t border-gray-200">
+                        <div className="flex items-center gap-3 mb-3">
+                            {call.summary && (
                                 <button
-                                    onClick={() => handleSkip(10)}
-                                    title="Forward 10 seconds"
-                                    className="h-7 w-7 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors relative"
+                                    onClick={() => setActiveSection(activeSection === 'summary' ? null : 'summary')}
+                                    className={`text-xs transition-colors pb-1 ${activeSection === 'summary'
+                                        ? 'text-gray-700 border-b-2 border-gray-700'
+                                        : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
+                                        }`}
                                 >
-                                    <RotateCw className="w-3.5 h-3.5" />
-                                    <span className="absolute text-[9px] font-semibold">10</span>
+                                    Summary
                                 </button>
-                            </div>
-
-                            {/* Time Display */}
-                            <div className="flex items-center">
-                                <span className="text-xs text-gray-500 font-mono">
-                                    {formatAudioTime(currentTime)} / {formatAudioTime(duration)}
-                                </span>
-                            </div>
+                            )}
+                            {call.transcription && (
+                                <button
+                                    onClick={() => setActiveSection(activeSection === 'transcription' ? null : 'transcription')}
+                                    className={`text-xs transition-colors pb-1 ${activeSection === 'transcription'
+                                        ? 'text-gray-700 border-b-2 border-gray-700'
+                                        : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
+                                        }`}
+                                >
+                                    {call.transcriptStatus === 'processing' ? 'Transcribing...' : 'Transcript'}
+                                </button>
+                            )}
                         </div>
 
-
-                        {/* Summary - Show only when active */}
                         {activeSection === 'summary' && call.summary && (
-                            <div className="pt-2">
-                                <p className="text-sm text-gray-700 leading-relaxed">
-                                    {call.summary}
-                                </p>
-                            </div>
-                        )}
-
-                        {/* Transcription - Show only when active */}
-                        {activeSection === 'transcription' && call.transcription && (
-                            <div className="pt-2">
-                                <ScrollArea className="h-48 bg-gray-50 p-3 rounded-md">
-                                    <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
-                                        {call.transcription}
-                                    </p>
-                                </ScrollArea>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
-
-            {/* ─── No Audio: Summary and Transcription separately ─── */}
-            {!call.audioUrl && (
-                <>
-                    {call.summary && (
-                        <div className="px-4 pb-4 border-t">
-                            <h4 className="font-medium text-sm mt-3 mb-2">Summary</h4>
-                            <p className="text-sm leading-relaxed bg-muted/50 p-3 rounded-md">
+                            <p className="text-sm text-gray-700 leading-relaxed">
                                 {call.summary}
                             </p>
-                        </div>
-                    )}
-                    {call.transcription && (
-                        <div className="px-4 pb-4 border-t">
-                            <h4 className="font-medium text-sm mt-3 mb-2">Transcription</h4>
+                        )}
+
+                        {activeSection === 'transcription' && call.transcription && (
                             <ScrollArea className="h-48 bg-gray-50 p-3 rounded-md">
-                                <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                                <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
                                     {call.transcription}
                                 </p>
                             </ScrollArea>
-                        </div>
-                    )}
-                </>
-            )}
+                        )}
+                    </div>
+                )}
+            </div>
 
             {/* ─── System Information (bg-gray-50, p-4 pt-0, space-y-2) ─── */}
             {showSystemInfo && (
