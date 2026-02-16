@@ -253,15 +253,79 @@ async function handleVoiceInbound(req, res) {
             console.log(`[${traceId}] Inbound: ${From} → SIP`);
             const sipDomain = process.env.SIP_DOMAIN || 'abchomes.sip.us1.twilio.com';
             // Support multiple SIP users (ring all simultaneously)
-            const sipUsers = (process.env.SIP_USERS || process.env.SIP_USER || 'dispatcher').split(',').map(u => u.trim());
-            const sipEndpoints = sipUsers.map(user =>
-                `        <Sip statusCallback="${statusCallbackUrl}"
+            const allSipUsers = (process.env.SIP_USERS || process.env.SIP_USER || 'dispatcher').split(',').map(u => u.trim());
+
+            // ── Exclude busy operators ──────────────────────────────────────
+            // Query child SIP legs that are currently active (not yet final)
+            let availableUsers = allSipUsers;
+            try {
+                const db = require('../db/connection');
+                const busyResult = await db.query(
+                    `SELECT DISTINCT to_number FROM calls
+                     WHERE status IN ('ringing', 'in-progress', 'voicemail_recording')
+                       AND is_final = false
+                       AND to_number LIKE 'sip:%'`
+                );
+                const busySipUsers = new Set();
+                for (const row of busyResult.rows) {
+                    // Extract username from "sip:dana@domain" or "sip:dana@domain:port"
+                    const match = row.to_number.match(/^sip:([^@]+)@/);
+                    if (match) busySipUsers.add(match[1]);
+                }
+                if (busySipUsers.size > 0) {
+                    availableUsers = allSipUsers.filter(u => !busySipUsers.has(u));
+                    console.log(`[${traceId}] Busy operators: [${[...busySipUsers].join(',')}], available: [${availableUsers.join(',')}]`);
+                }
+            } catch (busyErr) {
+                console.warn(`[${traceId}] Failed to check busy operators, ringing all:`, busyErr.message);
+            }
+
+            // If all operators are busy → go straight to voicemail
+            if (availableUsers.length === 0) {
+                console.log(`[${traceId}] All operators busy → voicemail`);
+                const vmLanguage = process.env.VM_LANGUAGE || 'en-US';
+                const vmGreeting = process.env.VM_GREETING || 'Hello! Our team is currently assisting other customers. Please leave your name and phone number, and we will call you back as soon as possible.';
+                const vmMaxLen = Number(process.env.VM_MAXLEN || 180);
+                const vmSilenceTimeout = Number(process.env.VM_SILENCE_TIMEOUT || 5);
+                const vmFinishOnKey = process.env.VM_FINISH_ON_KEY || '#';
+
+                twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say language="${vmLanguage}">${vmGreeting}</Say>
+    <Record maxLength="${vmMaxLen}"
+            timeout="${vmSilenceTimeout}"
+            finishOnKey="${vmFinishOnKey}"
+            playBeep="true"
+            transcribe="false"
+            recordingStatusCallback="${recordingStatusUrl}"
+            recordingStatusCallbackMethod="POST" />
+    <Hangup />
+</Response>`;
+
+                // Mark as voicemail_recording
+                try {
+                    const db = require('../db/connection');
+                    await db.query(
+                        `UPDATE calls SET status = 'voicemail_recording', is_final = false WHERE call_sid = $1`,
+                        [CallSid]
+                    );
+                    const realtimeService = require('../services/realtimeService');
+                    const freshCall = await queries.getCallByCallSid(CallSid);
+                    if (freshCall) {
+                        realtimeService.publishCallUpdate({ eventType: 'call.updated', ...freshCall });
+                    }
+                } catch (vmErr) {
+                    console.warn(`[${traceId}] Failed to set voicemail_recording:`, vmErr.message);
+                }
+            } else {
+                const sipEndpoints = availableUsers.map(user =>
+                    `        <Sip statusCallback="${statusCallbackUrl}"
              statusCallbackEvent="initiated ringing answered completed"
              statusCallbackMethod="POST">sip:${user}@${sipDomain}</Sip>`
-            ).join('\n');
+                ).join('\n');
 
-            const inboundTimeout = Number(process.env.DIAL_TIMEOUT || 25);
-            twiml = `<?xml version="1.0" encoding="UTF-8"?>
+                const inboundTimeout = Number(process.env.DIAL_TIMEOUT || 25);
+                twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Dial timeout="${inboundTimeout}"
           answerOnBridge="true"
@@ -273,6 +337,7 @@ async function handleVoiceInbound(req, res) {
 ${sipEndpoints}
     </Dial>
 </Response>`;
+            }
         }
 
         res.type('text/xml');
