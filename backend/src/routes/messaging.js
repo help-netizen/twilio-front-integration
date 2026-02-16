@@ -75,7 +75,8 @@ router.post('/:id/messages', upload.single('file'), async (req, res) => {
             );
         }
 
-        const message = await conversationsService.sendMessage(req.params.id, { body: body || null, mediaSid });
+        const fileInfo = file ? { filename: file.originalname, contentType: file.mimetype, size: file.size } : null;
+        const message = await conversationsService.sendMessage(req.params.id, { body: body || null, mediaSid, fileInfo });
         res.json({ message });
     } catch (err) {
         console.error('[Messaging] POST /:id/messages error:', err);

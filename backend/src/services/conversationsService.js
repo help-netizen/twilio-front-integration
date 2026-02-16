@@ -91,7 +91,7 @@ async function uploadMediaToMCS(buffer, contentType, filename) {
 /**
  * Send a message in a conversation.
  */
-async function sendMessage(conversationId, { body, author = 'agent', mediaSid }) {
+async function sendMessage(conversationId, { body, author = 'agent', mediaSid, fileInfo }) {
     const conv = await convQueries.getConversationById(conversationId);
     if (!conv) throw new Error(`Conversation ${conversationId} not found`);
 
@@ -113,11 +113,26 @@ async function sendMessage(conversationId, { body, author = 'agent', mediaSid })
         author,
         author_type: 'agent',
         direction: 'outbound',
-        body,
+        body: body || (fileInfo ? `[${fileInfo.filename}]` : null),
         delivery_status: 'sent',
         date_created_remote: twilioMsg.dateCreated,
         company_id: conv.company_id,
     });
+
+    // Save media record so UI can render it immediately
+    if (mediaSid && fileInfo) {
+        const mediaRecord = await convQueries.insertMedia({
+            message_id: dbMsg.id,
+            twilio_media_sid: mediaSid,
+            filename: fileInfo.filename,
+            content_type: fileInfo.contentType,
+            size_bytes: fileInfo.size,
+            preview_kind: guessPreviewKind(fileInfo.contentType),
+        });
+        dbMsg.media = mediaRecord ? [mediaRecord] : [];
+    } else {
+        dbMsg.media = [];
+    }
 
     await convQueries.updateConversationPreview(conv.id, {
         body: body || '[media]',
