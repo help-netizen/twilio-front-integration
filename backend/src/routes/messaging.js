@@ -76,7 +76,19 @@ router.post('/:id/messages', upload.single('file'), async (req, res) => {
         }
 
         const fileInfo = file ? { filename: file.originalname, contentType: file.mimetype, size: file.size } : null;
-        const message = await conversationsService.sendMessage(req.params.id, { body: body || null, mediaSid, fileInfo });
+
+        // Twilio Conversations drops body from SMS when mediaSid is set,
+        // so send media and text as separate messages.
+        let message;
+        if (mediaSid && body) {
+            // 1) media-only message
+            message = await conversationsService.sendMessage(req.params.id, { body: null, mediaSid, fileInfo });
+            // 2) text-only message
+            message = await conversationsService.sendMessage(req.params.id, { body });
+        } else {
+            message = await conversationsService.sendMessage(req.params.id, { body: body || null, mediaSid, fileInfo });
+        }
+
         res.json({ message });
     } catch (err) {
         console.error('[Messaging] POST /:id/messages error:', err);
