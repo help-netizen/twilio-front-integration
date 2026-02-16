@@ -59,10 +59,35 @@
     color: rgba(255, 255, 255, 0.8);
 }
 
+.wizard__header-right {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    flex-shrink: 0;
+}
+
+.wizard__call-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border-radius: 8px 0 0 8px;
+    background: #16a34a;
+    color: white;
+    font-size: 14px;
+    font-weight: 600;
+    text-decoration: none;
+    transition: background 0.2s;
+}
+
+.wizard__call-btn:hover {
+    background: #15803d;
+}
+
 .wizard__badge {
     text-align: center;
     background: rgba(255, 255, 255, 0.2);
-    border-radius: 8px;
+    border-radius: 0 8px 8px 0;
     padding: 6px 14px;
 }
 

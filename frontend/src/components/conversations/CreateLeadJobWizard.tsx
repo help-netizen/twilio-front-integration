@@ -671,12 +671,22 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
                             </div>
                         </div>
                     </div>
-                    {callCount !== undefined && (
-                        <div className="wizard__badge">
-                            <div className="wizard__badge-number">{callCount}</div>
-                            <div className="wizard__badge-label">Calls</div>
-                        </div>
-                    )}
+                    <div className="wizard__header-right">
+                        <a
+                            href={`tel:${phone}`}
+                            className="wizard__call-btn"
+                            title={`Call ${formatPhone(phone)}`}
+                        >
+                            <Phone className="w-4" />
+                            <span>Call</span>
+                        </a>
+                        {callCount !== undefined && (
+                            <div className="wizard__badge">
+                                <div className="wizard__badge-number">{callCount}</div>
+                                <div className="wizard__badge-label">Calls</div>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
 

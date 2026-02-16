@@ -14,29 +14,28 @@
 /* ── Header (gradient) ─────────────────────────────────────────────────── */
 .lead-card__header {
     background: linear-gradient(to right, #2563eb, #1d4ed8);
-    padding: 24px;
+    padding: 16px 20px;
     color: white;
 }
 
 .lead-card__header-content {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
 }
 
 .lead-card__header-left {
     display: flex;
-    align-items: flex-start;
-    gap: 16px;
+    align-items: center;
+    gap: 12px;
 }
 
 /* Avatar */
 .lead-card__avatar {
-    width: 64px;
-    height: 64px;
-    border-radius: 9999px;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
     background: rgba(255, 255, 255, 0.2);
-    backdrop-filter: blur(4px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -44,36 +43,36 @@
 }
 
 .lead-card__avatar-icon {
-    width: 32px;
-    height: 32px;
+    width: 24px;
+    height: 24px;
     color: white;
 }
 
 /* Name & phone */
 .lead-card__name {
-    font-size: 24px;
+    font-size: 18px;
     font-weight: 700;
-    line-height: 32px;
-    margin-bottom: 4px;
+    line-height: 1.2;
     color: white;
 }
 
 .lead-card__phone-row {
     display: flex;
     align-items: center;
-    gap: 8px;
-    color: #dbeafe;
+    gap: 6px;
+    margin-top: 2px;
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.8);
 }
 
 .lead-card__phone-icon {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
 }
 
 .lead-card__phone-number {
     font-family: ui-monospace, monospace;
-    font-size: 14px;
-    color: #dbeafe;
+    font-size: 13px;
 }
 
 
