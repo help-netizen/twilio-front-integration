@@ -25,6 +25,7 @@ export interface Call {
     answered_at: string | null;
     ended_at: string | null;
     duration_sec: number | null;
+    answered_by: string | null;
     price: string | null;
     price_unit: string | null;
     created_at: string;

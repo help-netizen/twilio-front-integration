@@ -51,6 +51,7 @@ function callToCallData(call: Call): CallData {
         recordingDuration: call.recording?.duration_sec || undefined,
         transcription: call.transcript?.text || undefined,
         transcriptStatus: call.transcript?.status as CallData['transcriptStatus'] || undefined,
+        answeredBy: call.answered_by || undefined,
     };
 }
 
@@ -84,6 +85,7 @@ export const ConversationPage: React.FC = () => {
                         is_final: event.is_final ?? updated[idx].is_final,
                         duration_sec: event.duration_sec ?? updated[idx].duration_sec,
                         ended_at: event.ended_at ?? updated[idx].ended_at,
+                        answered_by: event.answered_by ?? updated[idx].answered_by,
                     };
                     return updated;
                 }

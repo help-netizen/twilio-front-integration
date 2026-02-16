@@ -261,15 +261,20 @@ async function processVoiceEvent(payload, eventType, traceId) {
         try {
             const parentCall = await queries.getCallByCallSid(normalized.parentCallSid);
             if (parentCall && parentCall.status === 'ringing') {
+                // Extract operator name from SIP URI (e.g., sip:dana@domain.com → dana)
+                const toNum = normalized.toNumber || '';
+                const sipMatch = toNum.match(/^sip:([^@]+)@/i);
+                const answeredBy = sipMatch ? sipMatch[1] : null;
+
                 await db.query(
-                    `UPDATE calls SET status = 'in-progress', answered_at = $2 WHERE call_sid = $1`,
-                    [normalized.parentCallSid, normalized.eventTime]
+                    `UPDATE calls SET status = 'in-progress', answered_at = $2, answered_by = $3 WHERE call_sid = $1`,
+                    [normalized.parentCallSid, normalized.eventTime, answeredBy]
                 );
                 const freshParent = await queries.getCallByCallSid(normalized.parentCallSid);
                 if (freshParent) {
                     publishRealtimeEvent('call.updated', freshParent, traceId);
                 }
-                console.log(`[${traceId}] Child answered → parent ${normalized.parentCallSid} → in-progress`);
+                console.log(`[${traceId}] Child answered → parent ${normalized.parentCallSid} → in-progress (by ${answeredBy})`);
             }
         } catch (e) {
             console.warn(`[${traceId}] Failed to update parent to in-progress:`, e.message);

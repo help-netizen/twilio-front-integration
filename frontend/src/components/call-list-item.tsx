@@ -46,6 +46,7 @@ export interface CallData {
     summary?: string;
     transcription?: string;
     transcriptStatus?: 'processing' | 'completed' | 'failed';
+    answeredBy?: string;
 }
 
 interface CallListItemProps {
@@ -190,7 +191,9 @@ export function CallListItem({ call }: CallListItemProps) {
                         <div className="flex items-center justify-between gap-2">
                             <div className="flex items-baseline gap-2">
                                 <p className="text-sm font-mono font-semibold">{formatPhoneNumber(otherPartyNumber)}</p>
-                                {(call.totalDuration || call.duration) ? (
+                                {call.status === 'in-progress' && call.answeredBy ? (
+                                    <span className="text-xs font-medium" style={{ color: '#16a34a' }}>{call.answeredBy}</span>
+                                ) : (call.totalDuration || call.duration) ? (
                                     <span className="text-xs text-muted-foreground">{formatDuration(call.totalDuration || call.duration)}</span>
                                 ) : null}
                             </div>
