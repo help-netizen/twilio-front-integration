@@ -200,10 +200,10 @@ export const PulsePage: React.FC = () => {
     const hasActiveCall = contactCalls.some((c: any) => ['ringing', 'in-progress', 'queued', 'initiated', 'voicemail_recording'].includes(c.status));
 
     // Send SMS handler
-    const handleSendMessage = async (body: string, file?: File) => {
+    const handleSendMessage = async (message: string, files?: File[]) => {
         if (!conversations.length) return;
         const convId = conversations[0].id;
-        await messagingApi.sendMessage(convId, { body }, file);
+        await messagingApi.sendMessage(convId, { body: message }, files?.[0]);
         refetchTimeline();
     };
 
