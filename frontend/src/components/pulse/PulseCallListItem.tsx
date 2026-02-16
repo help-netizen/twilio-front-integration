@@ -124,11 +124,12 @@ export function PulseCallListItem({ call }: { call: CallData }) {
 
     const otherPartyNumber = call.direction === 'incoming' ? call.from : call.to;
     const directionLabel = call.direction === 'incoming' ? 'Incoming Call' : 'Outgoing Call';
+    const hasContentBelow = !!(call.audioUrl || call.summary || call.transcription);
 
     return (
         <Card className="overflow-hidden border border-gray-200 hover:shadow-md transition-shadow">
-            {/* ─── Header (p-4 pb-0) ─── */}
-            <div className="p-4 pb-0">
+            {/* ─── Header ─── */}
+            <div className={`p-4 ${hasContentBelow ? 'pb-0' : ''}`}>
                 <div className="flex items-center gap-3">
                     {/* Direction Icon with Status Color (w-9 h-9 rounded-full border) */}
                     <TooltipProvider>
