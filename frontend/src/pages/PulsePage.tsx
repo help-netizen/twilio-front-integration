@@ -1,18 +1,23 @@
 import React, { useState, useMemo } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
+import { toast } from 'sonner';
 import { useCallsByContact } from '../hooks/useConversations';
 import { usePulseTimeline } from '../hooks/usePulseTimeline';
 import { messagingApi } from '../services/messagingApi';
+import * as leadsApi from '../services/leadsApi';
 import { useRealtimeEvents, type SSECallEvent } from '../hooks/useRealtimeEvents';
 import { PulseTimeline } from '../components/pulse/PulseTimeline';
 import { SmsForm } from '../components/pulse/SmsForm';
-import { LeadCard } from '../components/conversations/LeadCard';
+import { LeadDetailPanel } from '../components/leads/LeadDetailPanel';
+import { EditLeadDialog } from '../components/leads/EditLeadDialog';
+import { ConvertToJobDialog } from '../components/leads/ConvertToJobDialog';
 import { normalizePhoneNumber, formatPhoneNumber } from '../utils/formatters';
 import { useLeadByPhone } from '../hooks/useLeadByPhone';
 import { Input } from '../components/ui/input';
 import { Skeleton } from '../components/ui/skeleton';
 import { Search, PhoneOff, Activity, PhoneIncoming, PhoneOutgoing, ArrowLeftRight } from 'lucide-react';
 import type { Call } from '../types/models';
+import type { Lead } from '../types/lead';
 import type { CallData } from '../components/call-list-item';
 import './PulsePage.css';
 
@@ -197,7 +202,90 @@ export const PulsePage: React.FC = () => {
     const contactCalls = timelineData?.calls || [];
     const contact = contactCalls[0]?.contact;
     const phone = contact?.phone_e164 || contactCalls[0]?.from_number || contactCalls[0]?.to_number || '';
-    const hasActiveCall = contactCalls.some((c: any) => ['ringing', 'in-progress', 'queued', 'initiated', 'voicemail_recording'].includes(c.status));
+
+    // Lead management state
+    const { lead: fetchedLead } = useLeadByPhone(phone || undefined);
+    const [leadOverride, setLeadOverride] = useState<Lead | null>(null);
+    const [editingLead, setEditingLead] = useState<Lead | null>(null);
+    const [convertingLead, setConvertingLead] = useState<Lead | null>(null);
+
+    // Use overridden lead if available (after mutations), otherwise fetched
+    const lead = leadOverride || fetchedLead;
+
+    // Reset override when phone changes
+    React.useEffect(() => {
+        setLeadOverride(null);
+    }, [phone]);
+
+    // Lead action handlers (same pattern as LeadsPage)
+    const handleUpdateStatus = async (uuid: string, status: string) => {
+        try {
+            await leadsApi.updateLead(uuid, { Status: status } as any);
+            const detail = await leadsApi.getLeadByUUID(uuid);
+            setLeadOverride(detail.data.lead);
+            toast.success('Status updated');
+        } catch { toast.error('Failed to update status'); }
+    };
+
+    const handleUpdateSource = async (uuid: string, source: string) => {
+        try {
+            await leadsApi.updateLead(uuid, { JobSource: source });
+            const detail = await leadsApi.getLeadByUUID(uuid);
+            setLeadOverride(detail.data.lead);
+            toast.success('Source updated');
+        } catch { toast.error('Failed to update source'); }
+    };
+
+    const handleUpdateComments = async (uuid: string, comments: string) => {
+        try {
+            await leadsApi.updateLead(uuid, { Comments: comments });
+            const detail = await leadsApi.getLeadByUUID(uuid);
+            setLeadOverride(detail.data.lead);
+            toast.success('Comments saved');
+        } catch { toast.error('Failed to save comments'); }
+    };
+
+    const handleMarkLost = async (uuid: string) => {
+        try {
+            await leadsApi.markLost(uuid);
+            const detail = await leadsApi.getLeadByUUID(uuid);
+            setLeadOverride(detail.data.lead);
+            toast.success('Lead marked as lost');
+        } catch { toast.error('Failed to mark lead as lost'); }
+    };
+
+    const handleActivate = async (uuid: string) => {
+        try {
+            await leadsApi.activateLead(uuid);
+            const detail = await leadsApi.getLeadByUUID(uuid);
+            setLeadOverride(detail.data.lead);
+            toast.success('Lead activated');
+        } catch { toast.error('Failed to activate lead'); }
+    };
+
+    const handleConvert = (_uuid: string) => {
+        if (lead) setConvertingLead(lead);
+    };
+
+    const handleConvertSuccess = async (updatedLead: Lead) => {
+        try {
+            const detail = await leadsApi.getLeadByUUID(updatedLead.UUID);
+            setLeadOverride(detail.data.lead);
+        } catch {
+            setLeadOverride(updatedLead);
+        }
+        setConvertingLead(null);
+    };
+
+    const handleDelete = async (uuid: string) => {
+        await handleMarkLost(uuid);
+    };
+
+    const handleUpdateLead = async (updatedLead: Lead) => {
+        setLeadOverride(updatedLead);
+        setEditingLead(null);
+        toast.success('Lead updated');
+    };
 
     // Send SMS handler
     const handleSendMessage = async (message: string, files?: File[]) => {
@@ -245,13 +333,20 @@ export const PulsePage: React.FC = () => {
                 </div>
             </div>
 
-            {/* Middle column: LeadCard / wizard (same as Calls section) */}
-            <div className="w-[400px] shrink-0 border-r bg-background overflow-y-auto">
+            {/* Middle column: Lead Detail Panel (same as Leads section) */}
+            <div className="w-[400px] shrink-0 border-r bg-background overflow-hidden">
                 {contactId && phone ? (
-                    <LeadCard
-                        phone={phone}
-                        callCount={contactCalls.length}
-                        hasActiveCall={hasActiveCall}
+                    <LeadDetailPanel
+                        lead={lead}
+                        onClose={() => { }}
+                        onEdit={(lead) => setEditingLead(lead)}
+                        onMarkLost={handleMarkLost}
+                        onActivate={handleActivate}
+                        onConvert={handleConvert}
+                        onUpdateComments={handleUpdateComments}
+                        onUpdateStatus={handleUpdateStatus}
+                        onUpdateSource={handleUpdateSource}
+                        onDelete={handleDelete}
                     />
                 ) : null}
             </div>
@@ -281,6 +376,25 @@ export const PulsePage: React.FC = () => {
                     </>
                 )}
             </div>
+
+            {/* Dialogs */}
+            {editingLead && (
+                <EditLeadDialog
+                    lead={editingLead}
+                    open={!!editingLead}
+                    onOpenChange={(open) => !open && setEditingLead(null)}
+                    onSuccess={handleUpdateLead}
+                />
+            )}
+
+            {convertingLead && (
+                <ConvertToJobDialog
+                    lead={convertingLead}
+                    open={!!convertingLead}
+                    onOpenChange={(open) => !open && setConvertingLead(null)}
+                    onSuccess={handleConvertSuccess}
+                />
+            )}
         </div>
     );
 };
