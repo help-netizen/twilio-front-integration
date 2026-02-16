@@ -334,7 +334,7 @@ export const PulsePage: React.FC = () => {
             </div>
 
             {/* Middle column: Lead Detail Panel (same as Leads section) */}
-            <div className="w-[400px] shrink-0 border-r bg-background overflow-hidden">
+            <div className="w-[400px] shrink-0 border-r bg-background flex flex-col overflow-hidden">
                 {contactId && phone ? (
                     <LeadDetailPanel
                         lead={lead}
