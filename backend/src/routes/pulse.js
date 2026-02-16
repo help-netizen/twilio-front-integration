@@ -47,6 +47,9 @@ router.get('/timeline/:contactId', async (req, res) => {
                 messages.push(...msgs.map(m => ({
                     ...m,
                     conversation_id: conv.id,
+                    // Derive from/to phone using conversation phones + direction
+                    from_number: m.direction === 'inbound' ? conv.customer_e164 : conv.proxy_e164,
+                    to_number: m.direction === 'inbound' ? conv.proxy_e164 : conv.customer_e164,
                     media: typeof m.media === 'string' ? JSON.parse(m.media) : m.media,
                 })));
             }

@@ -1,8 +1,8 @@
 import { useState, useRef } from 'react';
-import { Send, Paperclip, X, FileText, ChevronDown } from 'lucide-react';
+import { Send, Wand2, ChevronDown, Paperclip, X } from 'lucide-react';
 
 interface SmsFormProps {
-    onSend: (message: string, file?: File) => Promise<void>;
+    onSend: (message: string, file?: File) => void;
     disabled?: boolean;
 }
 
@@ -10,7 +10,7 @@ const MESSAGE_PRESETS = [
     { id: 'follow-up', label: 'Follow-up', text: 'Hi! Just following up on our previous conversation. Let me know if you have any questions.' },
     { id: 'thank-you', label: 'Thank You', text: 'Thank you for your time today! Looking forward to speaking with you again soon.' },
     { id: 'meeting', label: 'Schedule Meeting', text: 'Would you be available for a quick call this week? Let me know what time works best for you.' },
-    { id: 'info', label: 'Send Info', text: 'As promised, here\'s the information we discussed. Feel free to reach out if you need anything else.' },
+    { id: 'info', label: 'Send Info', text: "As promised, here's the information we discussed. Feel free to reach out if you need anything else." },
 ];
 
 function formatFileSize(bytes: number): string {
@@ -19,234 +19,156 @@ function formatFileSize(bytes: number): string {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function SmsForm({ onSend, disabled = false }: SmsFormProps) {
+export function SmsForm({ onSend, disabled }: SmsFormProps) {
     const [message, setMessage] = useState('');
     const [isPresetsOpen, setIsPresetsOpen] = useState(false);
-    const [sending, setSending] = useState(false);
-    const [attachedFile, setAttachedFile] = useState<File | null>(null);
+    const [isSending, setIsSending] = useState(false);
+    const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
     const fileInputRef = useRef<HTMLInputElement>(null);
-    const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-    const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-        setMessage(e.target.value);
-        const ta = textareaRef.current;
-        if (ta) { ta.style.height = 'auto'; ta.style.height = `${Math.min(ta.scrollHeight, 120)}px`; }
-    };
+    const canSend = (message.trim() || attachedFiles.length > 0) && !disabled && !isSending;
+
+    // ── Handlers ────────────────────────────────────────────────────────────
 
     const handleSend = async () => {
-        const body = message.trim();
-        if ((!body && !attachedFile) || sending || disabled) return;
-        setSending(true);
+        if (!canSend) return;
+        setIsSending(true);
         try {
-            await onSend(body, attachedFile || undefined);
+            await onSend(message, attachedFiles[0]);
             setMessage('');
-            setAttachedFile(null);
-            if (textareaRef.current) textareaRef.current.style.height = 'auto';
-        } catch { /* logged in parent */ } finally {
-            setSending(false);
+            setAttachedFiles([]);
+        } finally {
+            setIsSending(false);
         }
     };
 
-    const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            handleSend();
+        }
     };
 
     const handlePresetSelect = (text: string) => {
         setMessage(text);
         setIsPresetsOpen(false);
-        textareaRef.current?.focus();
     };
 
-    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (file) {
-            if (file.size > 10 * 1024 * 1024) {
-                alert('File too large. Maximum size is 10 MB.');
-                return;
-            }
-            setAttachedFile(file);
+    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files) {
+            setAttachedFiles(prev => [...prev, ...Array.from(e.target.files!)]);
         }
         e.target.value = '';
     };
 
+    const handleRemoveFile = (index: number) => {
+        setAttachedFiles(prev => prev.filter((_, i) => i !== index));
+    };
+
+    // ── Render ──────────────────────────────────────────────────────────────
+
     return (
-        <div style={{ borderTop: '1px solid #e5e7eb', padding: '12px 16px', backgroundColor: '#ffffff' }}>
-            {/* Attachment preview */}
-            {attachedFile && (
-                <div
-                    style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        padding: '8px 12px',
-                        marginBottom: '8px',
-                        backgroundColor: '#f3f4f6',
-                        borderRadius: '8px',
-                        fontSize: '13px',
-                    }}
-                >
-                    <FileText size={16} style={{ color: '#6b7280' }} />
-                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {attachedFile.name}
-                    </span>
-                    <span style={{ color: '#9ca3af', fontSize: '12px' }}>{formatFileSize(attachedFile.size)}</span>
-                    <button
-                        onClick={() => setAttachedFile(null)}
-                        style={{
-                            border: 'none',
-                            background: 'none',
-                            padding: '2px',
-                            cursor: 'pointer',
-                            color: '#6b7280',
-                            display: 'flex',
-                        }}
-                    >
-                        <X size={14} />
-                    </button>
+        <div className="border-t border-gray-200 bg-white p-4">
+            {/* Attached file chips */}
+            {attachedFiles.length > 0 && (
+                <div className="mb-3 flex flex-wrap gap-2">
+                    {attachedFiles.map((file, i) => (
+                        <div
+                            key={i}
+                            className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 border border-gray-200 rounded-lg text-sm"
+                        >
+                            <Paperclip className="w-3.5 h-3.5 text-gray-500" />
+                            <span className="text-gray-700 max-w-[150px] truncate">{file.name}</span>
+                            <span className="text-gray-500 text-xs">({formatFileSize(file.size)})</span>
+                            <button
+                                onClick={() => handleRemoveFile(i)}
+                                className="ml-1 text-gray-400 hover:text-red-600 transition-colors"
+                            >
+                                <X className="w-3.5 h-3.5" />
+                            </button>
+                        </div>
+                    ))}
                 </div>
             )}
 
-            {/* Input row */}
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px' }}>
-                {/* Presets dropdown */}
-                <div style={{ position: 'relative' }}>
+            {/* Textarea */}
+            <div className="relative mb-3">
+                <textarea
+                    rows={3}
+                    placeholder="Type your message... (⌘ + Enter to send)"
+                    value={message}
+                    onChange={e => setMessage(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    disabled={disabled || isSending}
+                    className="w-full px-3 py-2 pr-20 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                />
+                <span className="absolute bottom-2 left-3 text-xs text-gray-400">
+                    {message.length} characters
+                </span>
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex items-center justify-between gap-2">
+                {/* Left: Quick Messages + Attach */}
+                <div className="flex items-center gap-2 relative">
                     <button
                         onClick={() => setIsPresetsOpen(!isPresetsOpen)}
-                        disabled={disabled || sending}
-                        style={{
-                            border: '1px solid #e5e7eb',
-                            borderRadius: '8px',
-                            padding: '8px',
-                            backgroundColor: '#ffffff',
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '2px',
-                            color: '#6b7280',
-                        }}
-                        title="Quick messages"
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                     >
-                        <ChevronDown size={16} />
+                        <ChevronDown
+                            className="w-4 h-4 transition-transform"
+                            style={{ transform: isPresetsOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}
+                        />
+                        Quick Messages
                     </button>
+
+                    {/* Presets dropdown */}
                     {isPresetsOpen && (
-                        <div
-                            style={{
-                                position: 'absolute',
-                                bottom: '100%',
-                                left: 0,
-                                marginBottom: '4px',
-                                backgroundColor: '#ffffff',
-                                border: '1px solid #e5e7eb',
-                                borderRadius: '8px',
-                                boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-                                width: '280px',
-                                zIndex: 10,
-                                overflow: 'hidden',
-                            }}
-                        >
-                            {MESSAGE_PRESETS.map(p => (
-                                <button
-                                    key={p.id}
-                                    onClick={() => handlePresetSelect(p.text)}
-                                    style={{
-                                        display: 'block',
-                                        width: '100%',
-                                        textAlign: 'left',
-                                        padding: '10px 14px',
-                                        border: 'none',
-                                        backgroundColor: 'transparent',
-                                        cursor: 'pointer',
-                                        fontSize: '13px',
-                                    }}
-                                    onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#f3f4f6')}
-                                    onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
-                                >
-                                    <div style={{ fontWeight: 600, marginBottom: '2px' }}>{p.label}</div>
-                                    <div style={{ color: '#6b7280', fontSize: '12px', lineHeight: '1.3' }}>{p.text}</div>
-                                </button>
-                            ))}
-                        </div>
+                        <>
+                            {/* Backdrop */}
+                            <div className="fixed inset-0 z-10" onClick={() => setIsPresetsOpen(false)} />
+                            <div className="absolute left-0 bottom-full mb-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1">
+                                {MESSAGE_PRESETS.map(p => (
+                                    <button
+                                        key={p.id}
+                                        onClick={() => handlePresetSelect(p.text)}
+                                        className="w-full text-left px-3 py-2 hover:bg-gray-50 transition-colors"
+                                    >
+                                        <div className="text-sm font-medium text-gray-900">{p.label}</div>
+                                        <div className="text-xs text-gray-500 line-clamp-1">{p.text}</div>
+                                    </button>
+                                ))}
+                            </div>
+                        </>
                     )}
+
+                    <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="p-1.5 text-gray-700 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                        title="Attach file"
+                    >
+                        <Paperclip className="w-4 h-4" />
+                    </button>
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        className="hidden"
+                        onChange={handleFileSelect}
+                    />
                 </div>
 
-                {/* Attach button */}
-                <input
-                    ref={fileInputRef}
-                    type="file"
-                    onChange={handleFileChange}
-                    accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip"
-                    style={{ display: 'none' }}
-                />
-                <button
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={disabled || sending}
-                    style={{
-                        border: '1px solid #e5e7eb',
-                        borderRadius: '8px',
-                        padding: '8px',
-                        backgroundColor: '#ffffff',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        color: '#6b7280',
-                    }}
-                    title="Attach file"
-                >
-                    <Paperclip size={16} />
-                </button>
-
-                {/* Textarea */}
-                <textarea
-                    ref={textareaRef}
-                    value={message}
-                    onChange={handleInput}
-                    onKeyDown={handleKeyDown}
-                    placeholder="Type a message..."
-                    disabled={disabled || sending}
-                    rows={1}
-                    style={{
-                        flex: 1,
-                        resize: 'none',
-                        border: '1px solid #e5e7eb',
-                        borderRadius: '8px',
-                        padding: '8px 12px',
-                        fontSize: '14px',
-                        lineHeight: '1.5',
-                        outline: 'none',
-                        fontFamily: 'inherit',
-                        maxHeight: '120px',
-                    }}
-                />
-
-                {/* Character counter */}
-                {message.length > 0 && (
-                    <span style={{ fontSize: '11px', color: message.length > 1600 ? '#ef4444' : '#9ca3af', whiteSpace: 'nowrap' }}>
-                        {message.length}
-                    </span>
-                )}
-
-                {/* Send button */}
-                <button
-                    onClick={handleSend}
-                    disabled={(!message.trim() && !attachedFile) || sending || disabled}
-                    style={{
-                        border: 'none',
-                        borderRadius: '8px',
-                        padding: '8px 12px',
-                        backgroundColor: (!message.trim() && !attachedFile) || sending || disabled ? '#d1d5db' : '#2563eb',
-                        color: '#ffffff',
-                        cursor: (!message.trim() && !attachedFile) || sending || disabled ? 'not-allowed' : 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                    }}
-                    title="Send message"
-                >
-                    {sending ? (
-                        <div style={{ width: '16px', height: '16px', border: '2px solid #ffffff', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                    ) : (
-                        <Send size={16} />
-                    )}
-                </button>
+                {/* Right: Send */}
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={handleSend}
+                        disabled={!canSend}
+                        className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        <Send className="w-4 h-4" />
+                        {isSending ? 'Sending...' : 'Send SMS'}
+                    </button>
+                </div>
             </div>
         </div>
     );

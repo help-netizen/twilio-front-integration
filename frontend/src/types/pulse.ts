@@ -18,6 +18,8 @@ export interface SmsMessage {
     direction: 'inbound' | 'outbound';
     body: string | null;
     delivery_status: string | null;
+    from_number: string | null;
+    to_number: string | null;
     date_created_remote: string | null;
     created_at: string;
     media: SmsMediaItem[];
