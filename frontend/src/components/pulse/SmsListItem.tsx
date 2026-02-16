@@ -26,9 +26,11 @@ const formatFileSize = (bytes: number): string => {
 
 const isImage = (contentType: string | null): boolean => !!contentType && contentType.startsWith('image/');
 
+const mediaUrl = (media: SmsMediaItem) => `/api/messaging/media/${media.id}/temporary-url`;
+
 const handleDownload = (media: SmsMediaItem) => {
     const link = document.createElement('a');
-    link.href = `/api/conversations/media/${media.id}/content`;
+    link.href = mediaUrl(media);
     link.download = media.filename || 'download';
     link.target = '_blank';
     document.body.appendChild(link);
@@ -89,7 +91,7 @@ export function SmsListItem({ sms }: SmsListItemProps) {
                                         /* Image preview with download button */
                                         <div className="relative group">
                                             <img
-                                                src={`/api/conversations/media/${media.id}/content`}
+                                                src={mediaUrl(media)}
                                                 alt={media.filename || 'Image'}
                                                 className="w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
                                                 onClick={() => handleDownload(media)}
