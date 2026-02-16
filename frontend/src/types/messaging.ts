@@ -15,6 +15,9 @@ export interface Conversation {
     last_message_direction: 'inbound' | 'outbound' | null;
     closed_at: string | null;
     company_id: string | null;
+    has_unread: boolean;
+    last_read_at: string | null;
+    last_incoming_at: string | null;
     created_at: string;
     updated_at: string;
 }

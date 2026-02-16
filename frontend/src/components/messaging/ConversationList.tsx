@@ -42,29 +42,43 @@ function formatPhoneDisplay(e164: string | null): string {
 export function ConversationList({ conversations, selectedId, onSelect }: ConversationListProps) {
     return (
         <div className="conv-list">
-            {conversations.map(conv => (
-                <div
-                    key={conv.id}
-                    className={`conv-item ${conv.id === selectedId ? 'conv-item--selected' : ''}`}
-                    onClick={() => onSelect(conv)}
-                >
-                    <div className="conv-item__avatar">{getInitials(conv)}</div>
-                    <div className="conv-item__content">
-                        <div className="conv-item__top">
-                            <span className="conv-item__name">
-                                {conv.friendly_name || formatPhoneDisplay(conv.customer_e164)}
-                            </span>
-                            <span className="conv-item__time">{formatTime(conv.last_message_at)}</span>
-                        </div>
-                        <div className="conv-item__preview">
-                            {conv.last_message_direction === 'outbound' && (
-                                <span className="conv-item__direction">You: </span>
-                            )}
-                            {conv.last_message_preview || 'No messages yet'}
+            {conversations.map(conv => {
+                const isUnread = conv.has_unread;
+                const classes = [
+                    'conv-item',
+                    conv.id === selectedId ? 'conv-item--selected' : '',
+                    isUnread ? 'conv-item--unread' : '',
+                ].filter(Boolean).join(' ');
+
+                return (
+                    <div
+                        key={conv.id}
+                        className={classes}
+                        onClick={() => onSelect(conv)}
+                        aria-label={isUnread
+                            ? `Contact ${conv.friendly_name || conv.customer_e164 || 'Unknown'}, has unread messages`
+                            : undefined
+                        }
+                    >
+                        <div className="conv-item__avatar">{getInitials(conv)}</div>
+                        <div className="conv-item__content">
+                            <div className="conv-item__top">
+                                <span className="conv-item__name">
+                                    {isUnread && <span className="conv-item__dot" />}
+                                    {conv.friendly_name || formatPhoneDisplay(conv.customer_e164)}
+                                </span>
+                                <span className="conv-item__time">{formatTime(conv.last_message_at)}</span>
+                            </div>
+                            <div className="conv-item__preview">
+                                {conv.last_message_direction === 'outbound' && (
+                                    <span className="conv-item__direction">You: </span>
+                                )}
+                                {conv.last_message_preview || 'No messages yet'}
+                            </div>
                         </div>
                     </div>
-                </div>
-            ))}
+                );
+            })}
         </div>
     );
 }

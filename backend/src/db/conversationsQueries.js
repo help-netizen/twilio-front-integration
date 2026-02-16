@@ -43,7 +43,7 @@ async function getConversations({ limit = 30, cursor, state, company_id } = {}) 
 
     const result = await db.query(`
         SELECT * FROM sms_conversations ${where}
-        ORDER BY last_message_at DESC NULLS LAST
+        ORDER BY has_unread DESC, last_message_at DESC NULLS LAST
         LIMIT $${idx}
     `, params);
     return result.rows;
@@ -68,16 +68,32 @@ async function findActiveConversation(customer_e164, proxy_e164) {
     return result.rows[0] || null;
 }
 
-async function updateConversationPreview(conversationId, { body, direction, timestamp }) {
+async function updateConversationPreview(conversationId, { body, direction, timestamp, isInbound = false }) {
+    const extraSets = isInbound
+        ? ', has_unread = true, last_incoming_at = $4'
+        : '';
     await db.query(`
         UPDATE sms_conversations SET
             last_message_preview = $2,
             last_message_direction = $3,
             last_message_at = $4,
-            first_message_at = COALESCE(first_message_at, $4),
+            first_message_at = COALESCE(first_message_at, $4)
+            ${extraSets},
             updated_at = now()
         WHERE id = $1
     `, [conversationId, body, direction, timestamp]);
+}
+
+async function markConversationRead(conversationId) {
+    const result = await db.query(`
+        UPDATE sms_conversations SET
+            has_unread = false,
+            last_read_at = now(),
+            updated_at = now()
+        WHERE id = $1
+        RETURNING *
+    `, [conversationId]);
+    return result.rows[0] || null;
 }
 
 async function updateConversationState(conversationId, state) {
@@ -193,7 +209,7 @@ async function markEventProcessed(eventId, error = null) {
 
 module.exports = {
     upsertConversation, getConversations, getConversationById, getConversationBySid,
-    findActiveConversation, updateConversationPreview, updateConversationState,
+    findActiveConversation, updateConversationPreview, updateConversationState, markConversationRead,
     upsertMessage, getMessages, updateDeliveryStatus,
     insertMedia, getMediaById,
     insertEvent, markEventProcessed,

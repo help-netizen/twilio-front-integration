@@ -70,6 +70,21 @@ router.post('/:id/messages', async (req, res) => {
     }
 });
 
+// POST /api/messaging/:id/mark-read — mark conversation as read
+router.post('/:id/mark-read', async (req, res) => {
+    try {
+        const conv = await convQueries.markConversationRead(req.params.id);
+        if (!conv) return res.status(404).json({ error: 'Conversation not found' });
+        // SSE push updated conversation
+        const realtimeService = require('../services/realtimeService');
+        realtimeService.publishConversationUpdate(conv);
+        res.json({ conversation: conv });
+    } catch (err) {
+        console.error('[Messaging] POST /:id/mark-read error:', err);
+        res.status(500).json({ error: 'Failed to mark read' });
+    }
+});
+
 // POST /api/messaging/start — start new conversation
 router.post('/start', async (req, res) => {
     try {
@@ -88,21 +103,6 @@ router.post('/start', async (req, res) => {
     } catch (err) {
         console.error('[Messaging] POST /start error:', err);
         res.status(500).json({ error: err.message || 'Failed to start conversation' });
-    }
-});
-
-// GET /api/messaging/media/:mediaId/temporary-url — redirect to actual media
-router.get('/media/:mediaId/temporary-url', async (req, res) => {
-    try {
-        const result = await conversationsService.getMediaTemporaryUrl(req.params.mediaId);
-        if (!result.url) {
-            return res.status(404).json({ error: 'Media URL not available' });
-        }
-        // Redirect to the actual Twilio-hosted media URL
-        res.redirect(result.url);
-    } catch (err) {
-        console.error('[Messaging] GET /media/:id/temporary-url error:', err);
-        res.status(500).json({ error: err.message || 'Failed to get media URL' });
     }
 });
 

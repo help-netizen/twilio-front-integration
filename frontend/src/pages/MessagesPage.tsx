@@ -82,8 +82,9 @@ export function MessagesPage() {
                     // Update existing conversation
                     const updated = [...prev];
                     updated[idx] = updatedConv;
-                    // Re-sort by last_message_at desc
+                    // Re-sort: unread first, then by last_message_at desc
                     updated.sort((a, b) => {
+                        if (a.has_unread !== b.has_unread) return a.has_unread ? -1 : 1;
                         const ta = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
                         const tb = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
                         return tb - ta;
@@ -112,6 +113,21 @@ export function MessagesPage() {
 
     const handleSelectConversation = (conv: Conversation) => {
         setSelectedConversation(conv);
+
+        // Optimistic mark-as-read
+        if (conv.has_unread) {
+            setConversations(prev => prev.map(c =>
+                c.id === conv.id ? { ...c, has_unread: false } : c
+            ));
+            setSelectedConversation({ ...conv, has_unread: false });
+            messagingApi.markRead(conv.id).catch(err => {
+                console.error('Failed to mark read:', err);
+                // Rollback on error
+                setConversations(prev => prev.map(c =>
+                    c.id === conv.id ? { ...c, has_unread: true } : c
+                ));
+            });
+        }
     };
 
     const handleSendMessage = async (body: string) => {

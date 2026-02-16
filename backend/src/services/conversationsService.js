@@ -261,6 +261,7 @@ async function handleMessageAdded(payload) {
         body: payload.Body || '[media]',
         direction,
         timestamp: payload.DateCreated || new Date().toISOString(),
+        isInbound,
     });
 
     // SSE push

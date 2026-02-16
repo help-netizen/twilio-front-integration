@@ -326,6 +326,40 @@
     color: var(--muted-foreground);
 }
 
+/* Unread indicators */
+.conv-item--unread {
+    background: rgba(99, 102, 241, 0.06);
+}
+
+.conv-item--unread:hover {
+    background: rgba(99, 102, 241, 0.1);
+}
+
+.conv-item--unread .conv-item__name {
+    font-weight: 650;
+}
+
+.conv-item--unread .conv-item__preview {
+    color: var(--foreground);
+    font-weight: 550;
+}
+
+.conv-item--unread .conv-item__time {
+    color: #6366f1;
+    font-weight: 600;
+}
+
+.conv-item__dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    min-width: 8px;
+    border-radius: 50%;
+    background: #6366f1;
+    margin-right: 6px;
+    vertical-align: middle;
+}
+
 /* Message Thread */
 .msg-thread {
     flex: 1;

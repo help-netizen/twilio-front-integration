@@ -40,6 +40,11 @@ export const messagingApi = {
         return response.data;
     },
 
+    markRead: async (conversationId: string): Promise<Conversation> => {
+        const response = await apiClient.post<{ conversation: Conversation }>(`/messaging/${conversationId}/mark-read`);
+        return response.data.conversation;
+    },
+
     getMediaUrl: async (mediaId: string): Promise<MediaUrlResponse> => {
         const response = await apiClient.get<MediaUrlResponse>(`/messaging/media/${mediaId}/temporary-url`);
         return response.data;
