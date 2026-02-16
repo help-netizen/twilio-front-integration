@@ -170,14 +170,17 @@ async function processVoiceEvent(payload, eventType, traceId) {
         try {
             const existing = await queries.getCallByCallSid(normalized.callSid);
             if (existing) {
-                const existingIsFinal = isFinalStatus(existing.status) ||
+                const existingIsFinal = isFinalStatus(existing.status);
+                const isInVoicemailFlow =
                     ['voicemail_recording', 'voicemail_left'].includes(existing.status);
                 if (existingIsFinal && !isFinal) {
                     console.log(`[${traceId}] Skipping upsert — call is final (${existing.status}), ignoring non-final ${normalized.eventStatus}`);
                     skipUpsert = true;
                 }
-                if (['voicemail_recording', 'voicemail_left'].includes(existing.status)) {
-                    console.log(`[${traceId}] Skipping upsert — call is in ${existing.status} status`);
+                // Allow final events (completed, no-answer, etc.) to overwrite voicemail states
+                // (e.g. caller hangs up during greeting before recording starts)
+                if (isInVoicemailFlow && !isFinal) {
+                    console.log(`[${traceId}] Skipping upsert — call is in ${existing.status} status, ignoring non-final ${normalized.eventStatus}`);
                     skipUpsert = true;
                 }
             }
