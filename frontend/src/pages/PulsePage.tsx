@@ -9,6 +9,7 @@ import { useRealtimeEvents, type SSECallEvent } from '../hooks/useRealtimeEvents
 import { PulseTimeline } from '../components/pulse/PulseTimeline';
 import { SmsForm } from '../components/pulse/SmsForm';
 import { LeadDetailPanel } from '../components/leads/LeadDetailPanel';
+import { CreateLeadJobWizard } from '../components/conversations/CreateLeadJobWizard';
 import { EditLeadDialog } from '../components/leads/EditLeadDialog';
 import { ConvertToJobDialog } from '../components/leads/ConvertToJobDialog';
 import { normalizePhoneNumber, formatPhoneNumber } from '../utils/formatters';
@@ -202,9 +203,10 @@ export const PulsePage: React.FC = () => {
     const contactCalls = timelineData?.calls || [];
     const contact = contactCalls[0]?.contact;
     const phone = contact?.phone_e164 || contactCalls[0]?.from_number || contactCalls[0]?.to_number || '';
+    const hasActiveCall = contactCalls.some((c: any) => ['ringing', 'in-progress', 'queued', 'initiated', 'voicemail_recording'].includes(c.status));
 
     // Lead management state
-    const { lead: fetchedLead } = useLeadByPhone(phone || undefined);
+    const { lead: fetchedLead, isLoading: leadLoading } = useLeadByPhone(phone || undefined);
     const [leadOverride, setLeadOverride] = useState<Lead | null>(null);
     const [editingLead, setEditingLead] = useState<Lead | null>(null);
     const [convertingLead, setConvertingLead] = useState<Lead | null>(null);
@@ -336,18 +338,26 @@ export const PulsePage: React.FC = () => {
             {/* Middle column: Lead Detail Panel (same as Leads section) */}
             <div className="w-[400px] shrink-0 border-r bg-background flex flex-col overflow-hidden">
                 {contactId && phone ? (
-                    <LeadDetailPanel
-                        lead={lead}
-                        onClose={() => { }}
-                        onEdit={(lead) => setEditingLead(lead)}
-                        onMarkLost={handleMarkLost}
-                        onActivate={handleActivate}
-                        onConvert={handleConvert}
-                        onUpdateComments={handleUpdateComments}
-                        onUpdateStatus={handleUpdateStatus}
-                        onUpdateSource={handleUpdateSource}
-                        onDelete={handleDelete}
-                    />
+                    lead ? (
+                        <LeadDetailPanel
+                            lead={lead}
+                            onClose={() => { }}
+                            onEdit={(lead) => setEditingLead(lead)}
+                            onMarkLost={handleMarkLost}
+                            onActivate={handleActivate}
+                            onConvert={handleConvert}
+                            onUpdateComments={handleUpdateComments}
+                            onUpdateStatus={handleUpdateStatus}
+                            onUpdateSource={handleUpdateSource}
+                            onDelete={handleDelete}
+                        />
+                    ) : !leadLoading ? (
+                        <CreateLeadJobWizard
+                            phone={phone}
+                            callCount={contactCalls.length}
+                            hasActiveCall={hasActiveCall}
+                        />
+                    ) : null
                 ) : null}
             </div>
 
