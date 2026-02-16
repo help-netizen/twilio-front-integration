@@ -76,15 +76,7 @@
     color: #dbeafe;
 }
 
-/* Stats badge */
-.lead-card__badge {
-    background: rgba(255, 255, 255, 0.2);
-    backdrop-filter: blur(4px);
-    border-radius: 8px;
-    padding: 8px 16px;
-    text-align: center;
-    flex-shrink: 0;
-}
+
 
 .lead-card__badge-number {
     font-size: 24px;
@@ -98,29 +90,43 @@
 }
 
 /* Call button */
+.lead-card__header-right {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    flex-shrink: 0;
+}
+
 .lead-card__call-btn {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 8px 16px;
-    border-radius: 8px;
+    padding: 8px 14px;
+    border-radius: 8px 0 0 8px;
     background: #16a34a;
     color: white;
     font-size: 14px;
     font-weight: 600;
     text-decoration: none;
-    flex-shrink: 0;
-    transition: background 0.2s, transform 0.1s;
+    transition: background 0.2s;
 }
 
 .lead-card__call-btn:hover {
     background: #15803d;
-    transform: scale(1.05);
 }
 
 .lead-card__call-btn-icon {
     width: 16px;
     height: 16px;
+}
+
+/* Stats badge — attached to call button */
+.lead-card__badge {
+    background: rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(4px);
+    border-radius: 0 8px 8px 0;
+    padding: 8px 16px;
+    text-align: center;
 }
 
 /* ── Details section ───────────────────────────────────────────────────── */

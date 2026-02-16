@@ -97,21 +97,22 @@ export function LeadCard({ phone, callCount }: LeadCardProps) {
                         </div>
                     </div>
 
-                    {callCount !== undefined && (
-                        <div className="lead-card__badge">
-                            <div className="lead-card__badge-number">{callCount}</div>
-                            <div className="lead-card__badge-label">Calls</div>
-                        </div>
-                    )}
-
-                    <a
-                        href={`tel:${phone}`}
-                        className="lead-card__call-btn"
-                        title={`Call ${displayPhone}`}
-                    >
-                        <Phone className="lead-card__call-btn-icon" />
-                        <span>Call</span>
-                    </a>
+                    <div className="lead-card__header-right">
+                        <a
+                            href={`tel:${phone}`}
+                            className="lead-card__call-btn"
+                            title={`Call ${displayPhone}`}
+                        >
+                            <Phone className="lead-card__call-btn-icon" />
+                            <span>Call</span>
+                        </a>
+                        {callCount !== undefined && (
+                            <div className="lead-card__badge">
+                                <div className="lead-card__badge-number">{callCount}</div>
+                                <div className="lead-card__badge-label">Calls</div>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
 
