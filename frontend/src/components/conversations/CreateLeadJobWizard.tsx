@@ -44,6 +44,7 @@ export function CreateLeadJobWizard({ phone, callCount, hasActiveCall, onLeadCre
     const [step, setStep] = useState<Step>(1);
     const [submitting, setSubmitting] = useState(false);
     const [showSkipConfirm, setShowSkipConfirm] = useState(false);
+    const [confirmCall, setConfirmCall] = useState(false);
 
     // Step 1 — zip code / territory
     const [postalCode, setPostalCode] = useState('');
@@ -682,14 +683,15 @@ export function CreateLeadJobWizard({ phone, callCount, hasActiveCall, onLeadCre
                                 <span>Call</span>
                             </span>
                         ) : (
-                            <a
-                                href={`tel:${phone}`}
+                            <button
+                                type="button"
+                                onClick={() => setConfirmCall(c => !c)}
                                 className="wizard__call-btn"
                                 title={`Call ${formatPhone(phone)}`}
                             >
                                 <Phone className="w-4" />
                                 <span>Call</span>
-                            </a>
+                            </button>
                         )}
                         {callCount !== undefined && (
                             <div className="wizard__badge">
@@ -700,6 +702,30 @@ export function CreateLeadJobWizard({ phone, callCount, hasActiveCall, onLeadCre
                     </div>
                 </div>
             </div>
+
+            {/* Call confirmation */}
+            {confirmCall && (
+                <div className="wizard__confirm-call">
+                    <span className="wizard__confirm-label">Call {formatPhone(phone)}?</span>
+                    <div className="wizard__confirm-actions">
+                        <button
+                            type="button"
+                            className="wizard__confirm-cancel"
+                            onClick={() => setConfirmCall(false)}
+                        >
+                            Cancel
+                        </button>
+                        <a
+                            href={`tel:${phone}`}
+                            className="wizard__confirm-btn"
+                            onClick={() => setConfirmCall(false)}
+                        >
+                            <Phone className="w-4" />
+                            Call Now
+                        </a>
+                    </div>
+                </div>
+            )}
 
             {/* Step indicator */}
             {renderStepIndicator()}

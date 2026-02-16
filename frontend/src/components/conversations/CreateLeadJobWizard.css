@@ -2,9 +2,9 @@
 
 .wizard {
     overflow: hidden;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
     background: #fff;
 }
 
@@ -392,4 +392,59 @@
     align-items: center;
     padding: 10px 20px;
     border-top: 1px solid #f3f4f6;
+}
+
+/* ── Call confirmation bar ─────────────────────────────────────────────── */
+.wizard__confirm-call {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 20px;
+    background: #fffbeb;
+    border-bottom: 1px solid #fde68a;
+}
+
+.wizard__confirm-label {
+    font-size: 14px;
+    font-weight: 600;
+    color: #92400e;
+}
+
+.wizard__confirm-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.wizard__confirm-cancel {
+    background: none;
+    border: none;
+    font-size: 13px;
+    font-weight: 500;
+    color: #6b7280;
+    cursor: pointer;
+    padding: 6px 12px;
+}
+
+.wizard__confirm-cancel:hover {
+    color: #374151;
+}
+
+.wizard__confirm-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 28px;
+    border-radius: 8px;
+    background: #16a34a;
+    color: #fff;
+    font-size: 15px;
+    font-weight: 700;
+    text-decoration: none;
+    transition: background 0.15s;
+}
+
+.wizard__confirm-btn:hover {
+    background: #15803d;
 }

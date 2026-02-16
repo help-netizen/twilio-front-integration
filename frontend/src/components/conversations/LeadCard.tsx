@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { User, Phone, Mail, MapPin, Briefcase, Calendar, Tag, FileText } from 'lucide-react';
 import { useLeadByPhone } from '../../hooks/useLeadByPhone';
 import { Skeleton } from '../ui/skeleton';
@@ -47,6 +47,7 @@ function buildAddress(lead: Lead): string | null {
 
 export function LeadCard({ phone, callCount, hasActiveCall }: LeadCardProps) {
     const { lead, isLoading } = useLeadByPhone(phone);
+    const [confirmCall, setConfirmCall] = useState(false);
 
     if (isLoading) {
         return (
@@ -108,14 +109,15 @@ export function LeadCard({ phone, callCount, hasActiveCall }: LeadCardProps) {
                                 <span>Call</span>
                             </span>
                         ) : (
-                            <a
-                                href={`tel:${phone}`}
+                            <button
+                                type="button"
+                                onClick={() => setConfirmCall(c => !c)}
                                 className="lead-card__call-btn"
                                 title={`Call ${displayPhone}`}
                             >
                                 <Phone className="lead-card__call-btn-icon" />
                                 <span>Call</span>
-                            </a>
+                            </button>
                         )}
                         {callCount !== undefined && (
                             <div className="lead-card__badge">
@@ -126,6 +128,30 @@ export function LeadCard({ phone, callCount, hasActiveCall }: LeadCardProps) {
                     </div>
                 </div>
             </div>
+
+            {/* Call confirmation */}
+            {confirmCall && (
+                <div className="lead-card__confirm-call">
+                    <span className="lead-card__confirm-label">Call {displayPhone}?</span>
+                    <div className="lead-card__confirm-actions">
+                        <button
+                            type="button"
+                            className="lead-card__confirm-cancel"
+                            onClick={() => setConfirmCall(false)}
+                        >
+                            Cancel
+                        </button>
+                        <a
+                            href={`tel:${phone}`}
+                            className="lead-card__confirm-btn"
+                            onClick={() => setConfirmCall(false)}
+                        >
+                            <Phone className="lead-card__call-btn-icon" />
+                            Call Now
+                        </a>
+                    </div>
+                </div>
+            )}
 
             {/* Details */}
             <div className="lead-card__details">

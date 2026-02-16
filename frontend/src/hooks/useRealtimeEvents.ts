@@ -40,12 +40,31 @@ export interface SSEConnectionEvent {
     timestamp: string;
 }
 
+/** Messaging SSE events */
+export interface SSEMessageAddedEvent {
+    message: any;
+    conversationId: string;
+}
+
+export interface SSEMessageDeliveryEvent {
+    messageSid: string;
+    status: string;
+    errorCode: number | null;
+}
+
+export interface SSEConversationUpdatedEvent {
+    conversation: any;
+}
+
 /**
  * SSE Hook Options
  */
 interface UseRealtimeEventsOptions {
     onCallUpdate?: (event: SSECallEvent) => void;
     onCallCreated?: (event: SSECallEvent) => void;
+    onMessageAdded?: (event: SSEMessageAddedEvent) => void;
+    onMessageDelivery?: (event: SSEMessageDeliveryEvent) => void;
+    onConversationUpdated?: (event: SSEConversationUpdatedEvent) => void;
     onConnected?: (event: SSEConnectionEvent) => void;
     onError?: (error: Error) => void;
     autoReconnect?: boolean;
@@ -67,12 +86,18 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
     // Store callbacks in refs so changes don't trigger reconnect
     const onCallUpdateRef = useRef(options.onCallUpdate);
     const onCallCreatedRef = useRef(options.onCallCreated);
+    const onMessageAddedRef = useRef(options.onMessageAdded);
+    const onMessageDeliveryRef = useRef(options.onMessageDelivery);
+    const onConversationUpdatedRef = useRef(options.onConversationUpdated);
     const onConnectedRef = useRef(options.onConnected);
     const onErrorRef = useRef(options.onError);
 
     // Keep refs current
     onCallUpdateRef.current = options.onCallUpdate;
     onCallCreatedRef.current = options.onCallCreated;
+    onMessageAddedRef.current = options.onMessageAdded;
+    onMessageDeliveryRef.current = options.onMessageDelivery;
+    onConversationUpdatedRef.current = options.onConversationUpdated;
     onConnectedRef.current = options.onConnected;
     onErrorRef.current = options.onError;
 
@@ -131,6 +156,25 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
                 const data = JSON.parse(e.data) as SSECallEvent;
                 console.log('[SSE] Call created:', data.call_sid);
                 onCallCreatedRef.current?.(data);
+            });
+
+            // Messaging events
+            eventSource.addEventListener('message.added', (e) => {
+                const data = JSON.parse(e.data) as SSEMessageAddedEvent;
+                console.log('[SSE] Message added:', data.conversationId);
+                onMessageAddedRef.current?.(data);
+            });
+
+            eventSource.addEventListener('message.delivery', (e) => {
+                const data = JSON.parse(e.data) as SSEMessageDeliveryEvent;
+                console.log('[SSE] Message delivery:', data.messageSid, data.status);
+                onMessageDeliveryRef.current?.(data);
+            });
+
+            eventSource.addEventListener('conversation.updated', (e) => {
+                const data = JSON.parse(e.data) as SSEConversationUpdatedEvent;
+                console.log('[SSE] Conversation updated:', data.conversation?.id);
+                onConversationUpdatedRef.current?.(data);
             });
 
             // Error handling

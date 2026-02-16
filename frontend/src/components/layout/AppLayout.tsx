@@ -11,7 +11,7 @@ import {
     DropdownMenuItem,
     DropdownMenuSeparator,
 } from '../ui/dropdown-menu';
-import { Phone, Users, Settings, Key, BookOpen, FileText, LogOut, Shield } from 'lucide-react';
+import { Phone, MessageSquare, Users, Settings, Key, BookOpen, FileText, LogOut, Shield } from 'lucide-react';
 import './AppLayout.css';
 
 interface AppLayoutProps {
@@ -24,9 +24,10 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
     const location = useLocation();
     const navigate = useNavigate();
 
-    const activeTab = location.pathname.startsWith('/leads') ? 'leads'
-        : location.pathname.startsWith('/settings') ? 'settings'
-            : 'calls';
+    const activeTab = location.pathname.startsWith('/messages') ? 'messages'
+        : location.pathname.startsWith('/leads') ? 'leads'
+            : location.pathname.startsWith('/settings') ? 'settings'
+                : 'calls';
 
     const { accessDeniedMessage, clearAccessDenied, logout, hasRole } = useAuth();
 
@@ -70,6 +71,14 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                                 >
                                     <Phone className="size-4" />
                                     Calls
+                                </TabsTrigger>
+                                <TabsTrigger
+                                    value="messages"
+                                    className="flex items-center gap-2"
+                                    onClick={() => navigate('/messages')}
+                                >
+                                    <MessageSquare className="size-4" />
+                                    Messages
                                 </TabsTrigger>
                                 <TabsTrigger
                                     value="leads"

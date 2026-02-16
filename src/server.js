@@ -13,6 +13,7 @@ const integrationsLeadsRouter = require('../backend/src/routes/integrations-lead
 const integrationsAdminRouter = require('../backend/src/routes/integrations-admin');
 const leadFormSettingsRouter = require('../backend/src/routes/lead-form-settings');
 const usersRouter = require('../backend/src/routes/users');
+const messagingRouter = require('../backend/src/routes/messaging');
 const requestId = require('../backend/src/middleware/requestId');
 const { authenticate, requireRole, requireCompanyAccess } = require('../backend/src/middleware/keycloakAuth');
 const db = require('../backend/src/db/connection');
@@ -53,6 +54,19 @@ app.use('/events', eventsRouter);
 
 // Auth + tenant-scoped CRM API routes
 app.use('/api/calls', authenticate, requireCompanyAccess, callsRouter);
+// Media redirect — no auth (browser <img src> can't send JWT; UUID provides security)
+app.get('/api/messaging/media/:mediaId/temporary-url', async (req, res, next) => {
+    const conversationsService = require('../backend/src/services/conversationsService');
+    try {
+        const result = await conversationsService.getMediaTemporaryUrl(req.params.mediaId);
+        if (!result.url) return res.status(404).json({ error: 'Media URL not available' });
+        res.redirect(result.url);
+    } catch (err) {
+        console.error('[Media] redirect error:', err.message);
+        res.status(err.message.includes('not found') ? 404 : 500).json({ error: err.message });
+    }
+});
+app.use('/api/messaging', authenticate, requireCompanyAccess, messagingRouter);
 app.use('/api/sync', authenticate, requireCompanyAccess, syncRouter);
 
 // Leads API (behind feature flag)

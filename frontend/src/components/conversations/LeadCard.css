@@ -5,10 +5,9 @@
 /* Card container */
 .lead-card {
     overflow: hidden;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1),
-        0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
 }
 
 /* ── Header (gradient) ─────────────────────────────────────────────────── */
@@ -265,4 +264,59 @@
 .lead-card__status--lost {
     background: #fee2e2;
     color: #991b1b;
+}
+
+/* ── Call confirmation bar ─────────────────────────────────────────────── */
+.lead-card__confirm-call {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 20px;
+    background: #fffbeb;
+    border-bottom: 1px solid #fde68a;
+}
+
+.lead-card__confirm-label {
+    font-size: 14px;
+    font-weight: 600;
+    color: #92400e;
+}
+
+.lead-card__confirm-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.lead-card__confirm-cancel {
+    background: none;
+    border: none;
+    font-size: 13px;
+    font-weight: 500;
+    color: #6b7280;
+    cursor: pointer;
+    padding: 6px 12px;
+}
+
+.lead-card__confirm-cancel:hover {
+    color: #374151;
+}
+
+.lead-card__confirm-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 28px;
+    border-radius: 8px;
+    background: #16a34a;
+    color: #fff;
+    font-size: 15px;
+    font-weight: 700;
+    text-decoration: none;
+    transition: background 0.15s;
+}
+
+.lead-card__confirm-btn:hover {
+    background: #15803d;
 }

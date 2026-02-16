@@ -111,8 +111,10 @@ export const ConversationPage: React.FC = () => {
                 <div className="w-[360px] shrink-0 border-r flex flex-col bg-background">
                     <ConversationList />
                 </div>
-                <div className="flex-1 flex flex-col bg-background p-6 space-y-4">
-                    <Skeleton className="h-10 w-64" />
+                <div className="w-[400px] shrink-0 border-r bg-background overflow-y-auto">
+                    <Skeleton className="h-10 w-64 m-4" />
+                </div>
+                <div className="flex-1 flex flex-col bg-background p-6 space-y-4 overflow-y-auto">
                     {[...Array(3)].map((_, i) => (
                         <Skeleton key={i} className="h-32 w-full" />
                     ))}
@@ -121,13 +123,30 @@ export const ConversationPage: React.FC = () => {
         );
     }
 
-    if (!calls || calls.length === 0) {
-        return (
-            <div className="flex h-full overflow-hidden">
-                <div className="w-[360px] shrink-0 border-r flex flex-col bg-background">
-                    <ConversationList />
-                </div>
-                <div className="flex-1 flex flex-col bg-background">
+    // Derive contact info from the first call
+    const contact = calls?.[0]?.contact;
+    const phone = contact?.phone_e164 || calls?.[0]?.from_number || calls?.[0]?.to_number || '';
+
+    return (
+        <div className="flex h-full overflow-hidden">
+            <div className="w-[360px] shrink-0 border-r flex flex-col bg-background">
+                <ConversationList />
+            </div>
+
+            {/* Lead card / wizard — 400px fixed column, no padding */}
+            <div className="w-[400px] shrink-0 border-r bg-background overflow-y-auto">
+                {phone && (
+                    <LeadCard
+                        phone={phone}
+                        callCount={calls?.length}
+                        hasActiveCall={calls?.some(c => ['ringing', 'in-progress', 'queued', 'initiated', 'voicemail_recording'].includes(c.status))}
+                    />
+                )}
+            </div>
+
+            {/* Call list — remaining space */}
+            <div className="flex-1 flex flex-col bg-background overflow-y-auto">
+                {!calls || calls.length === 0 ? (
                     <div className="flex-1 flex items-center justify-center">
                         <div className="text-center">
                             <PhoneOff className="size-12 mx-auto mb-3 opacity-20" />
@@ -137,39 +156,18 @@ export const ConversationPage: React.FC = () => {
                             </p>
                         </div>
                     </div>
-                </div>
-            </div>
-        );
-    }
-
-    // Derive contact info from the first call
-    const contact = calls[0]?.contact;
-
-    return (
-        <div className="flex h-full overflow-hidden">
-            <div className="w-[360px] shrink-0 border-r flex flex-col bg-background">
-                <ConversationList />
-            </div>
-
-            <div className="flex-1 flex flex-col bg-background overflow-y-auto">
-                <div className="p-4">
-                    <LeadCard
-                        phone={contact?.phone_e164 || calls[0]?.from_number || calls[0]?.to_number || ''}
-                        callCount={calls.length}
-                        hasActiveCall={calls.some(c => ['ringing', 'in-progress', 'queued', 'initiated', 'voicemail_recording'].includes(c.status))}
-                    />
-                </div>
-
-                <div className="p-5 pt-0">
-                    <div className="space-y-4 max-w-3xl">
-                        {calls.map((call) => (
-                            <CallListItem
-                                key={call.id}
-                                call={callToCallData(call)}
-                            />
-                        ))}
+                ) : (
+                    <div className="p-5">
+                        <div className="space-y-4">
+                            {calls.map((call) => (
+                                <CallListItem
+                                    key={call.id}
+                                    call={callToCallData(call)}
+                                />
+                            ))}
+                        </div>
                     </div>
-                </div>
+                )}
             </div>
         </div>
     );

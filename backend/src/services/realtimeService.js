@@ -173,6 +173,36 @@ class RealtimeService extends EventEmitter {
         });
     }
 
+    // ─── Messaging SSE events ───
+
+    /**
+     * Broadcast new message to all connected clients
+     */
+    publishMessageAdded(message, conversation) {
+        this.broadcast('message.added', {
+            message,
+            conversationId: conversation.id,
+        });
+    }
+
+    /**
+     * Broadcast delivery status update
+     */
+    publishMessageDelivery(messageSid, status, errorCode) {
+        this.broadcast('message.delivery', {
+            messageSid,
+            status,
+            errorCode,
+        });
+    }
+
+    /**
+     * Broadcast conversation update (new message preview, state change)
+     */
+    publishConversationUpdate(conversation) {
+        this.broadcast('conversation.updated', { conversation });
+    }
+
     /**
      * Send keepalive ping to all clients
      */

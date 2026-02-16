@@ -314,8 +314,11 @@ export function AddressAutocomplete({
                     onChange={handleInputChange}
                     onKeyDown={handleKeyDown}
                     onFocus={(e) => {
-                        const len = e.target.value.length;
-                        e.target.setSelectionRange(len, len);
+                        const input = e.target;
+                        requestAnimationFrame(() => {
+                            const len = input.value.length;
+                            input.setSelectionRange(len, len);
+                        });
                     }}
                     disabled={!ready}
                     placeholder="Start typing address…"

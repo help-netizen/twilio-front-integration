@@ -30,6 +30,14 @@ router.post('/twilio/dial-action', handleDialAction);
 // POST /webhooks/twilio/voice-fallback — Emergency fallback
 router.post('/twilio/voice-fallback', handleVoiceFallback);
 
+// Conversations webhooks
+const {
+    handleConversationsPre,
+    handleConversationsPost,
+} = require('../webhooks/conversationsWebhooks');
+router.post('/twilio/conversations/pre', handleConversationsPre);
+router.post('/twilio/conversations/post', handleConversationsPost);
+
 // GET /webhooks/health
 router.get('/health', (req, res) => {
     res.status(200).json({

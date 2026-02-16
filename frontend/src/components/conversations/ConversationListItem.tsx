@@ -2,9 +2,8 @@ import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import type { Call } from '../../types/models';
 import { PhoneIncoming, PhoneOutgoing, ArrowLeftRight } from 'lucide-react';
-import { formatPhoneNumber, formatRelativeTime, formatAbsoluteTime } from '../../utils/formatters';
+import { formatPhoneNumber } from '../../utils/formatters';
 import { useLeadByPhone } from '../../hooks/useLeadByPhone';
-import { cn } from '../../lib/utils';
 
 interface ConversationListItemProps {
     call: Call;
@@ -34,11 +33,33 @@ function DirectionIcon({ direction, status }: { direction: string; status: strin
     return <PhoneOutgoing className="size-4" style={{ color }} />;
 }
 
+function getTimeAgo(date: Date): string {
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+
+    if (hours < 1) return 'now';
+    if (hours < 24) return `${hours}h ago`;
+    if (days < 7) return `${days}d ago`;
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function getFullDateTime(date: Date): string {
+    return date.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+    }) + ', ' + date.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+    });
+}
+
 export const ConversationListItem: React.FC<ConversationListItemProps> = ({ call }) => {
     const navigate = useNavigate();
     const location = useLocation();
 
-    // Navigate to contact page (if contact exists) or call detail
     const targetPath = call.contact
         ? `/contact/${call.contact.id}`
         : `/calls/${call.call_sid}`;
@@ -55,61 +76,69 @@ export const ConversationListItem: React.FC<ConversationListItemProps> = ({ call
         || call.to_number
         || call.call_sid;
 
-    // Fetch lead by phone for name
+    // Fetch lead by phone for name / company
     const { lead } = useLeadByPhone(rawPhone);
     const leadName = lead
         ? [lead.FirstName, lead.LastName].filter(Boolean).join(' ')
         : null;
+    const company = lead?.Company || null;
 
-    // Determine time for display
-    const displayTime = call.started_at || call.created_at;
+    // Primary display text: company > name > phone
+    const primaryText = company || leadName || formatPhoneNumber(rawPhone);
+    // Show secondary phone line only when we have a name/company above
+    const showSecondaryPhone = !!(company || leadName);
 
-    // Determine direction for icon
+    // Time for display
+    const displayDate = new Date(call.started_at || call.created_at);
+
+    // Direction for icon
     const iconDirection = call.direction === 'inbound' ? 'inbound'
         : call.direction?.startsWith('outbound') ? 'outbound'
             : call.direction === 'internal' ? 'internal'
                 : 'outbound';
 
     return (
-        <div
-            className={cn(
-                'border-b cursor-pointer transition-colors px-3 py-2.5',
-                'hover:bg-muted/50',
-                isActive && 'bg-muted border-l-4 border-l-primary'
-            )}
+        <button
             onClick={handleClick}
+            className={`w-full text-left px-4 py-3 transition-colors border-b border-gray-100 ${isActive ? 'bg-blue-50' : 'hover:bg-gray-50'
+                }`}
+            style={{ outline: 'none' }}
         >
-            <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-start gap-2.5">
+                {/* Direction icon — left side */}
+                <div className="shrink-0 pt-0.5">
                     <DirectionIcon direction={iconDirection} status={call.status} />
-                    <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                            <span className="text-sm font-medium truncate">
-                                {leadName || formatPhoneNumber(rawPhone)}
+                </div>
+
+                {/* Text content */}
+                <div className="min-w-0 flex-1">
+                    {/* Row 1: Primary line */}
+                    <div className="flex items-baseline justify-between mb-1">
+                        <span className="text-sm font-medium text-gray-900 truncate">
+                            {primaryText}
+                        </span>
+                        {call.call_count !== undefined && call.call_count !== null && (
+                            <span className="text-xs text-gray-500 ml-2 shrink-0">
+                                ({call.call_count})
                             </span>
-                            {call.call_count && call.call_count > 1 && (
-                                <span className="text-xs text-muted-foreground">({call.call_count})</span>
-                            )}
-                        </div>
-                        {leadName && (
-                            <span
-                                className="text-xs text-muted-foreground/70 truncate block"
-                                dangerouslySetInnerHTML={{
-                                    __html: formatPhoneNumber(rawPhone)
-                                }}
-                            />
                         )}
                     </div>
-                </div>
-                <div className="flex flex-col items-end shrink-0">
-                    <div className="text-xs text-muted-foreground font-medium">
-                        {formatRelativeTime(new Date(displayTime).getTime())}
-                    </div>
-                    <div className="text-[10px] text-muted-foreground/60">
-                        {formatAbsoluteTime(new Date(displayTime).getTime())}
+
+                    {/* Row 2: Secondary phone (conditional) */}
+                    {showSecondaryPhone && (
+                        <div className="text-xs text-gray-600 mb-1 font-mono">
+                            {formatPhoneNumber(rawPhone)}
+                        </div>
+                    )}
+
+                    {/* Row 3: Metadata */}
+                    <div className="flex items-center gap-1 text-xs text-gray-500">
+                        <span>{getTimeAgo(displayDate)}</span>
+                        <span className="text-gray-400">•</span>
+                        <span>{getFullDateTime(displayDate)}</span>
                     </div>
                 </div>
             </div>
-        </div>
+        </button>
     );
 };
