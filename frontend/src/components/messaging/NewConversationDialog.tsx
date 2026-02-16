@@ -13,7 +13,7 @@ const DEFAULT_PROXY_NUMBERS = [
 
 export function NewConversationDialog({ onSubmit, onClose }: NewConversationDialogProps) {
     const [customerPhone, setCustomerPhone] = useState('');
-    const [proxyNumber, setProxyNumber] = useState(DEFAULT_PROXY_NUMBERS[0].value);
+    const [proxyNumber, setProxyNumber] = useState(DEFAULT_PROXY_NUMBERS[1].value);
     const [initialMessage, setInitialMessage] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);

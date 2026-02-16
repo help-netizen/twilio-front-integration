@@ -54,9 +54,18 @@ async function getOrCreateConversation(customerE164, proxyE164, companyId) {
  */
 async function uploadMediaToMCS(buffer, contentType, filename) {
     const url = `https://mcs.us1.twilio.com/v1/Services/${SERVICE_SID}/Media`;
-    const FormData = (await import('form-data')).default;
-    const form = new FormData();
-    form.append('Media', buffer, { filename, contentType });
+
+    // Build multipart/form-data manually because Node fetch + form-data streams
+    // don't handle boundaries correctly.
+    const boundary = '----TwilioMCS' + Date.now();
+    const parts = [
+        `--${boundary}\r\n`,
+        `Content-Disposition: form-data; name="Media"; filename="${filename}"\r\n`,
+        `Content-Type: ${contentType}\r\n\r\n`,
+    ];
+    const header = Buffer.from(parts.join(''));
+    const footer = Buffer.from(`\r\n--${boundary}--\r\n`);
+    const body = Buffer.concat([header, buffer, footer]);
 
     const response = await fetch(url, {
         method: 'POST',
@@ -64,9 +73,9 @@ async function uploadMediaToMCS(buffer, contentType, filename) {
             'Authorization': 'Basic ' + Buffer.from(
                 `${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`
             ).toString('base64'),
-            ...form.getHeaders(),
+            'Content-Type': `multipart/form-data; boundary=${boundary}`,
         },
-        body: form,
+        body,
     });
 
     if (!response.ok) {
