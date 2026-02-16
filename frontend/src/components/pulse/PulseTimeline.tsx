@@ -100,7 +100,9 @@ export function PulseTimeline({ calls, messages, loading }: PulseTimelineProps) 
             );
         } else {
             rendered.push(
-                <SmsListItem key={`sms-${(item.data as SmsMessage).id}`} message={item.data as SmsMessage} />
+                <div key={`sms-${(item.data as SmsMessage).id}`} style={{ padding: '4px 16px' }}>
+                    <SmsListItem sms={item.data as SmsMessage} />
+                </div>
             );
         }
     }

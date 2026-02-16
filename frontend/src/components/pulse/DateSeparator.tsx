@@ -1,5 +1,5 @@
-// Date Separator Component
-// Pill-shaped date bubble between timeline groups
+// Date Separator — per TIMELINE_TECHNICAL_SPECIFICATION.md
+// bg-gray-200 text-gray-600 px-4 py-1.5 rounded-full text-xs font-medium shadow-sm
 
 interface DateSeparatorProps {
     date: string;
@@ -8,17 +8,7 @@ interface DateSeparatorProps {
 export function DateSeparator({ date }: DateSeparatorProps) {
     return (
         <div className="flex items-center justify-center my-6">
-            <div
-                style={{
-                    backgroundColor: '#f3f4f6',
-                    color: '#6b7280',
-                    padding: '6px 16px',
-                    borderRadius: '9999px',
-                    fontSize: '12px',
-                    fontWeight: 500,
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-                }}
-            >
+            <div className="bg-gray-200 text-gray-600 px-4 py-1.5 rounded-full text-xs font-medium shadow-sm">
                 {date}
             </div>
         </div>

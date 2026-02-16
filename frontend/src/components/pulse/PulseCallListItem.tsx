@@ -1,11 +1,5 @@
 /**
- * PulseCallListItem — call card for the Pulse timeline.
- * Design follows TIMELINE_DOCUMENTATION.md spec:
- *  - Header: left(icon + phone + timestamp) ❘ right(Badge + duration badge)
- *  - Audio player in bg-gray-50 pill
- *  - Call Summary always visible (bg-blue-50)
- *  - Transcription: Collapsible with blue trigger
- *  - System Info: Collapsible, grid 2-col
+ * PulseCallListItem — exact match to TIMELINE_TECHNICAL_SPECIFICATION.md
  */
 
 import { useState, useRef, useEffect } from 'react';
@@ -22,262 +16,373 @@ import {
     DollarSign,
     Hash,
     Navigation,
-    ChevronDown,
-    MessageSquare,
+    Timer,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { cn } from '@/lib/utils';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatPhoneNumber } from '@/utils/formatters';
 import type { CallData } from '../call-list-item';
 
-// ── Status badge config ──────────────────────────────────────────────────────
+// ── Status Colors (per spec) ─────────────────────────────────────────────────
 
-const STATUS_BADGE: Record<string, { text: string; className: string }> = {
-    'completed': { text: 'Completed', className: 'bg-green-100 text-green-800 hover:bg-green-100' },
-    'no-answer': { text: 'No Answer', className: 'bg-yellow-100 text-yellow-800 hover:bg-yellow-100' },
-    'busy': { text: 'Busy', className: 'bg-orange-100 text-orange-800 hover:bg-orange-100' },
-    'failed': { text: 'Failed', className: 'bg-red-100 text-red-800 hover:bg-red-100' },
-    'ringing': { text: 'Ringing', className: 'bg-blue-100 text-blue-800 hover:bg-blue-100' },
-    'in-progress': { text: 'In Progress', className: 'bg-purple-100 text-purple-800 hover:bg-purple-100' },
-    'voicemail_recording': { text: 'Leaving Voicemail', className: 'bg-orange-100 text-orange-800 hover:bg-orange-100' },
-    'voicemail_left': { text: 'Voicemail Left', className: 'bg-red-100 text-red-800 hover:bg-red-100' },
+const getStatusColor = (status: string) => {
+    switch (status) {
+        case 'completed':
+            return 'bg-green-500/10 text-green-700 border-green-200';
+        case 'no-answer':
+            return 'bg-yellow-500/10 text-yellow-700 border-yellow-200';
+        case 'busy':
+            return 'bg-orange-500/10 text-orange-700 border-orange-200';
+        case 'failed':
+            return 'bg-red-500/10 text-red-700 border-red-200';
+        case 'ringing':
+            return 'bg-blue-500/10 text-blue-700 border-blue-200';
+        case 'in-progress':
+            return 'bg-purple-500/10 text-purple-700 border-purple-200';
+        case 'voicemail_recording':
+            return 'bg-orange-500/10 text-orange-700 border-orange-200';
+        case 'voicemail_left':
+            return 'bg-red-500/10 text-red-700 border-red-200';
+        default:
+            return 'bg-gray-500/10 text-gray-700 border-gray-200';
+    }
 };
 
 // ── Formatters ───────────────────────────────────────────────────────────────
 
-function fmtDuration(sec: number | null | undefined): string {
-    if (!sec) return '';
-    const h = Math.floor(sec / 3600);
-    const m = Math.floor((sec % 3600) / 60);
-    const s = sec % 60;
-    if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-    return `${m}:${String(s).padStart(2, '0')}`;
-}
+const formatDuration = (seconds: number | null | undefined): string => {
+    if (!seconds) return 'N/A';
+    if (seconds < 60) return `${seconds}s`;
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}m ${s}s`;
+};
 
-function fmtAudioTime(sec: number): string {
-    if (!isFinite(sec) || isNaN(sec)) return '0:00';
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60);
-    return `${m}:${String(s).padStart(2, '0')}`;
-}
-
-function fmtTimestamp(date: Date): string {
+const formatTime = (date: Date): string => {
     return date.toLocaleString('en-US', {
         month: 'short', day: 'numeric', year: 'numeric',
         hour: 'numeric', minute: '2-digit', hour12: true,
     });
-}
+};
+
+const formatAudioTime = (seconds: number): string => {
+    if (!isFinite(seconds) || isNaN(seconds)) return '0:00';
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+};
 
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function PulseCallListItem({ call }: { call: CallData }) {
     const { token } = useAuth();
+    const [showSystemInfo, setShowSystemInfo] = useState(false);
+    const [activeSection, setActiveSection] = useState<'summary' | 'transcription' | null>(() => {
+        // Show summary by default for completed calls with summary
+        if (call.status === 'completed' && call.summary) return 'summary';
+        return null;
+    });
+
+    // Audio player state
     const [isPlaying, setIsPlaying] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(call.recordingDuration || call.totalDuration || call.duration || 0);
-    const [transcriptionOpen, setTranscriptionOpen] = useState(false);
-    const [systemInfoOpen, setSystemInfoOpen] = useState(false);
     const audioRef = useRef<HTMLAudioElement>(null);
 
-    // Audio events
     useEffect(() => {
-        const a = audioRef.current;
-        if (!a) return;
-        const onTime = () => setCurrentTime(a.currentTime);
-        const onDur = () => { if (isFinite(a.duration)) setDuration(a.duration); };
-        const onEnd = () => setIsPlaying(false);
-        a.addEventListener('timeupdate', onTime);
-        a.addEventListener('loadedmetadata', onDur);
-        a.addEventListener('durationchange', onDur);
-        a.addEventListener('ended', onEnd);
+        const audio = audioRef.current;
+        if (!audio) return;
+        const updateTime = () => setCurrentTime(audio.currentTime);
+        const updateDuration = () => { if (isFinite(audio.duration)) setDuration(audio.duration); };
+        const handleEnded = () => setIsPlaying(false);
+        audio.addEventListener('timeupdate', updateTime);
+        audio.addEventListener('loadedmetadata', updateDuration);
+        audio.addEventListener('durationchange', updateDuration);
+        audio.addEventListener('ended', handleEnded);
         return () => {
-            a.removeEventListener('timeupdate', onTime);
-            a.removeEventListener('loadedmetadata', onDur);
-            a.removeEventListener('durationchange', onDur);
-            a.removeEventListener('ended', onEnd);
+            audio.removeEventListener('timeupdate', updateTime);
+            audio.removeEventListener('loadedmetadata', updateDuration);
+            audio.removeEventListener('durationchange', updateDuration);
+            audio.removeEventListener('ended', handleEnded);
         };
     }, []);
 
-    const togglePlay = () => {
+    const handlePlayPause = () => {
         if (!audioRef.current) return;
-        isPlaying ? audioRef.current.pause() : audioRef.current.play();
+        if (isPlaying) audioRef.current.pause();
+        else audioRef.current.play();
         setIsPlaying(!isPlaying);
     };
-    const skip = (s: number) => {
+
+    const handleSkip = (seconds: number) => {
         if (!audioRef.current) return;
-        audioRef.current.currentTime = Math.max(0, Math.min(audioRef.current.currentTime + s, duration));
-    };
-    const seek = (v: number[]) => {
-        if (!audioRef.current) return;
-        audioRef.current.currentTime = v[0];
-        setCurrentTime(v[0]);
+        audioRef.current.currentTime = Math.max(0, Math.min(audioRef.current.currentTime + seconds, duration));
     };
 
-    const otherNumber = call.direction === 'incoming' ? call.from : call.to;
-    const badge = STATUS_BADGE[call.status] || STATUS_BADGE['completed'];
-    const durationSec = call.totalDuration || call.duration;
+    const handleSliderChange = (value: number[]) => {
+        if (!audioRef.current) return;
+        audioRef.current.currentTime = value[0];
+        setCurrentTime(value[0]);
+    };
+
+    const otherPartyNumber = call.direction === 'incoming' ? call.from : call.to;
+    const directionLabel = call.direction === 'incoming' ? 'Incoming Call' : 'Outgoing Call';
 
     return (
-        <Card className="bg-white border border-gray-200 shadow-sm overflow-hidden">
-            <div className="p-4 space-y-3">
-                {/* ─── Header ─── */}
-                <div className="flex items-center justify-between">
-                    {/* Left: icon + phone + timestamp */}
-                    <div className="flex items-center gap-2">
-                        {call.direction === 'incoming'
-                            ? <PhoneIncoming className="w-5 h-5 text-green-600 shrink-0" />
-                            : <PhoneOutgoing className="w-5 h-5 text-blue-600 shrink-0" />}
-                        <span className="text-sm font-medium text-gray-900">
-                            {formatPhoneNumber(otherNumber)}
-                        </span>
-                        <span className="text-xs text-gray-500">
-                            {fmtTimestamp(call.startTime)}
-                        </span>
+        <Card className="overflow-hidden border border-gray-200 hover:shadow-md transition-shadow">
+            {/* ─── Header (p-4 pb-0) ─── */}
+            <div className="p-4 pb-0">
+                <div className="flex items-center gap-3">
+                    {/* Direction Icon with Status Color (w-9 h-9 rounded-full border) */}
+                    <TooltipProvider>
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <div className={`flex items-center justify-center w-9 h-9 rounded-full border ${getStatusColor(call.status)}`}>
+                                    {call.direction === 'incoming' ? (
+                                        <PhoneIncoming className="w-4 h-4" />
+                                    ) : (
+                                        <PhoneOutgoing className="w-4 h-4" />
+                                    )}
+                                </div>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                                <p>{directionLabel} - {call.status.replace('-', ' ').charAt(0).toUpperCase() + call.status.replace('-', ' ').slice(1)}</p>
+                            </TooltipContent>
+                        </Tooltip>
+                    </TooltipProvider>
+
+                    {/* Phone Number */}
+                    <p className="text-xs text-gray-600 font-mono">{formatPhoneNumber(otherPartyNumber)}</p>
+
+                    {/* Spacer */}
+                    <div className="flex-1" />
+
+                    {/* Date */}
+                    <div className="text-xs text-gray-500">
+                        {formatTime(call.startTime)}
                     </div>
 
-                    {/* Right: status badge + duration badge */}
-                    <div className="flex items-center gap-2 shrink-0">
-                        <Badge variant="secondary" className={badge.className}>
-                            {badge.text}
-                        </Badge>
-                        {durationSec ? (
-                            <span className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-700">
-                                {fmtDuration(durationSec)}
-                            </span>
-                        ) : null}
-                    </div>
+                    {/* System Info Toggle */}
+                    <TooltipProvider>
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => setShowSystemInfo(!showSystemInfo)}
+                                    className="h-6 w-6 hover:bg-gray-100"
+                                >
+                                    <Settings2 className={`w-4 h-4 transition-transform ${showSystemInfo ? 'rotate-90' : ''}`} />
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                                <p>System Information</p>
+                            </TooltipContent>
+                        </Tooltip>
+                    </TooltipProvider>
                 </div>
+            </div>
 
-                {/* ─── Audio Player ─── */}
-                {call.audioUrl && (
-                    <div className="bg-gray-50 rounded-lg p-3">
-                        <audio
-                            ref={audioRef}
-                            src={token ? `${call.audioUrl}?token=${encodeURIComponent(token)}` : call.audioUrl}
-                            preload="metadata"
+            {/* ─── Audio Player (px-4 pb-4 bg-white) ─── */}
+            {call.audioUrl && (
+                <div className="px-4 pb-4 bg-white">
+                    <audio
+                        ref={audioRef}
+                        src={token ? `${call.audioUrl}?token=${encodeURIComponent(token)}` : call.audioUrl}
+                        preload="metadata"
+                    />
+
+                    <div className="space-y-3">
+                        {/* Action buttons and Controls in one row */}
+                        <div className="flex items-center gap-3">
+                            {/* Summary and Transcription tabs on the left */}
+                            <div className="flex items-center gap-3 shrink-0">
+                                {call.summary && (
+                                    <button
+                                        onClick={() => setActiveSection(activeSection === 'summary' ? null : 'summary')}
+                                        className={`text-xs transition-colors ${activeSection === 'summary'
+                                                ? 'text-gray-700 border-b-2 border-gray-700'
+                                                : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
+                                            }`}
+                                    >
+                                        Summary
+                                    </button>
+                                )}
+
+                                {call.transcription && (
+                                    <button
+                                        onClick={() => setActiveSection(activeSection === 'transcription' ? null : 'transcription')}
+                                        className={`text-xs transition-colors ${activeSection === 'transcription'
+                                                ? 'text-gray-700 border-b-2 border-gray-700'
+                                                : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
+                                            }`}
+                                    >
+                                        {call.transcriptStatus === 'processing' ? 'Transcribing...' : 'Transcript'}
+                                    </button>
+                                )}
+                            </div>
+
+                            {/* Audio Controls */}
+                            <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                    onClick={() => handleSkip(-10)}
+                                    title="Rewind 10 seconds"
+                                    className="h-7 w-7 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors relative"
+                                >
+                                    <RotateCcw className="w-3.5 h-3.5" />
+                                    <span className="absolute text-[9px] font-semibold">10</span>
+                                </button>
+
+                                <button
+                                    onClick={handlePlayPause}
+                                    className="h-7 w-7 flex items-center justify-center text-gray-500 hover:text-gray-700 transition-colors"
+                                >
+                                    {isPlaying ? (
+                                        <Pause className="w-3.5 h-3.5" />
+                                    ) : (
+                                        <Play className="w-3.5 h-3.5" />
+                                    )}
+                                </button>
+
+                                <button
+                                    onClick={() => handleSkip(10)}
+                                    title="Forward 10 seconds"
+                                    className="h-7 w-7 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors relative"
+                                >
+                                    <RotateCw className="w-3.5 h-3.5" />
+                                    <span className="absolute text-[9px] font-semibold">10</span>
+                                </button>
+                            </div>
+
+                            {/* Time Display */}
+                            <div className="flex items-center">
+                                <span className="text-xs text-gray-500 font-mono">
+                                    {formatAudioTime(currentTime)} / {formatAudioTime(duration)}
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* Slider */}
+                        <Slider
+                            value={[currentTime]}
+                            max={duration || 100}
+                            step={1}
+                            onValueChange={handleSliderChange}
+                            className="w-full"
                         />
 
-                        <div className="flex items-center gap-3">
-                            {/* Play / Pause */}
-                            <Button variant="ghost" size="icon" className="size-8" onClick={togglePlay}>
-                                {isPlaying
-                                    ? <Pause className="w-5 h-5" />
-                                    : <Play className="w-5 h-5" />}
-                            </Button>
+                        {/* Summary - Show only when active */}
+                        {activeSection === 'summary' && call.summary && (
+                            <div className="pt-2">
+                                <p className="text-sm text-gray-700 leading-relaxed">
+                                    {call.summary}
+                                </p>
+                            </div>
+                        )}
 
-                            {/* Rewind */}
-                            <Button variant="ghost" size="icon" className="size-8 relative hover:bg-gray-200" onClick={() => skip(-10)}>
-                                <RotateCcw className="w-4 h-4" />
-                                <span className="absolute text-[7px] font-bold leading-none">10</span>
-                            </Button>
-
-                            {/* Forward */}
-                            <Button variant="ghost" size="icon" className="size-8 relative hover:bg-gray-200" onClick={() => skip(10)}>
-                                <RotateCw className="w-4 h-4" />
-                                <span className="absolute text-[7px] font-bold leading-none">10</span>
-                            </Button>
-
-                            {/* Progress bar */}
-                            <Slider
-                                value={[currentTime]}
-                                max={duration || 100}
-                                step={1}
-                                onValueChange={seek}
-                                className="flex-1"
-                            />
-
-                            {/* Time */}
-                            <span className="text-xs text-gray-600 font-mono shrink-0">
-                                {fmtAudioTime(currentTime)} / {fmtAudioTime(duration)}
-                            </span>
-                        </div>
+                        {/* Transcription - Show only when active */}
+                        {activeSection === 'transcription' && call.transcription && (
+                            <div className="pt-2">
+                                <ScrollArea className="h-48 bg-gray-50 p-3 rounded-md">
+                                    <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                                        {call.transcription}
+                                    </p>
+                                </ScrollArea>
+                            </div>
+                        )}
                     </div>
-                )}
+                </div>
+            )}
 
-                {/* ─── Call Summary (always visible when exists) ─── */}
-                {call.summary && (
-                    <div className="p-3 bg-blue-50 rounded-lg">
-                        <div className="flex items-center gap-1.5 mb-1.5">
-                            <MessageSquare className="w-4 h-4 text-gray-700" />
-                            <span className="text-sm font-semibold text-gray-900">Call Summary</span>
+            {/* ─── No Audio: Summary and Transcription separately ─── */}
+            {!call.audioUrl && (
+                <>
+                    {call.summary && (
+                        <div className="px-4 pb-4 border-t">
+                            <h4 className="font-medium text-sm mt-3 mb-2">Summary</h4>
+                            <p className="text-sm leading-relaxed bg-muted/50 p-3 rounded-md">
+                                {call.summary}
+                            </p>
                         </div>
-                        <p className="text-sm text-gray-700 leading-relaxed">{call.summary}</p>
-                    </div>
-                )}
-
-                {/* ─── Transcription (Collapsible) ─── */}
-                {call.transcription && (
-                    <div>
-                        <button
-                            onClick={() => setTranscriptionOpen(!transcriptionOpen)}
-                            className="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700 transition-colors"
-                        >
-                            <ChevronDown className={cn(
-                                'w-4 h-4 transition-transform',
-                                transcriptionOpen && 'rotate-180',
-                            )} />
-                            View Transcription
-                        </button>
-
-                        {transcriptionOpen && (
-                            <ScrollArea className="mt-2 h-[200px] p-3 bg-gray-50 rounded-lg">
-                                <p className="text-sm text-gray-700 whitespace-pre-line leading-relaxed">
+                    )}
+                    {call.transcription && (
+                        <div className="px-4 pb-4 border-t">
+                            <h4 className="font-medium text-sm mt-3 mb-2">Transcription</h4>
+                            <ScrollArea className="h-48 bg-gray-50 p-3 rounded-md">
+                                <p className="text-sm leading-relaxed whitespace-pre-wrap">
                                     {call.transcription}
                                 </p>
                             </ScrollArea>
-                        )}
-                    </div>
-                )}
-
-                {call.transcriptStatus === 'processing' && (
-                    <p className="text-sm text-gray-500 italic animate-pulse">Transcribing audio…</p>
-                )}
-
-                {/* ─── System Information (Collapsible) ─── */}
-                <div>
-                    <button
-                        onClick={() => setSystemInfoOpen(!systemInfoOpen)}
-                        className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-900 transition-colors"
-                    >
-                        <Settings2 className={cn(
-                            'w-4 h-4 transition-transform',
-                            systemInfoOpen && 'rotate-90',
-                        )} />
-                        System Information
-                    </button>
-
-                    {systemInfoOpen && (
-                        <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
-                            {call.cost !== undefined && (
-                                <div className="flex items-center gap-1.5">
-                                    <DollarSign className="w-4 h-4 text-gray-400" />
-                                    <span className="text-gray-500">Cost:</span>
-                                    <span className="font-mono">${call.cost.toFixed(3)}</span>
-                                </div>
-                            )}
-                            <div className="flex items-center gap-1.5">
-                                <Hash className="w-4 h-4 text-gray-400" />
-                                <span className="text-gray-500">Call SID:</span>
-                                <span className="font-mono text-xs truncate max-w-[140px]">{call.callSid}</span>
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                                <Clock className="w-4 h-4 text-gray-400" />
-                                <span className="text-gray-500">Queue:</span>
-                                <span className="font-mono">{call.queueTime}s</span>
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                                <Navigation className="w-4 h-4 text-gray-400" />
-                                <span className="text-gray-500">Direction:</span>
-                                <span className="font-mono capitalize">{call.twilioDirection}</span>
-                            </div>
                         </div>
                     )}
+                </>
+            )}
+
+            {/* ─── System Information (bg-gray-50, p-4 pt-0, space-y-2) ─── */}
+            {showSystemInfo && (
+                <div className="p-4 pt-0 space-y-2 text-sm bg-gray-50">
+                    <div className="flex items-center gap-2">
+                        <Clock className="w-4 h-4 text-gray-400" />
+                        <span className="text-gray-600">Duration:</span>
+                        <span className="font-mono text-gray-900">
+                            {formatDuration(call.totalDuration || call.duration)}
+                        </span>
+                    </div>
+
+                    {call.talkTime !== undefined && (
+                        <div className="flex items-center gap-2">
+                            <Timer className="w-4 h-4 text-gray-400" />
+                            <span className="text-gray-600">Talk:</span>
+                            <span className="font-mono text-gray-900">
+                                {formatDuration(call.talkTime)}
+                            </span>
+                        </div>
+                    )}
+
+                    {call.waitTime !== undefined && (
+                        <div className="flex items-center gap-2">
+                            <Clock className="w-4 h-4 text-gray-400" />
+                            <span className="text-gray-600">Wait:</span>
+                            <span className="font-mono text-gray-900">
+                                {formatDuration(call.waitTime)}
+                            </span>
+                        </div>
+                    )}
+
+                    {call.cost !== undefined && (
+                        <div className="flex items-center gap-2">
+                            <DollarSign className="w-4 h-4 text-gray-400" />
+                            <span className="text-gray-600">Cost:</span>
+                            <span className="font-mono text-gray-900">
+                                ${call.cost.toFixed(4)} USD
+                            </span>
+                        </div>
+                    )}
+
+                    <div className="flex items-center gap-2">
+                        <Hash className="w-4 h-4 text-gray-400" />
+                        <span className="text-gray-600">Call SID:</span>
+                        <code className="text-xs bg-gray-200 px-2 py-1 rounded font-mono text-gray-800">
+                            {call.callSid}
+                        </code>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                        <Clock className="w-4 h-4 text-gray-400" />
+                        <span className="text-gray-600">Queue Time:</span>
+                        <span className="font-mono text-gray-900">{call.queueTime}s</span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                        <Navigation className="w-4 h-4 text-gray-400" />
+                        <span className="text-gray-600">Twilio Direction:</span>
+                        <span className="font-mono text-gray-900">{call.twilioDirection}</span>
+                    </div>
                 </div>
-            </div>
+            )}
         </Card>
     );
 }

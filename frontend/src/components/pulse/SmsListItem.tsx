@@ -1,208 +1,169 @@
+/**
+ * SmsListItem — exact match to TIMELINE_TECHNICAL_SPECIFICATION.md
+ * Adapted field names: sms.body (not sms.message), sms.from_number/to_number,
+ * sms.delivery_status, sms.created_at, media items from our schema.
+ */
+
 import { MessageSquare, Check, CheckCheck, X, Download, FileText, FileIcon } from 'lucide-react';
 import { Card } from '../ui/card';
 import type { SmsMessage, SmsMediaItem } from '../../types/pulse';
 
-interface SmsListItemProps {
-    message: SmsMessage;
-}
+// ── Formatters ───────────────────────────────────────────────────────────────
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function formatTime(dateStr: string | null): string {
-    if (!dateStr) return '';
-    return new Date(dateStr).toLocaleString('en-US', {
+const formatTime = (dateStr: string): string => {
+    const d = new Date(dateStr);
+    return d.toLocaleString('en-US', {
         month: 'short', day: 'numeric', year: 'numeric',
         hour: 'numeric', minute: '2-digit', hour12: true,
     });
+};
+
+const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+};
+
+const isImage = (contentType: string | null): boolean => !!contentType && contentType.startsWith('image/');
+
+const handleDownload = (media: SmsMediaItem) => {
+    const link = document.createElement('a');
+    link.href = `/api/conversations/media/${media.id}/content`;
+    link.download = media.filename || 'download';
+    link.target = '_blank';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+};
+
+// ── Component ────────────────────────────────────────────────────────────────
+
+interface SmsListItemProps {
+    sms: SmsMessage;
 }
 
-function formatFileSize(bytes: number | null): string {
-    if (!bytes) return '';
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function isImage(contentType: string | null): boolean {
-    return !!contentType && contentType.startsWith('image/');
-}
-
-function handleDownload(media: SmsMediaItem) {
-    const url = `/api/messaging/media/${media.id}/temporary-url`;
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = media.filename || 'attachment';
-    a.target = '_blank';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-}
-
-// ── Status icon ─────────────────────────────────────────────────────────────
-
-function StatusIndicator({ status, isOutgoing }: { status: string | null; isOutgoing: boolean }) {
-    if (!isOutgoing) return null;
-    const cls = 'w-4 h-4';
-    switch (status) {
-        case 'delivered':
-        case 'read':
-            return <CheckCheck className={cls} style={{ color: isOutgoing ? '#bfdbfe' : '#6b7280' }} />;
-        case 'sent':
-            return <Check className={cls} style={{ color: isOutgoing ? '#93c5fd' : '#6b7280' }} />;
-        case 'failed':
-        case 'undelivered':
-            return <X className={cls} style={{ color: '#fca5a5' }} />;
-        default:
-            return null;
-    }
-}
-
-// ── Media preview (image) ───────────────────────────────────────────────────
-
-function ImagePreview({ media, isOutgoing }: { media: SmsMediaItem; isOutgoing: boolean }) {
-    const url = `/api/messaging/media/${media.id}/temporary-url`;
-    return (
-        <div className="relative group" style={{ marginBottom: '8px' }}>
-            <img
-                src={url}
-                alt={media.filename || 'Image'}
-                className="w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
-                style={{ maxHeight: '300px', objectFit: 'contain' }}
-                onClick={() => handleDownload(media)}
-                loading="lazy"
-            />
-            {/* Download overlay */}
-            <button
-                onClick={(e) => { e.stopPropagation(); handleDownload(media); }}
-                className="absolute top-2 right-2 p-2 rounded-full shadow-lg transition-opacity opacity-0 group-hover:opacity-100"
-                style={{
-                    backgroundColor: isOutgoing ? '#1d4ed8' : '#1f2937',
-                }}
-            >
-                <Download className="w-4 h-4 text-white" />
-            </button>
-            {/* Size badge */}
-            {media.size_bytes && (
-                <span
-                    className="absolute bottom-2 left-2 px-2 py-1 rounded text-xs text-white"
-                    style={{ backgroundColor: isOutgoing ? 'rgba(29,78,216,0.9)' : 'rgba(31,41,55,0.9)' }}
-                >
-                    {formatFileSize(media.size_bytes)}
-                </span>
-            )}
-        </div>
-    );
-}
-
-// ── Media preview (document) ────────────────────────────────────────────────
-
-function DocumentPreview({ media, isOutgoing }: { media: SmsMediaItem; isOutgoing: boolean }) {
-    const isPdf = media.content_type?.includes('pdf');
-    return (
-        <button
-            onClick={() => handleDownload(media)}
-            className="w-full flex items-center gap-3 p-3 rounded-lg border transition-colors"
-            style={{
-                marginBottom: '8px',
-                backgroundColor: isOutgoing ? '#1d4ed8' : '#f9fafb',
-                borderColor: isOutgoing ? '#1e40af' : '#e5e7eb',
-            }}
-        >
-            <div className="p-2 rounded" style={{ backgroundColor: isOutgoing ? '#1e40af' : '#e5e7eb' }}>
-                {isPdf
-                    ? <FileText className="w-5 h-5" style={{ color: isOutgoing ? '#bfdbfe' : '#dc2626' }} />
-                    : <FileIcon className="w-5 h-5" style={{ color: isOutgoing ? '#bfdbfe' : '#4b5563' }} />
-                }
-            </div>
-            <div className="flex-1 text-left">
-                <div className="text-sm font-medium truncate" style={{ color: isOutgoing ? '#ffffff' : '#111827' }}>
-                    {media.filename || 'Attachment'}
-                </div>
-                {media.size_bytes && (
-                    <div className="text-xs" style={{ color: isOutgoing ? '#bfdbfe' : '#6b7280' }}>
-                        {formatFileSize(media.size_bytes)}
-                    </div>
-                )}
-            </div>
-            <Download
-                className="w-4 h-4 shrink-0"
-                style={{ color: isOutgoing ? '#bfdbfe' : '#9ca3af' }}
-            />
-        </button>
-    );
-}
-
-// ── Main component ──────────────────────────────────────────────────────────
-
-export function SmsListItem({ message }: SmsListItemProps) {
-    const isOutgoing = message.direction === 'outbound';
-    const hasMedia = !!message.media?.length;
-    const hasMessage = !!message.body?.trim();
+export function SmsListItem({ sms }: SmsListItemProps) {
+    const isOutgoing = sms.direction === 'outbound';
+    const hasMedia = sms.media && sms.media.length > 0;
+    const hasMessage = sms.body && sms.body.trim().length > 0;
 
     return (
-        <div className="flex" style={{
-            justifyContent: isOutgoing ? 'flex-end' : 'flex-start',
-            padding: '4px 16px',
-        }}>
+        <div className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
             <Card
-                className="border shadow-sm"
-                style={{
-                    maxWidth: '80%',
-                    padding: hasMessage ? '16px' : '8px',
-                    backgroundColor: isOutgoing ? '#2563eb' : '#ffffff',
-                    color: isOutgoing ? '#ffffff' : '#111827',
-                    borderColor: isOutgoing ? '#1d4ed8' : '#e5e7eb',
-                }}
+                className={`max-w-[80%] overflow-hidden border ${isOutgoing
+                    ? 'bg-blue-600 text-white border-blue-700'
+                    : 'bg-white text-gray-900 border-gray-200'
+                    }`}
             >
-                {/* Header with phone + status */}
-                {(hasMessage || (hasMedia && isOutgoing)) && (
-                    <div className="flex items-center gap-2 mb-2">
-                        <MessageSquare
-                            className="w-4 h-4"
-                            style={{ color: isOutgoing ? '#bfdbfe' : '#9ca3af' }}
-                        />
-                        <span
-                            className="text-xs font-mono"
-                            style={{ color: isOutgoing ? '#dbeafe' : '#6b7280' }}
-                        >
-                            {isOutgoing ? message.to_number : message.from_number}
-                        </span>
-                        <div className="ml-auto">
-                            <StatusIndicator status={message.delivery_status} isOutgoing={isOutgoing} />
+                <div className={hasMedia && !hasMessage ? 'p-2' : 'p-4'}>
+                    {/* Header - show if there's text or it's outgoing with media (for status) */}
+                    {(hasMessage || (hasMedia && isOutgoing)) && (
+                        <div className="flex items-center gap-2 mb-2">
+                            <MessageSquare className={`w-4 h-4 ${isOutgoing ? 'text-blue-200' : 'text-gray-400'}`} />
+                            <span className={`text-xs font-mono ${isOutgoing ? 'text-blue-100' : 'text-gray-500'}`}>
+                                {isOutgoing ? sms.to_number : sms.from_number}
+                            </span>
+                            {isOutgoing && (
+                                <span className={`ml-auto ${sms.delivery_status === 'delivered' ? 'text-blue-200' :
+                                    sms.delivery_status === 'sent' ? 'text-blue-300' :
+                                        'text-red-300'
+                                    }`}>
+                                    {sms.delivery_status === 'delivered' ? (
+                                        <CheckCheck className="w-3.5 h-3.5" />
+                                    ) : sms.delivery_status === 'sent' ? (
+                                        <Check className="w-3.5 h-3.5" />
+                                    ) : (
+                                        <X className="w-3.5 h-3.5" />
+                                    )}
+                                </span>
+                            )}
                         </div>
-                    </div>
-                )}
+                    )}
 
-                {/* Media attachments */}
-                {hasMedia && (
-                    <div className="space-y-2" style={{ marginBottom: hasMessage ? '12px' : 0 }}>
-                        {message.media!.map(m =>
-                            isImage(m.content_type)
-                                ? <ImagePreview key={m.id} media={m} isOutgoing={isOutgoing} />
-                                : <DocumentPreview key={m.id} media={m} isOutgoing={isOutgoing} />
-                        )}
-                    </div>
-                )}
+                    {/* Media Attachments */}
+                    {hasMedia && (
+                        <div className={hasMessage ? 'mb-3 space-y-2' : 'space-y-2'}>
+                            {sms.media!.map((media) => (
+                                <div key={media.id}>
+                                    {isImage(media.content_type || '') ? (
+                                        /* Image preview with download button */
+                                        <div className="relative group">
+                                            <img
+                                                src={`/api/conversations/media/${media.id}/content`}
+                                                alt={media.filename || 'Image'}
+                                                className="w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
+                                                onClick={() => handleDownload(media)}
+                                            />
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleDownload(media);
+                                                }}
+                                                className={`absolute top-2 right-2 p-2 rounded-full shadow-lg transition-opacity opacity-0 group-hover:opacity-100 ${isOutgoing ? 'bg-blue-700 hover:bg-blue-800' : 'bg-gray-800 hover:bg-gray-900'
+                                                    }`}
+                                                title="Download"
+                                            >
+                                                <Download className="w-4 h-4 text-white" />
+                                            </button>
+                                            {media.size_bytes && (
+                                                <div className={`absolute bottom-2 left-2 px-2 py-1 rounded text-xs ${isOutgoing ? 'bg-blue-700/90' : 'bg-gray-800/90'
+                                                    } text-white`}>
+                                                    {formatFileSize(media.size_bytes)}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        /* Non-image file with download */
+                                        <button
+                                            onClick={() => handleDownload(media)}
+                                            className={`w-full flex items-center gap-3 p-3 rounded-lg border transition-colors ${isOutgoing
+                                                ? 'bg-blue-700 border-blue-800 hover:bg-blue-800'
+                                                : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
+                                                }`}
+                                        >
+                                            <div className={`p-2 rounded ${isOutgoing ? 'bg-blue-800' : 'bg-gray-200'
+                                                }`}>
+                                                {(media.content_type || '').includes('pdf') ? (
+                                                    <FileText className={`w-5 h-5 ${isOutgoing ? 'text-blue-200' : 'text-red-600'}`} />
+                                                ) : (
+                                                    <FileIcon className={`w-5 h-5 ${isOutgoing ? 'text-blue-200' : 'text-gray-600'}`} />
+                                                )}
+                                            </div>
+                                            <div className="flex-1 text-left">
+                                                <div className={`text-sm font-medium truncate ${isOutgoing ? 'text-white' : 'text-gray-900'
+                                                    }`}>
+                                                    {media.filename || 'File'}
+                                                </div>
+                                                {media.size_bytes && (
+                                                    <div className={`text-xs ${isOutgoing ? 'text-blue-200' : 'text-gray-500'
+                                                        }`}>
+                                                        {formatFileSize(media.size_bytes)}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <Download className={`w-4 h-4 flex-shrink-0 ${isOutgoing ? 'text-blue-200' : 'text-gray-400'
+                                                }`} />
+                                        </button>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
 
-                {/* Message text */}
-                {hasMessage && (
-                    <div
-                        className="text-sm leading-relaxed mb-2"
-                        style={{ color: isOutgoing ? '#ffffff' : '#374151' }}
-                    >
-                        {message.body}
-                    </div>
-                )}
+                    {/* Message */}
+                    {hasMessage && (
+                        <p className={`text-sm leading-relaxed mb-2 ${isOutgoing ? 'text-white' : 'text-gray-700'}`}>
+                            {sms.body}
+                        </p>
+                    )}
 
-                {/* Timestamp */}
-                {hasMessage && (
-                    <div className="text-right" style={{
-                        fontSize: '11px',
-                        color: isOutgoing ? '#bfdbfe' : '#6b7280',
-                    }}>
-                        {formatTime(message.date_created_remote || message.created_at)}
-                    </div>
-                )}
+                    {/* Timestamp */}
+                    {hasMessage && (
+                        <div className={`text-xs ${isOutgoing ? 'text-blue-200' : 'text-gray-500'} text-right`}>
+                            {formatTime(sms.date_created_remote || sms.created_at)}
+                        </div>
+                    )}
+                </div>
             </Card>
         </div>
     );
