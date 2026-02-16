@@ -176,6 +176,25 @@ async function processVoiceEvent(payload, eventType, traceId) {
         } catch (e) { /* proceed with upsert if check fails */ }
     }
 
+    // Guard: for inbound parent calls, Twilio sends "in-progress" when TwiML starts
+    // (Dial begins ringing agents), not when someone answers. Keep as "ringing"
+    // until a child leg actually reaches "in-progress".
+    let effectiveStatus = normalized.eventStatus;
+    if (!normalized.parentCallSid && normalized.eventStatus === 'in-progress' && !skipUpsert) {
+        try {
+            const childCheck = await db.query(
+                `SELECT 1 FROM calls WHERE parent_call_sid = $1 AND status = 'in-progress' LIMIT 1`,
+                [normalized.callSid]
+            );
+            if (childCheck.rows.length === 0) {
+                effectiveStatus = 'ringing';
+                console.log(`[${traceId}] Parent in-progress but no child answered → keeping as ringing`);
+            }
+        } catch (e) { /* use original status if check fails */ }
+    }
+
+    const effectiveIsFinal = isFinalStatus(effectiveStatus);
+
     // Upsert call snapshot
     let call;
     if (!skipUpsert) {
@@ -186,11 +205,11 @@ async function processVoiceEvent(payload, eventType, traceId) {
             direction: processed.direction,   // Use CallProcessor's direction
             fromNumber: extractPhoneFromSIP(normalized.fromNumber),
             toNumber: extractPhoneFromSIP(normalized.toNumber),
-            status: normalized.eventStatus,
-            isFinal,
+            status: effectiveStatus,
+            isFinal: effectiveIsFinal,
             startedAt: normalized.eventTime,
-            answeredAt: normalized.eventStatus === 'in-progress' ? normalized.eventTime : null,
-            endedAt: isFinal ? normalized.eventTime : null,
+            answeredAt: effectiveStatus === 'in-progress' ? normalized.eventTime : null,
+            endedAt: effectiveIsFinal ? normalized.eventTime : null,
             durationSec: normalized.durationSec || null,
             price: normalized.price,
             priceUnit: normalized.priceUnit,
@@ -227,6 +246,26 @@ async function processVoiceEvent(payload, eventType, traceId) {
     // Publish realtime event (after enrichment so frontend gets correct duration)
     if (!skipUpsert) {
         publishRealtimeEvent('call.updated', enrichedCall || { call_sid: normalized.callSid, status: normalized.eventStatus }, traceId);
+    }
+
+    // When a child leg goes in-progress (someone answered), update parent to in-progress
+    if (normalized.parentCallSid && normalized.eventStatus === 'in-progress') {
+        try {
+            const parentCall = await queries.getCallByCallSid(normalized.parentCallSid);
+            if (parentCall && parentCall.status === 'ringing') {
+                await db.query(
+                    `UPDATE calls SET status = 'in-progress', answered_at = $2 WHERE call_sid = $1`,
+                    [normalized.parentCallSid, normalized.eventTime]
+                );
+                const freshParent = await queries.getCallByCallSid(normalized.parentCallSid);
+                if (freshParent) {
+                    publishRealtimeEvent('call.updated', freshParent, traceId);
+                }
+                console.log(`[${traceId}] Child answered → parent ${normalized.parentCallSid} → in-progress`);
+            }
+        } catch (e) {
+            console.warn(`[${traceId}] Failed to update parent to in-progress:`, e.message);
+        }
     }
 
     // Reconcile parent call if this is a child leg that reached final status
