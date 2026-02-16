@@ -312,7 +312,7 @@ async function handleDialAction(req, res) {
             traceId
         });
 
-        const toVoicemail = ['no-answer', 'busy', 'failed', 'canceled'].includes(dialStatus);
+        const toVoicemail = ['no-answer', 'busy'].includes(dialStatus);
 
         let twiml;
         if (toVoicemail) {
