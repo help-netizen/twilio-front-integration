@@ -302,12 +302,12 @@ function guessPreviewKind(contentType) {
  * Get media temporary URL from Twilio.
  * Fetches the media resource from Conversations API, caches URL for 4 hours.
  */
-async function getMediaTemporaryUrl(mediaId) {
+async function getMediaTemporaryUrl(mediaId, forceRefresh = false) {
     const media = await convQueries.getMediaById(mediaId);
     if (!media) throw new Error(`Media ${mediaId} not found`);
 
-    // Check cache (4-hour TTL)
-    if (media.temporary_url && media.temporary_url_expires_at && new Date(media.temporary_url_expires_at) > new Date()) {
+    // Check cache (4-hour TTL) — skip if force refresh
+    if (!forceRefresh && media.temporary_url && media.temporary_url_expires_at && new Date(media.temporary_url_expires_at) > new Date()) {
         return { url: media.temporary_url, expiresAt: media.temporary_url_expires_at, contentType: media.content_type };
     }
 
