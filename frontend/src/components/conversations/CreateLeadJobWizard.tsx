@@ -23,6 +23,7 @@ import { AddressAutocomplete } from '../AddressAutocomplete';
 interface CreateLeadJobWizardProps {
     phone: string;
     callCount?: number;
+    hasActiveCall?: boolean;
     /** Called after lead is created so the parent can refetch */
     onLeadCreated?: () => void;
 }
@@ -38,7 +39,7 @@ const STEP_LABELS: Record<Step, string> = {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateLeadJobWizardProps) {
+export function CreateLeadJobWizard({ phone, callCount, hasActiveCall, onLeadCreated }: CreateLeadJobWizardProps) {
     const queryClient = useQueryClient();
     const [step, setStep] = useState<Step>(1);
     const [submitting, setSubmitting] = useState(false);
@@ -672,14 +673,24 @@ export function CreateLeadJobWizard({ phone, callCount, onLeadCreated }: CreateL
                         </div>
                     </div>
                     <div className="wizard__header-right">
-                        <a
-                            href={`tel:${phone}`}
-                            className="wizard__call-btn"
-                            title={`Call ${formatPhone(phone)}`}
-                        >
-                            <Phone className="w-4" />
-                            <span>Call</span>
-                        </a>
+                        {hasActiveCall ? (
+                            <span
+                                className="wizard__call-btn wizard__call-btn--disabled"
+                                title="Someone is already on a call with this customer, try again later"
+                            >
+                                <Phone className="w-4" />
+                                <span>Call</span>
+                            </span>
+                        ) : (
+                            <a
+                                href={`tel:${phone}`}
+                                className="wizard__call-btn"
+                                title={`Call ${formatPhone(phone)}`}
+                            >
+                                <Phone className="w-4" />
+                                <span>Call</span>
+                            </a>
+                        )}
                         {callCount !== undefined && (
                             <div className="wizard__badge">
                                 <div className="wizard__badge-number">{callCount}</div>

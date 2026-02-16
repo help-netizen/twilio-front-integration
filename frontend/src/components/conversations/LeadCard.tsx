@@ -9,6 +9,7 @@ import './LeadCard.css';
 interface LeadCardProps {
     phone: string;
     callCount?: number;
+    hasActiveCall?: boolean;
 }
 
 function formatPhoneDisplay(phone: string): string {
@@ -44,7 +45,7 @@ function buildAddress(lead: Lead): string | null {
 
 /* ────────────────────────────────────── */
 
-export function LeadCard({ phone, callCount }: LeadCardProps) {
+export function LeadCard({ phone, callCount, hasActiveCall }: LeadCardProps) {
     const { lead, isLoading } = useLeadByPhone(phone);
 
     if (isLoading) {
@@ -72,7 +73,7 @@ export function LeadCard({ phone, callCount }: LeadCardProps) {
     }
 
     if (!lead) {
-        return <CreateLeadJobWizard phone={phone} callCount={callCount} />;
+        return <CreateLeadJobWizard phone={phone} callCount={callCount} hasActiveCall={hasActiveCall} />;
     }
 
     const displayName = [lead.FirstName, lead.LastName].filter(Boolean).join(' ') || 'Unknown';
@@ -98,14 +99,24 @@ export function LeadCard({ phone, callCount }: LeadCardProps) {
                     </div>
 
                     <div className="lead-card__header-right">
-                        <a
-                            href={`tel:${phone}`}
-                            className="lead-card__call-btn"
-                            title={`Call ${displayPhone}`}
-                        >
-                            <Phone className="lead-card__call-btn-icon" />
-                            <span>Call</span>
-                        </a>
+                        {hasActiveCall ? (
+                            <span
+                                className="lead-card__call-btn lead-card__call-btn--disabled"
+                                title="Someone is already on a call with this customer, try again later"
+                            >
+                                <Phone className="lead-card__call-btn-icon" />
+                                <span>Call</span>
+                            </span>
+                        ) : (
+                            <a
+                                href={`tel:${phone}`}
+                                className="lead-card__call-btn"
+                                title={`Call ${displayPhone}`}
+                            >
+                                <Phone className="lead-card__call-btn-icon" />
+                                <span>Call</span>
+                            </a>
+                        )}
                         {callCount !== undefined && (
                             <div className="lead-card__badge">
                                 <div className="lead-card__badge-number">{callCount}</div>
