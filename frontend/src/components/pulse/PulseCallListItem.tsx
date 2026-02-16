@@ -20,7 +20,6 @@ import {
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Slider } from '@/components/ui/slider';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatPhoneNumber } from '@/utils/formatters';
@@ -122,11 +121,6 @@ export function PulseCallListItem({ call }: { call: CallData }) {
         audioRef.current.currentTime = Math.max(0, Math.min(audioRef.current.currentTime + seconds, duration));
     };
 
-    const handleSliderChange = (value: number[]) => {
-        if (!audioRef.current) return;
-        audioRef.current.currentTime = value[0];
-        setCurrentTime(value[0]);
-    };
 
     const otherPartyNumber = call.direction === 'incoming' ? call.from : call.to;
     const directionLabel = call.direction === 'incoming' ? 'Incoming Call' : 'Outgoing Call';
@@ -204,8 +198,8 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                                     <button
                                         onClick={() => setActiveSection(activeSection === 'summary' ? null : 'summary')}
                                         className={`text-xs transition-colors ${activeSection === 'summary'
-                                                ? 'text-gray-700 border-b-2 border-gray-700'
-                                                : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
+                                            ? 'text-gray-700 border-b-2 border-gray-700'
+                                            : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
                                             }`}
                                     >
                                         Summary
@@ -216,8 +210,8 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                                     <button
                                         onClick={() => setActiveSection(activeSection === 'transcription' ? null : 'transcription')}
                                         className={`text-xs transition-colors ${activeSection === 'transcription'
-                                                ? 'text-gray-700 border-b-2 border-gray-700'
-                                                : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
+                                            ? 'text-gray-700 border-b-2 border-gray-700'
+                                            : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
                                             }`}
                                     >
                                         {call.transcriptStatus === 'processing' ? 'Transcribing...' : 'Transcript'}
@@ -265,14 +259,6 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                             </div>
                         </div>
 
-                        {/* Slider */}
-                        <Slider
-                            value={[currentTime]}
-                            max={duration || 100}
-                            step={1}
-                            onValueChange={handleSliderChange}
-                            className="w-full"
-                        />
 
                         {/* Summary - Show only when active */}
                         {activeSection === 'summary' && call.summary && (
