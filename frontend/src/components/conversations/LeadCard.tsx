@@ -103,6 +103,15 @@ export function LeadCard({ phone, callCount }: LeadCardProps) {
                             <div className="lead-card__badge-label">Calls</div>
                         </div>
                     )}
+
+                    <a
+                        href={`tel:${phone}`}
+                        className="lead-card__call-btn"
+                        title={`Call ${displayPhone}`}
+                    >
+                        <Phone className="lead-card__call-btn-icon" />
+                        <span>Call</span>
+                    </a>
                 </div>
             </div>
 
