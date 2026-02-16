@@ -1,6 +1,6 @@
 import { useRef, useEffect, useMemo } from 'react';
 import type { CallData } from '../call-list-item';
-import { CallListItem } from '../call-list-item';
+import { PulseCallListItem } from './PulseCallListItem';
 import type { SmsMessage, TimelineItem } from '../../types/pulse';
 import { DateSeparator } from './DateSeparator';
 import { SmsListItem } from './SmsListItem';
@@ -95,7 +95,7 @@ export function PulseTimeline({ calls, messages, loading }: PulseTimelineProps) 
         if (item.type === 'call') {
             rendered.push(
                 <div key={`call-${(item.data as CallData).id}`} style={{ padding: '4px 16px' }}>
-                    <CallListItem call={item.data as CallData} />
+                    <PulseCallListItem call={item.data as CallData} />
                 </div>
             );
         } else {
