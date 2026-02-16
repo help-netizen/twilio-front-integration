@@ -25,6 +25,8 @@ function callToCallData(call: Call): CallData {
         'in-progress': 'in-progress',
         'queued': 'ringing',
         'initiated': 'ringing',
+        'voicemail_recording': 'voicemail_recording',
+        'voicemail_left': 'voicemail_left',
     };
     const status = statusMap[rawStatus] || 'completed';
 

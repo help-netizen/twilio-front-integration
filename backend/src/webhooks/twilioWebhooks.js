@@ -338,6 +338,24 @@ async function handleDialAction(req, res) {
             recordingStatusCallbackMethod="POST" />
     <Hangup />
 </Response>`;
+
+            // Set call status to voicemail_recording so UI shows "Leaving voicemail"
+            try {
+                const db = require('../db/connection');
+                await db.query(
+                    `UPDATE calls SET status = 'voicemail_recording', is_final = false WHERE call_sid = $1`,
+                    [CallSid]
+                );
+                // Broadcast SSE so frontend updates immediately
+                const realtimeService = require('../services/realtimeService');
+                const freshCall = await queries.getCallByCallSid(CallSid);
+                if (freshCall) {
+                    realtimeService.publishCallUpdate({ eventType: 'call.updated', ...freshCall });
+                }
+                console.log(`[${traceId}] Status → voicemail_recording`);
+            } catch (vmErr) {
+                console.warn(`[${traceId}] Failed to set voicemail_recording:`, vmErr.message);
+            }
         } else {
             console.log(`[${traceId}] Call completed (${dialStatus}) → hangup`);
             twiml = `<?xml version="1.0" encoding="UTF-8"?>

@@ -14,13 +14,15 @@ const CallStatus = {
     INITIATED: 'initiated',
     RINGING: 'ringing',
     IN_PROGRESS: 'in-progress',
+    VOICEMAIL_RECORDING: 'voicemail_recording',
 
     // Final (terminal) statuses
     COMPLETED: 'completed',
     BUSY: 'busy',
     NO_ANSWER: 'no-answer',
     CANCELED: 'canceled',
-    FAILED: 'failed'
+    FAILED: 'failed',
+    VOICEMAIL_LEFT: 'voicemail_left'
 };
 
 /**
@@ -30,7 +32,8 @@ const NON_FINAL_STATUSES = [
     CallStatus.QUEUED,
     CallStatus.INITIATED,
     CallStatus.RINGING,
-    CallStatus.IN_PROGRESS
+    CallStatus.IN_PROGRESS,
+    CallStatus.VOICEMAIL_RECORDING
 ];
 
 const FINAL_STATUSES = [
@@ -38,7 +41,8 @@ const FINAL_STATUSES = [
     CallStatus.BUSY,
     CallStatus.NO_ANSWER,
     CallStatus.CANCELED,
-    CallStatus.FAILED
+    CallStatus.FAILED,
+    CallStatus.VOICEMAIL_LEFT
 ];
 
 /**
@@ -73,14 +77,21 @@ const VALID_TRANSITIONS = {
     ],
     [CallStatus.IN_PROGRESS]: [
         CallStatus.COMPLETED,
+        CallStatus.FAILED,
+        CallStatus.VOICEMAIL_RECORDING
+    ],
+    [CallStatus.VOICEMAIL_RECORDING]: [
+        CallStatus.VOICEMAIL_LEFT,
+        CallStatus.COMPLETED,
         CallStatus.FAILED
     ],
     // Final statuses cannot transition (except to themselves for idempotency)
     [CallStatus.COMPLETED]: [CallStatus.COMPLETED],
     [CallStatus.BUSY]: [CallStatus.BUSY],
-    [CallStatus.NO_ANSWER]: [CallStatus.NO_ANSWER],
-    [CallStatus.CANCELED]: [CallStatus.CANCELED],
-    [CallStatus.FAILED]: [CallStatus.FAILED]
+    [CallStatus.NO_ANSWER]: [CallStatus.NO_ANSWER, CallStatus.VOICEMAIL_RECORDING],
+    [CallStatus.CANCELED]: [CallStatus.CANCELED, CallStatus.VOICEMAIL_RECORDING],
+    [CallStatus.FAILED]: [CallStatus.FAILED],
+    [CallStatus.VOICEMAIL_LEFT]: [CallStatus.VOICEMAIL_LEFT]
 };
 
 /**
@@ -194,6 +205,9 @@ function getStatusMetadata(status) {
                 break;
             case CallStatus.FAILED:
                 description = 'Call failed';
+                break;
+            case CallStatus.VOICEMAIL_LEFT:
+                description = 'Voicemail was left';
                 break;
         }
     }

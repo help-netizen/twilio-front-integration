@@ -20,6 +20,8 @@ const STATUS_ICON_COLORS: Record<string, string> = {
     'in-progress': '#7c3aed',
     'queued': '#2563eb',
     'initiated': '#2563eb',
+    'voicemail_recording': '#ea580c',
+    'voicemail_left': '#dc2626',
 };
 
 function DirectionIcon({ direction, status }: { direction: string; status: string }) {

@@ -351,7 +351,28 @@ async function processRecordingEvent(payload, traceId) {
     if (normalized.status === 'completed') {
         publishRealtimeEvent('recording.ready', recording, traceId);
 
-        // Variant B: enqueue post-call transcription
+        // Transition voicemail_recording → voicemail_left
+        try {
+            const call = await queries.getCallByCallSid(normalized.callSid);
+            if (call && call.status === 'voicemail_recording') {
+                await db.query(
+                    `UPDATE calls SET status = 'voicemail_left', is_final = true,
+                     duration_sec = COALESCE($2, duration_sec),
+                     ended_at = COALESCE($3, ended_at)
+                     WHERE call_sid = $1`,
+                    [normalized.callSid, normalized.durationSec, normalized.eventTime]
+                );
+                const updatedCall = await queries.getCallByCallSid(normalized.callSid);
+                if (updatedCall) {
+                    publishRealtimeEvent('call.updated', updatedCall, traceId);
+                }
+                console.log(`[${traceId}] Status → voicemail_left for ${normalized.callSid}`);
+            }
+        } catch (err) {
+            console.warn(`[${traceId}] Failed to set voicemail_left:`, err.message);
+        }
+
+        // Enqueue post-call transcription
         try {
             await queries.upsertTranscript({
                 transcriptionSid: null,

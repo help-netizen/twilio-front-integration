@@ -33,7 +33,7 @@ export interface CallData {
     totalDuration?: number;
     talkTime?: number;
     waitTime?: number;
-    status: 'completed' | 'no-answer' | 'busy' | 'failed' | 'ringing' | 'in-progress';
+    status: 'completed' | 'no-answer' | 'busy' | 'failed' | 'ringing' | 'in-progress' | 'voicemail_recording' | 'voicemail_left';
     startTime: Date;
     endTime: Date;
     cost?: number;
@@ -59,6 +59,8 @@ const STATUS_CONFIG: Record<string, { label: string; iconColor: string; iconBg: 
     'failed': { label: 'missed', iconColor: '#dc2626', iconBg: '#fee2e2', badgeBg: '#fee2e2', badgeText: '#b91c1c' },
     'ringing': { label: 'ringing', iconColor: '#2563eb', iconBg: '#dbeafe', badgeBg: '#dbeafe', badgeText: '#1d4ed8' },
     'in-progress': { label: 'in progress', iconColor: '#7c3aed', iconBg: '#ede9fe', badgeBg: '#ede9fe', badgeText: '#6d28d9' },
+    'voicemail_recording': { label: 'leaving voicemail', iconColor: '#ea580c', iconBg: '#ffedd5', badgeBg: '#ffedd5', badgeText: '#c2410c' },
+    'voicemail_left': { label: 'voicemail left', iconColor: '#dc2626', iconBg: '#fee2e2', badgeBg: '#fee2e2', badgeText: '#b91c1c' },
 };
 
 export function CallListItem({ call }: CallListItemProps) {
