@@ -78,14 +78,16 @@
 
 
 .lead-card__badge-number {
-    font-size: 24px;
+    font-size: 20px;
     font-weight: 700;
     color: white;
 }
 
 .lead-card__badge-label {
-    font-size: 12px;
-    color: #dbeafe;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: rgba(255, 255, 255, 0.75);
 }
 
 /* Call button */
@@ -122,9 +124,8 @@
 /* Stats badge — attached to call button */
 .lead-card__badge {
     background: rgba(255, 255, 255, 0.2);
-    backdrop-filter: blur(4px);
     border-radius: 0 8px 8px 0;
-    padding: 8px 16px;
+    padding: 6px 14px;
     text-align: center;
 }
 
