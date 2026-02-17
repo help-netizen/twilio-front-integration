@@ -191,7 +191,7 @@ router.get('/by-contact', async (req, res) => {
                     call_sid: null,
                     direction: smsRow.last_message_direction === 'inbound' ? 'inbound' : 'outbound',
                     from_number: smsRow.customer_e164,
-                    to_number: smsRow.twilio_number || '',
+                    to_number: smsRow.proxy_e164 || '',
                     status: 'completed',
                     is_final: true,
                     started_at: smsRow.last_message_at,
@@ -239,6 +239,31 @@ router.get('/by-contact', async (req, res) => {
             }
         } catch (e) {
             console.warn('[by-contact] Unread enrichment failed:', e.message);
+        }
+
+        // Final dedup by contact phone digits (keeps entry with most calls)
+        {
+            const seen = new Map(); // digits → index
+            const deduped = [];
+            for (const conv of conversations) {
+                const raw = conv.contact?.phone_e164 || conv.from_number || '';
+                const digits = raw.replace(/\D/g, '');
+                if (!digits) { deduped.push(conv); continue; }
+                const existing = seen.get(digits);
+                if (existing !== undefined) {
+                    // Keep the one with more calls (prefer call-based over SMS-only)
+                    if ((conv.call_count || 0) > (deduped[existing].call_count || 0)) {
+                        // Merge SMS data into the better entry
+                        deduped[existing] = { ...conv, sms_count: Math.max(conv.sms_count || 0, deduped[existing].sms_count || 0) };
+                    } else {
+                        deduped[existing].sms_count = Math.max(conv.sms_count || 0, deduped[existing].sms_count || 0);
+                    }
+                } else {
+                    seen.set(digits, deduped.length);
+                    deduped.push(conv);
+                }
+            }
+            conversations = deduped;
         }
 
         // Final sort: unread first, then by last interaction (most recent first)
