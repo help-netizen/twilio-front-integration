@@ -596,6 +596,7 @@ async function getSyncHealth() {
 // =============================================================================
 
 async function markContactUnread(contactId, eventTime = new Date()) {
+    console.log(`[UNREAD-TRACE] markContactUnread called for contact ${contactId}`, new Error().stack?.split('\n').slice(1, 4).join(' <- '));
     const result = await db.query(
         `UPDATE contacts SET
             has_unread = true,
@@ -605,10 +606,12 @@ async function markContactUnread(contactId, eventTime = new Date()) {
          RETURNING *`,
         [contactId, eventTime]
     );
+    console.log(`[UNREAD-TRACE] markContactUnread result: has_unread=${result.rows[0]?.has_unread}`);
     return result.rows[0] || null;
 }
 
 async function markContactRead(contactId) {
+    console.log(`[UNREAD-TRACE] markContactRead called for contact ${contactId}`, new Error().stack?.split('\n').slice(1, 4).join(' <- '));
     const result = await db.query(
         `UPDATE contacts SET
             has_unread = false,
@@ -618,6 +621,7 @@ async function markContactRead(contactId) {
          RETURNING *`,
         [contactId]
     );
+    console.log(`[UNREAD-TRACE] markContactRead result: has_unread=${result.rows[0]?.has_unread}`);
     return result.rows[0] || null;
 }
 
