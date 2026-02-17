@@ -36,6 +36,7 @@ export interface Call {
     last_interaction_at?: string;  // most recent call or SMS timestamp
     last_interaction_type?: 'call' | 'sms_inbound' | 'sms_outbound';  // type of last interaction
     has_unread?: boolean;  // unread indicator for Pulse sidebar
+    sms_conversation_id?: string;  // sms_conversations.id for mark-read
     recording?: {
         recording_sid: string;
         status: string;

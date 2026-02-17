@@ -217,24 +217,27 @@ router.get('/by-contact', async (req, res) => {
             console.warn('[by-contact] SMS-only contacts failed:', smsOnlyErr.message);
         }
 
-        // Enrich with has_unread from contacts table
+        // Enrich with has_unread from sms_conversations table (same pattern as Messages section)
         try {
-            const contactIds = conversations
-                .map(c => c.contact?.id)
+            const phoneNumbers = conversations
+                .map(c => c.contact?.phone_e164 || c.from_number)
                 .filter(Boolean);
-            if (contactIds.length > 0) {
+            if (phoneNumbers.length > 0) {
                 const dbConn = require('../db/connection');
                 const unreadResult = await dbConn.query(
-                    `SELECT id, has_unread FROM contacts WHERE id = ANY($1)`,
-                    [contactIds]
+                    `SELECT id, customer_e164, has_unread FROM sms_conversations WHERE customer_e164 = ANY($1)`,
+                    [phoneNumbers]
                 );
                 const unreadMap = {};
+                const convIdMap = {};
                 for (const row of unreadResult.rows) {
-                    unreadMap[row.id] = row.has_unread;
+                    unreadMap[row.customer_e164] = row.has_unread;
+                    convIdMap[row.customer_e164] = row.id;
                 }
                 for (const conv of conversations) {
-                    const cid = conv.contact?.id;
-                    conv.has_unread = cid ? (unreadMap[cid] || false) : false;
+                    const phone = conv.contact?.phone_e164 || conv.from_number || '';
+                    conv.has_unread = phone ? (unreadMap[phone] || false) : false;
+                    conv.sms_conversation_id = phone ? (convIdMap[phone] || null) : null;
                 }
             }
         } catch (e) {

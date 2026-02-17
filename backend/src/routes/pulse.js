@@ -136,7 +136,7 @@ function formatCall(row) {
 router.get('/unread-count', async (req, res) => {
     try {
         const result = await db.query(
-            'SELECT COUNT(*) as count FROM contacts WHERE has_unread = true'
+            'SELECT COUNT(*) as count FROM sms_conversations WHERE has_unread = true'
         );
         res.json({ count: parseInt(result.rows[0].count) });
     } catch (error) {

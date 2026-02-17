@@ -6,7 +6,6 @@ import { usePulseTimeline } from '../hooks/usePulseTimeline';
 import { messagingApi } from '../services/messagingApi';
 import * as leadsApi from '../services/leadsApi';
 import { useRealtimeEvents, type SSECallEvent } from '../hooks/useRealtimeEvents';
-import { callsApi } from '../services/api';
 import { PulseTimeline } from '../components/pulse/PulseTimeline';
 import { SmsForm } from '../components/pulse/SmsForm';
 import { LeadDetailPanel } from '../components/leads/LeadDetailPanel';
@@ -98,9 +97,9 @@ function PulseContactItem({ call, isActive }: { call: Call; isActive: boolean })
         <button
             onClick={() => {
                 navigate(targetPath);
-                // Mark read on explicit user click
-                if (call.has_unread && call.contact?.id) {
-                    callsApi.markContactRead(call.contact.id).catch(() => { });
+                // Mark read on explicit user click — using sms_conversations (same as Messages section)
+                if (call.has_unread && call.sms_conversation_id) {
+                    messagingApi.markRead(call.sms_conversation_id).catch(() => { });
                 }
             }}
             className={`w-full text-left px-4 py-3 transition-colors border-b border-gray-100 relative ${isActive ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
