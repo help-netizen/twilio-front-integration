@@ -243,6 +243,7 @@ router.get('/by-contact', async (req, res) => {
 
         // Final dedup by contact phone digits (keeps entry with most calls)
         {
+            const beforeCount = conversations.length;
             const seen = new Map(); // digits → index
             const deduped = [];
             for (const conv of conversations) {
@@ -251,6 +252,7 @@ router.get('/by-contact', async (req, res) => {
                 if (!digits) { deduped.push(conv); continue; }
                 const existing = seen.get(digits);
                 if (existing !== undefined) {
+                    console.log('[by-contact] DEDUP: removing duplicate', digits, 'idx', deduped.length);
                     // Keep the one with more calls (prefer call-based over SMS-only)
                     if ((conv.call_count || 0) > (deduped[existing].call_count || 0)) {
                         // Merge SMS data into the better entry
@@ -263,6 +265,7 @@ router.get('/by-contact', async (req, res) => {
                     deduped.push(conv);
                 }
             }
+            console.log(`[by-contact] DEDUP: ${beforeCount} -> ${deduped.length} (removed ${beforeCount - deduped.length})`);
             conversations = deduped;
         }
 
