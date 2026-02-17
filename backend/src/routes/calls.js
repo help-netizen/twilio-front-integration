@@ -147,6 +147,73 @@ router.get('/by-contact', async (req, res) => {
             }
         }
 
+        // =====================================================================
+        // Add SMS-only contacts (those with SMS but NO calls)
+        // =====================================================================
+        try {
+            const existingDigits = new Set();
+            for (const c of conversations) {
+                const raw = c.contact?.phone_e164;
+                if (raw) existingDigits.add(raw.replace(/\D/g, ''));
+            }
+
+            const db = require('../db/connection');
+            // Find SMS conversations that don't match any existing contact phone
+            const smsOnlyResult = await db.query(
+                `SELECT sc.*,
+                        regexp_replace(sc.customer_e164, '\\D', '', 'g') as customer_digits,
+                        (SELECT COUNT(*) FROM sms_messages m
+                         WHERE m.conversation_id = sc.id) as sms_count
+                 FROM sms_conversations sc
+                 ORDER BY sc.last_message_at DESC NULLS LAST
+                 LIMIT 200`
+            );
+
+            for (const smsRow of smsOnlyResult.rows) {
+                const digits = smsRow.customer_digits;
+                if (existingDigits.has(digits)) continue; // already in call-based results
+                existingDigits.add(digits); // prevent duplicates from multiple sms_conversations
+
+                // Resolve or create contact
+                let contact = null;
+                try {
+                    contact = await queries.findOrCreateContact(smsRow.customer_e164);
+                } catch (e) {
+                    console.warn('[by-contact] Failed to resolve SMS-only contact:', e.message);
+                }
+
+                // Build a synthetic conversation entry with no call data
+                conversations.push({
+                    id: null,
+                    call_sid: null,
+                    direction: smsRow.last_message_direction === 'inbound' ? 'inbound' : 'outbound',
+                    from_number: smsRow.customer_e164,
+                    to_number: smsRow.twilio_number || '',
+                    status: 'completed',
+                    is_final: true,
+                    started_at: smsRow.last_message_at,
+                    ended_at: null,
+                    duration_sec: null,
+                    created_at: smsRow.created_at,
+                    updated_at: smsRow.updated_at,
+                    contact: contact ? {
+                        id: contact.id,
+                        phone_e164: contact.phone_e164,
+                        full_name: contact.full_name,
+                        email: contact.email,
+                        created_at: contact.created_at,
+                        updated_at: contact.updated_at,
+                    } : null,
+                    call_count: 0,
+                    sms_count: parseInt(smsRow.sms_count || 0),
+                    last_interaction_at: smsRow.last_message_at,
+                    last_interaction_type: smsRow.last_message_direction === 'inbound' ? 'sms_inbound' : 'sms_outbound',
+                });
+            }
+        } catch (smsOnlyErr) {
+            console.warn('[by-contact] SMS-only contacts failed:', smsOnlyErr.message);
+        }
+
         // Enrich with has_unread from contacts table
         try {
             const contactIds = conversations
