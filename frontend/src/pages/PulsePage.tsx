@@ -226,19 +226,24 @@ export const PulsePage: React.FC = () => {
         },
     });
 
-    // Mark contact read when opened
+    // Mark contact read only when user navigates to a contact (not on data refresh)
+    const contactDataRef = useRef(contactData);
+    contactDataRef.current = contactData;
     useEffect(() => {
         if (!contactId) return;
-        // Find the contact in the list to see if it's unread
-        const contact = contactData?.conversations?.find(
-            (c: Call) => c.contact?.id === contactId
-        );
-        if (contact?.has_unread) {
-            callsApi.markContactRead(contactId).catch(err =>
-                console.warn('[Pulse] Failed to mark contact read:', err)
+        // Small delay to let data settle after navigation
+        const timer = setTimeout(() => {
+            const contact = contactDataRef.current?.conversations?.find(
+                (c: Call) => c.contact?.id === contactId
             );
-        }
-    }, [contactId, contactData?.conversations]);
+            if (contact?.has_unread) {
+                callsApi.markContactRead(contactId).catch(err =>
+                    console.warn('[Pulse] Failed to mark contact read:', err)
+                );
+            }
+        }, 300);
+        return () => clearTimeout(timer);
+    }, [contactId]); // Only when user selects a different contact
 
     // Deduplicate contacts by phone digits (safety net for SMS-only + call entries)
     const filteredCalls = useMemo(() => {
