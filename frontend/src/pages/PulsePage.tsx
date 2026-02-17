@@ -255,7 +255,15 @@ export const PulsePage: React.FC = () => {
     // Derive contact info for LeadCard (same as ConversationPage)
     const contactCalls = timelineData?.calls || [];
     const contact = contactCalls[0]?.contact;
-    const phone = contact?.phone_e164 || contactCalls[0]?.from_number || contactCalls[0]?.to_number || '';
+    // Phone: try call contact, then call from/to, then sidebar contact, then SMS conversation
+    const selectedConv = filteredCalls.find((c: Call) => c.contact?.id === contactId);
+    const phone = contact?.phone_e164
+        || contactCalls[0]?.from_number
+        || contactCalls[0]?.to_number
+        || selectedConv?.contact?.phone_e164
+        || selectedConv?.from_number
+        || conversations[0]?.customer_e164
+        || '';
     const hasActiveCall = contactCalls.some((c: any) => ['ringing', 'in-progress', 'queued', 'initiated', 'voicemail_recording'].includes(c.status));
 
     // Lead management state
