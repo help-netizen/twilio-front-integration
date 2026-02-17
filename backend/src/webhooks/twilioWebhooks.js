@@ -219,6 +219,10 @@ async function handleVoiceInbound(req, res) {
         const dialActionUrl = `${baseUrl}/webhooks/twilio/voice-dial-action`;
         const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;
 
+        // Realtime transcription: build <Start><Stream> block if enabled
+        const realtimeEnabled = process.env.FEATURE_REALTIME_TRANSCRIPTION === 'true';
+        const mediaStreamUrl = baseUrl.replace(/^http/, 'ws') + '/ws/twilio-media';
+
         const isOutbound = From && From.startsWith('sip:');
         let twiml;
 
@@ -234,8 +238,16 @@ async function handleVoiceInbound(req, res) {
 
             const outboundCallerId = process.env.OUTBOUND_CALLER_ID || '+16175006181';
             const outboundTimeout = Number(process.env.DIAL_TIMEOUT || 25);
+            const outboundStreamXml = realtimeEnabled ? `
+    <Start>
+        <Stream name="realtime-transcript" url="${mediaStreamUrl}" track="both_tracks">
+            <Parameter name="callSid" value="${CallSid}" />
+            <Parameter name="direction" value="outbound" />
+        </Stream>
+    </Start>` : '';
+
             twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
+<Response>${outboundStreamXml}
     <Dial timeout="${outboundTimeout}"
           answerOnBridge="true"
           callerId="${outboundCallerId}"
@@ -325,8 +337,16 @@ async function handleVoiceInbound(req, res) {
                 ).join('\n');
 
                 const inboundTimeout = Number(process.env.DIAL_TIMEOUT || 25);
+                const inboundStreamXml = realtimeEnabled ? `
+    <Start>
+        <Stream name="realtime-transcript" url="${mediaStreamUrl}" track="both_tracks">
+            <Parameter name="callSid" value="${CallSid}" />
+            <Parameter name="direction" value="inbound" />
+        </Stream>
+    </Start>` : '';
+
                 twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
+<Response>${inboundStreamXml}
     <Dial timeout="${inboundTimeout}"
           answerOnBridge="true"
           action="${dialActionUrl}"
