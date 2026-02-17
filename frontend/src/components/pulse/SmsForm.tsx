@@ -1,24 +1,30 @@
 /**
- * SmsForm — exact match to TIMELINE_TECHNICAL_SPECIFICATION.md
- * Includes: Quick Messages presets (with "+ Add New"), file attachments,
+ * SmsForm — SMS composition form with quick messages, file attachments,
  * AI formatting button (Wand2), character counter, ⌘+Enter to send.
+ * Supports {Field Name} variable placeholders in quick messages.
  */
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Wand2, ChevronDown, Paperclip, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { authedFetch } from '../../services/apiClient';
+import type { Lead } from '../../types/lead';
+
+const API_BASE = import.meta.env.VITE_API_URL || '';
+
+interface QuickMessage {
+    id: string;
+    title: string;
+    content: string;
+    sort_order: number;
+}
 
 interface SmsFormProps {
     onSend: (message: string, files?: File[]) => void;
     onAiFormat?: (message: string) => Promise<string>;
     disabled?: boolean;
+    lead?: Lead | null;
 }
-
-const MESSAGE_PRESETS = [
-    { id: 'follow-up', label: 'Follow-up', text: 'Hi! Just following up on our previous conversation. Let me know if you have any questions.' },
-    { id: 'thank-you', label: 'Thank You', text: 'Thank you for your time today! Looking forward to speaking with you again soon.' },
-    { id: 'meeting', label: 'Schedule Meeting', text: 'Would you be available for a quick call this week? Let me know what time works best for you.' },
-    { id: 'info', label: 'Send Info', text: "As promised, here's the information we discussed. Feel free to reach out if you need anything else." },
-];
 
 const formatFileSize = (bytes: number): string => {
     if (bytes < 1024) return bytes + ' B';
@@ -26,12 +32,81 @@ const formatFileSize = (bytes: number): string => {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 };
 
-export function SmsForm({ onSend, onAiFormat, disabled }: SmsFormProps) {
+// ── Variable resolution ────────────────────────────────────────────────
+
+/** Core lead fields mapped from display name → Lead property key */
+const CORE_FIELD_MAP: Record<string, keyof Lead> = {
+    'First Name': 'FirstName',
+    'Last Name': 'LastName',
+    'Phone': 'Phone',
+    'Email': 'Email',
+    'Company': 'Company',
+    'Address': 'Address',
+    'City': 'City',
+    'State': 'State',
+    'Postal Code': 'PostalCode',
+    'Job Type': 'JobType',
+    'Job Source': 'JobSource',
+    'Description': 'Description',
+    'Created Date': 'CreatedDate',
+};
+
+/**
+ * Replace {Field Name} placeholders with actual lead values.
+ * If lead is null or the field value is empty, the placeholder stays as-is.
+ */
+function resolveVariables(text: string, lead: Lead | null | undefined): string {
+    if (!lead) return text;
+    return text.replace(/\{([^}]+)\}/g, (_match, fieldName: string) => {
+        const trimmed = fieldName.trim();
+        // 1. Try core fields
+        const coreKey = CORE_FIELD_MAP[trimmed];
+        if (coreKey) {
+            const val = lead[coreKey];
+            if (val != null && String(val).trim() !== '') return String(val);
+            return `{${trimmed}}`;
+        }
+        // 2. Try Metadata
+        const metaVal = lead.Metadata?.[trimmed];
+        if (metaVal != null && metaVal.trim() !== '') return metaVal;
+        return `{${trimmed}}`;
+    });
+}
+
+export function SmsForm({ onSend, onAiFormat, disabled, lead }: SmsFormProps) {
     const [message, setMessage] = useState('');
     const [isPresetsOpen, setIsPresetsOpen] = useState(false);
     const [isAiFormatting, setIsAiFormatting] = useState(false);
     const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+    // Auto-resize textarea: min 3 rows, max 10 rows
+    useEffect(() => {
+        const ta = textareaRef.current;
+        if (!ta) return;
+        ta.style.height = 'auto';
+        const lineHeight = parseInt(getComputedStyle(ta).lineHeight) || 20;
+        const minH = lineHeight * 3 + 16; // 3 rows + padding
+        const maxH = lineHeight * 10 + 16; // 10 rows + padding
+        ta.style.height = `${Math.min(Math.max(ta.scrollHeight, minH), maxH)}px`;
+    }, [message]);
+    const [quickMessages, setQuickMessages] = useState<QuickMessage[]>([]);
+    const navigate = useNavigate();
+
+    const fetchQuickMessages = useCallback(async () => {
+        try {
+            const res = await authedFetch(`${API_BASE}/api/quick-messages`);
+            const data = await res.json();
+            setQuickMessages(data.messages || []);
+        } catch (err) {
+            console.error('Failed to load quick messages:', err);
+        }
+    }, []);
+
+    useEffect(() => {
+        fetchQuickMessages();
+    }, [fetchQuickMessages]);
 
     const handleSend = () => {
         if (message.trim() || attachedFiles.length > 0) {
@@ -54,7 +129,7 @@ export function SmsForm({ onSend, onAiFormat, disabled }: SmsFormProps) {
     };
 
     const handlePresetSelect = (presetText: string) => {
-        setMessage(presetText);
+        setMessage(resolveVariables(presetText, lead));
         setIsPresetsOpen(false);
     };
 
@@ -105,18 +180,42 @@ export function SmsForm({ onSend, onAiFormat, disabled }: SmsFormProps) {
 
             {/* Message Input Area */}
             <div className="relative mb-3">
+                {/* Highlight backdrop — mirrors textarea content, highlights {variables} */}
+                <div
+                    aria-hidden
+                    className="absolute inset-0 px-3 py-2 pr-20 text-sm pointer-events-none overflow-hidden rounded-lg border border-transparent"
+                    style={{
+                        whiteSpace: 'pre-wrap',
+                        wordWrap: 'break-word',
+                        color: 'transparent',
+                        lineHeight: textareaRef.current ? getComputedStyle(textareaRef.current).lineHeight : '1.5',
+                        fontFamily: textareaRef.current ? getComputedStyle(textareaRef.current).fontFamily : 'inherit',
+                    }}
+                    dangerouslySetInnerHTML={{
+                        __html: message
+                            .replace(/&/g, '&amp;')
+                            .replace(/</g, '&lt;')
+                            .replace(/>/g, '&gt;')
+                            .replace(
+                                /\{([^}]+)\}/g,
+                                '<mark style="background:#fef3c7;color:transparent;border-radius:3px;padding:1px 0">$&</mark>'
+                            ) + '\n',
+                    }}
+                />
                 <textarea
+                    ref={textareaRef}
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
                     onKeyDown={handleKeyDown}
                     placeholder="Type your message... (Cmd/Ctrl + Enter to send)"
                     className="w-full px-3 py-2 pr-20 border border-gray-300 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                     rows={3}
+                    style={{ overflow: 'auto', background: 'transparent', position: 'relative' }}
                     disabled={disabled}
                 />
 
                 {/* Character Count */}
-                <div className="absolute bottom-2 left-3 text-xs text-gray-400">
+                <div className="absolute top-2 right-3 text-xs text-gray-400">
                     {message.length} characters
                 </div>
             </div>
@@ -143,14 +242,14 @@ export function SmsForm({ onSend, onAiFormat, disabled }: SmsFormProps) {
                                     onClick={() => setIsPresetsOpen(false)}
                                 />
                                 <div className="absolute left-0 bottom-full mb-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1">
-                                    {MESSAGE_PRESETS.map((preset) => (
+                                    {quickMessages.map((qm) => (
                                         <button
-                                            key={preset.id}
-                                            onClick={() => handlePresetSelect(preset.text)}
+                                            key={qm.id}
+                                            onClick={() => handlePresetSelect(qm.content)}
                                             className="w-full text-left px-3 py-2 hover:bg-gray-50 transition-colors"
                                         >
-                                            <div className="text-sm font-medium text-gray-900">{preset.label}</div>
-                                            <div className="text-xs text-gray-500 line-clamp-1">{preset.text}</div>
+                                            <div className="text-sm font-medium text-gray-900">{qm.title}</div>
+                                            <div className="text-xs text-gray-500 line-clamp-1">{qm.content}</div>
                                         </button>
                                     ))}
 
@@ -159,7 +258,7 @@ export function SmsForm({ onSend, onAiFormat, disabled }: SmsFormProps) {
                                     <button
                                         onClick={() => {
                                             setIsPresetsOpen(false);
-                                            // Logic for creating new preset
+                                            navigate('/settings/quick-messages');
                                         }}
                                         className="w-full text-left px-3 py-2 hover:bg-gray-50 transition-colors"
                                     >

@@ -18,10 +18,11 @@ FRONTEND_PORT=3001
 NGROK_API="http://localhost:4040/api/tunnels"
 PIDS=()
 
-# Twilio phone number SIDs to update (dev only uses test number)
+# Twilio phone number SIDs to update (dev only uses test numbers)
 # IMPORTANT: Do NOT add prod numbers here! They stay on fly.io.
 PHONE_SIDS=(
     "PN334757241793e249e3f73c62cb88accc"  # +1 (617) 992-7291 — DEV/TEST ONLY
+    "PNd4a275cf0cd02292bc69df105b4e6b7d"  # +1 (877) 419-4983 — DEV/TEST ONLY
 )
 
 # Colors

@@ -11,7 +11,7 @@ import {
     DropdownMenuItem,
     DropdownMenuSeparator,
 } from '../ui/dropdown-menu';
-import { Phone, MessageSquare, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity } from 'lucide-react';
+import { Phone, MessageSquare, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText } from 'lucide-react';
 import { useRealtimeEvents } from '../../hooks/useRealtimeEvents';
 import './AppLayout.css';
 
@@ -168,6 +168,13 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                                 >
                                     <FileText className="size-4" />
                                     Lead Form
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                    className="flex items-center gap-2 cursor-pointer"
+                                    onClick={() => navigate('/settings/quick-messages')}
+                                >
+                                    <MessageSquareText className="size-4" />
+                                    Quick Messages
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
                                     className="flex items-center gap-2 cursor-pointer"

@@ -15,6 +15,7 @@ const leadFormSettingsRouter = require('../backend/src/routes/lead-form-settings
 const usersRouter = require('../backend/src/routes/users');
 const messagingRouter = require('../backend/src/routes/messaging');
 const pulseRouter = require('../backend/src/routes/pulse');
+const quickMessagesRouter = require('../backend/src/routes/quick-messages');
 const requestId = require('../backend/src/middleware/requestId');
 const { authenticate, requireRole, requireCompanyAccess } = require('../backend/src/middleware/keycloakAuth');
 const db = require('../backend/src/db/connection');
@@ -89,6 +90,7 @@ app.get('/api/messaging/media/:mediaId/temporary-url', async (req, res, next) =>
 });
 app.use('/api/messaging', authenticate, requireCompanyAccess, messagingRouter);
 app.use('/api/pulse', authenticate, requireCompanyAccess, pulseRouter);
+app.use('/api/quick-messages', authenticate, requireCompanyAccess, quickMessagesRouter);
 app.use('/api/sync', authenticate, requireCompanyAccess, syncRouter);
 
 // Leads API (behind feature flag)

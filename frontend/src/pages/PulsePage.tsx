@@ -459,6 +459,7 @@ export const PulsePage: React.FC = () => {
                             <SmsForm
                                 onSend={handleSendMessage}
                                 disabled={!conversations.length}
+                                lead={lead}
                             />
                         )}
                     </>
