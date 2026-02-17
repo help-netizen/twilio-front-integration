@@ -96,7 +96,13 @@ function PulseContactItem({ call, isActive }: { call: Call; isActive: boolean })
 
     return (
         <button
-            onClick={() => navigate(targetPath)}
+            onClick={() => {
+                navigate(targetPath);
+                // Mark read on explicit user click
+                if (call.has_unread && call.contact?.id) {
+                    callsApi.markContactRead(call.contact.id).catch(() => { });
+                }
+            }}
             className={`w-full text-left px-4 py-3 transition-colors border-b border-gray-100 relative ${isActive ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
             style={{ outline: 'none' }}
         >
@@ -225,25 +231,6 @@ export const PulsePage: React.FC = () => {
             refetchContacts();
         },
     });
-
-    // Mark contact read only when user navigates to a contact (not on data refresh)
-    const contactDataRef = useRef(contactData);
-    contactDataRef.current = contactData;
-    useEffect(() => {
-        if (!contactId) return;
-        // Small delay to let data settle after navigation
-        const timer = setTimeout(() => {
-            const contact = contactDataRef.current?.conversations?.find(
-                (c: Call) => c.contact?.id === contactId
-            );
-            if (contact?.has_unread) {
-                callsApi.markContactRead(contactId).catch(err =>
-                    console.warn('[Pulse] Failed to mark contact read:', err)
-                );
-            }
-        }, 300);
-        return () => clearTimeout(timer);
-    }, [contactId]); // Only when user selects a different contact
 
     // Deduplicate contacts by phone digits (safety net for SMS-only + call entries)
     const filteredCalls = useMemo(() => {
