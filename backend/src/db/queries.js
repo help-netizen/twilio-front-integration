@@ -8,9 +8,12 @@ const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 // =============================================================================
 
 async function findContactByPhone(phoneE164) {
+    // Use digits-only comparison to handle format mismatches
+    // (e.g. "+15085140320" should match "+1 (508) 514-0320")
+    const digits = phoneE164.replace(/\D/g, '');
     const result = await db.query(
-        'SELECT * FROM contacts WHERE phone_e164 = $1',
-        [phoneE164]
+        `SELECT * FROM contacts WHERE regexp_replace(phone_e164, '\\D', '', 'g') = $1 LIMIT 1`,
+        [digits]
     );
     return result.rows[0];
 }

@@ -216,8 +216,12 @@ export const PulsePage: React.FC = () => {
             }
         },
         onCallCreated: () => refetchContacts(),
+        onMessageAdded: () => {
+            // Incoming/outgoing SMS — refresh contact list for unread state + timestamps
+            refetchContacts();
+            if (contactId) refetchTimeline();
+        },
         onContactRead: () => {
-            // Real-time: another user (or this user) marked a contact read
             refetchContacts();
         },
     });
