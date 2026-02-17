@@ -153,8 +153,11 @@ router.get('/by-contact', async (req, res) => {
         try {
             const existingDigits = new Set();
             for (const c of conversations) {
+                // Track all phone formats from existing call-based contacts
                 const raw = c.contact?.phone_e164;
                 if (raw) existingDigits.add(raw.replace(/\D/g, ''));
+                if (c.from_number) existingDigits.add(c.from_number.replace(/\D/g, ''));
+                if (c.to_number) existingDigits.add(c.to_number.replace(/\D/g, ''));
             }
 
             const db = require('../db/connection');
