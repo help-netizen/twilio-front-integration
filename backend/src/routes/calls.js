@@ -78,14 +78,23 @@ router.get('/by-contact', async (req, res) => {
 
         // Enrich with SMS data: find latest SMS for each contact's phone
         try {
-            const phones = conversations
-                .map(c => c.contact?.phone_e164)
-                .filter(Boolean);
+            // Normalize phones to digits-only for comparison
+            // (contacts may store "+1 (401) 602-3506", SMS stores "+14016023506")
+            const phoneMap = {}; // digits → original phone
+            for (const c of conversations) {
+                const raw = c.contact?.phone_e164;
+                if (raw) {
+                    const digits = raw.replace(/\D/g, '');
+                    phoneMap[digits] = raw;
+                }
+            }
+            const digitPhones = Object.keys(phoneMap);
 
-            if (phones.length > 0) {
+            if (digitPhones.length > 0) {
                 const db = require('../db/connection');
                 const smsResult = await db.query(
                     `SELECT customer_e164,
+                            regexp_replace(customer_e164, '\\D', '', 'g') as customer_digits,
                             last_message_at,
                             last_message_direction,
                             last_message_preview,
@@ -93,24 +102,25 @@ router.get('/by-contact', async (req, res) => {
                              JOIN sms_conversations sc2 ON sc2.id = m.conversation_id
                              WHERE sc2.customer_e164 = sc.customer_e164) as sms_count
                      FROM sms_conversations sc
-                     WHERE customer_e164 = ANY($1)`,
-                    [phones]
+                     WHERE regexp_replace(customer_e164, '\\D', '', 'g') = ANY($1)`,
+                    [digitPhones]
                 );
 
-                // Build phone → SMS data map
+                // Build digits → SMS data map
                 const smsMap = {};
                 for (const row of smsResult.rows) {
-                    const existing = smsMap[row.customer_e164];
-                    // Keep the most recent conversation per phone
+                    const digits = row.customer_digits;
+                    const existing = smsMap[digits];
                     if (!existing || (row.last_message_at && (!existing.last_message_at || new Date(row.last_message_at) > new Date(existing.last_message_at)))) {
-                        smsMap[row.customer_e164] = row;
+                        smsMap[digits] = row;
                     }
                 }
 
                 // Merge SMS data into conversations
                 for (const conv of conversations) {
-                    const phone = conv.contact?.phone_e164;
-                    const sms = phone ? smsMap[phone] : null;
+                    const raw = conv.contact?.phone_e164;
+                    const digits = raw ? raw.replace(/\D/g, '') : null;
+                    const sms = digits ? smsMap[digits] : null;
                     const callTime = new Date(conv.started_at || conv.created_at);
                     const smsTime = sms?.last_message_at ? new Date(sms.last_message_at) : null;
 
