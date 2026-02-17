@@ -240,7 +240,28 @@ export const PulsePage: React.FC = () => {
         }
     }, [contactId, contactData?.conversations]);
 
-    const filteredCalls = contactData?.conversations || [];
+    // Deduplicate contacts by phone digits (safety net for SMS-only + call entries)
+    const filteredCalls = useMemo(() => {
+        const raw = contactData?.conversations || [];
+        const seen = new Map<string, number>();
+        const deduped: Call[] = [];
+        for (const c of raw) {
+            const phone = c.contact?.phone_e164 || c.from_number || '';
+            const digits = phone.replace(/\D/g, '');
+            if (!digits) { deduped.push(c); continue; }
+            const existingIdx = seen.get(digits);
+            if (existingIdx !== undefined) {
+                // Keep the one with more calls
+                if ((c.call_count || 0) > (deduped[existingIdx].call_count || 0)) {
+                    deduped[existingIdx] = c;
+                }
+            } else {
+                seen.set(digits, deduped.length);
+                deduped.push(c);
+            }
+        }
+        return deduped;
+    }, [contactData?.conversations]);
 
     // Transform calls to CallData for timeline
     const callDataItems = useMemo(() => {
