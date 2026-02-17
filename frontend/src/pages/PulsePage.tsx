@@ -405,9 +405,9 @@ export const PulsePage: React.FC = () => {
                             <p className="text-sm text-muted-foreground">No contacts found</p>
                         </div>
                     ) : (
-                        filteredCalls.map((call) => (
+                        filteredCalls.map((call, idx) => (
                             <PulseContactItem
-                                key={call.id}
+                                key={call.id ?? `c-${call.contact?.id ?? (call.from_number || idx)}`}
                                 call={call}
                                 isActive={location.pathname === `/pulse/contact/${call.contact?.id || call.id}`}
                             />
