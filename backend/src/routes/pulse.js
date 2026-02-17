@@ -19,15 +19,16 @@ router.get('/timeline/:contactId', async (req, res) => {
             return res.status(400).json({ error: 'Invalid contactId' });
         }
 
-        // 1) Get contact to find phone
+        // 1) Get contact info directly from contacts table
+        const contactResult = await db.query(
+            'SELECT * FROM contacts WHERE id = $1', [contactId]
+        );
+        const contact = contactResult.rows[0] || null;
+
+        // 2) Get calls for this contact
         const callRows = await queries.getCallsByContactId(contactId);
-        if (!callRows.length) {
-            return res.json({ calls: [], messages: [], conversations: [] });
-        }
 
-        const contact = callRows[0].contact ? (typeof callRows[0].contact === 'string' ? JSON.parse(callRows[0].contact) : callRows[0].contact) : null;
         const rawPhone = contact?.phone_e164;
-
         // Normalize to E.164: strip everything except digits and leading +
         const normalizedPhone = rawPhone ? '+' + rawPhone.replace(/\D/g, '') : null;
 
@@ -38,7 +39,7 @@ router.get('/timeline/:contactId', async (req, res) => {
             if (row.to_number) callPhones.add(row.to_number);
         }
 
-        // 2) Format calls (reuse same format as calls route)
+        // Format calls (reuse same format as calls route)
         const calls = callRows.map(formatCall);
 
         // 3) Get SMS conversations matching the contact's phone
@@ -52,9 +53,13 @@ router.get('/timeline/:contactId', async (req, res) => {
 
         if (phonesToSearch.size > 0) {
             const phoneArray = [...phonesToSearch];
+            // Use digits-only comparison to handle format mismatches
+            const phoneDigits = phoneArray.map(p => p.replace(/\D/g, ''));
             const convResult = await db.query(
-                `SELECT * FROM sms_conversations WHERE customer_e164 = ANY($1) ORDER BY last_message_at DESC NULLS LAST`,
-                [phoneArray]
+                `SELECT * FROM sms_conversations
+                 WHERE regexp_replace(customer_e164, '\\D', '', 'g') = ANY($1)
+                 ORDER BY last_message_at DESC NULLS LAST`,
+                [phoneDigits]
             );
             conversations = convResult.rows;
 
