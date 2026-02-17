@@ -135,9 +135,14 @@ function formatCall(row) {
 // =============================================================================
 router.get('/unread-count', async (req, res) => {
     try {
-        const result = await db.query(
-            'SELECT COUNT(*) as count FROM sms_conversations WHERE has_unread = true'
-        );
+        // Count contacts that have unread in EITHER sms_conversations OR contacts
+        const result = await db.query(`
+            SELECT COUNT(DISTINCT phone) as count FROM (
+                SELECT customer_e164 as phone FROM sms_conversations WHERE has_unread = true
+                UNION
+                SELECT phone_e164 as phone FROM contacts WHERE has_unread = true
+            ) unread_phones
+        `);
         res.json({ count: parseInt(result.rows[0].count) });
     } catch (error) {
         console.error('Error fetching unread count:', error);

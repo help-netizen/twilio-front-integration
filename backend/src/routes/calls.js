@@ -217,28 +217,50 @@ router.get('/by-contact', async (req, res) => {
             console.warn('[by-contact] SMS-only contacts failed:', smsOnlyErr.message);
         }
 
-        // Enrich with has_unread from sms_conversations table (same pattern as Messages section)
+        // Enrich with has_unread from BOTH sms_conversations AND contacts tables
         try {
+            const dbConn = require('../db/connection');
+
+            // 1) SMS unread: from sms_conversations
             const phoneNumbers = conversations
                 .map(c => c.contact?.phone_e164 || c.from_number)
                 .filter(Boolean);
+            const smsUnreadMap = {};
+            const convIdMap = {};
             if (phoneNumbers.length > 0) {
-                const dbConn = require('../db/connection');
-                const unreadResult = await dbConn.query(
+                const smsResult = await dbConn.query(
                     `SELECT id, customer_e164, has_unread FROM sms_conversations WHERE customer_e164 = ANY($1)`,
                     [phoneNumbers]
                 );
-                const unreadMap = {};
-                const convIdMap = {};
-                for (const row of unreadResult.rows) {
-                    unreadMap[row.customer_e164] = row.has_unread;
+                for (const row of smsResult.rows) {
+                    smsUnreadMap[row.customer_e164] = row.has_unread;
                     convIdMap[row.customer_e164] = row.id;
                 }
-                for (const conv of conversations) {
-                    const phone = conv.contact?.phone_e164 || conv.from_number || '';
-                    conv.has_unread = phone ? (unreadMap[phone] || false) : false;
-                    conv.sms_conversation_id = phone ? (convIdMap[phone] || null) : null;
+            }
+
+            // 2) Call unread: from contacts
+            const contactIds = conversations
+                .map(c => c.contact?.id)
+                .filter(Boolean);
+            const contactUnreadMap = {};
+            if (contactIds.length > 0) {
+                const contactResult = await dbConn.query(
+                    `SELECT id, has_unread FROM contacts WHERE id = ANY($1)`,
+                    [contactIds]
+                );
+                for (const row of contactResult.rows) {
+                    contactUnreadMap[row.id] = row.has_unread;
                 }
+            }
+
+            // 3) Merge: unread if EITHER source says so
+            for (const conv of conversations) {
+                const phone = conv.contact?.phone_e164 || conv.from_number || '';
+                const cid = conv.contact?.id;
+                const smsUnread = phone ? (smsUnreadMap[phone] || false) : false;
+                const contactUnread = cid ? (contactUnreadMap[cid] || false) : false;
+                conv.has_unread = smsUnread || contactUnread;
+                conv.sms_conversation_id = phone ? (convIdMap[phone] || null) : null;
             }
         } catch (e) {
             console.warn('[by-contact] Unread enrichment failed:', e.message);
