@@ -16,7 +16,7 @@ import { formatPhoneNumber } from '../utils/formatters';
 import { useLeadByPhone } from '../hooks/useLeadByPhone';
 import { Input } from '../components/ui/input';
 import { Skeleton } from '../components/ui/skeleton';
-import { Search, PhoneOff, Activity, PhoneIncoming, PhoneOutgoing, ArrowLeftRight } from 'lucide-react';
+import { Search, PhoneOff, Activity, PhoneIncoming, PhoneOutgoing, ArrowLeftRight, MessageSquare, MessageSquareReply } from 'lucide-react';
 import type { Call } from '../types/models';
 import type { Lead } from '../types/lead';
 import type { CallData } from '../components/call-list-item';
@@ -49,11 +49,19 @@ function PulseContactItem({ call, isActive }: { call: Call; isActive: boolean })
     const company = lead?.Company || null;
     const primaryText = company || leadName || formatPhoneNumber(rawPhone);
     const showSecondaryPhone = !!(company || leadName);
-    const displayDate = new Date(call.started_at || call.created_at);
-    const iconDirection = call.direction === 'inbound' ? 'inbound'
+
+    // Use last_interaction_at (call or SMS), falling back to call time
+    const displayDate = new Date(call.last_interaction_at || call.started_at || call.created_at);
+    const interactionType = call.last_interaction_type || 'call';
+
+    // Total interactions count (calls + SMS)
+    const totalCount = (call.call_count || 0) + (call.sms_count || 0);
+
+    // Icon logic: show last interaction type
+    const callDirection = call.direction === 'inbound' ? 'inbound'
         : call.direction?.startsWith('outbound') ? 'outbound'
             : call.direction === 'internal' ? 'internal' : 'outbound';
-    const color = STATUS_ICON_COLORS[call.status?.toLowerCase() || ''] || '#16a34a';
+    const callColor = STATUS_ICON_COLORS[call.status?.toLowerCase() || ''] || '#16a34a';
 
     function getTimeAgo(date: Date): string {
         const now = new Date();
@@ -71,6 +79,20 @@ function PulseContactItem({ call, isActive }: { call: Call; isActive: boolean })
             date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
     }
 
+    // Render the icon based on last interaction type
+    const renderIcon = () => {
+        if (interactionType === 'sms_inbound') {
+            return <MessageSquareReply className="size-4" style={{ color: '#2563eb' }} />;
+        }
+        if (interactionType === 'sms_outbound') {
+            return <MessageSquare className="size-4" style={{ color: '#7c3aed' }} />;
+        }
+        // Call icon with direction
+        if (callDirection === 'internal') return <ArrowLeftRight className="size-4" style={{ color: callColor }} />;
+        if (callDirection === 'inbound') return <PhoneIncoming className="size-4" style={{ color: callColor }} />;
+        return <PhoneOutgoing className="size-4" style={{ color: callColor }} />;
+    };
+
     return (
         <button
             onClick={() => navigate(targetPath)}
@@ -79,15 +101,13 @@ function PulseContactItem({ call, isActive }: { call: Call; isActive: boolean })
         >
             <div className="flex items-start gap-2.5">
                 <div className="shrink-0 pt-0.5">
-                    {iconDirection === 'internal' ? <ArrowLeftRight className="size-4" style={{ color }} /> :
-                        iconDirection === 'inbound' ? <PhoneIncoming className="size-4" style={{ color }} /> :
-                            <PhoneOutgoing className="size-4" style={{ color }} />}
+                    {renderIcon()}
                 </div>
                 <div className="min-w-0 flex-1">
                     <div className="flex items-baseline justify-between mb-1">
                         <span className="text-sm font-medium text-gray-900 truncate">{primaryText}</span>
-                        {call.call_count !== undefined && call.call_count !== null && (
-                            <span className="text-xs text-gray-500 ml-2 shrink-0">({call.call_count})</span>
+                        {totalCount > 0 && (
+                            <span className="text-xs text-gray-500 ml-2 shrink-0">({totalCount})</span>
                         )}
                     </div>
                     {showSecondaryPhone && (

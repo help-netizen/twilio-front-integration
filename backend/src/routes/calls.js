@@ -70,11 +70,82 @@ router.get('/by-contact', async (req, res) => {
         });
         const total = await queries.getContactsWithCallsCount(companyId);
 
+        // Format calls first
+        let conversations = calls.map(c => ({
+            ...formatCall(c),
+            call_count: parseInt(c.call_count || 0),
+        }));
+
+        // Enrich with SMS data: find latest SMS for each contact's phone
+        try {
+            const phones = conversations
+                .map(c => c.contact?.phone_e164)
+                .filter(Boolean);
+
+            if (phones.length > 0) {
+                const db = require('../db/connection');
+                const smsResult = await db.query(
+                    `SELECT customer_e164,
+                            last_message_at,
+                            last_message_direction,
+                            last_message_preview,
+                            (SELECT COUNT(*) FROM sms_messages m
+                             JOIN sms_conversations sc2 ON sc2.id = m.conversation_id
+                             WHERE sc2.customer_e164 = sc.customer_e164) as sms_count
+                     FROM sms_conversations sc
+                     WHERE customer_e164 = ANY($1)`,
+                    [phones]
+                );
+
+                // Build phone → SMS data map
+                const smsMap = {};
+                for (const row of smsResult.rows) {
+                    const existing = smsMap[row.customer_e164];
+                    // Keep the most recent conversation per phone
+                    if (!existing || (row.last_message_at && (!existing.last_message_at || new Date(row.last_message_at) > new Date(existing.last_message_at)))) {
+                        smsMap[row.customer_e164] = row;
+                    }
+                }
+
+                // Merge SMS data into conversations
+                for (const conv of conversations) {
+                    const phone = conv.contact?.phone_e164;
+                    const sms = phone ? smsMap[phone] : null;
+                    const callTime = new Date(conv.started_at || conv.created_at);
+                    const smsTime = sms?.last_message_at ? new Date(sms.last_message_at) : null;
+
+                    conv.sms_count = sms ? parseInt(sms.sms_count || 0) : 0;
+
+                    if (smsTime && smsTime > callTime) {
+                        // SMS is the most recent interaction
+                        conv.last_interaction_at = sms.last_message_at;
+                        conv.last_interaction_type = sms.last_message_direction === 'inbound' ? 'sms_inbound' : 'sms_outbound';
+                    } else {
+                        // Call is the most recent interaction
+                        conv.last_interaction_at = conv.started_at || conv.created_at;
+                        conv.last_interaction_type = 'call';
+                    }
+                }
+
+                // Re-sort by last interaction (most recent first)
+                conversations.sort((a, b) => {
+                    const ta = new Date(a.last_interaction_at || 0);
+                    const tb = new Date(b.last_interaction_at || 0);
+                    return tb - ta;
+                });
+            }
+        } catch (smsErr) {
+            console.warn('[by-contact] SMS enrichment failed, using call-only order:', smsErr.message);
+            // Fallback: just set call-only interaction data
+            for (const conv of conversations) {
+                conv.last_interaction_at = conv.started_at || conv.created_at;
+                conv.last_interaction_type = 'call';
+                conv.sms_count = 0;
+            }
+        }
+
         res.json({
-            conversations: calls.map(c => ({
-                ...formatCall(c),
-                call_count: parseInt(c.call_count || 0),
-            })),
+            conversations,
             total,
             limit: parseInt(limit),
             offset: parseInt(offset),
