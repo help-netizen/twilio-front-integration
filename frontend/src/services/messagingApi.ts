@@ -60,4 +60,12 @@ export const messagingApi = {
         const response = await apiClient.get<MediaUrlResponse>(`/messaging/media/${mediaId}/temporary-url`);
         return response.data;
     },
+
+    polishText: async (text: string): Promise<{ polished_text: string; changed: boolean; fallback_used: boolean }> => {
+        const response = await apiClient.post<{ polished_text: string; changed: boolean; fallback_used: boolean }>(
+            '/text/polish',
+            { text, channel: 'sms' }
+        );
+        return response.data;
+    },
 };

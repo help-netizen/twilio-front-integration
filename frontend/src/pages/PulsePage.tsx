@@ -376,6 +376,24 @@ export const PulsePage: React.FC = () => {
         refetchTimeline();
     };
 
+    // AI text polish handler (Wand2 button)
+    const handleAiFormat = async (message: string): Promise<string> => {
+        try {
+            const result = await messagingApi.polishText(message);
+            if (result.fallback_used) {
+                toast.warning('AI polish unavailable — original text kept');
+                return message;
+            }
+            return result.polished_text;
+        } catch (err: any) {
+            const msg = err?.response?.status === 504 || err?.code === 'ECONNABORTED'
+                ? 'AI polish timed out — try again'
+                : 'AI polish failed — try again';
+            toast.error(msg);
+            return message;
+        }
+    };
+
     return (
         <div className="pulse-page">
             {/* Left sidebar: contact list */}
@@ -458,6 +476,7 @@ export const PulsePage: React.FC = () => {
                         {conversations.length > 0 && (
                             <SmsForm
                                 onSend={handleSendMessage}
+                                onAiFormat={handleAiFormat}
                                 disabled={!conversations.length}
                                 lead={lead}
                             />

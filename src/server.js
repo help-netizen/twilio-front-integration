@@ -16,6 +16,7 @@ const usersRouter = require('../backend/src/routes/users');
 const messagingRouter = require('../backend/src/routes/messaging');
 const pulseRouter = require('../backend/src/routes/pulse');
 const quickMessagesRouter = require('../backend/src/routes/quick-messages');
+const textPolishRouter = require('../backend/src/routes/text-polish');
 const requestId = require('../backend/src/middleware/requestId');
 const { authenticate, requireRole, requireCompanyAccess } = require('../backend/src/middleware/keycloakAuth');
 const db = require('../backend/src/db/connection');
@@ -91,6 +92,7 @@ app.get('/api/messaging/media/:mediaId/temporary-url', async (req, res, next) =>
 app.use('/api/messaging', authenticate, requireCompanyAccess, messagingRouter);
 app.use('/api/pulse', authenticate, requireCompanyAccess, pulseRouter);
 app.use('/api/quick-messages', authenticate, requireCompanyAccess, quickMessagesRouter);
+app.use('/api/text/polish', authenticate, requireCompanyAccess, textPolishRouter);
 app.use('/api/sync', authenticate, requireCompanyAccess, syncRouter);
 
 // Leads API (behind feature flag)
@@ -179,7 +181,7 @@ app.use((req, res) => {
 });
 
 // Start server
-app.listen(PORT, '0.0.0.0', async () => {
+const server = app.listen(PORT, '0.0.0.0', async () => {
     console.log(`🚀 Twilio-Front Integration Server running on port ${PORT}`);
     console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`🔗 Webhook URL: ${process.env.CALLBACK_HOSTNAME || 'http://localhost:' + PORT}`);
@@ -207,6 +209,15 @@ app.listen(PORT, '0.0.0.0', async () => {
         console.log('🎙️ Transcription worker started');
     } else {
         console.log('🎙️ Transcription worker disabled (set FEATURE_TRANSCRIPTION_WORKER=true to enable)');
+    }
+
+    // Realtime transcription (Twilio Media Streams → AssemblyAI)
+    if (process.env.FEATURE_REALTIME_TRANSCRIPTION === 'true') {
+        const { initMediaStreamServer } = require('../backend/src/services/mediaStreamServer');
+        initMediaStreamServer(server);
+        console.log('🎙️ Realtime transcription enabled at /ws/twilio-media');
+    } else {
+        console.log('🎙️ Realtime transcription disabled (set FEATURE_REALTIME_TRANSCRIPTION=true to enable)');
     }
 });
 
