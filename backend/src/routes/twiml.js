@@ -34,7 +34,6 @@ router.post('/voice', (req, res) => {
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Dial timeout="${dialTimeout}"
-          answerOnBridge="true"
           action="${dialActionUrl}"
           method="POST"
           record="record-from-answer-dual"
