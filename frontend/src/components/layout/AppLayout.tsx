@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../auth/AuthProvider';
 import { authedFetch } from '../../services/apiClient';
 import { useQueryClient } from '@tanstack/react-query';
@@ -12,6 +12,7 @@ import {
     DropdownMenuSeparator,
 } from '../ui/dropdown-menu';
 import { Phone, MessageSquare, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity } from 'lucide-react';
+import { useRealtimeEvents } from '../../hooks/useRealtimeEvents';
 import './AppLayout.css';
 
 interface AppLayoutProps {
@@ -32,6 +33,28 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                         : 'pulse';
 
     const { accessDeniedMessage, clearAccessDenied, logout, hasRole } = useAuth();
+
+    // --- Pulse unread badge ---
+    const [pulseUnreadCount, setPulseUnreadCount] = useState(0);
+
+    const fetchUnreadCount = useCallback(async () => {
+        try {
+            const res = await authedFetch('/api/pulse/unread-count');
+            const data = await res.json();
+            setPulseUnreadCount(data.count || 0);
+        } catch { /* ignore */ }
+    }, []);
+
+    // Fetch on mount + when navigating
+    useEffect(() => { fetchUnreadCount(); }, [fetchUnreadCount, location.pathname]);
+
+    // Refresh unread count on SSE events
+    useRealtimeEvents({
+        onCallCreated: () => fetchUnreadCount(),
+        onCallUpdate: () => fetchUnreadCount(),
+        onMessageAdded: () => fetchUnreadCount(),
+        onContactRead: () => fetchUnreadCount(),
+    });
 
     const handleRefresh = async () => {
         setIsRefreshing(true);
@@ -70,9 +93,18 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                                     value="pulse"
                                     className="flex items-center gap-2"
                                     onClick={() => navigate('/pulse')}
+                                    style={{ position: 'relative' }}
                                 >
                                     <Activity className="size-4" />
                                     Pulse
+                                    {pulseUnreadCount > 0 && (
+                                        <span
+                                            className="pulse-unread-badge"
+                                            title={`${pulseUnreadCount} unread`}
+                                        >
+                                            {pulseUnreadCount > 9 ? '9+' : pulseUnreadCount}
+                                        </span>
+                                    )}
                                 </TabsTrigger>
                                 <TabsTrigger
                                     value="calls"

@@ -130,4 +130,19 @@ function formatCall(row) {
     };
 }
 
+// =============================================================================
+// GET /api/pulse/unread-count — number of contacts with unread events
+// =============================================================================
+router.get('/unread-count', async (req, res) => {
+    try {
+        const result = await db.query(
+            'SELECT COUNT(*) as count FROM contacts WHERE has_unread = true'
+        );
+        res.json({ count: parseInt(result.rows[0].count) });
+    } catch (error) {
+        console.error('Error fetching unread count:', error);
+        res.json({ count: 0 });
+    }
+});
+
 module.exports = router;
