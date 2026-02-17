@@ -11,7 +11,7 @@ export const useCallsByContact = (search?: string) => {
     const query = useQuery({
         queryKey: ['calls-by-contact', search || ''],
         queryFn: () => callsApi.getByContact(100, 0, search || undefined),
-        staleTime: 60000,
+        staleTime: 0, // Always refetch on mount so new messages show after navigating
     });
 
     const refetch = useCallback(() => {
