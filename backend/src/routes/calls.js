@@ -136,13 +136,6 @@ router.get('/by-contact', async (req, res) => {
                         conv.last_interaction_type = 'call';
                     }
                 }
-
-                // Re-sort by last interaction (most recent first)
-                conversations.sort((a, b) => {
-                    const ta = new Date(a.last_interaction_at || 0);
-                    const tb = new Date(b.last_interaction_at || 0);
-                    return tb - ta;
-                });
             }
         } catch (smsErr) {
             console.warn('[by-contact] SMS enrichment failed, using call-only order:', smsErr.message);
@@ -154,6 +147,38 @@ router.get('/by-contact', async (req, res) => {
             }
         }
 
+        // Enrich with has_unread from contacts table
+        try {
+            const contactIds = conversations
+                .map(c => c.contact?.id)
+                .filter(Boolean);
+            if (contactIds.length > 0) {
+                const dbConn = require('../db/connection');
+                const unreadResult = await dbConn.query(
+                    `SELECT id, has_unread FROM contacts WHERE id = ANY($1)`,
+                    [contactIds]
+                );
+                const unreadMap = {};
+                for (const row of unreadResult.rows) {
+                    unreadMap[row.id] = row.has_unread;
+                }
+                for (const conv of conversations) {
+                    const cid = conv.contact?.id;
+                    conv.has_unread = cid ? (unreadMap[cid] || false) : false;
+                }
+            }
+        } catch (e) {
+            console.warn('[by-contact] Unread enrichment failed:', e.message);
+        }
+
+        // Final sort: unread first, then by last interaction (most recent first)
+        conversations.sort((a, b) => {
+            if (a.has_unread !== b.has_unread) return a.has_unread ? -1 : 1;
+            const ta = new Date(a.last_interaction_at || 0);
+            const tb = new Date(b.last_interaction_at || 0);
+            return tb - ta;
+        });
+
         res.json({
             conversations,
             total,
@@ -163,6 +188,26 @@ router.get('/by-contact', async (req, res) => {
     } catch (error) {
         console.error('Error fetching calls by contact:', error);
         res.status(500).json({ error: 'Failed to fetch calls by contact' });
+    }
+});
+
+// =============================================================================
+// POST /api/calls/contact/:contactId/mark-read — team-wide mark read
+// =============================================================================
+router.post('/contact/:contactId/mark-read', async (req, res) => {
+    try {
+        const { contactId } = req.params;
+        const contact = await queries.markContactRead(parseInt(contactId));
+        if (!contact) {
+            return res.status(404).json({ error: 'Contact not found' });
+        }
+        // SSE broadcast so all users see the read state
+        const realtimeService = require('../services/realtimeService');
+        realtimeService.broadcast('contact.read', { contactId: parseInt(contactId) });
+        res.json({ contact });
+    } catch (error) {
+        console.error('Error marking contact read:', error);
+        res.status(500).json({ error: 'Failed to mark contact read' });
     }
 });
 

@@ -56,6 +56,10 @@ export interface SSEConversationUpdatedEvent {
     conversation: any;
 }
 
+export interface SSEContactReadEvent {
+    contactId: number;
+}
+
 /**
  * SSE Hook Options
  */
@@ -65,6 +69,7 @@ interface UseRealtimeEventsOptions {
     onMessageAdded?: (event: SSEMessageAddedEvent) => void;
     onMessageDelivery?: (event: SSEMessageDeliveryEvent) => void;
     onConversationUpdated?: (event: SSEConversationUpdatedEvent) => void;
+    onContactRead?: (event: SSEContactReadEvent) => void;
     onConnected?: (event: SSEConnectionEvent) => void;
     onError?: (error: Error) => void;
     autoReconnect?: boolean;
@@ -89,6 +94,7 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
     const onMessageAddedRef = useRef(options.onMessageAdded);
     const onMessageDeliveryRef = useRef(options.onMessageDelivery);
     const onConversationUpdatedRef = useRef(options.onConversationUpdated);
+    const onContactReadRef = useRef(options.onContactRead);
     const onConnectedRef = useRef(options.onConnected);
     const onErrorRef = useRef(options.onError);
 
@@ -98,6 +104,7 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
     onMessageAddedRef.current = options.onMessageAdded;
     onMessageDeliveryRef.current = options.onMessageDelivery;
     onConversationUpdatedRef.current = options.onConversationUpdated;
+    onContactReadRef.current = options.onContactRead;
     onConnectedRef.current = options.onConnected;
     onErrorRef.current = options.onError;
 
@@ -175,6 +182,13 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
                 const data = JSON.parse(e.data) as SSEConversationUpdatedEvent;
                 console.log('[SSE] Conversation updated:', data.conversation?.id);
                 onConversationUpdatedRef.current?.(data);
+            });
+
+            // Contact read event
+            eventSource.addEventListener('contact.read', (e) => {
+                const data = JSON.parse(e.data) as SSEContactReadEvent;
+                console.log('[SSE] Contact read:', data.contactId);
+                onContactReadRef.current?.(data);
             });
 
             // Error handling

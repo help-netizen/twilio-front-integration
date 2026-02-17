@@ -88,6 +88,11 @@ export const callsApi = {
         const response = await apiClient.get<CallEventsResponse>(`/calls/${callSid}/events`);
         return response.data;
     },
+
+    /** Mark a contact as read (team-wide) */
+    markContactRead: async (contactId: number): Promise<void> => {
+        await apiClient.post(`/calls/contact/${contactId}/mark-read`);
+    },
 };
 
 export default apiClient;

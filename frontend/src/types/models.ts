@@ -35,6 +35,7 @@ export interface Call {
     sms_count?: number;  // present in by-contact response
     last_interaction_at?: string;  // most recent call or SMS timestamp
     last_interaction_type?: 'call' | 'sms_inbound' | 'sms_outbound';  // type of last interaction
+    has_unread?: boolean;  // unread indicator for Pulse sidebar
     recording?: {
         recording_sid: string;
         status: string;

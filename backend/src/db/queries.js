@@ -589,14 +589,45 @@ async function getSyncHealth() {
 }
 
 // =============================================================================
+// Contact unread state
+// =============================================================================
+
+async function markContactUnread(contactId, eventTime = new Date()) {
+    const result = await db.query(
+        `UPDATE contacts SET
+            has_unread = true,
+            last_incoming_event_at = GREATEST(last_incoming_event_at, $2),
+            updated_at = now()
+         WHERE id = $1
+         RETURNING *`,
+        [contactId, eventTime]
+    );
+    return result.rows[0] || null;
+}
+
+async function markContactRead(contactId) {
+    const result = await db.query(
+        `UPDATE contacts SET
+            has_unread = false,
+            last_read_at = now(),
+            updated_at = now()
+         WHERE id = $1
+         RETURNING *`,
+        [contactId]
+    );
+    return result.rows[0] || null;
+}
+
+// =============================================================================
 // Exports
 // =============================================================================
 
 module.exports = {
-    // Contacts
     findContactByPhone,
     createContact,
     findOrCreateContact,
+    markContactUnread,
+    markContactRead,
 
     // Calls
     upsertCall,

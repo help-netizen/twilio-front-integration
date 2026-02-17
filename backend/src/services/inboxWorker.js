@@ -159,6 +159,15 @@ async function processVoiceEvent(payload, eventType, traceId) {
             externalParty.formatted
         );
         contactId = contact.id;
+
+        // Mark contact unread for inbound calls (only root calls)
+        if (processed.direction === 'inbound' && !normalized.parentCallSid) {
+            try {
+                await queries.markContactUnread(contactId, new Date());
+            } catch (e) {
+                console.warn(`[${traceId}] Failed to mark contact unread:`, e.message);
+            }
+        }
     }
 
     const isFinal = isFinalStatus(normalized.eventStatus);

@@ -6,6 +6,7 @@ import { usePulseTimeline } from '../hooks/usePulseTimeline';
 import { messagingApi } from '../services/messagingApi';
 import * as leadsApi from '../services/leadsApi';
 import { useRealtimeEvents, type SSECallEvent } from '../hooks/useRealtimeEvents';
+import { callsApi } from '../services/api';
 import { PulseTimeline } from '../components/pulse/PulseTimeline';
 import { SmsForm } from '../components/pulse/SmsForm';
 import { LeadDetailPanel } from '../components/leads/LeadDetailPanel';
@@ -96,16 +97,23 @@ function PulseContactItem({ call, isActive }: { call: Call; isActive: boolean })
     return (
         <button
             onClick={() => navigate(targetPath)}
-            className={`w-full text-left px-4 py-3 transition-colors border-b border-gray-100 ${isActive ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
+            className={`w-full text-left px-4 py-3 transition-colors border-b border-gray-100 relative ${isActive ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
             style={{ outline: 'none' }}
         >
+            {/* Unread left bar */}
+            {call.has_unread && (
+                <div
+                    className="absolute left-0 top-0 bottom-0 w-[3px] rounded-r"
+                    style={{ backgroundColor: '#2563eb' }}
+                />
+            )}
             <div className="flex items-start gap-2.5">
                 <div className="shrink-0 pt-0.5">
                     {renderIcon()}
                 </div>
                 <div className="min-w-0 flex-1">
                     <div className="flex items-baseline justify-between mb-1">
-                        <span className="text-sm font-medium text-gray-900 truncate">{primaryText}</span>
+                        <span className={`text-sm truncate ${call.has_unread ? 'font-semibold text-gray-900' : 'font-medium text-gray-900'}`}>{primaryText}</span>
                         {totalCount > 0 && (
                             <span className="text-xs text-gray-500 ml-2 shrink-0">({totalCount})</span>
                         )}
@@ -208,7 +216,25 @@ export const PulsePage: React.FC = () => {
             }
         },
         onCallCreated: () => refetchContacts(),
+        onContactRead: () => {
+            // Real-time: another user (or this user) marked a contact read
+            refetchContacts();
+        },
     });
+
+    // Mark contact read when opened
+    useEffect(() => {
+        if (!contactId) return;
+        // Find the contact in the list to see if it's unread
+        const contact = contactData?.conversations?.find(
+            (c: Call) => c.contact?.id === contactId
+        );
+        if (contact?.has_unread) {
+            callsApi.markContactRead(contactId).catch(err =>
+                console.warn('[Pulse] Failed to mark contact read:', err)
+            );
+        }
+    }, [contactId, contactData?.conversations]);
 
     const filteredCalls = contactData?.conversations || [];
 

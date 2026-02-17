@@ -4,6 +4,7 @@
  */
 const twilio = require('twilio');
 const convQueries = require('../db/conversationsQueries');
+const queries = require('../db/queries');
 const realtimeService = require('./realtimeService');
 const db = require('../db/connection');
 
@@ -321,6 +322,18 @@ async function handleMessageAdded(payload) {
         timestamp: payload.DateCreated || new Date().toISOString(),
         isInbound,
     });
+
+    // Mark contact unread for inbound SMS
+    if (isInbound && conv.customer_e164) {
+        try {
+            const contact = await queries.findOrCreateContact(conv.customer_e164);
+            if (contact) {
+                await queries.markContactUnread(contact.id, new Date(payload.DateCreated || Date.now()));
+            }
+        } catch (e) {
+            console.error('[ConvService] Failed to mark contact unread for SMS:', e.message);
+        }
+    }
 
     // SSE push
     realtimeService.publishMessageAdded(msg, conv);
