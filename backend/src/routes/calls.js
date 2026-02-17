@@ -295,6 +295,11 @@ router.get('/by-contact', async (req, res) => {
 router.post('/contact/:contactId/mark-read', async (req, res) => {
     try {
         const { contactId } = req.params;
+        console.log(`[MARK-READ-DEBUG] POST /contact/${contactId}/mark-read called`, {
+            referer: req.headers.referer || req.headers.referrer,
+            origin: req.headers.origin,
+            userAgent: (req.headers['user-agent'] || '').substring(0, 80),
+        });
         const contact = await queries.markContactRead(parseInt(contactId));
         if (!contact) {
             return res.status(404).json({ error: 'Contact not found' });
