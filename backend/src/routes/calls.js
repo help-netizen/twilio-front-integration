@@ -437,7 +437,8 @@ router.get('/:callSid/media', async (req, res) => {
         const callSid = req.params.callSid;
         const media = await queries.getCallMedia(callSid);
         const recording = media.recordings?.[0];
-        const transcript = media.transcripts?.[0];
+        // Prefer the completed transcript over processing/enqueued ones
+        const transcript = media.transcripts?.find(t => t.status === 'completed') || media.transcripts?.[0];
 
         res.json({
             callSid,
