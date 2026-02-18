@@ -368,11 +368,31 @@ export const PulsePage: React.FC = () => {
         toast.success('Lead updated');
     };
 
+    // Derive our Twilio proxy number from call data (for starting new conversations)
+    const proxyPhone = useMemo(() => {
+        if (conversations.length) return conversations[0].proxy_e164 || '';
+        // For call-only contacts, our number is the other side of the call
+        const firstCall = contactCalls[0];
+        if (!firstCall) return '';
+        const dir = firstCall.direction || '';
+        // Inbound call: our number is to_number; Outbound: our number is from_number
+        return dir.includes('inbound') ? (firstCall.to_number || '') : (firstCall.from_number || '');
+    }, [conversations, contactCalls]);
+
     // Send SMS handler
     const handleSendMessage = async (message: string, files?: File[]) => {
-        if (!conversations.length) return;
-        const convId = conversations[0].id;
-        await messagingApi.sendMessage(convId, { body: message }, files?.[0]);
+        if (conversations.length) {
+            // Existing conversation — send directly
+            const convId = conversations[0].id;
+            await messagingApi.sendMessage(convId, { body: message }, files?.[0]);
+        } else if (phone && proxyPhone) {
+            // No conversation yet — create one with the first message
+            await messagingApi.startConversation({
+                customerE164: phone,
+                proxyE164: proxyPhone,
+                initialMessage: message,
+            });
+        }
         refetchTimeline();
     };
 
@@ -473,11 +493,11 @@ export const PulsePage: React.FC = () => {
                                 loading={timelineLoading}
                             />
                         </div>
-                        {conversations.length > 0 && (
+                        {phone && (
                             <SmsForm
                                 onSend={handleSendMessage}
                                 onAiFormat={handleAiFormat}
-                                disabled={!conversations.length}
+                                disabled={!phone}
                                 lead={lead}
                             />
                         )}
