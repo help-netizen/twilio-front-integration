@@ -465,10 +465,10 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                                                                         }
                                                                     }
                                                                 }}
-                                                                className={`w-full flex items-start gap-2 px-2 py-1.5 rounded text-left text-xs transition-colors ${startSec != null ? 'cursor-pointer hover:bg-gray-100' : 'cursor-default'}`}
+                                                                className={`w-full flex items-baseline gap-2 px-2 py-1.5 rounded text-left text-xs transition-colors ${startSec != null ? 'cursor-pointer hover:bg-gray-100' : 'cursor-default'}`}
                                                             >
                                                                 {startSec != null && (
-                                                                    <span className="shrink-0 mt-0.5 text-[10px] text-gray-400 font-mono tabular-nums">
+                                                                    <span className="shrink-0 text-[10px] text-gray-400 font-mono tabular-nums">
                                                                         {formatAudioTime(startSec)}
                                                                     </span>
                                                                 )}
