@@ -206,7 +206,7 @@ async function getCallsByContact({ limit = 20, offset = 0, companyId = null, sea
         searchFilter = 'AND (' + conditions.join(' OR ') + ')';
     }
 
-        const result = await db.query(
+    const result = await db.query(
         `SELECT * FROM (
             SELECT DISTINCT ON (c.contact_id)
                 c.*,
@@ -273,7 +273,8 @@ async function getCallsByContactId(contactId) {
             COALESCE(r.status, cr.status) as recording_status,
             COALESCE(r.duration_sec, cr.duration_sec) as recording_duration_sec,
             COALESCE(t.status, ct.status) as transcript_status,
-            COALESCE(t.text, ct.text) as transcript_text
+            COALESCE(t.text, ct.text) as transcript_text,
+            COALESCE(t.raw_payload, ct.raw_payload) as transcript_raw_payload
          FROM calls c
          LEFT JOIN contacts co ON c.contact_id = co.id
          -- Direct recording on this call
@@ -295,7 +296,7 @@ async function getCallsByContactId(contactId) {
          ) cr ON r.recording_sid IS NULL
          -- Direct transcript on this call
          LEFT JOIN LATERAL (
-             SELECT status, text
+             SELECT status, text, raw_payload
              FROM transcripts
              WHERE transcripts.call_sid = c.call_sid
              ORDER BY updated_at DESC
@@ -303,7 +304,7 @@ async function getCallsByContactId(contactId) {
          ) t ON true
          -- Fallback: transcript on child legs
          LEFT JOIN LATERAL (
-             SELECT tr.status, tr.text
+             SELECT tr.status, tr.text, tr.raw_payload
              FROM calls child
              JOIN transcripts tr ON tr.call_sid = child.call_sid
              WHERE child.parent_call_sid = c.call_sid

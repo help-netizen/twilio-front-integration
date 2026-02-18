@@ -186,6 +186,7 @@ function callToCallData(call: any): CallData {
         recordingDuration: call.recording?.duration_sec || undefined,
         transcription: call.transcript?.text || undefined,
         transcriptStatus: call.transcript?.status as CallData['transcriptStatus'] || undefined,
+        summary: call.transcript?.gemini_summary || undefined,
         answeredBy: call.answered_by || undefined,
     };
 }

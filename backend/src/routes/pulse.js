@@ -126,6 +126,12 @@ function formatCall(row) {
         transcript: row.transcript_status ? {
             status: row.transcript_status,
             text: row.transcript_text,
+            gemini_summary: (() => {
+                const rp = row.transcript_raw_payload;
+                if (!rp) return null;
+                const p = typeof rp === 'string' ? JSON.parse(rp) : rp;
+                return p.gemini_summary || null;
+            })(),
         } : undefined,
     };
 }
