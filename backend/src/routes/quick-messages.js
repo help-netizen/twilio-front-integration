@@ -7,10 +7,19 @@ const express = require('express');
 const router = express.Router();
 const qmQueries = require('../db/quickMessagesQueries');
 
+const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
+
+/** Resolve company_id: from user profile, companyFilter, or default */
+function getCompanyId(req) {
+    return req.user?.company_id
+        || req.companyFilter?.company_id
+        || DEFAULT_COMPANY_ID;
+}
+
 // GET /api/quick-messages — list all quick messages (ordered)
 router.get('/', async (req, res) => {
     try {
-        const messages = await qmQueries.getQuickMessages(req.user.company_id);
+        const messages = await qmQueries.getQuickMessages(getCompanyId(req));
         res.json({ messages });
     } catch (err) {
         console.error('[QuickMessages] GET / error:', err);
@@ -25,7 +34,7 @@ router.post('/', async (req, res) => {
         if (!title || !content) {
             return res.status(400).json({ error: 'title and content are required' });
         }
-        const message = await qmQueries.createQuickMessage(req.user.company_id, title, content);
+        const message = await qmQueries.createQuickMessage(getCompanyId(req), title, content);
         res.status(201).json({ message });
     } catch (err) {
         console.error('[QuickMessages] POST / error:', err);
@@ -41,7 +50,7 @@ router.put('/reorder', async (req, res) => {
         if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
             return res.status(400).json({ error: 'orderedIds array is required' });
         }
-        const messages = await qmQueries.reorderQuickMessages(req.user.company_id, orderedIds);
+        const messages = await qmQueries.reorderQuickMessages(getCompanyId(req), orderedIds);
         res.json({ messages });
     } catch (err) {
         console.error('[QuickMessages] PUT /reorder error:', err);
@@ -53,7 +62,7 @@ router.put('/reorder', async (req, res) => {
 router.put('/:id', async (req, res) => {
     try {
         const { title, content } = req.body;
-        const message = await qmQueries.updateQuickMessage(req.params.id, req.user.company_id, { title, content });
+        const message = await qmQueries.updateQuickMessage(req.params.id, getCompanyId(req), { title, content });
         if (!message) return res.status(404).json({ error: 'Quick message not found' });
         res.json({ message });
     } catch (err) {
@@ -65,7 +74,7 @@ router.put('/:id', async (req, res) => {
 // DELETE /api/quick-messages/:id — delete a quick message
 router.delete('/:id', async (req, res) => {
     try {
-        const deleted = await qmQueries.deleteQuickMessage(req.params.id, req.user.company_id);
+        const deleted = await qmQueries.deleteQuickMessage(req.params.id, getCompanyId(req));
         if (!deleted) return res.status(404).json({ error: 'Quick message not found' });
         res.json({ success: true });
     } catch (err) {
