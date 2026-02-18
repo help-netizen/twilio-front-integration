@@ -5,6 +5,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '@/auth/AuthProvider';
 import { authedFetch } from '@/services/apiClient';
+import { useLiveTranscript } from '@/hooks/useLiveTranscript';
 import {
     PhoneIncoming,
     PhoneOutgoing,
@@ -91,6 +92,17 @@ export function PulseCallListItem({ call }: { call: CallData }) {
     const [entities, setEntities] = useState<Entity[]>([]);
 
     const [sentimentScore, setSentimentScore] = useState<number | null>(null);
+
+    // Live streaming transcription
+    const liveLines = useLiveTranscript(call.callSid || '');
+    const isLiveStreaming = liveLines.length > 0 && !call.audioUrl; // live if lines exist and call still active (no recording yet)
+
+    // Auto-open transcription tab when live streaming starts
+    useEffect(() => {
+        if (liveLines.length > 0 && activeSection !== 'transcription') {
+            setActiveSection('transcription');
+        }
+    }, [liveLines.length > 0]); // only trigger on first line arrival
 
     // Gemini summary + structured entities
     const [geminiSummary, setGeminiSummary] = useState<string | null>(null);
@@ -301,6 +313,9 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                                             }`}
                                     >
                                         Transcription
+                                        {isLiveStreaming && (
+                                            <span className="ml-1 inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                                        )}
                                     </button>
                                 </div>
 
@@ -443,6 +458,27 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                                             <div className="flex items-center gap-2">
                                                 <div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin" />
                                                 <p className="text-sm text-gray-400 animate-pulse">Generating transcription...</p>
+                                            </div>
+                                        ) : isLiveStreaming ? (
+                                            <div>
+                                                <div className="flex items-center gap-2 mb-2">
+                                                    <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                                                    <span className="text-xs text-red-500 font-medium">Live transcription</span>
+                                                </div>
+                                                <div className="space-y-1">
+                                                    {liveLines.map((line, idx) => (
+                                                        <div key={idx} className="flex items-baseline gap-2 px-2 py-1 text-xs">
+                                                            <span className={`shrink-0 text-[10px] font-semibold ${line.speaker === 'agent' ? 'text-blue-500' : 'text-green-600'
+                                                                }`}>
+                                                                {line.speaker === 'agent' ? 'Agent' : 'Customer'}:
+                                                            </span>
+                                                            <span className="flex-1 text-sm text-gray-700 leading-relaxed">
+                                                                {line.text}
+                                                                {!line.isFinal && <span className="ml-1 text-gray-300 animate-pulse">▋</span>}
+                                                            </span>
+                                                        </div>
+                                                    ))}
+                                                </div>
                                             </div>
                                         ) : (transcriptionText || call.transcription) ? (
                                             <div>

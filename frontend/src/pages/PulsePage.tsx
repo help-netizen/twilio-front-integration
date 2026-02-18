@@ -5,7 +5,8 @@ import { useCallsByContact } from '../hooks/useConversations';
 import { usePulseTimeline } from '../hooks/usePulseTimeline';
 import { messagingApi } from '../services/messagingApi';
 import * as leadsApi from '../services/leadsApi';
-import { useRealtimeEvents, type SSECallEvent } from '../hooks/useRealtimeEvents';
+import { useRealtimeEvents, type SSECallEvent, type SSETranscriptDeltaEvent, type SSETranscriptFinalizedEvent } from '../hooks/useRealtimeEvents';
+import { appendTranscriptDelta, finalizeTranscript } from '../hooks/useLiveTranscript';
 import { callsApi } from '../services/api';
 import { PulseTimeline } from '../components/pulse/PulseTimeline';
 import { SmsForm } from '../components/pulse/SmsForm';
@@ -235,6 +236,20 @@ export const PulsePage: React.FC = () => {
         },
         onContactRead: () => {
             refetchContacts();
+        },
+        onTranscriptDelta: (event: SSETranscriptDeltaEvent) => {
+            appendTranscriptDelta(event.callSid, {
+                text: event.text,
+                speaker: event.speaker,
+                turnOrder: event.turnOrder,
+                isFinal: event.isFinal,
+                receivedAt: event.receivedAt,
+            });
+        },
+        onTranscriptFinalized: (event: SSETranscriptFinalizedEvent) => {
+            finalizeTranscript(event.callSid, event.text);
+            // Refetch timeline to pick up persisted transcript
+            if (contactId) refetchTimeline();
         },
     });
 

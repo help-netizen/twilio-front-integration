@@ -60,6 +60,26 @@ export interface SSEContactReadEvent {
     contactId: number;
 }
 
+/** Realtime transcription SSE events */
+export interface SSETranscriptDeltaEvent {
+    callSid: string;
+    track: string;
+    speaker: 'customer' | 'agent';
+    text: string;
+    isFinal: boolean;
+    turnOrder: number;
+    startMs?: number;
+    endMs?: number;
+    receivedAt: string;
+}
+
+export interface SSETranscriptFinalizedEvent {
+    callSid: string;
+    text: string;
+    segmentCount: number;
+    finalizedAt: string;
+}
+
 /**
  * SSE Hook Options
  */
@@ -70,6 +90,8 @@ interface UseRealtimeEventsOptions {
     onMessageDelivery?: (event: SSEMessageDeliveryEvent) => void;
     onConversationUpdated?: (event: SSEConversationUpdatedEvent) => void;
     onContactRead?: (event: SSEContactReadEvent) => void;
+    onTranscriptDelta?: (event: SSETranscriptDeltaEvent) => void;
+    onTranscriptFinalized?: (event: SSETranscriptFinalizedEvent) => void;
     onConnected?: (event: SSEConnectionEvent) => void;
     onError?: (error: Error) => void;
     autoReconnect?: boolean;
@@ -95,6 +117,8 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
     const onMessageDeliveryRef = useRef(options.onMessageDelivery);
     const onConversationUpdatedRef = useRef(options.onConversationUpdated);
     const onContactReadRef = useRef(options.onContactRead);
+    const onTranscriptDeltaRef = useRef(options.onTranscriptDelta);
+    const onTranscriptFinalizedRef = useRef(options.onTranscriptFinalized);
     const onConnectedRef = useRef(options.onConnected);
     const onErrorRef = useRef(options.onError);
 
@@ -105,6 +129,8 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
     onMessageDeliveryRef.current = options.onMessageDelivery;
     onConversationUpdatedRef.current = options.onConversationUpdated;
     onContactReadRef.current = options.onContactRead;
+    onTranscriptDeltaRef.current = options.onTranscriptDelta;
+    onTranscriptFinalizedRef.current = options.onTranscriptFinalized;
     onConnectedRef.current = options.onConnected;
     onErrorRef.current = options.onError;
 
@@ -189,6 +215,18 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
                 const data = JSON.parse(e.data) as SSEContactReadEvent;
                 console.log('[SSE] Contact read:', data.contactId);
                 onContactReadRef.current?.(data);
+            });
+
+            // Realtime transcription events
+            eventSource.addEventListener('transcript.delta', (e) => {
+                const data = JSON.parse(e.data) as SSETranscriptDeltaEvent;
+                onTranscriptDeltaRef.current?.(data);
+            });
+
+            eventSource.addEventListener('transcript.finalized', (e) => {
+                const data = JSON.parse(e.data) as SSETranscriptFinalizedEvent;
+                console.log('[SSE] Transcript finalized:', data.callSid, data.segmentCount, 'segments');
+                onTranscriptFinalizedRef.current?.(data);
             });
 
             // Error handling
