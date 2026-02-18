@@ -497,12 +497,17 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                             {activeSection === 'transcription' && (
                                 <div className="pt-2">
                                     <ScrollArea className="h-48 bg-gray-50 p-3 rounded-md">
-                                        {(transcriptionText || call.transcription) ? (
+                                        {isTranscribing ? (
+                                            <div className="flex items-center gap-2">
+                                                <div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin" />
+                                                <p className="text-sm text-gray-400 animate-pulse">Generating transcription...</p>
+                                            </div>
+                                        ) : (transcriptionText || call.transcription) ? (
                                             <div>
                                                 <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
                                                     {transcriptionText || call.transcription}
                                                 </p>
-                                                {call.callSid && !isTranscribing && (
+                                                {call.callSid && (
                                                     <button
                                                         onClick={async () => {
                                                             setIsTranscribing(true);
@@ -541,11 +546,6 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                                                         ↻ Reset transcription
                                                     </button>
                                                 )}
-                                            </div>
-                                        ) : isTranscribing ? (
-                                            <div className="flex items-center gap-2">
-                                                <div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin" />
-                                                <p className="text-sm text-gray-400 animate-pulse">Generating transcription...</p>
                                             </div>
                                         ) : (
                                             <div>

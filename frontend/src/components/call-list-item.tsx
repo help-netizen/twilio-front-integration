@@ -575,20 +575,23 @@ export function CallListItem({ call }: CallListItemProps) {
                             {activeSection === 'transcription' && (
                                 <div className="pt-2">
                                     <ScrollArea className="h-48 bg-muted/30 p-3 rounded-md">
-                                        {(transcriptionText || call.transcription) ? (
+                                        {isTranscribing ? (
+                                            <div className="flex items-center gap-2">
+                                                <div className="size-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                                                <p className="text-sm text-muted-foreground animate-pulse">Generating transcription...</p>
+                                            </div>
+                                        ) : (transcriptionText || call.transcription) ? (
                                             <div>
                                                 <p className="text-sm leading-relaxed whitespace-pre-wrap">
                                                     {transcriptionText || call.transcription}
                                                 </p>
-                                                {call.callSid && !isTranscribing && (
+                                                {call.callSid && (
                                                     <button
                                                         onClick={async () => {
                                                             setIsTranscribing(true);
                                                             setTranscribeError(null);
                                                             try {
-                                                                // 1. Delete existing transcripts
                                                                 await authedFetch(`/api/calls/${call.callSid}/transcript`, { method: 'DELETE' });
-                                                                // 2. Reset all state
                                                                 setTranscriptionText(null);
                                                                 setEntities([]);
                                                                 setSentimentScore(null);
@@ -599,7 +602,6 @@ export function CallListItem({ call }: CallListItemProps) {
                                                                 setActiveGeminiIdx(null);
                                                                 geminiLoadedRef.current = false;
                                                                 mediaLoadedRef.current = false;
-                                                                // 3. Re-run transcription
                                                                 const res = await authedFetch(`/api/calls/${call.callSid}/transcribe`, { method: 'POST' });
                                                                 const data = await res.json();
                                                                 if (!res.ok) throw new Error(data.error || 'Failed');
@@ -622,11 +624,6 @@ export function CallListItem({ call }: CallListItemProps) {
                                                         ↻ Reset transcription
                                                     </button>
                                                 )}
-                                            </div>
-                                        ) : isTranscribing ? (
-                                            <div className="flex items-center gap-2">
-                                                <div className="size-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                                                <p className="text-sm text-muted-foreground animate-pulse">Generating transcription...</p>
                                             </div>
                                         ) : (
                                             <div>
