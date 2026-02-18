@@ -498,9 +498,50 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                                 <div className="pt-2">
                                     <ScrollArea className="h-48 bg-gray-50 p-3 rounded-md">
                                         {(transcriptionText || call.transcription) ? (
-                                            <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
-                                                {transcriptionText || call.transcription}
-                                            </p>
+                                            <div>
+                                                <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                                                    {transcriptionText || call.transcription}
+                                                </p>
+                                                {call.callSid && !isTranscribing && (
+                                                    <button
+                                                        onClick={async () => {
+                                                            setIsTranscribing(true);
+                                                            setTranscribeError(null);
+                                                            try {
+                                                                await authedFetch(`/api/calls/${call.callSid}/transcript`, { method: 'DELETE' });
+                                                                setTranscriptionText(null);
+                                                                setEntities([]);
+                                                                setSentimentScore(null);
+                                                                setGeminiSummary(null);
+                                                                setGeminiEntities([]);
+                                                                setGeminiStatus('idle');
+                                                                setActiveEntityIdx(null);
+                                                                setActiveGeminiIdx(null);
+                                                                geminiLoadedRef.current = false;
+                                                                mediaLoadedRef.current = false;
+                                                                const res = await authedFetch(`/api/calls/${call.callSid}/transcribe`, { method: 'POST' });
+                                                                const data = await res.json();
+                                                                if (!res.ok) throw new Error(data.error || 'Failed');
+                                                                setTranscriptionText(data.transcript);
+                                                                if (data.entities) setEntities(data.entities);
+                                                                if (data.gemini_summary) {
+                                                                    setGeminiSummary(data.gemini_summary);
+                                                                    setGeminiEntities(data.gemini_entities || []);
+                                                                    setGeminiStatus('ready');
+                                                                }
+                                                                if (data.sentimentScore != null) setSentimentScore(data.sentimentScore);
+                                                            } catch (err: any) {
+                                                                setTranscribeError(err.message);
+                                                            } finally {
+                                                                setIsTranscribing(false);
+                                                            }
+                                                        }}
+                                                        className="mt-2 text-[11px] px-2 py-1 text-gray-400 border border-gray-300 rounded hover:bg-gray-100 transition-colors cursor-pointer"
+                                                    >
+                                                        ↻ Reset transcription
+                                                    </button>
+                                                )}
+                                            </div>
                                         ) : isTranscribing ? (
                                             <div className="flex items-center gap-2">
                                                 <div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin" />

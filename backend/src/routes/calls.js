@@ -477,6 +477,30 @@ router.get('/:callSid/media', async (req, res) => {
 });
 
 // =============================================================================
+// DELETE /api/calls/:callSid/transcript — remove all transcripts (for reset)
+// =============================================================================
+router.delete('/:callSid/transcript', async (req, res) => {
+    try {
+        const callSid = req.params.callSid;
+        const db = require('../db/connection');
+        const result = await db.query(
+            `DELETE FROM transcripts WHERE call_sid = $1`,
+            [callSid]
+        );
+        // Also remove any pending transcription jobs
+        await db.query(
+            `DELETE FROM transcription_jobs WHERE call_sid = $1`,
+            [callSid]
+        ).catch(() => { });
+        console.log(`🗑️ Deleted ${result.rowCount} transcript(s) for ${callSid}`);
+        res.json({ deleted: result.rowCount });
+    } catch (error) {
+        console.error(`Error deleting transcripts for ${req.params.callSid}:`, error);
+        res.status(500).json({ error: 'Failed to delete transcripts' });
+    }
+});
+
+// =============================================================================
 // POST /api/calls/:callSid/transcribe — generate transcription via AssemblyAI
 // =============================================================================
 router.post('/:callSid/transcribe', async (req, res) => {

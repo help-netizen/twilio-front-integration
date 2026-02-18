@@ -576,9 +576,53 @@ export function CallListItem({ call }: CallListItemProps) {
                                 <div className="pt-2">
                                     <ScrollArea className="h-48 bg-muted/30 p-3 rounded-md">
                                         {(transcriptionText || call.transcription) ? (
-                                            <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                                                {transcriptionText || call.transcription}
-                                            </p>
+                                            <div>
+                                                <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                                                    {transcriptionText || call.transcription}
+                                                </p>
+                                                {call.callSid && !isTranscribing && (
+                                                    <button
+                                                        onClick={async () => {
+                                                            setIsTranscribing(true);
+                                                            setTranscribeError(null);
+                                                            try {
+                                                                // 1. Delete existing transcripts
+                                                                await authedFetch(`/api/calls/${call.callSid}/transcript`, { method: 'DELETE' });
+                                                                // 2. Reset all state
+                                                                setTranscriptionText(null);
+                                                                setEntities([]);
+                                                                setSentimentScore(null);
+                                                                setGeminiSummary(null);
+                                                                setGeminiEntities([]);
+                                                                setGeminiStatus('idle');
+                                                                setActiveEntityIdx(null);
+                                                                setActiveGeminiIdx(null);
+                                                                geminiLoadedRef.current = false;
+                                                                mediaLoadedRef.current = false;
+                                                                // 3. Re-run transcription
+                                                                const res = await authedFetch(`/api/calls/${call.callSid}/transcribe`, { method: 'POST' });
+                                                                const data = await res.json();
+                                                                if (!res.ok) throw new Error(data.error || 'Failed');
+                                                                setTranscriptionText(data.transcript);
+                                                                if (data.entities) setEntities(data.entities);
+                                                                if (data.gemini_summary) {
+                                                                    setGeminiSummary(data.gemini_summary);
+                                                                    setGeminiEntities(data.gemini_entities || []);
+                                                                    setGeminiStatus('ready');
+                                                                }
+                                                                if (data.sentimentScore != null) setSentimentScore(data.sentimentScore);
+                                                            } catch (err: any) {
+                                                                setTranscribeError(err.message);
+                                                            } finally {
+                                                                setIsTranscribing(false);
+                                                            }
+                                                        }}
+                                                        className="mt-2 text-[11px] px-2 py-1 text-muted-foreground border border-muted-foreground/30 rounded hover:bg-muted/50 transition-colors cursor-pointer"
+                                                    >
+                                                        ↻ Reset transcription
+                                                    </button>
+                                                )}
+                                            </div>
                                         ) : isTranscribing ? (
                                             <div className="flex items-center gap-2">
                                                 <div className="size-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
