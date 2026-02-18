@@ -646,6 +646,15 @@ router.post('/:callSid/transcribe', async (req, res) => {
             },
         });
 
+        // Clean up stale "processing" placeholder (created by recording-status-handler)
+        try {
+            const db = require('../db/connection');
+            await db.query(
+                `DELETE FROM transcripts WHERE call_sid = $1 AND transcription_sid IS NULL AND status = 'processing'`,
+                [callSid]
+            );
+        } catch (e) { /* ignore cleanup errors */ }
+
         console.log(`✅ Transcription completed for ${callSid}: ${dialogText?.length} chars, ${result.utterances?.length || 0} utterances, ${entities.length} entities, sentiment=${sentimentScore}`);
         res.json({
             status: 'completed',
