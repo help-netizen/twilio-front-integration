@@ -513,6 +513,7 @@ router.post('/:callSid/transcribe', async (req, res) => {
                 speech_models: ['universal-2'],
                 language_detection: true,
                 speaker_labels: true,
+                format_text: true,
             }),
         });
         if (!transcriptRes.ok) {
