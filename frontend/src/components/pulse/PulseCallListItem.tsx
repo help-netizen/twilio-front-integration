@@ -446,9 +446,37 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                                             </div>
                                         ) : (transcriptionText || call.transcription) ? (
                                             <div>
-                                                <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
-                                                    {transcriptionText || call.transcription}
-                                                </p>
+                                                <div className="space-y-0.5">
+                                                    {(transcriptionText || call.transcription || '').split('\n').filter((l: string) => l.trim()).map((line: string, idx: number) => {
+                                                        const match = line.match(/^\[(\d+)ms\]\s*/);
+                                                        const startMs = match ? parseInt(match[1], 10) : null;
+                                                        const cleanLine = match ? line.slice(match[0].length) : line;
+                                                        const startSec = startMs != null ? startMs / 1000 : null;
+                                                        return (
+                                                            <button
+                                                                key={idx}
+                                                                onClick={() => {
+                                                                    if (audioRef.current && startSec != null) {
+                                                                        audioRef.current.currentTime = startSec;
+                                                                        setCurrentTime(startSec);
+                                                                        if (!isPlaying) {
+                                                                            audioRef.current.play();
+                                                                            setIsPlaying(true);
+                                                                        }
+                                                                    }
+                                                                }}
+                                                                className={`w-full flex items-start gap-2 px-2 py-1.5 rounded text-left text-xs transition-colors ${startSec != null ? 'cursor-pointer hover:bg-gray-100' : 'cursor-default'}`}
+                                                            >
+                                                                {startSec != null && (
+                                                                    <span className="shrink-0 mt-0.5 text-[10px] text-gray-400 font-mono tabular-nums">
+                                                                        {formatAudioTime(startSec)}
+                                                                    </span>
+                                                                )}
+                                                                <span className="flex-1 text-sm text-gray-700 leading-relaxed">{cleanLine}</span>
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
                                                 {call.callSid && (
                                                     <button
                                                         onClick={async () => {

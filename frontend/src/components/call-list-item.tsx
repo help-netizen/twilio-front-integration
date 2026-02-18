@@ -81,7 +81,10 @@ const STATUS_CONFIG: Record<string, { label: string; iconColor: string; iconBg: 
 export function CallListItem({ call }: CallListItemProps) {
     const { token } = useAuth();
     const [showSystemInfo, setShowSystemInfo] = useState(false);
-    const [activeSection, setActiveSection] = useState<'summary' | 'transcription' | null>(null);
+    const [activeSection, setActiveSection] = useState<'summary' | 'transcription' | null>(() => {
+        if (call.summary) return 'summary';
+        return null;
+    });
     const [isTranscribing, setIsTranscribing] = useState(false);
     const [transcriptionText, setTranscriptionText] = useState<string | null>(null);
     const [transcribeError, setTranscribeError] = useState<string | null>(null);
@@ -522,9 +525,40 @@ export function CallListItem({ call }: CallListItemProps) {
                                             </div>
                                         ) : (transcriptionText || call.transcription) ? (
                                             <div>
-                                                <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                                                    {transcriptionText || call.transcription}
-                                                </p>
+                                                <div className="space-y-0.5">
+                                                    {(transcriptionText || call.transcription || '').split('\n').filter((l: string) => l.trim()).map((line: string, idx: number) => {
+                                                        const match = line.match(/^\[(\d+)ms\]\s*/);
+                                                        const startMs = match ? parseInt(match[1], 10) : null;
+                                                        const cleanLine = match ? line.slice(match[0].length) : line;
+                                                        const startSec = startMs != null ? startMs / 1000 : null;
+                                                        return (
+                                                            <button
+                                                                key={idx}
+                                                                onClick={() => {
+                                                                    if (audioRef.current && startSec != null) {
+                                                                        audioRef.current.currentTime = startSec;
+                                                                        setCurrentTime(startSec);
+                                                                        if (!isPlaying) {
+                                                                            audioRef.current.play();
+                                                                            setIsPlaying(true);
+                                                                        }
+                                                                    }
+                                                                }}
+                                                                className={cn(
+                                                                    'w-full flex items-start gap-2 px-2 py-1.5 rounded text-left text-xs transition-colors',
+                                                                    startSec != null ? 'cursor-pointer hover:bg-muted/60' : 'cursor-default'
+                                                                )}
+                                                            >
+                                                                {startSec != null && (
+                                                                    <span className="shrink-0 mt-0.5 text-[10px] text-muted-foreground font-mono tabular-nums">
+                                                                        {formatAudioTime(startSec)}
+                                                                    </span>
+                                                                )}
+                                                                <span className="flex-1 text-sm leading-relaxed">{cleanLine}</span>
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
                                                 {call.callSid && (
                                                     <button
                                                         onClick={async () => {
@@ -605,109 +639,114 @@ export function CallListItem({ call }: CallListItemProps) {
                             )}
                         </div>
                     </div>
-                )}
+                )
+                }
 
                 {/* No Audio - Show Summary and Transcription separately */}
-                {!call.audioUrl && (
-                    <>
-                        {call.summary && (
-                            <div className="px-4 pb-4 border-t">
-                                <h4 className="font-medium text-sm mt-3 mb-2">Summary</h4>
-                                <p className="text-sm leading-relaxed bg-muted/50 p-3 rounded-md">
-                                    {call.summary}
-                                </p>
-                            </div>
-                        )}
-
-                        {call.transcription && (
-                            <div className="px-4 pb-4 border-t">
-                                <h4 className="font-medium text-sm mt-3 mb-2">Transcription</h4>
-                                <ScrollArea className="h-48 bg-muted/30 p-3 rounded-md">
-                                    <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                                        {call.transcription}
+                {
+                    !call.audioUrl && (
+                        <>
+                            {call.summary && (
+                                <div className="px-4 pb-4 border-t">
+                                    <h4 className="font-medium text-sm mt-3 mb-2">Summary</h4>
+                                    <p className="text-sm leading-relaxed bg-muted/50 p-3 rounded-md">
+                                        {call.summary}
                                     </p>
-                                </ScrollArea>
-                            </div>
-                        )}
-                    </>
-                )}
+                                </div>
+                            )}
+
+                            {call.transcription && (
+                                <div className="px-4 pb-4 border-t">
+                                    <h4 className="font-medium text-sm mt-3 mb-2">Transcription</h4>
+                                    <ScrollArea className="h-48 bg-muted/30 p-3 rounded-md">
+                                        <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                                            {call.transcription}
+                                        </p>
+                                    </ScrollArea>
+                                </div>
+                            )}
+                        </>
+                    )
+                }
 
                 {/* System Information */}
-                {showSystemInfo && (
-                    <>
-                        <Separator />
-                        <div className="p-4 space-y-2 text-sm bg-muted/30">
-                            <div className="flex items-center gap-2">
-                                <Clock className="size-4 text-muted-foreground" />
-                                <span className="text-muted-foreground">Duration:</span>
-                                <span className="font-mono">
-                                    {formatDuration(call.totalDuration || call.duration)}
-                                </span>
-                            </div>
-
-                            {call.talkTime !== undefined && (
-                                <div className="flex items-center gap-2">
-                                    <Timer className="size-4 text-muted-foreground" />
-                                    <span className="text-muted-foreground">Talk:</span>
-                                    <span className="font-mono">
-                                        {formatDuration(call.talkTime)}
-                                    </span>
-                                </div>
-                            )}
-
-                            {call.waitTime !== undefined && (
+                {
+                    showSystemInfo && (
+                        <>
+                            <Separator />
+                            <div className="p-4 space-y-2 text-sm bg-muted/30">
                                 <div className="flex items-center gap-2">
                                     <Clock className="size-4 text-muted-foreground" />
-                                    <span className="text-muted-foreground">Wait:</span>
+                                    <span className="text-muted-foreground">Duration:</span>
                                     <span className="font-mono">
-                                        {formatDuration(call.waitTime)}
+                                        {formatDuration(call.totalDuration || call.duration)}
                                     </span>
                                 </div>
-                            )}
 
-                            {call.cost !== undefined && (
+                                {call.talkTime !== undefined && (
+                                    <div className="flex items-center gap-2">
+                                        <Timer className="size-4 text-muted-foreground" />
+                                        <span className="text-muted-foreground">Talk:</span>
+                                        <span className="font-mono">
+                                            {formatDuration(call.talkTime)}
+                                        </span>
+                                    </div>
+                                )}
+
+                                {call.waitTime !== undefined && (
+                                    <div className="flex items-center gap-2">
+                                        <Clock className="size-4 text-muted-foreground" />
+                                        <span className="text-muted-foreground">Wait:</span>
+                                        <span className="font-mono">
+                                            {formatDuration(call.waitTime)}
+                                        </span>
+                                    </div>
+                                )}
+
+                                {call.cost !== undefined && (
+                                    <div className="flex items-center gap-2">
+                                        <DollarSign className="size-4 text-muted-foreground" />
+                                        <span className="text-muted-foreground">Cost:</span>
+                                        <span className="font-mono">
+                                            ${call.cost.toFixed(4)} USD
+                                        </span>
+                                    </div>
+                                )}
+
                                 <div className="flex items-center gap-2">
-                                    <DollarSign className="size-4 text-muted-foreground" />
-                                    <span className="text-muted-foreground">Cost:</span>
-                                    <span className="font-mono">
-                                        ${call.cost.toFixed(4)} USD
-                                    </span>
-                                </div>
-                            )}
-
-                            <div className="flex items-center gap-2">
-                                <Hash className="size-4 text-muted-foreground" />
-                                <span className="text-muted-foreground">Call SID:</span>
-                                <code className="text-xs bg-muted px-2 py-1 rounded font-mono">
-                                    {call.callSid}
-                                </code>
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                                <Clock className="size-4 text-muted-foreground" />
-                                <span className="text-muted-foreground">Queue Time:</span>
-                                <span className="font-mono">{call.queueTime}s</span>
-                            </div>
-
-                            {call.parentCall && (
-                                <div className="flex items-center gap-2">
-                                    <GitBranch className="size-4 text-muted-foreground" />
-                                    <span className="text-muted-foreground">Parent Call:</span>
+                                    <Hash className="size-4 text-muted-foreground" />
+                                    <span className="text-muted-foreground">Call SID:</span>
                                     <code className="text-xs bg-muted px-2 py-1 rounded font-mono">
-                                        {call.parentCall}
+                                        {call.callSid}
                                     </code>
                                 </div>
-                            )}
 
-                            <div className="flex items-center gap-2">
-                                <Navigation className="size-4 text-muted-foreground" />
-                                <span className="text-muted-foreground">Twilio Direction:</span>
-                                <span className="font-mono">{call.twilioDirection}</span>
+                                <div className="flex items-center gap-2">
+                                    <Clock className="size-4 text-muted-foreground" />
+                                    <span className="text-muted-foreground">Queue Time:</span>
+                                    <span className="font-mono">{call.queueTime}s</span>
+                                </div>
+
+                                {call.parentCall && (
+                                    <div className="flex items-center gap-2">
+                                        <GitBranch className="size-4 text-muted-foreground" />
+                                        <span className="text-muted-foreground">Parent Call:</span>
+                                        <code className="text-xs bg-muted px-2 py-1 rounded font-mono">
+                                            {call.parentCall}
+                                        </code>
+                                    </div>
+                                )}
+
+                                <div className="flex items-center gap-2">
+                                    <Navigation className="size-4 text-muted-foreground" />
+                                    <span className="text-muted-foreground">Twilio Direction:</span>
+                                    <span className="font-mono">{call.twilioDirection}</span>
+                                </div>
                             </div>
-                        </div>
-                    </>
-                )}
-            </div>
-        </Card>
+                        </>
+                    )
+                }
+            </div >
+        </Card >
     );
 }
