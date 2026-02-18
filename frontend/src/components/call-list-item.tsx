@@ -352,49 +352,47 @@ export function CallListItem({ call }: CallListItemProps) {
                                             )}
                                         </div>
                                         {entities.length > 0 ? (
-                                            <ScrollArea className="max-h-48">
-                                                <div className="space-y-1">
-                                                    {entities.map((entity, idx) => {
-                                                        const startSec = entity.start / 1000;
-                                                        const endSec = entity.end / 1000;
-                                                        const isActive = activeEntityIdx === idx;
-                                                        const isInRange = currentTime >= startSec && currentTime <= endSec;
-                                                        return (
-                                                            <button
-                                                                key={`${entity.entity_type}-${entity.start}-${idx}`}
-                                                                onClick={() => {
-                                                                    if (audioRef.current && entity.start != null) {
-                                                                        audioRef.current.currentTime = startSec;
-                                                                        setCurrentTime(startSec);
-                                                                        setActiveEntityIdx(idx);
-                                                                        if (!isPlaying) {
-                                                                            audioRef.current.play();
-                                                                            setIsPlaying(true);
-                                                                        }
+                                            <div className="max-h-60 overflow-y-auto space-y-1">
+                                                {entities.map((entity, idx) => {
+                                                    const startSec = entity.start / 1000;
+                                                    const endSec = entity.end / 1000;
+                                                    const isActive = activeEntityIdx === idx;
+                                                    const isInRange = currentTime >= startSec && currentTime <= endSec;
+                                                    return (
+                                                        <button
+                                                            key={`${entity.entity_type}-${entity.start}-${idx}`}
+                                                            onClick={() => {
+                                                                if (audioRef.current && entity.start != null) {
+                                                                    audioRef.current.currentTime = startSec;
+                                                                    setCurrentTime(startSec);
+                                                                    setActiveEntityIdx(idx);
+                                                                    if (!isPlaying) {
+                                                                        audioRef.current.play();
+                                                                        setIsPlaying(true);
                                                                     }
-                                                                }}
-                                                                className={cn(
-                                                                    'w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-xs transition-colors cursor-pointer',
-                                                                    (isActive || isInRange)
-                                                                        ? 'bg-primary/10 ring-1 ring-primary/30'
-                                                                        : 'hover:bg-muted/60'
-                                                                )}
-                                                                aria-label={`${entity.entity_type.replace(/_/g, ' ')}: ${entity.text}, at ${formatAudioTime(startSec)}`}
-                                                            >
-                                                                <span className="shrink-0 px-1.5 py-0.5 rounded bg-muted text-[10px] font-medium text-muted-foreground uppercase">
-                                                                    {entity.entity_type.replace(/_/g, ' ')}
+                                                                }
+                                                            }}
+                                                            className={cn(
+                                                                'w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-xs transition-colors cursor-pointer',
+                                                                (isActive || isInRange)
+                                                                    ? 'bg-primary/10 ring-1 ring-primary/30'
+                                                                    : 'hover:bg-muted/60'
+                                                            )}
+                                                            aria-label={`${entity.entity_type.replace(/_/g, ' ')}: ${entity.text}, at ${formatAudioTime(startSec)}`}
+                                                        >
+                                                            <span className="shrink-0 px-1.5 py-0.5 rounded bg-muted text-[10px] font-medium text-muted-foreground uppercase">
+                                                                {entity.entity_type.replace(/_/g, ' ')}
+                                                            </span>
+                                                            <span className="flex-1 truncate font-medium text-foreground">{entity.text}</span>
+                                                            {entity.start != null && (
+                                                                <span className="shrink-0 text-[10px] text-muted-foreground font-mono">
+                                                                    {formatAudioTime(startSec)}
                                                                 </span>
-                                                                <span className="flex-1 truncate font-medium text-foreground">{entity.text}</span>
-                                                                {entity.start != null && (
-                                                                    <span className="shrink-0 text-[10px] text-muted-foreground font-mono">
-                                                                        {formatAudioTime(startSec)}
-                                                                    </span>
-                                                                )}
-                                                            </button>
-                                                        );
-                                                    })}
-                                                </div>
-                                            </ScrollArea>
+                                                            )}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
                                         ) : transcriptionText || call.transcription ? (
                                             <p className="text-xs text-muted-foreground italic">No entities detected for this call.</p>
                                         ) : (
