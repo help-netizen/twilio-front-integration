@@ -95,8 +95,9 @@ async function generateCallSummary(dialogText, callMeta = {}) {
         ],
         generationConfig: {
             temperature: 0.15,
-            maxOutputTokens: 1024,
+            maxOutputTokens: 16384,
             candidateCount: 1,
+            thinkingConfig: { thinkingBudget: 4096 },
         },
     };
 
@@ -140,9 +141,13 @@ async function generateCallSummary(dialogText, callMeta = {}) {
             const data = await response.json();
             const latencyMs = Date.now() - startTime;
 
-            const rawOutput = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+            const rawOutput = data?.candidates?.[0]?.content?.parts
+                ?.filter(p => !p.thought)  // skip thinking parts for 2.5-pro
+                ?.map(p => p.text)
+                ?.filter(Boolean)
+                ?.join('') || '';
             if (!rawOutput) {
-                console.warn(`[CallSummary:${traceId}] Empty response from Gemini`);
+                console.warn(`[CallSummary:${traceId}] Empty response from Gemini (finishReason: ${data?.candidates?.[0]?.finishReason})`);
                 return { summary: '', entities: [], error: 'empty_provider_response' };
             }
 
