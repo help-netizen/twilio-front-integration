@@ -468,11 +468,13 @@ export const PulsePage: React.FC = () => {
                             onDelete={handleDelete}
                         />
                     ) : !leadLoading ? (
-                        <CreateLeadJobWizard
-                            phone={phone}
-                            callCount={contactCalls.length}
-                            hasActiveCall={hasActiveCall}
-                        />
+                        <div className="flex-1 overflow-y-auto">
+                            <CreateLeadJobWizard
+                                phone={phone}
+                                callCount={contactCalls.length}
+                                hasActiveCall={hasActiveCall}
+                            />
+                        </div>
                     ) : null
                 ) : null}
             </div>
