@@ -189,6 +189,58 @@ async function createJob(payload) {
     return res.data;
 }
 
+// ─── Transactions / Invoices / Jobs ───────────────────────────────────────────
+
+/**
+ * Fetch all transactions for a date range, auto-paginating.
+ * @param {Object} params - { date_from, date_to, status?, payment_method?, sort_by?, sort_order? }
+ * @returns {Array} All transaction objects
+ */
+async function getTransactions(params = {}) {
+    const allResults = [];
+    let cursor = 0;
+    const limit = 100; // max allowed by API
+
+    while (true) {
+        const queryParams = { limit, cursor };
+        if (params.date_from) queryParams.transaction_date_after = params.date_from;
+        if (params.date_to) queryParams.transaction_date_before = params.date_to;
+        if (params.status) queryParams.status = params.status;
+        if (params.payment_method) queryParams.payment_method = params.payment_method;
+        if (params.sort_by) queryParams.sort_by = params.sort_by;
+        if (params.sort_order) queryParams.sort_order = params.sort_order;
+
+        const res = await retryRequest(() =>
+            getClient().get('/transactions', { params: queryParams })
+        );
+
+        const data = res.data;
+        const results = data.results || [];
+        allResults.push(...results);
+
+        if (!data.has_more || !data.next_cursor) break;
+        cursor = data.next_cursor;
+    }
+
+    return allResults;
+}
+
+/**
+ * Fetch a single invoice by ID.
+ */
+async function getInvoice(id) {
+    const res = await retryRequest(() => getClient().get(`/invoices/${id}`));
+    return res.data;
+}
+
+/**
+ * Fetch a single job by ID.
+ */
+async function getJob(id) {
+    const res = await retryRequest(() => getClient().get(`/jobs/${id}`));
+    return res.data;
+}
+
 // ─── Retry helper ─────────────────────────────────────────────────────────────
 
 async function retryRequest(requestFn, maxRetries = 3) {
@@ -220,5 +272,8 @@ module.exports = {
     checkServiceArea,
     getTimeslots,
     getServices,
+    getTransactions,
+    getInvoice,
+    getJob,
 };
 

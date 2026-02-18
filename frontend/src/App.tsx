@@ -14,6 +14,7 @@ import LeadFormSettingsPage from './pages/LeadFormSettingsPage';
 import SuperAdminPage from './pages/SuperAdminPage';
 import CompanyUsersPage from './pages/CompanyUsersPage';
 import QuickMessagesPage from './pages/QuickMessagesPage';
+import PaymentsPage from './pages/PaymentsPage';
 import { EventNotification } from './components/EventNotification';
 import { Toaster } from './components/ui/sonner';
 import './App.css';
@@ -61,6 +62,11 @@ function App() {
               <Route path="/settings/quick-messages" element={
                 <ProtectedRoute roles={['company_admin', 'company_member']}>
                   <QuickMessagesPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/settings/payments" element={
+                <ProtectedRoute roles={['company_admin']}>
+                  <PaymentsPage />
                 </ProtectedRoute>
               } />
               <Route path="/settings/users" element={

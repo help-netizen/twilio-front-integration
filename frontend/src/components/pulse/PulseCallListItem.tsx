@@ -594,6 +594,34 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                         </div>
                     </div>
                 )}
+
+                {/* Live transcription panel for active calls (no audioUrl yet) */}
+                {!call.audioUrl && isLiveStreaming && (
+                    <div className="px-4 pb-4 bg-white">
+                        <div className="space-y-3">
+                            <div className="flex items-center gap-2">
+                                <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                                <span className="text-xs text-red-500 font-medium">Live transcription</span>
+                            </div>
+                            <ScrollArea className="h-48 bg-gray-50 p-3 rounded-md">
+                                <div className="space-y-1">
+                                    {liveLines.map((line, idx) => (
+                                        <div key={idx} className="flex items-baseline gap-2 px-2 py-1 text-xs">
+                                            <span className={`shrink-0 text-[10px] font-semibold ${line.speaker === 'agent' ? 'text-blue-500' : 'text-green-600'
+                                                }`}>
+                                                {line.speaker === 'agent' ? 'Agent' : 'Customer'}:
+                                            </span>
+                                            <span className="flex-1 text-sm text-gray-700 leading-relaxed">
+                                                {line.text}
+                                                {!line.isFinal && <span className="ml-1 text-gray-300 animate-pulse">▋</span>}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </ScrollArea>
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* ─── System Information (bg-gray-50, p-4 pt-0, space-y-2) ─── */}

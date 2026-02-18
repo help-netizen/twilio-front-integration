@@ -9,6 +9,8 @@ const { AssemblyAISession } = require('./assemblyAIBridge');
 const realtimeService = require('./realtimeService');
 const db = require('../db/connection');
 
+const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
+
 // Active transcription sessions: callSid → { session, segments, meta }
 const activeSessions = new Map();
 
@@ -173,9 +175,9 @@ async function finalizeSession(callSid) {
             await db.query(
                 `INSERT INTO transcripts
                     (transcription_sid, call_sid, mode, status, text,
-                     is_final, sequence_no, speaker, track, raw_payload)
+                     is_final, sequence_no, speaker, track, raw_payload, company_id)
                  VALUES ($1, $2, 'realtime', 'completed', $3,
-                         true, $4, $5, $6, $7)
+                         true, $4, $5, $6, $7, $8)
                  ON CONFLICT (transcription_sid) DO NOTHING`,
                 [
                     transcriptionSid,
@@ -190,7 +192,8 @@ async function finalizeSession(callSid) {
                         endMs: seg.endMs,
                         turnOrder: seg.turnOrder,
                         words: seg.words
-                    })
+                    }),
+                    DEFAULT_COMPANY_ID
                 ]
             );
         }
@@ -200,9 +203,9 @@ async function finalizeSession(callSid) {
         await db.query(
             `INSERT INTO transcripts
                 (transcription_sid, call_sid, mode, status, text,
-                 is_final, sequence_no, raw_payload)
+                 is_final, sequence_no, raw_payload, company_id)
              VALUES ($1, $2, 'realtime', 'completed', $3,
-                     true, 0, $4)
+                     true, 0, $4, $5)
              ON CONFLICT (transcription_sid) DO UPDATE SET
                  text = EXCLUDED.text,
                  status = 'completed',
@@ -216,7 +219,8 @@ async function finalizeSession(callSid) {
                     mode: 'single-channel',
                     provider: 'assemblyai',
                     finalizedAt: new Date().toISOString()
-                })
+                }),
+                DEFAULT_COMPANY_ID
             ]
         );
 

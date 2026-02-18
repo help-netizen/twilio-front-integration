@@ -101,6 +101,8 @@ if (process.env.FEATURE_LEADS_TAB !== 'false') {
 }
 
 // Zenbooker scheduling proxy
+const zenbookerPaymentsRouter = require('../backend/src/routes/zenbooker/payments');
+app.use('/api/zenbooker/payments', authenticate, requireCompanyAccess, zenbookerPaymentsRouter);
 app.use('/api/zenbooker', authenticate, requireCompanyAccess, zenbookerRouter);
 
 // BLANC Integrations API (secured header-based auth)

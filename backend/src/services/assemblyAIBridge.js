@@ -59,7 +59,7 @@ class AssemblyAISession {
     connect() {
         if (this.terminated) return;
 
-        const url = `${AAI_WS_BASE}?sample_rate=8000&encoding=pcm_mulaw`;
+        const url = `${AAI_WS_BASE}?sample_rate=8000&encoding=pcm_mulaw&format_turns=true`;
 
         this._log(`Connecting to ${url}`);
 
@@ -76,9 +76,11 @@ class AssemblyAISession {
         this.ws.on('message', (raw) => {
             try {
                 const msg = JSON.parse(raw.toString());
+                this._log(`Received msg type=${msg.type}`);
                 this._handleMessage(msg);
             } catch (e) {
-                this._log('Failed to parse message', e.message);
+                // Binary message or parse error — could be a response echo
+                this._log('Non-JSON message received, length=' + raw.length);
             }
         });
 
@@ -160,11 +162,21 @@ class AssemblyAISession {
     _flush() {
         if (this.buffer.length === 0) return;
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-        if (!this.ready) return;
+        if (!this.ready) {
+            this._log(`Flush skipped: not ready yet (buffer=${this.buffer.length} bytes)`);
+            return;
+        }
 
         try {
+            const bytes = this.buffer.length;
             this.ws.send(this.buffer);
             this.buffer = Buffer.alloc(0);
+            // Log periodically (every ~5s = 50 flushes at 100ms interval)
+            if (this._flushCount === undefined) this._flushCount = 0;
+            this._flushCount++;
+            if (this._flushCount % 50 === 1) {
+                this._log(`Flushed ${bytes} bytes (flush #${this._flushCount})`);
+            }
         } catch (e) {
             this._log('Flush error', e.message);
         }
