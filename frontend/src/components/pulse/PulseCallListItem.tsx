@@ -22,7 +22,6 @@ import {
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatPhoneNumber } from '@/utils/formatters';
 import type { CallData, Entity, GeminiEntity } from '../call-list-item';
@@ -90,7 +89,7 @@ export function PulseCallListItem({ call }: { call: CallData }) {
     const [transcriptionText, setTranscriptionText] = useState<string | null>(null);
     const [transcribeError, setTranscribeError] = useState<string | null>(null);
     const [entities, setEntities] = useState<Entity[]>([]);
-    const [activeEntityIdx, setActiveEntityIdx] = useState<number | null>(null);
+
     const [sentimentScore, setSentimentScore] = useState<number | null>(null);
 
     // Gemini summary + structured entities
@@ -433,63 +432,6 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                                             <p className="text-xs text-gray-400 italic bg-gray-50 p-3 rounded-md">Will appear after transcription completes.</p>
                                         ) : null}
                                     </div>
-
-                                    <Separator className="bg-gray-200" />
-
-                                    {/* ── Detected Entities (AssemblyAI) ── */}
-                                    <div className="flex items-center justify-between mb-1">
-                                        <h4 className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Detected Entities</h4>
-                                        {entities.length > 0 && (
-                                            <span className="text-[10px] text-gray-400">{entities.length} found</span>
-                                        )}
-                                    </div>
-                                    <ScrollArea className="h-48 bg-gray-50 p-3 rounded-md">
-                                        {entities.length > 0 ? (
-                                            <div className="space-y-1">
-                                                {entities.map((entity, idx) => {
-                                                    const startSec = entity.start / 1000;
-                                                    const endSec = entity.end / 1000;
-                                                    const isActive = activeEntityIdx === idx;
-                                                    const isInRange = currentTime >= startSec && currentTime <= endSec;
-                                                    return (
-                                                        <button
-                                                            key={`${entity.entity_type}-${entity.start}-${idx}`}
-                                                            onClick={() => {
-                                                                if (audioRef.current && entity.start != null) {
-                                                                    audioRef.current.currentTime = startSec;
-                                                                    setCurrentTime(startSec);
-                                                                    setActiveEntityIdx(idx);
-                                                                    if (!isPlaying) {
-                                                                        audioRef.current.play();
-                                                                        setIsPlaying(true);
-                                                                    }
-                                                                }
-                                                            }}
-                                                            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-xs transition-colors cursor-pointer ${(isActive || isInRange)
-                                                                ? 'bg-blue-50 ring-1 ring-blue-200'
-                                                                : 'hover:bg-gray-100'
-                                                                }`}
-                                                            aria-label={`${entity.entity_type.replace(/_/g, ' ')}: ${entity.text}, at ${formatAudioTime(startSec)}`}
-                                                        >
-                                                            <span className="shrink-0 px-1.5 py-0.5 rounded bg-gray-200 text-[10px] font-medium text-gray-600 uppercase">
-                                                                {entity.entity_type.replace(/_/g, ' ')}
-                                                            </span>
-                                                            <span className="flex-1 truncate font-medium text-gray-800">{entity.text}</span>
-                                                            {entity.start != null && (
-                                                                <span className="shrink-0 text-[10px] text-gray-400 font-mono">
-                                                                    {formatAudioTime(startSec)}
-                                                                </span>
-                                                            )}
-                                                        </button>
-                                                    );
-                                                })}
-                                            </div>
-                                        ) : transcriptionText || call.transcription ? (
-                                            <p className="text-xs text-gray-400 italic">No entities detected for this call.</p>
-                                        ) : (
-                                            <p className="text-xs text-gray-400 italic">Entities will appear after transcription is complete.</p>
-                                        )}
-                                    </ScrollArea>
                                 </div>
                             )}
 
@@ -520,7 +462,6 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                                                                 setGeminiSummary(null);
                                                                 setGeminiEntities([]);
                                                                 setGeminiStatus('idle');
-                                                                setActiveEntityIdx(null);
                                                                 setActiveGeminiIdx(null);
                                                                 geminiLoadedRef.current = false;
                                                                 mediaLoadedRef.current = false;

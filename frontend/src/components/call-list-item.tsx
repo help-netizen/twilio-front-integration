@@ -86,7 +86,6 @@ export function CallListItem({ call }: CallListItemProps) {
     const [transcriptionText, setTranscriptionText] = useState<string | null>(null);
     const [transcribeError, setTranscribeError] = useState<string | null>(null);
     const [entities, setEntities] = useState<Entity[]>([]);
-    const [activeEntityIdx, setActiveEntityIdx] = useState<number | null>(null);
     const [sentimentScore, setSentimentScore] = useState<number | null>(null);
 
     // Gemini summary + structured entities
@@ -509,65 +508,6 @@ export function CallListItem({ call }: CallListItemProps) {
                                             <p className="text-xs text-muted-foreground italic bg-muted/30 p-3 rounded-md">Will appear after transcription completes.</p>
                                         ) : null}
                                     </div>
-
-                                    <Separator />
-
-                                    {/* ── Detected Entities (AssemblyAI) ── */}
-                                    <div className="flex items-center justify-between mb-1">
-                                        <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">Detected Entities</h4>
-                                        {entities.length > 0 && (
-                                            <span className="text-[10px] text-muted-foreground">{entities.length} found</span>
-                                        )}
-                                    </div>
-                                    <ScrollArea className="h-48 bg-muted/30 p-3 rounded-md">
-                                        {entities.length > 0 ? (
-                                            <div className="space-y-1">
-                                                {entities.map((entity, idx) => {
-                                                    const startSec = entity.start / 1000;
-                                                    const endSec = entity.end / 1000;
-                                                    const isActive = activeEntityIdx === idx;
-                                                    const isInRange = currentTime >= startSec && currentTime <= endSec;
-                                                    return (
-                                                        <button
-                                                            key={`${entity.entity_type}-${entity.start}-${idx}`}
-                                                            onClick={() => {
-                                                                if (audioRef.current && entity.start != null) {
-                                                                    audioRef.current.currentTime = startSec;
-                                                                    setCurrentTime(startSec);
-                                                                    setActiveEntityIdx(idx);
-                                                                    if (!isPlaying) {
-                                                                        audioRef.current.play();
-                                                                        setIsPlaying(true);
-                                                                    }
-                                                                }
-                                                            }}
-                                                            className={cn(
-                                                                'w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-xs transition-colors cursor-pointer',
-                                                                (isActive || isInRange)
-                                                                    ? 'bg-primary/10 ring-1 ring-primary/30'
-                                                                    : 'hover:bg-muted/60'
-                                                            )}
-                                                            aria-label={`${entity.entity_type.replace(/_/g, ' ')}: ${entity.text}, at ${formatAudioTime(startSec)}`}
-                                                        >
-                                                            <span className="shrink-0 px-1.5 py-0.5 rounded bg-muted text-[10px] font-medium text-muted-foreground uppercase">
-                                                                {entity.entity_type.replace(/_/g, ' ')}
-                                                            </span>
-                                                            <span className="flex-1 truncate font-medium text-foreground">{entity.text}</span>
-                                                            {entity.start != null && (
-                                                                <span className="shrink-0 text-[10px] text-muted-foreground font-mono">
-                                                                    {formatAudioTime(startSec)}
-                                                                </span>
-                                                            )}
-                                                        </button>
-                                                    );
-                                                })}
-                                            </div>
-                                        ) : transcriptionText || call.transcription ? (
-                                            <p className="text-xs text-muted-foreground italic">No entities detected for this call.</p>
-                                        ) : (
-                                            <p className="text-xs text-muted-foreground italic">Entities will appear after transcription is complete.</p>
-                                        )}
-                                    </ScrollArea>
                                 </div>
                             )}
 
@@ -598,7 +538,6 @@ export function CallListItem({ call }: CallListItemProps) {
                                                                 setGeminiSummary(null);
                                                                 setGeminiEntities([]);
                                                                 setGeminiStatus('idle');
-                                                                setActiveEntityIdx(null);
                                                                 setActiveGeminiIdx(null);
                                                                 geminiLoadedRef.current = false;
                                                                 mediaLoadedRef.current = false;

@@ -567,7 +567,7 @@ router.post('/:callSid/transcribe', async (req, res) => {
                 language_detection: true,
                 speaker_labels: true,
                 format_text: true,
-                entity_detection: true,
+
                 sentiment_analysis: true,
             }),
         });
@@ -604,13 +604,8 @@ router.post('/:callSid/transcribe', async (req, res) => {
                 .join('\n\n');
         }
 
-        // 9. Extract entities
-        const entities = (result.entities || []).map(e => ({
-            entity_type: e.entity_type,
-            text: e.text,
-            start: e.start,  // ms
-            end: e.end,      // ms
-        }));
+        // 9. Entity detection disabled (using Gemini instead)
+        const entities = [];
 
         // 10. Compute overall sentiment score (-1 to +1)
         let sentimentScore = null;
