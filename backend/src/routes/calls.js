@@ -596,10 +596,11 @@ router.post('/:callSid/transcribe', async (req, res) => {
         }
 
         // 8. Format as dialog from utterances (Speaker A / Speaker B)
+        //    Include timestamps so Gemini can assign accurate start_ms to entities
         let dialogText = result.text; // fallback
         if (result.utterances && result.utterances.length > 0) {
             dialogText = result.utterances
-                .map(u => `Speaker ${u.speaker}: ${u.text}`)
+                .map(u => `[${u.start}ms] Speaker ${u.speaker}: ${u.text}`)
                 .join('\n\n');
         }
 

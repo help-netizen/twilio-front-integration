@@ -56,7 +56,7 @@ Field-specific rules:
 - Appointment Time Window: show range like "4:00 PM – 6:00 PM" if given
 - Lead Notes: only important action items (e.g. "Notify if earlier slot becomes available")
 
-Each entity MUST have "start_ms" set to the approximate millisecond timestamp in the audio where this entity is first mentioned. If you cannot determine the timestamp, set "start_ms" to null.
+Each entity MUST have "start_ms" set to the millisecond timestamp of the utterance where it is first mentioned. Each utterance in the transcript is prefixed with "[Xms]" — use those exact values. If no timestamp is available, set "start_ms" to null.
 
 Omit any entity whose value is not found in the transcript.`;
 
