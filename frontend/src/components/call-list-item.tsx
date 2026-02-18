@@ -185,6 +185,26 @@ export function CallListItem({ call }: CallListItemProps) {
         };
     }, []);
 
+    // Eagerly load transcript data (sentiment, entities) on mount
+    const mediaLoadedRef = useRef(false);
+    useEffect(() => {
+        if (mediaLoadedRef.current || !call.callSid || !call.audioUrl) return;
+        mediaLoadedRef.current = true;
+        (async () => {
+            try {
+                const res = await authedFetch(`/api/calls/${call.callSid}/media`);
+                if (!res.ok) return;
+                const data = await res.json();
+                const t = data.transcript;
+                if (t) {
+                    if (!transcriptionText && t.text) setTranscriptionText(t.text);
+                    if (entities.length === 0 && t.entities?.length) setEntities(t.entities);
+                    if (sentimentScore === null && t.sentimentScore != null) setSentimentScore(t.sentimentScore);
+                }
+            } catch { /* ignore */ }
+        })();
+    }, [call.callSid]);
+
     // Load Gemini summary/entities from /media when Summary tab opens
     useEffect(() => {
         if (activeSection !== 'summary' || geminiLoadedRef.current || !call.callSid) return;
