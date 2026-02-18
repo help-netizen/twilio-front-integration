@@ -512,6 +512,7 @@ router.post('/:callSid/transcribe', async (req, res) => {
                 audio_url: upload_url,
                 speech_models: ['universal-2'],
                 language_detection: true,
+                speaker_labels: true,
             }),
         });
         if (!transcriptRes.ok) {
@@ -538,7 +539,15 @@ router.post('/:callSid/transcribe', async (req, res) => {
             return res.status(504).json({ error: 'Transcription timed out' });
         }
 
-        // 8. Save to DB
+        // 8. Format as dialog from utterances (Speaker A / Speaker B)
+        let dialogText = result.text; // fallback
+        if (result.utterances && result.utterances.length > 0) {
+            dialogText = result.utterances
+                .map(u => `Speaker ${u.speaker}: ${u.text}`)
+                .join('\n\n');
+        }
+
+        // 9. Save to DB
         const transcriptionSid = `aai_${job.id}`;
         await queries.upsertTranscript({
             transcriptionSid,
@@ -548,13 +557,13 @@ router.post('/:callSid/transcribe', async (req, res) => {
             status: 'completed',
             languageCode: result.language_code || null,
             confidence: result.confidence || null,
-            text: result.text,
+            text: dialogText,
             isFinal: true,
             rawPayload: { assemblyai_id: job.id },
         });
 
-        console.log(`✅ Transcription completed for ${callSid}: ${result.text?.length} chars`);
-        res.json({ status: 'completed', transcript: result.text });
+        console.log(`✅ Transcription completed for ${callSid}: ${dialogText?.length} chars, ${result.utterances?.length || 0} utterances`);
+        res.json({ status: 'completed', transcript: dialogText });
     } catch (error) {
         console.error(`Error transcribing call ${callSid}:`, error);
         res.status(500).json({ error: 'Failed to generate transcription' });
