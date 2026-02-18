@@ -439,6 +439,14 @@ router.get('/:callSid/media', async (req, res) => {
                 confidence: transcript.confidence,
                 languageCode: transcript.language_code,
                 updatedAt: transcript.updated_at,
+                entities: (() => {
+                    try {
+                        const payload = typeof transcript.raw_payload === 'string'
+                            ? JSON.parse(transcript.raw_payload)
+                            : transcript.raw_payload;
+                        return payload?.entities || [];
+                    } catch { return []; }
+                })(),
             } : null,
         });
     } catch (error) {
@@ -514,6 +522,7 @@ router.post('/:callSid/transcribe', async (req, res) => {
                 language_detection: true,
                 speaker_labels: true,
                 format_text: true,
+                entity_detection: true,
             }),
         });
         if (!transcriptRes.ok) {
@@ -548,7 +557,15 @@ router.post('/:callSid/transcribe', async (req, res) => {
                 .join('\n\n');
         }
 
-        // 9. Save to DB
+        // 9. Extract entities
+        const entities = (result.entities || []).map(e => ({
+            entity_type: e.entity_type,
+            text: e.text,
+            start: e.start,  // ms
+            end: e.end,      // ms
+        }));
+
+        // 10. Save to DB (entities stored in raw_payload)
         const transcriptionSid = `aai_${job.id}`;
         await queries.upsertTranscript({
             transcriptionSid,
@@ -560,11 +577,11 @@ router.post('/:callSid/transcribe', async (req, res) => {
             confidence: result.confidence || null,
             text: dialogText,
             isFinal: true,
-            rawPayload: { assemblyai_id: job.id },
+            rawPayload: { assemblyai_id: job.id, entities },
         });
 
-        console.log(`✅ Transcription completed for ${callSid}: ${dialogText?.length} chars, ${result.utterances?.length || 0} utterances`);
-        res.json({ status: 'completed', transcript: dialogText });
+        console.log(`✅ Transcription completed for ${callSid}: ${dialogText?.length} chars, ${result.utterances?.length || 0} utterances, ${entities.length} entities`);
+        res.json({ status: 'completed', transcript: dialogText, entities });
     } catch (error) {
         console.error(`Error transcribing call ${callSid}:`, error);
         res.status(500).json({ error: 'Failed to generate transcription' });

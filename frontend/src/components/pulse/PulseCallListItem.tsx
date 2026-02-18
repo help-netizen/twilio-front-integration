@@ -24,7 +24,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatPhoneNumber } from '@/utils/formatters';
-import type { CallData } from '../call-list-item';
+import type { CallData, Entity } from '../call-list-item';
 
 // ── Status Colors (per spec) ─────────────────────────────────────────────────
 
@@ -88,6 +88,8 @@ export function PulseCallListItem({ call }: { call: CallData }) {
     const [isTranscribing, setIsTranscribing] = useState(false);
     const [transcriptionText, setTranscriptionText] = useState<string | null>(null);
     const [transcribeError, setTranscribeError] = useState<string | null>(null);
+    const [entities, setEntities] = useState<Entity[]>([]);
+    const [activeEntityIdx, setActiveEntityIdx] = useState<number | null>(null);
 
     // Audio player state
     const [isPlaying, setIsPlaying] = useState(false);
@@ -262,11 +264,72 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                             </div>
 
                             {/* Summary - Show only when active */}
-                            {activeSection === 'summary' && call.summary && (
-                                <div className="pt-2">
-                                    <p className="text-sm text-gray-700 leading-relaxed">
-                                        {call.summary}
-                                    </p>
+                            {activeSection === 'summary' && (
+                                <div className="pt-2 space-y-3">
+                                    {call.summary ? (
+                                        <p className="text-sm text-gray-700 leading-relaxed">
+                                            {call.summary}
+                                        </p>
+                                    ) : (
+                                        <p className="text-sm text-gray-400 italic">No summary available</p>
+                                    )}
+
+                                    {/* Detected Entities */}
+                                    <div className="bg-gray-50 rounded-md p-3">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <h4 className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Detected Entities</h4>
+                                            {entities.length > 0 && (
+                                                <span className="text-[10px] text-gray-400">{entities.length} found</span>
+                                            )}
+                                        </div>
+                                        {entities.length > 0 ? (
+                                            <ScrollArea className="max-h-48">
+                                                <div className="space-y-1">
+                                                    {entities.map((entity, idx) => {
+                                                        const startSec = entity.start / 1000;
+                                                        const endSec = entity.end / 1000;
+                                                        const isActive = activeEntityIdx === idx;
+                                                        const isInRange = currentTime >= startSec && currentTime <= endSec;
+                                                        return (
+                                                            <button
+                                                                key={`${entity.entity_type}-${entity.start}-${idx}`}
+                                                                onClick={() => {
+                                                                    if (audioRef.current && entity.start != null) {
+                                                                        audioRef.current.currentTime = startSec;
+                                                                        setCurrentTime(startSec);
+                                                                        setActiveEntityIdx(idx);
+                                                                        if (!isPlaying) {
+                                                                            audioRef.current.play();
+                                                                            setIsPlaying(true);
+                                                                        }
+                                                                    }
+                                                                }}
+                                                                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-left text-xs transition-colors cursor-pointer ${(isActive || isInRange)
+                                                                        ? 'bg-blue-50 ring-1 ring-blue-200'
+                                                                        : 'hover:bg-gray-100'
+                                                                    }`}
+                                                                aria-label={`${entity.entity_type.replace(/_/g, ' ')}: ${entity.text}, at ${formatAudioTime(startSec)}`}
+                                                            >
+                                                                <span className="shrink-0 px-1.5 py-0.5 rounded bg-gray-200 text-[10px] font-medium text-gray-600 uppercase">
+                                                                    {entity.entity_type.replace(/_/g, ' ')}
+                                                                </span>
+                                                                <span className="flex-1 truncate font-medium text-gray-800">{entity.text}</span>
+                                                                {entity.start != null && (
+                                                                    <span className="shrink-0 text-[10px] text-gray-400 font-mono">
+                                                                        {formatAudioTime(startSec)}
+                                                                    </span>
+                                                                )}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </ScrollArea>
+                                        ) : transcriptionText || call.transcription ? (
+                                            <p className="text-xs text-gray-400 italic">No entities detected for this call.</p>
+                                        ) : (
+                                            <p className="text-xs text-gray-400 italic">Entities will appear after transcription is complete.</p>
+                                        )}
+                                    </div>
                                 </div>
                             )}
 
@@ -299,6 +362,7 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                                                                 const data = await res.json();
                                                                 if (!res.ok) throw new Error(data.error || 'Failed');
                                                                 setTranscriptionText(data.transcript);
+                                                                if (data.entities) setEntities(data.entities);
                                                             } catch (err: any) {
                                                                 setTranscribeError(err.message);
                                                             } finally {
