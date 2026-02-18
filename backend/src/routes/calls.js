@@ -510,6 +510,7 @@ router.post('/:callSid/transcribe', async (req, res) => {
             },
             body: JSON.stringify({
                 audio_url: upload_url,
+                speech_model: 'universal-2',
                 language_detection: true,
             }),
         });
