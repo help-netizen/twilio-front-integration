@@ -22,9 +22,10 @@ import {
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatPhoneNumber } from '@/utils/formatters';
-import type { CallData, Entity } from '../call-list-item';
+import type { CallData, Entity, GeminiEntity } from '../call-list-item';
 
 // ── Status Colors (per spec) ─────────────────────────────────────────────────
 
@@ -92,6 +93,13 @@ export function PulseCallListItem({ call }: { call: CallData }) {
     const [activeEntityIdx, setActiveEntityIdx] = useState<number | null>(null);
     const [sentimentScore, setSentimentScore] = useState<number | null>(null);
 
+    // Gemini summary + structured entities
+    const [geminiSummary, setGeminiSummary] = useState<string | null>(null);
+    const [geminiEntities, setGeminiEntities] = useState<GeminiEntity[]>([]);
+    const [geminiStatus, setGeminiStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+    const [activeGeminiIdx, setActiveGeminiIdx] = useState<number | null>(null);
+    const geminiLoadedRef = useRef(false);
+
     // Audio player state
     const [isPlaying, setIsPlaying] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
@@ -115,6 +123,37 @@ export function PulseCallListItem({ call }: { call: CallData }) {
             audio.removeEventListener('ended', handleEnded);
         };
     }, []);
+
+    // Load Gemini summary/entities from /media when Summary tab opens
+    useEffect(() => {
+        if (activeSection !== 'summary' || geminiLoadedRef.current || !call.callSid) return;
+        geminiLoadedRef.current = true;
+        setGeminiStatus('loading');
+        (async () => {
+            try {
+                const res = await authedFetch(`/api/calls/${call.callSid}/media`);
+                if (!res.ok) throw new Error('Failed to load media');
+                const data = await res.json();
+                const t = data.transcript;
+                if (t) {
+                    if (!transcriptionText && t.text) setTranscriptionText(t.text);
+                    if (entities.length === 0 && t.entities?.length) setEntities(t.entities);
+                    if (sentimentScore === null && t.sentimentScore != null) setSentimentScore(t.sentimentScore);
+                    if (t.gemini_summary) {
+                        setGeminiSummary(t.gemini_summary);
+                        setGeminiEntities(t.gemini_entities || []);
+                        setGeminiStatus('ready');
+                    } else {
+                        setGeminiStatus('idle');
+                    }
+                } else {
+                    setGeminiStatus('idle');
+                }
+            } catch {
+                setGeminiStatus('error');
+            }
+        })();
+    }, [activeSection, call.callSid]);
 
     const handlePlayPause = () => {
         if (!audioRef.current) return;
@@ -289,15 +328,95 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                             {/* Summary - Show only when active */}
                             {activeSection === 'summary' && (
                                 <div className="pt-2 space-y-3">
-                                    {call.summary ? (
-                                        <p className="text-sm text-gray-700 leading-relaxed">
-                                            {call.summary}
-                                        </p>
-                                    ) : (
-                                        <p className="text-sm text-gray-400 italic">No summary available</p>
-                                    )}
+                                    {/* ── Call Summary (Gemini) ── */}
+                                    <div>
+                                        <h4 className="text-xs font-semibold text-gray-800 uppercase tracking-wide mb-1">Call Summary</h4>
+                                        {geminiStatus === 'loading' ? (
+                                            <div className="flex items-center gap-2 bg-gray-50 p-3 rounded-md">
+                                                <div className="w-3 h-3 border-2 border-gray-600 border-t-transparent rounded-full animate-spin" />
+                                                <span className="text-sm text-gray-400 animate-pulse">Generating summary…</span>
+                                            </div>
+                                        ) : geminiStatus === 'error' ? (
+                                            <p className="text-sm text-red-500 italic bg-red-50 p-3 rounded-md">Summary unavailable</p>
+                                        ) : geminiSummary ? (
+                                            <p className="text-sm text-gray-700 leading-relaxed bg-gray-50 p-3 rounded-md">{geminiSummary}</p>
+                                        ) : call.summary ? (
+                                            <p className="text-sm text-gray-700 leading-relaxed">{call.summary}</p>
+                                        ) : isTranscribing ? (
+                                            <p className="text-sm text-gray-400 italic bg-gray-50 p-3 rounded-md">Not ready (waiting for transcript)</p>
+                                        ) : (
+                                            <p className="text-sm text-gray-400 italic">No summary available</p>
+                                        )}
+                                    </div>
 
-                                    {/* Detected Entities */}
+                                    {/* ── Key Entities (Gemini structured) ── */}
+                                    <div>
+                                        <div className="flex items-center justify-between mb-1">
+                                            <h4 className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Key Entities</h4>
+                                            {geminiEntities.length > 0 && (
+                                                <span className="text-[10px] text-gray-400">{geminiEntities.length} found</span>
+                                            )}
+                                        </div>
+                                        {geminiStatus === 'loading' ? (
+                                            <div className="flex items-center gap-2 bg-gray-50 p-3 rounded-md">
+                                                <div className="w-3 h-3 border-2 border-gray-600 border-t-transparent rounded-full animate-spin" />
+                                                <span className="text-sm text-gray-400 animate-pulse">Extracting entities…</span>
+                                            </div>
+                                        ) : geminiStatus === 'error' ? (
+                                            <p className="text-sm text-red-500 italic bg-red-50 p-3 rounded-md">Entities unavailable</p>
+                                        ) : geminiEntities.length > 0 ? (
+                                            <div className="bg-gray-50 p-3 rounded-md space-y-1">
+                                                {geminiEntities.map((ge, idx) => {
+                                                    const hasTimestamp = ge.start_ms != null;
+                                                    const startSec = hasTimestamp ? ge.start_ms! / 1000 : 0;
+                                                    const isActive = activeGeminiIdx === idx;
+                                                    const isInRange = hasTimestamp && currentTime >= startSec && currentTime <= startSec + 10;
+                                                    return (
+                                                        <button
+                                                            key={`gemini-${ge.label}-${idx}`}
+                                                            onClick={() => {
+                                                                if (!hasTimestamp) return;
+                                                                if (audioRef.current) {
+                                                                    audioRef.current.currentTime = startSec;
+                                                                    setCurrentTime(startSec);
+                                                                    setActiveGeminiIdx(idx);
+                                                                    if (!isPlaying) {
+                                                                        audioRef.current.play();
+                                                                        setIsPlaying(true);
+                                                                    }
+                                                                }
+                                                            }}
+                                                            className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded text-left text-xs transition-colors ${hasTimestamp ? 'cursor-pointer' : 'cursor-default opacity-80'
+                                                                } ${(isActive || isInRange)
+                                                                    ? 'bg-blue-50 ring-1 ring-blue-200'
+                                                                    : hasTimestamp ? 'hover:bg-gray-100' : ''
+                                                                }`}
+                                                            title={hasTimestamp ? `Jump to ${formatAudioTime(startSec)}` : 'No timestamp available'}
+                                                        >
+                                                            <span className="shrink-0 text-[11px] font-medium text-gray-500" style={{ minWidth: '140px' }}>
+                                                                {ge.label}
+                                                            </span>
+                                                            <span className="shrink-0 text-gray-400">→</span>
+                                                            <span className="flex-1 font-medium text-gray-800" style={{ wordBreak: 'break-word' }}>{ge.value}</span>
+                                                            {hasTimestamp && (
+                                                                <span className="shrink-0 text-[10px] text-gray-400 font-mono">
+                                                                    {formatAudioTime(startSec)}
+                                                                </span>
+                                                            )}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        ) : (transcriptionText || call.transcription) && geminiStatus !== 'idle' ? (
+                                            <p className="text-xs text-gray-400 italic bg-gray-50 p-3 rounded-md">No key entities detected for this call.</p>
+                                        ) : isTranscribing ? (
+                                            <p className="text-xs text-gray-400 italic bg-gray-50 p-3 rounded-md">Will appear after transcription completes.</p>
+                                        ) : null}
+                                    </div>
+
+                                    <Separator className="bg-gray-200" />
+
+                                    {/* ── Detected Entities (AssemblyAI) ── */}
                                     <div className="flex items-center justify-between mb-1">
                                         <h4 className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Detected Entities</h4>
                                         {entities.length > 0 && (
@@ -384,6 +503,11 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                                                                 if (!res.ok) throw new Error(data.error || 'Failed');
                                                                 setTranscriptionText(data.transcript);
                                                                 if (data.entities) setEntities(data.entities);
+                                                                if (data.gemini_summary) {
+                                                                    setGeminiSummary(data.gemini_summary);
+                                                                    setGeminiEntities(data.gemini_entities || []);
+                                                                    setGeminiStatus('ready');
+                                                                }
                                                                 if (data.sentimentScore != null) setSentimentScore(data.sentimentScore);
                                                             } catch (err: any) {
                                                                 setTranscribeError(err.message);

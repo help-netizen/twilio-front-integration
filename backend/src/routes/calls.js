@@ -448,29 +448,26 @@ router.get('/:callSid/media', async (req, res) => {
                 durationSec: recording.duration_sec,
                 channels: recording.channels,
             } : null,
-            transcript: transcript ? {
-                status: transcript.status,
-                text: transcript.text,
-                confidence: transcript.confidence,
-                languageCode: transcript.language_code,
-                updatedAt: transcript.updated_at,
-                entities: (() => {
-                    try {
-                        const payload = typeof transcript.raw_payload === 'string'
-                            ? JSON.parse(transcript.raw_payload)
-                            : transcript.raw_payload;
-                        return payload?.entities || [];
-                    } catch { return []; }
-                })(),
-                sentimentScore: (() => {
-                    try {
-                        const payload = typeof transcript.raw_payload === 'string'
-                            ? JSON.parse(transcript.raw_payload)
-                            : transcript.raw_payload;
-                        return payload?.sentimentScore ?? null;
-                    } catch { return null; }
-                })(),
-            } : null,
+            transcript: transcript ? (() => {
+                let payload = {};
+                try {
+                    payload = typeof transcript.raw_payload === 'string'
+                        ? JSON.parse(transcript.raw_payload)
+                        : (transcript.raw_payload || {});
+                } catch { payload = {}; }
+                return {
+                    status: transcript.status,
+                    text: transcript.text,
+                    confidence: transcript.confidence,
+                    languageCode: transcript.language_code,
+                    updatedAt: transcript.updated_at,
+                    entities: payload.entities || [],
+                    sentimentScore: payload.sentimentScore ?? null,
+                    gemini_summary: payload.gemini_summary || null,
+                    gemini_entities: payload.gemini_entities || [],
+                    gemini_generated_at: payload.gemini_generated_at || null,
+                };
+            })() : null,
         });
     } catch (error) {
         console.error('Error fetching call media:', error);
@@ -604,7 +601,29 @@ router.post('/:callSid/transcribe', async (req, res) => {
             sentimentScore = totalConf > 0 ? Math.round((weightedSum / totalConf) * 100) / 100 : 0;
         }
 
-        // 10. Save to DB (entities stored in raw_payload)
+        // 10. Generate Gemini summary (non-blocking — if it fails, we still save transcript)
+        let geminiSummary = null;
+        let geminiEntities = [];
+        let geminiGeneratedAt = null;
+        try {
+            console.log(`[Transcribe] Generating Gemini summary for ${callSid}...`);
+            const summaryResult = await generateCallSummary(dialogText, {
+                callerPhone: req.body?.callerPhone || null,
+                callTime: req.body?.callTime || null,
+            });
+            if (summaryResult && !summaryResult.error) {
+                geminiSummary = summaryResult.summary;
+                geminiEntities = summaryResult.entities;
+                geminiGeneratedAt = new Date().toISOString();
+                console.log(`[Transcribe] Gemini summary OK for ${callSid}: ${geminiSummary?.length} chars, ${geminiEntities.length} entities`);
+            } else {
+                console.warn(`[Transcribe] Gemini summary skipped for ${callSid}: ${summaryResult?.error}`);
+            }
+        } catch (geminiErr) {
+            console.error(`[Transcribe] Gemini summary failed for ${callSid}:`, geminiErr.message);
+        }
+
+        // 11. Save to DB (entities + gemini data stored in raw_payload)
         const transcriptionSid = `aai_${job.id}`;
         await queries.upsertTranscript({
             transcriptionSid,
@@ -616,14 +635,88 @@ router.post('/:callSid/transcribe', async (req, res) => {
             confidence: result.confidence || null,
             text: dialogText,
             isFinal: true,
-            rawPayload: { assemblyai_id: job.id, entities, sentimentScore },
+            rawPayload: {
+                assemblyai_id: job.id,
+                entities,
+                sentimentScore,
+                gemini_summary: geminiSummary,
+                gemini_entities: geminiEntities,
+                gemini_generated_at: geminiGeneratedAt,
+            },
         });
 
         console.log(`✅ Transcription completed for ${callSid}: ${dialogText?.length} chars, ${result.utterances?.length || 0} utterances, ${entities.length} entities, sentiment=${sentimentScore}`);
-        res.json({ status: 'completed', transcript: dialogText, entities, sentimentScore });
+        res.json({
+            status: 'completed',
+            transcript: dialogText,
+            entities,
+            sentimentScore,
+            gemini_summary: geminiSummary,
+            gemini_entities: geminiEntities,
+        });
     } catch (error) {
         console.error(`Error transcribing call ${callSid}:`, error);
         res.status(500).json({ error: 'Failed to generate transcription' });
+    }
+});
+
+// =============================================================================
+// POST /api/calls/:callSid/summarize — (re-)generate Gemini summary
+// =============================================================================
+router.post('/:callSid/summarize', async (req, res) => {
+    const callSid = req.params.callSid;
+    try {
+        // 1. Load existing transcript
+        const media = await queries.getCallMedia(callSid);
+        const transcript = media.transcripts?.[0];
+        if (!transcript || transcript.status !== 'completed' || !transcript.text) {
+            return res.status(404).json({ error: 'No completed transcript found for this call' });
+        }
+
+        // 2. Call Gemini
+        const summaryResult = await generateCallSummary(transcript.text, {
+            callerPhone: req.body?.callerPhone || null,
+            callTime: req.body?.callTime || null,
+        });
+
+        if (summaryResult.error) {
+            return res.status(502).json({ error: `Summary generation failed: ${summaryResult.error}` });
+        }
+
+        // 3. Update raw_payload in existing transcript
+        let existingPayload = {};
+        try {
+            existingPayload = typeof transcript.raw_payload === 'string'
+                ? JSON.parse(transcript.raw_payload)
+                : (transcript.raw_payload || {});
+        } catch { existingPayload = {}; }
+
+        existingPayload.gemini_summary = summaryResult.summary;
+        existingPayload.gemini_entities = summaryResult.entities;
+        existingPayload.gemini_generated_at = new Date().toISOString();
+
+        await queries.upsertTranscript({
+            transcriptionSid: transcript.transcription_sid,
+            callSid,
+            recordingSid: transcript.recording_sid,
+            mode: transcript.mode || 'post-call',
+            status: transcript.status,
+            languageCode: transcript.language_code,
+            confidence: transcript.confidence,
+            text: transcript.text,
+            isFinal: true,
+            rawPayload: existingPayload,
+        });
+
+        console.log(`✅ Gemini summary (re-)generated for ${callSid}: ${summaryResult.summary?.length} chars, ${summaryResult.entities.length} entities`);
+        res.json({
+            status: 'completed',
+            gemini_summary: summaryResult.summary,
+            gemini_entities: summaryResult.entities,
+        });
+    } catch (error) {
+        console.error(`Error generating summary for ${callSid}:`, error);
+        res.status(500).json({ error: 'Failed to generate summary' });
     }
 });
 
