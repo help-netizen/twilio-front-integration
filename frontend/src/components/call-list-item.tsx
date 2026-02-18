@@ -81,6 +81,7 @@ export function CallListItem({ call }: CallListItemProps) {
     const [transcribeError, setTranscribeError] = useState<string | null>(null);
     const [entities, setEntities] = useState<Entity[]>([]);
     const [activeEntityIdx, setActiveEntityIdx] = useState<number | null>(null);
+    const [sentimentScore, setSentimentScore] = useState<number | null>(null);
 
     // Audio player state
     const [isPlaying, setIsPlaying] = useState(false);
@@ -94,6 +95,16 @@ export function CallListItem({ call }: CallListItemProps) {
         const mins = Math.floor(seconds / 60);
         const secs = seconds % 60;
         return `${mins}m ${secs}s`;
+    };
+
+    // Map sentiment score (-1…+1) to 5-level emoji + color
+    const getSentimentDisplay = (score: number | null) => {
+        if (score === null) return null;
+        if (score <= -0.4) return { emoji: '😡', color: '#dc2626', label: 'Very Negative' };
+        if (score <= -0.1) return { emoji: '😟', color: '#f59e0b', label: 'Negative' };
+        if (score <= 0.1) return { emoji: '😐', color: '#eab308', label: 'Neutral' };
+        if (score <= 0.4) return { emoji: '😊', color: '#22c55e', label: 'Positive' };
+        return { emoji: '😄', color: '#3b82f6', label: 'Very Positive' };
     };
 
     const formatTime = (date: Date) => {
@@ -250,6 +261,18 @@ export function CallListItem({ call }: CallListItemProps) {
                             <div className="flex items-center gap-3">
                                 {/* LEFT: Summary/Transcript buttons */}
                                 <div className="flex items-center gap-3 shrink-0">
+                                    {/* Sentiment emoji */}
+                                    {(() => {
+                                        const sd = getSentimentDisplay(sentimentScore);
+                                        if (!sd) return null;
+                                        return (
+                                            <span
+                                                title={`${sd.label} (${sentimentScore})`}
+                                                className="text-base leading-none cursor-default"
+                                                style={{ filter: `drop-shadow(0 0 2px ${sd.color})` }}
+                                            >{sd.emoji}</span>
+                                        );
+                                    })()}
                                     <button
                                         onClick={() => setActiveSection(activeSection === 'summary' ? null : 'summary')}
                                         className={cn(
@@ -432,6 +455,7 @@ export function CallListItem({ call }: CallListItemProps) {
                                                                 if (!res.ok) throw new Error(data.error || 'Failed');
                                                                 setTranscriptionText(data.transcript);
                                                                 if (data.entities) setEntities(data.entities);
+                                                                if (data.sentimentScore != null) setSentimentScore(data.sentimentScore);
                                                             } catch (err: any) {
                                                                 setTranscribeError(err.message);
                                                             } finally {

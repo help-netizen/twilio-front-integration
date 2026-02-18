@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const queries = require('../db/queries');
 const fetch = require('node-fetch');
+const { generateCallSummary } = require('../services/callSummaryService');
 
 // =============================================================================
 // GET /api/calls — list calls with cursor pagination
@@ -461,6 +462,14 @@ router.get('/:callSid/media', async (req, res) => {
                         return payload?.entities || [];
                     } catch { return []; }
                 })(),
+                sentimentScore: (() => {
+                    try {
+                        const payload = typeof transcript.raw_payload === 'string'
+                            ? JSON.parse(transcript.raw_payload)
+                            : transcript.raw_payload;
+                        return payload?.sentimentScore ?? null;
+                    } catch { return null; }
+                })(),
             } : null,
         });
     } catch (error) {
@@ -537,6 +546,7 @@ router.post('/:callSid/transcribe', async (req, res) => {
                 speaker_labels: true,
                 format_text: true,
                 entity_detection: true,
+                sentiment_analysis: true,
             }),
         });
         if (!transcriptRes.ok) {
@@ -579,6 +589,21 @@ router.post('/:callSid/transcribe', async (req, res) => {
             end: e.end,      // ms
         }));
 
+        // 10. Compute overall sentiment score (-1 to +1)
+        let sentimentScore = null;
+        const sentResults = result.sentiment_analysis_results || [];
+        if (sentResults.length > 0) {
+            let weightedSum = 0;
+            let totalConf = 0;
+            for (const s of sentResults) {
+                const val = s.sentiment === 'POSITIVE' ? 1 : s.sentiment === 'NEGATIVE' ? -1 : 0;
+                const conf = s.confidence || 0.5;
+                weightedSum += val * conf;
+                totalConf += conf;
+            }
+            sentimentScore = totalConf > 0 ? Math.round((weightedSum / totalConf) * 100) / 100 : 0;
+        }
+
         // 10. Save to DB (entities stored in raw_payload)
         const transcriptionSid = `aai_${job.id}`;
         await queries.upsertTranscript({
@@ -591,11 +616,11 @@ router.post('/:callSid/transcribe', async (req, res) => {
             confidence: result.confidence || null,
             text: dialogText,
             isFinal: true,
-            rawPayload: { assemblyai_id: job.id, entities },
+            rawPayload: { assemblyai_id: job.id, entities, sentimentScore },
         });
 
-        console.log(`✅ Transcription completed for ${callSid}: ${dialogText?.length} chars, ${result.utterances?.length || 0} utterances, ${entities.length} entities`);
-        res.json({ status: 'completed', transcript: dialogText, entities });
+        console.log(`✅ Transcription completed for ${callSid}: ${dialogText?.length} chars, ${result.utterances?.length || 0} utterances, ${entities.length} entities, sentiment=${sentimentScore}`);
+        res.json({ status: 'completed', transcript: dialogText, entities, sentimentScore });
     } catch (error) {
         console.error(`Error transcribing call ${callSid}:`, error);
         res.status(500).json({ error: 'Failed to generate transcription' });
