@@ -241,6 +241,37 @@ async function getJob(id) {
     return res.data;
 }
 
+// ─── Customers ────────────────────────────────────────────────────────────────
+
+/**
+ * Fetch customers from Zenbooker, auto-paginating.
+ * @param {Object} params - { created_after? }
+ * @returns {Array} All customer objects
+ */
+async function getCustomers(params = {}) {
+    const allResults = [];
+    let cursor = 0;
+    const limit = 100; // max allowed by API
+
+    while (true) {
+        const queryParams = { limit, cursor };
+        if (params.created_after) queryParams.created_after = params.created_after;
+
+        const res = await retryRequest(() =>
+            getClient().get('/customers', { params: queryParams })
+        );
+
+        const data = res.data;
+        const results = data.results || [];
+        allResults.push(...results);
+
+        if (!data.has_more || !data.next_cursor) break;
+        cursor = data.next_cursor;
+    }
+
+    return allResults;
+}
+
 // ─── Retry helper ─────────────────────────────────────────────────────────────
 
 async function retryRequest(requestFn, maxRetries = 3) {
@@ -275,5 +306,6 @@ module.exports = {
     getTransactions,
     getInvoice,
     getJob,
+    getCustomers,
 };
 

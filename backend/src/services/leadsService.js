@@ -89,6 +89,8 @@ function rowToLead(row) {
         Team: row.team || null, // populated via JOIN
         WorkizLink: null, // no external link for self-hosted
         Metadata: row.metadata || {},
+        ContactId: row.contact_id || null,
+        ContactName: row.contact_name || null,
         // Flatten custom metadata as top-level keys for API convenience
         ...(row.metadata || {}),
     };
@@ -205,15 +207,16 @@ async function listLeads({ start_date, offset = 0, records = 100, only_open = tr
     params.push(offset);
 
     const sql = `
-        SELECT l.*,
+        SELECT l.*, c.full_name AS contact_name,
             COALESCE(
                 json_agg(json_build_object('id', lta.id, 'name', lta.user_name))
                 FILTER (WHERE lta.id IS NOT NULL), '[]'
             ) AS team
         FROM leads l
         LEFT JOIN lead_team_assignments lta ON lta.lead_id = l.id
+        LEFT JOIN contacts c ON c.id = l.contact_id
         ${whereClause}
-        GROUP BY l.id
+        GROUP BY l.id, c.full_name
         ORDER BY l.created_at DESC
         LIMIT $${limitParam} OFFSET $${offsetParam}
     `;

@@ -12,6 +12,10 @@
 # Excludes old calls from active reconciliation
 0 * * * * cd /path/to/twilio-front-integration && node backend/src/scripts/freezeJob.js >> logs/freeze.log 2>&1
 
+# Contacts Sync - Zenbooker customers (hourly)
+# Syncs new customers from Zenbooker, uses created_after for efficiency
+0 * * * * cd /path/to/twilio-front-integration && node backend/src/cli/syncContacts.js >> logs/contacts-sync.log 2>&1
+
 # Cold Reconcile - Historical backfill (on-demand only)
 # Use manually when needed:
 # node backend/src/cli/reconcileCold.js --days 7

@@ -8,6 +8,7 @@ const syncRouter = require('../backend/src/routes/sync');
 const eventsRouter = require('../backend/src/routes/events');
 const twimlRouter = require('../backend/src/routes/twiml');
 const leadsRouter = require('../backend/src/routes/leads');
+const contactsRouter = require('../backend/src/routes/contacts');
 const zenbookerRouter = require('../backend/src/routes/zenbooker');
 const integrationsLeadsRouter = require('../backend/src/routes/integrations-leads');
 const integrationsAdminRouter = require('../backend/src/routes/integrations-admin');
@@ -99,6 +100,9 @@ app.use('/api/sync', authenticate, requireCompanyAccess, syncRouter);
 if (process.env.FEATURE_LEADS_TAB !== 'false') {
     app.use('/api/leads', authenticate, requireCompanyAccess, leadsRouter);
 }
+
+// Contacts API
+app.use('/api/contacts', authenticate, requireCompanyAccess, contactsRouter);
 
 // Zenbooker scheduling proxy
 const zenbookerPaymentsRouter = require('../backend/src/routes/zenbooker/payments');
