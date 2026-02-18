@@ -344,15 +344,15 @@ export function CallListItem({ call }: CallListItemProps) {
                                     )}
 
                                     {/* Detected Entities */}
-                                    <div className="bg-muted/30 rounded-md p-3">
-                                        <div className="flex items-center justify-between mb-2">
-                                            <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">Detected Entities</h4>
-                                            {entities.length > 0 && (
-                                                <span className="text-[10px] text-muted-foreground">{entities.length} found</span>
-                                            )}
-                                        </div>
+                                    <div className="flex items-center justify-between mb-1">
+                                        <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">Detected Entities</h4>
+                                        {entities.length > 0 && (
+                                            <span className="text-[10px] text-muted-foreground">{entities.length} found</span>
+                                        )}
+                                    </div>
+                                    <ScrollArea className="h-48 bg-muted/30 p-3 rounded-md">
                                         {entities.length > 0 ? (
-                                            <div className="max-h-60 overflow-y-auto space-y-1">
+                                            <div className="space-y-1">
                                                 {entities.map((entity, idx) => {
                                                     const startSec = entity.start / 1000;
                                                     const endSec = entity.end / 1000;
@@ -398,7 +398,7 @@ export function CallListItem({ call }: CallListItemProps) {
                                         ) : (
                                             <p className="text-xs text-muted-foreground italic">Entities will appear after transcription is complete.</p>
                                         )}
-                                    </div>
+                                    </ScrollArea>
                                 </div>
                             )}
 
