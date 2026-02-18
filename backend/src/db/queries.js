@@ -177,22 +177,36 @@ async function getCallsByContact({ limit = 20, offset = 0, companyId = null, sea
     const params = [limit, offset];
     if (companyId) params.push(companyId);
 
-    // Search filter: match digits against contact phone or call from/to numbers
+    // Search filter: match phone digits, contact name, call_sid, lead name
     let searchFilter = '';
     if (search) {
-        const digits = search.replace(/\D/g, '');
+        const searchTerm = search.trim();
+        const digits = searchTerm.replace(/\D/g, '');
+        const conditions = [];
+
+        // Text-based: contact name, call_sid
+        const textIdx = params.length + 1;
+        params.push('%' + searchTerm + '%');
+        conditions.push('co.full_name ILIKE $' + textIdx);
+        conditions.push('c.call_sid ILIKE $' + textIdx);
+        // Lead name via contact phone
+        conditions.push(
+            "EXISTS (SELECT 1 FROM leads l WHERE regexp_replace(l.phone, E'\\\\D', '', 'g') = regexp_replace(co.phone_e164, E'\\\\D', '', 'g') AND (l.first_name ILIKE $" + textIdx + " OR l.last_name ILIKE $" + textIdx + " OR CONCAT(l.first_name, ' ', l.last_name) ILIKE $" + textIdx + "))"
+        );
+
+        // Digit-based phone search
         if (digits.length > 0) {
-            const searchIdx = params.length + 1;
-            params.push(`%${digits}%`);
-            searchFilter = `AND (
-                regexp_replace(co.phone_e164, '\\D', '', 'g') LIKE $${searchIdx}
-                OR regexp_replace(c.from_number, '\\D', '', 'g') LIKE $${searchIdx}
-                OR regexp_replace(c.to_number, '\\D', '', 'g') LIKE $${searchIdx}
-            )`;
+            const digitIdx = params.length + 1;
+            params.push('%' + digits + '%');
+            conditions.push("regexp_replace(co.phone_e164, E'\\\\D', '', 'g') LIKE $" + digitIdx);
+            conditions.push("regexp_replace(c.from_number, E'\\\\D', '', 'g') LIKE $" + digitIdx);
+            conditions.push("regexp_replace(c.to_number, E'\\\\D', '', 'g') LIKE $" + digitIdx);
         }
+
+        searchFilter = 'AND (' + conditions.join(' OR ') + ')';
     }
 
-    const result = await db.query(
+        const result = await db.query(
         `SELECT * FROM (
             SELECT DISTINCT ON (c.contact_id)
                 c.*,

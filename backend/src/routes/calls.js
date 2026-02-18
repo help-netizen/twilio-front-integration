@@ -177,6 +177,20 @@ router.get('/by-contact', async (req, res) => {
                 if (existingDigits.has(digits)) continue; // already in call-based results
                 existingDigits.add(digits); // prevent duplicates from multiple sms_conversations
 
+                // Apply search filter to SMS-only contacts too
+                if (search) {
+                    const searchTerm = search.trim().toLowerCase();
+                    const searchDigits = searchTerm.replace(/\D/g, '');
+                    let matches = false;
+                    // Phone digits match
+                    if (searchDigits.length > 0 && digits.includes(searchDigits)) matches = true;
+                    // Friendly name match
+                    if (smsRow.friendly_name && smsRow.friendly_name.toLowerCase().includes(searchTerm)) matches = true;
+                    // Customer phone match (formatted)
+                    if (smsRow.customer_e164 && smsRow.customer_e164.toLowerCase().includes(searchTerm)) matches = true;
+                    if (!matches) continue;
+                }
+
                 // Resolve or create contact
                 let contact = null;
                 try {
