@@ -448,6 +448,119 @@ router.get('/:callSid/media', async (req, res) => {
 });
 
 // =============================================================================
+// POST /api/calls/:callSid/transcribe — generate transcription via AssemblyAI
+// =============================================================================
+router.post('/:callSid/transcribe', async (req, res) => {
+    const callSid = req.params.callSid;
+    try {
+        const apiKey = process.env.ASSEMBLYAI_API_KEY;
+        if (!apiKey) {
+            return res.status(500).json({ error: 'ASSEMBLYAI_API_KEY not configured' });
+        }
+
+        // 1. Get recording for this call
+        const media = await queries.getCallMedia(callSid);
+        const recording = media.recordings?.[0];
+        if (!recording || recording.status !== 'completed') {
+            return res.status(404).json({ error: 'No completed recording found for this call' });
+        }
+
+        // 2. Check if transcript already exists
+        if (media.transcripts?.length > 0 && media.transcripts[0].status === 'completed') {
+            return res.json({ status: 'already_exists', transcript: media.transcripts[0].text });
+        }
+
+        // 3. Build Twilio recording URL (direct, authenticated)
+        const accountSid = process.env.TWILIO_ACCOUNT_SID;
+        const authToken = process.env.TWILIO_AUTH_TOKEN;
+        const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Recordings/${recording.recording_sid}.mp3`;
+
+        // 4. Download audio from Twilio into a buffer
+        const authHeader = 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+        const audioRes = await fetch(twilioUrl, {
+            headers: { 'Authorization': authHeader },
+            redirect: 'follow',
+        });
+        if (!audioRes.ok) {
+            return res.status(502).json({ error: `Failed to fetch recording from Twilio: ${audioRes.status}` });
+        }
+        const audioBuffer = await audioRes.buffer();
+
+        // 5. Upload audio to AssemblyAI
+        const uploadRes = await fetch('https://api.assemblyai.com/v2/upload', {
+            method: 'POST',
+            headers: {
+                'authorization': apiKey,
+                'content-type': 'application/octet-stream',
+            },
+            body: audioBuffer,
+        });
+        if (!uploadRes.ok) {
+            const err = await uploadRes.text();
+            return res.status(502).json({ error: `AssemblyAI upload failed: ${err}` });
+        }
+        const { upload_url } = await uploadRes.json();
+
+        // 6. Submit transcription job
+        const transcriptRes = await fetch('https://api.assemblyai.com/v2/transcript', {
+            method: 'POST',
+            headers: {
+                'authorization': apiKey,
+                'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+                audio_url: upload_url,
+                language_detection: true,
+            }),
+        });
+        if (!transcriptRes.ok) {
+            const err = await transcriptRes.text();
+            return res.status(502).json({ error: `AssemblyAI transcription submit failed: ${err}` });
+        }
+        const job = await transcriptRes.json();
+
+        // 7. Poll for completion (max ~3 minutes)
+        let result = job;
+        const maxAttempts = 60;
+        for (let i = 0; i < maxAttempts && result.status !== 'completed' && result.status !== 'error'; i++) {
+            await new Promise(r => setTimeout(r, 3000));
+            const pollRes = await fetch(`https://api.assemblyai.com/v2/transcript/${job.id}`, {
+                headers: { 'authorization': apiKey },
+            });
+            result = await pollRes.json();
+        }
+
+        if (result.status === 'error') {
+            return res.status(500).json({ error: `Transcription failed: ${result.error}` });
+        }
+        if (result.status !== 'completed') {
+            return res.status(504).json({ error: 'Transcription timed out' });
+        }
+
+        // 8. Save to DB
+        const transcriptionSid = `aai_${job.id}`;
+        await queries.upsertTranscript({
+            transcriptionSid,
+            callSid,
+            recordingSid: recording.recording_sid,
+            mode: 'post-call',
+            status: 'completed',
+            languageCode: result.language_code || null,
+            confidence: result.confidence || null,
+            text: result.text,
+            isFinal: true,
+            rawPayload: { assemblyai_id: job.id },
+        });
+
+        console.log(`✅ Transcription completed for ${callSid}: ${result.text?.length} chars`);
+        res.json({ status: 'completed', transcript: result.text });
+    } catch (error) {
+        console.error(`Error transcribing call ${callSid}:`, error);
+        res.status(500).json({ error: 'Failed to generate transcription' });
+    }
+});
+
+// =============================================================================
 // GET /api/calls/:callSid/events — event history
 // =============================================================================
 router.get('/:callSid/events', async (req, res) => {

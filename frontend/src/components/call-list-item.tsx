@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '@/auth/AuthProvider';
+import { authedFetch } from '@/services/apiClient';
 import {
     PhoneIncoming,
     PhoneOutgoing,
@@ -68,6 +69,9 @@ export function CallListItem({ call }: CallListItemProps) {
     const { token } = useAuth();
     const [showSystemInfo, setShowSystemInfo] = useState(false);
     const [activeSection, setActiveSection] = useState<'summary' | 'transcription' | null>(null);
+    const [isTranscribing, setIsTranscribing] = useState(false);
+    const [transcriptionText, setTranscriptionText] = useState<string | null>(null);
+    const [transcribeError, setTranscribeError] = useState<string | null>(null);
 
     // Audio player state
     const [isPlaying, setIsPlaying] = useState(false);
@@ -257,7 +261,7 @@ export function CallListItem({ call }: CallListItemProps) {
                                                 : 'text-muted-foreground border-dashed border-muted-foreground hover:text-foreground'
                                         )}
                                     >
-                                        {call.transcriptStatus === 'processing' ? 'Transcribing...' : 'Transcript'}
+                                        Transcription
                                     </button>
                                 </div>
 
@@ -336,16 +340,43 @@ export function CallListItem({ call }: CallListItemProps) {
                             {activeSection === 'transcription' && (
                                 <div className="pt-2">
                                     <ScrollArea className="h-48 bg-muted/30 p-3 rounded-md">
-                                        {call.transcriptStatus === 'processing' ? (
-                                            <p className="text-sm text-muted-foreground italic animate-pulse">Transcribing audio...</p>
-                                        ) : call.transcriptStatus === 'failed' ? (
-                                            <p className="text-sm text-destructive">Transcription failed</p>
-                                        ) : call.transcription ? (
+                                        {(transcriptionText || call.transcription) ? (
                                             <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                                                {call.transcription}
+                                                {transcriptionText || call.transcription}
                                             </p>
+                                        ) : isTranscribing ? (
+                                            <div className="flex items-center gap-2">
+                                                <div className="size-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                                                <p className="text-sm text-muted-foreground animate-pulse">Generating transcription...</p>
+                                            </div>
                                         ) : (
-                                            <p className="text-sm text-muted-foreground italic">No transcript available</p>
+                                            <div>
+                                                <p className="text-sm text-muted-foreground italic">No transcription available</p>
+                                                {transcribeError && (
+                                                    <p className="text-sm text-destructive mt-1">{transcribeError}</p>
+                                                )}
+                                                {call.callSid && (
+                                                    <button
+                                                        onClick={async () => {
+                                                            setIsTranscribing(true);
+                                                            setTranscribeError(null);
+                                                            try {
+                                                                const res = await authedFetch(`/api/calls/${call.callSid}/transcribe`, { method: 'POST' });
+                                                                const data = await res.json();
+                                                                if (!res.ok) throw new Error(data.error || 'Failed');
+                                                                setTranscriptionText(data.transcript);
+                                                            } catch (err: any) {
+                                                                setTranscribeError(err.message);
+                                                            } finally {
+                                                                setIsTranscribing(false);
+                                                            }
+                                                        }}
+                                                        className="mt-2 text-xs px-3 py-1.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors cursor-pointer"
+                                                    >
+                                                        Generate
+                                                    </button>
+                                                )}
+                                            </div>
                                         )}
                                     </ScrollArea>
                                 </div>

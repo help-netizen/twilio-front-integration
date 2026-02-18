@@ -4,6 +4,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '@/auth/AuthProvider';
+import { authedFetch } from '@/services/apiClient';
 import {
     PhoneIncoming,
     PhoneOutgoing,
@@ -84,6 +85,9 @@ export function PulseCallListItem({ call }: { call: CallData }) {
         if (call.status === 'completed' && call.summary) return 'summary';
         return null;
     });
+    const [isTranscribing, setIsTranscribing] = useState(false);
+    const [transcriptionText, setTranscriptionText] = useState<string | null>(null);
+    const [transcribeError, setTranscribeError] = useState<string | null>(null);
 
     // Audio player state
     const [isPlaying, setIsPlaying] = useState(false);
@@ -213,7 +217,7 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                                             : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700 hover:border-gray-600'
                                             }`}
                                     >
-                                        {call.transcriptStatus === 'processing' ? 'Transcribing...' : 'Transcript'}
+                                        Transcription
                                     </button>
                                 </div>
 
@@ -267,12 +271,47 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                             )}
 
                             {/* Transcription - Show only when active */}
-                            {activeSection === 'transcription' && call.transcription && (
+                            {activeSection === 'transcription' && (
                                 <div className="pt-2">
                                     <ScrollArea className="h-48 bg-gray-50 p-3 rounded-md">
-                                        <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
-                                            {call.transcription}
-                                        </p>
+                                        {(transcriptionText || call.transcription) ? (
+                                            <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                                                {transcriptionText || call.transcription}
+                                            </p>
+                                        ) : isTranscribing ? (
+                                            <div className="flex items-center gap-2">
+                                                <div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin" />
+                                                <p className="text-sm text-gray-400 animate-pulse">Generating transcription...</p>
+                                            </div>
+                                        ) : (
+                                            <div>
+                                                <p className="text-sm text-gray-400 italic">No transcription available</p>
+                                                {transcribeError && (
+                                                    <p className="text-sm text-red-500 mt-1">{transcribeError}</p>
+                                                )}
+                                                {call.callSid && (
+                                                    <button
+                                                        onClick={async () => {
+                                                            setIsTranscribing(true);
+                                                            setTranscribeError(null);
+                                                            try {
+                                                                const res = await authedFetch(`/api/calls/${call.callSid}/transcribe`, { method: 'POST' });
+                                                                const data = await res.json();
+                                                                if (!res.ok) throw new Error(data.error || 'Failed');
+                                                                setTranscriptionText(data.transcript);
+                                                            } catch (err: any) {
+                                                                setTranscribeError(err.message);
+                                                            } finally {
+                                                                setIsTranscribing(false);
+                                                            }
+                                                        }}
+                                                        className="mt-2 text-xs px-3 py-1.5 bg-gray-800 text-white rounded-md hover:bg-gray-700 transition-colors cursor-pointer"
+                                                    >
+                                                        Generate
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )}
                                     </ScrollArea>
                                 </div>
                             )}
