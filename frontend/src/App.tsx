@@ -44,6 +44,7 @@ function App() {
               <Route path="/calls/:callSid" element={<ConversationPage />} />
               <Route path="/messages" element={<MessagesPage />} />
               <Route path="/leads" element={<LeadsPage />} />
+              <Route path="/leads/:leadId" element={<LeadsPage />} />
               <Route path="/contacts" element={<ContactsPage />} />
               <Route path="/settings" element={<Navigate to="/settings/integrations" replace />} />
               <Route path="/settings/integrations" element={

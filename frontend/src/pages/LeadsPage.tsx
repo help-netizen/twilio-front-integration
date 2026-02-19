@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { LeadsTable } from '../components/leads/LeadsTable';
 import { LeadsFilters } from '../components/leads/LeadsFilters';
@@ -16,6 +17,7 @@ import { DEFAULT_COLUMNS } from '../types/lead';
 const STORAGE_KEY = 'leads-table-columns';
 
 export function LeadsPage() {
+    const { leadId } = useParams<{ leadId?: string }>();
     const [leads, setLeads] = useState<Lead[]>([]);
     const [loading, setLoading] = useState(true);
     const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
@@ -62,6 +64,21 @@ export function LeadsPage() {
     useEffect(() => {
         loadLeads();
     }, [filters.start_date, filters.only_open, filters.status, filters.offset]);
+
+    // Auto-open lead from URL param (e.g. /leads/:leadId)
+    useEffect(() => {
+        if (!leadId) return;
+        // Don't re-fetch if already selected
+        if (selectedLead?.UUID === leadId) return;
+        (async () => {
+            try {
+                const detail = await leadsApi.getLeadByUUID(leadId);
+                setSelectedLead(detail.data.lead);
+            } catch (err) {
+                console.warn('[LeadsPage] Failed to load lead from URL:', leadId, err);
+            }
+        })();
+    }, [leadId]);
 
     // Client-side search
     const filteredLeads = useMemo(() => {
