@@ -134,6 +134,19 @@ router.get('/by-contact', async (req, res) => {
                     const callTime = new Date(conv.started_at || conv.created_at);
                     const smsTime = sms?.last_message_at ? new Date(sms.last_message_at) : null;
 
+                    // DEBUG: trace contact 669
+                    if (conv.contact?.id == 669 || conv.contact?.id === '669') {
+                        console.log('[SMS-ENRICH-DEBUG] contact 669:', {
+                            mainPhone: raw, mainDigits: digits,
+                            secPhone: sec, secDigits,
+                            smsFound: !!sms, smsCustomer: sms?.customer_e164,
+                            callTime: callTime.toISOString(),
+                            smsTime: smsTime?.toISOString(),
+                            smsMoreRecent: smsTime && smsTime > callTime,
+                            smsMapKeys: Object.keys(smsMap),
+                        });
+                    }
+
                     conv.sms_count = sms ? parseInt(sms.sms_count || 0) : 0;
 
                     if (smsTime && smsTime > callTime) {
