@@ -295,8 +295,10 @@ async function enrichEmail(contactId, emailNorm) {
 }
 
 async function createNewContact({ first_name, last_name, phone, email }, companyId) {
+    const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
     const fullName = [first_name, last_name].filter(Boolean).join(' ') || null;
     const emailNorm = normalizeEmail(email);
+    const effectiveCompanyId = companyId || DEFAULT_COMPANY_ID;
 
     const sql = `
         INSERT INTO contacts (full_name, first_name, last_name, phone_e164, email, company_id)
@@ -309,7 +311,7 @@ async function createNewContact({ first_name, last_name, phone, email }, company
         last_name || null,
         phone || null,
         email || null,
-        companyId,
+        effectiveCompanyId,
     ]);
     const contactId = rows[0].id;
 
