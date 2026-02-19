@@ -63,6 +63,7 @@ function rowToLead(row) {
         PhoneExt: row.phone_ext || null,
         SecondPhone: row.second_phone || null,
         SecondPhoneExt: row.second_phone_ext || null,
+        SecondPhoneName: row.second_phone_name || null,
         Email: row.email || null,
 
         FirstName: row.first_name || null,
@@ -134,6 +135,7 @@ const FIELD_MAP = {
     PhoneExt: 'phone_ext',
     SecondPhone: 'second_phone',
     SecondPhoneExt: 'second_phone_ext',
+    SecondPhoneName: 'second_phone_name',
     Email: 'email',
     Address: 'address',
     Unit: 'unit',

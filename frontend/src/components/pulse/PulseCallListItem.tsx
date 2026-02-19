@@ -19,6 +19,8 @@ import {
     Hash,
     Navigation,
     Timer,
+    Copy,
+    Check,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -109,6 +111,8 @@ export function PulseCallListItem({ call }: { call: CallData }) {
     const [geminiEntities, setGeminiEntities] = useState<GeminiEntity[]>([]);
     const [geminiStatus, setGeminiStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
     const [activeGeminiIdx, setActiveGeminiIdx] = useState<number | null>(null);
+    const [copiedEntityIdx, setCopiedEntityIdx] = useState<number | null>(null);
+    const [copiedSummary, setCopiedSummary] = useState(false);
     const geminiLoadedRef = useRef(false);
 
     // Audio player state
@@ -364,7 +368,22 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                                 <div className="pt-2 space-y-3">
                                     {/* ── Call Summary (Gemini) ── */}
                                     <div>
-                                        <h4 className="text-xs font-semibold text-gray-800 uppercase tracking-wide mb-1">Call Summary</h4>
+                                        <div className="flex items-center gap-1.5 mb-1">
+                                            <h4 className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Call Summary</h4>
+                                            {(geminiSummary || call.summary) && (
+                                                <button
+                                                    onClick={() => {
+                                                        navigator.clipboard.writeText(geminiSummary || call.summary || '');
+                                                        setCopiedSummary(true);
+                                                        setTimeout(() => setCopiedSummary(false), 1500);
+                                                    }}
+                                                    className="p-0.5 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-700 transition-colors"
+                                                    title="Copy summary"
+                                                >
+                                                    {copiedSummary ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+                                                </button>
+                                            )}
+                                        </div>
                                         {geminiStatus === 'loading' ? (
                                             <div className="flex items-center gap-2 bg-gray-50 p-3 rounded-md">
                                                 <div className="w-3 h-3 border-2 border-gray-600 border-t-transparent rounded-full animate-spin" />
@@ -406,7 +425,7 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                                                     const isActive = activeGeminiIdx === idx;
                                                     const isInRange = hasTimestamp && currentTime >= startSec && currentTime <= startSec + 10;
                                                     return (
-                                                        <button
+                                                        <div
                                                             key={`gemini-${ge.label}-${idx}`}
                                                             onClick={() => {
                                                                 if (!hasTimestamp) return;
@@ -420,7 +439,7 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                                                                     }
                                                                 }
                                                             }}
-                                                            className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded text-left text-xs transition-colors ${hasTimestamp ? 'cursor-pointer' : 'cursor-default opacity-80'
+                                                            className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded text-left text-xs transition-colors group ${hasTimestamp ? 'cursor-pointer' : 'cursor-default opacity-80'
                                                                 } ${(isActive || isInRange)
                                                                     ? 'bg-blue-50 ring-1 ring-blue-200'
                                                                     : hasTimestamp ? 'hover:bg-gray-100' : ''
@@ -430,6 +449,39 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                                                             <span className="shrink-0 text-[11px] font-medium text-gray-500" style={{ minWidth: '140px' }}>
                                                                 {ge.label}
                                                             </span>
+                                                            {/* Copy & Play action icons */}
+                                                            <span className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                <button
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        navigator.clipboard.writeText(ge.value);
+                                                                        setCopiedEntityIdx(idx);
+                                                                        setTimeout(() => setCopiedEntityIdx(null), 1500);
+                                                                    }}
+                                                                    className="p-0.5 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-700 transition-colors"
+                                                                    title="Copy value"
+                                                                >
+                                                                    {copiedEntityIdx === idx ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+                                                                </button>
+                                                                {hasTimestamp && (
+                                                                    <button
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            if (audioRef.current) {
+                                                                                audioRef.current.currentTime = startSec;
+                                                                                setCurrentTime(startSec);
+                                                                                setActiveGeminiIdx(idx);
+                                                                                audioRef.current.play();
+                                                                                setIsPlaying(true);
+                                                                            }
+                                                                        }}
+                                                                        className="p-0.5 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-700 transition-colors"
+                                                                        title={`Play from ${formatAudioTime(startSec)}`}
+                                                                    >
+                                                                        <Play className="w-3 h-3" />
+                                                                    </button>
+                                                                )}
+                                                            </span>
                                                             <span className="shrink-0 text-gray-400">→</span>
                                                             <span className="flex-1 font-medium text-gray-800" style={{ wordBreak: 'break-word' }}>{ge.value}</span>
                                                             {hasTimestamp && (
@@ -437,7 +489,7 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                                                                     {formatAudioTime(startSec)}
                                                                 </span>
                                                             )}
-                                                        </button>
+                                                        </div>
                                                     );
                                                 })}
                                             </div>

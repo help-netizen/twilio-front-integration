@@ -49,6 +49,7 @@ import { AddressAutocomplete } from '../AddressAutocomplete';
 
 export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLeadDialogProps) {
     const [loading, setLoading] = useState(false);
+    const [showSecondary, setShowSecondary] = useState(!!(lead.SecondPhone || lead.SecondPhoneName));
     const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
     const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
     const [_selectedContactAddressId, setSelectedContactAddressId] = useState<number | null>(null);
@@ -56,6 +57,8 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
         FirstName: lead.FirstName || '',
         LastName: lead.LastName || '',
         Phone: formatUSPhone(lead.Phone || ''),
+        SecondPhone: formatUSPhone(lead.SecondPhone || ''),
+        SecondPhoneName: lead.SecondPhoneName || '',
         Email: lead.Email || '',
         Company: lead.Company || '',
         Address: lead.Address || '',
@@ -98,6 +101,8 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
             FirstName: lead.FirstName || '',
             LastName: lead.LastName || '',
             Phone: formatUSPhone(lead.Phone || ''),
+            SecondPhone: formatUSPhone(lead.SecondPhone || ''),
+            SecondPhoneName: lead.SecondPhoneName || '',
             Email: lead.Email || '',
             Company: lead.Company || '',
             Address: lead.Address || '',
@@ -122,7 +127,11 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
 
         setLoading(true);
         try {
-            const submitData = { ...formData, Phone: toE164(formData.Phone) };
+            const submitData: UpdateLeadInput = {
+                ...formData,
+                Phone: toE164(formData.Phone),
+                SecondPhone: formData.SecondPhone ? toE164(formData.SecondPhone) : '',
+            };
             await leadsApi.updateLead(lead.UUID, submitData);
             // Fetch updated lead
             const detail = await leadsApi.getLeadByUUID(lead.UUID);
@@ -204,6 +213,36 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
                                 />
                             </div>
                         </div>
+
+                        {!showSecondary ? (
+                            <button
+                                type="button"
+                                onClick={() => setShowSecondary(true)}
+                                className="text-xs text-primary hover:underline"
+                            >
+                                + Secondary Phone
+                            </button>
+                        ) : (
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <Label htmlFor="secondPhone" className="mb-2">Secondary Phone</Label>
+                                    <PhoneInput
+                                        id="secondPhone"
+                                        value={formData.SecondPhone || ''}
+                                        onChange={(formatted) => setFormData({ ...formData, SecondPhone: formatted })}
+                                    />
+                                </div>
+                                <div>
+                                    <Label htmlFor="secondPhoneName" className="mb-2">Secondary Name</Label>
+                                    <Input
+                                        id="secondPhoneName"
+                                        value={formData.SecondPhoneName || ''}
+                                        onChange={(e) => setFormData({ ...formData, SecondPhoneName: e.target.value })}
+                                        placeholder="e.g. Tenant, Wife"
+                                    />
+                                </div>
+                            </div>
+                        )}
 
                         <div>
                             <Label htmlFor="company" className="mb-2">Company</Label>

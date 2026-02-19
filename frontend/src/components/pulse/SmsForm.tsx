@@ -5,7 +5,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Wand2, ChevronDown, Paperclip, X } from 'lucide-react';
+import { Send, Wand2, ChevronDown, Paperclip, X, ChevronUp } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { authedFetch } from '../../services/apiClient';
 import type { Lead } from '../../types/lead';
@@ -20,10 +20,20 @@ interface QuickMessage {
 }
 
 interface SmsFormProps {
-    onSend: (message: string, files?: File[]) => void;
+    onSend: (message: string, files?: File[], targetPhone?: string) => void;
     onAiFormat?: (message: string) => Promise<string>;
     disabled?: boolean;
     lead?: Lead | null;
+    /** Main phone number (E.164) */
+    mainPhone?: string;
+    /** Secondary phone number (E.164) */
+    secondaryPhone?: string;
+    /** Label for secondary phone, e.g. "Tenant" */
+    secondaryPhoneName?: string;
+    /** Currently selected phone (E.164) */
+    selectedPhone?: string;
+    /** Callback when user selects a different phone */
+    onPhoneChange?: (phone: string) => void;
 }
 
 const formatFileSize = (bytes: number): string => {
@@ -73,7 +83,7 @@ function resolveVariables(text: string, lead: Lead | null | undefined): string {
     });
 }
 
-export function SmsForm({ onSend, onAiFormat, disabled, lead }: SmsFormProps) {
+export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, secondaryPhone, secondaryPhoneName, selectedPhone, onPhoneChange }: SmsFormProps) {
     const [message, setMessage] = useState('');
     const [isPresetsOpen, setIsPresetsOpen] = useState(false);
     const [isAiFormatting, setIsAiFormatting] = useState(false);
@@ -110,7 +120,7 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead }: SmsFormProps) {
 
     const handleSend = () => {
         if (message.trim() || attachedFiles.length > 0) {
-            onSend(message, attachedFiles);
+            onSend(message, attachedFiles, selectedPhone);
             setMessage('');
             setAttachedFiles([]);
         }
@@ -154,8 +164,65 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead }: SmsFormProps) {
         }
     };
 
+    const [toDropdownOpen, setToDropdownOpen] = useState(false);
+
+    const formatDisplayPhone = (phone: string) => {
+        const digits = phone.replace(/\D/g, '');
+        if (digits.length === 11 && digits.startsWith('1')) {
+            return `(${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`;
+        }
+        if (digits.length === 10) {
+            return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+        }
+        return phone;
+    };
+
+    const hasSecondary = !!(secondaryPhone && mainPhone && secondaryPhone !== mainPhone);
+
     return (
         <div className="border-t border-gray-200 bg-white p-4">
+            {/* TO: phone selector — only when secondary phone exists */}
+            {hasSecondary && (
+                <div className="mb-2 relative">
+                    <div className="flex items-center gap-2 text-xs">
+                        <span className="text-gray-500 font-medium uppercase">To:</span>
+                        <button
+                            type="button"
+                            onClick={() => setToDropdownOpen(!toDropdownOpen)}
+                            className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-gray-200 hover:border-gray-300 bg-gray-50 hover:bg-gray-100 transition-colors text-sm text-gray-800"
+                        >
+                            <span>
+                                {selectedPhone === secondaryPhone
+                                    ? `${formatDisplayPhone(secondaryPhone)}${secondaryPhoneName ? ` — ${secondaryPhoneName}` : ''}`
+                                    : `${formatDisplayPhone(mainPhone)} — Main number`
+                                }
+                            </span>
+                            {toDropdownOpen ? <ChevronUp className="w-3 h-3 text-gray-400" /> : <ChevronDown className="w-3 h-3 text-gray-400" />}
+                        </button>
+                    </div>
+                    {toDropdownOpen && (
+                        <>
+                            <div className="fixed inset-0 z-10" onClick={() => setToDropdownOpen(false)} />
+                            <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1 min-w-[260px]">
+                                <button
+                                    onClick={() => { onPhoneChange?.(mainPhone); setToDropdownOpen(false); }}
+                                    className={`w-full text-left px-3 py-2 hover:bg-gray-50 text-sm flex items-center justify-between ${selectedPhone !== secondaryPhone ? 'bg-blue-50 text-blue-700' : 'text-gray-700'}`}
+                                >
+                                    <span>{formatDisplayPhone(mainPhone)} — Main number</span>
+                                    {selectedPhone !== secondaryPhone && <span className="text-xs">✓</span>}
+                                </button>
+                                <button
+                                    onClick={() => { onPhoneChange?.(secondaryPhone); setToDropdownOpen(false); }}
+                                    className={`w-full text-left px-3 py-2 hover:bg-gray-50 text-sm flex items-center justify-between ${selectedPhone === secondaryPhone ? 'bg-blue-50 text-blue-700' : 'text-gray-700'}`}
+                                >
+                                    <span>{formatDisplayPhone(secondaryPhone)}{secondaryPhoneName ? ` — ${secondaryPhoneName}` : ''}</span>
+                                    {selectedPhone === secondaryPhone && <span className="text-xs">✓</span>}
+                                </button>
+                            </div>
+                        </>
+                    )}
+                </div>
+            )}
             {/* Attached Files Preview */}
             {attachedFiles.length > 0 && (
                 <div className="mb-3 flex flex-wrap gap-2">

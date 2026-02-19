@@ -45,6 +45,7 @@ function useDebounce<T extends (...args: unknown[]) => void>(fn: T, delay: numbe
 
 export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDialogProps) {
     const [loading, setLoading] = useState(false);
+    const [showSecondary, setShowSecondary] = useState(false);
     const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
     const [formData, setFormData] = useState<CreateLeadInput>({
         FirstName: '',
@@ -298,6 +299,36 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                                 />
                             </div>
                         </div>
+
+                        {!showSecondary ? (
+                            <button
+                                type="button"
+                                onClick={() => setShowSecondary(true)}
+                                className="text-xs text-primary hover:underline"
+                            >
+                                + Secondary Phone
+                            </button>
+                        ) : (
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <Label htmlFor="secondPhone" className="mb-2">Secondary Phone</Label>
+                                    <PhoneInput
+                                        id="secondPhone"
+                                        value={formData.SecondPhone || ''}
+                                        onChange={(formatted) => setFormData({ ...formData, SecondPhone: formatted })}
+                                    />
+                                </div>
+                                <div>
+                                    <Label htmlFor="secondPhoneName" className="mb-2">Secondary Name</Label>
+                                    <Input
+                                        id="secondPhoneName"
+                                        value={formData.SecondPhoneName || ''}
+                                        onChange={(e) => setFormData({ ...formData, SecondPhoneName: e.target.value })}
+                                        placeholder="e.g. Tenant, Wife"
+                                    />
+                                </div>
+                            </div>
+                        )}
 
                         <div>
                             <Label htmlFor="company" className="mb-2">Company</Label>

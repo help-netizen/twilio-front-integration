@@ -18,12 +18,14 @@ interface EditContactDialogProps {
 
 export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: EditContactDialogProps) {
     const [loading, setLoading] = useState(false);
+    const [showSecondary, setShowSecondary] = useState(false);
     const [formData, setFormData] = useState({
         first_name: '',
         last_name: '',
         company_name: '',
         phone_e164: '',
         secondary_phone: '',
+        secondary_phone_name: '',
         email: '',
         notes: '',
     });
@@ -36,9 +38,11 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
                 company_name: contact.company_name || '',
                 phone_e164: formatUSPhone(contact.phone_e164 || ''),
                 secondary_phone: formatUSPhone(contact.secondary_phone || ''),
+                secondary_phone_name: contact.secondary_phone_name || '',
                 email: contact.email || '',
                 notes: contact.notes || '',
             });
+            setShowSecondary(!!(contact.secondary_phone || contact.secondary_phone_name));
         }
     }, [open, contact]);
 
@@ -52,6 +56,7 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
                 company_name: formData.company_name,
                 phone_e164: formData.phone_e164 ? toE164(formData.phone_e164) : '',
                 secondary_phone: formData.secondary_phone ? toE164(formData.secondary_phone) : '',
+                secondary_phone_name: formData.secondary_phone_name,
                 email: formData.email,
                 notes: formData.notes,
             });
@@ -119,24 +124,46 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
                         <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
                             Contact Information
                         </h3>
-                        <div className="grid grid-cols-2 gap-3">
-                            <div>
-                                <Label htmlFor="ec-phone" className="mb-1.5">Phone Number</Label>
-                                <PhoneInput
-                                    id="ec-phone"
-                                    value={formData.phone_e164}
-                                    onChange={(formatted) => setFormData({ ...formData, phone_e164: formatted })}
-                                />
+                        <div>
+                            <div className="flex items-center justify-between mb-1.5">
+                                <Label htmlFor="ec-phone">Phone Number</Label>
+                                {!showSecondary && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowSecondary(true)}
+                                        className="text-xs text-primary hover:underline"
+                                    >
+                                        + Secondary Phone
+                                    </button>
+                                )}
                             </div>
-                            <div>
-                                <Label htmlFor="ec-secondary-phone" className="mb-1.5">Secondary Phone</Label>
-                                <PhoneInput
-                                    id="ec-secondary-phone"
-                                    value={formData.secondary_phone}
-                                    onChange={(formatted) => setFormData({ ...formData, secondary_phone: formatted })}
-                                />
-                            </div>
+                            <PhoneInput
+                                id="ec-phone"
+                                value={formData.phone_e164}
+                                onChange={(formatted) => setFormData({ ...formData, phone_e164: formatted })}
+                            />
                         </div>
+                        {showSecondary && (
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <Label htmlFor="ec-secondary-phone" className="mb-1.5">Secondary Phone</Label>
+                                    <PhoneInput
+                                        id="ec-secondary-phone"
+                                        value={formData.secondary_phone}
+                                        onChange={(formatted) => setFormData({ ...formData, secondary_phone: formatted })}
+                                    />
+                                </div>
+                                <div>
+                                    <Label htmlFor="ec-secondary-phone-name" className="mb-1.5">Secondary Name</Label>
+                                    <Input
+                                        id="ec-secondary-phone-name"
+                                        value={formData.secondary_phone_name}
+                                        onChange={(e) => setFormData({ ...formData, secondary_phone_name: e.target.value })}
+                                        placeholder="e.g. Tenant, Wife"
+                                    />
+                                </div>
+                            </div>
+                        )}
                         <div>
                             <Label htmlFor="ec-email" className="mb-1.5">Email</Label>
                             <Input

@@ -196,6 +196,16 @@ router.post('/', async (req, res) => {
                     [contactResolution.contact_id, result.ClientId]
                 );
             } catch { /* ignore if already linked */ }
+
+            // Sync Company to contact if provided
+            if (body.Company) {
+                try {
+                    await require('../db/connection').query(
+                        'UPDATE contacts SET company_name = COALESCE(NULLIF(company_name, \'\'), $1), updated_at = NOW() WHERE id = $2',
+                        [body.Company, contactResolution.contact_id]
+                    );
+                } catch { /* non-blocking */ }
+            }
         }
 
         // Address sync: persist lead address to contact_addresses
@@ -268,7 +278,7 @@ router.patch('/:uuid', async (req, res) => {
         const result = await leadsService.updateLead(uuid, fields, req.companyFilter?.company_id);
 
         // Sync contact if lead has contact_id and contact-relevant fields changed
-        const contactFields = ['FirstName', 'LastName', 'Phone', 'Email'];
+        const contactFields = ['FirstName', 'LastName', 'Phone', 'Email', 'SecondPhone', 'SecondPhoneName', 'Company'];
         const hasContactChange = contactFields.some(f => f in fields);
         if (hasContactChange) {
             try {
@@ -296,6 +306,18 @@ router.patch('/:uuid', async (req, res) => {
                     if (lead.Email) {
                         updates.push(`email = $${idx++}`);
                         params.push(lead.Email);
+                    }
+                    if ('SecondPhone' in fields) {
+                        updates.push(`secondary_phone = $${idx++}`);
+                        params.push(lead.SecondPhone || null);
+                    }
+                    if ('SecondPhoneName' in fields) {
+                        updates.push(`secondary_phone_name = $${idx++}`);
+                        params.push(lead.SecondPhoneName || null);
+                    }
+                    if ('Company' in fields) {
+                        updates.push(`company_name = $${idx++}`);
+                        params.push(lead.Company || null);
                     }
 
                     if (updates.length > 0) {

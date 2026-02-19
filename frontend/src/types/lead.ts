@@ -19,6 +19,7 @@ export type Lead = {
     PhoneExt?: string | null;
     SecondPhone?: string | null;
     SecondPhoneExt?: string | null;
+    SecondPhoneName?: string | null;
     Email?: string | null;
 
     FirstName?: string | null;
@@ -123,6 +124,7 @@ export type CreateLeadInput = {
     PhoneExt?: string;
     SecondPhone?: string;
     SecondPhoneExt?: string;
+    SecondPhoneName?: string;
     Email?: string;
     Company?: string;
     Address?: string;
@@ -192,3 +194,22 @@ export const LEAD_STATUSES: LeadStatus[] = [
     'Converted',
 ];
 
+export const JOB_SOURCES = [
+    'eLocals',
+    'ServiceDirect',
+    'Inquirly',
+    'Rely',
+    'LHG',
+    'NSA',
+    'Website',
+    'Referral',
+    'Other',
+] as const;
+
+export const JOB_TYPES = [
+    'COD Service',
+    'COD Repair',
+    'Warranty',
+    'INS Service',
+    'INS Repair',
+] as const;

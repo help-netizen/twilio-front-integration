@@ -137,7 +137,7 @@ router.patch('/:id', async (req, res) => {
         }
 
         const db = require('../db/connection');
-        const allowedFields = ['first_name', 'last_name', 'company_name', 'phone_e164', 'secondary_phone', 'email', 'notes'];
+        const allowedFields = ['first_name', 'last_name', 'company_name', 'phone_e164', 'secondary_phone', 'secondary_phone_name', 'email', 'notes'];
         const setClauses = [];
         const params = [];
         let paramIdx = 1;
@@ -183,9 +183,11 @@ router.patch('/:id', async (req, res) => {
         const updated = await contactsService.getContactById(id);
         await db.query(
             `UPDATE leads
-             SET first_name = $1, last_name = $2, phone = $3, email = $4, updated_at = NOW()
-             WHERE contact_id = $5`,
-            [updated.first_name || '', updated.last_name || '', updated.phone_e164 || '', updated.email || '', id]
+             SET first_name = $1, last_name = $2, phone = $3, email = $4,
+                 second_phone = $5, second_phone_name = $6, company = $7, updated_at = NOW()
+             WHERE contact_id = $8`,
+            [updated.first_name || '', updated.last_name || '', updated.phone_e164 || '', updated.email || '',
+            updated.secondary_phone || null, updated.secondary_phone_name || null, updated.company_name || null, id]
         );
         console.log(`[ContactsAPI][${reqId}] Cascaded contact fields to linked leads for contact ${id}`);
 

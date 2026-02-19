@@ -344,7 +344,7 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
             }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 24px' }}>
                     <InfoRow label="Phone" value={formatPhone(contact.phone_e164)} icon={<Phone style={{ width: '14px', height: '14px' }} />} />
-                    <InfoRow label="Secondary Phone" value={formatPhone(contact.secondary_phone)} icon={<Phone style={{ width: '14px', height: '14px' }} />} />
+                    <InfoRow label={contact.secondary_phone_name ? `Secondary Phone (${contact.secondary_phone_name})` : 'Secondary Phone'} value={formatPhone(contact.secondary_phone)} icon={<Phone style={{ width: '14px', height: '14px' }} />} />
                     <div style={{ gridColumn: '1 / -1' }}>
                         <InfoRow label="Email" value={contact.email || ''} icon={<Mail style={{ width: '14px', height: '14px' }} />} />
                     </div>

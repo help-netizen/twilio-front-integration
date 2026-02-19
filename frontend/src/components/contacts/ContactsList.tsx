@@ -1,5 +1,6 @@
 import { Search, ChevronLeft, ChevronRight, User } from 'lucide-react';
 import { Button } from '../ui/button';
+import { Input } from '../ui/input';
 import { Skeleton } from '../ui/skeleton';
 import type { Contact } from '../../types/contact';
 
@@ -40,38 +41,15 @@ export function ContactsList({
 }: ContactsListProps) {
     return (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-            {/* Header */}
-            <div style={{ padding: '16px 16px 0', borderBottom: '1px solid #e5e7eb' }}>
-                <h2 style={{ margin: '0 0 12px', fontSize: '18px', fontWeight: 600, color: '#111827' }}>
-                    Contacts
-                </h2>
-                {/* Search */}
-                <div style={{ position: 'relative', marginBottom: '12px' }}>
-                    <Search
-                        style={{
-                            position: 'absolute',
-                            left: '10px',
-                            top: '50%',
-                            transform: 'translateY(-50%)',
-                            width: '16px',
-                            height: '16px',
-                            color: '#94a3b8',
-                        }}
-                    />
-                    <input
-                        type="text"
+            {/* Search */}
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid #e5e7eb' }}>
+                <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+                    <Input
                         placeholder="Search by name, phone, email..."
                         value={search}
                         onChange={(e) => onSearchChange(e.target.value)}
-                        style={{
-                            width: '100%',
-                            padding: '8px 12px 8px 34px',
-                            border: '1px solid #d1d5db',
-                            borderRadius: '8px',
-                            fontSize: '14px',
-                            outline: 'none',
-                            boxSizing: 'border-box',
-                        }}
+                        className="pl-9"
                     />
                 </div>
             </div>

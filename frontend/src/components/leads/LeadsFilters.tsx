@@ -4,31 +4,52 @@ import { Switch } from '../ui/switch';
 import { Label } from '../ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { Calendar } from '../ui/calendar';
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '../ui/command';
 import { Badge } from '../ui/badge';
-import { CalendarIcon, Search, Filter, X } from 'lucide-react';
+import { CalendarIcon, Search, X, Check } from 'lucide-react';
 import { format } from 'date-fns';
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import type { LeadsListParams } from '../../types/lead';
-import { LEAD_STATUSES } from '../../types/lead';
+import { LEAD_STATUSES, JOB_SOURCES, JOB_TYPES } from '../../types/lead';
 
 interface LeadsFiltersProps {
     filters: LeadsListParams;
     searchQuery: string;
+    sourceFilter: string[];
+    jobTypeFilter: string[];
     onFiltersChange: (filters: Partial<LeadsListParams>) => void;
     onSearchChange: (query: string) => void;
+    onSourceFilterChange: (sources: string[]) => void;
+    onJobTypeFilterChange: (types: string[]) => void;
 }
 
 export function LeadsFilters({
     filters,
     searchQuery,
+    sourceFilter,
+    jobTypeFilter,
     onFiltersChange,
-    onSearchChange
+    onSearchChange,
+    onSourceFilterChange,
+    onJobTypeFilterChange,
 }: LeadsFiltersProps) {
     const [datePickerOpen, setDatePickerOpen] = useState(false);
-    const [statusPopoverOpen, setStatusPopoverOpen] = useState(false);
+    const [dropdownOpen, setDropdownOpen] = useState(false);
+    const containerRef = useRef<HTMLDivElement>(null);
 
     const startDate = filters.start_date ? new Date(filters.start_date) : undefined;
+
+    // Close dropdown on outside click
+    useEffect(() => {
+        const handler = (e: MouseEvent) => {
+            if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+                setDropdownOpen(false);
+            }
+        };
+        if (dropdownOpen) {
+            document.addEventListener('mousedown', handler);
+        }
+        return () => document.removeEventListener('mousedown', handler);
+    }, [dropdownOpen]);
 
     const handleDateSelect = (date: Date | undefined) => {
         if (date) {
@@ -52,23 +73,112 @@ export function LeadsFilters({
         onFiltersChange({ status: updated });
     };
 
-    const clearStatusFilter = () => {
+    const toggleSource = (source: string) => {
+        const updated = sourceFilter.includes(source)
+            ? sourceFilter.filter(s => s !== source)
+            : [...sourceFilter, source];
+        onSourceFilterChange(updated);
+    };
+
+    const toggleJobType = (type: string) => {
+        const updated = jobTypeFilter.includes(type)
+            ? jobTypeFilter.filter(t => t !== type)
+            : [...jobTypeFilter, type];
+        onJobTypeFilterChange(updated);
+    };
+
+    const activeFilterCount =
+        (filters.status?.length || 0) + sourceFilter.length + jobTypeFilter.length;
+
+    const clearAllFilters = () => {
         onFiltersChange({ status: [] });
-        setStatusPopoverOpen(false);
+        onSourceFilterChange([]);
+        onJobTypeFilterChange([]);
     };
 
     return (
         <div className="flex flex-wrap gap-3 items-center">
-            {/* Search */}
-            <div className="relative flex-1 min-w-[200px]">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+            {/* Search + Filter Dropdown */}
+            <div className="relative flex-1 min-w-[200px]" ref={containerRef}>
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground z-10" />
                 <Input
                     placeholder="Search by name, phone, email, ID..."
                     value={searchQuery}
                     onChange={(e) => onSearchChange(e.target.value)}
+                    onFocus={() => setDropdownOpen(true)}
                     className="pl-9"
                 />
+
+                {/* Filter Dropdown Panel */}
+                {dropdownOpen && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-popover border rounded-lg shadow-lg z-50 p-0 overflow-hidden">
+                        {/* Active filter badges */}
+                        {activeFilterCount > 0 && (
+                            <div className="flex flex-wrap gap-1.5 p-3 pb-0 items-center">
+                                {(filters.status || []).map(s => (
+                                    <Badge key={`s-${s}`} variant="secondary" className="gap-1 text-xs">
+                                        {s}
+                                        <X className="size-3 cursor-pointer" onClick={() => toggleStatus(s)} />
+                                    </Badge>
+                                ))}
+                                {sourceFilter.map(s => (
+                                    <Badge key={`src-${s}`} variant="outline" className="gap-1 text-xs">
+                                        {s}
+                                        <X className="size-3 cursor-pointer" onClick={() => toggleSource(s)} />
+                                    </Badge>
+                                ))}
+                                {jobTypeFilter.map(t => (
+                                    <Badge key={`jt-${t}`} variant="default" className="gap-1 text-xs">
+                                        {t}
+                                        <X className="size-3 cursor-pointer" onClick={() => toggleJobType(t)} />
+                                    </Badge>
+                                ))}
+                                <button
+                                    onClick={clearAllFilters}
+                                    className="text-xs text-muted-foreground hover:text-foreground ml-1"
+                                >
+                                    Clear all
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Columns */}
+                        <div className="grid grid-cols-3 divide-x p-3 gap-0">
+                            {/* Status Column */}
+                            <FilterColumn
+                                title="STATUS"
+                                items={LEAD_STATUSES as unknown as string[]}
+                                selected={filters.status || []}
+                                onToggle={toggleStatus}
+                            />
+
+                            {/* Source Column */}
+                            <FilterColumn
+                                title="SOURCE"
+                                items={JOB_SOURCES as unknown as string[]}
+                                selected={sourceFilter}
+                                onToggle={toggleSource}
+                            />
+
+                            {/* Job Type Column */}
+                            <FilterColumn
+                                title="JOB TYPE"
+                                items={JOB_TYPES as unknown as string[]}
+                                selected={jobTypeFilter}
+                                onToggle={toggleJobType}
+                            />
+                        </div>
+                    </div>
+                )}
             </div>
+
+            {/* Active filter count badge */}
+            {activeFilterCount > 0 && (
+                <Badge variant="secondary" className="gap-1">
+                    {activeFilterCount} filter{activeFilterCount > 1 ? 's' : ''}
+                    <X className="size-3 cursor-pointer" onClick={clearAllFilters} />
+                </Badge>
+            )}
 
             {/* Date Range Picker */}
             <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
@@ -117,60 +227,6 @@ export function LeadsFilters({
                 </PopoverContent>
             </Popover>
 
-            {/* Status Filter */}
-            <Popover open={statusPopoverOpen} onOpenChange={setStatusPopoverOpen}>
-                <PopoverTrigger asChild>
-                    <Button variant="outline" className="gap-2">
-                        <Filter className="size-4" />
-                        Status
-                        {filters.status && filters.status.length > 0 && (
-                            <Badge variant="secondary" className="ml-1 px-1.5 py-0">
-                                {filters.status.length}
-                            </Badge>
-                        )}
-                    </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-[240px] p-0" align="start">
-                    <Command>
-                        <CommandInput placeholder="Search status..." />
-                        <CommandList>
-                            <CommandEmpty>No status found.</CommandEmpty>
-                            <CommandGroup>
-                                {LEAD_STATUSES.map((status) => (
-                                    <CommandItem
-                                        key={status}
-                                        onSelect={() => toggleStatus(status)}
-                                    >
-                                        <div className="flex items-center gap-2 w-full">
-                                            <div className={`size-4 border rounded flex items-center justify-center ${filters.status?.includes(status) ? 'bg-primary border-primary' : 'border-input'
-                                                }`}>
-                                                {filters.status?.includes(status) && (
-                                                    <div className="size-2 bg-primary-foreground rounded-sm" />
-                                                )}
-                                            </div>
-                                            <span>{status}</span>
-                                        </div>
-                                    </CommandItem>
-                                ))}
-                            </CommandGroup>
-                        </CommandList>
-                        {filters.status && filters.status.length > 0 && (
-                            <div className="border-t p-2">
-                                <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="w-full"
-                                    onClick={clearStatusFilter}
-                                >
-                                    <X className="size-4 mr-2" />
-                                    Clear filters
-                                </Button>
-                            </div>
-                        )}
-                    </Command>
-                </PopoverContent>
-            </Popover>
-
             {/* Only Open Toggle */}
             <div className="flex items-center gap-2 px-3 py-2 border rounded-md">
                 <Switch
@@ -181,6 +237,50 @@ export function LeadsFilters({
                 <Label htmlFor="only-open" className="cursor-pointer">
                     Only Open
                 </Label>
+            </div>
+        </div>
+    );
+}
+
+/* ────────────── Filter Column sub-component ────────────── */
+
+function FilterColumn({
+    title,
+    items,
+    selected,
+    onToggle,
+}: {
+    title: string;
+    items: string[];
+    selected: string[];
+    onToggle: (item: string) => void;
+}) {
+    return (
+        <div className="px-3 space-y-1">
+            <div className="text-[11px] font-semibold text-muted-foreground tracking-wider uppercase mb-2">
+                {title}
+            </div>
+            <div className="space-y-0.5 max-h-[240px] overflow-y-auto">
+                {items.map((item) => {
+                    const isSelected = selected.includes(item);
+                    return (
+                        <button
+                            key={item}
+                            type="button"
+                            onClick={() => onToggle(item)}
+                            className={`flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-md text-sm transition-colors ${isSelected
+                                    ? 'bg-primary/10 text-primary font-medium'
+                                    : 'hover:bg-muted text-foreground'
+                                }`}
+                        >
+                            <div className={`size-4 border rounded flex items-center justify-center shrink-0 ${isSelected ? 'bg-primary border-primary' : 'border-input'
+                                }`}>
+                                {isSelected && <Check className="size-3 text-primary-foreground" />}
+                            </div>
+                            {item}
+                        </button>
+                    );
+                })}
             </div>
         </div>
     );

@@ -466,37 +466,16 @@ async function processRecordingEvent(payload, traceId) {
             console.warn(`[${traceId}] Failed to set voicemail_left:`, err.message);
         }
 
-        // Enqueue post-call transcription
-        try {
-            await queries.upsertTranscript({
-                transcriptionSid: null,
-                callSid: normalized.callSid,
-                recordingSid: normalized.recordingSid,
-                mode: 'post-call',
-                status: 'processing',
-                languageCode: null,
-                confidence: null,
-                text: null,
-                isFinal: false,
-                rawPayload: { enqueued_by: 'recording-status-handler' },
-            });
-
-            await db.query(
-                `INSERT INTO transcription_jobs(call_sid, recording_sid, status)
-                 VALUES ($1, $2, 'queued')
-                 ON CONFLICT DO NOTHING`,
-                [normalized.callSid, normalized.recordingSid]
-            );
-
-            publishRealtimeEvent('transcript.processing', {
-                callSid: normalized.callSid,
-                recordingSid: normalized.recordingSid,
-                status: 'processing',
-            }, traceId);
-
-            console.log(`[${traceId}] Transcription job enqueued for ${normalized.callSid}`);
-        } catch (err) {
-            console.error(`[${traceId}] Failed to enqueue transcription:`, err.message);
+        // Auto-transcribe via AssemblyAI (fire-and-forget, same flow as manual button)
+        const MAX_AUTO_TRANSCRIBE_DURATION = 600; // 10 minutes
+        if (normalized.durationSec && normalized.durationSec > MAX_AUTO_TRANSCRIBE_DURATION) {
+            console.log(`[${traceId}] Skipping auto-transcription: recording duration ${normalized.durationSec}s > ${MAX_AUTO_TRANSCRIBE_DURATION}s`);
+        } else {
+            console.log(`[${traceId}] Auto-transcription starting for ${normalized.callSid} (duration: ${normalized.durationSec || 'unknown'}s)`);
+            const { transcribeCall } = require('./transcriptionService');
+            transcribeCall(normalized.callSid, normalized.recordingSid, traceId)
+                .then(() => console.log(`[${traceId}] Auto-transcription completed for ${normalized.callSid}`))
+                .catch(err => console.error(`[${traceId}] Auto-transcription failed for ${normalized.callSid}:`, err.message));
         }
     }
 }

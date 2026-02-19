@@ -92,7 +92,8 @@ export async function searchCandidates(params: {
  */
 export async function updateContact(contactId: number, fields: {
     first_name?: string; last_name?: string; company_name?: string;
-    phone_e164?: string; secondary_phone?: string; email?: string; notes?: string;
+    phone_e164?: string; secondary_phone?: string; secondary_phone_name?: string;
+    email?: string; notes?: string;
 }): Promise<{ ok: true; data: { contact: Contact } }> {
     const res = await authedFetch(`${API_BASE}/${contactId}`, {
         method: 'PATCH',

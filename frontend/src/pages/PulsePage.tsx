@@ -47,17 +47,24 @@ function PulseContactItem({ call, isActive }: { call: Call; isActive: boolean })
     const targetPath = contactId ? `/pulse/contact/${contactId}` : null;
 
     const rawPhone = call.contact?.phone_e164 || call.from_number || call.to_number || call.call_sid;
+
+    // Determine the actual phone from the last interaction (call or SMS direction)
+    const interactionType = call.last_interaction_type || 'call';
+    const isInbound = interactionType === 'sms_inbound' || (interactionType === 'call' && call.direction?.includes('inbound'));
+    const touchedPhone = isInbound ? (call.from_number || rawPhone) : (call.to_number || rawPhone);
+    // Show the touched phone, but fall back to main contact phone for lead lookup
+    const displayPhone = touchedPhone || rawPhone;
+
     const { lead } = useLeadByPhone(rawPhone);
     const leadName = lead ? [lead.FirstName, lead.LastName].filter(Boolean).join(' ') : null;
     const company = lead?.Company || null;
     const contactName = call.contact?.full_name && call.contact.full_name !== call.contact.phone_e164
         ? call.contact.full_name : null;
-    const primaryText = company || leadName || contactName || formatPhoneNumber(rawPhone);
+    const primaryText = company || leadName || contactName || formatPhoneNumber(displayPhone);
     const showSecondaryPhone = !!(company || leadName || contactName);
 
     // Use last_interaction_at (call or SMS), falling back to call time
     const displayDate = new Date(call.last_interaction_at || call.started_at || call.created_at);
-    const interactionType = call.last_interaction_type || 'call';
 
     // Total interactions count (calls + SMS)
     const totalCount = (call.call_count || 0) + (call.sms_count || 0);
@@ -135,7 +142,7 @@ function PulseContactItem({ call, isActive }: { call: Call; isActive: boolean })
                         )}
                     </div>
                     {showSecondaryPhone && (
-                        <div className="text-xs text-gray-600 mb-1 font-mono">{formatPhoneNumber(rawPhone)}</div>
+                        <div className="text-xs text-gray-600 mb-1 font-mono">{formatPhoneNumber(displayPhone)}</div>
                     )}
                     <div className="flex items-center gap-1 text-xs text-gray-500">
                         <span>{getTimeAgo(displayDate)}</span>
@@ -309,14 +316,66 @@ export const PulsePage: React.FC = () => {
     const [leadOverride, setLeadOverride] = useState<Lead | null>(null);
     const [editingLead, setEditingLead] = useState<Lead | null>(null);
     const [convertingLead, setConvertingLead] = useState<Lead | null>(null);
+    const [selectedToPhone, setSelectedToPhone] = useState<string>('');
 
     // Use overridden lead if available (after mutations), otherwise fetched
     const lead = leadOverride || fetchedLead;
 
-    // Reset override when phone changes
     React.useEffect(() => {
         setLeadOverride(null);
+        setSelectedToPhone('');
     }, [phone]);
+
+    // Derive secondary phone from lead or contact
+    const secondaryPhone = lead?.SecondPhone || contact?.secondary_phone || '';
+    const secondaryPhoneName = lead?.SecondPhoneName || contact?.secondary_phone_name || '';
+
+    // Normalize phone digits for comparison
+    const normalizeDigits = (p: string) => (p || '').replace(/\D/g, '');
+
+    // Determine last-used phone from timeline (most recent call or SMS)
+    const lastUsedPhone = useMemo(() => {
+        if (!phone || !secondaryPhone) return phone;
+        const mainDigits = normalizeDigits(phone);
+        const secDigits = normalizeDigits(secondaryPhone);
+        if (!secDigits || mainDigits === secDigits) return phone;
+
+        // Build a timeline of events sorted by time descending
+        type PhoneEvent = { phone: string; time: number };
+        const events: PhoneEvent[] = [];
+
+        // From SMS messages
+        for (const msg of messages) {
+            const msgPhone = msg.direction === 'inbound' ? msg.from_number : msg.to_number;
+            if (msgPhone) {
+                const d = normalizeDigits(msgPhone);
+                if (d === mainDigits) events.push({ phone, time: new Date(msg.date_created_remote || msg.created_at).getTime() });
+                else if (d === secDigits) events.push({ phone: secondaryPhone, time: new Date(msg.date_created_remote || msg.created_at).getTime() });
+            }
+        }
+
+        // From calls
+        for (const call of contactCalls) {
+            const callPhone = call.direction?.includes('inbound') ? call.from_number : call.to_number;
+            if (callPhone) {
+                const d = normalizeDigits(callPhone);
+                const t = new Date(call.started_at || call.created_at).getTime();
+                if (d === mainDigits) events.push({ phone, time: t });
+                else if (d === secDigits) events.push({ phone: secondaryPhone, time: t });
+            }
+        }
+
+        if (events.length === 0) return phone;
+        events.sort((a, b) => b.time - a.time);
+        return events[0].phone;
+    }, [phone, secondaryPhone, messages, contactCalls]);
+
+    // Set default selectedToPhone when timeline loads
+    React.useEffect(() => {
+        if (lastUsedPhone && !selectedToPhone) {
+            setSelectedToPhone(lastUsedPhone);
+        }
+    }, [lastUsedPhone, selectedToPhone]);
 
     // Lead action handlers (same pattern as LeadsPage)
     const handleUpdateStatus = async (uuid: string, status: string) => {
@@ -400,15 +459,18 @@ export const PulsePage: React.FC = () => {
     }, [conversations, contactCalls]);
 
     // Send SMS handler
-    const handleSendMessage = async (message: string, files?: File[]) => {
-        if (conversations.length) {
+    const handleSendMessage = async (message: string, files?: File[], targetPhone?: string) => {
+        const sendTo = targetPhone || phone;
+        // Find conversation matching the target phone
+        const targetConv = conversations.find(c => normalizeDigits(c.customer_e164) === normalizeDigits(sendTo));
+
+        if (targetConv) {
             // Existing conversation — send directly
-            const convId = conversations[0].id;
-            await messagingApi.sendMessage(convId, { body: message }, files?.[0]);
-        } else if (phone && proxyPhone) {
-            // No conversation yet — create one with the first message
+            await messagingApi.sendMessage(targetConv.id, { body: message }, files?.[0]);
+        } else if (sendTo && proxyPhone) {
+            // No conversation yet for this phone — create one
             await messagingApi.startConversation({
-                customerE164: phone,
+                customerE164: sendTo,
                 proxyE164: proxyPhone,
                 initialMessage: message,
             });
@@ -521,6 +583,11 @@ export const PulsePage: React.FC = () => {
                                 onAiFormat={handleAiFormat}
                                 disabled={!phone}
                                 lead={lead}
+                                mainPhone={phone}
+                                secondaryPhone={secondaryPhone}
+                                secondaryPhoneName={secondaryPhoneName}
+                                selectedPhone={selectedToPhone || phone}
+                                onPhoneChange={setSelectedToPhone}
                             />
                         )}
                     </>

@@ -355,7 +355,7 @@ export function LeadDetailPanel({
                                     <Phone className="size-4 mt-0.5 text-muted-foreground" />
                                     <div className="flex-1">
                                         <Label className="text-xs text-muted-foreground">
-                                            Secondary Phone
+                                            {lead.SecondPhoneName ? `Secondary Phone (${lead.SecondPhoneName})` : 'Secondary Phone'}
                                         </Label>
                                         <div className="flex items-center gap-2">
                                             <a

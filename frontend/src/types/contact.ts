@@ -24,6 +24,7 @@ export type Contact = {
     company_name: string | null;
     phone_e164: string | null;
     secondary_phone: string | null;
+    secondary_phone_name: string | null;
     email: string | null;
     notes: string | null;
     zenbooker_customer_id: string | null;

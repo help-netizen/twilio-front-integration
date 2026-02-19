@@ -487,11 +487,7 @@ router.delete('/:callSid/transcript', async (req, res) => {
             `DELETE FROM transcripts WHERE call_sid = $1`,
             [callSid]
         );
-        // Also remove any pending transcription jobs
-        await db.query(
-            `DELETE FROM transcription_jobs WHERE call_sid = $1`,
-            [callSid]
-        ).catch(() => { });
+
         console.log(`🗑️ Deleted ${result.rowCount} transcript(s) for ${callSid}`);
         res.json({ deleted: result.rowCount });
     } catch (error) {
@@ -506,187 +502,19 @@ router.delete('/:callSid/transcript', async (req, res) => {
 router.post('/:callSid/transcribe', async (req, res) => {
     const callSid = req.params.callSid;
     try {
-        const apiKey = process.env.ASSEMBLYAI_API_KEY;
-        if (!apiKey) {
-            return res.status(500).json({ error: 'ASSEMBLYAI_API_KEY not configured' });
-        }
-
-        // 1. Get recording for this call
+        // Get recording for this call
         const media = await queries.getCallMedia(callSid);
         const recording = media.recordings?.[0];
         if (!recording || recording.status !== 'completed') {
             return res.status(404).json({ error: 'No completed recording found for this call' });
         }
 
-        // 2. Check if transcript already exists
-        if (media.transcripts?.length > 0 && media.transcripts[0].status === 'completed') {
-            return res.json({ status: 'already_exists', transcript: media.transcripts[0].text });
-        }
-
-        // 3. Build Twilio recording URL (direct, authenticated)
-        const accountSid = process.env.TWILIO_ACCOUNT_SID;
-        const authToken = process.env.TWILIO_AUTH_TOKEN;
-        const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Recordings/${recording.recording_sid}.mp3`;
-
-        // 4. Download audio from Twilio into a buffer
-        const authHeader = 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64');
-        const audioRes = await fetch(twilioUrl, {
-            headers: { 'Authorization': authHeader },
-            redirect: 'follow',
-        });
-        if (!audioRes.ok) {
-            return res.status(502).json({ error: `Failed to fetch recording from Twilio: ${audioRes.status}` });
-        }
-        const audioBuffer = await audioRes.buffer();
-
-        // 5. Upload audio to AssemblyAI
-        const uploadRes = await fetch('https://api.assemblyai.com/v2/upload', {
-            method: 'POST',
-            headers: {
-                'authorization': apiKey,
-                'content-type': 'application/octet-stream',
-            },
-            body: audioBuffer,
-        });
-        if (!uploadRes.ok) {
-            const err = await uploadRes.text();
-            return res.status(502).json({ error: `AssemblyAI upload failed: ${err}` });
-        }
-        const { upload_url } = await uploadRes.json();
-
-        // 6. Submit transcription job
-        const transcriptRes = await fetch('https://api.assemblyai.com/v2/transcript', {
-            method: 'POST',
-            headers: {
-                'authorization': apiKey,
-                'content-type': 'application/json',
-            },
-            body: JSON.stringify({
-                audio_url: upload_url,
-                speech_models: ['universal-2'],
-                language_detection: true,
-                speaker_labels: true,
-                format_text: true,
-
-                sentiment_analysis: true,
-            }),
-        });
-        if (!transcriptRes.ok) {
-            const err = await transcriptRes.text();
-            return res.status(502).json({ error: `AssemblyAI transcription submit failed: ${err}` });
-        }
-        const job = await transcriptRes.json();
-
-        // 7. Poll for completion (max ~3 minutes)
-        let result = job;
-        const maxAttempts = 60;
-        for (let i = 0; i < maxAttempts && result.status !== 'completed' && result.status !== 'error'; i++) {
-            await new Promise(r => setTimeout(r, 3000));
-            const pollRes = await fetch(`https://api.assemblyai.com/v2/transcript/${job.id}`, {
-                headers: { 'authorization': apiKey },
-            });
-            result = await pollRes.json();
-        }
-
-        if (result.status === 'error') {
-            return res.status(500).json({ error: `Transcription failed: ${result.error}` });
-        }
-        if (result.status !== 'completed') {
-            return res.status(504).json({ error: 'Transcription timed out' });
-        }
-
-        // 8. Format as dialog from utterances (Speaker A / Speaker B)
-        //    Include timestamps so Gemini can assign accurate start_ms to entities
-        let dialogText = result.text; // fallback
-        if (result.utterances && result.utterances.length > 0) {
-            dialogText = result.utterances
-                .map(u => `[${u.start}ms] Speaker ${u.speaker}: ${u.text}`)
-                .join('\n\n');
-        }
-
-        // 9. Entity detection disabled (using Gemini instead)
-        const entities = [];
-
-        // 10. Compute overall sentiment score (-1 to +1)
-        let sentimentScore = null;
-        const sentResults = result.sentiment_analysis_results || [];
-        if (sentResults.length > 0) {
-            let weightedSum = 0;
-            let totalConf = 0;
-            for (const s of sentResults) {
-                const val = s.sentiment === 'POSITIVE' ? 1 : s.sentiment === 'NEGATIVE' ? -1 : 0;
-                const conf = s.confidence || 0.5;
-                weightedSum += val * conf;
-                totalConf += conf;
-            }
-            sentimentScore = totalConf > 0 ? Math.round((weightedSum / totalConf) * 100) / 100 : 0;
-        }
-
-        // 10. Generate Gemini summary (non-blocking — if it fails, we still save transcript)
-        let geminiSummary = null;
-        let geminiEntities = [];
-        let geminiGeneratedAt = null;
-        try {
-            console.log(`[Transcribe] Generating Gemini summary for ${callSid}...`);
-            const summaryResult = await generateCallSummary(dialogText, {
-                callerPhone: req.body?.callerPhone || null,
-                callTime: req.body?.callTime || null,
-            });
-            if (summaryResult && !summaryResult.error) {
-                geminiSummary = summaryResult.summary;
-                geminiEntities = summaryResult.entities;
-                geminiGeneratedAt = new Date().toISOString();
-                console.log(`[Transcribe] Gemini summary OK for ${callSid}: ${geminiSummary?.length} chars, ${geminiEntities.length} entities`);
-            } else {
-                console.warn(`[Transcribe] Gemini summary skipped for ${callSid}: ${summaryResult?.error}`);
-            }
-        } catch (geminiErr) {
-            console.error(`[Transcribe] Gemini summary failed for ${callSid}:`, geminiErr.message);
-        }
-
-        // 11. Save to DB (entities + gemini data stored in raw_payload)
-        const transcriptionSid = `aai_${job.id}`;
-        await queries.upsertTranscript({
-            transcriptionSid,
-            callSid,
-            recordingSid: recording.recording_sid,
-            mode: 'post-call',
-            status: 'completed',
-            languageCode: result.language_code || null,
-            confidence: result.confidence || null,
-            text: dialogText,
-            isFinal: true,
-            rawPayload: {
-                assemblyai_id: job.id,
-                entities,
-                sentimentScore,
-                gemini_summary: geminiSummary,
-                gemini_entities: geminiEntities,
-                gemini_generated_at: geminiGeneratedAt,
-            },
-        });
-
-        // Clean up stale "processing" placeholder (created by recording-status-handler)
-        try {
-            const db = require('../db/connection');
-            await db.query(
-                `DELETE FROM transcripts WHERE call_sid = $1 AND transcription_sid IS NULL AND status = 'processing'`,
-                [callSid]
-            );
-        } catch (e) { /* ignore cleanup errors */ }
-
-        console.log(`✅ Transcription completed for ${callSid}: ${dialogText?.length} chars, ${result.utterances?.length || 0} utterances, ${entities.length} entities, sentiment=${sentimentScore}`);
-        res.json({
-            status: 'completed',
-            transcript: dialogText,
-            entities,
-            sentimentScore,
-            gemini_summary: geminiSummary,
-            gemini_entities: geminiEntities,
-        });
+        const { transcribeCall } = require('../services/transcriptionService');
+        const result = await transcribeCall(callSid, recording.recording_sid, `manual-${callSid}`);
+        res.json(result);
     } catch (error) {
         console.error(`Error transcribing call ${callSid}:`, error);
-        res.status(500).json({ error: 'Failed to generate transcription' });
+        res.status(500).json({ error: error.message || 'Failed to generate transcription' });
     }
 });
 

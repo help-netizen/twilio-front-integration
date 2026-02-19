@@ -206,16 +206,7 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
         console.error('❌ Worker error:', error);
     });
 
-    // Start transcription worker (Variant B post-call pipeline)
-    if (process.env.FEATURE_TRANSCRIPTION_WORKER === 'true') {
-        const { startTranscriptionWorker } = require('../backend/src/services/transcriptionWorker');
-        startTranscriptionWorker().catch(error => {
-            console.error('❌ Transcription worker error:', error);
-        });
-        console.log('🎙️ Transcription worker started');
-    } else {
-        console.log('🎙️ Transcription worker disabled (set FEATURE_TRANSCRIPTION_WORKER=true to enable)');
-    }
+
 
     // Realtime transcription (Twilio Media Streams → AssemblyAI)
     if (process.env.FEATURE_REALTIME_TRANSCRIPTION === 'true') {

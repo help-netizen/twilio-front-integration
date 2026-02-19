@@ -42,6 +42,8 @@ export function LeadsPage() {
     });
 
     const [searchQuery, setSearchQuery] = useState('');
+    const [sourceFilter, setSourceFilter] = useState<string[]>([]);
+    const [jobTypeFilter, setJobTypeFilter] = useState<string[]>([]);
     const [hasMore, setHasMore] = useState(false);
 
     // Load leads
@@ -82,20 +84,39 @@ export function LeadsPage() {
         })();
     }, [leadId]);
 
-    // Client-side search
+    // Client-side search + filter
     const filteredLeads = useMemo(() => {
-        if (!searchQuery.trim()) return leads;
+        let result = leads;
 
-        const query = searchQuery.toLowerCase();
-        return leads.filter(lead =>
-            lead.FirstName?.toLowerCase().includes(query) ||
-            lead.LastName?.toLowerCase().includes(query) ||
-            lead.Company?.toLowerCase().includes(query) ||
-            lead.Phone?.includes(query) ||
-            lead.Email?.toLowerCase().includes(query) ||
-            String(lead.SerialId)?.includes(query)
-        );
-    }, [leads, searchQuery]);
+        // Text search
+        if (searchQuery.trim()) {
+            const query = searchQuery.toLowerCase();
+            result = result.filter(lead =>
+                lead.FirstName?.toLowerCase().includes(query) ||
+                lead.LastName?.toLowerCase().includes(query) ||
+                lead.Company?.toLowerCase().includes(query) ||
+                lead.Phone?.includes(query) ||
+                lead.Email?.toLowerCase().includes(query) ||
+                String(lead.SerialId)?.includes(query)
+            );
+        }
+
+        // Source filter
+        if (sourceFilter.length > 0) {
+            result = result.filter(lead =>
+                lead.JobSource && sourceFilter.includes(lead.JobSource)
+            );
+        }
+
+        // Job type filter
+        if (jobTypeFilter.length > 0) {
+            result = result.filter(lead =>
+                lead.JobType && jobTypeFilter.includes(lead.JobType)
+            );
+        }
+
+        return result;
+    }, [leads, searchQuery, sourceFilter, jobTypeFilter]);
 
     // Handle filter changes
     const handleFiltersChange = (newFilters: Partial<LeadsListParams>) => {
@@ -268,8 +289,12 @@ export function LeadsPage() {
                     <LeadsFilters
                         filters={filters}
                         searchQuery={searchQuery}
+                        sourceFilter={sourceFilter}
+                        jobTypeFilter={jobTypeFilter}
                         onFiltersChange={handleFiltersChange}
                         onSearchChange={setSearchQuery}
+                        onSourceFilterChange={setSourceFilter}
+                        onJobTypeFilterChange={setJobTypeFilter}
                     />
                 </div>
 

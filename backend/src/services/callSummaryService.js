@@ -95,9 +95,8 @@ async function generateCallSummary(dialogText, callMeta = {}) {
         ],
         generationConfig: {
             temperature: 0.15,
-            maxOutputTokens: 16384,
+            maxOutputTokens: 4096,
             candidateCount: 1,
-            thinkingConfig: { thinkingBudget: 4096 },
         },
     };
 
