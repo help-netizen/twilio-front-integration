@@ -153,6 +153,7 @@ const FIELD_MAP = {
     Status: 'status',
     SubStatus: 'sub_status',
     PaymentDueDate: 'payment_due_date',
+    contact_id: 'contact_id',
 };
 
 function mapFieldsToColumns(fields) {
