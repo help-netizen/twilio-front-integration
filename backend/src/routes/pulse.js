@@ -46,9 +46,15 @@ router.get('/timeline/:contactId', async (req, res) => {
         let messages = [];
         let conversations = [];
 
-        // Build a set of phones to search (normalized contact phone + call phones)
+        // Build a set of phones to search (normalized contact phone + secondary phone + call phones)
         const phonesToSearch = new Set();
         if (normalizedPhone) phonesToSearch.add(normalizedPhone);
+        // Include secondary phone so SMS to/from it shows in timeline
+        const secondaryPhone = contact?.secondary_phone;
+        if (secondaryPhone) {
+            const normalizedSecondary = '+' + secondaryPhone.replace(/\D/g, '');
+            phonesToSearch.add(normalizedSecondary);
+        }
         for (const p of callPhones) phonesToSearch.add(p);
 
         if (phonesToSearch.size > 0) {

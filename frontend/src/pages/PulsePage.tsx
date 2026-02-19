@@ -50,9 +50,17 @@ function PulseContactItem({ call, isActive }: { call: Call; isActive: boolean })
 
     // Determine the actual phone from the last interaction (call or SMS direction)
     const interactionType = call.last_interaction_type || 'call';
-    const isInbound = interactionType === 'sms_inbound' || (interactionType === 'call' && call.direction?.includes('inbound'));
-    const touchedPhone = isInbound ? (call.from_number || rawPhone) : (call.to_number || rawPhone);
-    // Show the touched phone, but fall back to main contact phone for lead lookup
+    let touchedPhone: string;
+    if (interactionType.startsWith('sms') && (call as any).sms_customer_e164) {
+        // SMS interaction — use the actual SMS customer phone (may be secondary phone)
+        touchedPhone = (call as any).sms_customer_e164;
+    } else {
+        // Call interaction — inbound: customer is from_number, outbound: customer is to_number
+        const isInbound = call.direction?.includes('inbound');
+        const candidatePhone = isInbound ? call.from_number : call.to_number;
+        // Filter out SIP URIs from call routing
+        touchedPhone = (candidatePhone && !candidatePhone.startsWith('sip:')) ? candidatePhone : rawPhone;
+    }
     const displayPhone = touchedPhone || rawPhone;
 
     const { lead } = useLeadByPhone(rawPhone);

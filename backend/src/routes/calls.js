@@ -81,12 +81,18 @@ router.get('/by-contact', async (req, res) => {
         try {
             // Normalize phones to digits-only for comparison
             // (contacts may store "+1 (401) 602-3506", SMS stores "+14016023506")
-            const phoneMap = {}; // digits → original phone
+            const phoneMap = {}; // digits → conv index
             for (const c of conversations) {
                 const raw = c.contact?.phone_e164;
                 if (raw) {
                     const digits = raw.replace(/\D/g, '');
                     phoneMap[digits] = raw;
+                }
+                // Also include secondary phone for SMS lookup
+                const sec = c.contact?.secondary_phone;
+                if (sec) {
+                    const secDigits = sec.replace(/\D/g, '');
+                    if (secDigits && !phoneMap[secDigits]) phoneMap[secDigits] = sec;
                 }
             }
             const digitPhones = Object.keys(phoneMap);
@@ -121,7 +127,10 @@ router.get('/by-contact', async (req, res) => {
                 for (const conv of conversations) {
                     const raw = conv.contact?.phone_e164;
                     const digits = raw ? raw.replace(/\D/g, '') : null;
-                    const sms = digits ? smsMap[digits] : null;
+                    // Also check secondary phone
+                    const sec = conv.contact?.secondary_phone;
+                    const secDigits = sec ? sec.replace(/\D/g, '') : null;
+                    const sms = (digits ? smsMap[digits] : null) || (secDigits ? smsMap[secDigits] : null);
                     const callTime = new Date(conv.started_at || conv.created_at);
                     const smsTime = sms?.last_message_at ? new Date(sms.last_message_at) : null;
 
@@ -131,6 +140,7 @@ router.get('/by-contact', async (req, res) => {
                         // SMS is the most recent interaction
                         conv.last_interaction_at = sms.last_message_at;
                         conv.last_interaction_type = sms.last_message_direction === 'inbound' ? 'sms_inbound' : 'sms_outbound';
+                        conv.sms_customer_e164 = sms.customer_e164;
                     } else {
                         // Call is the most recent interaction
                         conv.last_interaction_at = conv.started_at || conv.created_at;
