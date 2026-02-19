@@ -274,10 +274,9 @@ async function createLead(fields, companyId = null) {
     // Always set uuid
     columns.uuid = uuid;
 
-    // Set company_id if provided
-    if (companyId) {
-        columns.company_id = companyId;
-    }
+    // Always set company_id (fallback to default)
+    const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
+    columns.company_id = companyId || DEFAULT_COMPANY_ID;
 
     // Handle custom metadata fields (flat api_name keys + Metadata object)
     const meta = await extractCustomMetadata(fields);
