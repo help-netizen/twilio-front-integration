@@ -50,8 +50,10 @@ function PulseContactItem({ call, isActive }: { call: Call; isActive: boolean })
     const { lead } = useLeadByPhone(rawPhone);
     const leadName = lead ? [lead.FirstName, lead.LastName].filter(Boolean).join(' ') : null;
     const company = lead?.Company || null;
-    const primaryText = company || leadName || formatPhoneNumber(rawPhone);
-    const showSecondaryPhone = !!(company || leadName);
+    const contactName = call.contact?.full_name && call.contact.full_name !== call.contact.phone_e164
+        ? call.contact.full_name : null;
+    const primaryText = company || leadName || contactName || formatPhoneNumber(rawPhone);
+    const showSecondaryPhone = !!(company || leadName || contactName);
 
     // Use last_interaction_at (call or SMS), falling back to call time
     const displayDate = new Date(call.last_interaction_at || call.started_at || call.created_at);
