@@ -51,7 +51,7 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
     const [loading, setLoading] = useState(false);
     const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
     const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
-    const [selectedContactAddressId, setSelectedContactAddressId] = useState<number | null>(null);
+    const [_selectedContactAddressId, setSelectedContactAddressId] = useState<number | null>(null);
     const [formData, setFormData] = useState<UpdateLeadInput>({
         FirstName: lead.FirstName || '',
         LastName: lead.LastName || '',

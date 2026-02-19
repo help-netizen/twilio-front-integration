@@ -72,7 +72,7 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
 
     // Address state
     const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
-    const [selectedContactAddressId, setSelectedContactAddressId] = useState<number | null>(null);
+    const [_selectedContactAddressId, setSelectedContactAddressId] = useState<number | null>(null);
 
     // Fetch custom fields when dialog opens
     useEffect(() => {
