@@ -69,7 +69,7 @@ async function listContacts({ search, offset = 0, limit = 50 } = {}) {
         SELECT c.*
         FROM contacts c
         ${whereClause}
-        ORDER BY c.created_at DESC
+        ORDER BY c.id DESC
         LIMIT $${limitParam} OFFSET $${offsetParam}
     `;
 
