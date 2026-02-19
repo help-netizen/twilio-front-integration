@@ -106,10 +106,17 @@ async function run() {
         seenHashes.add(key);
 
         try {
+            // Auto-set is_primary only if contact has no existing addresses
+            const { rows: existingAddr } = await db.query(
+                'SELECT COUNT(*)::int as cnt FROM contact_addresses WHERE contact_id = $1',
+                [l.contact_id]
+            );
+            const isPrimary = existingAddr[0].cnt === 0;
+
             await db.query(
                 `INSERT INTO contact_addresses
                     (contact_id, street_line1, street_line2, city, state, postal_code, lat, lng, is_primary, address_normalized_hash)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, $9)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                  ON CONFLICT DO NOTHING`,
                 [
                     l.contact_id,
@@ -120,6 +127,7 @@ async function run() {
                     l.postal_code || '',
                     l.latitude || null,
                     l.longitude || null,
+                    isPrimary,
                     hash,
                 ]
             );

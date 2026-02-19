@@ -126,15 +126,22 @@ async function resolveAddress(contactId, { street, apt, city, state, zip, lat, l
     }
 
     // 3. No match → create new additional address
+    // Auto-set is_primary if this is the contact's first address
+    const { rows: existing } = await db.query(
+        'SELECT COUNT(*)::int as cnt FROM contact_addresses WHERE contact_id = $1',
+        [contactId]
+    );
+    const isPrimary = existing[0].cnt === 0;
+
     const { rows } = await db.query(
         `INSERT INTO contact_addresses
             (contact_id, street_line1, street_line2, city, state, postal_code,
              google_place_id, lat, lng, address_normalized_hash, is_primary)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, false)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          ON CONFLICT DO NOTHING
          RETURNING id`,
         [contactId, street || '', apt || null, city || '', state || '', zip || '',
-            placeId || null, lat || null, lng || null, hash]
+            placeId || null, lat || null, lng || null, hash, isPrimary]
     );
 
     if (rows.length > 0) {
