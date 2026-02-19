@@ -134,30 +134,23 @@ router.get('/by-contact', async (req, res) => {
                     const callTime = new Date(conv.started_at || conv.created_at);
                     const smsTime = sms?.last_message_at ? new Date(sms.last_message_at) : null;
 
-                    // DEBUG: trace contact 669
-                    if (conv.contact?.id == 669 || conv.contact?.id === '669') {
-                        console.log('[SMS-ENRICH-DEBUG] contact 669:', {
-                            mainPhone: raw, mainDigits: digits,
-                            secPhone: sec, secDigits,
-                            smsFound: !!sms, smsCustomer: sms?.customer_e164,
-                            callTime: callTime.toISOString(),
-                            smsTime: smsTime?.toISOString(),
-                            smsMoreRecent: smsTime && smsTime > callTime,
-                            smsMapKeys: Object.keys(smsMap),
-                        });
-                    }
-
                     conv.sms_count = sms ? parseInt(sms.sms_count || 0) : 0;
 
                     if (smsTime && smsTime > callTime) {
                         // SMS is the most recent interaction
                         conv.last_interaction_at = sms.last_message_at;
                         conv.last_interaction_type = sms.last_message_direction === 'inbound' ? 'sms_inbound' : 'sms_outbound';
-                        conv.sms_customer_e164 = sms.customer_e164;
+                        // Phone from SMS — the actual customer number in this conversation
+                        conv.last_interaction_phone = sms.customer_e164;
                     } else {
                         // Call is the most recent interaction
                         conv.last_interaction_at = conv.started_at || conv.created_at;
                         conv.last_interaction_type = 'call';
+                        // Phone from call — derive customer number from direction
+                        const isInbound = (conv.direction || '').includes('inbound');
+                        const candidatePhone = isInbound ? conv.from_number : conv.to_number;
+                        conv.last_interaction_phone = (candidatePhone && !candidatePhone.startsWith('sip:'))
+                            ? candidatePhone : (raw || conv.from_number || conv.to_number);
                     }
                 }
             }

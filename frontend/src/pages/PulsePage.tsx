@@ -48,20 +48,8 @@ function PulseContactItem({ call, isActive }: { call: Call; isActive: boolean })
 
     const rawPhone = call.contact?.phone_e164 || call.from_number || call.to_number || call.call_sid;
 
-    // Determine the actual phone from the last interaction (call or SMS direction)
-    const interactionType = call.last_interaction_type || 'call';
-    let touchedPhone: string;
-    if (interactionType.startsWith('sms') && (call as any).sms_customer_e164) {
-        // SMS interaction — use the actual SMS customer phone (may be secondary phone)
-        touchedPhone = (call as any).sms_customer_e164;
-    } else {
-        // Call interaction — inbound: customer is from_number, outbound: customer is to_number
-        const isInbound = call.direction?.includes('inbound');
-        const candidatePhone = isInbound ? call.from_number : call.to_number;
-        // Filter out SIP URIs from call routing
-        touchedPhone = (candidatePhone && !candidatePhone.startsWith('sip:')) ? candidatePhone : rawPhone;
-    }
-    const displayPhone = touchedPhone || rawPhone;
+    // Use last_interaction_phone from API — the actual customer phone from the last event
+    const displayPhone = (call as any).last_interaction_phone || rawPhone;
 
     const { lead } = useLeadByPhone(rawPhone);
     const leadName = lead ? [lead.FirstName, lead.LastName].filter(Boolean).join(' ') : null;
@@ -73,6 +61,7 @@ function PulseContactItem({ call, isActive }: { call: Call; isActive: boolean })
 
     // Use last_interaction_at (call or SMS), falling back to call time
     const displayDate = new Date(call.last_interaction_at || call.started_at || call.created_at);
+    const interactionType = call.last_interaction_type || 'call';
 
     // Total interactions count (calls + SMS)
     const totalCount = (call.call_count || 0) + (call.sms_count || 0);
