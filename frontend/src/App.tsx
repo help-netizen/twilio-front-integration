@@ -6,6 +6,7 @@ import { AppLayout } from './components/layout/AppLayout';
 import { HomePage } from './pages/HomePage';
 import { ConversationPage } from './pages/ConversationPage';
 import { LeadsPage } from './pages/LeadsPage';
+import { ContactsPage } from './pages/ContactsPage';
 import { PulsePage } from './pages/PulsePage';
 import { MessagesPage } from './pages/MessagesPage';
 import { IntegrationsPage } from './pages/IntegrationsPage';
@@ -43,6 +44,7 @@ function App() {
               <Route path="/calls/:callSid" element={<ConversationPage />} />
               <Route path="/messages" element={<MessagesPage />} />
               <Route path="/leads" element={<LeadsPage />} />
+              <Route path="/contacts" element={<ContactsPage />} />
               <Route path="/settings" element={<Navigate to="/settings/integrations" replace />} />
               <Route path="/settings/integrations" element={
                 <ProtectedRoute roles={['company_admin']}>

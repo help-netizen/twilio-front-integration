@@ -169,6 +169,16 @@ export function LeadsTable({
                         <span className="font-mono text-sm">{lead.SerialId}</span>
                     </TableCell>
                 );
+            case 'contact':
+                return (
+                    <TableCell key={key}>
+                        {lead.ContactName ? (
+                            <span className="text-sm" style={{ color: '#4f46e5', fontWeight: 500 }}>
+                                {lead.ContactName}
+                            </span>
+                        ) : '-'}
+                    </TableCell>
+                );
             default:
                 return <TableCell key={key}>-</TableCell>;
         }

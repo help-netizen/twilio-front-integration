@@ -1,12 +1,9 @@
-/**
- * Contacts API Client
- * Frontend fetch wrapper for /api/contacts/* endpoints.
- */
-
 import type {
     ContactsListParams,
     ContactsListResponse,
     ContactDetailResponse,
+    SearchCandidatesResponse,
+    Contact,
 } from '../types/contact';
 
 import { authedFetch } from './apiClient';
@@ -72,3 +69,89 @@ export async function listContacts(params: ContactsListParams = {}): Promise<Con
 export async function getContact(id: number): Promise<ContactDetailResponse> {
     return request<ContactDetailResponse>(`${API_BASE}/${id}`);
 }
+
+/**
+ * Search for candidate contacts for deduplication (used by create lead form)
+ */
+export async function searchCandidates(params: {
+    first_name: string;
+    last_name: string;
+    phone?: string;
+    email?: string;
+}): Promise<SearchCandidatesResponse> {
+    const sp = new URLSearchParams();
+    sp.set('first_name', params.first_name);
+    sp.set('last_name', params.last_name);
+    if (params.phone) sp.set('phone', params.phone);
+    if (params.email) sp.set('email', params.email);
+    return request<SearchCandidatesResponse>(`${API_BASE}/search-candidates?${sp.toString()}`);
+}
+
+/**
+ * Update a contact's fields
+ */
+export async function updateContact(contactId: number, fields: {
+    first_name?: string; last_name?: string; company_name?: string;
+    phone_e164?: string; secondary_phone?: string; email?: string; notes?: string;
+}): Promise<{ ok: true; data: { contact: Contact } }> {
+    const res = await authedFetch(`${API_BASE}/${contactId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fields),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+        throw new ContactsApiError(data.error.code, data.error.message, res.status, data.error.correlation_id);
+    }
+    return data;
+}
+
+/**
+ * Get saved addresses for a contact
+ */
+export async function getContactAddresses(contactId: number): Promise<{
+    ok: true;
+    data: {
+        addresses: SavedAddress[];
+    };
+    meta: { request_id: string; timestamp: string };
+}> {
+    return request(`${API_BASE}/${contactId}/addresses`);
+}
+
+/**
+ * Update a saved address for a contact
+ */
+export async function updateContactAddress(contactId: number, addressId: number, address: {
+    street: string; apt: string; city: string; state: string; zip: string;
+    lat?: number | null; lng?: number | null; placeId?: string | null;
+}): Promise<{ ok: true; data: { addresses: SavedAddress[] } }> {
+    const res = await authedFetch(`${API_BASE}/${contactId}/addresses/${addressId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(address),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+        throw new ContactsApiError(data.error.code, data.error.message, res.status, data.error.correlation_id);
+    }
+    return data;
+}
+
+export type SavedAddress = {
+    id: number;
+    contact_id: number;
+    label: string | null;
+    is_primary: boolean;
+    street_line1: string;
+    street_line2: string | null;
+    city: string;
+    state: string;
+    postal_code: string;
+    country: string;
+    google_place_id: string | null;
+    lat: number | null;
+    lng: number | null;
+    display: string;
+};
+

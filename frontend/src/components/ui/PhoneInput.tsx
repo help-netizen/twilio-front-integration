@@ -54,6 +54,7 @@ interface PhoneInputProps {
     id?: string;
     value: string;
     onChange: (formatted: string) => void;
+    onBlur?: () => void;
     placeholder?: string;
     required?: boolean;
     disabled?: boolean;
@@ -64,6 +65,7 @@ export function PhoneInput({
     id,
     value,
     onChange,
+    onBlur,
     placeholder = '(___) ___-____',
     required,
     disabled,
@@ -94,7 +96,7 @@ export function PhoneInput({
                 value={displayValue}
                 onChange={handleChange}
                 onFocus={() => setFocused(true)}
-                onBlur={() => setFocused(false)}
+                onBlur={() => { setFocused(false); onBlur?.(); }}
                 placeholder={placeholder}
                 required={required}
                 disabled={disabled}

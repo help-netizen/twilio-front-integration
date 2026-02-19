@@ -12,7 +12,8 @@ import {
     SelectValue,
 } from "./ui/select";
 import { Checkbox } from "./ui/checkbox";
-import { Loader2 } from "lucide-react";
+import { Loader2, MapPin } from "lucide-react";
+import type { SavedAddress } from "../services/contactsApi";
 
 /* Simple spinner */
 function Spinner() {
@@ -123,6 +124,10 @@ interface AddressAutocompleteProps {
     header?: React.ReactNode;
     /** Initial state of Place Details checkbox (default: false) */
     defaultUseDetails?: boolean;
+    /** Saved addresses from the resolved contact */
+    savedAddresses?: SavedAddress[];
+    /** Called when user selects a saved address */
+    onSelectSaved?: (addressId: number) => void;
 }
 
 /* ─── Component ───────────────────────────────────────────────── */
@@ -134,6 +139,8 @@ export function AddressAutocomplete({
     streetLabel = "Street Address",
     header,
     defaultUseDetails = false,
+    savedAddresses = [],
+    onSelectSaved,
 }: AddressAutocompleteProps) {
     const [gateReady, setGateReady] = useState(false);
     const [activeIndex, setActiveIndex] = useState(-1);
@@ -280,6 +287,28 @@ export function AddressAutocomplete({
     const showDropdown =
         gateReady && (loading || status === "OK") && (loading || suggestions.length > 0);
 
+    // Show saved addresses when field is focused and has content (or always when there are saved addresses and user is typing)
+    const [showSaved, setShowSaved] = useState(false);
+    const hasSaved = savedAddresses.length > 0;
+
+    function handleSelectSavedAddress(addr: SavedAddress) {
+        const fields: AddressFields = {
+            street: addr.street_line1,
+            apt: addr.street_line2 || '',
+            city: addr.city,
+            state: addr.state,
+            zip: addr.postal_code,
+            lat: addr.lat,
+            lng: addr.lng,
+        };
+        onChange(fields);
+        setSearchValue(addr.street_line1, false);
+        setShowSaved(false);
+        clearSuggestions();
+        setGateReady(false);
+        onSelectSaved?.(addr.id);
+    }
+
     /* ─── Render ────────────────────────────────────────────────── */
 
     return (
@@ -302,76 +331,124 @@ export function AddressAutocomplete({
                 </div>
             </div>
 
-            {/* ── Street Address (search + display) */}
-            <div className="relative">
-                <Label htmlFor={`${idPrefix}-street`} className="mb-1.5">
-                    {streetLabel}
-                </Label>
+            {/* ── Street Address + Apt/Unit row */}
+            <div className="flex gap-3">
+                <div className="relative flex-1 min-w-0">
+                    <Label htmlFor={`${idPrefix}-street`} className="mb-1.5">
+                        {streetLabel}
+                    </Label>
 
-                <Input
-                    id={`${idPrefix}-street`}
-                    value={searchValue}
-                    onChange={handleInputChange}
-                    onKeyDown={handleKeyDown}
-                    onFocus={(e) => {
-                        const input = e.target;
-                        requestAnimationFrame(() => {
-                            const len = input.value.length;
-                            input.setSelectionRange(len, len);
-                        });
-                    }}
-                    disabled={!ready}
-                    placeholder="Start typing address…"
-                    autoComplete="off"
-                />
+                    <Input
+                        id={`${idPrefix}-street`}
+                        value={searchValue}
+                        onChange={handleInputChange}
+                        onKeyDown={handleKeyDown}
+                        onFocus={(e) => {
+                            const input = e.target;
+                            requestAnimationFrame(() => {
+                                const len = input.value.length;
+                                input.setSelectionRange(len, len);
+                            });
+                            if (hasSaved) setShowSaved(true);
+                        }}
+                        onBlur={() => {
+                            // Delay to allow click on saved address
+                            setTimeout(() => setShowSaved(false), 200);
+                        }}
+                        disabled={!ready}
+                        placeholder="Start typing address…"
+                        autoComplete="off"
+                    />
 
-                {!ready && (
-                    <div className="mt-1.5 flex items-center gap-1.5">
-                        <Spinner />
-                        <span className="text-xs text-muted-foreground">Loading Google Maps…</span>
-                    </div>
-                )}
+                    {!ready && (
+                        <div className="mt-1.5 flex items-center gap-1.5">
+                            <Spinner />
+                            <span className="text-xs text-muted-foreground">Loading Google Maps…</span>
+                        </div>
+                    )}
 
-                {cyrillicWarning && (
-                    <div className="absolute z-50 mt-1 w-full rounded-md border border-amber-300 bg-amber-50 shadow-md px-3 py-2 text-sm text-amber-800">
-                        ⚠️ English only — please delete Cyrillic characters
-                    </div>
-                )}
+                    {cyrillicWarning && (
+                        <div className="absolute z-50 mt-1 w-full rounded-md border border-amber-300 bg-amber-50 shadow-md px-3 py-2 text-sm text-amber-800">
+                            ⚠️ English only — please delete Cyrillic characters
+                        </div>
+                    )}
 
-                {showDropdown && !cyrillicWarning && (
-                    <div
-                        role="listbox"
-                        className="absolute z-50 mt-1 w-full rounded-md border border-gray-200 bg-[#f3f3f5] shadow-md overflow-hidden"
-                    >
-                        {loading && (
-                            <div className="px-3 py-2 flex items-center gap-2 text-sm text-muted-foreground">
-                                <Spinner />
-                                Loading…
-                            </div>
-                        )}
+                    {(showDropdown || (showSaved && hasSaved)) && !cyrillicWarning && (
+                        <div
+                            role="listbox"
+                            className="absolute z-50 mt-1 w-full rounded-md border border-gray-200 bg-[#f3f3f5] shadow-md overflow-hidden"
+                        >
+                            {/* Saved addresses section */}
+                            {showSaved && hasSaved && (
+                                <>
+                                    <div className="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider bg-[#ebedf0]">
+                                        Saved addresses
+                                    </div>
+                                    {savedAddresses.map((addr) => (
+                                        <div
+                                            key={addr.id}
+                                            role="option"
+                                            aria-selected={false}
+                                            onMouseDown={(ev) => {
+                                                ev.preventDefault();
+                                                handleSelectSavedAddress(addr);
+                                            }}
+                                            className="cursor-pointer px-3 py-2 text-sm transition-colors hover:bg-accent/50 flex items-center gap-2"
+                                        >
+                                            <MapPin className="size-3.5 text-indigo-500 shrink-0" />
+                                            <span className="truncate">{addr.display}</span>
+                                            {addr.is_primary && (
+                                                <span className="ml-auto text-[10px] font-medium text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">Primary</span>
+                                            )}
+                                        </div>
+                                    ))}
+                                    {showDropdown && (
+                                        <div className="border-t border-gray-200" />
+                                    )}
+                                </>
+                            )}
 
-                        {!loading &&
-                            suggestions.map((item, idx) => (
-                                <div
-                                    key={`${item.place_id || item.description}-${idx}`}
-                                    role="option"
-                                    aria-selected={idx === activeIndex}
-                                    onMouseDown={(ev) => {
-                                        ev.preventDefault();
-                                        selectSuggestion(item);
-                                    }}
-                                    onMouseEnter={() => setActiveIndex(idx)}
-                                    className={`cursor-pointer px-3 py-2 text-sm transition-colors
-                                        ${idx === activeIndex
-                                            ? "bg-accent text-accent-foreground"
-                                            : "hover:bg-accent/50"
-                                        }`}
-                                >
-                                    {item.description}
+                            {/* Google suggestions */}
+                            {loading && (
+                                <div className="px-3 py-2 flex items-center gap-2 text-sm text-muted-foreground">
+                                    <Spinner />
+                                    Loading…
                                 </div>
-                            ))}
-                    </div>
-                )}
+                            )}
+
+                            {!loading &&
+                                suggestions.map((item, idx) => (
+                                    <div
+                                        key={`${item.place_id || item.description}-${idx}`}
+                                        role="option"
+                                        aria-selected={idx === activeIndex}
+                                        onMouseDown={(ev) => {
+                                            ev.preventDefault();
+                                            selectSuggestion(item);
+                                        }}
+                                        onMouseEnter={() => setActiveIndex(idx)}
+                                        className={`cursor-pointer px-3 py-2 text-sm transition-colors
+                                            ${idx === activeIndex
+                                                ? "bg-accent text-accent-foreground"
+                                                : "hover:bg-accent/50"
+                                            }`}
+                                    >
+                                        {item.description}
+                                    </div>
+                                ))}
+                        </div>
+                    )}
+                </div>
+
+                <div className="space-y-1.5 w-[100px] shrink-0">
+                    <Label htmlFor={`${idPrefix}-apt`}>Apt/Unit</Label>
+                    <Input
+                        id={`${idPrefix}-apt`}
+                        value={address.apt}
+                        onChange={(e) => handleFieldChange("apt", e.target.value)}
+                        placeholder="4B"
+                    />
+                </div>
             </div>
 
             {/* ── Loading indicator */}
@@ -382,8 +459,8 @@ export function AddressAutocomplete({
                 </div>
             )}
 
-            {/* ── City / Apt / State / Zip row */}
-            <div className="grid grid-cols-[2fr_1fr_72px_1fr] gap-3">
+            {/* ── City / State / Zip row */}
+            <div className="grid grid-cols-[2fr_72px_1fr] gap-3">
                 <div className="space-y-1.5 min-w-0">
                     <Label htmlFor={`${idPrefix}-city`}>City</Label>
                     <Input
@@ -391,16 +468,6 @@ export function AddressAutocomplete({
                         value={address.city}
                         onChange={(e) => handleFieldChange("city", e.target.value)}
                         placeholder="Boston"
-                    />
-                </div>
-
-                <div className="space-y-1.5 min-w-0">
-                    <Label htmlFor={`${idPrefix}-apt`}>Apt/Unit</Label>
-                    <Input
-                        id={`${idPrefix}-apt`}
-                        value={address.apt}
-                        onChange={(e) => handleFieldChange("apt", e.target.value)}
-                        placeholder="4B"
                     />
                 </div>
 

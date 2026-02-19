@@ -45,6 +45,8 @@ export type Lead = {
     Team?: Array<{ id: string | number; name: string }> | null;
     WorkizLink?: string | null;
     Metadata?: Record<string, string> | null;
+    ContactId?: number | null;
+    ContactName?: string | null;
 };
 
 export type LeadsListParams = {
@@ -91,6 +93,13 @@ export type LeadMutationResponse = {
         ClientId?: string;
         link?: string;
         message?: string;
+        contact_resolution?: {
+            contact_id: number | null;
+            status: 'matched' | 'created' | 'ambiguous';
+            matched_by: 'phone' | 'email' | 'none';
+            email_enriched: boolean;
+            warnings: string[];
+        };
     };
     meta: { request_id: string; timestamp: string };
 };
@@ -157,8 +166,9 @@ export const DEFAULT_COLUMNS: TableColumn[] = [
     { id: 'location', label: 'Location', visible: true, order: 4 },
     { id: 'jobType', label: 'Job Type', visible: true, order: 5 },
     { id: 'jobSource', label: 'Source', visible: true, order: 6 },
-    { id: 'created', label: 'Created', visible: true, order: 7 },
-    { id: 'serialId', label: 'ID', visible: true, order: 8 },
+    { id: 'contact', label: 'Contact', visible: true, order: 7 },
+    { id: 'created', label: 'Created', visible: true, order: 8 },
+    { id: 'serialId', label: 'ID', visible: true, order: 9 },
 ];
 
 export type LeadStatus =

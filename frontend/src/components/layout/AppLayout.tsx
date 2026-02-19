@@ -11,7 +11,7 @@ import {
     DropdownMenuItem,
     DropdownMenuSeparator,
 } from '../ui/dropdown-menu';
-import { Phone, MessageSquare, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign } from 'lucide-react';
+import { Phone, MessageSquare, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2 } from 'lucide-react';
 import { useRealtimeEvents } from '../../hooks/useRealtimeEvents';
 import './AppLayout.css';
 
@@ -28,9 +28,10 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
     const activeTab = location.pathname.startsWith('/pulse') ? 'pulse'
         : location.pathname.startsWith('/messages') ? 'messages'
             : location.pathname.startsWith('/leads') ? 'leads'
-                : location.pathname.startsWith('/settings') ? 'settings'
-                    : location.pathname.startsWith('/calls') || location.pathname.startsWith('/contact/') ? 'calls'
-                        : 'pulse';
+                : location.pathname.startsWith('/contacts') ? 'contacts'
+                    : location.pathname.startsWith('/settings') ? 'settings'
+                        : location.pathname.startsWith('/calls') || location.pathname.startsWith('/contact/') ? 'calls'
+                            : 'pulse';
 
     const { accessDeniedMessage, clearAccessDenied, logout, hasRole } = useAuth();
 
@@ -129,6 +130,14 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                                 >
                                     <Users className="size-4" />
                                     Leads
+                                </TabsTrigger>
+                                <TabsTrigger
+                                    value="contacts"
+                                    className="flex items-center gap-2"
+                                    onClick={() => navigate('/contacts')}
+                                >
+                                    <Contact2 className="size-4" />
+                                    Contacts
                                 </TabsTrigger>
                             </TabsList>
                         </Tabs>

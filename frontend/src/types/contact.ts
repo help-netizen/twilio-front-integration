@@ -2,15 +2,62 @@
  * Contact data model types.
  */
 
+export type ContactAddress = {
+    formatted?: string;
+    line1?: string;
+    line2?: string;
+    city?: string;
+    state?: string;
+    postal_code?: string;
+    lat?: number;
+    lng?: number;
+    nickname?: string;
+    is_default_address_for_customer?: boolean;
+    id?: string;
+};
+
 export type Contact = {
     id: number;
     full_name: string | null;
+    first_name: string | null;
+    last_name: string | null;
+    company_name: string | null;
     phone_e164: string | null;
+    secondary_phone: string | null;
     email: string | null;
     notes: string | null;
     zenbooker_customer_id: string | null;
     created_at: string;
     updated_at: string;
+    // Zenbooker-sourced data
+    addresses: ContactAddress[];
+    jobs: string[];
+    recurring_bookings: string[];
+    stripe_customer_id: string | null;
+    zenbooker_creation_date: string | null;
+    zenbooker_id: string | null;
+};
+
+export type DedupeCandidate = {
+    id: number;
+    full_name: string | null;
+    first_name: string | null;
+    last_name: string | null;
+    phone_e164: string | null;
+    email: string | null;
+    additional_emails: string[];
+    phone_match: boolean;
+    email_match: boolean;
+};
+
+export type SearchCandidatesResponse = {
+    ok: true;
+    data: {
+        candidates: DedupeCandidate[];
+        match_hint: 'none' | 'name_only' | 'phone' | 'phone_ambiguous' | 'email' | 'email_ambiguous';
+        will_enrich_email: boolean;
+    };
+    meta: { request_id: string; timestamp: string };
 };
 
 export type ContactLead = {

@@ -10,6 +10,8 @@
 const express = require('express');
 const router = express.Router();
 const leadsService = require('../services/leadsService');
+const contactDedupeService = require('../services/contactDedupeService');
+const contactAddressService = require('../services/contactAddressService');
 
 // =============================================================================
 // Helpers
@@ -120,7 +122,7 @@ router.get('/:uuid', async (req, res) => {
 });
 
 // =============================================================================
-// POST /api/leads — Create lead
+// POST /api/leads — Create lead (with contact deduplication)
 // =============================================================================
 router.post('/', async (req, res) => {
     const reqId = requestId();
@@ -138,8 +140,88 @@ router.post('/', async (req, res) => {
         }
 
         const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
+
+        // Contact deduplication: resolve or create contact
+        const contactResolution = await contactDedupeService.resolveContact({
+            first_name: body.FirstName,
+            last_name: body.LastName,
+            phone: body.Phone,
+            email: body.Email,
+        }, companyId);
+
+        // If ambiguous, return 409 with candidates for UI/API to resolve
+        if (contactResolution.status === 'ambiguous') {
+            return res.status(409).json({
+                ok: false,
+                error: {
+                    code: 'CONTACT_AMBIGUOUS',
+                    message: contactResolution.warnings.join('; '),
+                    correlation_id: reqId,
+                },
+                contact_resolution: contactResolution,
+            });
+        }
+
+        // Set contact_id on the lead body so createLead links it
+        if (contactResolution.contact_id) {
+            body.contact_id = contactResolution.contact_id;
+        }
+
         const result = await leadsService.createLead(body, companyId);
-        res.status(201).json(successResponse(result, reqId));
+
+        // Link lead to contact if not already done by createLead
+        if (contactResolution.contact_id && result.ClientId) {
+            try {
+                await require('../db/connection').query(
+                    'UPDATE leads SET contact_id = $1 WHERE id = $2 AND contact_id IS NULL',
+                    [contactResolution.contact_id, result.ClientId]
+                );
+            } catch { /* ignore if already linked */ }
+        }
+
+        // Address sync: persist lead address to contact_addresses
+        let addressResolution = { contact_address_id: null, status: 'none' };
+        if (contactResolution.contact_id && body.Address) {
+            try {
+                addressResolution = await contactAddressService.resolveAddress(
+                    contactResolution.contact_id,
+                    {
+                        street: body.Address,
+                        apt: body.Unit || null,
+                        city: body.City || '',
+                        state: body.State || '',
+                        zip: body.PostalCode || '',
+                        lat: body.Latitude || null,
+                        lng: body.Longitude || null,
+                        placeId: body.google_place_id || null,
+                    }
+                );
+                // Link lead to address
+                if (addressResolution.contact_address_id && result.ClientId) {
+                    await require('../db/connection').query(
+                        'UPDATE leads SET contact_address_id = $1 WHERE id = $2',
+                        [addressResolution.contact_address_id, result.ClientId]
+                    );
+                }
+            } catch (addrErr) {
+                console.error(`[LeadsAPI][${reqId}] Address sync error:`, addrErr.message);
+            }
+        }
+
+        res.status(201).json(successResponse({
+            ...result,
+            contact_resolution: {
+                contact_id: contactResolution.contact_id,
+                status: contactResolution.status,
+                matched_by: contactResolution.matched_by,
+                email_enriched: contactResolution.email_enriched,
+                warnings: contactResolution.warnings,
+            },
+            address_resolution: {
+                contact_address_id: addressResolution.contact_address_id,
+                status: addressResolution.status,
+            },
+        }, reqId));
     } catch (err) {
         handleError(err, reqId, res);
     }
@@ -165,6 +247,86 @@ router.patch('/:uuid', async (req, res) => {
         }
 
         const result = await leadsService.updateLead(uuid, fields, req.companyFilter?.company_id);
+
+        // Sync contact if lead has contact_id and contact-relevant fields changed
+        const contactFields = ['FirstName', 'LastName', 'Phone', 'Email'];
+        const hasContactChange = contactFields.some(f => f in fields);
+        if (hasContactChange) {
+            try {
+                const db = require('../db/connection');
+                // Get the updated lead to read its contact_id and current data
+                const lead = await leadsService.getLeadByUUID(uuid, req.companyFilter?.company_id);
+                if (lead && lead.ContactId) {
+                    const updates = [];
+                    const params = [];
+                    let idx = 1;
+
+                    if (lead.FirstName || lead.LastName) {
+                        const fullName = [lead.FirstName, lead.LastName].filter(Boolean).join(' ');
+                        updates.push(`full_name = $${idx++}`);
+                        params.push(fullName);
+                        updates.push(`first_name = $${idx++}`);
+                        params.push(lead.FirstName || null);
+                        updates.push(`last_name = $${idx++}`);
+                        params.push(lead.LastName || null);
+                    }
+                    if (lead.Phone) {
+                        updates.push(`phone_e164 = $${idx++}`);
+                        params.push(lead.Phone);
+                    }
+                    if (lead.Email) {
+                        updates.push(`email = $${idx++}`);
+                        params.push(lead.Email);
+                    }
+
+                    if (updates.length > 0) {
+                        params.push(lead.ContactId);
+                        await db.query(
+                            `UPDATE contacts SET ${updates.join(', ')}, updated_at = NOW() WHERE id = $${idx}`,
+                            params
+                        );
+                    }
+                }
+            } catch (syncErr) {
+                console.error(`[LeadsAPI][${reqId}] Contact sync error (non-blocking):`, syncErr.message);
+            }
+        }
+
+        // Address sync: if address fields changed, resolve and link to contact_addresses
+        const addressFields = ['Address', 'City', 'State', 'PostalCode', 'Unit'];
+        const hasAddressChange = addressFields.some(f => f in fields);
+        if (hasAddressChange) {
+            try {
+                const db = require('../db/connection');
+                const lead = hasContactChange
+                    ? await leadsService.getLeadByUUID(uuid, req.companyFilter?.company_id)
+                    : await leadsService.getLeadByUUID(uuid, req.companyFilter?.company_id);
+                if (lead && lead.ContactId && lead.Address) {
+                    const addrResult = await contactAddressService.resolveAddress(
+                        lead.ContactId,
+                        {
+                            street: lead.Address,
+                            apt: lead.Unit || null,
+                            city: lead.City || '',
+                            state: lead.State || '',
+                            zip: lead.PostalCode || '',
+                            lat: lead.Latitude || null,
+                            lng: lead.Longitude || null,
+                            placeId: fields.google_place_id || null,
+                        }
+                    );
+                    if (addrResult.contact_address_id) {
+                        await db.query(
+                            'UPDATE leads SET contact_address_id = $1 WHERE uuid = $2',
+                            [addrResult.contact_address_id, uuid]
+                        );
+                    }
+                }
+            } catch (addrErr) {
+                console.error(`[LeadsAPI][${reqId}] Address sync error (non-blocking):`, addrErr.message);
+            }
+        }
+
         res.json(successResponse(result, reqId));
     } catch (err) {
         handleError(err, reqId, res);

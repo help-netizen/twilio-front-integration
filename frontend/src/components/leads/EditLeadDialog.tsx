@@ -9,6 +9,8 @@ import { Textarea } from '../ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { toast } from 'sonner';
 import * as leadsApi from '../../services/leadsApi';
+import * as contactsApi from '../../services/contactsApi';
+import type { SavedAddress } from '../../services/contactsApi';
 import type { Lead, UpdateLeadInput } from '../../types/lead';
 
 interface EditLeadDialogProps {
@@ -48,6 +50,8 @@ import { AddressAutocomplete } from '../AddressAutocomplete';
 export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLeadDialogProps) {
     const [loading, setLoading] = useState(false);
     const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
+    const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
+    const [selectedContactAddressId, setSelectedContactAddressId] = useState<number | null>(null);
     const [formData, setFormData] = useState<UpdateLeadInput>({
         FirstName: lead.FirstName || '',
         LastName: lead.LastName || '',
@@ -55,6 +59,7 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
         Email: lead.Email || '',
         Company: lead.Company || '',
         Address: lead.Address || '',
+        Unit: lead.Unit || '',
         City: lead.City || '',
         State: lead.State || '',
         PostalCode: lead.PostalCode || '',
@@ -78,7 +83,14 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
                 }
             })
             .catch(() => { });
-    }, [open]);
+
+        // Fetch saved addresses for the contact
+        if (lead.ContactId) {
+            contactsApi.getContactAddresses(lead.ContactId)
+                .then((res) => setSavedAddresses(res.data.addresses))
+                .catch(() => { });
+        }
+    }, [open, lead.ContactId]);
 
     // Update form when lead changes
     useEffect(() => {
@@ -89,6 +101,7 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
             Email: lead.Email || '',
             Company: lead.Company || '',
             Address: lead.Address || '',
+            Unit: lead.Unit || '',
             City: lead.City || '',
             State: lead.State || '',
             PostalCode: lead.PostalCode || '',
@@ -208,9 +221,11 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
                             header={<h3 className="font-medium">Address</h3>}
                             idPrefix="edit-lead"
                             defaultUseDetails={true}
+                            savedAddresses={savedAddresses}
+                            onSelectSaved={(id) => setSelectedContactAddressId(id)}
                             value={{
                                 street: formData.Address || '',
-                                apt: '',
+                                apt: formData.Unit || '',
                                 city: formData.City || '',
                                 state: formData.State || '',
                                 zip: formData.PostalCode || '',
@@ -218,6 +233,7 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
                             onChange={(addr) => setFormData({
                                 ...formData,
                                 Address: addr.street,
+                                Unit: addr.apt || '',
                                 City: addr.city,
                                 State: addr.state,
                                 PostalCode: addr.zip,

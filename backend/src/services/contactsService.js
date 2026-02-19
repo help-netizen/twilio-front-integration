@@ -12,15 +12,27 @@ const db = require('../db/connection');
 // =============================================================================
 function rowToContact(row) {
     if (!row) return null;
+    const zbData = row.zenbooker_data || {};
     return {
         id: row.id,
         full_name: row.full_name,
+        first_name: row.first_name || null,
+        last_name: row.last_name || null,
+        company_name: row.company_name || null,
         phone_e164: row.phone_e164,
+        secondary_phone: row.secondary_phone || null,
         email: row.email,
         notes: row.notes,
         zenbooker_customer_id: row.zenbooker_customer_id,
         created_at: row.created_at,
         updated_at: row.updated_at,
+        // Zenbooker-sourced data
+        addresses: zbData.addresses || [],
+        jobs: zbData.jobs || [],
+        recurring_bookings: zbData.recurring_bookings || [],
+        stripe_customer_id: zbData.stripe_customer_id || null,
+        zenbooker_creation_date: zbData.creation_date || null,
+        zenbooker_id: zbData.id || null,
     };
 }
 
@@ -113,21 +125,26 @@ async function upsertFromZenbooker(customer) {
     const customerId = String(customer.id);
     const fullName = [customer.first_name, customer.last_name].filter(Boolean).join(' ') || null;
     const phone = customer.phone || null;
+    const secondaryPhone = customer.secondary_phone || null;
     const email = customer.email || null;
     const notes = customer.notes || null;
+    // Store full Zenbooker payload for rich display
+    const zbData = JSON.stringify(customer);
 
     const sql = `
-        INSERT INTO contacts (full_name, phone_e164, email, notes, zenbooker_customer_id)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO contacts (full_name, phone_e164, secondary_phone, email, notes, zenbooker_customer_id, zenbooker_data)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
         ON CONFLICT (zenbooker_customer_id) DO UPDATE SET
             full_name = COALESCE(EXCLUDED.full_name, contacts.full_name),
             phone_e164 = COALESCE(EXCLUDED.phone_e164, contacts.phone_e164),
+            secondary_phone = COALESCE(EXCLUDED.secondary_phone, contacts.secondary_phone),
             email = COALESCE(EXCLUDED.email, contacts.email),
-            notes = COALESCE(EXCLUDED.notes, contacts.notes)
+            notes = COALESCE(EXCLUDED.notes, contacts.notes),
+            zenbooker_data = EXCLUDED.zenbooker_data
         RETURNING *
     `;
 
-    const { rows } = await db.query(sql, [fullName, phone, email, notes, customerId]);
+    const { rows } = await db.query(sql, [fullName, phone, secondaryPhone, email, notes, customerId, zbData]);
     return rowToContact(rows[0]);
 }
 

@@ -61,6 +61,7 @@ export function CreateLeadJobWizard({ phone, callCount, hasActiveCall, onLeadCre
 
     // Address
     const [streetAddress, setStreetAddress] = useState('');
+    const [unit, setUnit] = useState('');
     const [city, setCity] = useState('');
     const [state, setState] = useState('MA');
 
@@ -180,6 +181,7 @@ export function CreateLeadJobWizard({ phone, callCount, hasActiveCall, onLeadCre
                 Phone: toE164(phoneNumber),
                 Email: email || undefined,
                 Address: streetAddress || undefined,
+                Unit: unit || undefined,
                 City: city || undefined,
                 State: state || undefined,
                 PostalCode: postalCode || undefined,
@@ -574,13 +576,14 @@ export function CreateLeadJobWizard({ phone, callCount, hasActiveCall, onLeadCre
                     idPrefix="wz4"
                     value={{
                         street: streetAddress,
-                        apt: '',
+                        apt: unit,
                         city: city,
                         state: state,
                         zip: postalCode,
                     }}
                     onChange={(addr) => {
                         setStreetAddress(addr.street);
+                        setUnit(addr.apt || '');
                         setCity(addr.city);
                         setState(addr.state);
                         setPostalCode(addr.zip);
