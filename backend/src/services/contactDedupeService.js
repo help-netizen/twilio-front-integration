@@ -297,6 +297,29 @@ async function enrichEmail(contactId, emailNorm) {
 async function createNewContact({ first_name, last_name, phone, email }, companyId) {
     const fullName = [first_name, last_name].filter(Boolean).join(' ') || null;
     const emailNorm = normalizeEmail(email);
+    const phoneNorm = normalizePhone(phone);
+
+    // Check if a contact with this phone already exists (name mismatch scenario)
+    if (phoneNorm) {
+        const { rows: existing } = await db.query(
+            `SELECT id FROM contacts WHERE phone_e164 = $1 LIMIT 1`,
+            [phoneNorm]
+        );
+        if (existing.length > 0) {
+            const contactId = existing[0].id;
+            // Enrich email if needed
+            if (emailNorm) {
+                await db.query(
+                    `INSERT INTO contact_emails (contact_id, email, email_normalized, is_primary)
+                     VALUES ($1, $2, $3, false)
+                     ON CONFLICT (contact_id, email_normalized) DO NOTHING`,
+                    [contactId, email, emailNorm]
+                );
+            }
+            console.log(`[Dedupe] Reused existing contact ${contactId} by phone ${phoneNorm} (name mismatch)`);
+            return contactId;
+        }
+    }
 
     const sql = `
         INSERT INTO contacts (full_name, first_name, last_name, phone_e164, email, company_id)
