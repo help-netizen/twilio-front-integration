@@ -137,16 +137,49 @@ async function processOneJob() {
             WHERE call_sid = $1 AND recording_sid = $2 AND status = 'processing'
         `, [job.call_sid, job.recording_sid, result.text, result.confidence, result.languageCode]);
 
+        // 3a. Generate Gemini summary + entities (non-blocking)
+        let geminiSummary = null;
+        let geminiEntities = [];
+        try {
+            if (result.text && result.text.trim().length > 0) {
+                const { generateCallSummary } = require('./callSummaryService');
+                console.log(`[${traceId}] Generating Gemini summary...`);
+                const summaryResult = await generateCallSummary(result.text);
+                if (summaryResult && !summaryResult.error) {
+                    geminiSummary = summaryResult.summary;
+                    geminiEntities = summaryResult.entities || [];
+                    // Save summary into transcript raw_payload
+                    await db.query(`
+                        UPDATE transcripts
+                        SET raw_payload = COALESCE(raw_payload, '{}'::jsonb) || $3::jsonb,
+                            updated_at = now()
+                        WHERE call_sid = $1 AND recording_sid = $2 AND status = 'completed'
+                    `, [job.call_sid, job.recording_sid, JSON.stringify({
+                        gemini_summary: geminiSummary,
+                        gemini_entities: geminiEntities,
+                        gemini_generated_at: new Date().toISOString(),
+                    })]);
+                    console.log(`[${traceId}] Gemini summary generated: ${geminiSummary?.length || 0} chars, ${geminiEntities.length} entities`);
+                } else {
+                    console.warn(`[${traceId}] Gemini summary skipped: ${summaryResult?.error}`);
+                }
+            }
+        } catch (summaryErr) {
+            console.error(`[${traceId}] Gemini summary failed (non-fatal):`, summaryErr.message);
+        }
+
         // 4. Mark job as done
         await db.query(`UPDATE transcription_jobs SET status = 'done', updated_at = now() WHERE id = $1`, [job.id]);
 
-        // 5. Emit transcript.ready
+        // 5. Emit transcript.ready (include summary if available)
         publishRealtimeEvent('transcript.ready', {
             callSid: job.call_sid,
             recordingSid: job.recording_sid,
             status: 'completed',
             text: result.text,
             confidence: result.confidence,
+            gemini_summary: geminiSummary,
+            gemini_entities: geminiEntities,
         }, traceId);
 
         console.log(`[${traceId}] Transcription completed successfully`);
