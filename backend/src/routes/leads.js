@@ -104,6 +104,24 @@ router.get('/by-phone/:phone', async (req, res) => {
 });
 
 // =============================================================================
+// GET /api/leads/by-id/:id — Get lead by numeric ID
+// =============================================================================
+router.get('/by-id/:id', async (req, res) => {
+    const reqId = requestId();
+    try {
+        const id = Number(req.params.id);
+        if (!id || isNaN(id) || id < 1) {
+            return res.status(400).json(errorResponse('INVALID_ID', 'Numeric ID is required', reqId));
+        }
+
+        const lead = await leadsService.getLeadById(id, req.companyFilter?.company_id);
+        res.json(successResponse({ lead }, reqId));
+    } catch (err) {
+        handleError(err, reqId, res);
+    }
+});
+
+// =============================================================================
 // GET /api/leads/:uuid — Get lead details
 // =============================================================================
 router.get('/:uuid', async (req, res) => {

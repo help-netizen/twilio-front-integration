@@ -461,7 +461,7 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
                         {leads.map((lead) => (
                             <div
                                 key={lead.id}
-                                onClick={() => navigate(`/leads/${lead.uuid}`)}
+                                onClick={() => navigate(`/leads/${lead.id}`)}
                                 style={{
                                     padding: '12px 16px', border: '1px solid #e5e7eb',
                                     borderRadius: '10px', cursor: 'pointer',

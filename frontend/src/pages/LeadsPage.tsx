@@ -68,11 +68,13 @@ export function LeadsPage() {
     // Auto-open lead from URL param (e.g. /leads/:leadId)
     useEffect(() => {
         if (!leadId) return;
+        const numericId = Number(leadId);
+        if (!numericId || isNaN(numericId)) return;
         // Don't re-fetch if already selected
-        if (selectedLead?.UUID === leadId) return;
+        if (selectedLead?.ClientId === String(numericId)) return;
         (async () => {
             try {
-                const detail = await leadsApi.getLeadByUUID(leadId);
+                const detail = await leadsApi.getLeadById(numericId);
                 setSelectedLead(detail.data.lead);
             } catch (err) {
                 console.warn('[LeadsPage] Failed to load lead from URL:', leadId, err);

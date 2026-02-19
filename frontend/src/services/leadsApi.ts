@@ -73,6 +73,13 @@ export async function getLeadByUUID(uuid: string): Promise<LeadDetailResponse> {
 }
 
 /**
+ * Get lead details by numeric ID
+ */
+export async function getLeadById(id: number): Promise<LeadDetailResponse> {
+    return request<LeadDetailResponse>(`${API_BASE}/by-id/${id}`);
+}
+
+/**
  * Create a new lead
  */
 export async function createLead(input: CreateLeadInput): Promise<LeadMutationResponse> {

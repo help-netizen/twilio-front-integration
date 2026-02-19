@@ -265,6 +265,35 @@ async function getLeadByUUID(uuid, companyId = null) {
 }
 
 // =============================================================================
+// Get Lead by numeric ID
+// =============================================================================
+async function getLeadById(id, companyId = null) {
+    const conditions = ['l.id = $1'];
+    const params = [id];
+    if (companyId) {
+        conditions.push(`l.company_id = $2`);
+        params.push(companyId);
+    }
+    const sql = `
+        SELECT l.*,
+            COALESCE(
+                json_agg(json_build_object('id', lta.id, 'name', lta.user_name))
+                FILTER (WHERE lta.id IS NOT NULL), '[]'
+            ) AS team
+        FROM leads l
+        LEFT JOIN lead_team_assignments lta ON lta.lead_id = l.id
+        WHERE ${conditions.join(' AND ')}
+        GROUP BY l.id
+    `;
+
+    const { rows } = await db.query(sql, params);
+    if (rows.length === 0) {
+        throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead #${id} not found`, 404);
+    }
+    return rowToLead(rows[0]);
+}
+
+// =============================================================================
 // Create Lead
 // =============================================================================
 async function createLead(fields, companyId = null) {
@@ -587,6 +616,7 @@ async function getLeadByPhone(phone, companyId = null) {
 module.exports = {
     listLeads,
     getLeadByUUID,
+    getLeadById,
     getLeadByPhone,
     createLead,
     updateLead,
