@@ -274,6 +274,18 @@ async function createLead(fields, companyId = null) {
     // Always set uuid
     columns.uuid = uuid;
 
+    // Normalize phone to E.164 format (+1XXXXXXXXXX for US)
+    if (columns.phone) {
+        const digits = columns.phone.replace(/\D/g, '');
+        if (digits.length === 10) {
+            columns.phone = '+1' + digits;
+        } else if (digits.length === 11 && digits.startsWith('1')) {
+            columns.phone = '+' + digits;
+        } else if (digits.length > 10 && !columns.phone.startsWith('+')) {
+            columns.phone = '+' + digits;
+        }
+    }
+
     // Always set company_id (fallback to default)
     const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
     columns.company_id = companyId || DEFAULT_COMPANY_ID;
