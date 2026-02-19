@@ -11,12 +11,21 @@ interface PulseTimelineProps {
     loading: boolean;
 }
 
+const TZ = 'America/New_York';
+
+function toESTDateKey(date: Date): string {
+    return date.toLocaleDateString('en-CA', { timeZone: TZ }); // YYYY-MM-DD
+}
+
 function formatDateSeparator(date: Date): string {
-    const now = new Date();
-    const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
-    if (diffDays === 0) return 'Today';
-    if (diffDays === 1) return 'Yesterday';
-    return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+    const nowKey = toESTDateKey(new Date());
+    const dateKey = toESTDateKey(date);
+    if (dateKey === nowKey) return 'Today';
+    // Check yesterday
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    if (dateKey === toESTDateKey(yesterday)) return 'Yesterday';
+    return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: TZ });
 }
 
 export function PulseTimeline({ calls, messages, loading }: PulseTimelineProps) {
@@ -82,7 +91,7 @@ export function PulseTimeline({ calls, messages, loading }: PulseTimelineProps) 
 
     for (let i = 0; i < timeline.length; i++) {
         const item = timeline[i];
-        const dateStr = item.timestamp.toDateString();
+        const dateStr = toESTDateKey(item.timestamp);
 
         // Insert date separator on date change
         if (dateStr !== lastDateStr) {

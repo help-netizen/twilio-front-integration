@@ -13,20 +13,28 @@ function formatMessageTime(dateStr: string | null): string {
     return new Date(dateStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+const TZ = 'America/New_York';
+
+function toESTDateKey(d: Date): string {
+    return d.toLocaleDateString('en-CA', { timeZone: TZ }); // YYYY-MM-DD
+}
+
 function formatDateSeparator(dateStr: string): string {
     const date = new Date(dateStr);
-    const now = new Date();
-    const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
-    if (diffDays === 0) return 'Today';
-    if (diffDays === 1) return 'Yesterday';
-    return date.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+    const nowKey = toESTDateKey(new Date());
+    const dateKey = toESTDateKey(date);
+    if (dateKey === nowKey) return 'Today';
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    if (dateKey === toESTDateKey(yesterday)) return 'Yesterday';
+    return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: TZ });
 }
 
 function shouldShowDateSeparator(messages: Message[], index: number): boolean {
     if (index === 0) return true;
     const curr = messages[index].date_created_remote || messages[index].created_at;
     const prev = messages[index - 1].date_created_remote || messages[index - 1].created_at;
-    return new Date(curr).toDateString() !== new Date(prev).toDateString();
+    return toESTDateKey(new Date(curr)) !== toESTDateKey(new Date(prev));
 }
 
 function getDeliveryIcon(status: string | null): string {
