@@ -43,7 +43,8 @@ const STATUS_ICON_COLORS: Record<string, string> = {
 
 function PulseContactItem({ call, isActive }: { call: Call; isActive: boolean }) {
     const navigate = useNavigate();
-    const targetPath = call.contact ? `/pulse/contact/${call.contact.id}` : `/pulse/contact/${call.id}`;
+    const contactId = call.contact?.id || call.id;
+    const targetPath = contactId ? `/pulse/contact/${contactId}` : null;
 
     const rawPhone = call.contact?.phone_e164 || call.from_number || call.to_number || call.call_sid;
     const { lead } = useLeadByPhone(rawPhone);
@@ -98,6 +99,7 @@ function PulseContactItem({ call, isActive }: { call: Call; isActive: boolean })
     return (
         <button
             onClick={() => {
+                if (!targetPath) return;
                 navigate(targetPath);
                 // Mark read on explicit user click — clear BOTH sources
                 if (call.has_unread) {
@@ -460,7 +462,7 @@ export const PulsePage: React.FC = () => {
                             <PulseContactItem
                                 key={call.id ?? `c-${call.contact?.id ?? (call.from_number || idx)}`}
                                 call={call}
-                                isActive={location.pathname === `/pulse/contact/${call.contact?.id || call.id}`}
+                                isActive={!!(call.contact?.id || call.id) && location.pathname === `/pulse/contact/${call.contact?.id || call.id}`}
                             />
                         ))
                     )}

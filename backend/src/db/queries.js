@@ -22,8 +22,6 @@ async function createContact(phoneE164, fullName = null, companyId = null) {
     const result = await db.query(
         `INSERT INTO contacts (phone_e164, full_name, company_id)
          VALUES ($1, $2, $3)
-         ON CONFLICT (phone_e164) WHERE phone_e164 IS NOT NULL
-         DO UPDATE SET full_name = COALESCE(EXCLUDED.full_name, contacts.full_name)
          RETURNING *`,
         [phoneE164, fullName || phoneE164, companyId || DEFAULT_COMPANY_ID]
     );
