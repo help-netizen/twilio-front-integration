@@ -22,7 +22,6 @@ import { AddressAutocomplete } from '../AddressAutocomplete';
 
 interface CreateLeadJobWizardProps {
     phone: string;
-    callCount?: number;
     hasActiveCall?: boolean;
     /** Called after lead is created so the parent can refetch */
     onLeadCreated?: () => void;
@@ -39,7 +38,7 @@ const STEP_LABELS: Record<Step, string> = {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function CreateLeadJobWizard({ phone, callCount, hasActiveCall, onLeadCreated }: CreateLeadJobWizardProps) {
+export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: CreateLeadJobWizardProps) {
     const queryClient = useQueryClient();
     const [step, setStep] = useState<Step>(1);
     const [submitting, setSubmitting] = useState(false);
@@ -696,12 +695,7 @@ export function CreateLeadJobWizard({ phone, callCount, hasActiveCall, onLeadCre
                                 <span>Call</span>
                             </button>
                         )}
-                        {callCount !== undefined && (
-                            <div className="wizard__badge">
-                                <div className="wizard__badge-number">{callCount}</div>
-                                <div className="wizard__badge-label">Calls</div>
-                            </div>
-                        )}
+
                     </div>
                 </div>
             </div>

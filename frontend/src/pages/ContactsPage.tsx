@@ -1,10 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { ContactsList } from '../components/contacts/ContactsList';
 import { ContactDetailPanel } from '../components/contacts/ContactDetailPanel';
 import * as contactsApi from '../services/contactsApi';
 import type { Contact, ContactLead } from '../types/contact';
 
 export function ContactsPage() {
+    const navigate = useNavigate();
+    const { contactId } = useParams<{ contactId?: string }>();
     const [contacts, setContacts] = useState<Contact[]>([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
@@ -34,6 +37,27 @@ export function ContactsPage() {
 
     useEffect(() => { loadContacts(); }, [loadContacts]);
 
+    // Auto-open contact from URL param (e.g. /contacts/:contactId)
+    useEffect(() => {
+        if (!contactId) return;
+        const numericId = Number(contactId);
+        if (!numericId || isNaN(numericId)) return;
+        // Don't re-fetch if already selected
+        if (selectedContact?.id === numericId) return;
+        (async () => {
+            setDetailLoading(true);
+            try {
+                const res = await contactsApi.getContact(numericId);
+                setSelectedContact(res.data.contact);
+                setSelectedLeads(res.data.leads);
+            } catch (err) {
+                console.warn('[ContactsPage] Failed to load contact from URL:', contactId, err);
+            } finally {
+                setDetailLoading(false);
+            }
+        })();
+    }, [contactId]);
+
     // Handle search
     const handleSearch = (value: string) => {
         setSearch(value);
@@ -56,6 +80,8 @@ export function ContactsPage() {
 
     // Handle contact selection
     const handleSelectContact = async (contact: Contact) => {
+        // Update URL to reflect selected contact
+        navigate(`/contacts/${contact.id}`, { replace: true });
         setSelectedContact(contact);
         setDetailLoading(true);
         try {

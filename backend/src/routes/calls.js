@@ -61,7 +61,7 @@ router.get('/active', async (req, res) => {
 // =============================================================================
 router.get('/by-contact', async (req, res) => {
     try {
-        const { limit = 20, offset = 0, search } = req.query;
+        const { limit = 50, offset = 0, search } = req.query;
         const companyId = req.companyFilter?.company_id;
         const calls = await queries.getCallsByTimeline({
             limit: parseInt(limit),
@@ -71,107 +71,40 @@ router.get('/by-contact', async (req, res) => {
         });
         const total = await queries.getTimelinesWithCallsCount(companyId);
 
-        // Format calls first
-        let conversations = calls.map(c => ({
-            ...formatCall(c),
-            call_count: parseInt(c.call_count || 0),
-            timeline_id: c.tl_id || c.timeline_id || null,
-            tl_phone: c.tl_phone || null,
-        }));
+        // Format calls — SMS data already included from SQL
+        let conversations = calls.map(c => {
+            const formatted = formatCall(c);
+            const tlPhone = c.tl_phone || null;
+            const callTime = new Date(c.started_at || c.created_at);
+            const smsTime = c.sms_last_message_at ? new Date(c.sms_last_message_at) : null;
 
-        // Enrich with SMS data: find latest SMS for each timeline's phone
-        try {
-            const phoneMap = {};
-            for (const c of conversations) {
-                // Use timeline phone as the primary key for SMS lookup
-                const tlPhone = c.tl_phone;
-                if (tlPhone) {
-                    const digits = tlPhone.replace(/\D/g, '');
-                    phoneMap[digits] = tlPhone;
-                }
-                // Also include contact phones (primary + secondary)
-                const raw = c.contact?.phone_e164;
-                if (raw) {
-                    const digits = raw.replace(/\D/g, '');
-                    if (!phoneMap[digits]) phoneMap[digits] = raw;
-                }
-                const sec = c.contact?.secondary_phone;
-                if (sec) {
-                    const secDigits = sec.replace(/\D/g, '');
-                    if (secDigits && !phoneMap[secDigits]) phoneMap[secDigits] = sec;
-                }
+            let last_interaction_at, last_interaction_type, last_interaction_phone;
+            if (smsTime && smsTime > callTime) {
+                last_interaction_at = c.sms_last_message_at;
+                last_interaction_type = c.sms_last_message_direction === 'inbound' ? 'sms_inbound' : 'sms_outbound';
+                last_interaction_phone = tlPhone || c.contact?.phone_e164 || c.from_number;
+            } else {
+                last_interaction_at = c.started_at || c.created_at;
+                last_interaction_type = 'call';
+                const isInbound = (c.direction || '').includes('inbound');
+                const candidatePhone = isInbound ? c.from_number : c.to_number;
+                last_interaction_phone = (candidatePhone && !candidatePhone.startsWith('sip:'))
+                    ? candidatePhone : (tlPhone || c.contact?.phone_e164 || c.from_number || c.to_number);
             }
-            const digitPhones = Object.keys(phoneMap);
 
-            if (digitPhones.length > 0) {
-                const db = require('../db/connection');
-                const smsResult = await db.query(
-                    `SELECT customer_e164,
-                            regexp_replace(customer_e164, '\\\\D', '', 'g') as customer_digits,
-                            last_message_at,
-                            last_message_direction,
-                            last_message_preview,
-                            (SELECT COUNT(*) FROM sms_messages m
-                             JOIN sms_conversations sc2 ON sc2.id = m.conversation_id
-                             WHERE sc2.customer_e164 = sc.customer_e164) as sms_count
-                     FROM sms_conversations sc
-                     WHERE regexp_replace(customer_e164, '\\\\D', '', 'g') = ANY($1)`,
-                    [digitPhones]
-                );
+            return {
+                ...formatted,
+                timeline_id: c.tl_id || c.timeline_id || null,
+                tl_phone: tlPhone,
+                has_unread: c.sms_has_unread || false,
+                sms_conversation_id: c.sms_conversation_id || null,
+                last_interaction_at,
+                last_interaction_type,
+                last_interaction_phone,
+            };
+        });
 
-                const smsMap = {};
-                for (const row of smsResult.rows) {
-                    const digits = row.customer_digits;
-                    const existing = smsMap[digits];
-                    if (!existing || (row.last_message_at && (!existing.last_message_at || new Date(row.last_message_at) > new Date(existing.last_message_at)))) {
-                        smsMap[digits] = row;
-                    }
-                }
-
-                // Merge SMS data into conversations
-                for (const conv of conversations) {
-                    // Use timeline phone as primary, fall back to contact phones
-                    const tlPhone = conv.tl_phone;
-                    const tlDigits = tlPhone ? tlPhone.replace(/\D/g, '') : null;
-                    const contactPhone = conv.contact?.phone_e164;
-                    const contactDigits = contactPhone ? contactPhone.replace(/\D/g, '') : null;
-                    const sec = conv.contact?.secondary_phone;
-                    const secDigits = sec ? sec.replace(/\D/g, '') : null;
-
-                    const sms = (tlDigits ? smsMap[tlDigits] : null)
-                        || (contactDigits ? smsMap[contactDigits] : null)
-                        || (secDigits ? smsMap[secDigits] : null);
-                    const callTime = new Date(conv.started_at || conv.created_at);
-                    const smsTime = sms?.last_message_at ? new Date(sms.last_message_at) : null;
-
-                    conv.sms_count = sms ? parseInt(sms.sms_count || 0) : 0;
-
-                    if (smsTime && smsTime > callTime) {
-                        conv.last_interaction_at = sms.last_message_at;
-                        conv.last_interaction_type = sms.last_message_direction === 'inbound' ? 'sms_inbound' : 'sms_outbound';
-                        conv.last_interaction_phone = sms.customer_e164;
-                    } else {
-                        conv.last_interaction_at = conv.started_at || conv.created_at;
-                        conv.last_interaction_type = 'call';
-                        const isInbound = (conv.direction || '').includes('inbound');
-                        const candidatePhone = isInbound ? conv.from_number : conv.to_number;
-                        conv.last_interaction_phone = (candidatePhone && !candidatePhone.startsWith('sip:'))
-                            ? candidatePhone : (tlPhone || contactPhone || conv.from_number || conv.to_number);
-                    }
-                }
-            }
-        } catch (smsErr) {
-            console.warn('[by-contact] SMS enrichment failed, using call-only order:', smsErr.message);
-            for (const conv of conversations) {
-                conv.last_interaction_at = conv.started_at || conv.created_at;
-                conv.last_interaction_type = 'call';
-                conv.sms_count = 0;
-            }
-        }
-
-        // =====================================================================
         // Add SMS-only timelines (those with SMS but NO calls)
-        // =====================================================================
         try {
             const existingDigits = new Set();
             for (const c of conversations) {
@@ -185,20 +118,19 @@ router.get('/by-contact', async (req, res) => {
                 if (c.to_number) existingDigits.add(c.to_number.replace(/\D/g, ''));
             }
 
-            const db = require('../db/connection');
-            const smsOnlyResult = await db.query(
-                `SELECT sc.*,
-                        regexp_replace(sc.customer_e164, '\\\\D', '', 'g') as customer_digits,
-                        (SELECT COUNT(*) FROM sms_messages m
-                         WHERE m.conversation_id = sc.id) as sms_count
+            const dbConn = require('../db/connection');
+            const smsOnlyResult = await dbConn.query(
+                `SELECT sc.*, sc.customer_digits
                  FROM sms_conversations sc
                  ORDER BY sc.last_message_at DESC NULLS LAST
                  LIMIT 200`
             );
 
+            // Filter to SMS-only (not already covered by call timelines)
+            const smsOnlyRows = [];
             for (const smsRow of smsOnlyResult.rows) {
                 const digits = smsRow.customer_digits;
-                if (existingDigits.has(digits)) continue;
+                if (!digits || existingDigits.has(digits)) continue;
                 existingDigits.add(digits);
 
                 if (search) {
@@ -210,123 +142,120 @@ router.get('/by-contact', async (req, res) => {
                     if (smsRow.customer_e164 && smsRow.customer_e164.toLowerCase().includes(searchTerm)) matches = true;
                     if (!matches) continue;
                 }
+                smsOnlyRows.push(smsRow);
+            }
 
-                // Find contact (do NOT create)
-                let contact = null;
-                try {
-                    contact = await queries.findContactByPhoneOrSecondary(smsRow.customer_e164);
-                } catch (e) {
-                    console.warn('[by-contact] Failed to resolve SMS-only contact:', e.message);
+            if (smsOnlyRows.length > 0) {
+                // Batch: find contacts by phone digits (2 queries instead of N*2)
+                const smsDigitsList = smsOnlyRows.map(s => s.customer_digits);
+                const [contactsResult, timelinesResult] = await Promise.all([
+                    dbConn.query(
+                        `SELECT * FROM contacts
+                         WHERE regexp_replace(phone_e164, '[^0-9]', '', 'g') = ANY($1)
+                            OR regexp_replace(secondary_phone, '[^0-9]', '', 'g') = ANY($1)`,
+                        [smsDigitsList]
+                    ),
+                    dbConn.query(
+                        `SELECT t.*, regexp_replace(COALESCE(t.phone_e164, c.phone_e164), '[^0-9]', '', 'g') as tl_digits
+                         FROM timelines t
+                         LEFT JOIN contacts c ON t.contact_id = c.id
+                         WHERE regexp_replace(COALESCE(t.phone_e164, c.phone_e164), '[^0-9]', '', 'g') = ANY($1)`,
+                        [smsDigitsList]
+                    ),
+                ]);
+
+                // Build lookup maps
+                const contactByDigits = {};
+                for (const co of contactsResult.rows) {
+                    const d1 = co.phone_e164 ? co.phone_e164.replace(/\D/g, '') : null;
+                    const d2 = co.secondary_phone ? co.secondary_phone.replace(/\D/g, '') : null;
+                    if (d1) contactByDigits[d1] = co;
+                    if (d2 && !contactByDigits[d2]) contactByDigits[d2] = co;
+                }
+                const timelineByDigits = {};
+                for (const tl of timelinesResult.rows) {
+                    if (tl.tl_digits) timelineByDigits[tl.tl_digits] = tl;
                 }
 
-                // Find or create timeline for this SMS phone
-                let timeline = null;
-                try {
-                    timeline = await queries.findOrCreateTimeline(smsRow.customer_e164, smsRow.company_id);
-                } catch (e) {
-                    console.warn('[by-contact] Failed to create SMS-only timeline:', e.message);
-                }
+                for (const smsRow of smsOnlyRows) {
+                    const contact = contactByDigits[smsRow.customer_digits] || null;
+                    const timeline = timelineByDigits[smsRow.customer_digits] || null;
 
-                conversations.push({
-                    id: null,
-                    call_sid: null,
-                    direction: smsRow.last_message_direction === 'inbound' ? 'inbound' : 'outbound',
-                    from_number: smsRow.customer_e164,
-                    to_number: smsRow.proxy_e164 || '',
-                    status: 'completed',
-                    is_final: true,
-                    started_at: smsRow.last_message_at,
-                    ended_at: null,
-                    duration_sec: null,
-                    created_at: smsRow.created_at,
-                    updated_at: smsRow.updated_at,
-                    contact: contact ? {
-                        id: contact.id,
-                        phone_e164: contact.phone_e164,
-                        full_name: contact.full_name,
-                        email: contact.email,
-                        secondary_phone: contact.secondary_phone,
-                        secondary_phone_name: contact.secondary_phone_name,
-                        company_name: contact.company_name,
-                        created_at: contact.created_at,
-                        updated_at: contact.updated_at,
-                    } : null,
-                    timeline_id: timeline?.id || null,
-                    tl_phone: smsRow.customer_e164,
-                    call_count: 0,
-                    sms_count: parseInt(smsRow.sms_count || 0),
-                    last_interaction_at: smsRow.last_message_at,
-                    last_interaction_type: smsRow.last_message_direction === 'inbound' ? 'sms_inbound' : 'sms_outbound',
-                    last_interaction_phone: smsRow.customer_e164,
-                });
+                    conversations.push({
+                        id: null,
+                        call_sid: null,
+                        direction: smsRow.last_message_direction === 'inbound' ? 'inbound' : 'outbound',
+                        from_number: smsRow.customer_e164,
+                        to_number: smsRow.proxy_e164 || '',
+                        status: 'completed',
+                        is_final: true,
+                        started_at: smsRow.last_message_at,
+                        ended_at: null,
+                        duration_sec: null,
+                        created_at: smsRow.created_at,
+                        updated_at: smsRow.updated_at,
+                        contact: contact ? {
+                            id: contact.id,
+                            phone_e164: contact.phone_e164,
+                            full_name: contact.full_name,
+                            email: contact.email,
+                            secondary_phone: contact.secondary_phone,
+                            secondary_phone_name: contact.secondary_phone_name,
+                            company_name: contact.company_name,
+                            created_at: contact.created_at,
+                            updated_at: contact.updated_at,
+                        } : null,
+                        timeline_id: timeline?.id || null,
+                        tl_phone: smsRow.customer_e164,
+                        has_unread: smsRow.has_unread || false,
+                        sms_conversation_id: smsRow.id || null,
+                        last_interaction_at: smsRow.last_message_at,
+                        last_interaction_type: smsRow.last_message_direction === 'inbound' ? 'sms_inbound' : 'sms_outbound',
+                        last_interaction_phone: smsRow.customer_e164,
+                    });
+                }
             }
         } catch (smsOnlyErr) {
             console.warn('[by-contact] SMS-only timelines failed:', smsOnlyErr.message);
         }
 
-        // Enrich with has_unread from BOTH sms_conversations AND contacts tables
+        // Enrich with has_unread from contacts table (SMS unread already from SQL)
         try {
             const dbConn = require('../db/connection');
-            const phoneNumbers = conversations
-                .map(c => c.tl_phone || c.contact?.phone_e164 || c.from_number)
-                .filter(Boolean);
-            const smsUnreadMap = {};
-            const convIdMap = {};
-            if (phoneNumbers.length > 0) {
-                const smsResult = await dbConn.query(
-                    `SELECT id, customer_e164, has_unread FROM sms_conversations WHERE customer_e164 = ANY($1)`,
-                    [phoneNumbers]
-                );
-                for (const row of smsResult.rows) {
-                    smsUnreadMap[row.customer_e164] = row.has_unread;
-                    convIdMap[row.customer_e164] = row.id;
-                }
-            }
-
             const contactIds = conversations.map(c => c.contact?.id).filter(Boolean);
-            const contactUnreadMap = {};
             if (contactIds.length > 0) {
                 const contactResult = await dbConn.query(
                     `SELECT id, has_unread FROM contacts WHERE id = ANY($1)`,
                     [contactIds]
                 );
+                const contactUnreadMap = {};
                 for (const row of contactResult.rows) {
                     contactUnreadMap[row.id] = row.has_unread;
                 }
-            }
-
-            for (const conv of conversations) {
-                const phone = conv.tl_phone || conv.contact?.phone_e164 || conv.from_number || '';
-                const cid = conv.contact?.id;
-                const smsUnread = phone ? (smsUnreadMap[phone] || false) : false;
-                const contactUnread = cid ? (contactUnreadMap[cid] || false) : false;
-                conv.has_unread = smsUnread || contactUnread;
-                conv.sms_conversation_id = phone ? (convIdMap[phone] || null) : null;
+                for (const conv of conversations) {
+                    const cid = conv.contact?.id;
+                    if (cid && contactUnreadMap[cid]) {
+                        conv.has_unread = true;
+                    }
+                }
             }
         } catch (e) {
             console.warn('[by-contact] Unread enrichment failed:', e.message);
         }
 
-        // Final dedup by timeline phone digits
+        // Dedup by timeline phone digits
         {
-            const beforeCount = conversations.length;
             const seen = new Map();
             const deduped = [];
             for (const conv of conversations) {
                 const raw = conv.tl_phone || conv.contact?.phone_e164 || conv.from_number || '';
                 const digits = raw.replace(/\D/g, '');
                 if (!digits) { deduped.push(conv); continue; }
-                const existing = seen.get(digits);
-                if (existing !== undefined) {
-                    if ((conv.call_count || 0) > (deduped[existing].call_count || 0)) {
-                        deduped[existing] = { ...conv, sms_count: Math.max(conv.sms_count || 0, deduped[existing].sms_count || 0) };
-                    } else {
-                        deduped[existing].sms_count = Math.max(conv.sms_count || 0, deduped[existing].sms_count || 0);
-                    }
-                } else {
+                if (!seen.has(digits)) {
                     seen.set(digits, deduped.length);
                     deduped.push(conv);
                 }
+                // Keep whichever was first (already sorted by recency)
             }
             conversations = deduped;
         }

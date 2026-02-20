@@ -735,7 +735,6 @@ async function findContactByPhoneOrSecondary(phoneE164) {
  */
 async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, search = null } = {}) {
     const companyFilter = companyId ? `AND c.company_id = $3` : '';
-    const companyFilter2 = companyId ? `AND c2.company_id = $3` : '';
     const params = [limit, offset];
     if (companyId) params.push(companyId);
 
@@ -776,21 +775,30 @@ async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, se
                 to_json(co) as contact,
                 tl.id as tl_id,
                 COALESCE(tl.phone_e164, co.phone_e164) as tl_phone,
-                (SELECT COUNT(*) FROM calls c2
-                 WHERE c2.timeline_id = c.timeline_id
-                   AND c2.parent_call_sid IS NULL
-                   ${companyFilter2}) as call_count,
-                (SELECT MAX(sc.last_message_at) FROM sms_conversations sc
-                 WHERE regexp_replace(sc.customer_e164, E'\\\\D', '', 'g') IN (
-                     regexp_replace(COALESCE(tl.phone_e164, co.phone_e164), E'\\\\D', '', 'g'),
-                     CASE WHEN co.secondary_phone IS NOT NULL
-                          THEN regexp_replace(co.secondary_phone, E'\\\\D', '', 'g')
-                          ELSE NULL END
-                 )
-                ) as sms_last_at
+                tl.sms_last_at,
+                -- SMS enrichment via LEFT JOIN (using pre-computed customer_digits)
+                sms.last_message_at as sms_last_message_at,
+                sms.last_message_direction as sms_last_message_direction,
+                sms.last_message_preview as sms_last_message_preview,
+                sms.has_unread as sms_has_unread,
+                sms.sms_conversation_id
              FROM calls c
              LEFT JOIN timelines tl ON c.timeline_id = tl.id
              LEFT JOIN contacts co ON tl.contact_id = co.id
+             -- SMS enrichment: find matching conversation by customer_digits
+             LEFT JOIN LATERAL (
+                 SELECT sc.last_message_at, sc.last_message_direction,
+                        sc.last_message_preview, sc.has_unread, sc.id as sms_conversation_id
+                 FROM sms_conversations sc
+                 WHERE sc.customer_digits IN (
+                     regexp_replace(COALESCE(tl.phone_e164, co.phone_e164), '[^0-9]', '', 'g'),
+                     CASE WHEN co.secondary_phone IS NOT NULL
+                          THEN regexp_replace(co.secondary_phone, '[^0-9]', '', 'g')
+                          ELSE NULL END
+                 )
+                 ORDER BY sc.last_message_at DESC NULLS LAST
+                 LIMIT 1
+             ) sms ON true
              WHERE c.timeline_id IS NOT NULL
                AND c.parent_call_sid IS NULL
                ${companyFilter}

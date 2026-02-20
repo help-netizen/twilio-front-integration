@@ -1,24 +1,44 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { callsApi } from '../services/api';
 import { useCallback } from 'react';
 
+const PAGE_SIZE = 50;
+
 /**
- * Hook: list of calls grouped by contact (sidebar / conversations list)
+ * Hook: list of timelines grouped by contact (sidebar / conversations list)
+ * Uses infinite query for scroll-based pagination.
  */
 export const useCallsByContact = (search?: string) => {
     const queryClient = useQueryClient();
 
-    const query = useQuery({
+    const query = useInfiniteQuery({
         queryKey: ['calls-by-contact', search || ''],
-        queryFn: () => callsApi.getByContact(100, 0, search || undefined),
-        staleTime: 0, // Always refetch on mount so new messages show after navigating
+        queryFn: ({ pageParam = 0 }) =>
+            callsApi.getByContact(PAGE_SIZE, pageParam, search || undefined),
+        initialPageParam: 0,
+        getNextPageParam: (lastPage, allPages) => {
+            const lastPageSize = lastPage.conversations?.length || 0;
+            // If the last page returned fewer items than PAGE_SIZE, there are no more
+            if (lastPageSize < PAGE_SIZE) return undefined;
+            const loaded = allPages.reduce((n, p) => n + (p.conversations?.length || 0), 0);
+            return loaded;
+        },
+        staleTime: 0,
     });
 
     const refetch = useCallback(() => {
         queryClient.invalidateQueries({ queryKey: ['calls-by-contact'] });
     }, [queryClient]);
 
-    return { ...query, refetch };
+    // Flatten pages into single conversations array for backwards compatibility
+    const conversations = query.data?.pages?.flatMap(p => p.conversations || []) || [];
+    const total = query.data?.pages?.[0]?.total || 0;
+
+    return {
+        ...query,
+        data: { conversations, total },
+        refetch,
+    };
 };
 
 /**

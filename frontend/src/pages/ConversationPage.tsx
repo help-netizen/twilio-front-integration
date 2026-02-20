@@ -138,7 +138,6 @@ export const ConversationPage: React.FC = () => {
                 {phone && (
                     <LeadCard
                         phone={phone}
-                        callCount={calls?.length}
                         hasActiveCall={calls?.some(c => ['ringing', 'in-progress', 'queued', 'initiated', 'voicemail_recording'].includes(c.status))}
                     />
                 )}

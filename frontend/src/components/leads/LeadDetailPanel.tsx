@@ -65,7 +65,7 @@ function MetadataSection({ lead }: { lead: Lead }) {
             <div className="space-y-3">
                 {/* Job Source */}
                 <div className="flex items-start gap-3">
-                    <Tag className="size-4 mt-0.5 text-muted-foreground" />
+                    <Tag className="size-4 shrink-0 text-muted-foreground" />
                     <div className="flex-1">
                         <Label className="text-xs text-muted-foreground">Job Source</Label>
                         <div className="text-sm font-medium mt-1">
@@ -76,7 +76,7 @@ function MetadataSection({ lead }: { lead: Lead }) {
 
                 {/* Created Date */}
                 <div className="flex items-start gap-3">
-                    <Calendar className="size-4 mt-0.5 text-muted-foreground" />
+                    <Calendar className="size-4 shrink-0 text-muted-foreground" />
                     <div className="flex-1">
                         <Label className="text-xs text-muted-foreground">Created Date</Label>
                         <div className="text-sm font-medium mt-1">
@@ -90,7 +90,7 @@ function MetadataSection({ lead }: { lead: Lead }) {
                 {/* Custom user-defined fields */}
                 {customFields.map((field) => (
                     <div key={field.id} className="flex items-start gap-3">
-                        <FileText className="size-4 mt-0.5 text-muted-foreground" />
+                        <FileText className="size-4 shrink-0 text-muted-foreground" />
                         <div className="flex-1">
                             <Label className="text-xs text-muted-foreground">{field.display_name}</Label>
                             <div className="text-sm font-medium mt-1 whitespace-pre-wrap">
@@ -331,7 +331,7 @@ export function LeadDetailPanel({
                             )}
 
                             <div className="flex items-start gap-3">
-                                <Phone className="size-4 mt-0.5 text-muted-foreground" />
+                                <Phone className="size-4 shrink-0 text-muted-foreground" />
                                 <div className="flex-1">
                                     <Label className="text-xs text-muted-foreground">Phone</Label>
                                     <div className="flex items-center gap-2">
@@ -352,7 +352,7 @@ export function LeadDetailPanel({
 
                             {lead.SecondPhone && (
                                 <div className="flex items-start gap-3">
-                                    <Phone className="size-4 mt-0.5 text-muted-foreground" />
+                                    <Phone className="size-4 shrink-0 text-muted-foreground" />
                                     <div className="flex-1">
                                         <Label className="text-xs text-muted-foreground">
                                             {lead.SecondPhoneName ? `Secondary Phone (${lead.SecondPhoneName})` : 'Secondary Phone'}
@@ -376,7 +376,7 @@ export function LeadDetailPanel({
 
                             {lead.Email && (
                                 <div className="flex items-start gap-3">
-                                    <Mail className="size-4 mt-0.5 text-muted-foreground" />
+                                    <Mail className="size-4 shrink-0 text-muted-foreground" />
                                     <div className="flex-1">
                                         <Label className="text-xs text-muted-foreground">Email</Label>
                                         <a
@@ -392,7 +392,7 @@ export function LeadDetailPanel({
                             {/* Address */}
                             {(lead.Address || lead.City) && (
                                 <div className="flex items-start gap-3">
-                                    <MapPin className="size-4 mt-0.5 text-muted-foreground" />
+                                    <MapPin className="size-4 shrink-0 text-muted-foreground" />
                                     <div className="flex-1">
                                         <Label className="text-xs text-muted-foreground">Address</Label>
                                         <div className="text-sm font-medium mt-1">

@@ -26,6 +26,7 @@ export interface SSECallEvent {
     duration_sec?: number;
     answered_by?: string;
     contact_id?: number;
+    timeline_id?: number;
     contact?: {
         id: number;
         phone_e164: string;

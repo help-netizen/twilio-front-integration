@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { LeadsTable } from '../components/leads/LeadsTable';
 import { LeadsFilters } from '../components/leads/LeadsFilters';
@@ -17,6 +17,7 @@ import { DEFAULT_COLUMNS } from '../types/lead';
 const STORAGE_KEY = 'leads-table-columns';
 
 export function LeadsPage() {
+    const navigate = useNavigate();
     const { leadId } = useParams<{ leadId?: string }>();
     const [leads, setLeads] = useState<Lead[]>([]);
     const [loading, setLoading] = useState(true);
@@ -139,6 +140,9 @@ export function LeadsPage() {
 
     // Handle lead selection — fetch full detail
     const handleSelectLead = async (lead: Lead) => {
+        // Update URL to reflect selected lead
+        const leadUrlId = lead.SerialId || lead.ClientId;
+        if (leadUrlId) navigate(`/leads/${leadUrlId}`, { replace: true });
         try {
             const detail = await leadsApi.getLeadByUUID(lead.UUID);
             setSelectedLead(detail.data.lead);
@@ -318,7 +322,7 @@ export function LeadsPage() {
             {/* Right: Detail Panel */}
             <LeadDetailPanel
                 lead={selectedLead}
-                onClose={() => setSelectedLead(null)}
+                onClose={() => { setSelectedLead(null); navigate('/leads', { replace: true }); }}
                 onEdit={(lead) => setEditingLead(lead)}
                 onMarkLost={handleMarkLost}
                 onActivate={handleActivate}

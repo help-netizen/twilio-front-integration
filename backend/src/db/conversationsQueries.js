@@ -13,19 +13,22 @@ async function upsertConversation(data) {
         company_id = DEFAULT_COMPANY_ID,
     } = data;
 
+    const customer_digits = customer_e164 ? customer_e164.replace(/\D/g, '') : null;
+
     const result = await db.query(`
         INSERT INTO sms_conversations
             (twilio_conversation_sid, service_sid, channel_type, state,
-             customer_e164, proxy_e164, friendly_name, attributes, source, company_id)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+             customer_e164, proxy_e164, friendly_name, attributes, source, company_id, customer_digits)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
         ON CONFLICT (twilio_conversation_sid) DO UPDATE SET
             state = EXCLUDED.state,
             friendly_name = COALESCE(EXCLUDED.friendly_name, sms_conversations.friendly_name),
             attributes = sms_conversations.attributes || EXCLUDED.attributes,
+            customer_digits = COALESCE(EXCLUDED.customer_digits, sms_conversations.customer_digits),
             updated_at = now()
         RETURNING *
     `, [twilio_conversation_sid, service_sid, channel_type, state,
-        customer_e164, proxy_e164, friendly_name, JSON.stringify(attributes), source, company_id]);
+        customer_e164, proxy_e164, friendly_name, JSON.stringify(attributes), source, company_id, customer_digits]);
     return result.rows[0];
 }
 

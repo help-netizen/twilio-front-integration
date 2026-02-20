@@ -59,10 +59,16 @@ export function PulseTimeline({ calls, messages, loading }: PulseTimelineProps) 
         return items;
     }, [calls, messages]);
 
-    // Auto-scroll to bottom
+    // Auto-scroll to bottom when timeline loads
     useEffect(() => {
         if (!loading && timeline.length > 0) {
-            endRef.current?.scrollIntoView({ behavior: 'smooth' });
+            // Use rAF to ensure DOM is painted before scrolling
+            requestAnimationFrame(() => {
+                const scrollContainer = endRef.current?.closest('.pulse-timeline-scroll');
+                if (scrollContainer) {
+                    scrollContainer.scrollTop = scrollContainer.scrollHeight;
+                }
+            });
         }
     }, [timeline.length, loading]);
 

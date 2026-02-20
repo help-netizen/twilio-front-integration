@@ -65,8 +65,6 @@ function PulseContactItem({ call, isActive }: { call: Call; isActive: boolean })
     const displayDate = new Date(call.last_interaction_at || call.started_at || call.created_at);
     const interactionType = call.last_interaction_type || 'call';
 
-    // Total interactions count (calls + SMS)
-    const totalCount = (call.call_count || 0) + (call.sms_count || 0);
 
     // Icon logic: show last interaction type
     const callDirection = call.direction === 'inbound' ? 'inbound'
@@ -136,9 +134,7 @@ function PulseContactItem({ call, isActive }: { call: Call; isActive: boolean })
                 <div className="min-w-0 flex-1">
                     <div className="flex items-baseline justify-between mb-1">
                         <span className={`text-sm truncate ${call.has_unread ? 'font-semibold text-gray-900' : 'font-medium text-gray-900'}`}>{primaryText}</span>
-                        {totalCount > 0 && (
-                            <span className="text-xs text-gray-500 ml-2 shrink-0">({totalCount})</span>
-                        )}
+
                     </div>
                     {showSecondaryPhone && (
                         <div className="text-xs text-gray-600 mb-1 font-mono">{formatPhoneNumber(displayPhone)}</div>
@@ -227,7 +223,23 @@ export const PulsePage: React.FC = () => {
     }, [searchQuery]);
 
     // Contact list
-    const { data: contactData, isLoading: contactsLoading, refetch: refetchContacts } = useCallsByContact(debouncedSearch || undefined);
+    const { data: contactData, isLoading: contactsLoading, refetch: refetchContacts, fetchNextPage, hasNextPage, isFetchingNextPage } = useCallsByContact(debouncedSearch || undefined);
+
+    // Infinite scroll sentinel
+    const loadMoreRef = useRef<HTMLDivElement | null>(null);
+    useEffect(() => {
+        if (!loadMoreRef.current) return;
+        const observer = new IntersectionObserver(
+            (entries) => {
+                if (entries[0].isIntersecting && hasNextPage && !isFetchingNextPage) {
+                    fetchNextPage();
+                }
+            },
+            { threshold: 0.1 }
+        );
+        observer.observe(loadMoreRef.current);
+        return () => observer.disconnect();
+    }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
     // Timeline data — use timelineId if on timeline route, else contactId
     const { data: timelineData, isLoading: timelineLoading, refetch: refetchTimeline } = usePulseTimeline(contactId, timelineId || undefined);
@@ -237,7 +249,10 @@ export const PulsePage: React.FC = () => {
         onCallUpdate: (event: SSECallEvent) => {
             if (event.parent_call_sid) return;
             refetchContacts();
-            if (contactId && event.contact_id && Number(event.contact_id) === contactId) {
+            if (
+                (contactId && event.contact_id && Number(event.contact_id) === contactId) ||
+                (timelineId && event.timeline_id && Number(event.timeline_id) === timelineId)
+            ) {
                 refetchTimeline();
             }
         },
@@ -275,16 +290,11 @@ export const PulsePage: React.FC = () => {
             const phone = c.contact?.phone_e164 || c.from_number || '';
             const digits = phone.replace(/\D/g, '');
             if (!digits) { deduped.push(c); continue; }
-            const existingIdx = seen.get(digits);
-            if (existingIdx !== undefined) {
-                // Keep the one with more calls
-                if ((c.call_count || 0) > (deduped[existingIdx].call_count || 0)) {
-                    deduped[existingIdx] = c;
-                }
-            } else {
+            if (!seen.has(digits)) {
                 seen.set(digits, deduped.length);
                 deduped.push(c);
             }
+            // Keep whichever was first (already sorted by recency)
         }
         return deduped;
     }, [contactData?.conversations]);
@@ -543,6 +553,12 @@ export const PulsePage: React.FC = () => {
                             );
                         })
                     )}
+                    {/* Infinite scroll sentinel */}
+                    <div ref={loadMoreRef} className="h-8 flex items-center justify-center">
+                        {isFetchingNextPage && (
+                            <div className="text-xs text-muted-foreground">Loading more...</div>
+                        )}
+                    </div>
                 </div>
             </div>
 
@@ -566,7 +582,6 @@ export const PulsePage: React.FC = () => {
                         <div className="flex-1 overflow-y-auto">
                             <CreateLeadJobWizard
                                 phone={phone}
-                                callCount={contactCalls.length}
                                 hasActiveCall={hasActiveCall}
                             />
                         </div>

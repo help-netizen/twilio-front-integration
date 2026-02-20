@@ -8,7 +8,6 @@ import './LeadCard.css';
 
 interface LeadCardProps {
     phone: string;
-    callCount?: number;
     hasActiveCall?: boolean;
 }
 
@@ -45,7 +44,7 @@ function buildAddress(lead: Lead): string | null {
 
 /* ────────────────────────────────────── */
 
-export function LeadCard({ phone, callCount, hasActiveCall }: LeadCardProps) {
+export function LeadCard({ phone, hasActiveCall }: LeadCardProps) {
     const { lead, isLoading } = useLeadByPhone(phone);
     const [confirmCall, setConfirmCall] = useState(false);
 
@@ -74,7 +73,7 @@ export function LeadCard({ phone, callCount, hasActiveCall }: LeadCardProps) {
     }
 
     if (!lead) {
-        return <CreateLeadJobWizard phone={phone} callCount={callCount} hasActiveCall={hasActiveCall} />;
+        return <CreateLeadJobWizard phone={phone} hasActiveCall={hasActiveCall} />;
     }
 
     const displayName = [lead.FirstName, lead.LastName].filter(Boolean).join(' ') || 'Unknown';
@@ -119,12 +118,7 @@ export function LeadCard({ phone, callCount, hasActiveCall }: LeadCardProps) {
                                 <span>Call</span>
                             </button>
                         )}
-                        {callCount !== undefined && (
-                            <div className="lead-card__badge">
-                                <div className="lead-card__badge-number">{callCount}</div>
-                                <div className="lead-card__badge-label">Calls</div>
-                            </div>
-                        )}
+
                     </div>
                 </div>
             </div>
