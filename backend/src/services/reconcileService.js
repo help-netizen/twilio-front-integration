@@ -93,7 +93,13 @@ async function reconcileCall(twilioPayload, source) {
         contactId,
         timelineId,
         direction: processed.direction,
-        fromNumber: extractPhoneFromSIP(normalized.fromNumber),
+        fromNumber: (() => {
+            const extracted = extractPhoneFromSIP(normalized.fromNumber);
+            if (extracted && extracted.startsWith('sip:')) {
+                return process.env.OUTBOUND_CALLER_ID || '+16175006181';
+            }
+            return extracted;
+        })(),
         toNumber: extractPhoneFromSIP(normalized.toNumber),
         status: normalized.eventStatus,
         isFinal,

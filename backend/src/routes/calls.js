@@ -78,18 +78,25 @@ router.get('/by-contact', async (req, res) => {
             const callTime = new Date(c.started_at || c.created_at);
             const smsTime = c.sms_last_message_at ? new Date(c.sms_last_message_at) : null;
 
+            // Helper: pick the first non-SIP phone from candidates
+            const pickPhone = (...candidates) => {
+                for (const p of candidates) {
+                    if (p && !p.startsWith('sip:')) return p;
+                }
+                return candidates.find(Boolean) || '';
+            };
+
             let last_interaction_at, last_interaction_type, last_interaction_phone;
             if (smsTime && smsTime > callTime) {
                 last_interaction_at = c.sms_last_message_at;
                 last_interaction_type = c.sms_last_message_direction === 'inbound' ? 'sms_inbound' : 'sms_outbound';
-                last_interaction_phone = tlPhone || c.contact?.phone_e164 || c.from_number;
+                last_interaction_phone = pickPhone(tlPhone, c.contact?.phone_e164, c.from_number, c.to_number);
             } else {
                 last_interaction_at = c.started_at || c.created_at;
                 last_interaction_type = 'call';
                 const isInbound = (c.direction || '').includes('inbound');
                 const candidatePhone = isInbound ? c.from_number : c.to_number;
-                last_interaction_phone = (candidatePhone && !candidatePhone.startsWith('sip:'))
-                    ? candidatePhone : (tlPhone || c.contact?.phone_e164 || c.from_number || c.to_number);
+                last_interaction_phone = pickPhone(candidatePhone, tlPhone, c.contact?.phone_e164, c.from_number, c.to_number);
             }
 
             return {
