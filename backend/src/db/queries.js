@@ -678,7 +678,7 @@ async function findOrCreateTimeline(phoneE164, companyId = null) {
         tl = await db.query(
             `INSERT INTO timelines (contact_id, company_id)
              VALUES ($1, $2)
-             ON CONFLICT (contact_id) WHERE contact_id IS NOT NULL
+             ON CONFLICT ON CONSTRAINT uq_timelines_contact
              DO UPDATE SET updated_at = now()
              RETURNING *`,
             [contact.id, companyId || contact.company_id || DEFAULT_COMPANY_ID]
@@ -699,7 +699,7 @@ async function findOrCreateTimeline(phoneE164, companyId = null) {
     tl = await db.query(
         `INSERT INTO timelines (phone_e164, company_id)
          VALUES ($1, $2)
-         ON CONFLICT (phone_e164) WHERE phone_e164 IS NOT NULL AND contact_id IS NULL
+         ON CONFLICT ON CONSTRAINT uq_timelines_orphan_phone
          DO UPDATE SET updated_at = now()
          RETURNING *`,
         [phoneE164, companyId || DEFAULT_COMPANY_ID]
