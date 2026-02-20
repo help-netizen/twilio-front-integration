@@ -701,11 +701,11 @@ async function findContactByPhoneOrSecondary(phoneE164) {
 /**
  * Get calls grouped by timeline (replaces getCallsByContact).
  * Returns latest call per timeline with call count.
+ * Sorts by most recent interaction (call OR SMS) via GREATEST().
  */
 async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, search = null } = {}) {
     const companyFilter = companyId ? `AND c.company_id = $3` : '';
     const companyFilter2 = companyId ? `AND c2.company_id = $3` : '';
-    const companyFilter3 = companyId ? `AND c3.company_id = $3` : '';
     const params = [limit, offset];
     if (companyId) params.push(companyId);
 
@@ -722,6 +722,9 @@ async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, se
         conditions.push('c.call_sid ILIKE $' + textIdx);
         conditions.push(
             "EXISTS (SELECT 1 FROM leads l WHERE regexp_replace(l.phone, E'\\\\D', '', 'g') = regexp_replace(co.phone_e164, E'\\\\D', '', 'g') AND (l.first_name ILIKE $" + textIdx + " OR l.last_name ILIKE $" + textIdx + " OR CONCAT(l.first_name, ' ', l.last_name) ILIKE $" + textIdx + "))"
+        );
+        conditions.push(
+            "EXISTS (SELECT 1 FROM leads l WHERE regexp_replace(l.phone, E'\\\\D', '', 'g') = regexp_replace(tl.phone_e164, E'\\\\D', '', 'g') AND (l.first_name ILIKE $" + textIdx + " OR l.last_name ILIKE $" + textIdx + " OR CONCAT(l.first_name, ' ', l.last_name) ILIKE $" + textIdx + "))"
         );
 
         if (digits.length > 0) {
@@ -745,7 +748,12 @@ async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, se
                 (SELECT COUNT(*) FROM calls c2
                  WHERE c2.timeline_id = c.timeline_id
                    AND c2.parent_call_sid IS NULL
-                   ${companyFilter2}) as call_count
+                   ${companyFilter2}) as call_count,
+                (SELECT sc.last_message_at FROM sms_conversations sc
+                 WHERE regexp_replace(sc.customer_e164, E'\\D', '', 'g')
+                     = regexp_replace(tl.phone_e164, E'\\D', '', 'g')
+                 ORDER BY sc.last_message_at DESC NULLS LAST LIMIT 1
+                ) as sms_last_at
              FROM calls c
              LEFT JOIN timelines tl ON c.timeline_id = tl.id
              LEFT JOIN contacts co ON tl.contact_id = co.id
@@ -753,16 +761,9 @@ async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, se
                AND c.parent_call_sid IS NULL
                ${companyFilter}
                ${searchFilter}
-               AND EXISTS (
-                   SELECT 1 FROM calls c3
-                   WHERE c3.timeline_id = c.timeline_id
-                     AND c3.parent_call_sid IS NULL
-                     AND c3.status NOT IN ('failed', 'canceled')
-                     ${companyFilter3}
-               )
              ORDER BY c.timeline_id, c.started_at DESC NULLS LAST
          ) sub
-         ORDER BY sub.started_at DESC NULLS LAST
+         ORDER BY GREATEST(sub.started_at, sub.sms_last_at) DESC NULLS LAST
          LIMIT $1 OFFSET $2`,
         params
     );
@@ -774,20 +775,12 @@ async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, se
  */
 async function getTimelinesWithCallsCount(companyId = null) {
     const companyFilter = companyId ? `AND calls.company_id = $1` : '';
-    const companyFilter2 = companyId ? `AND c2.company_id = $1` : '';
     const params = companyId ? [companyId] : [];
     const result = await db.query(
         `SELECT COUNT(DISTINCT timeline_id) FROM calls
          WHERE timeline_id IS NOT NULL
            AND parent_call_sid IS NULL
-           ${companyFilter}
-           AND EXISTS (
-               SELECT 1 FROM calls c2
-               WHERE c2.timeline_id = calls.timeline_id
-                 AND c2.parent_call_sid IS NULL
-                 AND c2.status NOT IN ('failed', 'canceled')
-                 ${companyFilter2}
-           )`,
+           ${companyFilter}`,
         params
     );
     return parseInt(result.rows[0].count, 10);

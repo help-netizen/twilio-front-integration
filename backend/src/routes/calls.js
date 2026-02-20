@@ -179,6 +179,8 @@ router.get('/by-contact', async (req, res) => {
                 if (tlPhone) existingDigits.add(tlPhone.replace(/\D/g, ''));
                 const raw = c.contact?.phone_e164;
                 if (raw) existingDigits.add(raw.replace(/\D/g, ''));
+                const sec = c.contact?.secondary_phone;
+                if (sec) existingDigits.add(sec.replace(/\D/g, ''));
                 if (c.from_number) existingDigits.add(c.from_number.replace(/\D/g, ''));
                 if (c.to_number) existingDigits.add(c.to_number.replace(/\D/g, ''));
             }
