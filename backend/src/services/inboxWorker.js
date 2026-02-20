@@ -157,7 +157,7 @@ async function processVoiceEvent(payload, eventType, traceId) {
     if (externalParty?.formatted && processed.direction !== 'internal') {
         const timeline = await queries.findOrCreateTimeline(
             externalParty.formatted,
-            event.company_id
+            null
         );
         timelineId = timeline.id;
         contactId = timeline.contact_id || null;
