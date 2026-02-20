@@ -71,11 +71,22 @@ router.get('/timeline/:contactId', async (req, res) => {
 
 // Shared timeline builder
 async function buildTimeline(req, res, contact, timeline) {
-    // Get calls for this contact/timeline
-    const contactId = contact?.id;
-    const callRows = contactId ? await queries.getCallsByContactId(contactId) : [];
+    // Get calls by timeline_id (primary grouping)
+    let callRows = [];
+    if (timeline?.id) {
+        const callResult = await db.query(
+            `SELECT c.*, to_json(co) as contact
+             FROM calls c
+             LEFT JOIN contacts co ON c.contact_id = co.id
+             WHERE c.timeline_id = $1
+             ORDER BY c.started_at DESC NULLS LAST`,
+            [timeline.id]
+        );
+        callRows = callResult.rows;
+    }
 
-    const rawPhone = timeline?.phone_e164 || contact?.phone_e164;
+    // Phone: contact phone (primary) or orphan timeline phone
+    const rawPhone = contact?.phone_e164 || timeline?.phone_e164;
     const normalizedPhone = rawPhone ? '+' + rawPhone.replace(/\D/g, '') : null;
 
     // Collect unique phone numbers from call rows
