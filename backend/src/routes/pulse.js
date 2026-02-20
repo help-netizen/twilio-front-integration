@@ -79,6 +79,7 @@ async function buildTimeline(req, res, contact, timeline) {
              FROM calls c
              LEFT JOIN contacts co ON c.contact_id = co.id
              WHERE c.timeline_id = $1
+               AND c.parent_call_sid IS NULL
              ORDER BY c.started_at DESC NULLS LAST`,
             [timeline.id]
         );

@@ -202,9 +202,9 @@ export const JOB_SOURCES = [
     'LHG',
     'NSA',
     'Website',
-    'Referral',
-    'Other',
+    'Google',
 ] as const;
+
 
 export const JOB_TYPES = [
     'COD Service',
