@@ -25,6 +25,10 @@ function rowToContact(row) {
         email: row.email,
         notes: row.notes,
         zenbooker_customer_id: row.zenbooker_customer_id,
+        zenbooker_sync_status: row.zenbooker_sync_status || 'not_linked',
+        zenbooker_synced_at: row.zenbooker_synced_at || null,
+        zenbooker_last_error: row.zenbooker_last_error || null,
+        zenbooker_account_id: row.zenbooker_account_id || null,
         created_at: row.created_at,
         updated_at: row.updated_at,
         // Zenbooker-sourced data

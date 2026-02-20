@@ -272,6 +272,86 @@ async function getCustomers(params = {}) {
     return allResults;
 }
 
+/**
+ * Retrieve a single customer by ID.
+ * @param {string} customerId
+ * @returns {Object} Customer object
+ */
+async function getCustomer(customerId) {
+    const res = await retryRequest(() => getClient().get(`/customers/${customerId}`));
+    return res.data;
+}
+
+/**
+ * Create a new customer in Zenbooker.
+ * @param {Object} data - { first_name, last_name, phone, email, ... }
+ * @returns {Object} Created customer from Zenbooker
+ */
+async function createCustomer(data) {
+    console.log('[Zenbooker] Creating customer:', JSON.stringify(data));
+    const res = await retryRequest(() => getClient().post('/customers', data));
+    console.log('[Zenbooker] Customer created:', res.data?.id);
+    return res.data;
+}
+
+/**
+ * Update an existing customer in Zenbooker.
+ * @param {string} customerId
+ * @param {Object} data - fields to update
+ * @returns {Object} Updated customer from Zenbooker
+ */
+async function updateCustomer(customerId, data) {
+    console.log(`[Zenbooker] Updating customer ${customerId}:`, JSON.stringify(data));
+    const res = await retryRequest(() => getClient().patch(`/customers/${customerId}`, data));
+    console.log(`[Zenbooker] Customer ${customerId} updated`);
+    return res.data;
+}
+
+/**
+ * Add an address to a Zenbooker customer.
+ * @param {string} customerId
+ * @param {Object} address - { line1, line2, city, state, postal_code, country }
+ * @returns {Object} Address response from Zenbooker
+ */
+async function addCustomerAddress(customerId, address) {
+    console.log(`[Zenbooker] Adding address to customer ${customerId}`);
+    const res = await retryRequest(() =>
+        getClient().post(`/customers/${customerId}/addresses`, address)
+    );
+    console.log(`[Zenbooker] Address added to customer ${customerId}`);
+    return res.data;
+}
+
+/**
+ * Edit an existing address for a Zenbooker customer.
+ * @param {string} customerId
+ * @param {string} addressId
+ * @param {Object} address - updated address fields
+ * @returns {Object} Updated address response from Zenbooker
+ */
+async function editCustomerAddress(customerId, addressId, address) {
+    console.log(`[Zenbooker] Editing address ${addressId} for customer ${customerId}`);
+    const res = await retryRequest(() =>
+        getClient().put(`/customers/${customerId}/addresses/${addressId}`, address)
+    );
+    console.log(`[Zenbooker] Address ${addressId} updated for customer ${customerId}`);
+    return res.data;
+}
+
+/**
+ * Add a note to a Zenbooker customer.
+ * @param {string} customerId
+ * @param {string} note - note text
+ * @returns {Object} Response from Zenbooker
+ */
+async function addCustomerNote(customerId, note) {
+    console.log(`[Zenbooker] Adding note to customer ${customerId}`);
+    const res = await retryRequest(() =>
+        getClient().post(`/customers/${customerId}/notes`, { note })
+    );
+    return res.data;
+}
+
 // ─── Retry helper ─────────────────────────────────────────────────────────────
 
 async function retryRequest(requestFn, maxRetries = 3) {
@@ -307,5 +387,11 @@ module.exports = {
     getInvoice,
     getJob,
     getCustomers,
+    getCustomer,
+    createCustomer,
+    updateCustomer,
+    addCustomerAddress,
+    editCustomerAddress,
+    addCustomerNote,
 };
 

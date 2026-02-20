@@ -111,6 +111,9 @@ app.use('/api/zenbooker', authenticate, requireCompanyAccess, zenbookerRouter);
 
 // BLANC Integrations API (secured header-based auth)
 app.use('/api/v1/integrations', integrationsLeadsRouter);
+// Zenbooker integrations (webhook = unauthenticated w/ secret; create-customer/sync = Keycloak auth inside route)
+const integrationsZenbookerRouter = require('../backend/src/routes/integrations-zenbooker');
+app.use('/api/integrations/zenbooker', integrationsZenbookerRouter);
 app.use('/api/admin/integrations', authenticate, requireRole('company_admin'), requireCompanyAccess, integrationsAdminRouter);
 app.use('/api/settings/lead-form', authenticate, requireRole('company_admin'), requireCompanyAccess, leadFormSettingsRouter);
 

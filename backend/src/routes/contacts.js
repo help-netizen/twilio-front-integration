@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const contactsService = require('../services/contactsService');
 const contactDedupeService = require('../services/contactDedupeService');
+const zenbookerSyncService = require('../services/zenbookerSyncService');
 
 // =============================================================================
 // Helpers
@@ -193,6 +194,13 @@ router.patch('/:id', async (req, res) => {
 
         // Return updated contact
         res.json(successResponse({ contact: updated }, reqId));
+
+        // Async: push to Zenbooker if linked
+        if (zenbookerSyncService.FEATURE_ENABLED && updated.zenbooker_customer_id) {
+            zenbookerSyncService.syncContactToZenbooker(id).catch(err =>
+                console.error(`[ContactsAPI][${reqId}] Zenbooker sync error (non-blocking):`, err.message)
+            );
+        }
     } catch (err) {
         if (err.code === 'NOT_FOUND') {
             return res.status(404).json(errorResponse('NOT_FOUND', err.message, reqId));
@@ -266,6 +274,13 @@ router.patch('/:id/addresses/:addressId', async (req, res) => {
 
         const addresses = await contactAddressService.getAddressesForContact(contactId);
         res.json(successResponse({ addresses }, reqId));
+
+        // Async: push address to Zenbooker if linked
+        if (zenbookerSyncService.FEATURE_ENABLED) {
+            zenbookerSyncService.syncAddressToZenbooker(contactId, addressId).catch(err =>
+                console.error(`[ContactsAPI][${reqId}] Zenbooker address sync error (non-blocking):`, err.message)
+            );
+        }
     } catch (err) {
         console.error(`[ContactsAPI][${reqId}] Error:`, err);
         res.status(500).json(errorResponse('INTERNAL_ERROR', 'An unexpected error occurred', reqId));

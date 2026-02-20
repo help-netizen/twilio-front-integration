@@ -156,3 +156,52 @@ export type SavedAddress = {
     display: string;
 };
 
+// ─── Zenbooker Integration ─────────────────────────────────────────────────────
+
+const ZB_INTEGRATION_BASE = '/api/integrations/zenbooker';
+
+/**
+ * Create a Zenbooker customer from an existing Blanc contact
+ */
+export async function createZenbookerCustomer(contactId: number): Promise<{
+    ok: true;
+    data: { zenbooker_customer_id: string; contact: Contact };
+}> {
+    const res = await authedFetch(`${ZB_INTEGRATION_BASE}/contacts/${contactId}/create-customer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+    });
+    const data = await res.json();
+    if (!data.ok) {
+        throw new ContactsApiError(
+            data.error?.code || 'UNKNOWN',
+            data.error?.message || 'Failed to create customer',
+            res.status,
+            data.meta?.request_id || ''
+        );
+    }
+    return data;
+}
+
+/**
+ * Sync a Blanc contact's data to Zenbooker
+ */
+export async function syncToZenbooker(contactId: number): Promise<{
+    ok: true;
+    data: { contact: Contact };
+}> {
+    const res = await authedFetch(`${ZB_INTEGRATION_BASE}/contacts/${contactId}/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+    });
+    const data = await res.json();
+    if (!data.ok) {
+        throw new ContactsApiError(
+            data.error?.code || 'UNKNOWN',
+            data.error?.message || 'Failed to sync',
+            res.status,
+            data.meta?.request_id || ''
+        );
+    }
+    return data;
+}

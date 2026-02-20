@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Phone, Mail, ExternalLink, Activity, TrendingUp, FileText, User, MapPin, CreditCard, Briefcase, CalendarClock, Pencil, Check, X } from 'lucide-react';
+import { Phone, Mail, ExternalLink, Activity, TrendingUp, FileText, User, MapPin, CreditCard, Briefcase, CalendarClock, Pencil, Check, X, RefreshCw, CloudUpload, AlertCircle } from 'lucide-react';
 import { Badge } from '../ui/badge';
 import { Skeleton } from '../ui/skeleton';
 import { useNavigate } from 'react-router-dom';
@@ -250,9 +250,38 @@ function AddressCard({ address, index, contactId, onSaved }: {
     );
 }
 
+const ZENBOOKER_SYNC_ENABLED = import.meta.env.VITE_FEATURE_ZENBOOKER_SYNC === 'true';
+
 export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged, onContactChanged }: ContactDetailPanelProps) {
     const navigate = useNavigate();
     const [editOpen, setEditOpen] = useState(false);
+    const [syncing, setSyncing] = useState(false);
+
+    const handleCreateInZenbooker = async () => {
+        setSyncing(true);
+        try {
+            await contactsApi.createZenbookerCustomer(contact.id);
+            toast.success('Customer created in Zenbooker');
+            onContactChanged?.();
+        } catch (err: any) {
+            toast.error(err.message || 'Failed to create customer');
+        } finally {
+            setSyncing(false);
+        }
+    };
+
+    const handleSyncToZenbooker = async () => {
+        setSyncing(true);
+        try {
+            await contactsApi.syncToZenbooker(contact.id);
+            toast.success('Contact synced to Zenbooker');
+            onContactChanged?.();
+        } catch (err: any) {
+            toast.error(err.message || 'Failed to sync');
+        } finally {
+            setSyncing(false);
+        }
+    };
 
     if (loading) {
         return (
@@ -295,9 +324,36 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
                                 <Activity style={{ width: '18px', height: '18px' }} />
                             </button>
                         </div>
-                        <div style={{ fontSize: '13px', color: '#6b7280', marginTop: '2px' }}>
+                        <div style={{ fontSize: '13px', color: '#6b7280', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                             Contact ID: {contact.id}
                             {contact.zenbooker_id && ` · Zenbooker ID: ${contact.zenbooker_id}`}
+                            {ZENBOOKER_SYNC_ENABLED && contact.zenbooker_sync_status && contact.zenbooker_sync_status !== 'not_linked' && (
+                                <Badge
+                                    style={{
+                                        fontSize: '10px',
+                                        padding: '1px 6px',
+                                        backgroundColor:
+                                            contact.zenbooker_sync_status === 'linked' ? '#dcfce7' :
+                                                contact.zenbooker_sync_status === 'pending' ? '#fef3c7' :
+                                                    contact.zenbooker_sync_status === 'error' ? '#fee2e2' : '#f1f5f9',
+                                        color:
+                                            contact.zenbooker_sync_status === 'linked' ? '#166534' :
+                                                contact.zenbooker_sync_status === 'pending' ? '#92400e' :
+                                                    contact.zenbooker_sync_status === 'error' ? '#991b1b' : '#475569',
+                                        border: 'none',
+                                    }}
+                                    title={contact.zenbooker_last_error || undefined}
+                                >
+                                    {contact.zenbooker_sync_status === 'linked' ? '● Synced' :
+                                        contact.zenbooker_sync_status === 'pending' ? '○ Syncing…' :
+                                            contact.zenbooker_sync_status === 'error' ? '✕ Sync Error' : contact.zenbooker_sync_status}
+                                </Badge>
+                            )}
+                            {ZENBOOKER_SYNC_ENABLED && contact.zenbooker_sync_status === 'error' && contact.zenbooker_last_error && (
+                                <span title={contact.zenbooker_last_error} style={{ cursor: 'help', display: 'flex' }}>
+                                    <AlertCircle style={{ width: '13px', height: '13px', color: '#ef4444' }} />
+                                </span>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -330,6 +386,40 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
                             Zenbooker
                             <ExternalLink style={{ width: '14px', height: '14px' }} />
                         </a>
+                    )}
+                    {ZENBOOKER_SYNC_ENABLED && !contact.zenbooker_customer_id && (
+                        <button
+                            onClick={handleCreateInZenbooker}
+                            disabled={syncing}
+                            title="Create this contact as a customer in Zenbooker"
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '6px',
+                                padding: '8px 12px', borderRadius: '8px', border: '1px solid #6366f1',
+                                backgroundColor: '#eef2ff', color: '#4338ca', fontSize: '13px',
+                                fontWeight: 500, cursor: syncing ? 'wait' : 'pointer',
+                                opacity: syncing ? 0.6 : 1, transition: 'all 0.15s',
+                            }}
+                        >
+                            <CloudUpload style={{ width: '14px', height: '14px' }} />
+                            {syncing ? 'Creating…' : 'Create in Zenbooker'}
+                        </button>
+                    )}
+                    {ZENBOOKER_SYNC_ENABLED && contact.zenbooker_customer_id && (
+                        <button
+                            onClick={handleSyncToZenbooker}
+                            disabled={syncing}
+                            title={`Sync contact data to Zenbooker${contact.zenbooker_synced_at ? `\nLast synced: ${new Date(contact.zenbooker_synced_at).toLocaleString()}` : ''}`}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '4px',
+                                padding: '8px 10px', borderRadius: '8px', border: '1px solid #d1d5db',
+                                backgroundColor: '#fff', color: '#374151', fontSize: '13px',
+                                fontWeight: 500, cursor: syncing ? 'wait' : 'pointer',
+                                opacity: syncing ? 0.6 : 1, transition: 'all 0.15s',
+                            }}
+                        >
+                            <RefreshCw style={{ width: '14px', height: '14px', animation: syncing ? 'spin 1s linear infinite' : 'none' }} />
+                            Sync
+                        </button>
                     )}
                 </div>
             </div>

@@ -28,6 +28,9 @@ export type Contact = {
     email: string | null;
     notes: string | null;
     zenbooker_customer_id: string | null;
+    zenbooker_sync_status: 'not_linked' | 'linked' | 'pending' | 'error' | null;
+    zenbooker_synced_at: string | null;
+    zenbooker_last_error: string | null;
     created_at: string;
     updated_at: string;
     // Zenbooker-sourced data
