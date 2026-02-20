@@ -214,22 +214,19 @@ function AddressCard({ address, index, contactId, onSaved }: {
             gap: '10px',
         }}>
             <MapPin style={{ width: '16px', height: '16px', color: '#6366f1', marginTop: '2px', flexShrink: 0 }} />
-            <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
-                    <span style={{ fontSize: '13px', fontWeight: 600, color: '#374151' }}>
-                        {address.nickname || `Address ${index + 1}`}
-                    </span>
-                    {address.is_default_address_for_customer && (
-                        <Badge variant="secondary" style={{ fontSize: '10px' }}>Default</Badge>
+            <div style={{ minWidth: 0, flex: 1, display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '14px', color: '#111827', fontWeight: 500, lineHeight: '1.5' }}>
+                        {line1 || '—'}
+                    </div>
+                    {line2 && (
+                        <div style={{ fontSize: '13px', color: '#6b7280', lineHeight: '1.5' }}>
+                            {line2}
+                        </div>
                     )}
                 </div>
-                <div style={{ fontSize: '14px', color: '#111827', fontWeight: 500, lineHeight: '1.5' }}>
-                    {line1 || '—'}
-                </div>
-                {line2 && (
-                    <div style={{ fontSize: '13px', color: '#6b7280', lineHeight: '1.5' }}>
-                        {line2}
-                    </div>
+                {address.is_default_address_for_customer && (
+                    <Badge variant="secondary" style={{ fontSize: '10px', flexShrink: 0, marginTop: '2px' }}>Default</Badge>
                 )}
             </div>
             {/* Edit button — only for local addresses (have numeric id) */}
