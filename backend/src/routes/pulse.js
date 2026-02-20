@@ -71,13 +71,53 @@ router.get('/timeline/:contactId', async (req, res) => {
 
 // Shared timeline builder
 async function buildTimeline(req, res, contact, timeline) {
-    // Get calls by timeline_id (primary grouping)
+    // Get calls by timeline_id with recordings + transcripts
     let callRows = [];
     if (timeline?.id) {
         const callResult = await db.query(
-            `SELECT c.*, to_json(co) as contact
+            `SELECT c.*, to_json(co) as contact,
+                COALESCE(r.recording_sid, cr.recording_sid) as recording_sid,
+                COALESCE(r.status, cr.status) as recording_status,
+                COALESCE(r.duration_sec, cr.duration_sec) as recording_duration_sec,
+                COALESCE(t.status, ct.status) as transcript_status,
+                COALESCE(t.text, ct.text) as transcript_text,
+                COALESCE(t.raw_payload, ct.raw_payload) as transcript_raw_payload
              FROM calls c
              LEFT JOIN contacts co ON c.contact_id = co.id
+             -- Direct recording on this call
+             LEFT JOIN LATERAL (
+                 SELECT recording_sid, status, duration_sec
+                 FROM recordings
+                 WHERE recordings.call_sid = c.call_sid
+                 ORDER BY completed_at DESC NULLS LAST, updated_at DESC
+                 LIMIT 1
+             ) r ON true
+             -- Fallback: recording on child legs (for parent inbound calls)
+             LEFT JOIN LATERAL (
+                 SELECT rec.recording_sid, rec.status, rec.duration_sec
+                 FROM calls child
+                 JOIN recordings rec ON rec.call_sid = child.call_sid
+                 WHERE child.parent_call_sid = c.call_sid
+                 ORDER BY rec.completed_at DESC NULLS LAST, rec.updated_at DESC
+                 LIMIT 1
+             ) cr ON r.recording_sid IS NULL
+             -- Direct transcript on this call
+             LEFT JOIN LATERAL (
+                 SELECT status, text, raw_payload
+                 FROM transcripts
+                 WHERE transcripts.call_sid = c.call_sid
+                 ORDER BY updated_at DESC
+                 LIMIT 1
+             ) t ON true
+             -- Fallback: transcript on child legs
+             LEFT JOIN LATERAL (
+                 SELECT tr.status, tr.text, tr.raw_payload
+                 FROM calls child
+                 JOIN transcripts tr ON tr.call_sid = child.call_sid
+                 WHERE child.parent_call_sid = c.call_sid
+                 ORDER BY tr.updated_at DESC
+                 LIMIT 1
+             ) ct ON t.status IS NULL
              WHERE c.timeline_id = $1
                AND c.parent_call_sid IS NULL
              ORDER BY c.started_at DESC NULLS LAST`,
