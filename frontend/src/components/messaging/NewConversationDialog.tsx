@@ -48,7 +48,7 @@ export function NewConversationDialog({ onSubmit, onClose }: NewConversationDial
                 <div className="new-conv-dialog__body">
                     <div className="new-conv-dialog__field">
                         <label>Customer Phone Number</label>
-                        <input type="tel" placeholder="+1 (555) 123-4567" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} autoFocus />
+                        <input type="tel" placeholder="+1 (555) 123-4567" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} autoComplete="off" autoFocus />
                     </div>
                     <div className="new-conv-dialog__field">
                         <label>Send From</label>

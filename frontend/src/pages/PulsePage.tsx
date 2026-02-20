@@ -245,7 +245,7 @@ export const PulsePage: React.FC = () => {
         onMessageAdded: () => {
             // Incoming/outgoing SMS — refresh contact list for unread state + timestamps
             refetchContacts();
-            if (contactId) refetchTimeline();
+            if (contactId || timelineId) refetchTimeline();
         },
         onContactRead: () => {
             refetchContacts();
@@ -262,7 +262,7 @@ export const PulsePage: React.FC = () => {
         onTranscriptFinalized: (event: SSETranscriptFinalizedEvent) => {
             finalizeTranscript(event.callSid, event.text);
             // Refetch timeline to pick up persisted transcript
-            if (contactId) refetchTimeline();
+            if (contactId || timelineId) refetchTimeline();
         },
     });
 
@@ -548,7 +548,7 @@ export const PulsePage: React.FC = () => {
 
             {/* Middle column: Lead Detail Panel (same as Leads section) */}
             <div className="w-[400px] shrink-0 border-r bg-background flex flex-col overflow-hidden">
-                {contactId && phone ? (
+                {(contactId || timelineId) && phone ? (
                     lead ? (
                         <LeadDetailPanel
                             lead={lead}
@@ -576,7 +576,7 @@ export const PulsePage: React.FC = () => {
 
             {/* Right column: timeline + SMS form */}
             <div className="pulse-timeline-column">
-                {!contactId ? (
+                {!contactId && !timelineId ? (
                     <div className="pulse-empty-state">
                         <Activity className="size-12 mb-4" style={{ opacity: 0.15 }} />
                         <p className="text-muted-foreground">Select a contact to view their timeline</p>
