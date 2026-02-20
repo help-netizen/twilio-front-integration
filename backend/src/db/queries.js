@@ -49,7 +49,8 @@ async function upsertCall(data) {
         callSid, parentCallSid, contactId, direction,
         fromNumber, toNumber, status, isFinal,
         startedAt, answeredAt, endedAt, durationSec,
-        price, priceUnit, lastEventTime, rawLastPayload
+        price, priceUnit, lastEventTime, rawLastPayload,
+        timelineId
     } = data;
 
     const result = await db.query(
@@ -58,11 +59,12 @@ async function upsertCall(data) {
             from_number, to_number, status, is_final,
             started_at, answered_at, ended_at, duration_sec,
             price, price_unit, last_event_time, raw_last_payload,
-            company_id
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+            company_id, timeline_id
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
         ON CONFLICT (call_sid) DO UPDATE SET
             parent_call_sid   = COALESCE(EXCLUDED.parent_call_sid, calls.parent_call_sid),
             contact_id        = COALESCE(EXCLUDED.contact_id, calls.contact_id),
+            timeline_id       = COALESCE(EXCLUDED.timeline_id, calls.timeline_id),
             direction         = EXCLUDED.direction,
             from_number       = EXCLUDED.from_number,
             to_number         = EXCLUDED.to_number,
@@ -85,7 +87,8 @@ async function upsertCall(data) {
             startedAt, answeredAt, endedAt, durationSec,
             price, priceUnit, lastEventTime,
             JSON.stringify(rawLastPayload || {}),
-            data.companyId || DEFAULT_COMPANY_ID
+            data.companyId || DEFAULT_COMPANY_ID,
+            timelineId || null
         ]
     );
     return result.rows[0];
@@ -639,6 +642,158 @@ async function markContactRead(contactId) {
 }
 
 // =============================================================================
+// Timeline operations
+// =============================================================================
+
+/**
+ * Find or create a timeline by phone number.
+ * Auto-links to a contact if the phone matches any contact's primary or secondary phone.
+ */
+async function findOrCreateTimeline(phoneE164, companyId = null) {
+    const digits = phoneE164.replace(/\D/g, '');
+
+    // Try to find existing timeline
+    let result = await db.query(
+        `SELECT * FROM timelines WHERE regexp_replace(phone_e164, '\\D', '', 'g') = $1 LIMIT 1`,
+        [digits]
+    );
+
+    if (result.rows[0]) return result.rows[0];
+
+    // Look for a contact that owns this phone (primary or secondary)
+    const contact = await findContactByPhoneOrSecondary(phoneE164);
+    const contactId = contact ? contact.id : null;
+
+    // Create timeline
+    result = await db.query(
+        `INSERT INTO timelines (phone_e164, contact_id, company_id)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (phone_e164) DO UPDATE SET
+            contact_id = COALESCE(timelines.contact_id, EXCLUDED.contact_id),
+            updated_at = now()
+         RETURNING *`,
+        [phoneE164, contactId, companyId || DEFAULT_COMPANY_ID]
+    );
+    return result.rows[0];
+}
+
+/**
+ * Find a contact by phone — checks both phone_e164 and secondary_phone.
+ * Does NOT create a contact if not found.
+ */
+async function findContactByPhoneOrSecondary(phoneE164) {
+    const digits = phoneE164.replace(/\D/g, '');
+    // Check primary phone first
+    let result = await db.query(
+        `SELECT * FROM contacts WHERE regexp_replace(phone_e164, '\\D', '', 'g') = $1 LIMIT 1`,
+        [digits]
+    );
+    if (result.rows[0]) return result.rows[0];
+
+    // Check secondary phone
+    result = await db.query(
+        `SELECT * FROM contacts WHERE regexp_replace(secondary_phone, '\\D', '', 'g') = $1 LIMIT 1`,
+        [digits]
+    );
+    return result.rows[0] || null;
+}
+
+/**
+ * Get calls grouped by timeline (replaces getCallsByContact).
+ * Returns latest call per timeline with call count.
+ */
+async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, search = null } = {}) {
+    const companyFilter = companyId ? `AND c.company_id = $3` : '';
+    const companyFilter2 = companyId ? `AND c2.company_id = $3` : '';
+    const companyFilter3 = companyId ? `AND c3.company_id = $3` : '';
+    const params = [limit, offset];
+    if (companyId) params.push(companyId);
+
+    // Search filter
+    let searchFilter = '';
+    if (search) {
+        const searchTerm = search.trim();
+        const digits = searchTerm.replace(/\D/g, '');
+        const conditions = [];
+
+        const textIdx = params.length + 1;
+        params.push('%' + searchTerm + '%');
+        conditions.push('co.full_name ILIKE $' + textIdx);
+        conditions.push('c.call_sid ILIKE $' + textIdx);
+        conditions.push(
+            "EXISTS (SELECT 1 FROM leads l WHERE regexp_replace(l.phone, E'\\\\D', '', 'g') = regexp_replace(co.phone_e164, E'\\\\D', '', 'g') AND (l.first_name ILIKE $" + textIdx + " OR l.last_name ILIKE $" + textIdx + " OR CONCAT(l.first_name, ' ', l.last_name) ILIKE $" + textIdx + "))"
+        );
+
+        if (digits.length > 0) {
+            const digitIdx = params.length + 1;
+            params.push('%' + digits + '%');
+            conditions.push("regexp_replace(co.phone_e164, E'\\\\D', '', 'g') LIKE $" + digitIdx);
+            conditions.push("regexp_replace(c.from_number, E'\\\\D', '', 'g') LIKE $" + digitIdx);
+            conditions.push("regexp_replace(c.to_number, E'\\\\D', '', 'g') LIKE $" + digitIdx);
+            conditions.push("regexp_replace(tl.phone_e164, E'\\\\D', '', 'g') LIKE $" + digitIdx);
+        }
+
+        searchFilter = 'AND (' + conditions.join(' OR ') + ')';
+    }
+
+    const result = await db.query(
+        `SELECT * FROM (
+            SELECT DISTINCT ON (c.timeline_id)
+                c.*,
+                to_json(co) as contact,
+                tl.id as tl_id, tl.phone_e164 as tl_phone,
+                (SELECT COUNT(*) FROM calls c2
+                 WHERE c2.timeline_id = c.timeline_id
+                   AND c2.parent_call_sid IS NULL
+                   ${companyFilter2}) as call_count
+             FROM calls c
+             LEFT JOIN timelines tl ON c.timeline_id = tl.id
+             LEFT JOIN contacts co ON tl.contact_id = co.id
+             WHERE c.timeline_id IS NOT NULL
+               AND c.parent_call_sid IS NULL
+               ${companyFilter}
+               ${searchFilter}
+               AND EXISTS (
+                   SELECT 1 FROM calls c3
+                   WHERE c3.timeline_id = c.timeline_id
+                     AND c3.parent_call_sid IS NULL
+                     AND c3.status NOT IN ('failed', 'canceled')
+                     ${companyFilter3}
+               )
+             ORDER BY c.timeline_id, c.started_at DESC NULLS LAST
+         ) sub
+         ORDER BY sub.started_at DESC NULLS LAST
+         LIMIT $1 OFFSET $2`,
+        params
+    );
+    return result.rows;
+}
+
+/**
+ * Get total timelines with calls count
+ */
+async function getTimelinesWithCallsCount(companyId = null) {
+    const companyFilter = companyId ? `AND calls.company_id = $1` : '';
+    const companyFilter2 = companyId ? `AND c2.company_id = $1` : '';
+    const params = companyId ? [companyId] : [];
+    const result = await db.query(
+        `SELECT COUNT(DISTINCT timeline_id) FROM calls
+         WHERE timeline_id IS NOT NULL
+           AND parent_call_sid IS NULL
+           ${companyFilter}
+           AND EXISTS (
+               SELECT 1 FROM calls c2
+               WHERE c2.timeline_id = calls.timeline_id
+                 AND c2.parent_call_sid IS NULL
+                 AND c2.status NOT IN ('failed', 'canceled')
+                 ${companyFilter2}
+           )`,
+        params
+    );
+    return parseInt(result.rows[0].count, 10);
+}
+
+// =============================================================================
 // Exports
 // =============================================================================
 
@@ -648,6 +803,12 @@ module.exports = {
     findOrCreateContact,
     markContactUnread,
     markContactRead,
+
+    // Timelines
+    findOrCreateTimeline,
+    findContactByPhoneOrSecondary,
+    getCallsByTimeline,
+    getTimelinesWithCallsCount,
 
     // Calls
     upsertCall,

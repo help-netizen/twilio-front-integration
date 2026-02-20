@@ -151,18 +151,20 @@ async function processVoiceEvent(payload, eventType, traceId) {
     const processed = CallProcessor.processCall(callData);
     const externalParty = processed.externalParty;
 
-    // Resolve contact
+    // Resolve timeline (NOT contact — contacts are only created from leads/import/manual)
+    let timelineId = null;
     let contactId = null;
     if (externalParty?.formatted && processed.direction !== 'internal') {
-        const contact = await queries.findOrCreateContact(
+        const timeline = await queries.findOrCreateTimeline(
             externalParty.formatted,
-            externalParty.formatted
+            event.company_id
         );
-        contactId = contact.id;
+        timelineId = timeline.id;
+        contactId = timeline.contact_id || null;
 
         // Mark contact unread for MISSED inbound calls only (not completed/answered)
         const answeredStatuses = ['completed', 'in-progress'];
-        if (processed.direction === 'inbound' && !normalized.parentCallSid
+        if (contactId && processed.direction === 'inbound' && !normalized.parentCallSid
             && !answeredStatuses.includes(normalized.eventStatus)) {
             try {
                 await queries.markContactUnread(contactId, new Date());
@@ -224,6 +226,7 @@ async function processVoiceEvent(payload, eventType, traceId) {
             callSid: normalized.callSid,
             parentCallSid: normalized.parentCallSid,
             contactId,
+            timelineId,
             direction: processed.direction,   // Use CallProcessor's direction
             fromNumber: extractPhoneFromSIP(normalized.fromNumber),
             toNumber: extractPhoneFromSIP(normalized.toNumber),

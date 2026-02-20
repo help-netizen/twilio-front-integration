@@ -11,7 +11,39 @@ const convQueries = require('../db/conversationsQueries');
 
 // =============================================================================
 // GET /api/pulse/timeline/:contactId — combined calls + SMS for a contact
+// Also supports /api/pulse/timeline-by-id/:timelineId for timeline-first routing
 // =============================================================================
+
+// Timeline by timelineId
+router.get('/timeline-by-id/:timelineId', async (req, res) => {
+    try {
+        const timelineId = parseInt(req.params.timelineId);
+        if (isNaN(timelineId)) {
+            return res.status(400).json({ error: 'Invalid timelineId' });
+        }
+
+        // Get timeline info
+        const tlResult = await db.query('SELECT * FROM timelines WHERE id = $1', [timelineId]);
+        const timeline = tlResult.rows[0];
+        if (!timeline) {
+            return res.status(404).json({ error: 'Timeline not found' });
+        }
+
+        // Get contact if linked
+        let contact = null;
+        if (timeline.contact_id) {
+            const contactResult = await db.query('SELECT * FROM contacts WHERE id = $1', [timeline.contact_id]);
+            contact = contactResult.rows[0] || null;
+        }
+
+        return await buildTimeline(req, res, contact, timeline);
+    } catch (error) {
+        console.error('[Pulse] GET /timeline-by-id/:timelineId error:', error);
+        res.status(500).json({ error: 'Failed to fetch timeline' });
+    }
+});
+
+// Legacy: timeline by contactId
 router.get('/timeline/:contactId', async (req, res) => {
     try {
         const contactId = parseInt(req.params.contactId);
@@ -19,76 +51,85 @@ router.get('/timeline/:contactId', async (req, res) => {
             return res.status(400).json({ error: 'Invalid contactId' });
         }
 
-        // 1) Get contact info directly from contacts table
-        const contactResult = await db.query(
-            'SELECT * FROM contacts WHERE id = $1', [contactId]
-        );
+        // Get contact info
+        const contactResult = await db.query('SELECT * FROM contacts WHERE id = $1', [contactId]);
         const contact = contactResult.rows[0] || null;
 
-        // 2) Get calls for this contact
-        const callRows = await queries.getCallsByContactId(contactId);
-
-        const rawPhone = contact?.phone_e164;
-        // Normalize to E.164: strip everything except digits and leading +
-        const normalizedPhone = rawPhone ? '+' + rawPhone.replace(/\D/g, '') : null;
-
-        // Also collect unique phone numbers from call rows (from/to)
-        const callPhones = new Set();
-        for (const row of callRows) {
-            if (row.from_number) callPhones.add(row.from_number);
-            if (row.to_number) callPhones.add(row.to_number);
+        // Find timeline linked to this contact
+        let timeline = null;
+        if (contact) {
+            const tlResult = await db.query('SELECT * FROM timelines WHERE contact_id = $1 LIMIT 1', [contactId]);
+            timeline = tlResult.rows[0] || null;
         }
 
-        // Format calls (reuse same format as calls route)
-        const calls = callRows.map(formatCall);
-
-        // 3) Get SMS conversations matching the contact's phone
-        let messages = [];
-        let conversations = [];
-
-        // Build a set of phones to search (normalized contact phone + secondary phone + call phones)
-        const phonesToSearch = new Set();
-        if (normalizedPhone) phonesToSearch.add(normalizedPhone);
-        // Include secondary phone so SMS to/from it shows in timeline
-        const secondaryPhone = contact?.secondary_phone;
-        if (secondaryPhone) {
-            const normalizedSecondary = '+' + secondaryPhone.replace(/\D/g, '');
-            phonesToSearch.add(normalizedSecondary);
-        }
-        for (const p of callPhones) phonesToSearch.add(p);
-
-        if (phonesToSearch.size > 0) {
-            const phoneArray = [...phonesToSearch];
-            // Use digits-only comparison to handle format mismatches
-            const phoneDigits = phoneArray.map(p => p.replace(/\D/g, ''));
-            const convResult = await db.query(
-                `SELECT * FROM sms_conversations
-                 WHERE regexp_replace(customer_e164, '\\D', '', 'g') = ANY($1)
-                 ORDER BY last_message_at DESC NULLS LAST`,
-                [phoneDigits]
-            );
-            conversations = convResult.rows;
-
-            // Fetch messages from all matching conversations
-            for (const conv of conversations) {
-                const msgs = await convQueries.getMessages(conv.id, { limit: 200 });
-                messages.push(...msgs.map(m => ({
-                    ...m,
-                    conversation_id: conv.id,
-                    // Derive from/to phone using conversation phones + direction
-                    from_number: m.direction === 'inbound' ? conv.customer_e164 : conv.proxy_e164,
-                    to_number: m.direction === 'inbound' ? conv.proxy_e164 : conv.customer_e164,
-                    media: typeof m.media === 'string' ? JSON.parse(m.media) : m.media,
-                })));
-            }
-        }
-
-        res.json({ calls, messages, conversations });
+        return await buildTimeline(req, res, contact, timeline);
     } catch (error) {
         console.error('[Pulse] GET /timeline/:contactId error:', error);
         res.status(500).json({ error: 'Failed to fetch timeline' });
     }
 });
+
+// Shared timeline builder
+async function buildTimeline(req, res, contact, timeline) {
+    // Get calls for this contact/timeline
+    const contactId = contact?.id;
+    const callRows = contactId ? await queries.getCallsByContactId(contactId) : [];
+
+    const rawPhone = timeline?.phone_e164 || contact?.phone_e164;
+    const normalizedPhone = rawPhone ? '+' + rawPhone.replace(/\D/g, '') : null;
+
+    // Collect unique phone numbers from call rows
+    const callPhones = new Set();
+    for (const row of callRows) {
+        if (row.from_number) callPhones.add(row.from_number);
+        if (row.to_number) callPhones.add(row.to_number);
+    }
+
+    const calls = callRows.map(formatCall);
+
+    // Get SMS conversations matching phones
+    let messages = [];
+    let conversations = [];
+
+    const phonesToSearch = new Set();
+    if (normalizedPhone) phonesToSearch.add(normalizedPhone);
+    // Include secondary phone
+    const secondaryPhone = contact?.secondary_phone;
+    if (secondaryPhone) {
+        const normalizedSecondary = '+' + secondaryPhone.replace(/\D/g, '');
+        phonesToSearch.add(normalizedSecondary);
+    }
+    for (const p of callPhones) phonesToSearch.add(p);
+
+    if (phonesToSearch.size > 0) {
+        const phoneArray = [...phonesToSearch];
+        const phoneDigits = phoneArray.map(p => p.replace(/\D/g, ''));
+        const convResult = await db.query(
+            `SELECT * FROM sms_conversations
+             WHERE regexp_replace(customer_e164, '\\D', '', 'g') = ANY($1)
+             ORDER BY last_message_at DESC NULLS LAST`,
+            [phoneDigits]
+        );
+        conversations = convResult.rows;
+
+        for (const conv of conversations) {
+            const msgs = await convQueries.getMessages(conv.id, { limit: 200 });
+            messages.push(...msgs.map(m => ({
+                ...m,
+                conversation_id: conv.id,
+                from_number: m.direction === 'inbound' ? conv.customer_e164 : conv.proxy_e164,
+                to_number: m.direction === 'inbound' ? conv.proxy_e164 : conv.customer_e164,
+                media: typeof m.media === 'string' ? JSON.parse(m.media) : m.media,
+            })));
+        }
+    }
+
+    res.json({
+        calls, messages, conversations,
+        timeline_id: timeline?.id || null,
+        contact: contact || null,
+    });
+}
 
 // =============================================================================
 // Format a call row (mirrors calls.js format)

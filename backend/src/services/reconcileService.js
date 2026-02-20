@@ -77,9 +77,11 @@ async function reconcileCall(twilioPayload, source) {
     const externalParty = processed.externalParty;
 
     let contactId = null;
+    let timelineId = null;
     if (externalParty?.formatted && processed.direction !== 'internal') {
-        const contact = await queries.findOrCreateContact(externalParty.formatted);
-        contactId = contact.id;
+        const timeline = await queries.findOrCreateTimeline(externalParty.formatted);
+        timelineId = timeline.id;
+        contactId = timeline.contact_id || null;
     }
 
     const { isFinalStatus } = require('./stateMachine');
@@ -89,6 +91,7 @@ async function reconcileCall(twilioPayload, source) {
         callSid: normalized.callSid,
         parentCallSid: normalized.parentCallSid,
         contactId,
+        timelineId,
         direction: processed.direction,
         fromNumber: extractPhoneFromSIP(normalized.fromNumber),
         toNumber: extractPhoneFromSIP(normalized.toNumber),

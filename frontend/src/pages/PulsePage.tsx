@@ -25,7 +25,7 @@ import type { CallData } from '../components/call-list-item';
 import './PulsePage.css';
 
 // =============================================================================
-// Contact List Item (Pulse-specific — navigates to /pulse/contact/:id)
+// Contact List Item (Pulse-specific — navigates to /pulse/timeline/:timelineId)
 // =============================================================================
 const STATUS_ICON_COLORS: Record<string, string> = {
     'completed': '#16a34a',
@@ -43,10 +43,12 @@ const STATUS_ICON_COLORS: Record<string, string> = {
 
 function PulseContactItem({ call, isActive }: { call: Call; isActive: boolean }) {
     const navigate = useNavigate();
+    // Prefer timeline_id for navigation, fall back to contact_id (legacy)
+    const tlId = (call as any).timeline_id;
     const contactId = call.contact?.id || call.id;
-    const targetPath = contactId ? `/pulse/contact/${contactId}` : null;
+    const targetPath = tlId ? `/pulse/timeline/${tlId}` : (contactId ? `/pulse/contact/${contactId}` : null);
 
-    const rawPhone = call.contact?.phone_e164 || call.from_number || call.to_number || call.call_sid;
+    const rawPhone = (call as any).tl_phone || call.contact?.phone_e164 || call.from_number || call.to_number || call.call_sid;
 
     // Use last_interaction_phone from API — the actual customer phone from the last event
     const displayPhone = (call as any).last_interaction_phone || rawPhone;
@@ -205,8 +207,11 @@ function callToCallData(call: any): CallData {
 // =============================================================================
 export const PulsePage: React.FC = () => {
     const { id } = useParams<{ id: string }>();
-    const contactId = parseInt(id || '0');
     const location = useLocation();
+    // Detect route type: /pulse/timeline/:id or /pulse/contact/:id
+    const isTimelineRoute = location.pathname.startsWith('/pulse/timeline/');
+    const timelineId = isTimelineRoute ? parseInt(id || '0') : 0;
+    const contactId = isTimelineRoute ? 0 : parseInt(id || '0');
 
     // Search with debounce (server-side search)
     const [searchQuery, setSearchQuery] = useState('');
@@ -224,8 +229,8 @@ export const PulsePage: React.FC = () => {
     // Contact list
     const { data: contactData, isLoading: contactsLoading, refetch: refetchContacts } = useCallsByContact(debouncedSearch || undefined);
 
-    // Timeline data
-    const { data: timelineData, isLoading: timelineLoading, refetch: refetchTimeline } = usePulseTimeline(contactId);
+    // Timeline data — use timelineId if on timeline route, else contactId
+    const { data: timelineData, isLoading: timelineLoading, refetch: refetchTimeline } = usePulseTimeline(contactId, timelineId || undefined);
 
     // Real-time updates
     useRealtimeEvents({
@@ -296,10 +301,14 @@ export const PulsePage: React.FC = () => {
 
     // Derive contact info for LeadCard (same as ConversationPage)
     const contactCalls = timelineData?.calls || [];
-    const contact = contactCalls[0]?.contact;
-    // Phone: try call contact, then call from/to, then sidebar contact, then SMS conversation
-    const selectedConv = filteredCalls.find((c: Call) => c.contact?.id === contactId);
+    const contact = (timelineData as any)?.contact || contactCalls[0]?.contact;
+    // Phone: try timeline data, then call contact, then call from/to, then sidebar contact, then SMS conversation
+    const selectedConv = filteredCalls.find((c: Call) => {
+        const tlId = (c as any).timeline_id;
+        return tlId ? tlId === timelineId : c.contact?.id === contactId;
+    });
     const phone = contact?.phone_e164
+        || (selectedConv as any)?.tl_phone
         || contactCalls[0]?.from_number
         || contactCalls[0]?.to_number
         || selectedConv?.contact?.phone_e164
@@ -519,13 +528,20 @@ export const PulsePage: React.FC = () => {
                             <p className="text-sm text-muted-foreground">No contacts found</p>
                         </div>
                     ) : (
-                        filteredCalls.map((call, idx) => (
-                            <PulseContactItem
-                                key={call.id ?? `c-${call.contact?.id ?? (call.from_number || idx)}`}
-                                call={call}
-                                isActive={!!(call.contact?.id || call.id) && location.pathname === `/pulse/contact/${call.contact?.id || call.id}`}
-                            />
-                        ))
+                        filteredCalls.map((call, idx) => {
+                            const tlId = (call as any).timeline_id;
+                            const cId = call.contact?.id || call.id;
+                            const isActive = tlId
+                                ? location.pathname === `/pulse/timeline/${tlId}`
+                                : (!!cId && location.pathname === `/pulse/contact/${cId}`);
+                            return (
+                                <PulseContactItem
+                                    key={tlId ?? call.id ?? `c-${call.contact?.id ?? (call.from_number || idx)}`}
+                                    call={call}
+                                    isActive={isActive}
+                                />
+                            );
+                        })
                     )}
                 </div>
             </div>

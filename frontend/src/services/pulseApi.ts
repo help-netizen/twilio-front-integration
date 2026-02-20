@@ -23,4 +23,9 @@ export const pulseApi = {
         const response = await apiClient.get<PulseTimelineResponse>(`/pulse/timeline/${contactId}`);
         return response.data;
     },
+    /** Get combined timeline (calls + messages) by timeline ID */
+    getTimelineById: async (timelineId: number): Promise<PulseTimelineResponse> => {
+        const response = await apiClient.get<PulseTimelineResponse>(`/pulse/timeline-by-id/${timelineId}`);
+        return response.data;
+    },
 };

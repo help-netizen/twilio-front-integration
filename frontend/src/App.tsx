@@ -39,6 +39,7 @@ function App() {
               <Route path="/" element={<Navigate to="/pulse" replace />} />
               <Route path="/pulse" element={<PulsePage />} />
               <Route path="/pulse/contact/:id" element={<PulsePage />} />
+              <Route path="/pulse/timeline/:id" element={<PulsePage />} />
               <Route path="/calls" element={<HomePage />} />
               <Route path="/contact/:id" element={<ConversationPage />} />
               <Route path="/calls/:callSid" element={<ConversationPage />} />

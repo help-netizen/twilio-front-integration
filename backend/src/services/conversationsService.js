@@ -323,10 +323,10 @@ async function handleMessageAdded(payload) {
         isInbound,
     });
 
-    // Mark contact unread for inbound SMS
+    // Mark contact unread for inbound SMS (if contact exists — do NOT create)
     if (isInbound && conv.customer_e164) {
         try {
-            const contact = await queries.findOrCreateContact(conv.customer_e164);
+            const contact = await queries.findContactByPhoneOrSecondary(conv.customer_e164);
             if (contact) {
                 await queries.markContactUnread(contact.id, new Date(payload.DateCreated || Date.now()));
             }
