@@ -646,35 +646,65 @@ async function markContactRead(contactId) {
 // =============================================================================
 
 /**
- * Find or create a timeline by phone number.
- * Auto-links to a contact if the phone matches any contact's primary or secondary phone.
+ * Find or create a timeline for a phone number.
+ * Contact-first resolution:
+ *   1. Find the most recently updated contact whose primary or secondary phone matches
+ *   2. If found → find/create a timeline by contact_id (one per contact)
+ *   3. If not found → find/create an orphan timeline by phone_e164
  */
 async function findOrCreateTimeline(phoneE164, companyId = null) {
     const digits = phoneE164.replace(/\D/g, '');
 
-    // Try to find existing timeline
-    let result = await db.query(
-        `SELECT * FROM timelines WHERE regexp_replace(phone_e164, '\\D', '', 'g') = $1 LIMIT 1`,
+    // 1. Find the most recently updated contact for this phone
+    const contactResult = await db.query(
+        `SELECT * FROM contacts
+         WHERE regexp_replace(phone_e164, '\\D', '', 'g') = $1
+            OR regexp_replace(secondary_phone, '\\D', '', 'g') = $1
+         ORDER BY updated_at DESC NULLS LAST
+         LIMIT 1`,
         [digits]
     );
+    const contact = contactResult.rows[0] || null;
 
-    if (result.rows[0]) return result.rows[0];
+    if (contact) {
+        // 2. Contact found — find/create timeline by contact_id
+        let tl = await db.query(
+            `SELECT * FROM timelines WHERE contact_id = $1 LIMIT 1`,
+            [contact.id]
+        );
+        if (tl.rows[0]) return { ...tl.rows[0], contact_id: contact.id };
 
-    // Look for a contact that owns this phone (primary or secondary)
-    const contact = await findContactByPhoneOrSecondary(phoneE164);
-    const contactId = contact ? contact.id : null;
+        // Create contact timeline (phone_e164 = NULL)
+        tl = await db.query(
+            `INSERT INTO timelines (contact_id, company_id)
+             VALUES ($1, $2)
+             ON CONFLICT (contact_id) WHERE contact_id IS NOT NULL
+             DO UPDATE SET updated_at = now()
+             RETURNING *`,
+            [contact.id, companyId || contact.company_id || DEFAULT_COMPANY_ID]
+        );
+        return { ...tl.rows[0], contact_id: contact.id };
+    }
 
-    // Create timeline
-    result = await db.query(
-        `INSERT INTO timelines (phone_e164, contact_id, company_id)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (phone_e164) DO UPDATE SET
-            contact_id = COALESCE(timelines.contact_id, EXCLUDED.contact_id),
-            updated_at = now()
-         RETURNING *`,
-        [phoneE164, contactId, companyId || DEFAULT_COMPANY_ID]
+    // 3. No contact — find/create orphan timeline by phone_e164
+    let tl = await db.query(
+        `SELECT * FROM timelines
+         WHERE contact_id IS NULL
+           AND regexp_replace(phone_e164, '\\D', '', 'g') = $1
+         LIMIT 1`,
+        [digits]
     );
-    return result.rows[0];
+    if (tl.rows[0]) return tl.rows[0];
+
+    tl = await db.query(
+        `INSERT INTO timelines (phone_e164, company_id)
+         VALUES ($1, $2)
+         ON CONFLICT (phone_e164) WHERE phone_e164 IS NOT NULL AND contact_id IS NULL
+         DO UPDATE SET updated_at = now()
+         RETURNING *`,
+        [phoneE164, companyId || DEFAULT_COMPANY_ID]
+    );
+    return tl.rows[0];
 }
 
 /**
@@ -744,15 +774,19 @@ async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, se
             SELECT DISTINCT ON (c.timeline_id)
                 c.*,
                 to_json(co) as contact,
-                tl.id as tl_id, tl.phone_e164 as tl_phone,
+                tl.id as tl_id,
+                COALESCE(tl.phone_e164, co.phone_e164) as tl_phone,
                 (SELECT COUNT(*) FROM calls c2
                  WHERE c2.timeline_id = c.timeline_id
                    AND c2.parent_call_sid IS NULL
                    ${companyFilter2}) as call_count,
-                (SELECT sc.last_message_at FROM sms_conversations sc
-                 WHERE regexp_replace(sc.customer_e164, E'\\D', '', 'g')
-                     = regexp_replace(tl.phone_e164, E'\\D', '', 'g')
-                 ORDER BY sc.last_message_at DESC NULLS LAST LIMIT 1
+                (SELECT MAX(sc.last_message_at) FROM sms_conversations sc
+                 WHERE regexp_replace(sc.customer_e164, E'\\\\D', '', 'g') IN (
+                     regexp_replace(COALESCE(tl.phone_e164, co.phone_e164), E'\\\\D', '', 'g'),
+                     CASE WHEN co.secondary_phone IS NOT NULL
+                          THEN regexp_replace(co.secondary_phone, E'\\\\D', '', 'g')
+                          ELSE NULL END
+                 )
                 ) as sms_last_at
              FROM calls c
              LEFT JOIN timelines tl ON c.timeline_id = tl.id
