@@ -265,8 +265,8 @@ async function getCustomers(params = {}) {
         const results = data.results || [];
         allResults.push(...results);
 
-        if (!data.has_more || !data.next_cursor) break;
-        cursor = data.next_cursor;
+        if (!data.has_more) break;
+        cursor = data.cursor || (cursor + results.length);
     }
 
     return allResults;
@@ -347,7 +347,7 @@ async function editCustomerAddress(customerId, addressId, address) {
 async function addCustomerNote(customerId, note) {
     console.log(`[Zenbooker] Adding note to customer ${customerId}`);
     const res = await retryRequest(() =>
-        getClient().post(`/customers/${customerId}/notes`, { note })
+        getClient().post(`/customers/${customerId}/notes`, { text: note })
     );
     return res.data;
 }
@@ -376,6 +376,7 @@ async function retryRequest(requestFn, maxRetries = 3) {
 }
 
 module.exports = {
+    getClient,
     createJobFromLead,
     createJob,
     getTerritories,

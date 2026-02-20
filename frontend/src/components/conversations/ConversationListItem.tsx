@@ -60,9 +60,12 @@ export const ConversationListItem: React.FC<ConversationListItemProps> = ({ call
     const navigate = useNavigate();
     const location = useLocation();
 
+    const tlId = (call as any).timeline_id;
     const targetPath = call.contact
         ? `/contact/${call.contact.id}`
-        : `/calls/${call.call_sid}`;
+        : tlId
+            ? `/pulse/timeline/${tlId}`
+            : `/calls/${call.call_sid}`;
 
     const isActive = location.pathname === targetPath;
 
@@ -70,8 +73,10 @@ export const ConversationListItem: React.FC<ConversationListItemProps> = ({ call
         navigate(targetPath);
     };
 
-    // Determine display phone number
-    const rawPhone = call.contact?.phone_e164
+    // Determine display phone number — prefer timeline phone (external party)
+    const rawPhone = (call as any).tl_phone
+        || (call as any).last_interaction_phone
+        || call.contact?.phone_e164
         || call.from_number
         || call.to_number
         || call.call_sid;

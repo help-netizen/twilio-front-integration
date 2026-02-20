@@ -13,6 +13,17 @@ const contactsService = require('./contactsService');
 
 const FEATURE_ENABLED = process.env.FEATURE_ZENBOOKER_SYNC === 'true';
 
+/**
+ * Strip phone to digits only — Zenbooker expects e.g. "6195551234" not "+16195551234"
+ */
+function stripPhone(phone) {
+    if (!phone) return undefined;
+    const digits = phone.replace(/\D/g, '');
+    // Remove leading country code '1' if 11 digits
+    if (digits.length === 11 && digits.startsWith('1')) return digits.slice(1);
+    return digits;
+}
+
 // =============================================================================
 // Feature flag guard
 // =============================================================================
@@ -45,10 +56,10 @@ async function pushContactToZenbooker(contactId) {
 
     // Build Zenbooker customer payload
     const customerData = {
-        first_name: contact.first_name || '',
-        last_name: contact.last_name || '',
+        name: [contact.first_name, contact.last_name].filter(Boolean).join(' ') || contact.full_name || '',
     };
-    if (contact.phone_e164) customerData.phone = contact.phone_e164;
+    const phone = stripPhone(contact.phone_e164);
+    if (phone) customerData.phone = phone;
     if (contact.email) customerData.email = contact.email;
 
     // Set status to pending before API call
@@ -107,14 +118,37 @@ async function syncContactToZenbooker(contactId) {
     }
 
     const updateData = {
-        first_name: contact.first_name || '',
-        last_name: contact.last_name || '',
+        name: [contact.first_name, contact.last_name].filter(Boolean).join(' ') || contact.full_name || '',
     };
-    if (contact.phone_e164) updateData.phone = contact.phone_e164;
+    const phone = stripPhone(contact.phone_e164);
+    if (phone) updateData.phone = phone;
     if (contact.email) updateData.email = contact.email;
 
     try {
         await zenbookerClient.updateCustomer(contact.zenbooker_customer_id, updateData);
+
+        // Sync secondary phone as a note (Zenbooker only supports one phone field)
+        if (contact.secondary_phone) {
+            const label = contact.secondary_phone_name || 'Secondary';
+            const noteText = `${label} phone: ${contact.secondary_phone}`;
+            try {
+                await zenbookerClient.addCustomerNote(contact.zenbooker_customer_id, noteText);
+                console.log(`[ZbSync] Added secondary phone note for contact ${contactId}`);
+            } catch (noteErr) {
+                console.warn(`[ZbSync] Failed to add secondary phone note:`, noteErr.message);
+            }
+        }
+
+        // Sync contact notes to Zenbooker
+        if (contact.notes) {
+            try {
+                await zenbookerClient.addCustomerNote(contact.zenbooker_customer_id, contact.notes);
+                console.log(`[ZbSync] Added notes for contact ${contactId}`);
+            } catch (noteErr) {
+                console.warn(`[ZbSync] Failed to add notes:`, noteErr.message);
+            }
+        }
+
         await db.query(
             `UPDATE contacts SET zenbooker_synced_at = NOW(), zenbooker_sync_status = 'linked', zenbooker_last_error = NULL WHERE id = $1`,
             [contactId]
@@ -171,7 +205,6 @@ async function syncAddressToZenbooker(contactId, addressId) {
         city: addr.city || '',
         state: addr.state || '',
         postal_code: addr.postal_code || '',
-        country: addr.country || 'US',
     };
 
     try {
@@ -216,7 +249,6 @@ async function pushExistingAddresses(contactId, zbCustomerId) {
                 city: addr.city || '',
                 state: addr.state || '',
                 postal_code: addr.postal_code || '',
-                country: addr.country || 'US',
             };
             const result = await zenbookerClient.addCustomerAddress(zbCustomerId, zbAddr);
             const zbAddrId = result?.id || result?.address_id;

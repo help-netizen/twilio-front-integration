@@ -1,6 +1,6 @@
 import React from 'react';
 import { useParams } from 'react-router-dom';
-import { useContactCalls } from '../hooks/useConversations';
+import { useContactCalls, useCall } from '../hooks/useConversations';
 import { useRealtimeEvents, type SSECallEvent } from '../hooks/useRealtimeEvents';
 import { useQueryClient } from '@tanstack/react-query';
 import { ConversationList } from '../components/conversations/ConversationList';
@@ -56,9 +56,16 @@ function callToCallData(call: Call): CallData {
 }
 
 export const ConversationPage: React.FC = () => {
-    const { id } = useParams<{ id: string }>();
+    const { id, callSid } = useParams<{ id?: string; callSid?: string }>();
     const contactId = parseInt(id || '0');
-    const { data: calls, isLoading } = useContactCalls(contactId);
+    const singleCallSid = callSid || '';
+
+    // Fetch by contact if on /contact/:id, or by callSid if on /calls/:callSid
+    const { data: contactCalls, isLoading: contactLoading } = useContactCalls(contactId);
+    const { data: singleCall, isLoading: singleLoading } = useCall(singleCallSid);
+
+    const calls = contactId ? contactCalls : (singleCall ? [singleCall] : []);
+    const isLoading = contactId ? contactLoading : singleLoading;
     const queryClient = useQueryClient();
 
     // Subscribe to SSE events — update contact-calls cache inline

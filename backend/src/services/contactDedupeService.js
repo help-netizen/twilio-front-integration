@@ -325,6 +325,16 @@ async function createNewContact({ first_name, last_name, phone, email }, company
         );
     }
 
+    // Async: auto-create in Zenbooker if feature is enabled
+    try {
+        const zenbookerSyncService = require('./zenbookerSyncService');
+        if (zenbookerSyncService.FEATURE_ENABLED) {
+            zenbookerSyncService.pushContactToZenbooker(contactId).catch(err =>
+                console.error(`[ContactDedupe] Zenbooker auto-create error (non-blocking):`, err.message)
+            );
+        }
+    } catch (e) { /* zenbookerSyncService not available */ }
+
     return contactId;
 }
 

@@ -538,6 +538,28 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
             const zbResult = await zenbookerClient.createJobFromLead(lead);
             zenbookerJobId = zbResult.job_id;
             console.log(`[ConvertLead] Zenbooker job created: ${zenbookerJobId}`);
+
+            // Fetch the created job to get the Zenbooker customer ID and link it to the Blanc contact
+            if (zenbookerJobId && leadRows[0].contact_id) {
+                try {
+                    const jobDetail = await zenbookerClient.getJob(zenbookerJobId);
+                    const zbCustomerId = jobDetail?.customer?.id;
+                    if (zbCustomerId) {
+                        await db.query(
+                            `UPDATE contacts
+                             SET zenbooker_customer_id = COALESCE(NULLIF(zenbooker_customer_id, ''), $1),
+                                 zenbooker_data = COALESCE(zenbooker_data, '{}'::jsonb) || jsonb_build_object('id', $1::text),
+                                 zenbooker_sync_status = 'linked',
+                                 zenbooker_synced_at = NOW()
+                             WHERE id = $2`,
+                            [zbCustomerId, leadRows[0].contact_id]
+                        );
+                        console.log(`[ConvertLead] Linked contact ${leadRows[0].contact_id} to Zenbooker customer ${zbCustomerId}`);
+                    }
+                } catch (linkErr) {
+                    console.warn(`[ConvertLead] Could not link Zenbooker customer to contact:`, linkErr.message);
+                }
+            }
         } catch (err) {
             // If Zenbooker API key not configured, skip silently
             if (err.message === 'ZENBOOKER_API_KEY is not configured') {

@@ -1,6 +1,8 @@
-import { useState } from 'react';
-import { Phone, Mail, ExternalLink, Activity, TrendingUp, FileText, User, MapPin, CreditCard, Briefcase, CalendarClock, Pencil, Check, X, RefreshCw, CloudUpload, AlertCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Phone, Mail, ExternalLink, Activity, TrendingUp, FileText, User, MapPin, Briefcase, Pencil, Check, X, RefreshCw, CloudUpload, AlertCircle } from 'lucide-react';
 import { Badge } from '../ui/badge';
+import { Switch } from '../ui/switch';
+import { Label } from '../ui/label';
 import { Skeleton } from '../ui/skeleton';
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
@@ -18,7 +20,7 @@ interface ContactDetailPanelProps {
     onContactChanged?: () => void;
 }
 
-const ZENBOOKER_BASE_URL = 'https://app.zenbooker.com';
+const ZENBOOKER_BASE_URL = 'https://zenbooker.com';
 
 function formatPhone(phone: string | null): string {
     if (!phone) return '';
@@ -41,6 +43,108 @@ function getLeadStatusColor(status: string): string {
         case 'Lost': return '#ef4444';
         default: return '#6b7280';
     }
+}
+
+const ZENBOOKER_JOB_URL = 'https://zenbooker.com/app?view=sched&view-job=';
+
+function getJobStatusStyle(status: string): { bg: string; color: string } {
+    switch (status.toLowerCase()) {
+        case 'completed': return { bg: '#dcfce7', color: '#166534' };
+        case 'en-route': return { bg: '#dbeafe', color: '#1e40af' };
+        case 'started': return { bg: '#fef3c7', color: '#92400e' };
+        case 'scheduled': return { bg: '#f3e8ff', color: '#6b21a8' };
+        case 'canceled': return { bg: '#fee2e2', color: '#991b1b' };
+        default: return { bg: '#f1f5f9', color: '#475569' };
+    }
+}
+
+function JobsList({ customerId }: { customerId: string | null }) {
+    const [jobs, setJobs] = useState<contactsApi.ZenbookerJob[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [loaded, setLoaded] = useState(false);
+
+    useEffect(() => {
+        if (!customerId) return;
+        setLoading(true);
+        setLoaded(false);
+        contactsApi.fetchZenbookerJobs(customerId)
+            .then(data => { setJobs(data); setLoaded(true); })
+            .catch(() => setLoaded(true))
+            .finally(() => setLoading(false));
+    }, [customerId]);
+
+    if (!customerId) return null;
+
+    return (
+        <div style={{ marginBottom: '24px' }}>
+            <h3 style={sectionTitleStyle}>
+                <Briefcase style={{ width: '16px', height: '16px' }} />
+                Jobs {loaded ? `(${jobs.length})` : ''}
+            </h3>
+            {loading && (
+                <div style={{ fontSize: '13px', color: '#94a3b8', padding: '8px 0' }}>Loading jobs…</div>
+            )}
+            {loaded && jobs.length === 0 && (
+                <div style={{
+                    padding: '32px', textAlign: 'center', color: '#94a3b8',
+                    fontSize: '14px', backgroundColor: '#f8fafc', borderRadius: '8px',
+                }}>
+                    <Briefcase style={{ width: '32px', height: '32px', margin: '0 auto 8px', opacity: 0.3 }} />
+                    No jobs found in Zenbooker
+                </div>
+            )}
+            {jobs.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {jobs.map(job => {
+                        const statusStyle = getJobStatusStyle(job.status);
+                        const date = job.start_date ? new Date(job.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null;
+                        return (
+                            <a
+                                key={job.id}
+                                href={`${ZENBOOKER_JOB_URL}${job.id}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{
+                                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                    padding: '12px 16px', borderRadius: '10px', border: '1px solid #e5e7eb',
+                                    backgroundColor: '#fff', textDecoration: 'none', color: 'inherit',
+                                    transition: 'all 0.15s', cursor: 'pointer', gap: '8px',
+                                }}
+                                onMouseEnter={e => { e.currentTarget.style.borderColor = '#93c5fd'; e.currentTarget.style.boxShadow = '0 1px 4px rgba(59,130,246,0.1)'; }}
+                                onMouseLeave={e => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; }}
+                            >
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                        <span style={{ fontSize: '14px', fontWeight: 500, color: '#111827' }}>
+                                            {job.service_name || 'Job'}
+                                        </span>
+                                        {job.job_number && (
+                                            <span style={{ fontSize: '12px', color: '#9ca3af', fontFamily: 'monospace' }}>#{job.job_number}</span>
+                                        )}
+                                        <span style={{
+                                            fontSize: '11px', fontWeight: 600, padding: '2px 8px',
+                                            borderRadius: '10px', backgroundColor: statusStyle.bg,
+                                            color: statusStyle.color, textTransform: 'capitalize',
+                                        }}>
+                                            {job.status}
+                                        </span>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '12px', marginTop: '4px', fontSize: '12px', color: '#6b7280' }}>
+                                        {job.assigned_providers.length > 0 && (
+                                            <span>👤 {job.assigned_providers.join(', ')}</span>
+                                        )}
+                                        {date && <span>📅 {date}</span>}
+                                        {job.invoice_total && <span>💰 ${job.invoice_total}</span>}
+                                    </div>
+                                </div>
+                                <ExternalLink style={{ width: '14px', height: '14px', color: '#9ca3af', flexShrink: 0 }} />
+                            </a>
+                        );
+                    })}
+                </div>
+            )}
+        </div>
+    );
 }
 
 const labelStyle: React.CSSProperties = {
@@ -256,6 +360,10 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
     const navigate = useNavigate();
     const [editOpen, setEditOpen] = useState(false);
     const [syncing, setSyncing] = useState(false);
+    const [onlyOpenLeads, setOnlyOpenLeads] = useState(true);
+    const filteredLeads = onlyOpenLeads
+        ? leads.filter(l => !['Lost', 'Converted'].includes(l.status))
+        : leads;
 
     const handleCreateInZenbooker = async () => {
         setSyncing(true);
@@ -326,7 +434,7 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
                         </div>
                         <div style={{ fontSize: '13px', color: '#6b7280', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                             Contact ID: {contact.id}
-                            {contact.zenbooker_id && ` · Zenbooker ID: ${contact.zenbooker_id}`}
+
                             {ZENBOOKER_SYNC_ENABLED && contact.zenbooker_sync_status && contact.zenbooker_sync_status !== 'not_linked' && (
                                 <Badge
                                     style={{
@@ -370,23 +478,6 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
                         <Pencil style={{ width: '14px', height: '14px' }} />
                         Edit
                     </button>
-                    {contact.zenbooker_customer_id && (
-                        <a
-                            href={`${ZENBOOKER_BASE_URL}/customers/${contact.zenbooker_customer_id}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            title="Open in Zenbooker"
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: '6px',
-                                padding: '8px 12px', borderRadius: '8px', border: '1px solid #d1d5db',
-                                backgroundColor: '#fff', color: '#374151', fontSize: '13px',
-                                fontWeight: 500, textDecoration: 'none', transition: 'all 0.15s',
-                            }}
-                        >
-                            Zenbooker
-                            <ExternalLink style={{ width: '14px', height: '14px' }} />
-                        </a>
-                    )}
                     {ZENBOOKER_SYNC_ENABLED && !contact.zenbooker_customer_id && (
                         <button
                             onClick={handleCreateInZenbooker}
@@ -408,7 +499,7 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
                         <button
                             onClick={handleSyncToZenbooker}
                             disabled={syncing}
-                            title={`Sync contact data to Zenbooker${contact.zenbooker_synced_at ? `\nLast synced: ${new Date(contact.zenbooker_synced_at).toLocaleString()}` : ''}`}
+                            title={`Push data from this contact to Zenbooker. All customer fields in Zenbooker will be replaced with data from this card.${contact.zenbooker_synced_at ? `\nLast synced: ${new Date(contact.zenbooker_synced_at).toLocaleString()}` : ''}`}
                             style={{
                                 display: 'flex', alignItems: 'center', gap: '4px',
                                 padding: '8px 10px', borderRadius: '8px', border: '1px solid #d1d5db',
@@ -421,6 +512,7 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
                             Sync
                         </button>
                     )}
+
                 </div>
             </div>
 
@@ -432,9 +524,25 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 24px' }}>
                     <InfoRow label="Phone" value={formatPhone(contact.phone_e164)} icon={<Phone style={{ width: '14px', height: '14px' }} />} />
                     <InfoRow label={contact.secondary_phone_name ? `Secondary Phone (${contact.secondary_phone_name})` : 'Secondary Phone'} value={formatPhone(contact.secondary_phone)} icon={<Phone style={{ width: '14px', height: '14px' }} />} />
-                    <div style={{ gridColumn: '1 / -1' }}>
-                        <InfoRow label="Email" value={contact.email || ''} icon={<Mail style={{ width: '14px', height: '14px' }} />} />
-                    </div>
+                    <InfoRow label="Email" value={contact.email || ''} icon={<Mail style={{ width: '14px', height: '14px' }} />} />
+                    {contact.zenbooker_id ? (
+                        <div style={{ marginBottom: '4px' }}>
+                            <div style={{ fontSize: '11px', fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <ExternalLink style={{ width: '14px', height: '14px' }} />
+                                Zenbooker ID
+                            </div>
+                            <a
+                                href={`${ZENBOOKER_BASE_URL}/app?view=customers&customer=${contact.zenbooker_id}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ fontSize: '14px', color: '#6366f1', textDecoration: 'none' }}
+                                onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
+                                onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
+                            >
+                                {contact.zenbooker_id}
+                            </a>
+                        </div>
+                    ) : <div />}
                     {contact.company_name && (
                         <div style={{ gridColumn: '1 / -1' }}>
                             <InfoRow label="Company" value={contact.company_name} icon={<Briefcase style={{ width: '14px', height: '14px' }} />} />
@@ -469,49 +577,6 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
                 )}
             </div>
 
-            {/* Zenbooker Data */}
-            <div style={{
-                backgroundColor: '#f8fafc', borderRadius: '12px',
-                padding: '16px 20px', marginBottom: '24px',
-            }}>
-                <h3 style={{ ...sectionTitleStyle, marginBottom: '12px' }}>
-                    <Briefcase style={{ width: '16px', height: '16px' }} />
-                    Zenbooker Details
-                </h3>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 24px' }}>
-                    <InfoRow label="Zenbooker Customer ID" value={contact.zenbooker_customer_id || ''} />
-                    <InfoRow label="Stripe Customer ID" value={contact.stripe_customer_id || ''} icon={<CreditCard style={{ width: '14px', height: '14px' }} />} />
-                    <InfoRow label="Zenbooker Creation Date" value={contact.zenbooker_creation_date || ''} icon={<CalendarClock style={{ width: '14px', height: '14px' }} />} />
-                </div>
-
-                {/* Jobs */}
-                <div style={{ marginTop: '16px' }}>
-                    <div style={labelStyle}>Jobs ({contact.jobs.length})</div>
-                    {contact.jobs.length === 0 ? (
-                        <div style={{ fontSize: '13px', color: '#cbd5e1', marginTop: '4px' }}>No jobs</div>
-                    ) : (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '4px' }}>
-                            {contact.jobs.map((job, i) => (
-                                <Badge key={i} variant="secondary">{job}</Badge>
-                            ))}
-                        </div>
-                    )}
-                </div>
-
-                {/* Recurring Bookings */}
-                <div style={{ marginTop: '12px' }}>
-                    <div style={labelStyle}>Recurring Bookings ({contact.recurring_bookings.length})</div>
-                    {contact.recurring_bookings.length === 0 ? (
-                        <div style={{ fontSize: '13px', color: '#cbd5e1', marginTop: '4px' }}>No recurring bookings</div>
-                    ) : (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '4px' }}>
-                            {contact.recurring_bookings.map((rb, i) => (
-                                <Badge key={i} variant="secondary">{rb}</Badge>
-                            ))}
-                        </div>
-                    )}
-                </div>
-            </div>
 
             {/* Notes */}
             <div style={{ marginBottom: '24px' }}>
@@ -530,22 +595,34 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
 
             {/* Leads Section */}
             <div>
-                <h3 style={sectionTitleStyle}>
-                    <TrendingUp style={{ width: '16px', height: '16px' }} />
-                    Leads ({leads.length})
-                </h3>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <h3 style={sectionTitleStyle}>
+                        <TrendingUp style={{ width: '16px', height: '16px' }} />
+                        Leads ({onlyOpenLeads ? filteredLeads.length : leads.length})
+                    </h3>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Switch
+                            id="leads-only-open"
+                            checked={onlyOpenLeads}
+                            onCheckedChange={setOnlyOpenLeads}
+                        />
+                        <Label htmlFor="leads-only-open" style={{ cursor: 'pointer', fontSize: '13px' }}>
+                            Only Open
+                        </Label>
+                    </div>
+                </div>
 
-                {leads.length === 0 ? (
+                {filteredLeads.length === 0 ? (
                     <div style={{
                         padding: '32px', textAlign: 'center', color: '#94a3b8',
                         fontSize: '14px', backgroundColor: '#f8fafc', borderRadius: '8px',
                     }}>
                         <TrendingUp style={{ width: '32px', height: '32px', margin: '0 auto 8px', opacity: 0.3 }} />
-                        No leads found for this customer
+                        {onlyOpenLeads ? 'No open leads for this customer' : 'No leads found for this customer'}
                     </div>
                 ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        {leads.map((lead) => (
+                        {filteredLeads.map((lead) => (
                             <div
                                 key={lead.id}
                                 onClick={() => navigate(`/leads/${lead.id}`)}
@@ -609,6 +686,11 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
                         ))}
                     </div>
                 )}
+            </div>
+
+            {/* Jobs */}
+            <div style={{ marginTop: '24px' }}>
+                <JobsList customerId={contact.zenbooker_customer_id} />
             </div>
 
             {/* Timestamps */}

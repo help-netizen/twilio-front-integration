@@ -150,5 +150,57 @@ router.post('/contacts/:contactId/sync', authenticate, requireCompanyAccess, asy
         res.status(500).json({ ok: false, error: { code: 'INTERNAL_ERROR', message: err.message } });
     }
 });
+// =============================================================================
+// GET /jobs — Fetch Zenbooker jobs for a customer
+// =============================================================================
+router.get('/jobs', authenticate, requireCompanyAccess, async (req, res) => {
+    const reqId = requestId();
+    try {
+        const customerId = req.query.customer_id;
+        if (!customerId) {
+            return res.status(400).json({ ok: false, error: { code: 'MISSING_CUSTOMER_ID', message: 'customer_id query parameter required' } });
+        }
+
+        const zenbookerClient = require('../services/zenbookerClient');
+
+        // Fetch jobs for this customer (paginated)
+        const allJobs = [];
+        let cursor = 0;
+        const limit = 100;
+
+        while (true) {
+            const jobRes = await zenbookerClient.getClient().get('/jobs', {
+                params: { customer: customerId, limit, cursor },
+            });
+            const data = jobRes.data;
+            const results = data.results || [];
+            allJobs.push(...results);
+            if (!data.has_more || results.length === 0) break;
+            cursor += results.length;
+            if (allJobs.length >= 200) break; // Safety limit
+        }
+
+        // Map to lightweight response
+        const jobs = allJobs.map(job => ({
+            id: job.id,
+            job_number: job.job_number || null,
+            service_name: job.service_name || null,
+            status: job.canceled ? 'Canceled' : (job.status || 'Unknown'),
+            start_date: job.start_date || null,
+            end_date: job.end_date || null,
+            created: job.created || null,
+            assigned_providers: (job.assigned_providers || []).map(p => p.name).filter(Boolean),
+            service_address: job.service_address?.formatted || null,
+            invoice_total: job.invoice?.total || null,
+            invoice_status: job.invoice?.status || null,
+            recurring: job.recurring || false,
+        }));
+
+        res.json({ ok: true, data: jobs });
+    } catch (err) {
+        console.error(`[ZbIntegration][${reqId}] jobs error:`, err.response?.data || err.message);
+        res.status(500).json({ ok: false, error: { code: 'INTERNAL_ERROR', message: err.message } });
+    }
+});
 
 module.exports = router;

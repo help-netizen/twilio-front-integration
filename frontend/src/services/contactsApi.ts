@@ -205,3 +205,26 @@ export async function syncToZenbooker(contactId: number): Promise<{
     }
     return data;
 }
+
+export interface ZenbookerJob {
+    id: string;
+    job_number: string | null;
+    service_name: string | null;
+    status: string;
+    start_date: string | null;
+    end_date: string | null;
+    created: string | null;
+    assigned_providers: string[];
+    service_address: string | null;
+    invoice_total: string | null;
+    invoice_status: string | null;
+    recurring: boolean;
+}
+
+export async function fetchZenbookerJobs(customerId: string): Promise<ZenbookerJob[]> {
+    if (!customerId) return [];
+    const res = await authedFetch(`${ZB_INTEGRATION_BASE}/jobs?customer_id=${customerId}`);
+    const data = await res.json();
+    if (!data.ok) return [];
+    return data.data || [];
+}
