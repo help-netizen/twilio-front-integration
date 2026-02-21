@@ -506,19 +506,21 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+            <DialogContent className="max-w-xl max-h-[85vh] flex flex-col overflow-hidden">
                 <DialogHeader>
                     <DialogTitle>Convert to Job — {lead?.FirstName} {lead?.LastName}</DialogTitle>
                 </DialogHeader>
 
-                {renderStepIndicator()}
+                <div className="flex-1 overflow-y-auto pr-1">
+                    {renderStepIndicator()}
 
-                {step === 1 && renderStep1()}
-                {step === 2 && renderStep2()}
-                {step === 3 && renderStep3()}
-                {step === 4 && renderStep4()}
+                    {step === 1 && renderStep1()}
+                    {step === 2 && renderStep2()}
+                    {step === 3 && renderStep3()}
+                    {step === 4 && renderStep4()}
+                </div>
 
-                <DialogFooter className="flex justify-between pt-4">
+                <DialogFooter className="flex justify-between pt-4 border-t shrink-0">
                     <div>
                         {step > 1 && (
                             <Button variant="outline" onClick={() => setStep((step - 1) as Step)} disabled={submitting}>
