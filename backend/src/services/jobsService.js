@@ -186,7 +186,7 @@ async function getJobByZbId(zbJobId) {
     return rowToJob(rows[0]);
 }
 
-async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 50, companyId } = {}) {
+async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 50, companyId, contactId } = {}) {
     const conditions = [];
     const params = [];
     let idx = 0;
@@ -210,6 +210,9 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
             j.address ILIKE $${idx}
         )`);
         params.push(`%${search}%`);
+    }
+    if (contactId) {
+        idx++; conditions.push(`j.contact_id = $${idx}`); params.push(contactId);
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';

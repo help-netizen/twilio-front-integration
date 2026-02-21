@@ -53,6 +53,7 @@ export interface JobsListParams {
     search?: string;
     offset?: number;
     limit?: number;
+    contact_id?: number;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

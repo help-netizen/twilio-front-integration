@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import type { Contact, ContactLead, ContactAddress } from '../../types/contact';
 import { AddressAutocomplete, type AddressFields } from '../AddressAutocomplete';
 import * as contactsApi from '../../services/contactsApi';
+import * as jobsApi from '../../services/jobsApi';
 import { EditContactDialog } from './EditContactDialog';
 
 interface ContactDetailPanelProps {
@@ -45,35 +46,36 @@ function getLeadStatusColor(status: string): string {
     }
 }
 
-const ZENBOOKER_JOB_URL = 'https://zenbooker.com/app?view=sched&view-job=';
+
 
 function getJobStatusStyle(status: string): { bg: string; color: string } {
-    switch (status.toLowerCase()) {
-        case 'completed': return { bg: '#dcfce7', color: '#166534' };
-        case 'en-route': return { bg: '#dbeafe', color: '#1e40af' };
-        case 'started': return { bg: '#fef3c7', color: '#92400e' };
-        case 'scheduled': return { bg: '#f3e8ff', color: '#6b21a8' };
-        case 'canceled': return { bg: '#fee2e2', color: '#991b1b' };
+    switch (status) {
+        case 'Submitted': return { bg: '#dbeafe', color: '#1e40af' };
+        case 'Waiting for parts': return { bg: '#fef3c7', color: '#92400e' };
+        case 'Follow Up with Client': return { bg: '#f3e8ff', color: '#6b21a8' };
+        case 'Visit completed': return { bg: '#dcfce7', color: '#166534' };
+        case 'Job is Done': return { bg: '#e5e7eb', color: '#374151' };
+        case 'Rescheduled': return { bg: '#ffedd5', color: '#9a3412' };
+        case 'Canceled': return { bg: '#fee2e2', color: '#991b1b' };
         default: return { bg: '#f1f5f9', color: '#475569' };
     }
 }
 
-function JobsList({ customerId }: { customerId: string | null }) {
-    const [jobs, setJobs] = useState<contactsApi.ZenbookerJob[]>([]);
+function JobsList({ contactId }: { contactId: number }) {
+    const [jobs, setJobs] = useState<jobsApi.LocalJob[]>([]);
     const [loading, setLoading] = useState(false);
     const [loaded, setLoaded] = useState(false);
+    const navigate = useNavigate();
 
     useEffect(() => {
-        if (!customerId) return;
+        if (!contactId) return;
         setLoading(true);
         setLoaded(false);
-        contactsApi.fetchZenbookerJobs(customerId)
-            .then(data => { setJobs(data); setLoaded(true); })
+        jobsApi.listJobs({ contact_id: contactId, limit: 50 })
+            .then(data => { setJobs(data.results); setLoaded(true); })
             .catch(() => setLoaded(true))
             .finally(() => setLoading(false));
-    }, [customerId]);
-
-    if (!customerId) return null;
+    }, [contactId]);
 
     return (
         <div style={{ marginBottom: '24px' }}>
@@ -90,25 +92,23 @@ function JobsList({ customerId }: { customerId: string | null }) {
                     fontSize: '14px', backgroundColor: '#f8fafc', borderRadius: '8px',
                 }}>
                     <Briefcase style={{ width: '32px', height: '32px', margin: '0 auto 8px', opacity: 0.3 }} />
-                    No jobs found in Zenbooker
+                    No jobs found
                 </div>
             )}
             {jobs.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {jobs.map(job => {
-                        const statusStyle = getJobStatusStyle(job.status);
+                        const statusStyle = getJobStatusStyle(job.blanc_status);
                         const date = job.start_date ? new Date(job.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null;
                         return (
-                            <a
+                            <div
                                 key={job.id}
-                                href={`${ZENBOOKER_JOB_URL}${job.id}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
+                                onClick={() => navigate(`/jobs?selected=${job.id}`)}
                                 style={{
                                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                                     padding: '12px 16px', borderRadius: '10px', border: '1px solid #e5e7eb',
-                                    backgroundColor: '#fff', textDecoration: 'none', color: 'inherit',
-                                    transition: 'all 0.15s', cursor: 'pointer', gap: '8px',
+                                    backgroundColor: '#fff', cursor: 'pointer', gap: '8px',
+                                    transition: 'all 0.15s',
                                 }}
                                 onMouseEnter={e => { e.currentTarget.style.borderColor = '#93c5fd'; e.currentTarget.style.boxShadow = '0 1px 4px rgba(59,130,246,0.1)'; }}
                                 onMouseLeave={e => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; }}
@@ -124,21 +124,20 @@ function JobsList({ customerId }: { customerId: string | null }) {
                                         <span style={{
                                             fontSize: '11px', fontWeight: 600, padding: '2px 8px',
                                             borderRadius: '10px', backgroundColor: statusStyle.bg,
-                                            color: statusStyle.color, textTransform: 'capitalize',
+                                            color: statusStyle.color,
                                         }}>
-                                            {job.status}
+                                            {job.blanc_status}
                                         </span>
                                     </div>
                                     <div style={{ display: 'flex', gap: '12px', marginTop: '4px', fontSize: '12px', color: '#6b7280' }}>
-                                        {job.assigned_providers.length > 0 && (
-                                            <span>👤 {job.assigned_providers.join(', ')}</span>
+                                        {job.assigned_techs && job.assigned_techs.length > 0 && (
+                                            <span>👤 {job.assigned_techs.map((p: any) => p.name).join(', ')}</span>
                                         )}
                                         {date && <span>📅 {date}</span>}
                                         {job.invoice_total && <span>💰 ${job.invoice_total}</span>}
                                     </div>
                                 </div>
-                                <ExternalLink style={{ width: '14px', height: '14px', color: '#9ca3af', flexShrink: 0 }} />
-                            </a>
+                            </div>
                         );
                     })}
                 </div>
@@ -690,7 +689,7 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
 
             {/* Jobs */}
             <div style={{ marginTop: '24px' }}>
-                <JobsList customerId={contact.zenbooker_customer_id} />
+                <JobsList contactId={contact.id} />
             </div>
 
             {/* Timestamps */}

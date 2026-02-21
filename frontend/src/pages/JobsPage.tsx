@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { toast } from 'sonner';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import {
@@ -8,6 +9,7 @@ import {
     Loader2, StickyNote, CalendarClock,
 } from 'lucide-react';
 import * as jobsApi from '../services/jobsApi';
+import * as contactsApi from '../services/contactsApi';
 import type { LocalJob, JobsListParams } from '../services/jobsApi';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -88,12 +90,18 @@ export function JobsPage() {
     const [detailLoading, setDetailLoading] = useState(false);
     const [totalCount, setTotalCount] = useState(0);
 
+    const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
+
     // Filters
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState<string>('');
     const [offset, setOffset] = useState(0);
     const [hasMore, setHasMore] = useState(false);
     const LIMIT = 50;
+
+    // Contact info for detail panel
+    const [contactInfo, setContactInfo] = useState<{ name: string; phone: string; email: string; id: number } | null>(null);
 
     const loadJobs = useCallback(async (newOffset = 0) => {
         setLoading(true);
@@ -121,19 +129,36 @@ export function JobsPage() {
 
     useEffect(() => { loadJobs(0); }, [loadJobs]);
 
-    // Job selection — fetch full detail
     const handleSelectJob = async (job: LocalJob) => {
         setSelectedJob(job);
         setDetailLoading(true);
+        setContactInfo(null);
         try {
             const detail = await jobsApi.getJob(job.id);
             setSelectedJob(detail);
+            // Fetch linked Blanc contact if available
+            if (detail.contact_id) {
+                try {
+                    const resp = await contactsApi.getContact(detail.contact_id);
+                    const c = resp.data.contact;
+                    setContactInfo({ name: c.full_name || '—', phone: c.phone_e164 || '', email: c.email || '', id: c.id });
+                } catch { /* no contact found */ }
+            }
         } catch {
             // Keep the list-version
         } finally {
             setDetailLoading(false);
         }
     };
+
+    // Auto-select job from URL ?selected=ID
+    useEffect(() => {
+        const selectedId = searchParams.get('selected');
+        if (selectedId && jobs.length > 0 && !selectedJob) {
+            const job = jobs.find(j => j.id === parseInt(selectedId, 10));
+            if (job) handleSelectJob(job);
+        }
+    }, [jobs, searchParams]);
 
     // ---------- Actions ----------
 
@@ -353,15 +378,37 @@ export function JobsPage() {
                             <section>
                                 <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Customer</h3>
                                 <div className="space-y-1">
-                                    <div className="flex items-center gap-2">
-                                        <User2 className="size-4 text-muted-foreground" />
-                                        <span className="font-medium">{selectedJob.customer_name || '—'}</span>
-                                    </div>
-                                    {selectedJob.customer_phone && (
-                                        <div className="text-sm text-muted-foreground pl-6">{selectedJob.customer_phone}</div>
-                                    )}
-                                    {selectedJob.customer_email && (
-                                        <div className="text-sm text-muted-foreground pl-6">{selectedJob.customer_email}</div>
+                                    {contactInfo ? (
+                                        <>
+                                            <div className="flex items-center gap-2">
+                                                <User2 className="size-4 text-muted-foreground" />
+                                                <span
+                                                    className="font-medium text-indigo-600 cursor-pointer hover:underline"
+                                                    onClick={() => navigate(`/contacts/${contactInfo.id}`)}
+                                                >
+                                                    {contactInfo.name}
+                                                </span>
+                                            </div>
+                                            {contactInfo.phone && (
+                                                <div className="text-sm text-muted-foreground pl-6">{contactInfo.phone}</div>
+                                            )}
+                                            {contactInfo.email && (
+                                                <div className="text-sm text-muted-foreground pl-6">{contactInfo.email}</div>
+                                            )}
+                                        </>
+                                    ) : (
+                                        <>
+                                            <div className="flex items-center gap-2">
+                                                <User2 className="size-4 text-muted-foreground" />
+                                                <span className="font-medium">{selectedJob.customer_name || '—'}</span>
+                                            </div>
+                                            {selectedJob.customer_phone && (
+                                                <div className="text-sm text-muted-foreground pl-6">{selectedJob.customer_phone}</div>
+                                            )}
+                                            {selectedJob.customer_email && (
+                                                <div className="text-sm text-muted-foreground pl-6">{selectedJob.customer_email}</div>
+                                            )}
+                                        </>
                                     )}
                                 </div>
                             </section>

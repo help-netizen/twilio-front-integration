@@ -12,7 +12,7 @@ const jobsService = require('../services/jobsService');
 
 router.get('/', async (req, res) => {
     try {
-        const { blanc_status, canceled, search, offset, limit } = req.query;
+        const { blanc_status, canceled, search, offset, limit, contact_id } = req.query;
         const result = await jobsService.listJobs({
             blancStatus: blanc_status || undefined,
             zbCanceled: canceled,
@@ -20,6 +20,7 @@ router.get('/', async (req, res) => {
             offset: parseInt(offset, 10) || 0,
             limit: parseInt(limit, 10) || 50,
             companyId: req.companyId || undefined,
+            contactId: contact_id || undefined,
         });
         res.json({ ok: true, data: result });
     } catch (err) {
