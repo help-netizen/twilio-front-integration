@@ -547,8 +547,9 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
     const { rows: [jobRow] } = await db.query(`
         INSERT INTO jobs (
             lead_id, contact_id, blanc_status, service_name, address,
-            customer_name, customer_phone, customer_email, company_id
-        ) VALUES ($1, $2, 'Submitted', $3, $4, $5, $6, $7, $8)
+            customer_name, customer_phone, customer_email, company_id,
+            job_type, job_source, description, metadata, comments
+        ) VALUES ($1, $2, 'Submitted', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING id
     `, [
         leadRow.id,
@@ -559,6 +560,11 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
         customerPhone,
         customerEmail,
         leadRow.company_id || null,
+        leadRow.job_type || serviceName,
+        leadRow.job_source || null,
+        overrides.service?.description || leadRow.lead_notes || leadRow.comments || null,
+        leadRow.metadata || '{}',
+        leadRow.comments || null,
     ]);
     const localJobId = jobRow.id;
     console.log(`[ConvertLead] Local job created: ${localJobId}`);

@@ -34,6 +34,13 @@ export interface LocalJob {
     assigned_techs?: Array<{ id: string; name: string }>;
     notes?: Array<{ text: string; created: string }>;
 
+    // Lead-like fields (unified)
+    job_type?: string;
+    job_source?: string;
+    description?: string;
+    metadata?: Record<string, string>;
+    comments?: string;
+
     company_id?: string;
     created_at?: string;
     updated_at?: string;

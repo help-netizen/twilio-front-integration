@@ -3,14 +3,22 @@ import { toast } from 'sonner';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
+import { Label } from '../components/ui/label';
+import { Separator } from '../components/ui/separator';
 import {
     Search, RefreshCw, ChevronLeft, ChevronRight, X, MapPin,
     User2, FileText, Play, CheckCircle2, Navigation, Ban,
-    Loader2, StickyNote, CalendarClock,
+    Loader2, StickyNote, CalendarClock, Phone, Mail, Tag, Briefcase,
+    Calendar, ChevronDown, CornerDownLeft,
 } from 'lucide-react';
+import { authedFetch } from '../services/apiClient';
 import * as jobsApi from '../services/jobsApi';
 import * as contactsApi from '../services/contactsApi';
 import type { LocalJob, JobsListParams } from '../services/jobsApi';
+import { formatPhone } from '../lib/formatPhone';
+import {
+    DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '../components/ui/dropdown-menu';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -377,234 +385,472 @@ export function JobsPage() {
 
             {/* ── Right: Detail Panel ─────────────────────────────────── */}
             {selectedJob && (
-                <div className="w-full md:w-[440px] flex flex-col border-l bg-white overflow-hidden">
-                    {/* Header */}
-                    <div className="border-b px-4 py-3 flex items-center justify-between">
-                        <div>
-                            <div className="font-semibold text-lg">
-                                Job #{selectedJob.job_number || selectedJob.id}
-                            </div>
-                            <div className="flex items-center gap-2 mt-1">
-                                <BlancBadge status={selectedJob.blanc_status} />
-                                <ZbBadge status={selectedJob.zb_status} />
+                <JobDetailPanel
+                    job={selectedJob}
+                    contactInfo={contactInfo}
+                    detailLoading={detailLoading}
+                    noteJobId={noteJobId}
+                    noteText={noteText}
+                    setNoteText={setNoteText}
+                    setNoteJobId={setNoteJobId}
+                    onClose={handleCloseDetail}
+                    onBlancStatusChange={handleBlancStatusChange}
+                    onAddNote={handleAddNote}
+                    onMarkEnroute={handleMarkEnroute}
+                    onMarkInProgress={handleMarkInProgress}
+                    onMarkComplete={handleMarkComplete}
+                    onCancel={handleCancel}
+                    navigate={navigate}
+                />
+            )}
+        </div>
+    );
+}
+// ─── Metadata Section (reuses lead-form settings) ────────────────────────────
+
+interface CustomFieldDef {
+    id: string;
+    display_name: string;
+    api_name: string;
+    field_type: string;
+    is_system: boolean;
+    sort_order: number;
+}
+
+function JobMetadataSection({ job }: { job: LocalJob }) {
+    const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
+
+    useEffect(() => {
+        authedFetch('/api/settings/lead-form')
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    setCustomFields(data.customFields.filter((f: CustomFieldDef) => !f.is_system));
+                }
+            })
+            .catch(() => { });
+    }, []);
+
+    const meta = job.metadata || {};
+    const hasAny = job.job_source || job.created_at || customFields.some(f => meta[f.api_name]);
+
+    if (!hasAny) return null;
+
+    return (
+        <>
+            <Separator />
+            <div>
+                <h4 className="font-medium mb-3">Metadata</h4>
+                <div className="space-y-3">
+                    {/* Source */}
+                    {job.job_source && (
+                        <div className="flex items-start gap-3">
+                            <Tag className="size-4 shrink-0 text-muted-foreground" />
+                            <div className="flex-1">
+                                <Label className="text-xs text-muted-foreground">Source</Label>
+                                <div className="text-sm font-medium mt-1">{job.job_source}</div>
                             </div>
                         </div>
-                        <Button variant="ghost" size="icon" onClick={handleCloseDetail}>
-                            <X className="size-4" />
-                        </Button>
+                    )}
+
+                    {/* Created */}
+                    {job.created_at && (
+                        <div className="flex items-start gap-3">
+                            <Calendar className="size-4 shrink-0 text-muted-foreground" />
+                            <div className="flex-1">
+                                <Label className="text-xs text-muted-foreground">Created Date</Label>
+                                <div className="text-sm font-medium mt-1">{formatDate(job.created_at)}</div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Custom fields from settings */}
+                    {customFields.map(field => (
+                        <div key={field.id} className="flex items-start gap-3">
+                            <FileText className="size-4 shrink-0 text-muted-foreground" />
+                            <div className="flex-1">
+                                <Label className="text-xs text-muted-foreground">{field.display_name}</Label>
+                                <div className="text-sm font-medium mt-1 whitespace-pre-wrap">
+                                    {meta[field.api_name] || <span className="text-muted-foreground">N/A</span>}
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </>
+    );
+}
+
+// ─── Job Detail Panel ────────────────────────────────────────────────────────
+
+interface JobDetailPanelProps {
+    job: LocalJob;
+    contactInfo: { id: number; name: string; phone?: string; email?: string } | null;
+    detailLoading: boolean;
+    noteJobId: number | null;
+    noteText: string;
+    setNoteText: (v: string) => void;
+    setNoteJobId: (v: number | null) => void;
+    onClose: () => void;
+    onBlancStatusChange: (id: number, s: string) => void;
+    onAddNote: () => void;
+    onMarkEnroute: (id: number) => void;
+    onMarkInProgress: (id: number) => void;
+    onMarkComplete: (id: number) => void;
+    onCancel: (id: number) => void;
+    navigate: (path: string) => void;
+}
+
+function JobDetailPanel({
+    job, contactInfo, detailLoading,
+    noteJobId, noteText, setNoteText, setNoteJobId,
+    onClose, onBlancStatusChange, onAddNote,
+    onMarkEnroute, onMarkInProgress, onMarkComplete, onCancel,
+    navigate,
+}: JobDetailPanelProps) {
+    const [comments, setComments] = useState(job.comments || '');
+    const [isFocused, setIsFocused] = useState(false);
+    const [isEditingComments, setIsEditingComments] = useState(false);
+
+    useEffect(() => {
+        setComments(job.comments || '');
+        setIsEditingComments(false);
+    }, [job.id]);
+
+    const handleSaveComments = async () => {
+        setIsFocused(false);
+        if (!comments.trim()) setIsEditingComments(false);
+        // TODO: save comments via API when endpoint exists
+    };
+
+    return (
+        <div className="w-full md:w-[440px] flex flex-col border-l bg-white overflow-hidden">
+            {/* ── Header ── */}
+            <div className="p-4 border-b">
+                <div className="flex items-start justify-between mb-3">
+                    <div className="flex-1">
+                        <h3 className="font-semibold text-lg">
+                            {contactInfo?.name || job.customer_name || `Job #${job.job_number || job.id}`}
+                        </h3>
                     </div>
+                    <Button variant="ghost" size="sm" onClick={onClose}>
+                        <X className="size-4" />
+                    </Button>
+                </div>
 
-                    {detailLoading ? (
-                        <div className="flex-1 flex items-center justify-center text-muted-foreground">
-                            <Loader2 className="size-5 animate-spin mr-2" /> Loading...
-                        </div>
-                    ) : (
-                        <div className="flex-1 overflow-auto p-4 space-y-5">
-                            {/* Customer */}
-                            <section>
-                                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Customer</h3>
-                                <div className="space-y-1">
-                                    {contactInfo ? (
-                                        <>
-                                            <div className="flex items-center gap-2">
-                                                <User2 className="size-4 text-muted-foreground" />
-                                                <span
-                                                    className="font-medium text-indigo-600 cursor-pointer hover:underline"
-                                                    onClick={() => navigate(`/contacts/${contactInfo.id}`)}
-                                                >
-                                                    {contactInfo.name}
-                                                </span>
-                                            </div>
-                                            {contactInfo.phone && (
-                                                <div className="text-sm text-muted-foreground pl-6">{contactInfo.phone}</div>
-                                            )}
-                                            {contactInfo.email && (
-                                                <div className="text-sm text-muted-foreground pl-6">{contactInfo.email}</div>
-                                            )}
-                                        </>
-                                    ) : (
-                                        <>
-                                            <div className="flex items-center gap-2">
-                                                <User2 className="size-4 text-muted-foreground" />
-                                                <span className="font-medium">{selectedJob.customer_name || '—'}</span>
-                                            </div>
-                                            {selectedJob.customer_phone && (
-                                                <div className="text-sm text-muted-foreground pl-6">{selectedJob.customer_phone}</div>
-                                            )}
-                                            {selectedJob.customer_email && (
-                                                <div className="text-sm text-muted-foreground pl-6">{selectedJob.customer_email}</div>
-                                            )}
-                                        </>
-                                    )}
-                                </div>
-                            </section>
+                <div className="flex items-center gap-2 flex-wrap">
+                    {/* Blanc status badge dropdown */}
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <button className="inline-flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 rounded-sm">
+                                <BlancBadge status={job.blanc_status} />
+                                <ChevronDown className="size-3 text-muted-foreground" />
+                            </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start">
+                            {BLANC_STATUSES.map(s => (
+                                <DropdownMenuItem
+                                    key={s}
+                                    onClick={() => onBlancStatusChange(job.id, s)}
+                                    className={s === job.blanc_status ? 'bg-accent' : ''}
+                                >
+                                    {s}
+                                </DropdownMenuItem>
+                            ))}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
 
-                            {/* Service & Schedule */}
-                            <section>
-                                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Service</h3>
-                                <div className="space-y-1">
-                                    <div className="flex items-center gap-2">
-                                        <FileText className="size-4 text-muted-foreground" />
-                                        <span>{selectedJob.service_name || '—'}</span>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <CalendarClock className="size-4 text-muted-foreground" />
-                                        <span className="text-sm">{formatDate(selectedJob.start_date)}</span>
-                                        {selectedJob.end_date && (
-                                            <span className="text-xs text-muted-foreground">→ {formatDate(selectedJob.end_date)}</span>
+                    {/* ZB status */}
+                    {job.zb_status && <ZbBadge status={job.zb_status} />}
+
+                    {/* Source badge */}
+                    {job.job_source && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border bg-background">
+                            {job.job_source}
+                        </span>
+                    )}
+
+                    <span className="text-xs text-muted-foreground font-mono ml-auto">
+                        #{job.job_number || job.id}
+                    </span>
+                </div>
+            </div>
+
+            {detailLoading ? (
+                <div className="flex-1 flex items-center justify-center text-muted-foreground">
+                    <Loader2 className="size-5 animate-spin mr-2" /> Loading...
+                </div>
+            ) : (
+                <div className="flex-1 overflow-y-auto">
+                    <div className="p-4 space-y-4">
+                        {/* ── Contact Information ── */}
+                        <div>
+                            <h4 className="font-medium mb-3">Contact Information</h4>
+                            <div className="space-y-3">
+                                {/* Comments */}
+                                {(comments.trim() || isEditingComments) ? (
+                                    <div className="relative bg-rose-50 rounded-lg border border-rose-100 py-1 px-2">
+                                        <textarea
+                                            ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } }}
+                                            className="w-full text-sm resize-none bg-transparent border-none outline-none min-h-[24px] pr-16 leading-6"
+                                            value={comments}
+                                            onChange={e => setComments(e.target.value)}
+                                            onFocus={() => setIsFocused(true)}
+                                            onBlur={handleSaveComments}
+                                            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSaveComments(); } }}
+                                            placeholder="Add comments..."
+                                            rows={1}
+                                            autoFocus={isEditingComments}
+                                            style={{ height: 'auto', minHeight: '24px' }}
+                                            onInput={e => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = `${t.scrollHeight}px`; }}
+                                        />
+                                        {isFocused && (
+                                            <Button size="sm" className="absolute top-1 right-1.5 h-6 px-2 text-xs"
+                                                onMouseDown={e => e.preventDefault()} onClick={handleSaveComments}>
+                                                <CornerDownLeft className="size-3 mr-1" /> Enter
+                                            </Button>
                                         )}
-                                    </div>
-                                    {selectedJob.address && (
-                                        <div className="flex items-start gap-2">
-                                            <MapPin className="size-4 text-muted-foreground mt-0.5" />
-                                            <span className="text-sm">{selectedJob.address}</span>
-                                        </div>
-                                    )}
-                                </div>
-                            </section>
-
-                            {/* Blanc Status — Manual Transitions */}
-                            <section>
-                                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Change Status</h3>
-                                {(() => {
-                                    const allowed = ALLOWED_TRANSITIONS[selectedJob.blanc_status] || [];
-                                    if (allowed.length === 0) {
-                                        return <div className="text-xs text-muted-foreground">No transitions available</div>;
-                                    }
-                                    return (
-                                        <div className="flex flex-wrap gap-1.5">
-                                            {allowed.map(s => (
-                                                <button
-                                                    key={s}
-                                                    onClick={() => handleBlancStatusChange(selectedJob.id, s)}
-                                                    className={`text-xs px-2 py-1 rounded-md border transition-colors hover:opacity-80 ${BLANC_STATUS_COLORS[s] || 'bg-gray-100'
-                                                        }`}
-                                                >
-                                                    → {s}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    );
-                                })()}
-                            </section>
-
-                            {/* Assigned Techs */}
-                            <section>
-                                <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Assigned Techs</h3>
-                                {selectedJob.assigned_techs && selectedJob.assigned_techs.length > 0 ? (
-                                    <div className="space-y-1">
-                                        {selectedJob.assigned_techs.map((p: any) => (
-                                            <div key={p.id} className="flex items-center gap-2 text-sm">
-                                                <User2 className="size-3.5 text-muted-foreground" />
-                                                {p.name}
-                                            </div>
-                                        ))}
                                     </div>
                                 ) : (
-                                    <div className="text-sm text-muted-foreground">No techs assigned</div>
+                                    <button onClick={() => { setIsEditingComments(true); setIsFocused(true); }}
+                                        className="text-sm text-muted-foreground hover:text-foreground transition-colors underline decoration-dashed decoration-1 underline-offset-4">
+                                        + Add comment
+                                    </button>
                                 )}
-                            </section>
 
-                            {/* Invoice */}
-                            {selectedJob.invoice_total && (
-                                <section>
-                                    <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Invoice</h3>
-                                    <div className="text-sm">
-                                        <span className="font-medium">${selectedJob.invoice_total}</span>
-                                        {selectedJob.invoice_status && (
-                                            <span className="ml-2 text-muted-foreground">({selectedJob.invoice_status})</span>
-                                        )}
+                                {/* Phone */}
+                                {(contactInfo?.phone || job.customer_phone) && (
+                                    <div className="flex items-start gap-3">
+                                        <Phone className="size-4 shrink-0 text-muted-foreground" />
+                                        <div className="flex-1">
+                                            <Label className="text-xs text-muted-foreground">Phone</Label>
+                                            <div className="text-sm font-medium">
+                                                <a href={`tel:${contactInfo?.phone || job.customer_phone}`} className="text-foreground no-underline hover:underline">
+                                                    {formatPhone(contactInfo?.phone || job.customer_phone)}
+                                                </a>
+                                            </div>
+                                        </div>
                                     </div>
-                                </section>
-                            )}
+                                )}
 
-                            {/* Territory */}
-                            {selectedJob.territory && (
-                                <section>
-                                    <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Territory</h3>
-                                    <div className="text-sm">{selectedJob.territory}</div>
-                                </section>
-                            )}
+                                {/* Email */}
+                                {(contactInfo?.email || job.customer_email) && (
+                                    <div className="flex items-start gap-3">
+                                        <Mail className="size-4 shrink-0 text-muted-foreground" />
+                                        <div className="flex-1">
+                                            <Label className="text-xs text-muted-foreground">Email</Label>
+                                            <a href={`mailto:${contactInfo?.email || job.customer_email}`}
+                                                className="text-sm font-medium text-foreground no-underline hover:underline block">
+                                                {contactInfo?.email || job.customer_email}
+                                            </a>
+                                        </div>
+                                    </div>
+                                )}
 
-                            {/* Notes */}
-                            {selectedJob.notes && selectedJob.notes.length > 0 && (
-                                <section>
-                                    <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Notes</h3>
+                                {/* Address */}
+                                {job.address && (
+                                    <div className="flex items-start gap-3">
+                                        <MapPin className="size-4 shrink-0 text-muted-foreground" />
+                                        <div className="flex-1">
+                                            <Label className="text-xs text-muted-foreground">Address</Label>
+                                            <div className="text-sm font-medium mt-1">{job.address}</div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Contact link */}
+                                {contactInfo && (
+                                    <div className="flex items-start gap-3">
+                                        <User2 className="size-4 shrink-0 text-muted-foreground" />
+                                        <div className="flex-1">
+                                            <Label className="text-xs text-muted-foreground">Contact</Label>
+                                            <span
+                                                className="text-sm font-medium text-indigo-600 cursor-pointer hover:underline block"
+                                                onClick={() => navigate(`/contacts/${contactInfo.id}`)}
+                                            >
+                                                {contactInfo.name}
+                                            </span>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        <Separator />
+
+                        {/* ── Job Details ── */}
+                        <div>
+                            <h4 className="font-medium mb-3">Job Details</h4>
+                            <div className="space-y-3">
+                                {/* Job Type */}
+                                <div>
+                                    <Label className="text-xs text-muted-foreground">Job Type</Label>
+                                    <div className="text-sm font-medium mt-1">
+                                        {job.job_type || job.service_name || <span className="text-muted-foreground">N/A</span>}
+                                    </div>
+                                </div>
+
+                                {/* Description */}
+                                <div>
+                                    <Label className="text-xs text-muted-foreground">Description</Label>
+                                    <div className="text-sm mt-1 whitespace-pre-wrap">
+                                        {job.description || <span className="text-muted-foreground">N/A</span>}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <Separator />
+
+                        {/* ── Schedule (ZB data) ── */}
+                        <div>
+                            <h4 className="font-medium mb-3">Schedule</h4>
+                            <div className="space-y-2">
+                                <div className="flex items-center gap-2">
+                                    <Briefcase className="size-4 text-muted-foreground" />
+                                    <span className="text-sm">{job.service_name || '—'}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <CalendarClock className="size-4 text-muted-foreground" />
+                                    <span className="text-sm">{formatDate(job.start_date)}</span>
+                                    {job.end_date && (
+                                        <span className="text-xs text-muted-foreground">→ {formatDate(job.end_date)}</span>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* ── Status Transitions ── */}
+                        <div>
+                            <h4 className="font-medium mb-3">Change Status</h4>
+                            {(() => {
+                                const allowed = ALLOWED_TRANSITIONS[job.blanc_status] || [];
+                                if (allowed.length === 0) {
+                                    return <div className="text-xs text-muted-foreground">No transitions available</div>;
+                                }
+                                return (
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {allowed.map(s => (
+                                            <button key={s} onClick={() => onBlancStatusChange(job.id, s)}
+                                                className={`text-xs px-2 py-1 rounded-md border transition-colors hover:opacity-80 ${BLANC_STATUS_COLORS[s] || 'bg-gray-100'}`}>
+                                                → {s}
+                                            </button>
+                                        ))}
+                                    </div>
+                                );
+                            })()}
+                        </div>
+
+                        {/* ── Assigned Techs ── */}
+                        <div>
+                            <h4 className="font-medium mb-3">Assigned Techs</h4>
+                            {job.assigned_techs && job.assigned_techs.length > 0 ? (
+                                <div className="space-y-1">
+                                    {job.assigned_techs.map((p: any) => (
+                                        <div key={p.id} className="flex items-center gap-2 text-sm">
+                                            <User2 className="size-3.5 text-muted-foreground" /> {p.name}
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="text-sm text-muted-foreground">No techs assigned</div>
+                            )}
+                        </div>
+
+                        {/* ── Invoice ── */}
+                        {job.invoice_total && (
+                            <div>
+                                <h4 className="font-medium mb-3">Invoice</h4>
+                                <div className="text-sm">
+                                    <span className="font-medium">${job.invoice_total}</span>
+                                    {job.invoice_status && <span className="ml-2 text-muted-foreground">({job.invoice_status})</span>}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* ── Territory ── */}
+                        {job.territory && (
+                            <div>
+                                <h4 className="font-medium mb-3">Territory</h4>
+                                <div className="text-sm">{job.territory}</div>
+                            </div>
+                        )}
+
+                        {/* ── Metadata ── */}
+                        <JobMetadataSection job={job} />
+
+                        {/* ── Notes ── */}
+                        {job.notes && job.notes.length > 0 && (
+                            <>
+                                <Separator />
+                                <div>
+                                    <h4 className="font-medium mb-3">Notes</h4>
                                     <div className="space-y-2">
-                                        {selectedJob.notes.map((note, i) => (
+                                        {job.notes.map((note, i) => (
                                             <div key={i} className="text-sm bg-muted/50 rounded-md p-2">
                                                 <div>{note.text}</div>
                                                 <div className="text-xs text-muted-foreground mt-1">{formatDate(note.created)}</div>
                                             </div>
                                         ))}
                                     </div>
-                                </section>
-                            )}
-
-                            {/* Add Note */}
-                            {noteJobId === selectedJob.id ? (
-                                <section className="space-y-2">
-                                    <textarea
-                                        className="w-full border rounded-md p-2 text-sm min-h-[60px] resize-none"
-                                        placeholder="Add a note..."
-                                        value={noteText}
-                                        onChange={e => setNoteText(e.target.value)}
-                                        autoFocus
-                                    />
-                                    <div className="flex gap-2">
-                                        <Button size="sm" onClick={handleAddNote} disabled={!noteText.trim()}>Save Note</Button>
-                                        <Button size="sm" variant="ghost" onClick={() => { setNoteJobId(null); setNoteText(''); }}>Cancel</Button>
-                                    </div>
-                                </section>
-                            ) : null}
-                        </div>
-                    )}
-
-                    {/* Action Buttons */}
-                    <div className="border-t p-3 space-y-2">
-                        {/* Add Note button */}
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            className="w-full justify-start"
-                            onClick={() => setNoteJobId(selectedJob.id)}
-                        >
-                            <StickyNote className="size-4 mr-2" /> Add Note
-                        </Button>
-
-                        {/* Zenbooker status transition buttons */}
-                        {!selectedJob.zb_canceled && (
-                            <div className="flex flex-wrap gap-2">
-                                {selectedJob.zb_status === 'scheduled' && (
-                                    <>
-                                        <Button size="sm" variant="outline" onClick={() => handleMarkEnroute(selectedJob.id)}>
-                                            <Navigation className="size-4 mr-1" /> En-route
-                                        </Button>
-                                        <Button size="sm" variant="outline" onClick={() => handleMarkInProgress(selectedJob.id)}>
-                                            <Play className="size-4 mr-1" /> Start
-                                        </Button>
-                                    </>
-                                )}
-                                {selectedJob.zb_status === 'en-route' && (
-                                    <Button size="sm" variant="outline" onClick={() => handleMarkInProgress(selectedJob.id)}>
-                                        <Play className="size-4 mr-1" /> Start
-                                    </Button>
-                                )}
-                                {(selectedJob.zb_status === 'in-progress' || selectedJob.zb_status === 'en-route' || selectedJob.zb_status === 'scheduled') && (
-                                    <Button size="sm" variant="outline" onClick={() => handleMarkComplete(selectedJob.id)}>
-                                        <CheckCircle2 className="size-4 mr-1" /> Complete
-                                    </Button>
-                                )}
-                                {selectedJob.zb_status !== 'complete' && (
-                                    <Button size="sm" variant="destructive" onClick={() => handleCancel(selectedJob.id)}>
-                                        <Ban className="size-4 mr-1" /> Cancel
-                                    </Button>
-                                )}
-                            </div>
+                                </div>
+                            </>
                         )}
+
+                        {/* Add Note inline */}
+                        {noteJobId === job.id ? (
+                            <section className="space-y-2">
+                                <textarea className="w-full border rounded-md p-2 text-sm min-h-[60px] resize-none"
+                                    placeholder="Add a note..." value={noteText}
+                                    onChange={e => setNoteText(e.target.value)} autoFocus />
+                                <div className="flex gap-2">
+                                    <Button size="sm" onClick={onAddNote} disabled={!noteText.trim()}>Save Note</Button>
+                                    <Button size="sm" variant="ghost" onClick={() => { setNoteJobId(null); setNoteText(''); }}>Cancel</Button>
+                                </div>
+                            </section>
+                        ) : null}
                     </div>
                 </div>
             )}
+
+            {/* ── Footer Actions ── */}
+            <div className="p-4 border-t space-y-2">
+                <Button variant="outline" size="sm" className="w-full justify-start"
+                    onClick={() => setNoteJobId(job.id)}>
+                    <StickyNote className="size-4 mr-2" /> Add Note
+                </Button>
+
+                {!job.zb_canceled && (
+                    <div className="flex flex-wrap gap-2">
+                        {job.zb_status === 'scheduled' && (
+                            <>
+                                <Button size="sm" variant="outline" onClick={() => onMarkEnroute(job.id)}>
+                                    <Navigation className="size-4 mr-1" /> En-route
+                                </Button>
+                                <Button size="sm" variant="outline" onClick={() => onMarkInProgress(job.id)}>
+                                    <Play className="size-4 mr-1" /> Start
+                                </Button>
+                            </>
+                        )}
+                        {job.zb_status === 'en-route' && (
+                            <Button size="sm" variant="outline" onClick={() => onMarkInProgress(job.id)}>
+                                <Play className="size-4 mr-1" /> Start
+                            </Button>
+                        )}
+                        {(job.zb_status === 'in-progress' || job.zb_status === 'en-route' || job.zb_status === 'scheduled') && (
+                            <Button size="sm" variant="outline" onClick={() => onMarkComplete(job.id)}>
+                                <CheckCircle2 className="size-4 mr-1" /> Complete
+                            </Button>
+                        )}
+                        {job.zb_status !== 'complete' && (
+                            <Button size="sm" variant="destructive" onClick={() => onCancel(job.id)}>
+                                <Ban className="size-4 mr-1" /> Cancel
+                            </Button>
+                        )}
+                    </div>
+                )}
+            </div>
         </div>
     );
 }
