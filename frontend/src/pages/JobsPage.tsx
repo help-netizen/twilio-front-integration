@@ -9,7 +9,7 @@ import {
     Search, RefreshCw, ChevronLeft, ChevronRight, X, MapPin,
     User2, FileText, Play, CheckCircle2, Navigation, Ban,
     Loader2, StickyNote, CalendarClock, Phone, Mail, Tag, Briefcase,
-    Calendar, ChevronDown, CornerDownLeft,
+    Calendar, ChevronDown, CornerDownLeft, ArrowUpDown, ArrowUp, ArrowDown,
 } from 'lucide-react';
 import { authedFetch } from '../services/apiClient';
 import * as jobsApi from '../services/jobsApi';
@@ -108,6 +108,10 @@ export function JobsPage() {
     const [hasMore, setHasMore] = useState(false);
     const LIMIT = 50;
 
+    // Sort
+    const [sortBy, setSortBy] = useState<string>('created_at');
+    const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+
     // Contact info for detail panel
     const [contactInfo, setContactInfo] = useState<{ name: string; phone: string; email: string; id: number } | null>(null);
 
@@ -120,6 +124,8 @@ export function JobsPage() {
             };
             if (statusFilter) params.blanc_status = statusFilter;
             if (searchQuery.trim()) params.search = searchQuery.trim();
+            if (sortBy) params.sort_by = sortBy;
+            if (sortOrder) params.sort_order = sortOrder;
 
             const data = await jobsApi.listJobs(params);
             setJobs(data.results || []);
@@ -133,7 +139,7 @@ export function JobsPage() {
         } finally {
             setLoading(false);
         }
-    }, [statusFilter, searchQuery]);
+    }, [statusFilter, searchQuery, sortBy, sortOrder]);
 
     useEffect(() => { loadJobs(0); }, [loadJobs]);
 
@@ -326,12 +332,39 @@ export function JobsPage() {
                         <table className="w-full text-sm">
                             <thead className="bg-white sticky top-0 z-10 shadow-[0_1px_0_0_hsl(var(--border))]">
                                 <tr className="border-b text-left">
-                                    <th className="px-4 py-2.5 font-medium">#</th>
-                                    <th className="px-4 py-2.5 font-medium">Customer</th>
-                                    <th className="px-4 py-2.5 font-medium">Service</th>
-                                    <th className="px-4 py-2.5 font-medium">Date</th>
-                                    <th className="px-4 py-2.5 font-medium">Status</th>
-                                    <th className="px-4 py-2.5 font-medium">Techs</th>
+                                    {[
+                                        { key: 'job_number', label: '#' },
+                                        { key: 'customer_name', label: 'Customer' },
+                                        { key: 'service_name', label: 'Service' },
+                                        { key: 'start_date', label: 'Date' },
+                                        { key: 'blanc_status', label: 'Status' },
+                                        { key: '', label: 'Techs' },
+                                    ].map(col => (
+                                        <th
+                                            key={col.label}
+                                            className={`px-4 py-2.5 font-medium ${col.key ? 'cursor-pointer select-none hover:bg-muted/30 transition-colors' : ''}`}
+                                            onClick={() => {
+                                                if (!col.key) return;
+                                                if (sortBy === col.key) {
+                                                    setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+                                                } else {
+                                                    setSortBy(col.key);
+                                                    setSortOrder('asc');
+                                                }
+                                            }}
+                                        >
+                                            <span className="inline-flex items-center gap-1">
+                                                {col.label}
+                                                {col.key && (
+                                                    sortBy === col.key
+                                                        ? (sortOrder === 'asc'
+                                                            ? <ArrowUp className="size-3.5 text-primary" />
+                                                            : <ArrowDown className="size-3.5 text-primary" />)
+                                                        : <ArrowUpDown className="size-3.5 text-muted-foreground/40" />
+                                                )}
+                                            </span>
+                                        </th>
+                                    ))}
                                 </tr>
                             </thead>
                             <tbody>

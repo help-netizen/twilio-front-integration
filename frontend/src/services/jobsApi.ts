@@ -61,6 +61,8 @@ export interface JobsListParams {
     offset?: number;
     limit?: number;
     contact_id?: number;
+    sort_by?: string;
+    sort_order?: 'asc' | 'desc';
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

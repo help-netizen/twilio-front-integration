@@ -186,7 +186,7 @@ async function getJobByZbId(zbJobId) {
     return rowToJob(rows[0]);
 }
 
-async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 50, companyId, contactId } = {}) {
+async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 50, companyId, contactId, sortBy, sortOrder } = {}) {
     const conditions = [];
     const params = [];
     let idx = 0;
@@ -223,13 +223,26 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
     );
     const total = parseInt(countRows[0].total, 10);
 
+    // Sort — whitelist columns to prevent SQL injection
+    const SORTABLE_COLUMNS = {
+        job_number: 'j.job_number',
+        customer_name: 'j.customer_name',
+        service_name: 'j.service_name',
+        start_date: 'j.start_date',
+        blanc_status: 'j.blanc_status',
+        created_at: 'j.created_at',
+    };
+    const sortCol = SORTABLE_COLUMNS[sortBy] || 'j.created_at';
+    const sortDir = sortOrder === 'asc' ? 'ASC' : 'DESC';
+    const orderClause = `ORDER BY ${sortCol} ${sortDir} NULLS LAST`;
+
     // Data
     idx++; params.push(limit);
     idx++; params.push(offset);
     const { rows } = await db.query(`
         SELECT j.* FROM jobs j
         ${whereClause}
-        ORDER BY j.start_date DESC NULLS LAST, j.created_at DESC
+        ${orderClause}
         LIMIT $${idx - 1} OFFSET $${idx}
     `, params);
 
