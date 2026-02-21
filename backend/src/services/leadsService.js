@@ -602,15 +602,47 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
 
     // 4. Update local job with ZB data and link contact
     if (zenbookerJobId) {
-        await db.query(
-            `UPDATE jobs SET zenbooker_job_id = $1 WHERE id = $2`,
-            [zenbookerJobId, localJobId]
-        );
+        try {
+            const jobDetail = await zenbookerClient.getJob(zenbookerJobId);
+            console.log(`[ConvertLead] Fetched ZB job detail for sync:`, jobDetail?.job_number, jobDetail?.start_date);
 
-        // Link ZB customer to Blanc contact
-        if (leadRow.contact_id) {
-            try {
-                const jobDetail = await zenbookerClient.getJob(zenbookerJobId);
+            // Sync ALL ZB fields back into local job (schedule, territory, techs, invoice, etc.)
+            await db.query(`
+                UPDATE jobs SET
+                    zenbooker_job_id = $1,
+                    job_number = COALESCE($3, job_number),
+                    start_date = COALESCE($4, start_date),
+                    end_date = COALESCE($5, end_date),
+                    territory = COALESCE($6, territory),
+                    assigned_techs = COALESCE($7::jsonb, assigned_techs),
+                    notes = COALESCE($8::jsonb, notes),
+                    invoice_total = COALESCE($9, invoice_total),
+                    invoice_status = COALESCE($10, invoice_status),
+                    zb_status = COALESCE($11, zb_status),
+                    zb_canceled = COALESCE($12, zb_canceled),
+                    zb_rescheduled = COALESCE($13, zb_rescheduled),
+                    zb_raw = $14::jsonb,
+                    updated_at = NOW()
+                WHERE id = $2
+            `, [
+                zenbookerJobId,
+                localJobId,
+                jobDetail?.job_number || null,
+                jobDetail?.start_date || null,
+                jobDetail?.end_date || null,
+                jobDetail?.territory?.name || null,
+                JSON.stringify(jobDetail?.assigned_providers || []),
+                JSON.stringify(jobDetail?.notes || []),
+                jobDetail?.invoice?.total || null,
+                jobDetail?.invoice?.status || null,
+                jobDetail?.status || 'scheduled',
+                !!jobDetail?.canceled,
+                !!jobDetail?.rescheduled,
+                JSON.stringify(jobDetail || {}),
+            ]);
+
+            // Link ZB customer to Blanc contact
+            if (leadRow.contact_id) {
                 const zbCustomerId = jobDetail?.customer?.id;
                 if (zbCustomerId) {
                     await db.query(
@@ -624,9 +656,14 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
                     );
                     console.log(`[ConvertLead] Linked contact ${leadRow.contact_id} to ZB customer ${zbCustomerId}`);
                 }
-            } catch (linkErr) {
-                console.warn(`[ConvertLead] Could not link ZB customer:`, linkErr.message);
             }
+        } catch (syncErr) {
+            // Fallback: at minimum save the zenbooker_job_id
+            console.warn(`[ConvertLead] Could not sync ZB job detail:`, syncErr.message);
+            await db.query(
+                `UPDATE jobs SET zenbooker_job_id = $1 WHERE id = $2`,
+                [zenbookerJobId, localJobId]
+            );
         }
     }
 
