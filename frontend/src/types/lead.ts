@@ -94,6 +94,8 @@ export type LeadMutationResponse = {
         ClientId?: string;
         link?: string;
         message?: string;
+        job_id?: number;
+        zenbooker_job_id?: string;
         contact_resolution?: {
             contact_id: number | null;
             status: 'matched' | 'created' | 'ambiguous';

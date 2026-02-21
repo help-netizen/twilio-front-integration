@@ -266,7 +266,7 @@ export default function LeadFormSettingsPage() {
             {/* Header */}
             <div className="lfsp-header">
                 <div>
-                    <h1 className="lfsp-title">Lead Form Settings</h1>
+                    <h1 className="lfsp-title">Lead & Job Settings</h1>
                     <p className="lfsp-subtitle">Configure job types and form fields for lead management</p>
                 </div>
                 <button

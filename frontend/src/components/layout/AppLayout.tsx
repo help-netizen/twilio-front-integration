@@ -185,7 +185,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                                     onClick={() => navigate('/settings/lead-form')}
                                 >
                                     <FileText className="size-4" />
-                                    Lead Form
+                                    Lead & Job
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
                                     className="flex items-center gap-2 cursor-pointer"

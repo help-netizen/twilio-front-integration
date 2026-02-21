@@ -7,9 +7,10 @@ import { Badge } from '../ui/badge';
 import { Textarea } from '../ui/textarea';
 import { toast } from 'sonner';
 import type { Lead } from '../../types/lead';
-import * as zenbookerApi from '../../services/zenbookerApi';
 import * as leadsApi from '../../services/leadsApi';
+import { authedFetch } from '../../services/apiClient';
 import type { ServiceAreaResult, Timeslot, TimeslotDay } from '../../services/zenbookerApi';
+import * as zenbookerApi from '../../services/zenbookerApi';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -72,6 +73,22 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
 
     // Coordinates from service-area check
     const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+
+    // Dynamic job types from settings
+    const [jobTypes, setJobTypes] = useState<string[]>([]);
+
+    // ── Fetch job types on open ──
+    useEffect(() => {
+        if (!open) return;
+        authedFetch('/api/settings/lead-form')
+            .then(r => r.json())
+            .then(data => {
+                if (data.success && data.jobTypes?.length) {
+                    setJobTypes(data.jobTypes.map((jt: { name: string }) => jt.name));
+                }
+            })
+            .catch(() => { });
+    }, [open]);
 
     // ── Pre-fill from lead on open ──
     useEffect(() => {
@@ -186,8 +203,8 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
 
         setSubmitting(true);
         try {
-            // 1. Create job in Zenbooker
-            const jobPayload = {
+            // Build the Zenbooker job payload
+            const zbJobPayload = {
                 territory_id: territoryId,
                 timeslot_id: selectedTimeslot.id,
                 customer: {
@@ -219,18 +236,27 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
                 email_notifications: true,
             };
 
-            const zbResult = await zenbookerApi.createJob(jobPayload);
-
-            // 2. Mark lead as converted with the Zenbooker job ID
-            await leadsApi.convertLead(lead.UUID, { zenbooker_job_id: zbResult.job_id });
-
-            toast.success('Job created in Zenbooker', {
-                description: `Job ID: ${zbResult.job_id}`,
-                duration: 10000,
-                action: {
-                    label: 'Open Job on Zenbooker',
-                    onClick: () => window.open(`https://zenbooker.com/app?view=sched&view-job=${zbResult.job_id}`, '_blank'),
+            // Single backend call: creates local job + ZB job + marks lead converted
+            const result = await leadsApi.convertLead(lead.UUID, {
+                zb_job_payload: zbJobPayload,
+                service: { name: serviceName },
+                customer: { name, phone, email },
+                address: {
+                    line1: address, line2: unit,
+                    city, state, postal_code: postalCode,
                 },
+            });
+
+            const jobId = result.data?.job_id;
+            const zbJobId = result.data?.zenbooker_job_id;
+
+            toast.success('Job created', {
+                description: zbJobId ? `Zenbooker Job: ${zbJobId}` : `Local Job #${jobId}`,
+                duration: 10000,
+                action: jobId ? {
+                    label: 'Open Job',
+                    onClick: () => window.location.href = `/jobs/${jobId}`,
+                } : undefined,
             });
 
             onSuccess({ ...lead, Status: 'Converted' });
@@ -341,7 +367,24 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
         <div className="space-y-4">
             <div>
                 <Label htmlFor="cj-svc-name">Service Name *</Label>
-                <Input id="cj-svc-name" value={serviceName} onChange={(e) => setServiceName(e.target.value)} placeholder="Plumbing Repair" />
+                {jobTypes.length > 0 ? (
+                    <select
+                        id="cj-svc-name"
+                        value={serviceName}
+                        onChange={(e) => setServiceName(e.target.value)}
+                        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    >
+                        <option value="">Select service type</option>
+                        {jobTypes.map(jt => (
+                            <option key={jt} value={jt}>{jt}</option>
+                        ))}
+                        {serviceName && !jobTypes.includes(serviceName) && (
+                            <option value={serviceName}>{serviceName}</option>
+                        )}
+                    </select>
+                ) : (
+                    <Input id="cj-svc-name" value={serviceName} onChange={(e) => setServiceName(e.target.value)} placeholder="Plumbing Repair" />
+                )}
             </div>
             <div>
                 <Label htmlFor="cj-svc-desc">Description</Label>

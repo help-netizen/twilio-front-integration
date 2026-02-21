@@ -201,11 +201,11 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
             const createdUUID = leadRes.data?.UUID;
 
             if (withJob && createdUUID) {
-                // 2. Create job in Zenbooker
+                // 2. Convert lead → job via single backend call
                 const territoryId = territoryResult?.service_territory?.id;
                 if (!territoryId) throw new Error('No territory for job creation');
 
-                const jobPayload: Record<string, unknown> = {
+                const zbJobPayload: Record<string, unknown> = {
                     territory_id: territoryId,
                     customer: {
                         name: [firstName, lastName].filter(Boolean).join(' ') || 'Unknown',
@@ -235,32 +235,43 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
 
                 // Add timeslot if selected
                 if (selectedTimeslot) {
-                    jobPayload.timeslot_id = selectedTimeslot.id;
+                    zbJobPayload.timeslot_id = selectedTimeslot.id;
                 } else {
                     // Fallback: tomorrow 8am-12pm
                     const tomorrow = new Date();
                     tomorrow.setDate(tomorrow.getDate() + 1);
                     tomorrow.setHours(8, 0, 0, 0);
                     const end = new Date(tomorrow.getTime() + 4 * 60 * 60 * 1000);
-                    jobPayload.timeslot = {
+                    zbJobPayload.timeslot = {
                         type: 'arrival_window',
                         start: tomorrow.toISOString(),
                         end: end.toISOString(),
                     };
                 }
 
-                const zbResult = await zenbookerApi.createJob(jobPayload);
+                const result = await leadsApi.convertLead(createdUUID, {
+                    zb_job_payload: zbJobPayload,
+                    service: { name: jobType || 'General Service' },
+                    customer: {
+                        name: [firstName, lastName].filter(Boolean).join(' ') || 'Unknown',
+                        phone: toE164(phoneNumber),
+                        email: email || undefined,
+                    },
+                    address: {
+                        line1: streetAddress, line2: unit,
+                        city, state, postal_code: postalCode,
+                    },
+                });
 
-                // 3. Link zenbooker job to lead
-                await leadsApi.convertLead(createdUUID, { zenbooker_job_id: zbResult.job_id });
+                const jobId = result.data?.job_id;
 
                 toast.success('Lead & Job created', {
-                    description: `Job ID: ${zbResult.job_id}`,
+                    description: jobId ? `Job #${jobId}` : 'Job created',
                     duration: 10000,
-                    action: {
-                        label: 'Open Job on Zenbooker',
-                        onClick: () => window.open(`https://zenbooker.com/app?view=sched&view-job=${zbResult.job_id}`, '_blank'),
-                    },
+                    action: jobId ? {
+                        label: 'Open Job',
+                        onClick: () => window.location.href = `/jobs/${jobId}`,
+                    } : undefined,
                 });
             } else {
                 toast.success('Lead created', {

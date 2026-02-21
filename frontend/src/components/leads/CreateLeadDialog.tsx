@@ -30,7 +30,7 @@ interface CustomFieldDef {
     sort_order: number;
 }
 
-const JOB_TYPES = ['COD Service', 'COD Repair', 'Warranty', 'INS Service', 'INS Repair'];
+const DEFAULT_JOB_TYPES = ['COD Service', 'COD Repair', 'Warranty', 'INS Service', 'INS Repair'];
 const JOB_SOURCES = ['eLocals', 'ServiceDirect', 'Inquirly', 'Rely', 'LHG', 'NSA', 'Other'];
 import { AddressAutocomplete } from '../AddressAutocomplete';
 
@@ -47,6 +47,7 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
     const [loading, setLoading] = useState(false);
     const [showSecondary, setShowSecondary] = useState(false);
     const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
+    const [jobTypes, setJobTypes] = useState<string[]>(DEFAULT_JOB_TYPES);
     const [formData, setFormData] = useState<CreateLeadInput>({
         FirstName: '',
         LastName: '',
@@ -57,7 +58,7 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
         City: '',
         State: 'MA',
         PostalCode: '',
-        JobType: 'COD Service',
+        JobType: '',
         JobSource: '',
         Description: '',
         Status: 'Submitted',
@@ -86,6 +87,10 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                         (f: CustomFieldDef) => !f.is_system
                     );
                     setCustomFields(userFields);
+                    // Use dynamic job types from settings
+                    if (data.jobTypes && data.jobTypes.length > 0) {
+                        setJobTypes(data.jobTypes.map((jt: { name: string }) => jt.name));
+                    }
                 }
             })
             .catch(() => { });
@@ -205,7 +210,7 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                 City: '',
                 State: 'MA',
                 PostalCode: '',
-                JobType: 'COD Service',
+                JobType: '',
                 JobSource: '',
                 Description: '',
                 Status: 'Submitted',
@@ -397,7 +402,7 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                                         <SelectValue placeholder="Select job type" />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        {JOB_TYPES.map((type) => (
+                                        {jobTypes.map((type) => (
                                             <SelectItem key={type} value={type}>
                                                 {type}
                                             </SelectItem>

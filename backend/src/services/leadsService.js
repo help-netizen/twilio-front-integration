@@ -519,7 +519,7 @@ async function unassignUser(uuid, userName, companyId = null) {
 // Convert Lead to Job
 // =============================================================================
 async function convertLead(uuid, overrides = {}, companyId = null) {
-    // 1. Fetch full lead to get address/contact info for Zenbooker
+    // 1. Fetch full lead
     const conditions = ['uuid = $1'];
     const params = [uuid];
     if (companyId) {
@@ -533,76 +533,117 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
         throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
     }
     const lead = rowToLead(leadRows[0]);
+    const leadRow = leadRows[0];
 
-    // 2. Create job in Zenbooker (or use pre-created job_id from booking dialog)
+    // 2. Create local job row in Blanc
+    const serviceName = overrides.service?.name || lead.JobType || 'General Service';
+    const address = overrides.address
+        ? [overrides.address.line1, overrides.address.line2, overrides.address.city, overrides.address.state, overrides.address.postal_code].filter(Boolean).join(', ')
+        : [leadRow.address, leadRow.unit, leadRow.city, leadRow.state, leadRow.postal_code].filter(Boolean).join(', ');
+    const customerName = overrides.customer?.name || [leadRow.first_name, leadRow.last_name].filter(Boolean).join(' ') || null;
+    const customerPhone = overrides.customer?.phone || leadRow.phone || null;
+    const customerEmail = overrides.customer?.email || leadRow.email || null;
+
+    const { rows: [jobRow] } = await db.query(`
+        INSERT INTO jobs (
+            lead_id, contact_id, blanc_status, service_name, address,
+            customer_name, customer_phone, customer_email, company_id
+        ) VALUES ($1, $2, 'Submitted', $3, $4, $5, $6, $7, $8)
+        RETURNING id
+    `, [
+        leadRow.id,
+        leadRow.contact_id || null,
+        serviceName,
+        address,
+        customerName,
+        customerPhone,
+        customerEmail,
+        leadRow.company_id || null,
+    ]);
+    const localJobId = jobRow.id;
+    console.log(`[ConvertLead] Local job created: ${localJobId}`);
+
+    // 3. Create Zenbooker job (if booking data provided or auto-create)
     let zenbookerJobId = overrides.zenbooker_job_id || null;
 
-    if (!zenbookerJobId) {
-        // No pre-created job — call Zenbooker auto-create
+    if (!zenbookerJobId && overrides.zb_job_payload) {
+        // Frontend sent full booking payload — create ZB job directly
+        try {
+            const zbResult = await zenbookerClient.createJob(overrides.zb_job_payload);
+            zenbookerJobId = zbResult.job_id;
+            console.log(`[ConvertLead] Zenbooker job created from booking: ${zenbookerJobId}`);
+        } catch (err) {
+            console.error('[ConvertLead] Zenbooker booking error:', err.response?.data || err.message);
+            // Don't fail — local job is already created
+        }
+    } else if (!zenbookerJobId) {
+        // No booking data — try auto-create from lead
         try {
             const zbResult = await zenbookerClient.createJobFromLead(lead);
             zenbookerJobId = zbResult.job_id;
             console.log(`[ConvertLead] Zenbooker job created: ${zenbookerJobId}`);
-
-            // Fetch the created job to get the Zenbooker customer ID and link it to the Blanc contact
-            if (zenbookerJobId && leadRows[0].contact_id) {
-                try {
-                    const jobDetail = await zenbookerClient.getJob(zenbookerJobId);
-                    const zbCustomerId = jobDetail?.customer?.id;
-                    if (zbCustomerId) {
-                        await db.query(
-                            `UPDATE contacts
-                             SET zenbooker_customer_id = COALESCE(NULLIF(zenbooker_customer_id, ''), $1),
-                                 zenbooker_data = COALESCE(zenbooker_data, '{}'::jsonb) || jsonb_build_object('id', $1::text),
-                                 zenbooker_sync_status = 'linked',
-                                 zenbooker_synced_at = NOW()
-                             WHERE id = $2`,
-                            [zbCustomerId, leadRows[0].contact_id]
-                        );
-                        console.log(`[ConvertLead] Linked contact ${leadRows[0].contact_id} to Zenbooker customer ${zbCustomerId}`);
-                    }
-                } catch (linkErr) {
-                    console.warn(`[ConvertLead] Could not link Zenbooker customer to contact:`, linkErr.message);
-                }
-            }
         } catch (err) {
-            // If Zenbooker API key not configured, skip silently
             if (err.message === 'ZENBOOKER_API_KEY is not configured') {
-                console.warn('[ConvertLead] Zenbooker not configured, skipping job creation');
+                console.warn('[ConvertLead] Zenbooker not configured, skipping');
             } else {
                 console.error('[ConvertLead] Zenbooker error:', err.response?.data || err.message);
-                throw new LeadsServiceError(
-                    'ZENBOOKER_ERROR',
-                    `Failed to create Zenbooker job: ${err.response?.data?.error?.message || err.message}`,
-                    502
-                );
+                // Don't fail — local job is already created
             }
         }
     } else {
         console.log(`[ConvertLead] Using pre-created Zenbooker job: ${zenbookerJobId}`);
     }
 
-    // 3. Mark lead as converted and save Zenbooker job ID
+    // 4. Update local job with ZB data and link contact
+    if (zenbookerJobId) {
+        await db.query(
+            `UPDATE jobs SET zenbooker_job_id = $1 WHERE id = $2`,
+            [zenbookerJobId, localJobId]
+        );
+
+        // Link ZB customer to Blanc contact
+        if (leadRow.contact_id) {
+            try {
+                const jobDetail = await zenbookerClient.getJob(zenbookerJobId);
+                const zbCustomerId = jobDetail?.customer?.id;
+                if (zbCustomerId) {
+                    await db.query(
+                        `UPDATE contacts
+                         SET zenbooker_customer_id = COALESCE(NULLIF(zenbooker_customer_id, ''), $1),
+                             zenbooker_data = COALESCE(zenbooker_data, '{}'::jsonb) || jsonb_build_object('id', $1::text),
+                             zenbooker_sync_status = 'linked',
+                             zenbooker_synced_at = NOW()
+                         WHERE id = $2`,
+                        [zbCustomerId, leadRow.contact_id]
+                    );
+                    console.log(`[ConvertLead] Linked contact ${leadRow.contact_id} to ZB customer ${zbCustomerId}`);
+                }
+            } catch (linkErr) {
+                console.warn(`[ConvertLead] Could not link ZB customer:`, linkErr.message);
+            }
+        }
+    }
+
+    // 5. Mark lead as converted
     const updateConditions = ['uuid = $1'];
     const updateParams = [uuid, zenbookerJobId];
     if (companyId) {
         updateConditions.push(`company_id = $3`);
         updateParams.push(companyId);
     }
-    const updateSql = `
+    await db.query(`
         UPDATE leads
         SET converted_to_job = true, status = 'Converted',
             zenbooker_job_id = COALESCE($2, zenbooker_job_id)
         WHERE ${updateConditions.join(' AND ')}
-        RETURNING uuid, id
-    `;
-    const { rows } = await db.query(updateSql, updateParams);
+    `, updateParams);
 
     return {
-        UUID: rows[0].uuid,
-        ClientId: String(rows[0].id),
+        UUID: lead.UUID,
+        ClientId: String(leadRow.id),
+        job_id: localJobId,
         zenbooker_job_id: zenbookerJobId,
-        link: null,
+        link: `/jobs/${localJobId}`,
     };
 }
 
