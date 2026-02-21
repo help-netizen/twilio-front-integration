@@ -5,14 +5,15 @@ import { useCallsByContact } from '../hooks/useConversations';
 import { usePulseTimeline } from '../hooks/usePulseTimeline';
 import { messagingApi } from '../services/messagingApi';
 import * as leadsApi from '../services/leadsApi';
+import * as contactsApi from '../services/contactsApi';
 import { useRealtimeEvents, type SSECallEvent, type SSETranscriptDeltaEvent, type SSETranscriptFinalizedEvent } from '../hooks/useRealtimeEvents';
 import { appendTranscriptDelta, finalizeTranscript } from '../hooks/useLiveTranscript';
 import { callsApi } from '../services/api';
 import { PulseTimeline } from '../components/pulse/PulseTimeline';
 import { SmsForm } from '../components/pulse/SmsForm';
 import { LeadDetailPanel } from '../components/leads/LeadDetailPanel';
+import { PulseContactPanel } from '../components/contacts/PulseContactPanel';
 import { CreateLeadJobWizard } from '../components/conversations/CreateLeadJobWizard';
-import { ContactCard } from '../components/conversations/ContactCard';
 import { EditLeadDialog } from '../components/leads/EditLeadDialog';
 import { ConvertToJobDialog } from '../components/leads/ConvertToJobDialog';
 import { formatPhoneNumber } from '../utils/formatters';
@@ -22,6 +23,7 @@ import { Skeleton } from '../components/ui/skeleton';
 import { Search, PhoneOff, Activity, PhoneIncoming, PhoneOutgoing, ArrowLeftRight, MessageSquare, MessageSquareReply } from 'lucide-react';
 import type { Call } from '../types/models';
 import type { Lead } from '../types/lead';
+import type { ContactLead } from '../types/contact';
 import type { CallData } from '../components/call-list-item';
 import './PulsePage.css';
 
@@ -343,6 +345,31 @@ export const PulsePage: React.FC = () => {
         setSelectedToPhone('');
     }, [phone]);
 
+    // Contact detail panel state (for no-lead fallback)
+    const [contactDetail, setContactDetail] = useState<{ contact: any; leads: ContactLead[] } | null>(null);
+    const [contactDetailLoading, setContactDetailLoading] = useState(false);
+
+    // Fetch full contact detail when there's no open lead but contact exists
+    React.useEffect(() => {
+        if (lead || leadLoading || !contact?.id) {
+            setContactDetail(null);
+            return;
+        }
+        let cancelled = false;
+        setContactDetailLoading(true);
+        contactsApi.getContact(contact.id).then(res => {
+            if (!cancelled) {
+                setContactDetail({ contact: res.data.contact, leads: res.data.leads });
+            }
+        }).catch(err => {
+            console.warn('[PulsePage] Failed to load contact detail:', err);
+            if (!cancelled) setContactDetail(null);
+        }).finally(() => {
+            if (!cancelled) setContactDetailLoading(false);
+        });
+        return () => { cancelled = true; };
+    }, [lead, leadLoading, contact?.id]);
+
     // Derive secondary phone from lead or contact
     const secondaryPhone = lead?.SecondPhone || contact?.secondary_phone || '';
     const secondaryPhoneName = lead?.SecondPhoneName || contact?.secondary_phone_name || '';
@@ -485,10 +512,17 @@ export const PulsePage: React.FC = () => {
             // Existing conversation — send directly
             await messagingApi.sendMessage(targetConv.id, { body: message }, files?.[0]);
         } else if (sendTo && proxyPhone) {
+            // Normalize phones to E.164 before sending to Twilio
+            const toE164 = (p: string) => {
+                const digits = p.replace(/\D/g, '');
+                if (digits.startsWith('1') && digits.length === 11) return `+${digits}`;
+                if (digits.length === 10) return `+1${digits}`;
+                return `+${digits}`;
+            };
             // No conversation yet for this phone — create one
             await messagingApi.startConversation({
-                customerE164: sendTo,
-                proxyE164: proxyPhone,
+                customerE164: toE164(sendTo),
+                proxyE164: toE164(proxyPhone),
                 initialMessage: message,
             });
         }
@@ -563,7 +597,7 @@ export const PulsePage: React.FC = () => {
                 </div>
             </div>
 
-            {/* Middle column: Lead Detail Panel / Contact Card / Create Lead */}
+            {/* Middle column: Lead Detail Panel / Contact Detail / Create Lead */}
             <div className="w-[400px] shrink-0 border-r bg-background flex flex-col overflow-hidden">
                 {(contactId || timelineId) && phone ? (
                     lead ? (
@@ -579,15 +613,26 @@ export const PulsePage: React.FC = () => {
                             onUpdateSource={handleUpdateSource}
                             onDelete={handleDelete}
                         />
-                    ) : !leadLoading ? (
+                    ) : !leadLoading && contact?.id && contactDetail ? (
                         <div className="flex-1 overflow-y-auto">
-                            {contact && (
-                                <ContactCard
-                                    contact={contact}
-                                    phone={phone}
-                                    hasActiveCall={hasActiveCall}
-                                />
-                            )}
+                            <PulseContactPanel
+                                contact={contactDetail.contact}
+                                leads={contactDetail.leads}
+                                loading={contactDetailLoading}
+                                onAddressesChanged={() => {
+                                    contactsApi.getContact(contact.id).then(res => {
+                                        setContactDetail({ contact: res.data.contact, leads: res.data.leads });
+                                    }).catch(() => { });
+                                }}
+                                onContactChanged={() => {
+                                    contactsApi.getContact(contact.id).then(res => {
+                                        setContactDetail({ contact: res.data.contact, leads: res.data.leads });
+                                    }).catch(() => { });
+                                }}
+                            />
+                        </div>
+                    ) : !leadLoading && !contact?.id ? (
+                        <div className="flex-1 overflow-y-auto">
                             <CreateLeadJobWizard
                                 phone={phone}
                                 hasActiveCall={hasActiveCall}

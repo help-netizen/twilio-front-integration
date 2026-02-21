@@ -3,6 +3,7 @@ const router = express.Router();
 const contactsService = require('../services/contactsService');
 const contactDedupeService = require('../services/contactDedupeService');
 const zenbookerSyncService = require('../services/zenbookerSyncService');
+const { toE164 } = require('../utils/phoneUtils');
 
 // =============================================================================
 // Helpers
@@ -145,8 +146,13 @@ router.patch('/:id', async (req, res) => {
 
         for (const field of allowedFields) {
             if (req.body[field] !== undefined) {
+                let value = req.body[field] || null;
+                // Normalize phone fields to E.164
+                if ((field === 'phone_e164' || field === 'secondary_phone') && value) {
+                    value = toE164(value) || value;
+                }
                 setClauses.push(`${field} = $${paramIdx}`);
-                params.push(req.body[field] || null);
+                params.push(value);
                 paramIdx++;
             }
         }

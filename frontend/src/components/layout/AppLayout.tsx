@@ -11,7 +11,7 @@ import {
     DropdownMenuItem,
     DropdownMenuSeparator,
 } from '../ui/dropdown-menu';
-import { Phone, MessageSquare, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2 } from 'lucide-react';
+import { Phone, MessageSquare, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase } from 'lucide-react';
 import { useRealtimeEvents } from '../../hooks/useRealtimeEvents';
 import './AppLayout.css';
 
@@ -28,10 +28,11 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
     const activeTab = location.pathname.startsWith('/pulse') ? 'pulse'
         : location.pathname.startsWith('/messages') ? 'messages'
             : location.pathname.startsWith('/leads') ? 'leads'
-                : location.pathname.startsWith('/contacts') ? 'contacts'
-                    : location.pathname.startsWith('/settings') ? 'settings'
-                        : location.pathname.startsWith('/calls') || location.pathname.startsWith('/contact/') ? 'calls'
-                            : 'pulse';
+                : location.pathname.startsWith('/jobs') ? 'jobs'
+                    : location.pathname.startsWith('/contacts') ? 'contacts'
+                        : location.pathname.startsWith('/settings') ? 'settings'
+                            : location.pathname.startsWith('/calls') || location.pathname.startsWith('/contact/') ? 'calls'
+                                : 'pulse';
 
     const { accessDeniedMessage, clearAccessDenied, logout, hasRole } = useAuth();
 
@@ -132,6 +133,14 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                                     Leads
                                 </TabsTrigger>
                                 <TabsTrigger
+                                    value="jobs"
+                                    className="flex items-center gap-2"
+                                    onClick={() => navigate('/jobs')}
+                                >
+                                    <Briefcase className="size-4" />
+                                    Jobs
+                                </TabsTrigger>
+                                <TabsTrigger
                                     value="contacts"
                                     className="flex items-center gap-2"
                                     onClick={() => navigate('/contacts')}
@@ -205,6 +214,13 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                                 >
                                     <Users className="size-4" />
                                     Users
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                    className="flex items-center gap-2 cursor-pointer"
+                                    onClick={() => navigate('/settings/providers')}
+                                >
+                                    <Wrench className="size-4" />
+                                    Providers
                                 </DropdownMenuItem>
                                 {hasRole('super_admin') && (
                                     <>

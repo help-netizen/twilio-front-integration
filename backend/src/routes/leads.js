@@ -368,6 +368,25 @@ router.patch('/:uuid', async (req, res) => {
             }
         }
 
+        // Zenbooker job FSM sync: if SubStatus changed on a converted job, push to Zenbooker
+        if ('SubStatus' in fields) {
+            try {
+                const db = require('../db/connection');
+                const { rows: jobRows } = await db.query(
+                    `SELECT converted_to_job, zenbooker_job_id FROM leads WHERE uuid = $1`,
+                    [uuid]
+                );
+                if (jobRows.length > 0 && jobRows[0].converted_to_job && jobRows[0].zenbooker_job_id) {
+                    const jobSyncService = require('../services/jobSyncService');
+                    jobSyncService.syncBlancStatusToZenbooker(uuid, fields.SubStatus).catch(err => {
+                        console.error(`[LeadsAPI][${reqId}] Zenbooker job sync error (non-blocking):`, err.message);
+                    });
+                }
+            } catch (syncErr) {
+                console.error(`[LeadsAPI][${reqId}] Job sync check error (non-blocking):`, syncErr.message);
+            }
+        }
+
         res.json(successResponse(result, reqId));
     } catch (err) {
         handleError(err, reqId, res);

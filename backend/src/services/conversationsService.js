@@ -7,6 +7,7 @@ const convQueries = require('../db/conversationsQueries');
 const queries = require('../db/queries');
 const realtimeService = require('./realtimeService');
 const db = require('../db/connection');
+const { toE164 } = require('../utils/phoneUtils');
 
 const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 const SERVICE_SID = process.env.TWILIO_CONVERSATIONS_SERVICE_SID;
@@ -15,6 +16,9 @@ const SERVICE_SID = process.env.TWILIO_CONVERSATIONS_SERVICE_SID;
  * Create or find a Twilio Conversation for a customer↔proxy pair.
  */
 async function getOrCreateConversation(customerE164, proxyE164, companyId) {
+    // Normalize phones to E.164 (defense-in-depth)
+    customerE164 = toE164(customerE164) || customerE164;
+    proxyE164 = toE164(proxyE164) || proxyE164;
     // Check DB first
     let dbConv = await convQueries.findActiveConversation(customerE164, proxyE164);
     if (dbConv) return dbConv;

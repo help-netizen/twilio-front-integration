@@ -16,6 +16,8 @@ import SuperAdminPage from './pages/SuperAdminPage';
 import CompanyUsersPage from './pages/CompanyUsersPage';
 import QuickMessagesPage from './pages/QuickMessagesPage';
 import PaymentsPage from './pages/PaymentsPage';
+import ProvidersPage from './pages/ProvidersPage';
+import JobsPage from './pages/JobsPage';
 import { EventNotification } from './components/EventNotification';
 import { Toaster } from './components/ui/sonner';
 import './App.css';
@@ -46,6 +48,7 @@ function App() {
               <Route path="/messages" element={<MessagesPage />} />
               <Route path="/leads" element={<LeadsPage />} />
               <Route path="/leads/:leadId" element={<LeadsPage />} />
+              <Route path="/jobs" element={<JobsPage />} />
               <Route path="/contacts" element={<ContactsPage />} />
               <Route path="/contacts/:contactId" element={<ContactsPage />} />
               <Route path="/settings" element={<Navigate to="/settings/integrations" replace />} />
@@ -72,6 +75,11 @@ function App() {
               <Route path="/settings/payments" element={
                 <ProtectedRoute roles={['company_admin']}>
                   <PaymentsPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/settings/providers" element={
+                <ProtectedRoute roles={['company_admin', 'company_member']}>
+                  <ProvidersPage />
                 </ProtectedRoute>
               } />
               <Route path="/settings/users" element={

@@ -86,6 +86,38 @@ router.post('/webhooks', async (req, res) => {
                     [procErr.message, eventKey]
                 );
             }
+        } else if (event.startsWith('job.')) {
+            // ── Job webhook events ──────────────────────────────────────
+            // 1. Sync to local jobs table
+            // 2. Legacy: update lead sub_status
+            try {
+                const jobsService = require('../services/jobsService');
+                const jobSyncService = require('../services/jobSyncService');
+
+                // Primary: upsert into local jobs table
+                const zbJobId = payload.data?.id || payload.data?.job_id;
+                if (zbJobId) {
+                    const localResult = await jobsService.syncFromZenbooker(zbJobId, payload.data);
+                    console.log(`[ZbWebhook][${reqId}] Local job sync:`, JSON.stringify(localResult));
+                }
+
+                // Legacy: update lead sub_status
+                const legacyResult = await jobSyncService.handleJobWebhook(payload);
+                console.log(`[ZbWebhook][${reqId}] Lead sub_status sync:`, JSON.stringify(legacyResult));
+
+                await db.query(
+                    `UPDATE webhook_inbox SET status = 'processed', processed_at = NOW(), attempts = attempts + 1
+                     WHERE event_key = $1 AND provider = 'zenbooker'`,
+                    [eventKey]
+                );
+            } catch (procErr) {
+                console.error(`[ZbWebhook][${reqId}] Job event processing error:`, procErr.message);
+                await db.query(
+                    `UPDATE webhook_inbox SET status = 'failed', error_text = $1, attempts = attempts + 1
+                     WHERE event_key = $2 AND provider = 'zenbooker'`,
+                    [procErr.message, eventKey]
+                );
+            }
         } else {
             console.log(`[ZbWebhook][${reqId}] Event ${event} not handled or feature disabled`);
         }

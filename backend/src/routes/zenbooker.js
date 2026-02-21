@@ -109,4 +109,22 @@ router.post('/jobs', async (req, res) => {
     }
 });
 
+// GET /api/zenbooker/team-members — Fetch service providers
+router.get('/team-members', async (req, res) => {
+    try {
+        const members = await zenbookerClient.getTeamMembers({
+            service_provider: true,
+            deactivated: false,
+        });
+        res.json({ ok: true, data: members });
+    } catch (err) {
+        console.error('[Zenbooker] team-members error:', err.response?.data || err.message);
+        const status = err.response?.status || 500;
+        res.status(status).json({
+            ok: false,
+            error: err.response?.data?.error?.message || err.message,
+        });
+    }
+});
+
 module.exports = router;

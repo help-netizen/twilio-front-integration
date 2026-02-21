@@ -1,4 +1,5 @@
 const db = require('./connection');
+const { toE164 } = require('../utils/phoneUtils');
 
 // Default company ID for single-tenant mode (Boston Masters)
 const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
@@ -19,11 +20,12 @@ async function findContactByPhone(phoneE164) {
 }
 
 async function createContact(phoneE164, fullName = null, companyId = null) {
+    const normalized = toE164(phoneE164) || phoneE164;
     const result = await db.query(
         `INSERT INTO contacts (phone_e164, full_name, company_id)
          VALUES ($1, $2, $3)
          RETURNING *`,
-        [phoneE164, fullName || phoneE164, companyId || DEFAULT_COMPANY_ID]
+        [normalized, fullName || normalized, companyId || DEFAULT_COMPANY_ID]
     );
     return result.rows[0];
 }
@@ -696,13 +698,14 @@ async function findOrCreateTimeline(phoneE164, companyId = null) {
     );
     if (tl.rows[0]) return tl.rows[0];
 
+    const normalizedPhone = toE164(phoneE164) || phoneE164;
     tl = await db.query(
         `INSERT INTO timelines (phone_e164, company_id)
          VALUES ($1, $2)
          ON CONFLICT (phone_e164) WHERE phone_e164 IS NOT NULL AND contact_id IS NULL
          DO UPDATE SET updated_at = now()
          RETURNING *`,
-        [phoneE164, companyId || DEFAULT_COMPANY_ID]
+        [normalizedPhone, companyId || DEFAULT_COMPANY_ID]
     );
     return tl.rows[0];
 }

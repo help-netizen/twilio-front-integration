@@ -106,7 +106,11 @@ app.use('/api/contacts', authenticate, requireCompanyAccess, contactsRouter);
 
 // Zenbooker scheduling proxy
 const zenbookerPaymentsRouter = require('../backend/src/routes/zenbooker/payments');
+const zenbookerJobsRouter = require('../backend/src/routes/zenbooker/jobs');
+const localJobsRouter = require('../backend/src/routes/jobs');
 app.use('/api/zenbooker/payments', authenticate, requireCompanyAccess, zenbookerPaymentsRouter);
+app.use('/api/zenbooker/jobs', authenticate, requireCompanyAccess, zenbookerJobsRouter);
+app.use('/api/jobs', authenticate, requireCompanyAccess, localJobsRouter);
 app.use('/api/zenbooker', authenticate, requireCompanyAccess, zenbookerRouter);
 
 // BLANC Integrations API (secured header-based auth)

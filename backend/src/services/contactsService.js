@@ -6,6 +6,7 @@
  */
 
 const db = require('../db/connection');
+const { toE164 } = require('../utils/phoneUtils');
 
 // =============================================================================
 // DB row → Contact object
@@ -130,8 +131,8 @@ async function getContactLeads(contactId) {
 async function upsertFromZenbooker(customer) {
     const customerId = String(customer.id);
     const fullName = [customer.first_name, customer.last_name].filter(Boolean).join(' ') || null;
-    const phone = customer.phone || null;
-    const secondaryPhone = customer.secondary_phone || null;
+    const phone = toE164(customer.phone) || customer.phone || null;
+    const secondaryPhone = toE164(customer.secondary_phone) || customer.secondary_phone || null;
     const secondaryPhoneName = customer.secondary_phone_name || null;
     const email = customer.email || null;
     const notes = customer.notes || null;

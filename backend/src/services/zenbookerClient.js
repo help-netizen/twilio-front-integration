@@ -241,6 +241,100 @@ async function getJob(id) {
     return res.data;
 }
 
+/**
+ * Retrieve a list of jobs with query parameters, auto-paginating.
+ * @param {Object} params - { recurring_booking?, assigned?, sort_by?, sort_order?,
+ *   created_before?, created_after?, start_date_min?, start_date_max?,
+ *   canceled?, status?, customer?, territory?, cursor?, limit? }
+ * @returns {Object} { results, cursor, count, has_more, acct }
+ */
+async function getJobs(params = {}) {
+    const queryParams = {};
+    const passthrough = [
+        'recurring_booking', 'assigned', 'sort_by', 'sort_order',
+        'created_before', 'created_after', 'start_date_min', 'start_date_max',
+        'canceled', 'status', 'customer', 'territory', 'cursor', 'limit',
+    ];
+    for (const key of passthrough) {
+        if (params[key] !== undefined) queryParams[key] = params[key];
+    }
+    if (!queryParams.limit) queryParams.limit = 20;
+
+    const res = await retryRequest(() =>
+        getClient().get('/jobs', { params: queryParams })
+    );
+    return res.data;
+}
+
+/**
+ * Cancel a job and remove it from the schedule.
+ * @param {string} id - Job ID
+ */
+async function cancelJob(id) {
+    const res = await retryRequest(() => getClient().post(`/jobs/${id}/cancel`));
+    return res.data;
+}
+
+/**
+ * Reschedule a job.
+ * @param {string} id - Job ID
+ * @param {Object} data - { start_date (ISO 8601), arrival_window_minutes? }
+ */
+async function rescheduleJob(id, data) {
+    const res = await retryRequest(() => getClient().post(`/jobs/${id}/reschedule`, data));
+    return res.data;
+}
+
+/**
+ * Assign or unassign service providers to a job.
+ * @param {string} id - Job ID
+ * @param {Object} data - { assign?: string[], unassign?: string[], notify?: boolean }
+ */
+async function assignProviders(id, data) {
+    const res = await retryRequest(() => getClient().post(`/jobs/${id}/assign`, data));
+    return res.data;
+}
+
+/**
+ * Add a note to a job.
+ * @param {string} id - Job ID
+ * @param {Object} data - { text?, files?: string[], image?: string[] }
+ */
+async function addJobNote(id, data) {
+    const res = await retryRequest(() => getClient().post(`/jobs/${id}/notes`, data));
+    return res.data;
+}
+
+/**
+ * Mark a job as en-route. Notifies the customer if SMS alerts are enabled.
+ * @param {string} id - Job ID
+ * @param {Object} [data] - { date_time_enroute? (ISO 8601), eta_minutes? (default 15) }
+ */
+async function markJobEnroute(id, data = {}) {
+    const res = await retryRequest(() => getClient().post(`/jobs/${id}/enroute`, data));
+    return res.data;
+}
+
+/**
+ * Mark a job as in-progress.
+ * @param {string} id - Job ID
+ * @param {Object} [data] - { date_time_started? (ISO 8601) }
+ */
+async function markJobInProgress(id, data = {}) {
+    const res = await retryRequest(() => getClient().post(`/jobs/${id}/start`, data));
+    return res.data;
+}
+
+/**
+ * Mark a job as complete.
+ * @param {string} id - Job ID
+ * @param {Object} [data] - { date_time_completed? (ISO 8601) }
+ */
+async function markJobComplete(id, data = {}) {
+    const res = await retryRequest(() => getClient().post(`/jobs/${id}/complete`, data));
+    return res.data;
+}
+
 // ─── Customers ────────────────────────────────────────────────────────────────
 
 /**
@@ -375,6 +469,38 @@ async function retryRequest(requestFn, maxRetries = 3) {
     throw lastError;
 }
 
+// ─── Team Members ─────────────────────────────────────────────────────────────
+
+/**
+ * Fetch team members from Zenbooker, auto-paginating.
+ * @param {Object} params - { service_provider?, deactivated? }
+ * @returns {Array} All team member objects
+ */
+async function getTeamMembers(params = {}) {
+    const allResults = [];
+    let cursor = 0;
+    const limit = 100;
+
+    while (true) {
+        const queryParams = { limit, cursor };
+        if (params.service_provider !== undefined) queryParams.service_provider = params.service_provider;
+        if (params.deactivated !== undefined) queryParams.deactivated = params.deactivated;
+
+        const res = await retryRequest(() =>
+            getClient().get('/team_members', { params: queryParams })
+        );
+
+        const data = res.data;
+        const results = data.results || [];
+        allResults.push(...results);
+
+        if (!data.has_more) break;
+        cursor = data.next_cursor ?? (cursor + results.length);
+    }
+
+    return allResults;
+}
+
 module.exports = {
     getClient,
     createJobFromLead,
@@ -387,6 +513,14 @@ module.exports = {
     getTransactions,
     getInvoice,
     getJob,
+    getJobs,
+    cancelJob,
+    rescheduleJob,
+    assignProviders,
+    addJobNote,
+    markJobEnroute,
+    markJobInProgress,
+    markJobComplete,
     getCustomers,
     getCustomer,
     createCustomer,
@@ -394,5 +528,6 @@ module.exports = {
     addCustomerAddress,
     editCustomerAddress,
     addCustomerNote,
+    getTeamMembers,
 };
 

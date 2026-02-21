@@ -13,6 +13,7 @@
  */
 
 const db = require('../db/connection');
+const { toE164 } = require('../utils/phoneUtils');
 
 // =============================================================================
 // Normalization helpers
@@ -309,7 +310,7 @@ async function createNewContact({ first_name, last_name, phone, email }, company
         fullName,
         first_name || null,
         last_name || null,
-        phone || null,
+        toE164(phone),
         email || null,
         effectiveCompanyId,
     ]);
