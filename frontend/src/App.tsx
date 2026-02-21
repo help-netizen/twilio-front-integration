@@ -49,6 +49,7 @@ function App() {
               <Route path="/leads" element={<LeadsPage />} />
               <Route path="/leads/:leadId" element={<LeadsPage />} />
               <Route path="/jobs" element={<JobsPage />} />
+              <Route path="/jobs/:jobId" element={<JobsPage />} />
               <Route path="/contacts" element={<ContactsPage />} />
               <Route path="/contacts/:contactId" element={<ContactsPage />} />
               <Route path="/settings" element={<Navigate to="/settings/integrations" replace />} />

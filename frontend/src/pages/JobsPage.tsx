@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { toast } from 'sonner';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import {
@@ -91,7 +91,7 @@ export function JobsPage() {
     const [totalCount, setTotalCount] = useState(0);
 
     const navigate = useNavigate();
-    const [searchParams] = useSearchParams();
+    const { jobId: urlJobId } = useParams<{ jobId?: string }>();
 
     // Filters
     const [searchQuery, setSearchQuery] = useState('');
@@ -133,6 +133,7 @@ export function JobsPage() {
         setSelectedJob(job);
         setDetailLoading(true);
         setContactInfo(null);
+        navigate(`/jobs/${job.id}`, { replace: true });
         try {
             const detail = await jobsApi.getJob(job.id);
             setSelectedJob(detail);
@@ -151,14 +152,39 @@ export function JobsPage() {
         }
     };
 
-    // Auto-select job from URL ?selected=ID
+    const handleCloseDetail = () => {
+        setSelectedJob(null);
+        setContactInfo(null);
+        navigate('/jobs', { replace: true });
+    };
+
+    // Auto-select job from URL /jobs/:jobId
     useEffect(() => {
-        const selectedId = searchParams.get('selected');
-        if (selectedId && jobs.length > 0 && !selectedJob) {
-            const job = jobs.find(j => j.id === parseInt(selectedId, 10));
-            if (job) handleSelectJob(job);
+        if (urlJobId && !selectedJob && !loading) {
+            const id = parseInt(urlJobId, 10);
+            const job = jobs.find(j => j.id === id);
+            if (job) {
+                handleSelectJob(job);
+            } else if (jobs.length > 0) {
+                // Job not in current page — fetch directly
+                (async () => {
+                    setDetailLoading(true);
+                    try {
+                        const detail = await jobsApi.getJob(id);
+                        setSelectedJob(detail);
+                        if (detail.contact_id) {
+                            try {
+                                const resp = await contactsApi.getContact(detail.contact_id);
+                                const c = resp.data.contact;
+                                setContactInfo({ name: c.full_name || '—', phone: c.phone_e164 || '', email: c.email || '', id: c.id });
+                            } catch { }
+                        }
+                    } catch { /* not found */ }
+                    finally { setDetailLoading(false); }
+                })();
+            }
         }
-    }, [jobs, searchParams]);
+    }, [urlJobId, jobs, loading]);
 
     // ---------- Actions ----------
 
@@ -363,7 +389,7 @@ export function JobsPage() {
                                 <ZbBadge status={selectedJob.zb_status} />
                             </div>
                         </div>
-                        <Button variant="ghost" size="icon" onClick={() => setSelectedJob(null)}>
+                        <Button variant="ghost" size="icon" onClick={handleCloseDetail}>
                             <X className="size-4" />
                         </Button>
                     </div>

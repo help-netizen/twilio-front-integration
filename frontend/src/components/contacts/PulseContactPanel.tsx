@@ -107,7 +107,7 @@ function JobsList({ contactId }: { contactId: number }) {
                         const date = job.start_date ? new Date(job.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null;
                         return (
                             <div key={job.id}
-                                onClick={() => navigate(`/jobs?selected=${job.id}`)}
+                                onClick={() => navigate(`/jobs/${job.id}`)}
                                 className="flex items-center justify-between p-3 rounded-lg border bg-white cursor-pointer hover:border-blue-300 hover:shadow-sm transition-all">
                                 <div className="flex-1 min-w-0">
                                     <div className="flex items-center gap-2 flex-wrap">

@@ -103,7 +103,7 @@ function JobsList({ contactId }: { contactId: number }) {
                         return (
                             <div
                                 key={job.id}
-                                onClick={() => navigate(`/jobs?selected=${job.id}`)}
+                                onClick={() => navigate(`/jobs/${job.id}`)}
                                 style={{
                                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                                     padding: '12px 16px', borderRadius: '10px', border: '1px solid #e5e7eb',

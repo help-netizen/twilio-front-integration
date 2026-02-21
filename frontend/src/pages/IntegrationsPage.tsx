@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
     fetchIntegrations,
     createIntegration,
     revokeIntegration,
+    fetchWebhookUrl,
+    regenerateWebhookUrl,
     type Integration,
 } from '../services/integrationsApi';
 import {
@@ -38,6 +39,9 @@ import {
     EyeOff,
     Key,
     AlertTriangle,
+    Webhook,
+    RefreshCw,
+    Check,
 } from 'lucide-react';
 
 export function IntegrationsPage() {
@@ -48,10 +52,28 @@ export function IntegrationsPage() {
     const [secretVisible, setSecretVisible] = useState(false);
     const [clientName, setClientName] = useState('');
     const [revokeTarget, setRevokeTarget] = useState<Integration | null>(null);
+    const [regenerateOpen, setRegenerateOpen] = useState(false);
+    const [webhookCopied, setWebhookCopied] = useState(false);
 
     const { data: integrations = [], isLoading } = useQuery({
         queryKey: ['integrations'],
         queryFn: fetchIntegrations,
+    });
+
+    // Zenbooker webhook URL
+    const { data: webhookData, isLoading: webhookLoading } = useQuery({
+        queryKey: ['zenbooker-webhook-url'],
+        queryFn: fetchWebhookUrl,
+    });
+
+    const regenerateMutation = useMutation({
+        mutationFn: regenerateWebhookUrl,
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['zenbooker-webhook-url'] });
+            setRegenerateOpen(false);
+            toast.success('Webhook URL regenerated');
+        },
+        onError: () => toast.error('Failed to regenerate webhook URL'),
     });
 
     const createMutation = useMutation({
@@ -87,6 +109,14 @@ export function IntegrationsPage() {
         toast.success(`${label} copied to clipboard`);
     }
 
+    function copyWebhookUrl() {
+        if (!webhookData?.url) return;
+        navigator.clipboard.writeText(webhookData.url);
+        setWebhookCopied(true);
+        toast.success('Webhook URL copied to clipboard');
+        setTimeout(() => setWebhookCopied(false), 2000);
+    }
+
     function getStatusBadge(integration: Integration) {
         if (integration.revoked_at) {
             return <Badge variant="destructive">Revoked</Badge>;
@@ -111,28 +141,67 @@ export function IntegrationsPage() {
     return (
         <div className="p-6 max-w-5xl mx-auto">
             {/* Header */}
-            <div className="flex items-center justify-between mb-6">
-                <div>
-                    <h1 className="text-2xl font-semibold">API Integrations</h1>
-                    <p className="text-muted-foreground text-sm mt-1">
-                        Manage API credentials for external lead generators
-                    </p>
-                    <Link
-                        to="/settings/api-docs"
-                        className="text-sm text-blue-600 hover:text-blue-800 hover:underline mt-1 inline-block"
-                    >
-                        View API Documentation →
-                    </Link>
-                </div>
-                <Button onClick={() => setCreateOpen(true)}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Create Integration
-                </Button>
+            <div className="mb-6">
+                <h1 className="text-2xl font-semibold">Integrations</h1>
+                <p className="text-muted-foreground text-sm mt-1">
+                    Manage webhooks and API credentials
+                </p>
             </div>
 
             <Separator className="mb-6" />
 
-            {/* Table */}
+            {/* Zenbooker Webhook URL */}
+            <div className="border rounded-lg p-5 mb-8 bg-card">
+                <div className="flex items-center gap-2 mb-1">
+                    <Webhook className="h-5 w-5 text-indigo-600" />
+                    <h2 className="text-lg font-semibold">Zenbooker Webhooks</h2>
+                </div>
+                <p className="text-sm text-muted-foreground mb-4">
+                    Paste this URL into Zenbooker → Settings → Webhooks for all event types you want to receive.
+                </p>
+
+                {webhookLoading ? (
+                    <div className="text-sm text-muted-foreground">Loading webhook URL…</div>
+                ) : webhookData?.url ? (
+                    <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                            <code className="flex-1 bg-muted px-3 py-2.5 rounded text-sm font-mono break-all select-all">
+                                {webhookData.url}
+                            </code>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={copyWebhookUrl}
+                                className="shrink-0"
+                            >
+                                {webhookCopied ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+                            </Button>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setRegenerateOpen(true)}
+                                className="shrink-0"
+                                title="Generate new URL (invalidates old one)"
+                            >
+                                <RefreshCw className="h-4 w-4" />
+                            </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                            This URL works for all webhook event types: jobs, customers, invoices, etc.
+                        </p>
+                    </div>
+                ) : (
+                    <div className="text-sm text-red-500">Failed to load webhook URL</div>
+                )}
+            </div>
+
+            <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold">API Keys</h2>
+                <Button onClick={() => setCreateOpen(true)} size="sm">
+                    <Plus className="h-4 w-4 mr-2" />
+                    Create Integration
+                </Button>
+            </div>
             {isLoading ? (
                 <div className="text-center text-muted-foreground py-12">Loading…</div>
             ) : integrations.length === 0 ? (
@@ -357,6 +426,33 @@ export function IntegrationsPage() {
                             disabled={revokeMutation.isPending}
                         >
                             {revokeMutation.isPending ? 'Revoking…' : 'Revoke'}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Regenerate Webhook URL Confirmation */}
+            <Dialog open={regenerateOpen} onOpenChange={setRegenerateOpen}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2 text-amber-600">
+                            <AlertTriangle className="h-5 w-5" />
+                            Regenerate Webhook URL
+                        </DialogTitle>
+                        <DialogDescription>
+                            This will generate a new webhook URL and <strong>invalidate the current one</strong>.
+                            You will need to update the URL in Zenbooker settings.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setRegenerateOpen(false)}>
+                            Cancel
+                        </Button>
+                        <Button
+                            onClick={() => regenerateMutation.mutate()}
+                            disabled={regenerateMutation.isPending}
+                        >
+                            {regenerateMutation.isPending ? 'Regenerating…' : 'Regenerate'}
                         </Button>
                     </DialogFooter>
                 </DialogContent>

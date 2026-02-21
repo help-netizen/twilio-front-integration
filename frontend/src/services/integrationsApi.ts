@@ -52,3 +52,18 @@ export async function createIntegration(payload: CreateIntegrationPayload): Prom
 export async function revokeIntegration(keyId: string): Promise<void> {
     await request(`${API_BASE}/${keyId}`, { method: 'DELETE' });
 }
+
+// ── Zenbooker Webhook URL ───────────────────────────────────────────────────
+const ZB_BASE = '/api/integrations/zenbooker';
+
+export async function fetchWebhookUrl(): Promise<{ url: string; key: string }> {
+    const data = await request<{ ok: boolean; data: { url: string; key: string } }>(`${ZB_BASE}/webhook-url`);
+    return data.data;
+}
+
+export async function regenerateWebhookUrl(): Promise<{ url: string; key: string }> {
+    const data = await request<{ ok: boolean; data: { url: string; key: string } }>(`${ZB_BASE}/webhook-url/regenerate`, {
+        method: 'POST',
+    });
+    return data.data;
+}
