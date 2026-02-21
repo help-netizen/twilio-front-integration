@@ -239,7 +239,7 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
             // Single backend call: creates local job + ZB job + marks lead converted
             const result = await leadsApi.convertLead(lead.UUID, {
                 zb_job_payload: zbJobPayload,
-                service: { name: serviceName },
+                service: { name: serviceName, description: serviceDescription },
                 customer: { name, phone, email },
                 address: {
                     line1: address, line2: unit,
