@@ -318,6 +318,11 @@ async function createLead(fields, companyId = null) {
         }
     }
 
+    // Normalize names to Title Case (e.g. "JOHN" → "John", "doe" → "Doe")
+    const toTitleCase = (s) => s ? s.replace(/\S+/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()) : s;
+    if (columns.first_name) columns.first_name = toTitleCase(columns.first_name);
+    if (columns.last_name) columns.last_name = toTitleCase(columns.last_name);
+
     // Always set company_id (fallback to default)
     const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
     columns.company_id = companyId || DEFAULT_COMPANY_ID;
