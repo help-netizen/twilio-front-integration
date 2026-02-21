@@ -134,6 +134,23 @@ router.get('/by-contact', async (req, res) => {
             );
 
             // Filter to SMS-only (not already covered by call timelines)
+            // Pre-compute contact name matches for search
+            let searchContactDigits = null;
+            if (search) {
+                const searchTerm = search.trim();
+                if (searchTerm.length > 0 && /[a-zA-Z]/.test(searchTerm)) {
+                    const contactMatchResult = await dbConn.query(
+                        `SELECT phone_e164, secondary_phone FROM contacts
+                         WHERE full_name ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1`,
+                        ['%' + searchTerm + '%']
+                    );
+                    searchContactDigits = new Set();
+                    for (const co of contactMatchResult.rows) {
+                        if (co.phone_e164) searchContactDigits.add(co.phone_e164.replace(/\D/g, ''));
+                        if (co.secondary_phone) searchContactDigits.add(co.secondary_phone.replace(/\D/g, ''));
+                    }
+                }
+            }
             const smsOnlyRows = [];
             for (const smsRow of smsOnlyResult.rows) {
                 const digits = smsRow.customer_digits;
@@ -147,6 +164,8 @@ router.get('/by-contact', async (req, res) => {
                     if (searchDigits.length > 0 && digits.includes(searchDigits)) matches = true;
                     if (smsRow.friendly_name && smsRow.friendly_name.toLowerCase().includes(searchTerm)) matches = true;
                     if (smsRow.customer_e164 && smsRow.customer_e164.toLowerCase().includes(searchTerm)) matches = true;
+                    // Also check if a contact with matching name owns this phone
+                    if (!matches && searchContactDigits && searchContactDigits.has(digits)) matches = true;
                     if (!matches) continue;
                 }
                 smsOnlyRows.push(smsRow);
