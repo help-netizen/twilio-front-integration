@@ -12,6 +12,7 @@ import { PulseTimeline } from '../components/pulse/PulseTimeline';
 import { SmsForm } from '../components/pulse/SmsForm';
 import { LeadDetailPanel } from '../components/leads/LeadDetailPanel';
 import { CreateLeadJobWizard } from '../components/conversations/CreateLeadJobWizard';
+import { ContactCard } from '../components/conversations/ContactCard';
 import { EditLeadDialog } from '../components/leads/EditLeadDialog';
 import { ConvertToJobDialog } from '../components/leads/ConvertToJobDialog';
 import { formatPhoneNumber } from '../utils/formatters';
@@ -562,7 +563,7 @@ export const PulsePage: React.FC = () => {
                 </div>
             </div>
 
-            {/* Middle column: Lead Detail Panel (same as Leads section) */}
+            {/* Middle column: Lead Detail Panel / Contact Card / Create Lead */}
             <div className="w-[400px] shrink-0 border-r bg-background flex flex-col overflow-hidden">
                 {(contactId || timelineId) && phone ? (
                     lead ? (
@@ -580,6 +581,13 @@ export const PulsePage: React.FC = () => {
                         />
                     ) : !leadLoading ? (
                         <div className="flex-1 overflow-y-auto">
+                            {contact && (
+                                <ContactCard
+                                    contact={contact}
+                                    phone={phone}
+                                    hasActiveCall={hasActiveCall}
+                                />
+                            )}
                             <CreateLeadJobWizard
                                 phone={phone}
                                 hasActiveCall={hasActiveCall}

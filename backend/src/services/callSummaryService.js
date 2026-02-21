@@ -95,8 +95,9 @@ async function generateCallSummary(dialogText, callMeta = {}) {
         ],
         generationConfig: {
             temperature: 0.15,
-            maxOutputTokens: 4096,
+            maxOutputTokens: 16384,
             candidateCount: 1,
+            responseMimeType: 'application/json',
         },
     };
 
@@ -145,8 +146,12 @@ async function generateCallSummary(dialogText, callMeta = {}) {
                 ?.map(p => p.text)
                 ?.filter(Boolean)
                 ?.join('') || '';
+            const finishReason = data?.candidates?.[0]?.finishReason;
+            if (finishReason === 'MAX_TOKENS') {
+                console.warn(`[CallSummary:${traceId}] ⚠ Output truncated by MAX_TOKENS — response may be incomplete`);
+            }
             if (!rawOutput) {
-                console.warn(`[CallSummary:${traceId}] Empty response from Gemini (finishReason: ${data?.candidates?.[0]?.finishReason})`);
+                console.warn(`[CallSummary:${traceId}] Empty response from Gemini (finishReason: ${finishReason})`);
                 return { summary: '', entities: [], error: 'empty_provider_response' };
             }
 
@@ -193,7 +198,41 @@ function parseGeminiOutput(rawOutput) {
             })) : [],
         };
     } catch (err) {
-        console.warn('[CallSummary] Failed to parse Gemini JSON, using raw text as summary:', err.message);
+        console.warn('[CallSummary] JSON.parse failed, attempting partial extraction:', err.message);
+
+        // Try to extract "summary" field from truncated JSON via regex
+        let summary = '';
+        const summaryMatch = cleaned.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+        if (summaryMatch) {
+            try { summary = JSON.parse(`"${summaryMatch[1]}"`); } catch { summary = summaryMatch[1]; }
+        }
+
+        // Try to extract complete entities from truncated JSON
+        let entities = [];
+        const entitiesBlockMatch = cleaned.match(/"entities"\s*:\s*\[([\s\S]*)/);
+        if (entitiesBlockMatch) {
+            const block = entitiesBlockMatch[1];
+            // Match each complete entity object { "label": ..., "value": ..., "start_ms": ... }
+            const entityRegex = /\{\s*"label"\s*:\s*"([^"]*?)"\s*,\s*"value"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"start_ms"\s*:\s*(\d+|null)\s*\}/g;
+            let m;
+            while ((m = entityRegex.exec(block)) !== null) {
+                let value = m[2];
+                try { value = JSON.parse(`"${m[2]}"`); } catch { /* use raw */ }
+                entities.push({
+                    label: m[1],
+                    value,
+                    start_ms: m[3] === 'null' ? null : parseInt(m[3], 10),
+                });
+            }
+        }
+
+        if (summary) {
+            console.log(`[CallSummary] Partial extraction OK: summary=${summary.length} chars, entities=${entities.length}`);
+            return { summary, entities };
+        }
+
+        // Final fallback: use raw text but strip JSON-looking prefixes
+        console.warn('[CallSummary] Could not extract summary from partial JSON, using raw text');
         return {
             summary: cleaned.slice(0, 500),
             entities: [],

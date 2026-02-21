@@ -610,7 +610,10 @@ async function getLeadByPhone(phone, companyId = null) {
     const last10 = digits.length >= 10 ? digits.slice(-10) : digits;
     if (!last10) return null;
 
-    const conditions = [`RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10) = $1`];
+    const conditions = [
+        `RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10) = $1`,
+        `l.status NOT IN ('Lost', 'Converted')`,
+    ];
     const params = [last10];
     if (companyId) {
         conditions.push(`l.company_id = $2`);
