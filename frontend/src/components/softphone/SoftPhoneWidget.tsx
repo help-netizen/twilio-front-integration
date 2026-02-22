@@ -80,7 +80,7 @@ export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({
         return `${m}:${s.toString().padStart(2, '0')}`;
     };
 
-    // Handle input change — decide dial vs search mode
+    // Handle input change — search contacts for both phone and name input
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const val = e.target.value;
         setInputValue(val);
@@ -89,11 +89,12 @@ export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({
         if (isLikelyPhoneInput(val)) {
             const normalized = normalizeToE164(val);
             setNormalizedNumber(normalized);
-            setShowSearch(false);
         } else {
             setNormalizedNumber(null);
-            setShowSearch(val.trim().length >= 2);
         }
+
+        // Show search for any input with 2+ characters
+        setShowSearch(val.trim().length >= 2);
     };
 
     // Contact selected from search
@@ -222,7 +223,7 @@ export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({
                                 onChange={handleInputChange}
                                 onKeyDown={handleKeyDown}
                                 onFocus={() => {
-                                    if (!isLikelyPhoneInput(inputValue) && inputValue.trim().length >= 2) {
+                                    if (inputValue.trim().length >= 2) {
                                         setShowSearch(true);
                                     }
                                 }}
@@ -235,17 +236,12 @@ export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({
                             />
                         </div>
 
-                        {selectedContactName && (
-                            <div className="softphone-helper">
-                                {selectedContactName} — {formatPhoneDisplay(normalizedNumber || '')}
-                            </div>
-                        )}
-
-                        {!normalizedNumber && inputValue.length > 0 && isLikelyPhoneInput(inputValue) && (
-                            <div className="softphone-helper error">
-                                Enter a valid phone number (e.g., 617-555-1234 or +16175551234)
-                            </div>
-                        )}
+                        {/* Reserved space for contact name — prevents Call button jumping */}
+                        <div className="softphone-contact-name-slot">
+                            {selectedContactName && (
+                                <span>{selectedContactName} — {formatPhoneDisplay(normalizedNumber || '')}</span>
+                            )}
+                        </div>
 
                         <div className="softphone-actions">
                             <button

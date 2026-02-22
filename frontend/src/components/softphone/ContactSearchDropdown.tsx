@@ -42,7 +42,7 @@ export const ContactSearchDropdown: React.FC<ContactSearchDropdownProps> = ({
         debounceRef.current = setTimeout(async () => {
             setLoading(true);
             try {
-                const response = await listContacts({ search: query.trim(), limit: 15 });
+                const response = await listContacts({ search: query.trim(), limit: 3 });
                 const contacts = response.data?.results || [];
 
                 // Flatten: each phone → separate row
@@ -72,14 +72,14 @@ export const ContactSearchDropdown: React.FC<ContactSearchDropdownProps> = ({
                     }
                 }
 
-                setResults(rows);
+                setResults(rows.slice(0, 3));
             } catch (err) {
                 console.error('[ContactSearch] Error:', err);
                 setResults([]);
             } finally {
                 setLoading(false);
             }
-        }, 300);
+        }, 500);
 
         return () => {
             if (debounceRef.current) clearTimeout(debounceRef.current);

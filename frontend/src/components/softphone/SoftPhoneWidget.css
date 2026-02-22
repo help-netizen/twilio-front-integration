@@ -240,6 +240,17 @@
     color: #f44336;
 }
 
+/* Reserved space for contact name — fixed height so Call button doesn't jump */
+.softphone-contact-name-slot {
+    height: 22px;
+    margin-top: 6px;
+    padding: 0 4px;
+    font-size: 13px;
+    color: #aaa;
+    display: flex;
+    align-items: center;
+}
+
 /* ─── Call Actions ───────────────────────────────────────────────────────── */
 .softphone-actions {
     display: flex;
