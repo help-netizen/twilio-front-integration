@@ -140,7 +140,7 @@ twimlRouter.post('/twiml/outbound', async (req, res) => {
         try {
             const db = require('../db/connection');
             const queries = require('../db/queries');
-            const { publishRealtimeEvent } = require('../services/sseService');
+            const realtimeService = require('../services/realtimeService');
 
             // Resolve timeline for the dialed number
             const timeline = await queries.findOrCreateTimeline(normalized, null);
@@ -168,7 +168,7 @@ twimlRouter.post('/twiml/outbound', async (req, res) => {
             });
 
             if (call) {
-                publishRealtimeEvent('call.updated', call, 'twiml-outbound');
+                realtimeService.publishCallUpdate({ eventType: 'call.updated', ...call });
                 console.log('[Voice TwiML] Initial call record created:', callSid);
             }
         } catch (err) {
