@@ -15,6 +15,7 @@ import { Phone, PhoneIncoming, MessageSquare, Users, Settings, Key, BookOpen, Fi
 import { useRealtimeEvents } from '../../hooks/useRealtimeEvents';
 import { useTwilioDevice } from '../../hooks/useTwilioDevice';
 import { SoftPhoneWidget } from '../softphone/SoftPhoneWidget';
+import { formatPhoneDisplay } from '../../utils/phoneUtils';
 import './AppLayout.css';
 
 interface AppLayoutProps {
@@ -63,6 +64,24 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                 .catch(() => { /* navigation is best-effort */ });
         }
     }, [voice, navigate]);
+
+    // Resolve incoming caller's contact name
+    const [incomingCallerName, setIncomingCallerName] = useState<string | null>(null);
+    useEffect(() => {
+        if (!voice.incomingCall) {
+            setIncomingCallerName(null);
+            return;
+        }
+        const phone = voice.callerInfo?.number;
+        if (!phone) return;
+
+        authedFetch(`/api/pulse/timeline-by-phone?phone=${encodeURIComponent(phone)}`)
+            .then(res => res.json())
+            .then(data => {
+                if (data.contactName) setIncomingCallerName(data.contactName);
+            })
+            .catch(() => { });
+    }, [voice.incomingCall, voice.callerInfo?.number]);
 
     // --- Pulse unread badge ---
     const [pulseUnreadCount, setPulseUnreadCount] = useState(0);
@@ -187,7 +206,10 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                                 onClick={handleAcceptIncoming}
                             >
                                 <PhoneIncoming size={16} />
-                                Accept Call
+                                <span>
+                                    {incomingCallerName || (voice.callerInfo?.number ? formatPhoneDisplay(voice.callerInfo.number) : 'Unknown')}
+                                </span>
+                                — Accept
                             </button>
                         )}
                         {activeTab === 'calls' && (
