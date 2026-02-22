@@ -380,18 +380,42 @@ async function linkAndUpdate(contactId, zbCustomerId, data, account) {
 }
 
 async function updateContactFromZenbooker(contactId, data, account) {
-    // Update zenbooker_data and sync timestamp, but don't overwrite Blanc master fields
+    // Parse name — ZB sends `name` (full) or `first_name`/`last_name`
+    let firstName = data.first_name || null;
+    let lastName = data.last_name || null;
+    let fullName = data.name || null;
+
+    if (!firstName && !lastName && fullName) {
+        const parts = fullName.trim().split(/\s+/);
+        firstName = parts[0] || null;
+        lastName = parts.length > 1 ? parts.slice(1).join(' ') : null;
+    }
+    if (!fullName && (firstName || lastName)) {
+        fullName = [firstName, lastName].filter(Boolean).join(' ');
+    }
+
+    const phone = normalizePhone(data.phone);
+    const email = (data.email || '').trim() || null;
+
+    // Update master fields + zenbooker_data
     await db.query(
         `UPDATE contacts
          SET zenbooker_data = $1::jsonb,
              zenbooker_synced_at = NOW(),
              zenbooker_account_id = COALESCE($2, zenbooker_account_id),
              zenbooker_sync_status = 'linked',
-             zenbooker_last_error = NULL
-         WHERE id = $3`,
-        [JSON.stringify(data), account || null, contactId]
+             zenbooker_last_error = NULL,
+             full_name = COALESCE($3, full_name),
+             first_name = COALESCE($4, first_name),
+             last_name = COALESCE($5, last_name),
+             phone_e164 = COALESCE($6, phone_e164),
+             email = COALESCE($7, email)
+         WHERE id = $8`,
+        [JSON.stringify(data), account || null,
+            fullName, firstName, lastName, phone, email,
+            contactId]
     );
-    console.log(`[ZbSync] Updated Zenbooker data for contact ${contactId}`);
+    console.log(`[ZbSync] Updated contact ${contactId} from Zenbooker (name=${fullName}, phone=${phone}, email=${email})`);
 
     if (data.addresses?.length) {
         await importAddresses(contactId, data.id ? String(data.id) : null, data.addresses);
