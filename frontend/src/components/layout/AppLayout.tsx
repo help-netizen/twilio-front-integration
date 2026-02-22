@@ -212,27 +212,25 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                                 — Accept
                             </button>
                         )}
+                        {voice.phoneAllowed && (
+                            <button
+                                onClick={() => setSoftPhoneOpen(true)}
+                                className="softphone-header-btn"
+                                title="Open SoftPhone"
+                            >
+                                <Phone size={15} />
+                                <span>SoftPhone</span>
+                            </button>
+                        )}
                         {activeTab === 'calls' && (
-                            <>
-                                {voice.phoneAllowed && (
-                                    <button
-                                        onClick={() => setSoftPhoneOpen(true)}
-                                        className="refresh-button"
-                                        title="Open SoftPhone"
-                                        style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
-                                    >
-                                        📞 SoftPhone
-                                    </button>
-                                )}
-                                <button
-                                    onClick={handleRefresh}
-                                    disabled={isRefreshing}
-                                    className="refresh-button"
-                                    title="Refresh calls from last 3 days from Twilio"
-                                >
-                                    {isRefreshing ? '🔄 Refreshing...' : '🔄 Refresh'}
-                                </button>
-                            </>
+                            <button
+                                onClick={handleRefresh}
+                                disabled={isRefreshing}
+                                className="refresh-button"
+                                title="Refresh calls from last 3 days from Twilio"
+                            >
+                                {isRefreshing ? '🔄 Refreshing...' : '🔄 Refresh'}
+                            </button>
                         )}
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
