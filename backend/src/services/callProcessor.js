@@ -144,7 +144,7 @@ class CallProcessor {
             // True internal call between SIP endpoints (forwarding/transfer)
             return 'internal';
         } else {
-            // Neither is SIP (e.g. Twilio API sync data has plain phone numbers)
+            // Neither is SIP (e.g. Client-routed calls or Twilio API sync data)
             // Use owned-number detection as fallback
             const fromIsOwned = isOwnedNumber(callData.from);
             const toIsOwned = isOwnedNumber(callData.to);
@@ -156,7 +156,12 @@ class CallProcessor {
                 // TO is our number → customer called in → INBOUND
                 return 'inbound';
             } else {
-                // Both owned or neither owned → can't determine
+                // OWNED_PHONE_NUMBERS inconclusive — use Twilio's own Direction field
+                // This handles WebRTC Client calls where neither number is SIP
+                const twilioDir = (callData.direction || '').toLowerCase();
+                if (twilioDir === 'inbound') return 'inbound';
+                if (twilioDir.startsWith('outbound')) return 'outbound';
+                // Final fallback
                 return 'external';
             }
         }
