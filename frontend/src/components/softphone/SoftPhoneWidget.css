@@ -125,6 +125,63 @@
     color: #f44336;
 }
 
+/* ─── Caller ID Picker ──────────────────────────────────────────────────── */
+.softphone-caller-id {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 0 2px;
+}
+
+.softphone-caller-id-label {
+    font-size: 12px;
+    color: #888;
+    white-space: nowrap;
+}
+
+.softphone-caller-id-select-wrapper {
+    position: relative;
+    flex: 1;
+}
+
+.softphone-caller-id-select {
+    width: 100%;
+    padding: 7px 28px 7px 10px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    color: #e0e0e0;
+    font-size: 13px;
+    cursor: pointer;
+    outline: none;
+    appearance: none;
+    -webkit-appearance: none;
+    transition: border-color 0.15s;
+}
+
+.softphone-caller-id-select:hover {
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.softphone-caller-id-select:focus {
+    border-color: rgba(99, 102, 241, 0.5);
+}
+
+.softphone-caller-id-select option {
+    background: #1a1a2e;
+    color: #e0e0e0;
+}
+
+.softphone-caller-id-chevron {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #666;
+    pointer-events: none;
+}
+
 /* ─── Call Actions ───────────────────────────────────────────────────────── */
 .softphone-actions {
     display: flex;

@@ -5,12 +5,18 @@
  * Uses useTwilioDevice hook for call management.
  */
 
-import React, { useState, useCallback } from 'react';
-import { Phone, PhoneOff, PhoneIncoming, X, Mic, MicOff, Grid3x3 } from 'lucide-react';
+import React, { useState, useCallback, useEffect } from 'react';
+import { Phone, PhoneOff, PhoneIncoming, X, Mic, MicOff, Grid3x3, ChevronDown } from 'lucide-react';
 import { type UseTwilioDeviceReturn } from '../../hooks/useTwilioDevice';
 import { ContactSearchDropdown } from './ContactSearchDropdown';
 import { normalizeToE164, formatPhoneDisplay, isLikelyPhoneInput } from '../../utils/phoneUtils';
+import { authedFetch } from '../../services/apiClient';
 import './SoftPhoneWidget.css';
+
+interface BlancNumber {
+    phone_number: string;
+    friendly_name: string | null;
+}
 
 interface SoftPhoneWidgetProps {
     voice: UseTwilioDeviceReturn;
@@ -26,6 +32,25 @@ export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({ voice, open, o
     const [selectedContactName, setSelectedContactName] = useState<string | null>(null);
     const [showKeypad, setShowKeypad] = useState(false);
     const [showSearch, setShowSearch] = useState(false);
+    const [blancNumbers, setBlancNumbers] = useState<BlancNumber[]>([]);
+    const [selectedCallerId, setSelectedCallerId] = useState<string>('');
+
+    // Fetch Blanc-enabled phone numbers for caller ID picker
+    useEffect(() => {
+        async function loadBlancNumbers() {
+            try {
+                const res = await authedFetch('/api/voice/blanc-numbers');
+                const data = await res.json();
+                if (data.ok && data.numbers.length > 0) {
+                    setBlancNumbers(data.numbers);
+                    setSelectedCallerId(data.numbers[0].phone_number);
+                }
+            } catch (err) {
+                console.error('[SoftPhone] Failed to load blanc numbers:', err);
+            }
+        }
+        loadBlancNumbers();
+    }, []);
 
     const {
         callState,
@@ -76,9 +101,14 @@ export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({ voice, open, o
     // Initiate outbound call
     const handleCall = useCallback(() => {
         if (!normalizedNumber) return;
-        makeCall(normalizedNumber);
+        // Pass selected caller ID as a custom param that the TwiML endpoint will read
+        const params: Record<string, string> = {};
+        if (selectedCallerId) {
+            params.CallerId = selectedCallerId;
+        }
+        makeCall(normalizedNumber, params);
         setShowSearch(false);
-    }, [normalizedNumber, makeCall]);
+    }, [normalizedNumber, makeCall, selectedCallerId]);
 
     // Handle Enter key
     const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -164,6 +194,28 @@ export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({ voice, open, o
                             {!normalizedNumber && inputValue.length > 0 && isLikelyPhoneInput(inputValue) && (
                                 <div className="softphone-helper error">
                                     Enter a valid phone number (e.g., 617-555-1234 or +16175551234)
+                                </div>
+                            )}
+
+                            {/* Caller ID Picker */}
+                            {blancNumbers.length > 0 && (
+                                <div className="softphone-caller-id">
+                                    <label className="softphone-caller-id-label">Call from:</label>
+                                    <div className="softphone-caller-id-select-wrapper">
+                                        <select
+                                            className="softphone-caller-id-select"
+                                            value={selectedCallerId}
+                                            onChange={(e) => setSelectedCallerId(e.target.value)}
+                                        >
+                                            {blancNumbers.map((n) => (
+                                                <option key={n.phone_number} value={n.phone_number}>
+                                                    {formatPhoneDisplay(n.phone_number)}
+                                                    {n.friendly_name ? ` — ${n.friendly_name}` : ''}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <ChevronDown size={14} className="softphone-caller-id-chevron" />
+                                    </div>
                                 </div>
                             )}
 

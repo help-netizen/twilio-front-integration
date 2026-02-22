@@ -46,7 +46,8 @@ const twimlRouter = express.Router();
  */
 twimlRouter.post('/twiml/outbound', (req, res) => {
     const to = req.body.To;
-    const callerId = process.env.SOFTPHONE_CALLER_ID || process.env.TWILIO_PHONE_NUMBER;
+    // Allow client to specify caller ID (from Blanc phone settings); fall back to env var
+    const callerId = req.body.CallerId || process.env.SOFTPHONE_CALLER_ID || process.env.TWILIO_PHONE_NUMBER;
     const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
     const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
     const dialActionUrl = `${baseUrl}/webhooks/twilio/voice-dial-action`;
@@ -166,6 +167,24 @@ twimlRouter.post('/twiml/inbound', async (req, res) => {
 
     console.log('[Voice TwiML] Inbound TwiML generated, routing to:', defaultIdentity);
     res.type('text/xml').send(twiml);
+});
+
+/**
+ * GET /api/voice/blanc-numbers
+ * Returns phone numbers configured as Blanc (routing_mode='client') for caller ID picker.
+ */
+twimlRouter.get('/blanc-numbers', async (req, res) => {
+    try {
+        const db = require('../db/connection');
+        const result = await db.query(
+            `SELECT phone_number, friendly_name FROM phone_number_settings WHERE routing_mode = 'client' ORDER BY phone_number`
+        );
+        res.json({ ok: true, numbers: result.rows });
+    } catch (err) {
+        console.error('[Voice] Failed to fetch blanc numbers:', err.message);
+        // Fallback: return empty list so UI still works
+        res.json({ ok: true, numbers: [] });
+    }
 });
 
 module.exports = { tokenRouter, twimlRouter };
