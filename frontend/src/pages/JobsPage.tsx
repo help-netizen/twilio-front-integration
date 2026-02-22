@@ -756,13 +756,28 @@ function JobDetailPanel({
                                     <Briefcase className="size-4 text-muted-foreground" />
                                     <span className="text-sm">{job.service_name || '—'}</span>
                                 </div>
-                                <div className="flex items-center gap-2">
-                                    <CalendarClock className="size-4 text-muted-foreground" />
-                                    <span className="text-sm">{formatDate(job.start_date)}</span>
-                                    {job.end_date && (
-                                        <span className="text-xs text-muted-foreground">→ {formatDate(job.end_date)}</span>
-                                    )}
-                                </div>
+                                {job.start_date ? (
+                                    <div className="rounded-lg border bg-muted/30 p-3">
+                                        <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                                            <CalendarClock className="size-3.5" />
+                                            Date & Time
+                                        </div>
+                                        <div className="text-base font-semibold">
+                                            {new Date(job.start_date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+                                            {job.end_date && (
+                                                <> – {new Date(job.end_date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}</>
+                                            )}
+                                        </div>
+                                        <div className="text-sm text-muted-foreground">
+                                            {new Date(job.start_date).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })}
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center gap-2">
+                                        <CalendarClock className="size-4 text-muted-foreground" />
+                                        <span className="text-sm text-muted-foreground">Not scheduled</span>
+                                    </div>
+                                )}
                             </div>
                         </div>
 
