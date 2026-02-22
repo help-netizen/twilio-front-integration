@@ -42,12 +42,25 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
     const voice = useTwilioDevice();
     const [softPhoneOpen, setSoftPhoneOpen] = useState(false);
 
-    // Auto-open SoftPhone on incoming call
+    // Auto-open SoftPhone on incoming call + navigate to caller's timeline
     const handleAcceptIncoming = useCallback(() => {
         setSoftPhoneOpen(true);
         // Small delay to let the modal render, then accept
         setTimeout(() => voice.acceptCall(), 100);
-    }, [voice]);
+
+        // Navigate to the caller's timeline
+        const callerNumber = voice.callerInfo?.number;
+        if (callerNumber) {
+            authedFetch(`/api/pulse/timeline-by-phone?phone=${encodeURIComponent(callerNumber)}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.timelineId) {
+                        navigate(`/pulse/timeline/${data.timelineId}`);
+                    }
+                })
+                .catch(() => { /* navigation is best-effort */ });
+        }
+    }, [voice, navigate]);
 
     // --- Pulse unread badge ---
     const [pulseUnreadCount, setPulseUnreadCount] = useState(0);

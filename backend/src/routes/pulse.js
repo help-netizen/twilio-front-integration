@@ -254,5 +254,31 @@ router.get('/unread-count', async (req, res) => {
         res.json({ count: 0 });
     }
 });
+// =============================================================================
+// GET /api/pulse/timeline-by-phone — find timeline ID by phone number
+// =============================================================================
+router.get('/timeline-by-phone', async (req, res) => {
+    try {
+        const phone = req.query.phone;
+        if (!phone) return res.json({ timelineId: null });
+
+        const digits = phone.replace(/\D/g, '');
+        if (!digits) return res.json({ timelineId: null });
+
+        // Find timeline by contact phone or orphan timeline phone
+        const result = await db.query(
+            `SELECT t.id FROM timelines t
+             LEFT JOIN contacts c ON t.contact_id = c.id
+             WHERE regexp_replace(COALESCE(t.phone_e164, c.phone_e164), '\\D', '', 'g') = $1
+                OR regexp_replace(c.secondary_phone, '\\D', '', 'g') = $1
+             LIMIT 1`,
+            [digits]
+        );
+        res.json({ timelineId: result.rows[0]?.id || null });
+    } catch (error) {
+        console.error('[Pulse] timeline-by-phone error:', error);
+        res.json({ timelineId: null });
+    }
+});
 
 module.exports = router;

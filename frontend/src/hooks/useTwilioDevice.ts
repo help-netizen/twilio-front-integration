@@ -7,6 +7,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Device, Call } from '@twilio/voice-sdk';
 import { fetchVoiceToken } from '../services/voiceApi';
+import { startRingtone, stopRingtone } from '../utils/ringtone';
 
 export type CallState =
     | 'idle'
@@ -199,10 +200,12 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
                     setIncomingCall(call);
                     setCallState('incoming');
                     setCallerInfo({ number: call.parameters.From || 'Unknown' });
+                    startRingtone();
 
                     // Attach handlers for cancel/etc
                     call.on('cancel', () => {
                         console.log('[SoftPhone] Incoming call canceled by caller');
+                        stopRingtone();
                         setIncomingCall(null);
                         setCallState('idle');
                         setCallerInfo(null);
@@ -223,6 +226,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
                     });
 
                     call.on('reject', () => {
+                        stopRingtone();
                         setIncomingCall(null);
                         setCallState('idle');
                         setCallerInfo(null);
@@ -287,6 +291,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
 
     const acceptCall = useCallback(() => {
         if (!incomingCall) return;
+        stopRingtone();
 
         incomingCall.accept();
         setActiveCall(incomingCall);
@@ -325,6 +330,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
 
     const declineCall = useCallback(() => {
         if (incomingCall) {
+            stopRingtone();
             incomingCall.reject();
             setIncomingCall(null);
             setCallState('idle');
