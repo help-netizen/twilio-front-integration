@@ -11,16 +11,105 @@ import {
     DropdownMenuItem,
     DropdownMenuSeparator,
 } from '../ui/dropdown-menu';
-import { Phone, PhoneIncoming, MessageSquare, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase } from 'lucide-react';
+import { Phone, PhoneIncoming, MessageSquare, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase, Mic, MicOff } from 'lucide-react';
 import { useRealtimeEvents } from '../../hooks/useRealtimeEvents';
 import { useTwilioDevice } from '../../hooks/useTwilioDevice';
 import { SoftPhoneWidget } from '../softphone/SoftPhoneWidget';
-import { SoftPhoneProvider } from '../../contexts/SoftPhoneContext';
+import { SoftPhoneProvider, useSoftPhone } from '../../contexts/SoftPhoneContext';
 import { formatPhoneDisplay } from '../../utils/phoneUtils';
 import './AppLayout.css';
 
 interface AppLayoutProps {
     children: React.ReactNode;
+}
+
+// ─── Unified SoftPhone Header Button ─────────────────────────────────────────
+// Shows "SoftPhone" when idle; transforms into a call status pill during calls
+
+function formatDuration(seconds: number): string {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function SoftPhoneHeaderButton({ voice, softPhoneOpen, softPhoneMinimized, onOpenOrRestore }: {
+    voice: ReturnType<typeof useTwilioDevice>;
+    softPhoneOpen: boolean;
+    softPhoneMinimized: boolean;
+    onOpenOrRestore: () => void;
+}) {
+    const { activeCallContact } = useSoftPhone();
+    const { callState, callDuration, isMuted, toggleMute } = voice;
+
+    const isInCall = ['connecting', 'ringing', 'connected', 'incoming'].includes(callState);
+    const showCallState = isInCall || callState === 'ended' || callState === 'failed';
+
+    // When panel is fully open (not minimized), just show the simple SoftPhone button
+    if (softPhoneOpen && !softPhoneMinimized) {
+        return (
+            <button
+                onClick={onOpenOrRestore}
+                className="softphone-header-btn"
+                title="SoftPhone is open"
+            >
+                <Phone size={15} />
+                <span>SoftPhone</span>
+            </button>
+        );
+    }
+
+    // Active call state — show status pill
+    if (showCallState) {
+        const statusClass =
+            callState === 'connected' ? 'active-connected' :
+                callState === 'connecting' || callState === 'ringing' ? 'active-ringing' :
+                    callState === 'incoming' ? 'active-incoming' :
+                        callState === 'ended' ? 'active-ended' :
+                            callState === 'failed' ? 'active-failed' : '';
+
+        const statusLabel =
+            callState === 'connected' ? formatDuration(callDuration) :
+                callState === 'connecting' ? 'Connecting...' :
+                    callState === 'ringing' ? 'Ringing...' :
+                        callState === 'incoming' ? 'Incoming...' :
+                            callState === 'ended' ? 'Call Ended' :
+                                callState === 'failed' ? 'Call Failed' : '';
+
+        return (
+            <button
+                onClick={onOpenOrRestore}
+                className={`softphone-header-btn ${statusClass}`}
+                title="Click to restore SoftPhone"
+            >
+                <Phone size={14} />
+                {activeCallContact && (
+                    <span className="softphone-header-contact">{activeCallContact}</span>
+                )}
+                <span className="softphone-header-status">{statusLabel}</span>
+                {isInCall && (
+                    <span
+                        className={`softphone-header-mute ${isMuted ? 'muted' : ''}`}
+                        onClick={(e) => { e.stopPropagation(); toggleMute(); }}
+                        title={isMuted ? 'Unmute' : 'Mute'}
+                    >
+                        {isMuted ? <MicOff size={13} /> : <Mic size={13} />}
+                    </span>
+                )}
+            </button>
+        );
+    }
+
+    // Idle — standard green SoftPhone button
+    return (
+        <button
+            onClick={onOpenOrRestore}
+            className="softphone-header-btn"
+            title="Open SoftPhone"
+        >
+            <Phone size={15} />
+            <span>SoftPhone</span>
+        </button>
+    );
 }
 
 export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
@@ -215,14 +304,18 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                                 </button>
                             )}
                             {voice.phoneAllowed && (
-                                <button
-                                    onClick={() => setSoftPhoneOpen(true)}
-                                    className="softphone-header-btn"
-                                    title="Open SoftPhone"
-                                >
-                                    <Phone size={15} />
-                                    <span>SoftPhone</span>
-                                </button>
+                                <SoftPhoneHeaderButton
+                                    voice={voice}
+                                    softPhoneOpen={softPhoneOpen}
+                                    softPhoneMinimized={softPhoneMinimized}
+                                    onOpenOrRestore={() => {
+                                        if (softPhoneMinimized) {
+                                            setSoftPhoneMinimized(false);
+                                        } else {
+                                            setSoftPhoneOpen(true);
+                                        }
+                                    }}
+                                />
                             )}
                             {activeTab === 'calls' && (
                                 <button
@@ -368,7 +461,6 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                     minimized={softPhoneMinimized}
                     onClose={() => { setSoftPhoneOpen(false); setSoftPhoneMinimized(false); }}
                     onMinimize={() => setSoftPhoneMinimized(true)}
-                    onRestore={() => setSoftPhoneMinimized(false)}
                 />
             </div>
         </SoftPhoneProvider>

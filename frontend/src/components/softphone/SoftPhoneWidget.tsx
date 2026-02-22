@@ -26,13 +26,12 @@ interface SoftPhoneWidgetProps {
     minimized: boolean;
     onClose: () => void;
     onMinimize: () => void;
-    onRestore: () => void;
 }
 
 const DTMF_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'];
 
 export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({
-    voice, open, minimized, onClose, onMinimize, onRestore,
+    voice, open, minimized, onClose, onMinimize,
 }) => {
     const [inputValue, setInputValue] = useState('');
     const [normalizedNumber, setNormalizedNumber] = useState<string | null>(null);
@@ -42,7 +41,7 @@ export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({
     const [callError, setCallError] = useState<string | null>(null);
     const [blancNumbers, setBlancNumbers] = useState<BlancNumber[]>([]);
     const [selectedCallerId, setSelectedCallerId] = useState<string>('');
-    const { pendingRequest, clearPending } = useSoftPhone();
+    const { pendingRequest, clearPending, setActiveCallContact } = useSoftPhone();
 
     // Consume pending click-to-call request
     useEffect(() => {
@@ -179,7 +178,21 @@ export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({
             .catch(() => { /* best-effort */ });
     }, [callState, callerInfo?.number, normalizedNumber, selectedContactName]);
 
+    // Sync active call contact name to context so AppLayout header button can display it
+    useEffect(() => {
+        const isInCallState = ['connecting', 'ringing', 'connected', 'incoming'].includes(callState);
+        if (isInCallState) {
+            const phone = callerInfo?.number || normalizedNumber;
+            const displayName = selectedContactName || (phone ? formatPhoneDisplay(phone) : null);
+            setActiveCallContact(displayName);
+        } else {
+            setActiveCallContact(null);
+        }
+    }, [callState, selectedContactName, callerInfo?.number, normalizedNumber, setActiveCallContact]);
+
     if (!open) return null;
+    // When minimized, the header button in AppLayout handles the display
+    if (minimized) return null;
 
     const isInCall = ['connecting', 'ringing', 'connected', 'incoming'].includes(callState);
     const canCall = normalizedNumber && callState === 'idle' && deviceReady;
@@ -196,28 +209,6 @@ export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({
     };
 
     const status = statusConfig[callState] || statusConfig.idle;
-
-    // ─── Minimized Tray ──────────────────────────────────────────────
-    // Shown as a small pill when minimized during an active call
-    if (minimized && isInCall) {
-        return (
-            <div className="softphone-tray" onClick={onRestore}>
-                <span className={`softphone-tray-status ${status.className}`}>
-                    {callState === 'connected' ? formatDuration(callDuration) : status.label}
-                </span>
-                <button
-                    className={`softphone-tray-mute ${isMuted ? 'active' : ''}`}
-                    onClick={(e) => { e.stopPropagation(); toggleMute(); }}
-                    title={isMuted ? 'Unmute' : 'Mute'}
-                >
-                    {isMuted ? <MicOff size={14} /> : <Mic size={14} />}
-                </button>
-            </div>
-        );
-    }
-
-    // When minimized and not in call, don't render anything
-    if (minimized) return null;
 
     return (
         <div className="softphone-panel">
