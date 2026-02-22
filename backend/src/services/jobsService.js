@@ -186,7 +186,7 @@ async function getJobByZbId(zbJobId) {
     return rowToJob(rows[0]);
 }
 
-async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 50, companyId, contactId, sortBy, sortOrder } = {}) {
+async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 50, companyId, contactId, sortBy, sortOrder, onlyOpen, startDate, endDate } = {}) {
     const conditions = [];
     const params = [];
     let idx = 0;
@@ -213,6 +213,15 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
     }
     if (contactId) {
         idx++; conditions.push(`j.contact_id = $${idx}`); params.push(contactId);
+    }
+    if (onlyOpen) {
+        conditions.push(`j.blanc_status NOT IN ('Job is Done', 'Canceled')`);
+    }
+    if (startDate) {
+        idx++; conditions.push(`j.start_date >= $${idx}`); params.push(startDate);
+    }
+    if (endDate) {
+        idx++; conditions.push(`j.start_date <= $${idx}`); params.push(endDate + ' 23:59:59');
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';

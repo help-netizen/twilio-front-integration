@@ -4,7 +4,8 @@
     display: inline-flex;
     align-items: center;
     gap: 3px;
-    padding: 2px 8px;
+    /* Visual size stays small, but clickable area is bigger via padding */
+    padding: 4px 10px;
     background: linear-gradient(135deg, #059669, #10b981);
     color: #fff;
     border: none;
@@ -18,7 +19,19 @@
     transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease;
     vertical-align: middle;
     line-height: 1;
-    margin-left: 6px;
+    margin-left: 4px;
+    /* Invisible extended hit area around button */
+    position: relative;
+}
+
+/* Extend clickable area with pseudo-element */
+.click-to-call-btn::before {
+    content: '';
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    bottom: -6px;
+    left: -6px;
 }
 
 .click-to-call-btn:hover {
@@ -26,14 +39,15 @@
 }
 
 /* Show on parent hover — parent needs .click-to-call-row class */
-.click-to-call-row:hover .click-to-call-btn,
-.click-to-call-btn.inline:hover {
+.click-to-call-row:hover .click-to-call-btn {
     opacity: 1;
     transform: scale(1);
 }
 
-/* For cases where parent is a different structure, also support data-attr */
-*:hover>.click-to-call-btn {
+/* Also support any ancestor hover (for flex containers with gap) */
+*:hover>.click-to-call-btn,
+*:hover>*>.click-to-call-btn,
+*:hover>*>*>.click-to-call-btn {
     opacity: 1;
     transform: scale(1);
 }

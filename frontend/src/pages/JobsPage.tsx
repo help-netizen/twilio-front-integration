@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../components/ui/button';
@@ -21,6 +21,7 @@ import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu';
 import { ClickToCallButton } from '../components/softphone/ClickToCallButton';
+import { JobsFilters } from '../components/jobs/JobsFilters';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -97,10 +98,18 @@ export function JobsPage() {
 
     // Filters
     const [searchQuery, setSearchQuery] = useState('');
-    const [statusFilter, setStatusFilter] = useState<string>('');
     const [offset, setOffset] = useState(0);
     const [hasMore, setHasMore] = useState(false);
     const LIMIT = 50;
+
+    // Filters
+    const [statusFilter, setStatusFilter] = useState<string[]>([]);
+    const [providerFilter, setProviderFilter] = useState<string[]>([]);
+    const [sourceFilter, setSourceFilter] = useState<string[]>([]);
+    const [jobTypeFilter, setJobTypeFilter] = useState<string[]>([]);
+    const [onlyOpen, setOnlyOpen] = useState(false);
+    const [startDate, setStartDate] = useState<string | undefined>(undefined);
+    const [endDate, setEndDate] = useState<string | undefined>(undefined);
 
     // Sort
     const [sortBy, setSortBy] = useState<string>('created_at');
@@ -116,10 +125,12 @@ export function JobsPage() {
                 limit: LIMIT,
                 offset: newOffset,
             };
-            if (statusFilter) params.blanc_status = statusFilter;
             if (searchQuery.trim()) params.search = searchQuery.trim();
             if (sortBy) params.sort_by = sortBy;
             if (sortOrder) params.sort_order = sortOrder;
+            if (onlyOpen) params.only_open = true;
+            if (startDate) params.start_date = startDate;
+            if (endDate) params.end_date = endDate;
 
             const data = await jobsApi.listJobs(params);
             setJobs(data.results || []);
@@ -133,7 +144,27 @@ export function JobsPage() {
         } finally {
             setLoading(false);
         }
-    }, [statusFilter, searchQuery, sortBy, sortOrder]);
+    }, [searchQuery, sortBy, sortOrder, onlyOpen, startDate, endDate]);
+
+    // Client-side filtering (applied on top of server results)
+    const filteredJobs = useMemo(() => {
+        let result = jobs;
+        if (statusFilter.length > 0) {
+            result = result.filter(j => j.blanc_status && statusFilter.includes(j.blanc_status));
+        }
+        if (sourceFilter.length > 0) {
+            result = result.filter(j => j.job_source && sourceFilter.includes(j.job_source));
+        }
+        if (jobTypeFilter.length > 0) {
+            result = result.filter(j => j.service_name && jobTypeFilter.includes(j.service_name));
+        }
+        if (providerFilter.length > 0) {
+            result = result.filter(j =>
+                j.assigned_techs?.some((t: any) => providerFilter.includes(t.name))
+            );
+        }
+        return result;
+    }, [jobs, statusFilter, sourceFilter, jobTypeFilter, providerFilter]);
 
     useEffect(() => { loadJobs(0); }, [loadJobs]);
 
@@ -289,27 +320,25 @@ export function JobsPage() {
                             Refresh
                         </Button>
                     </div>
-                    <div className="flex items-center gap-2">
-                        <div className="relative flex-1">
-                            <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-                            <Input
-                                placeholder="Search jobs..."
-                                value={searchQuery}
-                                onChange={e => setSearchQuery(e.target.value)}
-                                className="pl-9"
-                            />
-                        </div>
-                        <select
-                            value={statusFilter}
-                            onChange={e => setStatusFilter(e.target.value)}
-                            className="border rounded-md px-3 py-2 text-sm bg-white"
-                        >
-                            <option value="">All statuses</option>
-                            {BLANC_STATUSES.map(s => (
-                                <option key={s} value={s}>{s}</option>
-                            ))}
-                        </select>
-                    </div>
+                    <JobsFilters
+                        searchQuery={searchQuery}
+                        onSearchChange={setSearchQuery}
+                        statusFilter={statusFilter}
+                        onStatusFilterChange={setStatusFilter}
+                        providerFilter={providerFilter}
+                        onProviderFilterChange={setProviderFilter}
+                        sourceFilter={sourceFilter}
+                        onSourceFilterChange={setSourceFilter}
+                        jobTypeFilter={jobTypeFilter}
+                        onJobTypeFilterChange={setJobTypeFilter}
+                        startDate={startDate}
+                        endDate={endDate}
+                        onStartDateChange={setStartDate}
+                        onEndDateChange={setEndDate}
+                        onlyOpen={onlyOpen}
+                        onOnlyOpenChange={setOnlyOpen}
+                        jobs={jobs}
+                    />
                 </div>
 
                 {/* Table */}
@@ -362,7 +391,7 @@ export function JobsPage() {
                                 </tr>
                             </thead>
                             <tbody>
-                                {jobs.map(job => (
+                                {filteredJobs.map(job => (
                                     <tr
                                         key={job.id}
                                         className={`border-b hover:bg-muted/30 cursor-pointer transition-colors ${selectedJob?.id === job.id ? 'bg-muted/50' : ''
