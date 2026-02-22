@@ -11,6 +11,7 @@ import { Phone, PhoneOff, PhoneIncoming, X, Mic, MicOff, Grid3x3, Minimize2 } fr
 import { type UseTwilioDeviceReturn } from '../../hooks/useTwilioDevice';
 import { ContactSearchDropdown } from './ContactSearchDropdown';
 import { normalizeToE164, formatPhoneDisplay, isLikelyPhoneInput } from '../../utils/phoneUtils';
+import { useSoftPhone } from '../../contexts/SoftPhoneContext';
 import { authedFetch } from '../../services/apiClient';
 import './SoftPhoneWidget.css';
 
@@ -41,6 +42,20 @@ export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({
     const [callError, setCallError] = useState<string | null>(null);
     const [blancNumbers, setBlancNumbers] = useState<BlancNumber[]>([]);
     const [selectedCallerId, setSelectedCallerId] = useState<string>('');
+    const { pendingRequest, clearPending } = useSoftPhone();
+
+    // Consume pending click-to-call request
+    useEffect(() => {
+        if (open && pendingRequest) {
+            const e164 = normalizeToE164(pendingRequest.phone);
+            setInputValue(formatPhoneDisplay(e164 || pendingRequest.phone));
+            setNormalizedNumber(e164);
+            setSelectedContactName(pendingRequest.contactName || null);
+            setShowSearch(false);
+            setCallError(null);
+            clearPending();
+        }
+    }, [open, pendingRequest, clearPending]);
 
     // Fetch Blanc-enabled phone numbers for caller ID picker
     useEffect(() => {

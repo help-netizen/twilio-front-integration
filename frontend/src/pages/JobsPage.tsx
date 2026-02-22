@@ -20,6 +20,7 @@ import { formatPhone } from '../lib/formatPhone';
 import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu';
+import { ClickToCallButton } from '../components/softphone/ClickToCallButton';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -866,12 +867,16 @@ function JobDetailPanel({
                                         </div>
                                         <div>
                                             <p className="text-xs text-muted-foreground">Phone</p>
-                                            <p className="font-medium">
+                                            <div className="flex items-center gap-1">
                                                 <a href={`tel:${contactInfo?.phone || job.customer_phone}`}
-                                                    className="text-foreground no-underline hover:underline">
+                                                    className="font-medium text-foreground no-underline hover:underline">
                                                     {formatPhone(contactInfo?.phone || job.customer_phone)}
                                                 </a>
-                                            </p>
+                                                <ClickToCallButton
+                                                    phone={contactInfo?.phone || job.customer_phone || ''}
+                                                    contactName={contactInfo?.name || job.customer_name || undefined}
+                                                />
+                                            </div>
                                         </div>
                                     </div>
                                 )}
