@@ -802,14 +802,16 @@ function JobDetailPanel({
                                     </div>
                                 </div>
 
-                                {job.territory && (
+                                {(job.address || job.territory) && (
                                     <div className="flex items-start gap-3">
                                         <div className="size-10 rounded-lg bg-muted flex items-center justify-center">
                                             <MapPin className="size-5 text-muted-foreground" />
                                         </div>
                                         <div>
-                                            <p className="text-xs text-muted-foreground">Service Area</p>
-                                            <p className="font-medium">{job.territory}</p>
+                                            <p className="text-xs text-muted-foreground">
+                                                Service Area{job.territory ? `: ${job.territory}` : ''}
+                                            </p>
+                                            {job.address && <p className="font-medium">{job.address}</p>}
                                         </div>
                                     </div>
                                 )}
