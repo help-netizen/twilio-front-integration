@@ -261,6 +261,61 @@ router.put('/:id/enable', async (req, res) => {
     }
 });
 
+/**
+ * PUT /:id/phone-calls — Toggle phone calls access for a user
+ * Body: { allowed: boolean }
+ */
+router.put('/:id/phone-calls', async (req, res) => {
+    try {
+        const userId = req.params.id;
+        const companyId = req.user.company_id;
+        const { allowed } = req.body;
+
+        if (typeof allowed !== 'boolean') {
+            return res.status(422).json({
+                code: 'VALIDATION_ERROR',
+                message: 'allowed must be a boolean',
+                trace_id: req.traceId,
+            });
+        }
+
+        // Auto-add column if not exists
+        const db = require('../db/connection');
+        await db.query(`
+            DO $$ BEGIN
+                ALTER TABLE company_memberships ADD COLUMN phone_calls_allowed BOOLEAN NOT NULL DEFAULT false;
+            EXCEPTION WHEN duplicate_column THEN NULL;
+            END $$;
+        `);
+
+        await db.query(
+            `UPDATE company_memberships SET phone_calls_allowed = $1 WHERE user_id = $2 AND company_id = $3`,
+            [allowed, userId, companyId]
+        );
+
+        await auditService.log({
+            actor_id: req.user.crmUser?.id,
+            actor_email: req.user.email,
+            actor_ip: req.ip,
+            action: 'phone_calls_toggled',
+            target_type: 'user',
+            target_id: userId,
+            company_id: companyId,
+            details: { phone_calls_allowed: allowed },
+            trace_id: req.traceId,
+        });
+
+        res.json({ ok: true, phone_calls_allowed: allowed });
+    } catch (err) {
+        console.error('[Users] Phone calls toggle failed:', err.message);
+        res.status(500).json({
+            code: 'INTERNAL_ERROR',
+            message: 'Failed to update phone calls access',
+            trace_id: req.traceId,
+        });
+    }
+});
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**

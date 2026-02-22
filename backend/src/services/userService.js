@@ -124,7 +124,8 @@ async function listUsers(companyId, opts = {}) {
     const { rows } = await db.query(
         `SELECT u.id, u.email, u.full_name, u.last_login_at, u.created_at,
                 m.role as membership_role, m.status as membership_status,
-                m.company_id
+                m.company_id,
+                COALESCE(m.phone_calls_allowed, false) as phone_calls_allowed
          FROM crm_users u ${join} ${where}
          ORDER BY u.created_at DESC
          LIMIT $${i++} OFFSET $${i++}`,

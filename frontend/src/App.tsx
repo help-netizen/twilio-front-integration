@@ -17,6 +17,7 @@ import CompanyUsersPage from './pages/CompanyUsersPage';
 import QuickMessagesPage from './pages/QuickMessagesPage';
 import PaymentsPage from './pages/PaymentsPage';
 import ProvidersPage from './pages/ProvidersPage';
+import PhoneCallsSettingsPage from './pages/PhoneCallsSettingsPage';
 import JobsPage from './pages/JobsPage';
 import { EventNotification } from './components/EventNotification';
 import { Toaster } from './components/ui/sonner';
@@ -81,6 +82,11 @@ function App() {
               <Route path="/settings/providers" element={
                 <ProtectedRoute roles={['company_admin', 'company_member']}>
                   <ProvidersPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/settings/phone-calls" element={
+                <ProtectedRoute roles={['company_admin']}>
+                  <PhoneCallsSettingsPage />
                 </ProtectedRoute>
               } />
               <Route path="/settings/users" element={

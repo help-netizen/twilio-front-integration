@@ -262,14 +262,35 @@ async function handleVoiceInbound(req, res) {
     </Dial>
 </Response>`;
         } else {
-            // ── WebRTC SoftPhone routing ──────────────────────────────────────
-            // If SOFTPHONE_DEFAULT_IDENTITY is set, route to <Client> (browser SDK)
-            // instead of <Sip> (Bria). All other logic (recording, callbacks,
-            // voicemail, realtime transcription) stays identical.
-            const softphoneIdentity = process.env.SOFTPHONE_DEFAULT_IDENTITY;
+            // ── Determine routing mode for this phone number ──────────────
+            // Check phone_number_settings table for per-number config,
+            // fall back to SOFTPHONE_DEFAULT_IDENTITY env var.
+            let routingMode = 'sip';
+            let clientIdentity = null;
 
-            if (softphoneIdentity) {
-                console.log(`[${traceId}] Inbound: ${From} → Client(${softphoneIdentity})`);
+            try {
+                const dbConn = require('../db/connection');
+                const routeResult = await dbConn.query(
+                    `SELECT routing_mode, client_identity FROM phone_number_settings WHERE phone_number = $1`,
+                    [To]
+                );
+                if (routeResult.rows.length > 0) {
+                    routingMode = routeResult.rows[0].routing_mode;
+                    clientIdentity = routeResult.rows[0].client_identity;
+                }
+            } catch (routeErr) {
+                console.warn(`[${traceId}] Failed to query phone_number_settings, using env fallback:`, routeErr.message);
+            }
+
+            // Env var fallback (global override)
+            if (routingMode === 'sip' && process.env.SOFTPHONE_DEFAULT_IDENTITY) {
+                routingMode = 'client';
+                clientIdentity = process.env.SOFTPHONE_DEFAULT_IDENTITY;
+            }
+
+            if (routingMode === 'client' && clientIdentity) {
+                // ── WebRTC SoftPhone routing ──────────────────────────────────
+                console.log(`[${traceId}] Inbound: ${From} → Client(${clientIdentity})`);
 
                 const inboundTimeout = Number(process.env.DIAL_TIMEOUT || 25);
                 const inboundStreamXml = realtimeEnabled ? `
@@ -291,7 +312,7 @@ async function handleVoiceInbound(req, res) {
           recordingStatusCallbackMethod="POST">
         <Client statusCallback="${statusCallbackUrl}"
                 statusCallbackEvent="initiated ringing answered completed"
-                statusCallbackMethod="POST">${softphoneIdentity}</Client>
+                statusCallbackMethod="POST">${clientIdentity}</Client>
     </Dial>
 </Response>`;
             } else {

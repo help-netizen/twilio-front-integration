@@ -255,6 +255,13 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                                     <Wrench className="size-4" />
                                     Providers
                                 </DropdownMenuItem>
+                                <DropdownMenuItem
+                                    className="flex items-center gap-2 cursor-pointer"
+                                    onClick={() => navigate('/settings/phone-calls')}
+                                >
+                                    <Phone className="size-4" />
+                                    Phone Calls
+                                </DropdownMenuItem>
                                 {hasRole('super_admin') && (
                                     <>
                                         <DropdownMenuSeparator />
