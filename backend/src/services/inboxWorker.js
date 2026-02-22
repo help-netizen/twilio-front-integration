@@ -288,28 +288,41 @@ async function processVoiceEvent(payload, eventType, traceId) {
         publishRealtimeEvent('call.updated', enrichedCall || { call_sid: normalized.callSid, status: normalized.eventStatus }, traceId);
     }
 
-    // When a child leg goes in-progress (someone answered), update parent to in-progress
-    if (normalized.parentCallSid && normalized.eventStatus === 'in-progress') {
+    // Propagate child leg status changes to parent call
+    if (normalized.parentCallSid && ['ringing', 'in-progress'].includes(normalized.eventStatus)) {
         try {
             const parentCall = await queries.getCallByCallSid(normalized.parentCallSid);
-            if (parentCall && parentCall.status === 'ringing') {
-                // Extract operator name from SIP URI (e.g., sip:dana@domain.com → dana)
-                const toNum = normalized.toNumber || '';
-                const sipMatch = toNum.match(/^sip:([^@]+)@/i);
-                const answeredBy = sipMatch ? sipMatch[1] : null;
+            if (parentCall) {
+                const parentStatus = parentCall.status;
 
-                await db.query(
-                    `UPDATE calls SET status = 'in-progress', answered_at = $2, answered_by = $3 WHERE call_sid = $1`,
-                    [normalized.parentCallSid, normalized.eventTime, answeredBy]
-                );
-                const freshParent = await queries.getCallByCallSid(normalized.parentCallSid);
-                if (freshParent) {
-                    publishRealtimeEvent('call.updated', freshParent, traceId);
+                // Child ringing → parent ringing (if parent is still initiated)
+                if (normalized.eventStatus === 'ringing' && ['initiated', 'queued'].includes(parentStatus)) {
+                    await db.query(
+                        `UPDATE calls SET status = 'ringing' WHERE call_sid = $1`,
+                        [normalized.parentCallSid]
+                    );
+                    const freshParent = await queries.getCallByCallSid(normalized.parentCallSid);
+                    if (freshParent) publishRealtimeEvent('call.updated', freshParent, traceId);
+                    console.log(`[${traceId}] Child ringing → parent ${normalized.parentCallSid} → ringing`);
                 }
-                console.log(`[${traceId}] Child answered → parent ${normalized.parentCallSid} → in-progress (by ${answeredBy})`);
+
+                // Child in-progress (answered) → parent in-progress
+                if (normalized.eventStatus === 'in-progress' && ['initiated', 'queued', 'ringing'].includes(parentStatus)) {
+                    const toNum = normalized.toNumber || '';
+                    const sipMatch = toNum.match(/^sip:([^@]+)@/i);
+                    const answeredBy = sipMatch ? sipMatch[1] : null;
+
+                    await db.query(
+                        `UPDATE calls SET status = 'in-progress', answered_at = $2, answered_by = $3 WHERE call_sid = $1`,
+                        [normalized.parentCallSid, normalized.eventTime, answeredBy]
+                    );
+                    const freshParent = await queries.getCallByCallSid(normalized.parentCallSid);
+                    if (freshParent) publishRealtimeEvent('call.updated', freshParent, traceId);
+                    console.log(`[${traceId}] Child answered → parent ${normalized.parentCallSid} → in-progress (by ${answeredBy})`);
+                }
             }
         } catch (e) {
-            console.warn(`[${traceId}] Failed to update parent to in-progress:`, e.message);
+            console.warn(`[${traceId}] Failed to propagate child status to parent:`, e.message);
         }
     }
 
