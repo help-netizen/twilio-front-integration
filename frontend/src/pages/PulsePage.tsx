@@ -44,7 +44,7 @@ const STATUS_ICON_COLORS: Record<string, string> = {
     'voicemail_left': '#dc2626',
 };
 
-function PulseContactItem({ call, isActive, onMarkUnread }: { call: Call; isActive: boolean; onMarkUnread?: (contactId: number) => void }) {
+function PulseContactItem({ call, isActive, onMarkUnread }: { call: Call; isActive: boolean; onMarkUnread?: (contactId: number | null, smsConversationId: string | null) => void }) {
     const navigate = useNavigate();
     // Prefer timeline_id for navigation, fall back to contact_id (legacy)
     const tlId = (call as any).timeline_id;
@@ -161,7 +161,7 @@ function PulseContactItem({ call, isActive, onMarkUnread }: { call: Call; isActi
                     </div>
                 </div>
                 {/* 3-dot menu — only on active item */}
-                {isActive && call.contact?.id && (
+                {isActive && (
                     <div className="shrink-0 relative" ref={menuRef}>
                         <div
                             role="button"
@@ -181,13 +181,13 @@ function PulseContactItem({ call, isActive, onMarkUnread }: { call: Call; isActi
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         setMenuOpen(false);
-                                        if (call.contact?.id && onMarkUnread) onMarkUnread(call.contact.id);
+                                        onMarkUnread?.(call.contact?.id || null, (call as any).sms_conversation_id || null);
                                     }}
                                     onKeyDown={(e) => {
                                         if (e.key === 'Enter') {
                                             e.stopPropagation();
                                             setMenuOpen(false);
-                                            if (call.contact?.id && onMarkUnread) onMarkUnread(call.contact.id);
+                                            onMarkUnread?.(call.contact?.id || null, (call as any).sms_conversation_id || null);
                                         }
                                     }}
                                     className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer w-full"
@@ -635,9 +635,13 @@ export const PulsePage: React.FC = () => {
                                     key={tlId ?? call.id ?? `c-${call.contact?.id ?? (call.from_number || idx)}`}
                                     call={call}
                                     isActive={isActive}
-                                    onMarkUnread={async (contactId) => {
+                                    onMarkUnread={async (contactId, smsConversationId) => {
                                         try {
-                                            await callsApi.markContactUnread(contactId);
+                                            const promises: Promise<any>[] = [];
+                                            if (contactId) promises.push(callsApi.markContactUnread(contactId));
+                                            if (smsConversationId) promises.push(messagingApi.markUnread(smsConversationId));
+                                            if (promises.length === 0) { toast.error('Nothing to mark'); return; }
+                                            await Promise.all(promises);
                                             refetchContacts();
                                             toast.success('Marked as unread');
                                         } catch { toast.error('Failed to mark as unread'); }

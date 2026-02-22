@@ -99,6 +99,17 @@ async function markConversationRead(conversationId) {
     return result.rows[0] || null;
 }
 
+async function markConversationUnread(conversationId) {
+    const result = await db.query(`
+        UPDATE sms_conversations SET
+            has_unread = true,
+            updated_at = now()
+        WHERE id = $1
+        RETURNING *
+    `, [conversationId]);
+    return result.rows[0] || null;
+}
+
 async function updateConversationState(conversationId, state) {
     const closedAt = state === 'closed' ? new Date().toISOString() : null;
     await db.query(`
@@ -212,7 +223,7 @@ async function markEventProcessed(eventId, error = null) {
 
 module.exports = {
     upsertConversation, getConversations, getConversationById, getConversationBySid,
-    findActiveConversation, updateConversationPreview, updateConversationState, markConversationRead,
+    findActiveConversation, updateConversationPreview, updateConversationState, markConversationRead, markConversationUnread,
     upsertMessage, getMessages, updateDeliveryStatus,
     insertMedia, getMediaById,
     insertEvent, markEventProcessed,

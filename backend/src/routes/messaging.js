@@ -114,6 +114,20 @@ router.post('/:id/mark-read', async (req, res) => {
     }
 });
 
+// POST /api/messaging/:id/mark-unread — mark conversation as unread
+router.post('/:id/mark-unread', async (req, res) => {
+    try {
+        const conv = await convQueries.markConversationUnread(req.params.id);
+        if (!conv) return res.status(404).json({ error: 'Conversation not found' });
+        const realtimeService = require('../services/realtimeService');
+        realtimeService.publishConversationUpdate(conv);
+        res.json({ conversation: conv });
+    } catch (err) {
+        console.error('[Messaging] POST /:id/mark-unread error:', err);
+        res.status(500).json({ error: 'Failed to mark unread' });
+    }
+});
+
 // POST /api/messaging/start — start new conversation
 router.post('/start', async (req, res) => {
     try {
