@@ -10,6 +10,7 @@ import {
     User2, FileText, Play, CheckCircle2, Navigation, Ban,
     Loader2, StickyNote, CalendarClock, Phone, Mail, Tag, Briefcase,
     Calendar, ChevronDown, CornerDownLeft, ArrowUpDown, ArrowUp, ArrowDown,
+    Plus,
 } from 'lucide-react';
 import { authedFetch } from '../services/apiClient';
 import * as jobsApi from '../services/jobsApi';
@@ -285,7 +286,7 @@ export function JobsPage() {
     return (
         <div className="flex h-full overflow-hidden">
             {/* ── Left: Jobs List ─────────────────────────────────────── */}
-            <div className={`flex-1 flex flex-col border-r overflow-hidden ${selectedJob ? 'hidden md:flex' : 'flex'}`}>
+            <div className={`flex flex-col border-r overflow-hidden ${selectedJob ? 'hidden md:flex md:w-[340px] md:flex-shrink-0' : 'flex flex-1'}`}>
                 {/* Filters */}
                 <div className="border-b p-4 space-y-3">
                     <div className="flex items-center justify-between">
@@ -545,11 +546,12 @@ function JobDetailPanel({
     const [comments, setComments] = useState(job.comments || '');
     const [isFocused, setIsFocused] = useState(false);
     const [isEditingComments, setIsEditingComments] = useState(false);
-    const [contactInfoOpen, setContactInfoOpen] = useState(false);
+    const [showMobileNotes, setShowMobileNotes] = useState(false);
 
     useEffect(() => {
         setComments(job.comments || '');
         setIsEditingComments(false);
+        setShowMobileNotes(false);
     }, [job.id]);
 
     const handleSaveComments = async () => {
@@ -558,43 +560,123 @@ function JobDetailPanel({
         // TODO: save comments via API when endpoint exists
     };
 
-    return (
-        <div className="w-full md:w-[440px] flex flex-col border-l bg-white overflow-hidden">
-            {/* ── Header ── */}
-            <div className="p-4 border-b">
-                <div className="flex items-start justify-between mb-3">
-                    <div className="flex-1">
-                        <h3 className="font-semibold text-lg">
-                            Job #{job.job_number || job.id}
-                            {(contactInfo?.name || job.customer_name) && (
-                                <>
-                                    {' - '}
-                                    {contactInfo ? (
-                                        <span
-                                            className="text-foreground hover:text-primary hover:underline cursor-pointer transition-colors"
-                                            onClick={() => navigate(`/contacts/${contactInfo.id}`)}
-                                        >
-                                            {contactInfo.name}
-                                        </span>
-                                    ) : (
-                                        <span>{job.customer_name}</span>
-                                    )}
-                                </>
-                            )}
-                        </h3>
+    // ── Shared sub-components ──
+
+    const renderDescription = () => (
+        <div>
+            <h3 className="text-sm font-semibold text-muted-foreground mb-3">Description</h3>
+            <div className="p-3 bg-muted rounded-lg">
+                <p className="text-sm whitespace-pre-wrap">{job.description || 'No description'}</p>
+            </div>
+        </div>
+    );
+
+    const renderComments = () => (
+        <div>
+            <h3 className="text-sm font-semibold text-muted-foreground mb-3">Comments</h3>
+            {(comments.trim() || isEditingComments) ? (
+                <div className="relative bg-rose-50 rounded-lg border border-rose-100 py-1 px-2">
+                    <textarea
+                        ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } }}
+                        className="w-full text-sm resize-none bg-transparent border-none outline-none min-h-[24px] pr-16 leading-6"
+                        value={comments}
+                        onChange={e => setComments(e.target.value)}
+                        onFocus={() => setIsFocused(true)}
+                        onBlur={handleSaveComments}
+                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSaveComments(); } }}
+                        placeholder="Add comments..."
+                        rows={1}
+                        autoFocus={isEditingComments}
+                        style={{ height: 'auto', minHeight: '24px' }}
+                        onInput={e => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = `${t.scrollHeight}px`; }}
+                    />
+                    {isFocused && (
+                        <Button size="sm" className="absolute top-1 right-1.5 h-6 px-2 text-xs"
+                            onMouseDown={e => e.preventDefault()} onClick={handleSaveComments}>
+                            <CornerDownLeft className="size-3 mr-1" /> Enter
+                        </Button>
+                    )}
+                </div>
+            ) : (
+                <button onClick={() => { setIsEditingComments(true); setIsFocused(true); }}
+                    className="text-sm text-muted-foreground hover:text-foreground transition-colors underline decoration-dashed decoration-1 underline-offset-4">
+                    + Add comment
+                </button>
+            )}
+        </div>
+    );
+
+    const renderNotes = () => (
+        <div>
+            <h3 className="text-sm font-semibold text-muted-foreground mb-3">
+                Job Notes ({job.notes?.length || 0})
+            </h3>
+            <div className="space-y-3">
+                {job.notes && job.notes.length > 0 ? job.notes.map((note, i) => (
+                    <div key={i} className="p-3 bg-muted rounded-lg">
+                        <p className="text-sm">{note.text}</p>
+                        <p className="text-xs text-muted-foreground mt-1">{formatDate(note.created)}</p>
                     </div>
-                    <Button variant="ghost" size="sm" onClick={onClose}>
-                        <X className="size-4" />
+                )) : (
+                    <p className="text-sm text-muted-foreground">No notes yet</p>
+                )}
+            </div>
+        </div>
+    );
+
+    const renderAddNote = () => (
+        <div className="border-t bg-background p-4 space-y-3">
+            <textarea
+                className="w-full border rounded-md px-3 py-2 text-sm resize-none min-h-[80px]"
+                placeholder="Write a note..."
+                value={noteJobId === job.id ? noteText : ''}
+                onChange={e => { setNoteJobId(job.id); setNoteText(e.target.value); }}
+                onFocus={() => { if (noteJobId !== job.id) setNoteJobId(job.id); }}
+                onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); onAddNote(); } }}
+            />
+            <div className="flex items-center justify-between">
+                <p className="text-xs text-muted-foreground">⌘ + Enter to submit</p>
+                <Button size="sm" onClick={onAddNote} disabled={!noteText.trim() || noteJobId !== job.id}>
+                    <Plus className="size-4 mr-1" /> Add Note
+                </Button>
+            </div>
+        </div>
+    );
+
+
+return (
+    <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+        {/* ═══ LEFT COLUMN ═══ */}
+        <div className="w-full md:w-1/2 flex flex-col overflow-hidden border-l">
+            {/* Blue gradient header */}
+            <div className="bg-gradient-to-r from-blue-500 to-blue-600 p-5 text-white group/header">
+                <div className="flex items-center justify-between mb-3">
+                    <Button variant="ghost" size="sm" className="md:hidden text-white hover:bg-white/20" onClick={onClose}>
+                        ← Back
                     </Button>
+                    <div className="flex items-center gap-1 ml-auto">
+                        <Button variant="ghost" size="sm"
+                            className="md:hidden text-white hover:bg-white/20"
+                            onClick={() => setShowMobileNotes(!showMobileNotes)}>
+                            <FileText className="size-4 mr-1" /> Notes
+                        </Button>
+                        <Button variant="ghost" size="sm"
+                            className="text-white hover:bg-white/20 opacity-0 group-hover/header:opacity-100 transition-opacity hidden md:inline-flex"
+                            onClick={onClose}>
+                            <X className="size-4" />
+                        </Button>
+                    </div>
                 </div>
 
-                <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-2 mb-2 flex-wrap">
+                    <span className="font-mono text-sm text-blue-100">#{job.job_number || job.id}</span>
+
                     {/* Blanc status badge dropdown */}
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                            <button className="inline-flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 rounded-sm">
+                            <button className="inline-flex items-center gap-1 focus:outline-none rounded-sm">
                                 <BlancBadge status={job.blanc_status} />
-                                <ChevronDown className="size-3 text-muted-foreground" />
+                                <ChevronDown className="size-3 text-blue-200" />
                             </button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="start">
@@ -610,317 +692,263 @@ function JobDetailPanel({
                         </DropdownMenuContent>
                     </DropdownMenu>
 
-                    {/* ZB status */}
                     {job.zb_status && <ZbBadge status={job.zb_status} />}
 
-                    {/* Source badge */}
                     {job.job_source && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border bg-background">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-white/20 text-white">
                             {job.job_source}
                         </span>
                     )}
 
-                    {job.zenbooker_job_id ? (
+                    {job.zenbooker_job_id && (
                         <a
                             href={`https://zenbooker.com/app?view=jobs&view-job=${job.zenbooker_job_id}`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-xs font-mono ml-auto text-primary hover:underline"
+                            className="text-xs font-mono ml-auto text-blue-100 hover:text-white hover:underline"
                             onClick={(e) => e.stopPropagation()}
                         >
                             ZB: {job.job_number || job.id}
                         </a>
-                    ) : (
-                        <span className="text-xs text-muted-foreground font-mono ml-auto">
-                            #{job.job_number || job.id}
-                        </span>
                     )}
                 </div>
+
+                <h2 className="text-2xl font-bold mb-1">{job.service_name || 'Job'}</h2>
+                <p className="text-blue-100">
+                    {contactInfo ? (
+                        <span
+                            className="hover:text-white hover:underline cursor-pointer transition-colors"
+                            onClick={() => navigate(`/contacts/${contactInfo.id}`)}
+                        >
+                            {contactInfo.name}
+                        </span>
+                    ) : (
+                        job.customer_name || '—'
+                    )}
+                </p>
             </div>
 
+            {/* Action buttons bar */}
+            {!job.zb_canceled && (
+                <div className="flex items-center gap-2 px-4 py-3 border-b bg-background">
+                    {job.zb_status === 'en-route' && (
+                        <Button variant="outline" size="default" className="gap-2 opacity-50 cursor-default" disabled>
+                            <Navigation className="size-4" />
+                            <span className="hidden sm:inline">En-route</span>
+                        </Button>
+                    )}
+                    {job.zb_status === 'scheduled' && (
+                        <Button variant="outline" size="default" className="gap-2"
+                            onClick={() => onMarkEnroute(job.id)}>
+                            <Navigation className="size-4" />
+                            <span className="hidden sm:inline">En-route</span>
+                        </Button>
+                    )}
+                    {(job.zb_status === 'scheduled' || job.zb_status === 'en-route') && (
+                        <Button size="default" className="gap-2 flex-1 bg-orange-500 hover:bg-orange-600 text-white"
+                            onClick={() => onMarkInProgress(job.id)}>
+                            <Play className="size-4" />
+                            Start Job
+                        </Button>
+                    )}
+                    {job.zb_status === 'in-progress' && (
+                        <Button variant="outline" size="default" className="gap-2 opacity-50 cursor-default" disabled>
+                            <Play className="size-4" />
+                            <span className="hidden sm:inline">In Progress</span>
+                        </Button>
+                    )}
+                    {(job.zb_status === 'in-progress' || job.zb_status === 'en-route' || job.zb_status === 'scheduled') && (
+                        <Button variant="outline" size="default" className="gap-2"
+                            onClick={() => onMarkComplete(job.id)}>
+                            <CheckCircle2 className="size-4" />
+                            <span className="hidden sm:inline">Complete</span>
+                        </Button>
+                    )}
+                    {job.zb_status !== 'complete' && (
+                        <Button variant="destructive" size="sm" className="gap-1 ml-auto"
+                            onClick={() => onCancel(job.id)}>
+                            <Ban className="size-3.5" />
+                        </Button>
+                    )}
+                </div>
+            )}
+
+            {/* Scrollable content */}
             {detailLoading ? (
                 <div className="flex-1 flex items-center justify-center text-muted-foreground">
                     <Loader2 className="size-5 animate-spin mr-2" /> Loading...
                 </div>
             ) : (
-                <div className="flex-1 overflow-y-auto">
-                    <div className="p-4 space-y-4">
-                        {/* ── Add Comment (above Contact Information) ── */}
-                        {(comments.trim() || isEditingComments) ? (
-                            <div className="relative bg-rose-50 rounded-lg border border-rose-100 py-1 px-2">
-                                <textarea
-                                    ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } }}
-                                    className="w-full text-sm resize-none bg-transparent border-none outline-none min-h-[24px] pr-16 leading-6"
-                                    value={comments}
-                                    onChange={e => setComments(e.target.value)}
-                                    onFocus={() => setIsFocused(true)}
-                                    onBlur={handleSaveComments}
-                                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSaveComments(); } }}
-                                    placeholder="Add comments..."
-                                    rows={1}
-                                    autoFocus={isEditingComments}
-                                    style={{ height: 'auto', minHeight: '24px' }}
-                                    onInput={e => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = `${t.scrollHeight}px`; }}
-                                />
-                                {isFocused && (
-                                    <Button size="sm" className="absolute top-1 right-1.5 h-6 px-2 text-xs"
-                                        onMouseDown={e => e.preventDefault()} onClick={handleSaveComments}>
-                                        <CornerDownLeft className="size-3 mr-1" /> Enter
-                                    </Button>
-                                )}
+                <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                    {/* ── Schedule ── */}
+                    <div>
+                        <h3 className="text-sm font-semibold text-muted-foreground mb-3">Schedule</h3>
+                        <div className="space-y-3">
+                            <div className="flex items-center gap-3">
+                                <div className="size-10 rounded-lg bg-muted flex items-center justify-center">
+                                    <Calendar className="size-5 text-muted-foreground" />
+                                </div>
+                                <div>
+                                    <p className="text-xs text-muted-foreground">Date & Time</p>
+                                    {job.start_date ? (
+                                        <>
+                                            <p className="font-medium">
+                                                {new Date(job.start_date).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })}
+                                            </p>
+                                            <p className="text-sm text-muted-foreground">
+                                                {new Date(job.start_date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
+                                                {job.end_date && ` - ${new Date(job.end_date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}`}
+                                            </p>
+                                        </>
+                                    ) : (
+                                        <p className="font-medium text-muted-foreground">Not scheduled</p>
+                                    )}
+                                </div>
+                            </div>
+
+                            {job.address && (
+                                <div className="flex items-start gap-3">
+                                    <div className="size-10 rounded-lg bg-muted flex items-center justify-center">
+                                        <MapPin className="size-5 text-muted-foreground" />
+                                    </div>
+                                    <div>
+                                        <p className="text-xs text-muted-foreground">Service Address</p>
+                                        <p className="font-medium">{job.address}</p>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* ── Assigned Providers ── */}
+                    <div>
+                        <h3 className="text-sm font-semibold text-muted-foreground mb-3">Assigned Providers</h3>
+                        {job.assigned_techs && job.assigned_techs.length > 0 ? (
+                            <div className="space-y-2">
+                                {job.assigned_techs.map((p: any) => (
+                                    <div key={p.id} className="flex items-center gap-3 p-3 bg-muted rounded-lg">
+                                        <div className="size-10 rounded-full bg-primary/10 flex items-center justify-center">
+                                            <User2 className="size-5 text-primary" />
+                                        </div>
+                                        <div className="flex-1">
+                                            <p className="font-medium">{p.name}</p>
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
                         ) : (
-                            <button onClick={() => { setIsEditingComments(true); setIsFocused(true); }}
-                                className="text-sm text-muted-foreground hover:text-foreground transition-colors underline decoration-dashed decoration-1 underline-offset-4">
-                                + Add comment
-                            </button>
+                            <div className="text-sm text-muted-foreground">No providers assigned</div>
                         )}
+                    </div>
 
-                        {/* ── Contact Information (collapsible) ── */}
-                        <div className="border rounded-lg">
-                            <button
-                                onClick={() => setContactInfoOpen(!contactInfoOpen)}
-                                className="w-full flex items-center justify-between px-3 py-2.5 text-sm font-medium hover:bg-muted/30 transition-colors"
-                            >
-                                <span>Contact Information</span>
-                                <ChevronDown className={`size-4 text-muted-foreground transition-transform ${contactInfoOpen ? 'rotate-180' : ''}`} />
-                            </button>
-                            {contactInfoOpen && (
-                                <div className="px-3 pb-3 space-y-3">
-                                    {/* Phone */}
-                                    {(contactInfo?.phone || job.customer_phone) && (
-                                        <div className="flex items-start gap-3">
-                                            <Phone className="size-4 shrink-0 text-muted-foreground" />
-                                            <div className="flex-1">
-                                                <Label className="text-xs text-muted-foreground">Phone</Label>
-                                                <div className="text-sm font-medium">
-                                                    <a href={`tel:${contactInfo?.phone || job.customer_phone}`} className="text-foreground no-underline hover:underline">
-                                                        {formatPhone(contactInfo?.phone || job.customer_phone)}
-                                                    </a>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {/* Email */}
-                                    {(contactInfo?.email || job.customer_email) && (
-                                        <div className="flex items-start gap-3">
-                                            <Mail className="size-4 shrink-0 text-muted-foreground" />
-                                            <div className="flex-1">
-                                                <Label className="text-xs text-muted-foreground">Email</Label>
-                                                <a href={`mailto:${contactInfo?.email || job.customer_email}`}
-                                                    className="text-sm font-medium text-foreground no-underline hover:underline block">
-                                                    {contactInfo?.email || job.customer_email}
-                                                </a>
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {/* Address */}
-                                    {job.address && (
-                                        <div className="flex items-start gap-3">
-                                            <MapPin className="size-4 shrink-0 text-muted-foreground" />
-                                            <div className="flex-1">
-                                                <Label className="text-xs text-muted-foreground">Address</Label>
-                                                <div className="text-sm font-medium mt-1">{job.address}</div>
-                                            </div>
-                                        </div>
-                                    )}
+                    {/* ── Customer ── */}
+                    <div>
+                        <h3 className="text-sm font-semibold text-muted-foreground mb-3">Customer</h3>
+                        <div className="space-y-3">
+                            {(contactInfo?.email || job.customer_email) && (
+                                <div className="flex items-center gap-3">
+                                    <div className="size-10 rounded-lg bg-muted flex items-center justify-center">
+                                        <Mail className="size-5 text-muted-foreground" />
+                                    </div>
+                                    <div>
+                                        <p className="text-xs text-muted-foreground">Email</p>
+                                        <p className="font-medium">
+                                            <a href={`mailto:${contactInfo?.email || job.customer_email}`}
+                                                className="text-foreground no-underline hover:underline">
+                                                {contactInfo?.email || job.customer_email}
+                                            </a>
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
+                            {(contactInfo?.phone || job.customer_phone) && (
+                                <div className="flex items-center gap-3">
+                                    <div className="size-10 rounded-lg bg-muted flex items-center justify-center">
+                                        <Phone className="size-5 text-muted-foreground" />
+                                    </div>
+                                    <div>
+                                        <p className="text-xs text-muted-foreground">Phone</p>
+                                        <p className="font-medium">
+                                            <a href={`tel:${contactInfo?.phone || job.customer_phone}`}
+                                                className="text-foreground no-underline hover:underline">
+                                                {formatPhone(contactInfo?.phone || job.customer_phone)}
+                                            </a>
+                                        </p>
+                                    </div>
                                 </div>
                             )}
                         </div>
+                    </div>
 
-                        <Separator />
-
-                        {/* ── Job Details ── */}
+                    {/* ── Invoice ── */}
+                    {job.invoice_total && (
                         <div>
-                            <h4 className="font-medium mb-3">Job Details</h4>
-                            <div className="space-y-3">
-                                {/* Job Type */}
-                                <div>
-                                    <Label className="text-xs text-muted-foreground">Job Type</Label>
-                                    <div className="text-sm font-medium mt-1">
-                                        {job.job_type || job.service_name || <span className="text-muted-foreground">N/A</span>}
-                                    </div>
+                            <h3 className="text-sm font-semibold text-muted-foreground mb-3">Invoice</h3>
+                            <div className="border rounded-lg p-4 space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <span className="font-semibold">Total</span>
+                                    <span className="text-xl font-bold">${job.invoice_total}</span>
                                 </div>
-
-                                {/* Description */}
-                                <div>
-                                    <Label className="text-xs text-muted-foreground">Description</Label>
-                                    <div className="text-sm mt-1 whitespace-pre-wrap">
-                                        {job.description || <span className="text-muted-foreground">N/A</span>}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <Separator />
-
-                        {/* ── Schedule (ZB data) ── */}
-                        <div>
-                            <h4 className="font-medium mb-3">Schedule</h4>
-                            <div className="space-y-2">
-                                <div className="flex items-center gap-2">
-                                    <Briefcase className="size-4 text-muted-foreground" />
-                                    <span className="text-sm">{job.service_name || '—'}</span>
-                                </div>
-                                {job.start_date ? (
-                                    <div className="rounded-lg border bg-muted/30 p-3">
-                                        <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
-                                            <CalendarClock className="size-3.5" />
-                                            Date & Time
-                                        </div>
-                                        <div className="text-base font-semibold">
-                                            {new Date(job.start_date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}
-                                            {job.end_date && (
-                                                <> – {new Date(job.end_date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}</>
-                                            )}
-                                        </div>
-                                        <div className="text-sm text-muted-foreground">
-                                            {new Date(job.start_date).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })}
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="flex items-center gap-2">
-                                        <CalendarClock className="size-4 text-muted-foreground" />
-                                        <span className="text-sm text-muted-foreground">Not scheduled</span>
+                                {job.invoice_status && (
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-sm text-muted-foreground">Status</span>
+                                        <span className="text-xs px-2 py-0.5 rounded-md bg-secondary">{job.invoice_status}</span>
                                     </div>
                                 )}
                             </div>
                         </div>
+                    )}
 
-                        {/* ── Status Transitions ── */}
+                    {/* ── Territory ── */}
+                    {job.territory && (
                         <div>
-                            <h4 className="font-medium mb-3">Change Status</h4>
-                            {(() => {
-                                const allowed = ALLOWED_TRANSITIONS[job.blanc_status] || [];
-                                if (allowed.length === 0) {
-                                    return <div className="text-xs text-muted-foreground">No transitions available</div>;
-                                }
-                                return (
-                                    <div className="flex flex-wrap gap-1.5">
-                                        {allowed.map(s => (
-                                            <button key={s} onClick={() => onBlancStatusChange(job.id, s)}
-                                                className={`text-xs px-2 py-1 rounded-md border transition-colors hover:opacity-80 ${BLANC_STATUS_COLORS[s] || 'bg-gray-100'}`}>
-                                                → {s}
-                                            </button>
-                                        ))}
-                                    </div>
-                                );
-                            })()}
+                            <h3 className="text-sm font-semibold text-muted-foreground mb-3">Territory</h3>
+                            <div className="text-sm">{job.territory}</div>
                         </div>
+                    )}
 
-                        {/* ── Assigned Techs ── */}
-                        <div>
-                            <h4 className="font-medium mb-3">Assigned Techs</h4>
-                            {job.assigned_techs && job.assigned_techs.length > 0 ? (
-                                <div className="space-y-1">
-                                    {job.assigned_techs.map((p: any) => (
-                                        <div key={p.id} className="flex items-center gap-2 text-sm">
-                                            <User2 className="size-3.5 text-muted-foreground" /> {p.name}
-                                        </div>
-                                    ))}
-                                </div>
-                            ) : (
-                                <div className="text-sm text-muted-foreground">No techs assigned</div>
-                            )}
-                        </div>
-
-                        {/* ── Invoice ── */}
-                        {job.invoice_total && (
-                            <div>
-                                <h4 className="font-medium mb-3">Invoice</h4>
-                                <div className="text-sm">
-                                    <span className="font-medium">${job.invoice_total}</span>
-                                    {job.invoice_status && <span className="ml-2 text-muted-foreground">({job.invoice_status})</span>}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* ── Territory ── */}
-                        {job.territory && (
-                            <div>
-                                <h4 className="font-medium mb-3">Territory</h4>
-                                <div className="text-sm">{job.territory}</div>
-                            </div>
-                        )}
-
-                        {/* ── Metadata ── */}
+                    {/* ── Mobile-only: Description, Comments, Metadata, Notes ── */}
+                    <div className="md:hidden space-y-6">
+                        <Separator />
+                        {renderDescription()}
+                        {renderComments()}
                         <JobMetadataSection job={job} />
-
-                        {/* ── Notes ── */}
-                        {job.notes && job.notes.length > 0 && (
-                            <>
-                                <Separator />
-                                <div>
-                                    <h4 className="font-medium mb-3">Notes</h4>
-                                    <div className="space-y-2">
-                                        {job.notes.map((note, i) => (
-                                            <div key={i} className="text-sm bg-muted/50 rounded-md p-2">
-                                                <div>{note.text}</div>
-                                                <div className="text-xs text-muted-foreground mt-1">{formatDate(note.created)}</div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            </>
-                        )}
-
-                        {/* Add Note inline */}
-                        {noteJobId === job.id ? (
-                            <section className="space-y-2">
-                                <textarea className="w-full border rounded-md p-2 text-sm min-h-[60px] resize-none"
-                                    placeholder="Add a note..." value={noteText}
-                                    onChange={e => setNoteText(e.target.value)} autoFocus />
-                                <div className="flex gap-2">
-                                    <Button size="sm" onClick={onAddNote} disabled={!noteText.trim()}>Save Note</Button>
-                                    <Button size="sm" variant="ghost" onClick={() => { setNoteJobId(null); setNoteText(''); }}>Cancel</Button>
-                                </div>
-                            </section>
-                        ) : null}
+                        {renderNotes()}
+                        <div className="space-y-2">
+                            <textarea
+                                className="w-full border rounded-md px-3 py-2 text-sm resize-none min-h-[60px]"
+                                placeholder="Write a note..."
+                                value={noteJobId === job.id ? noteText : ''}
+                                onChange={e => { setNoteJobId(job.id); setNoteText(e.target.value); }}
+                                onFocus={() => { if (noteJobId !== job.id) setNoteJobId(job.id); }}
+                            />
+                            <Button size="sm" onClick={onAddNote} disabled={!noteText.trim() || noteJobId !== job.id}>
+                                <Plus className="size-4 mr-1" /> Add Note
+                            </Button>
+                        </div>
                     </div>
                 </div>
             )}
-
-            {/* ── Footer Actions ── */}
-            <div className="p-4 border-t space-y-2">
-                <Button variant="outline" size="sm" className="w-full justify-start"
-                    onClick={() => setNoteJobId(job.id)}>
-                    <StickyNote className="size-4 mr-2" /> Add Note
-                </Button>
-
-                {!job.zb_canceled && (
-                    <div className="flex flex-wrap gap-2">
-                        {job.zb_status === 'scheduled' && (
-                            <>
-                                <Button size="sm" variant="outline" onClick={() => onMarkEnroute(job.id)}>
-                                    <Navigation className="size-4 mr-1" /> En-route
-                                </Button>
-                                <Button size="sm" variant="outline" onClick={() => onMarkInProgress(job.id)}>
-                                    <Play className="size-4 mr-1" /> Start
-                                </Button>
-                            </>
-                        )}
-                        {job.zb_status === 'en-route' && (
-                            <Button size="sm" variant="outline" onClick={() => onMarkInProgress(job.id)}>
-                                <Play className="size-4 mr-1" /> Start
-                            </Button>
-                        )}
-                        {(job.zb_status === 'in-progress' || job.zb_status === 'en-route' || job.zb_status === 'scheduled') && (
-                            <Button size="sm" variant="outline" onClick={() => onMarkComplete(job.id)}>
-                                <CheckCircle2 className="size-4 mr-1" /> Complete
-                            </Button>
-                        )}
-                        {job.zb_status !== 'complete' && (
-                            <Button size="sm" variant="destructive" onClick={() => onCancel(job.id)}>
-                                <Ban className="size-4 mr-1" /> Cancel
-                            </Button>
-                        )}
-                    </div>
-                )}
-            </div>
         </div>
-    );
+
+        {/* ═══ RIGHT COLUMN (desktop only) ═══ */}
+        <div className="w-full md:w-1/2 flex-col overflow-hidden border-l hidden md:flex">
+            <div className="border-b p-4 flex items-center justify-between">
+                <h3 className="text-lg font-semibold">Details and Notes</h3>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-6">
+                {renderDescription()}
+                {renderComments()}
+                <JobMetadataSection job={job} />
+                {renderNotes()}
+            </div>
+
+            {renderAddNote()}
+        </div>
+    </div>
+);
 }
+
 
 export default JobsPage;
