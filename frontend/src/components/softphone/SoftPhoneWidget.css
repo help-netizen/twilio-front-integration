@@ -15,7 +15,7 @@
     border-radius: 16px;
     width: 360px;
     box-shadow: 0 25px 60px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.08);
-    overflow: hidden;
+    overflow: visible;
     animation: softphone-slide-in 0.2s ease-out;
 }
 
@@ -202,6 +202,7 @@
 /* ─── Body (Idle) ────────────────────────────────────────────────────────── */
 .softphone-body {
     padding: 20px;
+    overflow: visible;
 }
 
 .softphone-input-wrapper {
