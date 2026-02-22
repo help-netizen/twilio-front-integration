@@ -604,9 +604,21 @@ function JobDetailPanel({
                         </span>
                     )}
 
-                    <span className="text-xs text-muted-foreground font-mono ml-auto">
-                        #{job.job_number || job.id}
-                    </span>
+                    {job.zenbooker_job_id ? (
+                        <a
+                            href={`https://zenbooker.com/app?view=jobs&view-job=${job.zenbooker_job_id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs font-mono ml-auto text-primary hover:underline"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            ZB: {job.job_number || job.id}
+                        </a>
+                    ) : (
+                        <span className="text-xs text-muted-foreground font-mono ml-auto">
+                            #{job.job_number || job.id}
+                        </span>
+                    )}
                 </div>
             </div>
 
