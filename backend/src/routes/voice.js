@@ -17,22 +17,58 @@ const tokenRouter = express.Router();
 /**
  * GET /api/voice/token
  * Returns a short-lived Twilio Access Token for the authenticated user.
+ * Only issues token if user has phone_calls_allowed = true.
  */
-tokenRouter.get('/token', (req, res) => {
+tokenRouter.get('/token', async (req, res) => {
     try {
-        // Identity derived from Keycloak-authenticated CRM user
         const userId = req.user?.crmUser?.id;
+        const companyId = req.user?.company_id;
         if (!userId) {
             return res.status(401).json({ error: 'User not authenticated' });
+        }
+
+        // Check phone_calls_allowed
+        const db = require('../db/connection');
+        const permResult = await db.query(
+            `SELECT COALESCE(phone_calls_allowed, false) as allowed
+             FROM company_memberships WHERE user_id = $1 AND company_id = $2`,
+            [userId, companyId]
+        );
+        const allowed = permResult.rows[0]?.allowed === true;
+        if (!allowed) {
+            return res.json({ allowed: false });
         }
 
         const identity = `user_${userId}`;
         const result = generateToken(identity);
 
-        res.json(result);
+        res.json({ ...result, allowed: true });
     } catch (err) {
         console.error('[Voice] Token generation error:', err.message);
         res.status(500).json({ error: 'Failed to generate voice token' });
+    }
+});
+
+/**
+ * GET /api/voice/phone-access
+ * Lightweight check: is phone calling enabled for this user?
+ */
+tokenRouter.get('/phone-access', async (req, res) => {
+    try {
+        const userId = req.user?.crmUser?.id;
+        const companyId = req.user?.company_id;
+        if (!userId) return res.json({ allowed: false });
+
+        const db = require('../db/connection');
+        const r = await db.query(
+            `SELECT COALESCE(phone_calls_allowed, false) as allowed
+             FROM company_memberships WHERE user_id = $1 AND company_id = $2`,
+            [userId, companyId]
+        );
+        res.json({ allowed: r.rows[0]?.allowed === true });
+    } catch (err) {
+        console.error('[Voice] Phone access check error:', err.message);
+        res.json({ allowed: false });
     }
 });
 

@@ -642,10 +642,12 @@ function JobDetailPanel({
             <div className="w-full md:w-1/2 flex flex-col overflow-hidden border-l">
                 {/* Blue gradient header */}
                 <div className="bg-gradient-to-r from-blue-500 to-blue-600 p-5 text-white group/header">
-                    <div className="flex items-center justify-between mb-3">
+                    {/* First line: Service name + close/back */}
+                    <div className="flex items-center justify-between mb-2">
                         <Button variant="ghost" size="sm" className="md:hidden text-white hover:bg-white/20" onClick={onClose}>
                             ← Back
                         </Button>
+                        <h2 className="text-2xl font-bold hidden md:block">{job.service_name || 'Job'}</h2>
                         <div className="flex items-center gap-1 ml-auto">
                             <Button variant="ghost" size="sm"
                                 className="md:hidden text-white hover:bg-white/20"
@@ -659,9 +661,24 @@ function JobDetailPanel({
                             </Button>
                         </div>
                     </div>
+                    {/* Mobile service name */}
+                    <h2 className="text-2xl font-bold mb-2 md:hidden">{job.service_name || 'Job'}</h2>
 
                     <div className="flex items-center gap-2 mb-2 flex-wrap">
-                        <span className="font-mono text-sm text-blue-100">#{job.job_number || job.id}</span>
+                        {/* Job number as ZB link */}
+                        {job.zenbooker_job_id ? (
+                            <a
+                                href={`https://zenbooker.com/app?view=jobs&view-job=${job.zenbooker_job_id}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="font-mono text-sm text-blue-100 hover:text-white hover:underline"
+                                onClick={(e) => e.stopPropagation()}
+                            >
+                                #{job.job_number || job.id}
+                            </a>
+                        ) : (
+                            <span className="font-mono text-sm text-blue-100">#{job.job_number || job.id}</span>
+                        )}
 
                         {/* Blanc status badge dropdown */}
                         <DropdownMenu>
@@ -691,21 +708,8 @@ function JobDetailPanel({
                                 {job.job_source}
                             </span>
                         )}
-
-                        {job.zenbooker_job_id && (
-                            <a
-                                href={`https://zenbooker.com/app?view=jobs&view-job=${job.zenbooker_job_id}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-xs font-mono ml-auto text-blue-100 hover:text-white hover:underline"
-                                onClick={(e) => e.stopPropagation()}
-                            >
-                                ZB: {job.job_number || job.id}
-                            </a>
-                        )}
                     </div>
 
-                    <h2 className="text-2xl font-bold mb-1">{job.service_name || 'Job'}</h2>
                     <p className="text-blue-100">
                         {contactInfo ? (
                             <span

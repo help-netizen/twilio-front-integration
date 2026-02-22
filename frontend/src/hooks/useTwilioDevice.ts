@@ -33,6 +33,7 @@ export interface UseTwilioDeviceReturn {
     sendDigits: (digits: string) => void;
     deviceReady: boolean;
     error: string | null;
+    phoneAllowed: boolean;
 }
 
 export function useTwilioDevice(): UseTwilioDeviceReturn {
@@ -45,6 +46,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
     const [deviceReady, setDeviceReady] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [isMuted, setIsMuted] = useState(false);
+    const [phoneAllowed, setPhoneAllowed] = useState(true);
 
     const durationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const connectedAtRef = useRef<number | null>(null);
@@ -143,9 +145,18 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
         async function initDevice() {
             try {
                 console.log('[SoftPhone] Fetching voice token...');
-                const { token } = await fetchVoiceToken();
+                const tokenResponse = await fetchVoiceToken();
 
                 if (cancelled) return;
+
+                // If user is not allowed to make phone calls, skip Device init
+                if (tokenResponse.allowed === false) {
+                    console.log('[SoftPhone] Phone calls not allowed for this user');
+                    setPhoneAllowed(false);
+                    return;
+                }
+                setPhoneAllowed(true);
+                const { token } = tokenResponse;
 
                 const dev = new Device(token, {
                     logLevel: 1,
@@ -361,5 +372,6 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
         sendDigits,
         deviceReady,
         error,
+        phoneAllowed,
     };
 }

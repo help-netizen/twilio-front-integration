@@ -288,12 +288,73 @@ async function handleVoiceInbound(req, res) {
                 clientIdentity = process.env.SOFTPHONE_DEFAULT_IDENTITY;
             }
 
-            if (routingMode === 'client' && clientIdentity) {
+            if (routingMode === 'client') {
                 // ── WebRTC SoftPhone routing ──────────────────────────────────
-                console.log(`[${traceId}] Inbound: ${From} → Client(${clientIdentity})`);
+                // Query all users with phone_calls_allowed = true
+                let allowedIdentities = [];
+                try {
+                    const allowedResult = await dbConn.query(
+                        `SELECT 'user_' || user_id AS identity FROM company_memberships
+                         WHERE phone_calls_allowed = true`
+                    );
+                    allowedIdentities = allowedResult.rows.map(r => r.identity);
+                } catch (permErr) {
+                    console.warn(`[${traceId}] Failed to query allowed users, falling back to clientIdentity:`, permErr.message);
+                    if (clientIdentity) allowedIdentities = [clientIdentity];
+                }
 
-                const inboundTimeout = Number(process.env.DIAL_TIMEOUT || 25);
-                const inboundStreamXml = realtimeEnabled ? `
+                // Fallback: if no DB result but env var set, use it
+                if (allowedIdentities.length === 0 && clientIdentity) {
+                    allowedIdentities = [clientIdentity];
+                }
+
+                if (allowedIdentities.length === 0) {
+                    // No allowed users → voicemail
+                    console.log(`[${traceId}] No allowed Client users → voicemail`);
+                    const vmLanguage = process.env.VM_LANGUAGE || 'en-US';
+                    const vmGreeting = process.env.VM_GREETING || 'Hello! Our team is currently assisting other customers. Please leave your name and phone number, and we will call you back as soon as possible.';
+                    const vmMaxLen = Number(process.env.VM_MAXLEN || 180);
+                    const vmSilenceTimeout = Number(process.env.VM_SILENCE_TIMEOUT || 5);
+                    const vmFinishOnKey = process.env.VM_FINISH_ON_KEY || '#';
+
+                    twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say language="${vmLanguage}">${vmGreeting}</Say>
+    <Record maxLength="${vmMaxLen}"
+            timeout="${vmSilenceTimeout}"
+            finishOnKey="${vmFinishOnKey}"
+            playBeep="true"
+            transcribe="false"
+            recordingStatusCallback="${recordingStatusUrl}"
+            recordingStatusCallbackMethod="POST" />
+    <Hangup />
+</Response>`;
+
+                    // Mark as voicemail_recording
+                    try {
+                        await dbConn.query(
+                            `UPDATE calls SET status = 'voicemail_recording', is_final = false WHERE call_sid = $1`,
+                            [CallSid]
+                        );
+                        const realtimeService = require('../services/realtimeService');
+                        const freshCall = await queries.getCallByCallSid(CallSid);
+                        if (freshCall) {
+                            realtimeService.publishCallUpdate({ eventType: 'call.updated', ...freshCall });
+                        }
+                    } catch (vmErr) {
+                        console.warn(`[${traceId}] Failed to set voicemail_recording:`, vmErr.message);
+                    }
+                } else {
+                    console.log(`[${traceId}] Inbound: ${From} → Client([${allowedIdentities.join(',')}])`);
+
+                    const clientEndpoints = allowedIdentities.map(id =>
+                        `        <Client statusCallback="${statusCallbackUrl}"
+                statusCallbackEvent="initiated ringing answered completed"
+                statusCallbackMethod="POST">${id}</Client>`
+                    ).join('\n');
+
+                    const inboundTimeout = Number(process.env.DIAL_TIMEOUT || 25);
+                    const inboundStreamXml = realtimeEnabled ? `
     <Start>
         <Stream name="realtime-transcript" url="${mediaStreamUrl}" track="both_tracks">
             <Parameter name="callSid" value="${CallSid}" />
@@ -301,7 +362,7 @@ async function handleVoiceInbound(req, res) {
         </Stream>
     </Start>` : '';
 
-                twiml = `<?xml version="1.0" encoding="UTF-8"?>
+                    twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>${inboundStreamXml}
     <Dial timeout="${inboundTimeout}"
           answerOnBridge="true"
@@ -310,11 +371,10 @@ async function handleVoiceInbound(req, res) {
           record="record-from-answer-dual"
           recordingStatusCallback="${recordingStatusUrl}"
           recordingStatusCallbackMethod="POST">
-        <Client statusCallback="${statusCallbackUrl}"
-                statusCallbackEvent="initiated ringing answered completed"
-                statusCallbackMethod="POST">${clientIdentity}</Client>
+${clientEndpoints}
     </Dial>
 </Response>`;
+                }
             } else {
                 // ── SIP / Bria routing (original) ─────────────────────────────
                 console.log(`[${traceId}] Inbound: ${From} → SIP`);

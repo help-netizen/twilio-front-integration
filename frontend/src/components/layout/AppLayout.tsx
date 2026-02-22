@@ -177,14 +177,16 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                         )}
                         {activeTab === 'calls' && (
                             <>
-                                <button
-                                    onClick={() => setSoftPhoneOpen(true)}
-                                    className="refresh-button"
-                                    title="Open SoftPhone"
-                                    style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
-                                >
-                                    📞 SoftPhone
-                                </button>
+                                {voice.phoneAllowed && (
+                                    <button
+                                        onClick={() => setSoftPhoneOpen(true)}
+                                        className="refresh-button"
+                                        title="Open SoftPhone"
+                                        style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                                    >
+                                        📞 SoftPhone
+                                    </button>
+                                )}
                                 <button
                                     onClick={handleRefresh}
                                     disabled={isRefreshing}
