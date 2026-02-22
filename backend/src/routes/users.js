@@ -335,10 +335,12 @@ function generateTempPassword() {
  * Returns the Keycloak user UUID (sub).
  */
 async function createKeycloakUser(email, fullName, tempPassword, role) {
-    const KC_URL = process.env.KEYCLOAK_REALM_URL?.replace(/\/realms\/.*$/, '');
+    const KC_URL = process.env.KEYCLOAK_URL || 'http://localhost:8080';
     const REALM = process.env.KEYCLOAK_REALM || 'crm-prod';
+    const KC_ADMIN_USER = process.env.KEYCLOAK_ADMIN_USER || 'admin';
+    const KC_ADMIN_PASS = process.env.KEYCLOAK_ADMIN_PASSWORD || 'admin';
 
-    if (!KC_URL) {
+    if (!process.env.KEYCLOAK_URL) {
         // Dev mode — generate fake sub
         const crypto = require('crypto');
         return crypto.randomUUID();
@@ -350,9 +352,18 @@ async function createKeycloakUser(email, fullName, tempPassword, role) {
         {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'grant_type=password&client_id=admin-cli&username=admin&password=admin',
+            body: new URLSearchParams({
+                grant_type: 'password',
+                client_id: 'admin-cli',
+                username: KC_ADMIN_USER,
+                password: KC_ADMIN_PASS,
+            }),
         }
     );
+    if (!adminTokenRes.ok) {
+        const body = await adminTokenRes.text();
+        throw new Error(`KC admin auth failed: ${adminTokenRes.status} ${body}`);
+    }
     const { access_token } = await adminTokenRes.json();
 
     // Create user
