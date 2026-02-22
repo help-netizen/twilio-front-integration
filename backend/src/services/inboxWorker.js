@@ -34,8 +34,8 @@ function normalizeVoiceEvent(payload) {
         ? new Date(parseInt(Timestamp) * 1000)
         : new Date();
 
-    // Direction detection via CallProcessor
-    const direction = CallProcessor.detectDirection({ from: From, to: To });
+    // Direction detection via CallProcessor (pass Twilio's own Direction for fallback)
+    const direction = CallProcessor.detectDirection({ from: From, to: To, direction: Direction });
 
     return {
         callSid: CallSid,
@@ -234,6 +234,12 @@ async function processVoiceEvent(payload, eventType, traceId) {
                 if (extracted && extracted.startsWith('sip:')) {
                     return process.env.OUTBOUND_CALLER_ID || '+16175006181';
                 }
+                // Replace client:user_xxx (WebRTC SoftPhone identity) with
+                // the To number for timeline grouping — the child leg will have the
+                // actual caller ID, and reconcileParentCall will fix from_number later
+                if (extracted && extracted.startsWith('client:')) {
+                    return null; // Will be set from child leg during reconciliation
+                }
                 return extracted;
             })(),
             toNumber: extractPhoneFromSIP(normalized.toNumber),
@@ -392,7 +398,12 @@ async function reconcileParentCall(parentCallSid, traceId) {
             parentStatus = 'in-progress';
         }
 
-        // Update parent call with reconciled data + propagate contact_id from child
+        // Update parent call with reconciled data + propagate contact_id and from_number from child
+        // (for SoftPhone outbound, parent has from_number=null or client:xxx, child has the actual caller ID)
+        const childFromNumber = winner
+            ? (await db.query(`SELECT from_number FROM calls WHERE call_sid = $1`, [winner.call_sid])).rows[0]?.from_number
+            : (await db.query(`SELECT from_number FROM calls WHERE parent_call_sid = $1 AND from_number NOT LIKE 'client:%' LIMIT 1`, [parentCallSid])).rows[0]?.from_number;
+
         await db.query(
             `UPDATE calls SET
                 status = $2,
@@ -400,9 +411,14 @@ async function reconcileParentCall(parentCallSid, traceId) {
                 duration_sec = COALESCE($4, duration_sec),
                 answered_at = COALESCE($5, answered_at),
                 ended_at = COALESCE($6, ended_at),
-                contact_id = COALESCE(calls.contact_id, $7)
+                contact_id = COALESCE(calls.contact_id, $7),
+                from_number = CASE
+                    WHEN calls.from_number IS NULL OR calls.from_number LIKE 'client:%'
+                    THEN COALESCE($8, calls.from_number)
+                    ELSE calls.from_number
+                END
              WHERE call_sid = $1`,
-            [parentCallSid, parentStatus, parentIsFinal, parentDuration, parentAnsweredAt, parentEndedAt, childContactId]
+            [parentCallSid, parentStatus, parentIsFinal, parentDuration, parentAnsweredAt, parentEndedAt, childContactId, childFromNumber]
         );
 
         console.log(`[${traceId}] Reconciled parent ${parentCallSid}: status=${parentStatus}, winner=${winner?.call_sid || 'none'}`);
