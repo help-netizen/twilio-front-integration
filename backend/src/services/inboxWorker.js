@@ -200,11 +200,13 @@ async function processVoiceEvent(payload, eventType, traceId) {
         } catch (e) { /* proceed with upsert if check fails */ }
     }
 
-    // Guard: for inbound parent calls, Twilio sends "in-progress" when TwiML starts
+    // Guard: for INBOUND parent calls, Twilio sends "in-progress" when TwiML starts
     // (Dial begins ringing agents), not when someone answers. Keep as "ringing"
     // until a child leg actually reaches "in-progress".
+    // NOTE: Skip this guard for outbound calls — their in-progress is genuine (callee answered).
     let effectiveStatus = normalized.eventStatus;
-    if (!normalized.parentCallSid && normalized.eventStatus === 'in-progress' && !skipUpsert) {
+    if (!normalized.parentCallSid && normalized.eventStatus === 'in-progress' && !skipUpsert
+        && processed.direction === 'inbound') {
         try {
             const childCheck = await db.query(
                 `SELECT 1 FROM calls WHERE parent_call_sid = $1 AND status = 'in-progress' LIMIT 1`,
