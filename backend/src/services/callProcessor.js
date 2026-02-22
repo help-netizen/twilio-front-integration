@@ -123,45 +123,43 @@ class CallProcessor {
      * @returns {string} 'inbound' | 'outbound' | 'internal' | 'external'
      */
     static detectDirection(callData) {
+        // WebRTC Client outbound: From starts with 'client:' (e.g. client:user_xxx)
+        // Twilio marks these as Direction=inbound (client→Twilio), but they are
+        // actually outbound calls initiated from the SoftPhone
+        if (callData.from && callData.from.startsWith('client:')) {
+            return 'outbound';
+        }
+
         const fromIsSIP = isSIPAddress(callData.from);
         const toIsSIP = isSIPAddress(callData.to);
 
         if (!fromIsSIP && toIsSIP) {
             // External number calling TO SIP dispatcher → INBOUND
-            // Example: +1 (508) 514-0320 → sip:dispatcher@...
             return 'inbound';
         } else if (fromIsSIP && !toIsSIP) {
             // SIP dispatcher calling TO external number → OUTBOUND
-            // Example: sip:dispatcher@... → +1 (508) 514-0320
             return 'outbound';
         } else if (fromIsSIP && toIsSIP) {
-            // Both SIP — but check if To contains a phone number
-            // Pattern: sip:DIGITS@domain means outbound dialing via SIP trunk
+            // Both SIP — check if To contains a phone number
             const toPhoneMatch = callData.to.match(/^sip:(\+?\d+)@/i);
             if (toPhoneMatch) {
                 return 'outbound';  // SIP user dialing a phone number
             }
-            // True internal call between SIP endpoints (forwarding/transfer)
             return 'internal';
         } else {
-            // Neither is SIP (e.g. Client-routed calls or Twilio API sync data)
-            // Use owned-number detection as fallback
+            // Neither is SIP (e.g. Client-routed inbound calls or Twilio API sync data)
             const fromIsOwned = isOwnedNumber(callData.from);
             const toIsOwned = isOwnedNumber(callData.to);
 
             if (fromIsOwned && !toIsOwned) {
-                // FROM is our number → we called out → OUTBOUND
                 return 'outbound';
             } else if (!fromIsOwned && toIsOwned) {
-                // TO is our number → customer called in → INBOUND
                 return 'inbound';
             } else {
                 // OWNED_PHONE_NUMBERS inconclusive — use Twilio's own Direction field
-                // This handles WebRTC Client calls where neither number is SIP
                 const twilioDir = (callData.direction || '').toLowerCase();
                 if (twilioDir === 'inbound') return 'inbound';
                 if (twilioDir.startsWith('outbound')) return 'outbound';
-                // Final fallback
                 return 'external';
             }
         }
