@@ -381,7 +381,7 @@ async function addNote(jobId, text) {
     // Also push to Zenbooker if linked
     if (job.zenbooker_job_id) {
         try {
-            await zenbookerClient.addJobNote(job.zenbooker_job_id, text);
+            await zenbookerClient.addJobNote(job.zenbooker_job_id, { text });
         } catch (err) {
             console.error(`[JobsService] Note sync error:`, err.response?.data || err.message);
         }
