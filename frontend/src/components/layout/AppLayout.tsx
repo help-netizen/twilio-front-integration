@@ -11,8 +11,10 @@ import {
     DropdownMenuItem,
     DropdownMenuSeparator,
 } from '../ui/dropdown-menu';
-import { Phone, MessageSquare, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase } from 'lucide-react';
+import { Phone, PhoneIncoming, MessageSquare, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase } from 'lucide-react';
 import { useRealtimeEvents } from '../../hooks/useRealtimeEvents';
+import { useTwilioDevice } from '../../hooks/useTwilioDevice';
+import { SoftPhoneWidget } from '../softphone/SoftPhoneWidget';
 import './AppLayout.css';
 
 interface AppLayoutProps {
@@ -35,6 +37,17 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                                 : 'pulse';
 
     const { accessDeniedMessage, clearAccessDenied, logout, hasRole } = useAuth();
+
+    // --- SoftPhone ---
+    const voice = useTwilioDevice();
+    const [softPhoneOpen, setSoftPhoneOpen] = useState(false);
+
+    // Auto-open SoftPhone on incoming call
+    const handleAcceptIncoming = useCallback(() => {
+        setSoftPhoneOpen(true);
+        // Small delay to let the modal render, then accept
+        setTimeout(() => voice.acceptCall(), 100);
+    }, [voice]);
 
     // --- Pulse unread badge ---
     const [pulseUnreadCount, setPulseUnreadCount] = useState(0);
@@ -152,15 +165,35 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                         </Tabs>
                     </div>
                     <div className="header-actions">
-                        {activeTab === 'calls' && (
+                        {/* Global incoming call button */}
+                        {voice.incomingCall && (
                             <button
-                                onClick={handleRefresh}
-                                disabled={isRefreshing}
-                                className="refresh-button"
-                                title="Refresh calls from last 3 days from Twilio"
+                                className="incoming-call-btn"
+                                onClick={handleAcceptIncoming}
                             >
-                                {isRefreshing ? '🔄 Refreshing...' : '🔄 Refresh'}
+                                <PhoneIncoming size={16} />
+                                Accept Call
                             </button>
+                        )}
+                        {activeTab === 'calls' && (
+                            <>
+                                <button
+                                    onClick={() => setSoftPhoneOpen(true)}
+                                    className="refresh-button"
+                                    title="Open SoftPhone"
+                                    style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                                >
+                                    📞 SoftPhone
+                                </button>
+                                <button
+                                    onClick={handleRefresh}
+                                    disabled={isRefreshing}
+                                    className="refresh-button"
+                                    title="Refresh calls from last 3 days from Twilio"
+                                >
+                                    {isRefreshing ? '🔄 Refreshing...' : '🔄 Refresh'}
+                                </button>
+                            </>
                         )}
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
@@ -281,6 +314,13 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                 )}
                 {children}
             </main>
+
+            {/* SoftPhone Modal */}
+            <SoftPhoneWidget
+                voice={voice}
+                open={softPhoneOpen}
+                onClose={() => setSoftPhoneOpen(false)}
+            />
         </div>
     );
 };

@@ -7,6 +7,7 @@ const callsRouter = require('../backend/src/routes/calls');
 const syncRouter = require('../backend/src/routes/sync');
 const eventsRouter = require('../backend/src/routes/events');
 const twimlRouter = require('../backend/src/routes/twiml');
+const { tokenRouter: voiceTokenRouter, twimlRouter: voiceTwimlRouter } = require('../backend/src/routes/voice');
 const leadsRouter = require('../backend/src/routes/leads');
 const contactsRouter = require('../backend/src/routes/contacts');
 const zenbookerRouter = require('../backend/src/routes/zenbooker');
@@ -54,9 +55,11 @@ app.use((req, res, next) => {
 app.use('/health', healthRouter);
 app.use('/webhooks', webhooksRouter);
 app.use('/twiml', twimlRouter);
+app.use('/api/voice', voiceTwimlRouter); // TwiML endpoints (Twilio-called, no auth)
 app.use('/events', eventsRouter);
 
 // Auth + tenant-scoped CRM API routes
+app.use('/api/voice', authenticate, requireCompanyAccess, voiceTokenRouter); // Voice token (Keycloak-authed)
 app.use('/api/calls', authenticate, requireCompanyAccess, callsRouter);
 // Media proxy — no auth (browser <img src> can't send JWT; UUID provides security)
 // Proxies media content through the backend to avoid CORS and expired-URL issues

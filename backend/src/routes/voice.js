@@ -1,0 +1,121 @@
+/**
+ * Voice API Routes — SoftPhone (Twilio Voice JS SDK)
+ *
+ * Provides:
+ *   GET  /api/voice/token           — Mint Access Token (Keycloak-authed)
+ *   POST /api/voice/twiml/outbound  — TwiML for SDK-initiated outbound calls (Twilio-called)
+ *   POST /api/voice/twiml/inbound   — TwiML for inbound calls → route to <Client> (Twilio-called)
+ */
+
+const express = require('express');
+const { generateToken } = require('../services/voiceService');
+const { toE164 } = require('../utils/phoneUtils');
+
+// ─── Authenticated router (token endpoint) ──────────────────────────────────
+const tokenRouter = express.Router();
+
+/**
+ * GET /api/voice/token
+ * Returns a short-lived Twilio Access Token for the authenticated user.
+ */
+tokenRouter.get('/token', (req, res) => {
+    try {
+        // Identity derived from Keycloak-authenticated CRM user
+        const userId = req.user?.crmUser?.id;
+        if (!userId) {
+            return res.status(401).json({ error: 'User not authenticated' });
+        }
+
+        const identity = `user_${userId}`;
+        const result = generateToken(identity);
+
+        res.json(result);
+    } catch (err) {
+        console.error('[Voice] Token generation error:', err.message);
+        res.status(500).json({ error: 'Failed to generate voice token' });
+    }
+});
+
+// ─── TwiML router (Twilio-called, no auth) ──────────────────────────────────
+const twimlRouter = express.Router();
+
+/**
+ * POST /api/voice/twiml/outbound
+ * Called by Twilio when the browser SDK initiates an outbound call via Device.connect().
+ * Returns TwiML that dials the PSTN number.
+ */
+twimlRouter.post('/twiml/outbound', (req, res) => {
+    const to = req.body.To;
+    const callerId = process.env.SOFTPHONE_CALLER_ID || process.env.TWILIO_PHONE_NUMBER;
+
+    console.log('[Voice TwiML] Outbound request:', {
+        to,
+        callerId,
+        from: req.body.From,
+        callSid: req.body.CallSid,
+    });
+
+    if (!to) {
+        const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say>No destination number provided.</Say>
+</Response>`;
+        res.type('text/xml').send(twiml);
+        return;
+    }
+
+    // Normalize and validate
+    const normalized = toE164(to);
+    if (!normalized) {
+        const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say>Invalid phone number.</Say>
+</Response>`;
+        res.type('text/xml').send(twiml);
+        return;
+    }
+
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Dial callerId="${callerId}">
+        <Number>${normalized}</Number>
+    </Dial>
+</Response>`;
+
+    console.log('[Voice TwiML] Outbound TwiML generated for:', normalized);
+    res.type('text/xml').send(twiml);
+});
+
+/**
+ * POST /api/voice/twiml/inbound
+ * Called by Twilio when an inbound call arrives at the Twilio phone number.
+ * Routes to <Client> identity for WebRTC delivery.
+ */
+twimlRouter.post('/twiml/inbound', (req, res) => {
+    // Default identity or env-configured identity
+    const defaultIdentity = process.env.SOFTPHONE_DEFAULT_IDENTITY || 'user_1';
+
+    console.log('[Voice TwiML] Inbound request:', {
+        from: req.body.From,
+        to: req.body.To || req.body.Called,
+        callSid: req.body.CallSid,
+        targetIdentity: defaultIdentity,
+    });
+
+    const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
+    const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
+
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Dial timeout="25">
+        <Client statusCallback="${statusCallbackUrl}"
+                statusCallbackEvent="initiated ringing answered completed"
+                statusCallbackMethod="POST">${defaultIdentity}</Client>
+    </Dial>
+</Response>`;
+
+    console.log('[Voice TwiML] Inbound TwiML generated, routing to:', defaultIdentity);
+    res.type('text/xml').send(twiml);
+});
+
+module.exports = { tokenRouter, twimlRouter };
