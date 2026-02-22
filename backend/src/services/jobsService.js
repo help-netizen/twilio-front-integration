@@ -85,7 +85,7 @@ function rowToJob(row) {
 function zbJobToColumns(zbJob) {
     return {
         job_number: zbJob.job_number || null,
-        service_name: zbJob.service_name || null,
+        service_name: zbJob.service_name || zbJob.services?.[0]?.service_name || null,
         start_date: zbJob.start_date || null,
         end_date: zbJob.end_date || null,
         customer_name: zbJob.customer?.name || null,
@@ -98,7 +98,7 @@ function zbJobToColumns(zbJob) {
         invoice_total: zbJob.invoice?.total || null,
         invoice_status: zbJob.invoice?.status || null,
         assigned_techs: JSON.stringify(zbJob.assigned_providers || []),
-        notes: JSON.stringify(zbJob.notes || []),
+        notes: JSON.stringify(zbJob.job_notes || zbJob.notes || []),
         zb_status: zbJob.status || 'scheduled',
         zb_canceled: !!zbJob.canceled,
         zb_rescheduled: !!zbJob.rescheduled,
