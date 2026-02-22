@@ -131,6 +131,23 @@ export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({
         sendDigits(digit);
     };
 
+    // Auto-resolve contact name when call starts without a contact selected
+    useEffect(() => {
+        if (callState === 'idle' || selectedContactName) return;
+
+        const phone = callerInfo?.number || normalizedNumber;
+        if (!phone) return;
+
+        authedFetch(`/api/pulse/timeline-by-phone?phone=${encodeURIComponent(phone)}`)
+            .then(res => res.json())
+            .then(data => {
+                if (data.contactName && !selectedContactName) {
+                    setSelectedContactName(data.contactName);
+                }
+            })
+            .catch(() => { /* best-effort */ });
+    }, [callState, callerInfo?.number, normalizedNumber, selectedContactName]);
+
     if (!open) return null;
 
     const isInCall = ['connecting', 'ringing', 'connected', 'incoming'].includes(callState);
