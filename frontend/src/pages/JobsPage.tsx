@@ -545,6 +545,7 @@ function JobDetailPanel({
     const [comments, setComments] = useState(job.comments || '');
     const [isFocused, setIsFocused] = useState(false);
     const [isEditingComments, setIsEditingComments] = useState(false);
+    const [contactInfoOpen, setContactInfoOpen] = useState(false);
 
     useEffect(() => {
         setComments(job.comments || '');
@@ -564,7 +565,22 @@ function JobDetailPanel({
                 <div className="flex items-start justify-between mb-3">
                     <div className="flex-1">
                         <h3 className="font-semibold text-lg">
-                            {contactInfo?.name || job.customer_name || `Job #${job.job_number || job.id}`}
+                            Job #{job.job_number || job.id}
+                            {(contactInfo?.name || job.customer_name) && (
+                                <>
+                                    {' - '}
+                                    {contactInfo ? (
+                                        <span
+                                            className="text-foreground hover:text-primary hover:underline cursor-pointer transition-colors"
+                                            onClick={() => navigate(`/contacts/${contactInfo.id}`)}
+                                        >
+                                            {contactInfo.name}
+                                        </span>
+                                    ) : (
+                                        <span>{job.customer_name}</span>
+                                    )}
+                                </>
+                            )}
                         </h3>
                     </div>
                     <Button variant="ghost" size="sm" onClick={onClose}>
@@ -629,97 +645,89 @@ function JobDetailPanel({
             ) : (
                 <div className="flex-1 overflow-y-auto">
                     <div className="p-4 space-y-4">
-                        {/* ── Contact Information ── */}
-                        <div>
-                            <h4 className="font-medium mb-3">Contact Information</h4>
-                            <div className="space-y-3">
-                                {/* Comments */}
-                                {(comments.trim() || isEditingComments) ? (
-                                    <div className="relative bg-rose-50 rounded-lg border border-rose-100 py-1 px-2">
-                                        <textarea
-                                            ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } }}
-                                            className="w-full text-sm resize-none bg-transparent border-none outline-none min-h-[24px] pr-16 leading-6"
-                                            value={comments}
-                                            onChange={e => setComments(e.target.value)}
-                                            onFocus={() => setIsFocused(true)}
-                                            onBlur={handleSaveComments}
-                                            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSaveComments(); } }}
-                                            placeholder="Add comments..."
-                                            rows={1}
-                                            autoFocus={isEditingComments}
-                                            style={{ height: 'auto', minHeight: '24px' }}
-                                            onInput={e => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = `${t.scrollHeight}px`; }}
-                                        />
-                                        {isFocused && (
-                                            <Button size="sm" className="absolute top-1 right-1.5 h-6 px-2 text-xs"
-                                                onMouseDown={e => e.preventDefault()} onClick={handleSaveComments}>
-                                                <CornerDownLeft className="size-3 mr-1" /> Enter
-                                            </Button>
-                                        )}
-                                    </div>
-                                ) : (
-                                    <button onClick={() => { setIsEditingComments(true); setIsFocused(true); }}
-                                        className="text-sm text-muted-foreground hover:text-foreground transition-colors underline decoration-dashed decoration-1 underline-offset-4">
-                                        + Add comment
-                                    </button>
+                        {/* ── Add Comment (above Contact Information) ── */}
+                        {(comments.trim() || isEditingComments) ? (
+                            <div className="relative bg-rose-50 rounded-lg border border-rose-100 py-1 px-2">
+                                <textarea
+                                    ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } }}
+                                    className="w-full text-sm resize-none bg-transparent border-none outline-none min-h-[24px] pr-16 leading-6"
+                                    value={comments}
+                                    onChange={e => setComments(e.target.value)}
+                                    onFocus={() => setIsFocused(true)}
+                                    onBlur={handleSaveComments}
+                                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSaveComments(); } }}
+                                    placeholder="Add comments..."
+                                    rows={1}
+                                    autoFocus={isEditingComments}
+                                    style={{ height: 'auto', minHeight: '24px' }}
+                                    onInput={e => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = `${t.scrollHeight}px`; }}
+                                />
+                                {isFocused && (
+                                    <Button size="sm" className="absolute top-1 right-1.5 h-6 px-2 text-xs"
+                                        onMouseDown={e => e.preventDefault()} onClick={handleSaveComments}>
+                                        <CornerDownLeft className="size-3 mr-1" /> Enter
+                                    </Button>
                                 )}
+                            </div>
+                        ) : (
+                            <button onClick={() => { setIsEditingComments(true); setIsFocused(true); }}
+                                className="text-sm text-muted-foreground hover:text-foreground transition-colors underline decoration-dashed decoration-1 underline-offset-4">
+                                + Add comment
+                            </button>
+                        )}
 
-                                {/* Phone */}
-                                {(contactInfo?.phone || job.customer_phone) && (
-                                    <div className="flex items-start gap-3">
-                                        <Phone className="size-4 shrink-0 text-muted-foreground" />
-                                        <div className="flex-1">
-                                            <Label className="text-xs text-muted-foreground">Phone</Label>
-                                            <div className="text-sm font-medium">
-                                                <a href={`tel:${contactInfo?.phone || job.customer_phone}`} className="text-foreground no-underline hover:underline">
-                                                    {formatPhone(contactInfo?.phone || job.customer_phone)}
+                        {/* ── Contact Information (collapsible) ── */}
+                        <div className="border rounded-lg">
+                            <button
+                                onClick={() => setContactInfoOpen(!contactInfoOpen)}
+                                className="w-full flex items-center justify-between px-3 py-2.5 text-sm font-medium hover:bg-muted/30 transition-colors"
+                            >
+                                <span>Contact Information</span>
+                                <ChevronDown className={`size-4 text-muted-foreground transition-transform ${contactInfoOpen ? 'rotate-180' : ''}`} />
+                            </button>
+                            {contactInfoOpen && (
+                                <div className="px-3 pb-3 space-y-3">
+                                    {/* Phone */}
+                                    {(contactInfo?.phone || job.customer_phone) && (
+                                        <div className="flex items-start gap-3">
+                                            <Phone className="size-4 shrink-0 text-muted-foreground" />
+                                            <div className="flex-1">
+                                                <Label className="text-xs text-muted-foreground">Phone</Label>
+                                                <div className="text-sm font-medium">
+                                                    <a href={`tel:${contactInfo?.phone || job.customer_phone}`} className="text-foreground no-underline hover:underline">
+                                                        {formatPhone(contactInfo?.phone || job.customer_phone)}
+                                                    </a>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Email */}
+                                    {(contactInfo?.email || job.customer_email) && (
+                                        <div className="flex items-start gap-3">
+                                            <Mail className="size-4 shrink-0 text-muted-foreground" />
+                                            <div className="flex-1">
+                                                <Label className="text-xs text-muted-foreground">Email</Label>
+                                                <a href={`mailto:${contactInfo?.email || job.customer_email}`}
+                                                    className="text-sm font-medium text-foreground no-underline hover:underline block">
+                                                    {contactInfo?.email || job.customer_email}
                                                 </a>
                                             </div>
                                         </div>
-                                    </div>
-                                )}
+                                    )}
 
-                                {/* Email */}
-                                {(contactInfo?.email || job.customer_email) && (
-                                    <div className="flex items-start gap-3">
-                                        <Mail className="size-4 shrink-0 text-muted-foreground" />
-                                        <div className="flex-1">
-                                            <Label className="text-xs text-muted-foreground">Email</Label>
-                                            <a href={`mailto:${contactInfo?.email || job.customer_email}`}
-                                                className="text-sm font-medium text-foreground no-underline hover:underline block">
-                                                {contactInfo?.email || job.customer_email}
-                                            </a>
+                                    {/* Address */}
+                                    {job.address && (
+                                        <div className="flex items-start gap-3">
+                                            <MapPin className="size-4 shrink-0 text-muted-foreground" />
+                                            <div className="flex-1">
+                                                <Label className="text-xs text-muted-foreground">Address</Label>
+                                                <div className="text-sm font-medium mt-1">{job.address}</div>
+                                            </div>
                                         </div>
-                                    </div>
-                                )}
-
-                                {/* Address */}
-                                {job.address && (
-                                    <div className="flex items-start gap-3">
-                                        <MapPin className="size-4 shrink-0 text-muted-foreground" />
-                                        <div className="flex-1">
-                                            <Label className="text-xs text-muted-foreground">Address</Label>
-                                            <div className="text-sm font-medium mt-1">{job.address}</div>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {/* Contact link */}
-                                {contactInfo && (
-                                    <div className="flex items-start gap-3">
-                                        <User2 className="size-4 shrink-0 text-muted-foreground" />
-                                        <div className="flex-1">
-                                            <Label className="text-xs text-muted-foreground">Contact</Label>
-                                            <span
-                                                className="text-sm font-medium text-indigo-600 cursor-pointer hover:underline block"
-                                                onClick={() => navigate(`/contacts/${contactInfo.id}`)}
-                                            >
-                                                {contactInfo.name}
-                                            </span>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
+                                    )}
+                                </div>
+                            )}
                         </div>
 
                         <Separator />
