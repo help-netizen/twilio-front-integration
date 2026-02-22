@@ -80,7 +80,7 @@ const twimlRouter = express.Router();
  * Called by Twilio when the browser SDK initiates an outbound call via Device.connect().
  * Returns TwiML that dials the PSTN number.
  */
-twimlRouter.post('/twiml/outbound', (req, res) => {
+twimlRouter.post('/twiml/outbound', async (req, res) => {
     const to = req.body.To;
     // Allow client to specify caller ID (from Blanc phone settings); fall back to env var
     const callerId = req.body.CallerId || process.env.SOFTPHONE_CALLER_ID || process.env.TWILIO_PHONE_NUMBER;
@@ -133,6 +133,48 @@ twimlRouter.post('/twiml/outbound', (req, res) => {
 
     console.log('[Voice TwiML] Outbound TwiML generated for:', normalized);
     res.type('text/xml').send(twiml);
+
+    // Create parent call record immediately so it appears in timeline right away
+    const callSid = req.body.CallSid;
+    if (callSid) {
+        try {
+            const db = require('../db/connection');
+            const queries = require('../db/queries');
+            const { publishRealtimeEvent } = require('../services/sseService');
+
+            // Resolve timeline for the dialed number
+            const timeline = await queries.findOrCreateTimeline(normalized, null);
+            const timelineId = timeline.id;
+            const contactId = timeline.contact_id || null;
+
+            const call = await queries.upsertCall({
+                callSid,
+                parentCallSid: null,
+                contactId,
+                timelineId,
+                direction: 'outbound',
+                fromNumber: callerId,
+                toNumber: normalized,
+                status: 'initiated',
+                isFinal: false,
+                startedAt: new Date(),
+                answeredAt: null,
+                endedAt: null,
+                durationSec: null,
+                price: null,
+                priceUnit: null,
+                lastEventTime: new Date(),
+                rawLastPayload: req.body,
+            });
+
+            if (call) {
+                publishRealtimeEvent('call.updated', call, 'twiml-outbound');
+                console.log('[Voice TwiML] Initial call record created:', callSid);
+            }
+        } catch (err) {
+            console.warn('[Voice TwiML] Failed to create initial call record (non-blocking):', err.message);
+        }
+    }
 });
 
 /**
