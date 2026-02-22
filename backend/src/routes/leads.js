@@ -331,6 +331,24 @@ router.patch('/:uuid', async (req, res) => {
             } catch (syncErr) {
                 console.error(`[LeadsAPI][${reqId}] Contact sync error (non-blocking):`, syncErr.message);
             }
+
+            // Async: merge orphan timelines when phone fields change
+            if ('Phone' in fields || 'SecondPhone' in fields) {
+                (async () => {
+                    try {
+                        const lead = await leadsService.getLeadByUUID(uuid, req.companyFilter?.company_id);
+                        if (!lead || !lead.ContactId) return;
+                        const { mergeOrphanTimelines } = require('../services/timelineMergeService');
+                        await mergeOrphanTimelines(
+                            lead.ContactId,
+                            [lead.Phone, lead.SecondPhone],
+                            `[LeadsAPI][${reqId}]`
+                        );
+                    } catch (mergeErr) {
+                        console.warn(`[LeadsAPI][${reqId}] Timeline merge error (non-blocking):`, mergeErr.message);
+                    }
+                })();
+            }
         }
 
         // Address sync: if address fields changed, resolve and link to contact_addresses
