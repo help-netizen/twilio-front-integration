@@ -38,6 +38,7 @@ export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({
     const [selectedContactName, setSelectedContactName] = useState<string | null>(null);
     const [showKeypad, setShowKeypad] = useState(false);
     const [showSearch, setShowSearch] = useState(false);
+    const [callError, setCallError] = useState<string | null>(null);
     const [blancNumbers, setBlancNumbers] = useState<BlancNumber[]>([]);
     const [selectedCallerId, setSelectedCallerId] = useState<string>('');
 
@@ -106,8 +107,23 @@ export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({
     }, []);
 
     // Initiate outbound call
-    const handleCall = useCallback(() => {
+    const handleCall = useCallback(async () => {
         if (!normalizedNumber) return;
+        setCallError(null);
+
+        // Pre-flight: check if number is already on an active call
+        try {
+            const res = await authedFetch(`/api/voice/check-busy?phone=${encodeURIComponent(normalizedNumber)}`);
+            const data = await res.json();
+            if (data.busy) {
+                setCallError(data.message || 'A team member is already on the line with this contact. Please try again later.');
+                setTimeout(() => setCallError(null), 5000);
+                return;
+            }
+        } catch {
+            // fail-open: if check fails, allow the call
+        }
+
         const params: Record<string, string> = {};
         if (selectedCallerId) {
             params.CallerId = selectedCallerId;
@@ -259,6 +275,11 @@ export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({
                                 <span>{selectedContactName} — {formatPhoneDisplay(normalizedNumber || '')}</span>
                             )}
                         </div>
+
+                        {/* Busy error message */}
+                        {callError && (
+                            <div className="softphone-error">{callError}</div>
+                        )}
 
                         <div className="softphone-actions">
                             <button

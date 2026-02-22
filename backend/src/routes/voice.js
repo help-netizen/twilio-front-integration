@@ -72,6 +72,42 @@ tokenRouter.get('/phone-access', async (req, res) => {
     }
 });
 
+/**
+ * GET /api/voice/check-busy?phone=+15085140320
+ * Returns whether a phone number currently has an active call.
+ * Used to prevent two users from calling the same number simultaneously.
+ */
+tokenRouter.get('/check-busy', async (req, res) => {
+    try {
+        const phone = req.query.phone;
+        if (!phone) return res.json({ busy: false });
+
+        const db = require('../db/connection');
+        const normalized = toE164(phone);
+
+        const result = await db.query(
+            `SELECT call_sid, status, direction FROM calls
+             WHERE parent_call_sid IS NULL
+               AND status IN ('initiated', 'ringing', 'in-progress', 'queued')
+               AND (from_number = $1 OR to_number = $1)
+             LIMIT 1`,
+            [normalized]
+        );
+
+        if (result.rows.length > 0) {
+            return res.json({
+                busy: true,
+                message: 'A team member is already on the line with this contact. Please try again later.',
+            });
+        }
+
+        res.json({ busy: false });
+    } catch (err) {
+        console.error('[Voice] Check-busy error:', err.message);
+        res.json({ busy: false }); // fail-open
+    }
+});
+
 // ─── TwiML router (Twilio-called, no auth) ──────────────────────────────────
 const twimlRouter = express.Router();
 
