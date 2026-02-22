@@ -267,9 +267,9 @@ async function handleVoiceInbound(req, res) {
             // fall back to SOFTPHONE_DEFAULT_IDENTITY env var.
             let routingMode = 'sip';
             let clientIdentity = null;
+            const dbConn = require('../db/connection');
 
             try {
-                const dbConn = require('../db/connection');
                 const routeResult = await dbConn.query(
                     `SELECT routing_mode, client_identity FROM phone_number_settings WHERE phone_number = $1`,
                     [To]
