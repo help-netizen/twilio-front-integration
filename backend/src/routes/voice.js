@@ -47,6 +47,10 @@ const twimlRouter = express.Router();
 twimlRouter.post('/twiml/outbound', (req, res) => {
     const to = req.body.To;
     const callerId = process.env.SOFTPHONE_CALLER_ID || process.env.TWILIO_PHONE_NUMBER;
+    const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
+    const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
+    const dialActionUrl = `${baseUrl}/webhooks/twilio/voice-dial-action`;
+    const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;
 
     console.log('[Voice TwiML] Outbound request:', {
         to,
@@ -77,8 +81,16 @@ twimlRouter.post('/twiml/outbound', (req, res) => {
 
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Dial callerId="${callerId}">
-        <Number>${normalized}</Number>
+    <Dial callerId="${callerId}"
+          timeout="25"
+          action="${dialActionUrl}"
+          method="POST"
+          record="record-from-answer-dual"
+          recordingStatusCallback="${recordingStatusUrl}"
+          recordingStatusCallbackMethod="POST">
+        <Number statusCallback="${statusCallbackUrl}"
+                statusCallbackEvent="initiated ringing answered completed"
+                statusCallbackMethod="POST">${normalized}</Number>
     </Dial>
 </Response>`;
 
@@ -94,6 +106,10 @@ twimlRouter.post('/twiml/outbound', (req, res) => {
 twimlRouter.post('/twiml/inbound', (req, res) => {
     // Default identity or env-configured identity
     const defaultIdentity = process.env.SOFTPHONE_DEFAULT_IDENTITY || 'user_1';
+    const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
+    const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
+    const dialActionUrl = `${baseUrl}/webhooks/twilio/voice-dial-action`;
+    const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;
 
     console.log('[Voice TwiML] Inbound request:', {
         from: req.body.From,
@@ -102,12 +118,14 @@ twimlRouter.post('/twiml/inbound', (req, res) => {
         targetIdentity: defaultIdentity,
     });
 
-    const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
-    const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
-
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Dial timeout="25">
+    <Dial timeout="25"
+          action="${dialActionUrl}"
+          method="POST"
+          record="record-from-answer-dual"
+          recordingStatusCallback="${recordingStatusUrl}"
+          recordingStatusCallbackMethod="POST">
         <Client statusCallback="${statusCallbackUrl}"
                 statusCallbackEvent="initiated ringing answered completed"
                 statusCallbackMethod="POST">${defaultIdentity}</Client>
