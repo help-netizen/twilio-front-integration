@@ -28,7 +28,7 @@ function requestId() {
 // =============================================================================
 // Shared: process webhook payload (used by both legacy and per-company routes)
 // =============================================================================
-async function processWebhookPayload(reqId, payload, headers) {
+async function processWebhookPayload(reqId, payload, headers, companyId = null) {
     const event = payload.event || 'unknown';
     const dataId = payload.data?.id ? String(payload.data.id) : 'unknown';
     const webhookId = payload.webhook_id || '';
@@ -40,11 +40,11 @@ async function processWebhookPayload(reqId, payload, headers) {
     const eventKey = `zenbooker:${event}:${dataId}:${webhookId}`;
     try {
         await db.query(
-            `INSERT INTO webhook_inbox (provider, event_key, source, event_type, call_sid, payload, headers)
-             VALUES ('zenbooker', $1, 'zenbooker', $2, NULL, $3::jsonb, $4::jsonb)
+            `INSERT INTO webhook_inbox (provider, event_key, source, event_type, call_sid, payload, headers, company_id)
+             VALUES ('zenbooker', $1, 'zenbooker', $2, NULL, $3::jsonb, $4::jsonb, $5)
              ON CONFLICT (event_key) DO NOTHING
              RETURNING id`,
-            [eventKey, event, JSON.stringify(payload), JSON.stringify(headers)]
+            [eventKey, event, JSON.stringify(payload), JSON.stringify(headers), companyId]
         );
     } catch (dbErr) {
         if (dbErr.code === '23505') {
@@ -154,7 +154,7 @@ router.post('/wh/:key', async (req, res) => {
         res.status(200).json({ ok: true, request_id: reqId });
 
         // Process async
-        await processWebhookPayload(reqId, req.body, req.headers);
+        await processWebhookPayload(reqId, req.body, req.headers, company.id);
     } catch (err) {
         console.error(`[ZbWebhook][${reqId}] Unexpected error:`, err);
         if (!res.headersSent) {
