@@ -332,6 +332,26 @@ router.post('/contact/:contactId/mark-read', async (req, res) => {
 });
 
 // =============================================================================
+// POST /api/calls/contact/:contactId/mark-unread — team-wide mark unread
+// =============================================================================
+router.post('/contact/:contactId/mark-unread', async (req, res) => {
+    try {
+        const { contactId } = req.params;
+        const contact = await queries.markContactUnread(parseInt(contactId));
+        if (!contact) {
+            return res.status(404).json({ error: 'Contact not found' });
+        }
+        // SSE broadcast so all users see the unread state
+        const realtimeService = require('../services/realtimeService');
+        realtimeService.broadcast('contact.unread', { contactId: parseInt(contactId) });
+        res.json({ contact });
+    } catch (error) {
+        console.error('Error marking contact unread:', error);
+        res.status(500).json({ error: 'Failed to mark contact unread' });
+    }
+});
+
+// =============================================================================
 // GET /api/calls/contact/:contactId — all calls for a contact
 // =============================================================================
 router.get('/contact/:contactId', async (req, res) => {

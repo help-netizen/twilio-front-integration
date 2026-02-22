@@ -20,7 +20,7 @@ import { formatPhoneNumber } from '../utils/formatters';
 import { useLeadByPhone } from '../hooks/useLeadByPhone';
 import { Input } from '../components/ui/input';
 import { Skeleton } from '../components/ui/skeleton';
-import { Search, PhoneOff, Activity, PhoneIncoming, PhoneOutgoing, ArrowLeftRight, MessageSquare, MessageSquareReply } from 'lucide-react';
+import { Search, PhoneOff, Activity, PhoneIncoming, PhoneOutgoing, ArrowLeftRight, MessageSquare, MessageSquareReply, MoreVertical, EyeOff } from 'lucide-react';
 import type { Call } from '../types/models';
 import type { Lead } from '../types/lead';
 import type { ContactLead } from '../types/contact';
@@ -44,7 +44,7 @@ const STATUS_ICON_COLORS: Record<string, string> = {
     'voicemail_left': '#dc2626',
 };
 
-function PulseContactItem({ call, isActive }: { call: Call; isActive: boolean }) {
+function PulseContactItem({ call, isActive, onMarkUnread }: { call: Call; isActive: boolean; onMarkUnread?: (contactId: number) => void }) {
     const navigate = useNavigate();
     // Prefer timeline_id for navigation, fall back to contact_id (legacy)
     const tlId = (call as any).timeline_id;
@@ -105,6 +105,19 @@ function PulseContactItem({ call, isActive }: { call: Call; isActive: boolean })
         return <PhoneOutgoing className="size-4" style={{ color: callColor }} />;
     };
 
+    const [menuOpen, setMenuOpen] = React.useState(false);
+    const menuRef = React.useRef<HTMLDivElement>(null);
+
+    // Close menu on outside click
+    React.useEffect(() => {
+        if (!menuOpen) return;
+        const handler = (e: MouseEvent) => {
+            if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [menuOpen]);
+
     return (
         <button
             onClick={() => {
@@ -137,7 +150,6 @@ function PulseContactItem({ call, isActive }: { call: Call; isActive: boolean })
                 <div className="min-w-0 flex-1">
                     <div className="flex items-baseline justify-between mb-1">
                         <span className={`text-sm truncate ${call.has_unread ? 'font-semibold text-gray-900' : 'font-medium text-gray-900'}`}>{primaryText}</span>
-
                     </div>
                     {showSecondaryPhone && (
                         <div className="text-xs text-gray-600 mb-1 font-mono">{formatPhoneNumber(displayPhone)}</div>
@@ -148,6 +160,45 @@ function PulseContactItem({ call, isActive }: { call: Call; isActive: boolean })
                         <span>{getFullDateTime(displayDate)}</span>
                     </div>
                 </div>
+                {/* 3-dot menu — only on active item */}
+                {isActive && call.contact?.id && (
+                    <div className="shrink-0 relative" ref={menuRef}>
+                        <div
+                            role="button"
+                            tabIndex={0}
+                            onClick={(e) => { e.stopPropagation(); setMenuOpen(prev => !prev); }}
+                            onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMenuOpen(prev => !prev); } }}
+                            className="p-1 rounded hover:bg-blue-100 transition-colors cursor-pointer"
+                            title="More options"
+                        >
+                            <MoreVertical className="size-4 text-gray-500" />
+                        </div>
+                        {menuOpen && (
+                            <div className="absolute right-0 top-full mt-1 z-50 bg-white rounded-md shadow-lg border border-gray-200 py-1 min-w-[160px]">
+                                <div
+                                    role="button"
+                                    tabIndex={0}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setMenuOpen(false);
+                                        if (call.contact?.id && onMarkUnread) onMarkUnread(call.contact.id);
+                                    }}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            e.stopPropagation();
+                                            setMenuOpen(false);
+                                            if (call.contact?.id && onMarkUnread) onMarkUnread(call.contact.id);
+                                        }
+                                    }}
+                                    className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer w-full"
+                                >
+                                    <EyeOff className="size-3.5" />
+                                    Mark as Unread
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
         </button>
     );
@@ -584,6 +635,13 @@ export const PulsePage: React.FC = () => {
                                     key={tlId ?? call.id ?? `c-${call.contact?.id ?? (call.from_number || idx)}`}
                                     call={call}
                                     isActive={isActive}
+                                    onMarkUnread={async (contactId) => {
+                                        try {
+                                            await callsApi.markContactUnread(contactId);
+                                            refetchContacts();
+                                            toast.success('Marked as unread');
+                                        } catch { toast.error('Failed to mark as unread'); }
+                                    }}
                                 />
                             );
                         })

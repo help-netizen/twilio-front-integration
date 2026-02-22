@@ -93,6 +93,11 @@ export const callsApi = {
     markContactRead: async (contactId: number): Promise<void> => {
         await apiClient.post(`/calls/contact/${contactId}/mark-read`);
     },
+
+    /** Mark a contact as unread (team-wide) */
+    markContactUnread: async (contactId: number): Promise<void> => {
+        await apiClient.post(`/calls/contact/${contactId}/mark-unread`);
+    },
 };
 
 export default apiClient;
