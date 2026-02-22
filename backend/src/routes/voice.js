@@ -102,9 +102,13 @@ twimlRouter.post('/twiml/outbound', (req, res) => {
  * POST /api/voice/twiml/inbound
  * Called by Twilio when an inbound call arrives at the Twilio phone number.
  * Routes to <Client> identity for WebRTC delivery.
+ *
+ * IMPORTANT: This also ingests the initial call event into webhook_inbox
+ * so the parent call (with correct From=caller) is stored. Without this,
+ * only child <Client> status callbacks would be processed, and those
+ * have From=company_number instead of the caller's number.
  */
-twimlRouter.post('/twiml/inbound', (req, res) => {
-    // Default identity or env-configured identity
+twimlRouter.post('/twiml/inbound', async (req, res) => {
     const defaultIdentity = process.env.SOFTPHONE_DEFAULT_IDENTITY || 'user_1';
     const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
     const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
@@ -117,6 +121,34 @@ twimlRouter.post('/twiml/inbound', (req, res) => {
         callSid: req.body.CallSid,
         targetIdentity: defaultIdentity,
     });
+
+    // ── Ingest parent call into webhook_inbox (same as handleVoiceInbound) ──
+    // This ensures the call record has the correct From (caller) number.
+    try {
+        const queries = require('../db/queries');
+        const { CallSid } = req.body;
+        if (CallSid) {
+            const eventKey = `voice:${CallSid}:inbound-softphone:${Date.now()}`;
+            await queries.insertInboxEvent({
+                eventKey,
+                source: 'voice',
+                eventType: 'call.inbound',
+                eventTime: new Date(),
+                callSid: CallSid,
+                recordingSid: null,
+                transcriptionSid: null,
+                payload: req.body,
+                headers: {
+                    'x-twilio-signature': req.headers['x-twilio-signature'],
+                    'i-twilio-idempotency-token': req.headers['i-twilio-idempotency-token'],
+                },
+            });
+            console.log('[Voice TwiML] Inbound call ingested into webhook_inbox:', CallSid);
+        }
+    } catch (ingestErr) {
+        // Non-blocking — still return TwiML even if ingestion fails
+        console.error('[Voice TwiML] Ingestion error (non-blocking):', ingestErr.message);
+    }
 
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
