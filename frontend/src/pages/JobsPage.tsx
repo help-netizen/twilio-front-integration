@@ -2,11 +2,10 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../components/ui/button';
-import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Separator } from '../components/ui/separator';
 import {
-    Search, RefreshCw, ChevronLeft, ChevronRight, X, MapPin,
+    RefreshCw, ChevronLeft, ChevronRight, X, MapPin,
     User2, FileText, Play, CheckCircle2, Navigation, Ban,
     Loader2, Phone, Mail, Tag,
     Calendar, ChevronDown, CornerDownLeft, ArrowUpDown, ArrowUp, ArrowDown,
@@ -109,7 +108,6 @@ export function JobsPage() {
     const [jobTypeFilter, setJobTypeFilter] = useState<string[]>([]);
     const [onlyOpen, setOnlyOpen] = useState(false);
     const [startDate, setStartDate] = useState<string | undefined>(undefined);
-    const [endDate, setEndDate] = useState<string | undefined>(undefined);
 
     // Sort
     const [sortBy, setSortBy] = useState<string>('created_at');
@@ -130,7 +128,6 @@ export function JobsPage() {
             if (sortOrder) params.sort_order = sortOrder;
             if (onlyOpen) params.only_open = true;
             if (startDate) params.start_date = startDate;
-            if (endDate) params.end_date = endDate;
 
             const data = await jobsApi.listJobs(params);
             setJobs(data.results || []);
@@ -144,7 +141,7 @@ export function JobsPage() {
         } finally {
             setLoading(false);
         }
-    }, [searchQuery, sortBy, sortOrder, onlyOpen, startDate, endDate]);
+    }, [searchQuery, sortBy, sortOrder, onlyOpen, startDate]);
 
     // Client-side filtering (applied on top of server results)
     const filteredJobs = useMemo(() => {
@@ -332,9 +329,7 @@ export function JobsPage() {
                         jobTypeFilter={jobTypeFilter}
                         onJobTypeFilterChange={setJobTypeFilter}
                         startDate={startDate}
-                        endDate={endDate}
                         onStartDateChange={setStartDate}
-                        onEndDateChange={setEndDate}
                         onlyOpen={onlyOpen}
                         onOnlyOpenChange={setOnlyOpen}
                         jobs={jobs}

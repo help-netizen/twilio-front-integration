@@ -42,9 +42,7 @@ interface JobsFiltersProps {
     onJobTypeFilterChange: (v: string[]) => void;
 
     startDate?: string;
-    endDate?: string;
     onStartDateChange: (d: string | undefined) => void;
-    onEndDateChange: (d: string | undefined) => void;
 
     onlyOpen: boolean;
     onOnlyOpenChange: (v: boolean) => void;
@@ -61,7 +59,7 @@ export function JobsFilters({
     providerFilter, onProviderFilterChange,
     sourceFilter, onSourceFilterChange,
     jobTypeFilter, onJobTypeFilterChange,
-    startDate, endDate, onStartDateChange, onEndDateChange,
+    startDate, onStartDateChange,
     onlyOpen, onOnlyOpenChange,
     jobs,
 }: JobsFiltersProps) {
