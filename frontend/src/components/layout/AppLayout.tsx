@@ -41,10 +41,12 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
     // --- SoftPhone ---
     const voice = useTwilioDevice();
     const [softPhoneOpen, setSoftPhoneOpen] = useState(false);
+    const [softPhoneMinimized, setSoftPhoneMinimized] = useState(false);
 
     // Auto-open SoftPhone on incoming call + navigate to caller's timeline
     const handleAcceptIncoming = useCallback(() => {
         setSoftPhoneOpen(true);
+        setSoftPhoneMinimized(false);
         // Small delay to let the modal render, then accept
         setTimeout(() => voice.acceptCall(), 100);
 
@@ -337,11 +339,14 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                 {children}
             </main>
 
-            {/* SoftPhone Modal */}
+            {/* SoftPhone Panel */}
             <SoftPhoneWidget
                 voice={voice}
                 open={softPhoneOpen}
-                onClose={() => setSoftPhoneOpen(false)}
+                minimized={softPhoneMinimized}
+                onClose={() => { setSoftPhoneOpen(false); setSoftPhoneMinimized(false); }}
+                onMinimize={() => setSoftPhoneMinimized(true)}
+                onRestore={() => setSoftPhoneMinimized(false)}
             />
         </div>
     );

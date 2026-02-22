@@ -1,23 +1,16 @@
 /*
  * SoftPhone Widget — Styles
  *
- * Dark-themed softphone modal with state-based UI.
+ * Dark-themed softphone panel (non-blocking, no overlay).
+ * Supports minimize-to-tray during active calls.
  */
 
-/* ─── Modal Overlay ──────────────────────────────────────────────────────── */
-.softphone-overlay {
+/* ─── Panel (replaces modal overlay) ─────────────────────────────────────── */
+.softphone-panel {
     position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(4px);
-    z-index: 10000;
-    display: flex;
-    align-items: flex-start;
-    justify-content: flex-end;
-    padding: 80px 24px 24px;
-}
-
-.softphone-modal {
+    top: 56px;
+    right: 16px;
+    z-index: 9000;
     background: #1a1a2e;
     border-radius: 16px;
     width: 360px;
@@ -38,12 +31,82 @@
     }
 }
 
+/* ─── Minimized Tray Pill ────────────────────────────────────────────────── */
+.softphone-tray {
+    position: fixed;
+    top: 12px;
+    right: 220px;
+    z-index: 9001;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px 4px 12px;
+    background: #1a1a2e;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 20px;
+    cursor: pointer;
+    transition: background 0.15s, box-shadow 0.15s;
+    animation: softphone-slide-in 0.15s ease-out;
+}
+
+.softphone-tray:hover {
+    background: #242445;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+}
+
+.softphone-tray-status {
+    font-size: 13px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.3px;
+}
+
+.softphone-tray-status.connected {
+    color: #66bb6a;
+}
+
+.softphone-tray-status.connecting {
+    color: #ffa726;
+}
+
+.softphone-tray-status.ringing {
+    color: #42a5f5;
+}
+
+.softphone-tray-status.incoming {
+    color: #ab47bc;
+    animation: softphone-pulse 1.5s ease-in-out infinite;
+}
+
+.softphone-tray-mute {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255, 255, 255, 0.08);
+    color: #ccc;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+}
+
+.softphone-tray-mute:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.softphone-tray-mute.active {
+    background: rgba(244, 67, 54, 0.25);
+    color: #ef5350;
+}
+
 /* ─── Header ─────────────────────────────────────────────────────────────── */
 .softphone-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 16px 20px;
+    padding: 12px 12px 12px 16px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
@@ -54,20 +117,17 @@
     color: #e0e0e0;
     font-size: 14px;
     font-weight: 600;
+    min-width: 0;
+    flex: 1;
 }
 
-.softphone-status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #4caf50;
+.softphone-header-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
 }
 
-.softphone-status-dot.offline {
-    background: #f44336;
-}
-
-.softphone-close {
+.softphone-header-btn {
     background: none;
     border: none;
     color: #888;
@@ -79,9 +139,64 @@
     transition: color 0.15s, background 0.15s;
 }
 
-.softphone-close:hover {
+.softphone-header-btn:hover {
     color: #fff;
     background: rgba(255, 255, 255, 0.1);
+}
+
+/* ─── Header Caller ID ───────────────────────────────────────────────────── */
+.softphone-header-caller-id {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.softphone-header-caller-label {
+    font-size: 12px;
+    color: #888;
+    white-space: nowrap;
+    font-weight: 400;
+}
+
+.softphone-header-caller-select {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    color: #e0e0e0;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 3px 6px;
+    cursor: pointer;
+    outline: none;
+    appearance: auto;
+    max-width: 170px;
+}
+
+.softphone-header-caller-select:hover {
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.softphone-header-caller-select:focus {
+    border-color: rgba(99, 102, 241, 0.5);
+}
+
+.softphone-header-caller-select option {
+    background: #1a1a2e;
+    color: #e0e0e0;
+}
+
+/* ─── Status Dot ─────────────────────────────────────────────────────────── */
+.softphone-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #4caf50;
+    flex-shrink: 0;
+}
+
+.softphone-status-dot.offline {
+    background: #f44336;
 }
 
 /* ─── Body (Idle) ────────────────────────────────────────────────────────── */
@@ -123,63 +238,6 @@
 
 .softphone-helper.error {
     color: #f44336;
-}
-
-/* ─── Caller ID Picker ──────────────────────────────────────────────────── */
-.softphone-caller-id {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 12px;
-    padding: 0 2px;
-}
-
-.softphone-caller-id-label {
-    font-size: 12px;
-    color: #888;
-    white-space: nowrap;
-}
-
-.softphone-caller-id-select-wrapper {
-    position: relative;
-    flex: 1;
-}
-
-.softphone-caller-id-select {
-    width: 100%;
-    padding: 7px 28px 7px 10px;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 8px;
-    color: #e0e0e0;
-    font-size: 13px;
-    cursor: pointer;
-    outline: none;
-    appearance: none;
-    -webkit-appearance: none;
-    transition: border-color 0.15s;
-}
-
-.softphone-caller-id-select:hover {
-    border-color: rgba(255, 255, 255, 0.2);
-}
-
-.softphone-caller-id-select:focus {
-    border-color: rgba(99, 102, 241, 0.5);
-}
-
-.softphone-caller-id-select option {
-    background: #1a1a2e;
-    color: #e0e0e0;
-}
-
-.softphone-caller-id-chevron {
-    position: absolute;
-    right: 8px;
-    top: 50%;
-    transform: translateY(-50%);
-    color: #666;
-    pointer-events: none;
 }
 
 /* ─── Call Actions ───────────────────────────────────────────────────────── */
@@ -457,7 +515,7 @@
     }
 }
 
-/* ─── DTMF Keypad Overlay ────────────────────────────────────────────────── */
+/* ─── DTMF Keypad ────────────────────────────────────────────────────────── */
 .softphone-keypad {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
