@@ -48,9 +48,8 @@ router.post('/', async (req, res) => {
         // Generate temporary password
         const tempPassword = generateTempPassword();
 
-        // Create in Keycloak using the caller's session token
-        const bearerToken = req.headers.authorization?.replace('Bearer ', '');
-        const keycloakSub = await createKeycloakUser(email, full_name, tempPassword, role, bearerToken);
+        // Create in Keycloak (server-side admin token)
+        const keycloakSub = await createKeycloakUser(email, full_name, tempPassword, role);
 
         // Create in CRM DB with membership
         const user = await userService.createUserWithMembership({
@@ -332,36 +331,50 @@ function generateTempPassword() {
 }
 
 /**
- * Create a user in Keycloak via Admin API.
- * Uses the caller's session token (admin/super_admin must have
- * `manage-users` role from `realm-management` client in Keycloak).
- * 
- * @param {string} email
- * @param {string} fullName
- * @param {string} tempPassword
- * @param {string} role
- * @param {string} accessToken — Bearer token from the authenticated admin user
- * @returns {Promise<string>} Keycloak user UUID (sub)
+ * Get an admin-level access token from Keycloak.
+ * Uses KEYCLOAK_ADMIN_USER / KEYCLOAK_ADMIN_PASSWORD env vars.
  */
-async function createKeycloakUser(email, fullName, tempPassword, role, accessToken) {
+async function getKeycloakAdminToken(kcUrl) {
+    const adminUser = process.env.KEYCLOAK_ADMIN_USER || 'admin';
+    const adminPass = process.env.KEYCLOAK_ADMIN_PASSWORD || 'admin';
+    const res = await fetch(`${kcUrl}/realms/master/protocol/openid-connect/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+            grant_type: 'password',
+            client_id: 'admin-cli',
+            username: adminUser,
+            password: adminPass,
+        }),
+    });
+    if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`KC admin auth failed: ${res.status} ${body}`);
+    }
+    return (await res.json()).access_token;
+}
+
+/**
+ * Create a user in Keycloak via Admin API.
+ * Uses a server-side admin token for full permissions
+ * (user creation + role assignment).
+ */
+async function createKeycloakUser(email, fullName, tempPassword, role) {
     const KC_URL = process.env.KEYCLOAK_REALM_URL?.replace(/\/realms\/.*$/, '');
     const REALM = process.env.KEYCLOAK_REALM || 'crm-prod';
 
     if (!KC_URL) {
-        // Dev mode — generate fake sub
         const crypto = require('crypto');
         return crypto.randomUUID();
     }
 
-    const authHeader = { Authorization: `Bearer ${accessToken}` };
+    const token = await getKeycloakAdminToken(KC_URL);
+    const auth = { Authorization: `Bearer ${token}` };
 
     // Create user
     const createRes = await fetch(`${KC_URL}/admin/realms/${REALM}/users`, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            ...authHeader,
-        },
+        headers: { 'Content-Type': 'application/json', ...auth },
         body: JSON.stringify({
             username: email,
             email,
@@ -382,7 +395,7 @@ async function createKeycloakUser(email, fullName, tempPassword, role, accessTok
     // Get user ID
     const usersRes = await fetch(
         `${KC_URL}/admin/realms/${REALM}/users?username=${encodeURIComponent(email)}&exact=true`,
-        { headers: authHeader }
+        { headers: auth }
     );
     const users = await usersRes.json();
     if (!users.length) throw new Error('User created but not found in Keycloak');
@@ -392,23 +405,26 @@ async function createKeycloakUser(email, fullName, tempPassword, role, accessTok
     // Assign realm role
     const roleRes = await fetch(
         `${KC_URL}/admin/realms/${REALM}/roles/${role}`,
-        { headers: authHeader }
+        { headers: auth }
     );
     if (roleRes.ok) {
         const roleObj = await roleRes.json();
-        await fetch(
+        const assignRes = await fetch(
             `${KC_URL}/admin/realms/${REALM}/users/${kcUserId}/role-mappings/realm`,
             {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...authHeader },
+                headers: { 'Content-Type': 'application/json', ...auth },
                 body: JSON.stringify([{ id: roleObj.id, name: role }]),
             }
         );
+        if (!assignRes.ok) {
+            console.error(`[Users] Role assignment failed: ${assignRes.status} ${await assignRes.text()}`);
+        }
     } else {
-        console.warn(`[Users] Keycloak role '${role}' not found, skipping role assignment`);
+        console.warn(`[Users] Keycloak role '${role}' not found, skipping`);
     }
 
-    return users[0].id; // Keycloak UUID = sub
+    return users[0].id;
 }
 
 module.exports = router;
