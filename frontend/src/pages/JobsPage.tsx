@@ -629,10 +629,38 @@ function JobDetailPanel({
                 Job Notes ({job.notes?.length || 0})
             </h3>
             <div className="space-y-3">
-                {job.notes && job.notes.length > 0 ? job.notes.map((note, i) => (
-                    <div key={i} className="p-3 bg-muted rounded-lg">
-                        <p className="text-sm">{note.text}</p>
-                        <p className="text-xs text-muted-foreground mt-1">{formatDate(note.created)}</p>
+                {job.notes && job.notes.length > 0 ? job.notes.map((note: any, i: number) => (
+                    <div key={note.id || i} className="p-3 bg-muted rounded-lg space-y-2">
+                        {note.text && <p className="text-sm whitespace-pre-wrap">{note.text}</p>}
+                        {note.images && note.images.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                                {note.images.map((url: string, j: number) => (
+                                    <a key={j} href={url} target="_blank" rel="noopener noreferrer">
+                                        <img
+                                            src={url}
+                                            alt={`Note image ${j + 1}`}
+                                            className="w-24 h-24 object-cover rounded-md border hover:opacity-80 transition-opacity"
+                                        />
+                                    </a>
+                                ))}
+                            </div>
+                        )}
+                        {note.files && note.files.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                                {note.files.map((url: string, j: number) => (
+                                    <a key={j} href={url} target="_blank" rel="noopener noreferrer"
+                                        className="text-xs text-primary hover:underline">
+                                        📎 File {j + 1}
+                                    </a>
+                                ))}
+                            </div>
+                        )}
+                        {note.created && (
+                            <p className="text-xs text-muted-foreground">{formatDate(note.created)}</p>
+                        )}
+                        {!note.text && (!note.images || note.images.length === 0) && (
+                            <p className="text-xs text-muted-foreground italic">Empty note</p>
+                        )}
                     </div>
                 )) : (
                     <p className="text-sm text-muted-foreground">No notes yet</p>
