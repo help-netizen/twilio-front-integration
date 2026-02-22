@@ -802,14 +802,14 @@ function JobDetailPanel({
                                     </div>
                                 </div>
 
-                                {job.address && (
+                                {job.territory && (
                                     <div className="flex items-start gap-3">
                                         <div className="size-10 rounded-lg bg-muted flex items-center justify-center">
                                             <MapPin className="size-5 text-muted-foreground" />
                                         </div>
                                         <div>
-                                            <p className="text-xs text-muted-foreground">Service Address</p>
-                                            <p className="font-medium">{job.address}</p>
+                                            <p className="text-xs text-muted-foreground">Service Area</p>
+                                            <p className="font-medium">{job.territory}</p>
                                         </div>
                                     </div>
                                 )}
@@ -895,13 +895,6 @@ function JobDetailPanel({
                             </div>
                         )}
 
-                        {/* ── Territory ── */}
-                        {job.territory && (
-                            <div>
-                                <h3 className="text-sm font-semibold text-muted-foreground mb-3">Territory</h3>
-                                <div className="text-sm">{job.territory}</div>
-                            </div>
-                        )}
 
                         {/* ── Mobile-only: Description, Comments, Metadata, Notes ── */}
                         <div className="md:hidden space-y-6">
