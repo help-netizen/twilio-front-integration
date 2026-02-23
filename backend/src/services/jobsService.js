@@ -438,56 +438,80 @@ async function cancelJob(jobId) {
     const job = await getJobById(jobId);
     if (!job) throw new Error(`Job #${jobId} not found`);
 
+    let zbError = null;
     if (job.zenbooker_job_id) {
-        await zenbookerClient.cancelJob(job.zenbooker_job_id);
+        try {
+            await zenbookerClient.cancelJob(job.zenbooker_job_id);
+        } catch (e) {
+            zbError = e.message;
+            console.warn(`[JobsService] ZB cancel failed for ${job.zenbooker_job_id}: ${zbError}`);
+        }
     }
     await db.query(
         'UPDATE jobs SET zb_canceled = true, blanc_status = $1, updated_at = NOW() WHERE id = $2',
         ['Canceled', jobId]
     );
-    return { ...job, blanc_status: 'Canceled', zb_canceled: true };
+    return { ...job, blanc_status: 'Canceled', zb_canceled: true, zb_warning: zbError };
 }
 
 async function markEnroute(jobId) {
     const job = await getJobById(jobId);
     if (!job) throw new Error(`Job #${jobId} not found`);
 
+    let zbError = null;
     if (job.zenbooker_job_id) {
-        await zenbookerClient.markJobEnroute(job.zenbooker_job_id);
+        try {
+            await zenbookerClient.markJobEnroute(job.zenbooker_job_id);
+        } catch (e) {
+            zbError = e.message;
+            console.warn(`[JobsService] ZB enroute failed for ${job.zenbooker_job_id}: ${zbError}`);
+        }
     }
     await db.query(
         "UPDATE jobs SET zb_status = 'en-route', updated_at = NOW() WHERE id = $1",
         [jobId]
     );
-    return { ...job, zb_status: 'en-route' };
+    return { ...job, zb_status: 'en-route', zb_warning: zbError };
 }
 
 async function markInProgress(jobId) {
     const job = await getJobById(jobId);
     if (!job) throw new Error(`Job #${jobId} not found`);
 
+    let zbError = null;
     if (job.zenbooker_job_id) {
-        await zenbookerClient.markJobInProgress(job.zenbooker_job_id);
+        try {
+            await zenbookerClient.markJobInProgress(job.zenbooker_job_id);
+        } catch (e) {
+            zbError = e.message;
+            console.warn(`[JobsService] ZB start failed for ${job.zenbooker_job_id}: ${zbError}`);
+        }
     }
     await db.query(
         "UPDATE jobs SET zb_status = 'in-progress', updated_at = NOW() WHERE id = $1",
         [jobId]
     );
-    return { ...job, zb_status: 'in-progress' };
+    return { ...job, zb_status: 'in-progress', zb_warning: zbError };
 }
 
 async function markComplete(jobId) {
     const job = await getJobById(jobId);
     if (!job) throw new Error(`Job #${jobId} not found`);
 
+    let zbError = null;
     if (job.zenbooker_job_id) {
-        await zenbookerClient.markJobComplete(job.zenbooker_job_id);
+        try {
+            await zenbookerClient.markJobComplete(job.zenbooker_job_id);
+        } catch (e) {
+            zbError = e.message;
+            console.warn(`[JobsService] ZB complete failed for ${job.zenbooker_job_id}: ${zbError}`);
+        }
     }
     await db.query(
         "UPDATE jobs SET zb_status = 'complete', blanc_status = 'Visit completed', updated_at = NOW() WHERE id = $1",
         [jobId]
     );
-    return { ...job, zb_status: 'complete', blanc_status: 'Visit completed' };
+    return { ...job, zb_status: 'complete', blanc_status: 'Visit completed', zb_warning: zbError };
 }
 
 // =============================================================================
