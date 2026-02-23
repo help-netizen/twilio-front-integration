@@ -31,10 +31,19 @@ const DEFAULT_FIELDS = [
 
 const SETTING_KEY = 'jobs_list_fields';
 
+// ─── Resolve company_id (super_admin fallback to first company) ──────────────
+async function resolveCompanyId(req) {
+    const cid = req.companyFilter?.company_id;
+    if (cid) return cid;
+    // super_admin: companyFilter is empty — pick the first (only) company
+    const { rows } = await db.query('SELECT id FROM companies ORDER BY id LIMIT 1');
+    return rows[0]?.id || null;
+}
+
 // ─── GET /api/settings/jobs-list-fields ──────────────────────────────────────
 router.get('/', async (req, res) => {
     try {
-        const companyId = req.user?.company_id || req.companyFilter?.company_id;
+        const companyId = await resolveCompanyId(req);
         if (!companyId) {
             return res.json({ ok: true, ordered_visible_fields: DEFAULT_FIELDS });
         }
@@ -86,7 +95,7 @@ router.put('/', async (req, res) => {
             return true;
         });
 
-        const companyId = req.user?.company_id || req.companyFilter?.company_id;
+        const companyId = await resolveCompanyId(req);
         if (!companyId) {
             return res.status(400).json({ ok: false, error: 'No company context' });
         }
