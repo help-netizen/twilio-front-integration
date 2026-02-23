@@ -85,7 +85,7 @@ function rowToJob(row) {
 function zbJobToColumns(zbJob) {
     return {
         job_number: zbJob.job_number || null,
-        service_name: zbJob.service_name || null,
+        service_name: zbJob.service_name || zbJob.services?.[0]?.service_name || null,
         start_date: zbJob.start_date || null,
         end_date: zbJob.end_date || null,
         customer_name: zbJob.customer?.name || null,
@@ -98,7 +98,7 @@ function zbJobToColumns(zbJob) {
         invoice_total: zbJob.invoice?.total || null,
         invoice_status: zbJob.invoice?.status || null,
         assigned_techs: JSON.stringify(zbJob.assigned_providers || []),
-        notes: JSON.stringify(zbJob.notes || []),
+        notes: JSON.stringify(zbJob.job_notes || zbJob.notes || []),
         zb_status: zbJob.status || 'scheduled',
         zb_canceled: !!zbJob.canceled,
         zb_rescheduled: !!zbJob.rescheduled,
@@ -186,7 +186,7 @@ async function getJobByZbId(zbJobId) {
     return rowToJob(rows[0]);
 }
 
-async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 50, companyId, contactId, sortBy, sortOrder } = {}) {
+async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 50, companyId, contactId, sortBy, sortOrder, onlyOpen, startDate, endDate } = {}) {
     const conditions = [];
     const params = [];
     let idx = 0;
@@ -213,6 +213,15 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
     }
     if (contactId) {
         idx++; conditions.push(`j.contact_id = $${idx}`); params.push(contactId);
+    }
+    if (onlyOpen) {
+        conditions.push(`j.blanc_status NOT IN ('Job is Done', 'Canceled')`);
+    }
+    if (startDate) {
+        idx++; conditions.push(`j.start_date >= $${idx}`); params.push(startDate);
+    }
+    if (endDate) {
+        idx++; conditions.push(`j.start_date <= $${idx}`); params.push(endDate + ' 23:59:59');
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';

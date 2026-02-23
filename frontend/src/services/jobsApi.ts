@@ -63,6 +63,9 @@ export interface JobsListParams {
     contact_id?: number;
     sort_by?: string;
     sort_order?: 'asc' | 'desc';
+    only_open?: boolean;
+    start_date?: string;
+    end_date?: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

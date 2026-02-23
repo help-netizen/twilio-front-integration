@@ -1,12 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../components/ui/button';
-import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Separator } from '../components/ui/separator';
 import {
-    Search, RefreshCw, ChevronLeft, ChevronRight, X, MapPin,
+    RefreshCw, ChevronLeft, ChevronRight, X, MapPin,
     User2, FileText, Play, CheckCircle2, Navigation, Ban,
     Loader2, Phone, Mail, Tag,
     Calendar, ChevronDown, CornerDownLeft, ArrowUpDown, ArrowUp, ArrowDown,
@@ -20,6 +19,8 @@ import { formatPhone } from '../lib/formatPhone';
 import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu';
+import { ClickToCallButton } from '../components/softphone/ClickToCallButton';
+import { JobsFilters } from '../components/jobs/JobsFilters';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -96,10 +97,17 @@ export function JobsPage() {
 
     // Filters
     const [searchQuery, setSearchQuery] = useState('');
-    const [statusFilter, setStatusFilter] = useState<string>('');
     const [offset, setOffset] = useState(0);
     const [hasMore, setHasMore] = useState(false);
     const LIMIT = 50;
+
+    // Filters
+    const [statusFilter, setStatusFilter] = useState<string[]>([]);
+    const [providerFilter, setProviderFilter] = useState<string[]>([]);
+    const [sourceFilter, setSourceFilter] = useState<string[]>([]);
+    const [jobTypeFilter, setJobTypeFilter] = useState<string[]>([]);
+    const [onlyOpen, setOnlyOpen] = useState(false);
+    const [startDate, setStartDate] = useState<string | undefined>(undefined);
 
     // Sort
     const [sortBy, setSortBy] = useState<string>('created_at');
@@ -115,10 +123,11 @@ export function JobsPage() {
                 limit: LIMIT,
                 offset: newOffset,
             };
-            if (statusFilter) params.blanc_status = statusFilter;
             if (searchQuery.trim()) params.search = searchQuery.trim();
             if (sortBy) params.sort_by = sortBy;
             if (sortOrder) params.sort_order = sortOrder;
+            if (onlyOpen) params.only_open = true;
+            if (startDate) params.start_date = startDate;
 
             const data = await jobsApi.listJobs(params);
             setJobs(data.results || []);
@@ -132,7 +141,27 @@ export function JobsPage() {
         } finally {
             setLoading(false);
         }
-    }, [statusFilter, searchQuery, sortBy, sortOrder]);
+    }, [searchQuery, sortBy, sortOrder, onlyOpen, startDate]);
+
+    // Client-side filtering (applied on top of server results)
+    const filteredJobs = useMemo(() => {
+        let result = jobs;
+        if (statusFilter.length > 0) {
+            result = result.filter(j => j.blanc_status && statusFilter.includes(j.blanc_status));
+        }
+        if (sourceFilter.length > 0) {
+            result = result.filter(j => j.job_source && sourceFilter.includes(j.job_source));
+        }
+        if (jobTypeFilter.length > 0) {
+            result = result.filter(j => j.service_name && jobTypeFilter.includes(j.service_name));
+        }
+        if (providerFilter.length > 0) {
+            result = result.filter(j =>
+                j.assigned_techs?.some((t: any) => providerFilter.includes(t.name))
+            );
+        }
+        return result;
+    }, [jobs, statusFilter, sourceFilter, jobTypeFilter, providerFilter]);
 
     useEffect(() => { loadJobs(0); }, [loadJobs]);
 
@@ -288,27 +317,23 @@ export function JobsPage() {
                             Refresh
                         </Button>
                     </div>
-                    <div className="flex items-center gap-2">
-                        <div className="relative flex-1">
-                            <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-                            <Input
-                                placeholder="Search jobs..."
-                                value={searchQuery}
-                                onChange={e => setSearchQuery(e.target.value)}
-                                className="pl-9"
-                            />
-                        </div>
-                        <select
-                            value={statusFilter}
-                            onChange={e => setStatusFilter(e.target.value)}
-                            className="border rounded-md px-3 py-2 text-sm bg-white"
-                        >
-                            <option value="">All statuses</option>
-                            {BLANC_STATUSES.map(s => (
-                                <option key={s} value={s}>{s}</option>
-                            ))}
-                        </select>
-                    </div>
+                    <JobsFilters
+                        searchQuery={searchQuery}
+                        onSearchChange={setSearchQuery}
+                        statusFilter={statusFilter}
+                        onStatusFilterChange={setStatusFilter}
+                        providerFilter={providerFilter}
+                        onProviderFilterChange={setProviderFilter}
+                        sourceFilter={sourceFilter}
+                        onSourceFilterChange={setSourceFilter}
+                        jobTypeFilter={jobTypeFilter}
+                        onJobTypeFilterChange={setJobTypeFilter}
+                        startDate={startDate}
+                        onStartDateChange={setStartDate}
+                        onlyOpen={onlyOpen}
+                        onOnlyOpenChange={setOnlyOpen}
+                        jobs={jobs}
+                    />
                 </div>
 
                 {/* Table */}
@@ -361,7 +386,7 @@ export function JobsPage() {
                                 </tr>
                             </thead>
                             <tbody>
-                                {jobs.map(job => (
+                                {filteredJobs.map(job => (
                                     <tr
                                         key={job.id}
                                         className={`border-b hover:bg-muted/30 cursor-pointer transition-colors ${selectedJob?.id === job.id ? 'bg-muted/50' : ''
@@ -604,10 +629,38 @@ function JobDetailPanel({
                 Job Notes ({job.notes?.length || 0})
             </h3>
             <div className="space-y-3">
-                {job.notes && job.notes.length > 0 ? job.notes.map((note, i) => (
-                    <div key={i} className="p-3 bg-muted rounded-lg">
-                        <p className="text-sm">{note.text}</p>
-                        <p className="text-xs text-muted-foreground mt-1">{formatDate(note.created)}</p>
+                {job.notes && job.notes.length > 0 ? job.notes.map((note: any, i: number) => (
+                    <div key={note.id || i} className="p-3 bg-muted rounded-lg space-y-2">
+                        {note.text && <p className="text-sm whitespace-pre-wrap">{note.text}</p>}
+                        {note.images && note.images.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                                {note.images.map((url: string, j: number) => (
+                                    <a key={j} href={url} target="_blank" rel="noopener noreferrer">
+                                        <img
+                                            src={url}
+                                            alt={`Note image ${j + 1}`}
+                                            className="w-24 h-24 object-cover rounded-md border hover:opacity-80 transition-opacity"
+                                        />
+                                    </a>
+                                ))}
+                            </div>
+                        )}
+                        {note.files && note.files.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                                {note.files.map((url: string, j: number) => (
+                                    <a key={j} href={url} target="_blank" rel="noopener noreferrer"
+                                        className="text-xs text-primary hover:underline">
+                                        📎 File {j + 1}
+                                    </a>
+                                ))}
+                            </div>
+                        )}
+                        {note.created && (
+                            <p className="text-xs text-muted-foreground">{formatDate(note.created)}</p>
+                        )}
+                        {!note.text && (!note.images || note.images.length === 0) && (
+                            <p className="text-xs text-muted-foreground italic">Empty note</p>
+                        )}
                     </div>
                 )) : (
                     <p className="text-sm text-muted-foreground">No notes yet</p>
@@ -642,10 +695,12 @@ function JobDetailPanel({
             <div className="w-full md:w-1/2 flex flex-col overflow-hidden border-l">
                 {/* Blue gradient header */}
                 <div className="bg-gradient-to-r from-blue-500 to-blue-600 p-5 text-white group/header">
-                    <div className="flex items-center justify-between mb-3">
+                    {/* First line: Service name + close/back */}
+                    <div className="flex items-center justify-between mb-2">
                         <Button variant="ghost" size="sm" className="md:hidden text-white hover:bg-white/20" onClick={onClose}>
                             ← Back
                         </Button>
+                        <h2 className="text-2xl font-bold hidden md:block">{job.service_name || 'Job'}</h2>
                         <div className="flex items-center gap-1 ml-auto">
                             <Button variant="ghost" size="sm"
                                 className="md:hidden text-white hover:bg-white/20"
@@ -659,9 +714,24 @@ function JobDetailPanel({
                             </Button>
                         </div>
                     </div>
+                    {/* Mobile service name */}
+                    <h2 className="text-2xl font-bold mb-2 md:hidden">{job.service_name || 'Job'}</h2>
 
                     <div className="flex items-center gap-2 mb-2 flex-wrap">
-                        <span className="font-mono text-sm text-blue-100">#{job.job_number || job.id}</span>
+                        {/* Job number as ZB link */}
+                        {job.zenbooker_job_id ? (
+                            <a
+                                href={`https://zenbooker.com/app?view=jobs&view-job=${job.zenbooker_job_id}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="font-mono text-sm text-blue-100 hover:text-white hover:underline"
+                                onClick={(e) => e.stopPropagation()}
+                            >
+                                #{job.job_number || job.id}
+                            </a>
+                        ) : (
+                            <span className="font-mono text-sm text-blue-100">#{job.job_number || job.id}</span>
+                        )}
 
                         {/* Blanc status badge dropdown */}
                         <DropdownMenu>
@@ -691,21 +761,8 @@ function JobDetailPanel({
                                 {job.job_source}
                             </span>
                         )}
-
-                        {job.zenbooker_job_id && (
-                            <a
-                                href={`https://zenbooker.com/app?view=jobs&view-job=${job.zenbooker_job_id}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-xs font-mono ml-auto text-blue-100 hover:text-white hover:underline"
-                                onClick={(e) => e.stopPropagation()}
-                            >
-                                ZB: {job.job_number || job.id}
-                            </a>
-                        )}
                     </div>
 
-                    <h2 className="text-2xl font-bold mb-1">{job.service_name || 'Job'}</h2>
                     <p className="text-blue-100">
                         {contactInfo ? (
                             <span
@@ -798,14 +855,16 @@ function JobDetailPanel({
                                     </div>
                                 </div>
 
-                                {job.address && (
+                                {(job.address || job.territory) && (
                                     <div className="flex items-start gap-3">
                                         <div className="size-10 rounded-lg bg-muted flex items-center justify-center">
                                             <MapPin className="size-5 text-muted-foreground" />
                                         </div>
                                         <div>
-                                            <p className="text-xs text-muted-foreground">Service Address</p>
-                                            <p className="font-medium">{job.address}</p>
+                                            <p className="text-xs text-muted-foreground">
+                                                Service Area{job.territory ? `: ${job.territory}` : ''}
+                                            </p>
+                                            {job.address && <p className="font-medium">{job.address}</p>}
                                         </div>
                                     </div>
                                 )}
@@ -860,12 +919,16 @@ function JobDetailPanel({
                                         </div>
                                         <div>
                                             <p className="text-xs text-muted-foreground">Phone</p>
-                                            <p className="font-medium">
+                                            <div className="flex items-center gap-1">
                                                 <a href={`tel:${contactInfo?.phone || job.customer_phone}`}
-                                                    className="text-foreground no-underline hover:underline">
+                                                    className="font-medium text-foreground no-underline hover:underline">
                                                     {formatPhone(contactInfo?.phone || job.customer_phone)}
                                                 </a>
-                                            </p>
+                                                <ClickToCallButton
+                                                    phone={contactInfo?.phone || job.customer_phone || ''}
+                                                    contactName={contactInfo?.name || job.customer_name || undefined}
+                                                />
+                                            </div>
                                         </div>
                                     </div>
                                 )}
@@ -891,13 +954,6 @@ function JobDetailPanel({
                             </div>
                         )}
 
-                        {/* ── Territory ── */}
-                        {job.territory && (
-                            <div>
-                                <h3 className="text-sm font-semibold text-muted-foreground mb-3">Territory</h3>
-                                <div className="text-sm">{job.territory}</div>
-                            </div>
-                        )}
 
                         {/* ── Mobile-only: Description, Comments, Metadata, Notes ── */}
                         <div className="md:hidden space-y-6">

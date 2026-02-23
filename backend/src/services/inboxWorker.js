@@ -34,8 +34,8 @@ function normalizeVoiceEvent(payload) {
         ? new Date(parseInt(Timestamp) * 1000)
         : new Date();
 
-    // Direction detection via CallProcessor
-    const direction = CallProcessor.detectDirection({ from: From, to: To });
+    // Direction detection via CallProcessor (pass Twilio's own Direction for fallback)
+    const direction = CallProcessor.detectDirection({ from: From, to: To, direction: Direction });
 
     return {
         callSid: CallSid,
@@ -204,11 +204,13 @@ async function processVoiceEvent(payload, eventType, traceId) {
         } catch (e) { /* proceed with upsert if check fails */ }
     }
 
-    // Guard: for inbound parent calls, Twilio sends "in-progress" when TwiML starts
+    // Guard: for INBOUND parent calls, Twilio sends "in-progress" when TwiML starts
     // (Dial begins ringing agents), not when someone answers. Keep as "ringing"
     // until a child leg actually reaches "in-progress".
+    // NOTE: Skip this guard for outbound calls — their in-progress is genuine (callee answered).
     let effectiveStatus = normalized.eventStatus;
-    if (!normalized.parentCallSid && normalized.eventStatus === 'in-progress' && !skipUpsert) {
+    if (!normalized.parentCallSid && normalized.eventStatus === 'in-progress' && !skipUpsert
+        && processed.direction === 'inbound') {
         try {
             const childCheck = await db.query(
                 `SELECT 1 FROM calls WHERE parent_call_sid = $1 AND status = 'in-progress' LIMIT 1`,
@@ -237,6 +239,12 @@ async function processVoiceEvent(payload, eventType, traceId) {
                 // Replace SIP username URIs (sip:dana@...) with owned caller ID for clean display
                 if (extracted && extracted.startsWith('sip:')) {
                     return process.env.OUTBOUND_CALLER_ID || '+16175006181';
+                }
+                // Replace client:user_xxx (WebRTC SoftPhone identity) with
+                // the To number for timeline grouping — the child leg will have the
+                // actual caller ID, and reconcileParentCall will fix from_number later
+                if (extracted && extracted.startsWith('client:')) {
+                    return null; // Will be set from child leg during reconciliation
                 }
                 return extracted;
             })(),
@@ -284,28 +292,41 @@ async function processVoiceEvent(payload, eventType, traceId) {
         publishRealtimeEvent('call.updated', enrichedCall || { call_sid: normalized.callSid, status: normalized.eventStatus }, traceId);
     }
 
-    // When a child leg goes in-progress (someone answered), update parent to in-progress
-    if (normalized.parentCallSid && normalized.eventStatus === 'in-progress') {
+    // Propagate child leg status changes to parent call
+    if (normalized.parentCallSid && ['ringing', 'in-progress'].includes(normalized.eventStatus)) {
         try {
             const parentCall = await queries.getCallByCallSid(normalized.parentCallSid);
-            if (parentCall && parentCall.status === 'ringing') {
-                // Extract operator name from SIP URI (e.g., sip:dana@domain.com → dana)
-                const toNum = normalized.toNumber || '';
-                const sipMatch = toNum.match(/^sip:([^@]+)@/i);
-                const answeredBy = sipMatch ? sipMatch[1] : null;
+            if (parentCall) {
+                const parentStatus = parentCall.status;
 
-                await db.query(
-                    `UPDATE calls SET status = 'in-progress', answered_at = $2, answered_by = $3 WHERE call_sid = $1`,
-                    [normalized.parentCallSid, normalized.eventTime, answeredBy]
-                );
-                const freshParent = await queries.getCallByCallSid(normalized.parentCallSid);
-                if (freshParent) {
-                    publishRealtimeEvent('call.updated', freshParent, traceId);
+                // Child ringing → parent ringing (if parent is still initiated)
+                if (normalized.eventStatus === 'ringing' && ['initiated', 'queued'].includes(parentStatus)) {
+                    await db.query(
+                        `UPDATE calls SET status = 'ringing' WHERE call_sid = $1`,
+                        [normalized.parentCallSid]
+                    );
+                    const freshParent = await queries.getCallByCallSid(normalized.parentCallSid);
+                    if (freshParent) publishRealtimeEvent('call.updated', freshParent, traceId);
+                    console.log(`[${traceId}] Child ringing → parent ${normalized.parentCallSid} → ringing`);
                 }
-                console.log(`[${traceId}] Child answered → parent ${normalized.parentCallSid} → in-progress (by ${answeredBy})`);
+
+                // Child in-progress (answered) → parent in-progress
+                if (normalized.eventStatus === 'in-progress' && ['initiated', 'queued', 'ringing'].includes(parentStatus)) {
+                    const toNum = normalized.toNumber || '';
+                    const sipMatch = toNum.match(/^sip:([^@]+)@/i);
+                    const answeredBy = sipMatch ? sipMatch[1] : null;
+
+                    await db.query(
+                        `UPDATE calls SET status = 'in-progress', answered_at = $2, answered_by = $3 WHERE call_sid = $1`,
+                        [normalized.parentCallSid, normalized.eventTime, answeredBy]
+                    );
+                    const freshParent = await queries.getCallByCallSid(normalized.parentCallSid);
+                    if (freshParent) publishRealtimeEvent('call.updated', freshParent, traceId);
+                    console.log(`[${traceId}] Child answered → parent ${normalized.parentCallSid} → in-progress (by ${answeredBy})`);
+                }
             }
         } catch (e) {
-            console.warn(`[${traceId}] Failed to update parent to in-progress:`, e.message);
+            console.warn(`[${traceId}] Failed to propagate child status to parent:`, e.message);
         }
     }
 
@@ -396,7 +417,12 @@ async function reconcileParentCall(parentCallSid, traceId) {
             parentStatus = 'in-progress';
         }
 
-        // Update parent call with reconciled data + propagate contact_id from child
+        // Update parent call with reconciled data + propagate contact_id and from_number from child
+        // (for SoftPhone outbound, parent has from_number=null or client:xxx, child has the actual caller ID)
+        const childFromNumber = winner
+            ? (await db.query(`SELECT from_number FROM calls WHERE call_sid = $1`, [winner.call_sid])).rows[0]?.from_number
+            : (await db.query(`SELECT from_number FROM calls WHERE parent_call_sid = $1 AND from_number NOT LIKE 'client:%' LIMIT 1`, [parentCallSid])).rows[0]?.from_number;
+
         await db.query(
             `UPDATE calls SET
                 status = $2,
@@ -404,9 +430,14 @@ async function reconcileParentCall(parentCallSid, traceId) {
                 duration_sec = COALESCE($4, duration_sec),
                 answered_at = COALESCE($5, answered_at),
                 ended_at = COALESCE($6, ended_at),
-                contact_id = COALESCE(calls.contact_id, $7)
+                contact_id = COALESCE(calls.contact_id, $7),
+                from_number = CASE
+                    WHEN calls.from_number IS NULL OR calls.from_number LIKE 'client:%'
+                    THEN COALESCE($8, calls.from_number)
+                    ELSE calls.from_number
+                END
              WHERE call_sid = $1`,
-            [parentCallSid, parentStatus, parentIsFinal, parentDuration, parentAnsweredAt, parentEndedAt, childContactId]
+            [parentCallSid, parentStatus, parentIsFinal, parentDuration, parentAnsweredAt, parentEndedAt, childContactId, childFromNumber]
         );
 
         console.log(`[${traceId}] Reconciled parent ${parentCallSid}: status=${parentStatus}, winner=${winner?.call_sid || 'none'}`);

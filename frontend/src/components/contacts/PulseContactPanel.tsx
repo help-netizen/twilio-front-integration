@@ -20,6 +20,7 @@ import { AddressAutocomplete, type AddressFields } from '../AddressAutocomplete'
 import * as contactsApi from '../../services/contactsApi';
 import * as jobsApi from '../../services/jobsApi';
 import { EditContactDialog } from './EditContactDialog';
+import { ClickToCallButton } from '../softphone/ClickToCallButton';
 import type { Contact, ContactLead, ContactAddress } from '../../types/contact';
 
 /* ────────────────────────────────────────────────────
@@ -329,10 +330,11 @@ export function PulseContactPanel({ contact, leads, loading, onAddressesChanged,
                                 <Phone className="size-4 shrink-0 text-muted-foreground" />
                                 <div className="flex-1">
                                     <Label className="text-xs text-muted-foreground">Phone</Label>
-                                    <div className="text-sm font-medium">
+                                    <div className="flex items-center gap-1">
                                         <a href={`tel:${contact.phone_e164}`} className="text-foreground no-underline hover:underline">
                                             {formatPhone(contact.phone_e164)}
                                         </a>
+                                        <ClickToCallButton phone={contact.phone_e164 || ''} contactName={contact.full_name || undefined} />
                                     </div>
                                 </div>
                             </div>
@@ -346,9 +348,12 @@ export function PulseContactPanel({ contact, leads, loading, onAddressesChanged,
                                     </Label>
                                     <div className="text-sm font-medium">
                                         {contact.secondary_phone ? (
-                                            <a href={`tel:${contact.secondary_phone}`} className="text-foreground no-underline hover:underline">
-                                                {formatPhone(contact.secondary_phone)}
-                                            </a>
+                                            <div className="flex items-center gap-1">
+                                                <a href={`tel:${contact.secondary_phone}`} className="text-foreground no-underline hover:underline">
+                                                    {formatPhone(contact.secondary_phone)}
+                                                </a>
+                                                <ClickToCallButton phone={contact.secondary_phone} contactName={contact.full_name || undefined} />
+                                            </div>
                                         ) : <span className="text-muted-foreground">—</span>}
                                     </div>
                                 </div>

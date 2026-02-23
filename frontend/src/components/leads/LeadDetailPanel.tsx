@@ -26,6 +26,7 @@ import { Badge } from '../ui/badge';
 import { Separator } from '../ui/separator';
 import { Label } from '../ui/label';
 import { formatPhone } from '../../lib/formatPhone';
+import { ClickToCallButton } from '../softphone/ClickToCallButton';
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -341,6 +342,7 @@ export function LeadDetailPanel({
                                         >
                                             {formatPhone(lead.Phone)}
                                         </a>
+                                        <ClickToCallButton phone={lead.Phone || ''} contactName={[lead.FirstName, lead.LastName].filter(Boolean).join(' ')} />
                                         {lead.PhoneExt && (
                                             <span className="text-xs text-muted-foreground">
                                                 ext. {lead.PhoneExt}
@@ -364,6 +366,7 @@ export function LeadDetailPanel({
                                             >
                                                 {formatPhone(lead.SecondPhone)}
                                             </a>
+                                            <ClickToCallButton phone={lead.SecondPhone} contactName={[lead.FirstName, lead.LastName].filter(Boolean).join(' ')} />
                                             {lead.SecondPhoneExt && (
                                                 <span className="text-xs text-muted-foreground">
                                                     ext. {lead.SecondPhoneExt}

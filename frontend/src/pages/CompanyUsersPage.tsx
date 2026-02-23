@@ -19,7 +19,7 @@ import {
 import { toast } from 'sonner';
 import {
     Users, UserPlus, RefreshCw, ShieldCheck, User,
-    ChevronLeft, ChevronRight, Ban, CheckCircle2, Copy,
+    ChevronLeft, ChevronRight, Ban, CheckCircle2, Copy, Phone, PhoneOff,
 } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
@@ -32,6 +32,7 @@ interface CompanyUser {
     full_name: string;
     membership_role: string;
     membership_status: string;
+    phone_calls_allowed: boolean;
     last_login_at: string | null;
     created_at: string;
 }
@@ -204,6 +205,30 @@ export default function CompanyUsersPage() {
         }
     };
 
+    /* ── Toggle Phone Calls ───────────────────────────────────── */
+
+    const togglePhoneCalls = async (user: CompanyUser) => {
+        const newVal = !user.phone_calls_allowed;
+        setActionLoading(user.id);
+        try {
+            const res = await authedFetch(`${API_BASE}/users/${user.id}/phone-calls`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ allowed: newVal }),
+            });
+            if (!res.ok) {
+                toast.error('Failed to update phone calls access');
+            } else {
+                toast.success(newVal ? 'Phone calls enabled' : 'Phone calls disabled');
+                fetchUsers();
+            }
+        } catch {
+            toast.error('Connection error');
+        } finally {
+            setActionLoading(null);
+        }
+    };
+
     /* ── Helpers ───────────────────────────────────────────────── */
 
     const fmtDate = (d: string | null) => {
@@ -311,6 +336,7 @@ export default function CompanyUsersPage() {
                                 <TableHead>User</TableHead>
                                 <TableHead>Role</TableHead>
                                 <TableHead>Status</TableHead>
+                                <TableHead>Phone Calls</TableHead>
                                 <TableHead>Last Login</TableHead>
                                 <TableHead>Created</TableHead>
                                 <TableHead className="text-right">Actions</TableHead>
@@ -343,6 +369,19 @@ export default function CompanyUsersPage() {
                                     <TableCell>
                                         <Badge variant={u.membership_status === 'active' ? 'outline' : 'destructive'}>
                                             {u.membership_status === 'active' ? 'Active' : 'Disabled'}
+                                        </Badge>
+                                    </TableCell>
+                                    <TableCell>
+                                        <Badge
+                                            variant={u.phone_calls_allowed ? 'outline' : 'secondary'}
+                                            className={`cursor-pointer ${u.phone_calls_allowed ? 'border-emerald-300 text-emerald-700' : 'opacity-60'}`}
+                                            onClick={() => togglePhoneCalls(u)}
+                                        >
+                                            {u.phone_calls_allowed ? (
+                                                <><Phone className="size-3 mr-1" />Allowed</>
+                                            ) : (
+                                                <><PhoneOff className="size-3 mr-1" />Not Allowed</>
+                                            )}
                                         </Badge>
                                     </TableCell>
                                     <TableCell className="text-sm">{fmtDate(u.last_login_at)}</TableCell>
