@@ -123,16 +123,17 @@ function zbJobToColumns(zbJob) {
 }
 
 /**
- * Compute blanc_status from Zenbooker flags/status (§9 priority rules)
- *   1. canceled=true  → Canceled
- *   2. rescheduled=true → Rescheduled
+ * Compute blanc_status from Zenbooker flags/status + event type (priority rules)
+ *   Event type is the primary signal (ZB data flags are unreliable).
+ *   1. event=job.canceled OR canceled=true  → Canceled
+ *   2. event=job.rescheduled OR rescheduled=true → Rescheduled
  *   3. status=complete → Visit completed
  *   4. status=scheduled/en-route → Submitted
  */
-function computeBlancStatusFromZb(zbStatus, zbCanceled, zbRescheduled) {
-    if (zbCanceled) return 'Canceled';
-    if (zbStatus === 'complete') return 'Visit completed';
-    if (zbRescheduled) return 'Rescheduled';
+function computeBlancStatusFromZb(zbStatus, zbCanceled, zbRescheduled, eventType = '') {
+    if (zbCanceled || eventType === 'job.canceled') return 'Canceled';
+    if (zbStatus === 'complete' || eventType === 'job.completed') return 'Visit completed';
+    if (zbRescheduled || eventType === 'job.rescheduled') return 'Rescheduled';
     return 'Submitted';
 }
 
@@ -341,9 +342,9 @@ async function updateBlancStatus(jobId, newStatus) {
  * Sync a Zenbooker job event into the local jobs table.
  * Creates or updates the local job, recalculates blanc_status.
  */
-async function syncFromZenbooker(zbJobId, zbData, companyId = null) {
+async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = '') {
     const cols = zbJobToColumns(zbData);
-    const newBlancStatus = computeBlancStatusFromZb(cols.zb_status, cols.zb_canceled, cols.zb_rescheduled);
+    const newBlancStatus = computeBlancStatusFromZb(cols.zb_status, cols.zb_canceled, cols.zb_rescheduled, eventType);
 
     // Try to match ZB customer → Blanc contact
     let contactId = null;
