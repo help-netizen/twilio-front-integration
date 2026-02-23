@@ -9,7 +9,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
     Loader2, Download, Search, DollarSign, X,
-    CreditCard, ChevronLeft, ChevronRight, FileText,
+    ChevronLeft, ChevronRight, FileText,
     User2, MapPin, Receipt, ChevronDown, ImageIcon, ExternalLink,
 } from 'lucide-react';
 import { authedFetch } from '../services/apiClient';
@@ -173,7 +173,7 @@ export default function PaymentsPage() {
     const [detailLoading, setDetailLoading] = useState(false);
 
     // Search debounce
-    const searchTimer = useRef<ReturnType<typeof setTimeout>>();
+    const searchTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
     useEffect(() => {
         searchTimer.current = setTimeout(() => setSearchQuery(searchInput), 400);
         return () => clearTimeout(searchTimer.current);
@@ -561,8 +561,6 @@ function PaymentDetailPanel({
         );
     }
 
-    const images = detail.attachments.filter(a => a.kind === 'image');
-    const files = detail.attachments.filter(a => a.kind === 'file');
     const allAttachments = detail.attachments;
 
     return (
