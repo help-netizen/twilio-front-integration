@@ -16,6 +16,7 @@ const integrationsLeadsRouter = require('../backend/src/routes/integrations-lead
 const integrationsAdminRouter = require('../backend/src/routes/integrations-admin');
 const leadFormSettingsRouter = require('../backend/src/routes/lead-form-settings');
 const jobTagsSettingsRouter = require('../backend/src/routes/job-tags-settings');
+const jobsListFieldsRouter = require('../backend/src/routes/jobs-list-fields-settings');
 const usersRouter = require('../backend/src/routes/users');
 const messagingRouter = require('../backend/src/routes/messaging');
 const pulseRouter = require('../backend/src/routes/pulse');
@@ -136,6 +137,7 @@ app.use('/api/integrations/zenbooker', integrationsZenbookerRouter);
 app.use('/api/admin/integrations', authenticate, requireRole('company_admin'), requireCompanyAccess, integrationsAdminRouter);
 app.use('/api/settings/lead-form', authenticate, requireRole('company_admin'), requireCompanyAccess, leadFormSettingsRouter);
 app.use('/api/settings/job-tags', authenticate, requireRole('company_admin'), requireCompanyAccess, jobTagsSettingsRouter);
+app.use('/api/settings/jobs-list-fields', authenticate, requireCompanyAccess, jobsListFieldsRouter);
 
 // User management API (§5, §6)
 app.use('/api/users', authenticate, requireRole('company_admin'), requireCompanyAccess, usersRouter);

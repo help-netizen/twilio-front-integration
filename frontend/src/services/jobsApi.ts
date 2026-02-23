@@ -184,3 +184,24 @@ export async function archiveJobTag(id: number): Promise<JobTag> {
         method: 'DELETE',
     });
 }
+
+// ─── Jobs List Fields (column config) API ─────────────────────────────────────
+
+const FIELDS_BASE = '/api/settings/jobs-list-fields';
+
+export async function getJobsListFields(): Promise<string[]> {
+    const res = await authedFetch(FIELDS_BASE);
+    const json = await res.json();
+    return json.ordered_visible_fields || [];
+}
+
+export async function saveJobsListFields(fields: string[]): Promise<string[]> {
+    const res = await authedFetch(FIELDS_BASE, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ordered_visible_fields: fields }),
+    });
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error || 'Failed to save');
+    return json.ordered_visible_fields;
+}

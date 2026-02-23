@@ -9,7 +9,7 @@ import {
     User2, FileText, Play, CheckCircle2, Navigation, Ban,
     Loader2, Phone, Mail, Tag,
     Calendar, ChevronDown, CornerDownLeft, ArrowUpDown, ArrowUp, ArrowDown,
-    Plus, CircleDot,
+    Plus, CircleDot, SlidersHorizontal,
 } from 'lucide-react';
 import { authedFetch } from '../services/apiClient';
 import * as jobsApi from '../services/jobsApi';
@@ -21,6 +21,10 @@ import {
 } from '../components/ui/dropdown-menu';
 import { ClickToCallButton } from '../components/softphone/ClickToCallButton';
 import { JobsFilters } from '../components/jobs/JobsFilters';
+import {
+    Popover, PopoverContent, PopoverTrigger,
+} from '../components/ui/popover';
+import { Checkbox } from '../components/ui/checkbox';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -120,6 +124,105 @@ function formatSchedule(startIso?: string | null, endIso?: string | null): { dat
     } catch { return { date: startIso, time: '' }; }
 }
 
+// ─── Column Definitions ──────────────────────────────────────────────────────
+
+interface ColumnDef {
+    key: string;
+    label: string;
+    sortKey?: string;  // if sortable, which backend field to sort by
+    width?: string;
+    render: (job: LocalJob) => React.ReactNode;
+}
+
+const ALL_COLUMNS: Record<string, ColumnDef> = {
+    job_number: {
+        key: 'job_number', label: '#', sortKey: 'job_number', width: 'w-20',
+        render: (j) => <span className="font-mono text-xs text-muted-foreground">{j.job_number || '—'}</span>,
+    },
+    customer_name: {
+        key: 'customer_name', label: 'Customer', sortKey: 'customer_name', width: 'w-48 max-w-[12rem]',
+        render: (j) => (
+            <div className="max-w-[12rem]">
+                <div className="font-medium truncate">{j.customer_name || '—'}</div>
+                {j.customer_phone && <div className="text-xs text-muted-foreground">{j.customer_phone}</div>}
+            </div>
+        ),
+    },
+    customer_phone: {
+        key: 'customer_phone', label: 'Phone',
+        render: (j) => <span>{j.customer_phone || '—'}</span>,
+    },
+    customer_email: {
+        key: 'customer_email', label: 'Email',
+        render: (j) => <span className="truncate max-w-[10rem] block">{j.customer_email || '—'}</span>,
+    },
+    service_name: {
+        key: 'service_name', label: 'Service', sortKey: 'service_name', width: 'w-40 max-w-[10rem]',
+        render: (j) => <span className="truncate max-w-[10rem] block">{j.service_name || '—'}</span>,
+    },
+    blanc_status: {
+        key: 'blanc_status', label: 'Status', sortKey: 'blanc_status',
+        render: (j) => (
+            <div className="flex flex-col gap-1">
+                <BlancBadge status={j.blanc_status} />
+                <ZbBadge status={j.zb_status} />
+            </div>
+        ),
+    },
+    zb_status: {
+        key: 'zb_status', label: 'ZB Status',
+        render: (j) => <ZbBadge status={j.zb_status} />,
+    },
+    tags: {
+        key: 'tags', label: 'Tags',
+        render: (j) => (
+            <div className="flex flex-wrap gap-1" title={j.tags?.length ? j.tags.map((t: any) => t.name).join(', ') : ''}>
+                {j.tags?.length ? j.tags.map((t: JobTag) => <TagBadge key={t.id} tag={t} small />) : <span className="text-xs text-muted-foreground">—</span>}
+            </div>
+        ),
+    },
+    assigned_techs: {
+        key: 'assigned_techs', label: 'Techs',
+        render: (j) => <span>{j.assigned_techs?.map((p: any) => p.name).join(', ') || '—'}</span>,
+    },
+    start_date: {
+        key: 'start_date', label: 'Schedule', sortKey: 'start_date',
+        render: (j) => {
+            const s = formatSchedule(j.start_date, j.end_date);
+            return <div className="text-xs"><div className="whitespace-nowrap">{s.date}</div>{s.time && <div className="text-muted-foreground whitespace-nowrap">{s.time}</div>}</div>;
+        },
+    },
+    address: {
+        key: 'address', label: 'Address',
+        render: (j) => <span className="line-clamp-2 text-xs">{j.address || '—'}</span>,
+    },
+    territory: {
+        key: 'territory', label: 'Territory',
+        render: (j) => <span className="line-clamp-2 text-xs">{j.territory || '—'}</span>,
+    },
+    invoice_total: {
+        key: 'invoice_total', label: 'Invoice', sortKey: 'invoice_total',
+        render: (j) => <span>{j.invoice_total != null ? `$${Number(j.invoice_total).toFixed(2)}` : '—'}</span>,
+    },
+    invoice_status: {
+        key: 'invoice_status', label: 'Inv. Status',
+        render: (j) => <span>{j.invoice_status || '—'}</span>,
+    },
+    job_source: {
+        key: 'job_source', label: 'Source',
+        render: (j) => j.job_source ? (
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-muted">{j.job_source}</span>
+        ) : <span className="text-xs text-muted-foreground">—</span>,
+    },
+    created_at: {
+        key: 'created_at', label: 'Created', sortKey: 'created_at',
+        render: (j) => <span className="text-xs whitespace-nowrap">{formatSchedule(j.created_at).date}</span>,
+    },
+};
+
+const DEFAULT_VISIBLE_FIELDS = ['job_number', 'customer_name', 'service_name', 'blanc_status', 'tags', 'assigned_techs', 'start_date'];
+const ALL_FIELD_KEYS = Object.keys(ALL_COLUMNS);
+
 // ─── Jobs Page ───────────────────────────────────────────────────────────────
 
 export function JobsPage() {
@@ -157,6 +260,12 @@ export function JobsPage() {
     // Contact info for detail panel
     const [contactInfo, setContactInfo] = useState<{ name: string; phone: string; email: string; id: number } | null>(null);
 
+    // Column config
+    const [visibleFields, setVisibleFields] = useState<string[]>(DEFAULT_VISIBLE_FIELDS);
+    const [fieldsOpen, setFieldsOpen] = useState(false);
+    const [pendingFields, setPendingFields] = useState<string[]>([]);
+    const [savingFields, setSavingFields] = useState(false);
+
     const loadJobs = useCallback(async (newOffset = 0) => {
         setLoading(true);
         try {
@@ -191,6 +300,15 @@ export function JobsPage() {
     // Load tag catalog on mount
     useEffect(() => {
         jobsApi.listJobTags().then(setAllTags).catch(() => { });
+    }, []);
+
+    // Load column config on mount
+    useEffect(() => {
+        jobsApi.getJobsListFields()
+            .then(fields => {
+                if (fields.length > 0) setVisibleFields(fields);
+            })
+            .catch(() => { });
     }, []);
 
     // Client-side filtering (only for filters not yet supported server-side)
@@ -364,10 +482,115 @@ export function JobsPage() {
                 <div className="border-b p-4 space-y-3">
                     <div className="flex items-center justify-between">
                         <h2 className="text-xl font-semibold">Jobs</h2>
-                        <Button variant="outline" size="sm" onClick={() => loadJobs(offset)} disabled={loading}>
-                            <RefreshCw className={`size-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
-                            Refresh
-                        </Button>
+                        <div className="flex items-center gap-1">
+                            {/* Fields config */}
+                            <Popover open={fieldsOpen} onOpenChange={(open) => {
+                                setFieldsOpen(open);
+                                if (open) setPendingFields([...visibleFields]);
+                            }}>
+                                <PopoverTrigger asChild>
+                                    <Button variant="outline" size="sm">
+                                        <SlidersHorizontal className="size-4 mr-1" />
+                                        Fields
+                                    </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-72 p-0" align="end">
+                                    <div className="px-3 py-2 border-b font-medium text-sm">Visible Fields</div>
+                                    <div className="max-h-80 overflow-auto p-1">
+                                        {/* Visible fields (ordered) */}
+                                        {pendingFields.map((fk, idx) => {
+                                            const col = ALL_COLUMNS[fk];
+                                            if (!col) return null;
+                                            return (
+                                                <div key={fk} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted/50 group">
+                                                    <Checkbox
+                                                        checked={true}
+                                                        onCheckedChange={() => {
+                                                            setPendingFields(prev => prev.filter(k => k !== fk));
+                                                        }}
+                                                        className="size-4"
+                                                    />
+                                                    <span className="flex-1 text-sm">{col.label}</span>
+                                                    <div className="flex gap-0.5 opacity-0 group-hover:opacity-100">
+                                                        <button
+                                                            className="p-0.5 rounded hover:bg-muted disabled:opacity-30"
+                                                            disabled={idx === 0}
+                                                            onClick={() => {
+                                                                setPendingFields(prev => {
+                                                                    const n = [...prev];
+                                                                    [n[idx - 1], n[idx]] = [n[idx], n[idx - 1]];
+                                                                    return n;
+                                                                });
+                                                            }}
+                                                        >
+                                                            <ArrowUp className="size-3" />
+                                                        </button>
+                                                        <button
+                                                            className="p-0.5 rounded hover:bg-muted disabled:opacity-30"
+                                                            disabled={idx === pendingFields.length - 1}
+                                                            onClick={() => {
+                                                                setPendingFields(prev => {
+                                                                    const n = [...prev];
+                                                                    [n[idx], n[idx + 1]] = [n[idx + 1], n[idx]];
+                                                                    return n;
+                                                                });
+                                                            }}
+                                                        >
+                                                            <ArrowDown className="size-3" />
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                        {/* Hidden fields */}
+                                        {ALL_FIELD_KEYS.filter(k => !pendingFields.includes(k)).length > 0 && (
+                                            <>
+                                                <Separator className="my-1" />
+                                                <div className="px-2 py-1 text-xs text-muted-foreground font-medium">Hidden</div>
+                                            </>
+                                        )}
+                                        {ALL_FIELD_KEYS.filter(k => !pendingFields.includes(k)).map(fk => {
+                                            const col = ALL_COLUMNS[fk];
+                                            return (
+                                                <div key={fk} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted/50">
+                                                    <Checkbox
+                                                        checked={false}
+                                                        onCheckedChange={() => {
+                                                            setPendingFields(prev => [...prev, fk]);
+                                                        }}
+                                                        className="size-4"
+                                                    />
+                                                    <span className="flex-1 text-sm text-muted-foreground">{col.label}</span>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                    <div className="px-3 py-2 border-t flex gap-2 justify-end">
+                                        <Button variant="ghost" size="sm" onClick={() => setFieldsOpen(false)}>Cancel</Button>
+                                        <Button size="sm" disabled={savingFields || pendingFields.length === 0} onClick={async () => {
+                                            setSavingFields(true);
+                                            try {
+                                                await jobsApi.saveJobsListFields(pendingFields);
+                                                setVisibleFields(pendingFields);
+                                                setFieldsOpen(false);
+                                                toast.success('Column config saved');
+                                            } catch (e: any) {
+                                                toast.error('Failed to save', { description: e.message });
+                                            } finally {
+                                                setSavingFields(false);
+                                            }
+                                        }}>
+                                            {savingFields ? <Loader2 className="size-4 animate-spin mr-1" /> : null}
+                                            Save
+                                        </Button>
+                                    </div>
+                                </PopoverContent>
+                            </Popover>
+                            <Button variant="outline" size="sm" onClick={() => loadJobs(offset)} disabled={loading}>
+                                <RefreshCw className={`size-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
+                                Refresh
+                            </Button>
+                        </div>
                     </div>
                     <JobsFilters
                         searchQuery={searchQuery}
@@ -405,85 +628,50 @@ export function JobsPage() {
                         <table className="w-full text-sm">
                             <thead className="bg-white sticky top-0 z-10 shadow-[0_1px_0_0_hsl(var(--border))]">
                                 <tr className="border-b text-left">
-                                    {[
-                                        { key: 'job_number', label: '#', width: 'w-20' },
-                                        { key: 'customer_name', label: 'Customer', width: 'w-48 max-w-[12rem]' },
-                                        { key: 'service_name', label: 'Service', width: 'w-40 max-w-[10rem]' },
-                                        { key: 'blanc_status', label: 'Status', width: '' },
-                                        { key: '', label: 'Tags', width: '' },
-                                        { key: '', label: 'Techs', width: '' },
-                                        { key: 'start_date', label: 'Schedule', width: '' },
-                                    ].map(col => (
-                                        <th
-                                            key={col.label}
-                                            className={`px-4 py-2.5 font-medium ${col.width} ${col.key ? 'cursor-pointer select-none hover:bg-muted/30 transition-colors' : ''}`}
-                                            onClick={() => {
-                                                if (!col.key) return;
-                                                if (sortBy === col.key) {
-                                                    setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
-                                                } else {
-                                                    setSortBy(col.key);
-                                                    setSortOrder('asc');
-                                                }
-                                            }}
-                                        >
-                                            <span className="inline-flex items-center gap-1">
-                                                {col.label}
-                                                {col.key && (
-                                                    sortBy === col.key
-                                                        ? (sortOrder === 'asc'
-                                                            ? <ArrowUp className="size-3.5 text-primary" />
-                                                            : <ArrowDown className="size-3.5 text-primary" />)
-                                                        : <ArrowUpDown className="size-3.5 text-muted-foreground/40" />
-                                                )}
-                                            </span>
-                                        </th>
-                                    ))}
+                                    {visibleFields.map(fk => {
+                                        const col = ALL_COLUMNS[fk];
+                                        if (!col) return null;
+                                        return (
+                                            <th
+                                                key={fk}
+                                                className={`px-4 py-2.5 font-medium ${col.width || ''} ${col.sortKey ? 'cursor-pointer select-none hover:bg-muted/30 transition-colors' : ''}`}
+                                                onClick={() => {
+                                                    if (!col.sortKey) return;
+                                                    if (sortBy === col.sortKey) {
+                                                        setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+                                                    } else {
+                                                        setSortBy(col.sortKey);
+                                                        setSortOrder('asc');
+                                                    }
+                                                }}
+                                            >
+                                                <span className="inline-flex items-center gap-1">
+                                                    {col.label}
+                                                    {col.sortKey && (
+                                                        sortBy === col.sortKey
+                                                            ? (sortOrder === 'asc'
+                                                                ? <ArrowUp className="size-3.5 text-primary" />
+                                                                : <ArrowDown className="size-3.5 text-primary" />)
+                                                            : <ArrowUpDown className="size-3.5 text-muted-foreground/40" />
+                                                    )}
+                                                </span>
+                                            </th>
+                                        );
+                                    })}
                                 </tr>
                             </thead>
                             <tbody>
                                 {filteredJobs.map(job => (
                                     <tr
                                         key={job.id}
-                                        className={`border-b hover:bg-muted/30 cursor-pointer transition-colors ${selectedJob?.id === job.id ? 'bg-muted/50' : ''
-                                            }`}
+                                        className={`border-b hover:bg-muted/30 cursor-pointer transition-colors ${selectedJob?.id === job.id ? 'bg-muted/50' : ''}`}
                                         onClick={() => handleSelectJob(job)}
                                     >
-                                        <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">
-                                            {job.job_number || '—'}
-                                        </td>
-                                        <td className="px-4 py-2.5 max-w-[12rem]">
-                                            <div className="font-medium truncate">{job.customer_name || '—'}</div>
-                                            {job.customer_phone && (
-                                                <div className="text-xs text-muted-foreground">{job.customer_phone}</div>
-                                            )}
-                                        </td>
-                                        <td className="px-4 py-2.5 max-w-[10rem] truncate">{job.service_name || '—'}</td>
-                                        <td className="px-4 py-2.5">
-                                            <div className="flex flex-col gap-1">
-                                                <BlancBadge status={job.blanc_status} />
-                                                <ZbBadge status={job.zb_status} />
-                                            </div>
-                                        </td>
-                                        <td className="px-4 py-2.5">
-                                            <div
-                                                className="flex flex-wrap gap-1"
-                                                title={job.tags && job.tags.length > 0 ? job.tags.map(t => t.name).join(', ') : ''}
-                                            >
-                                                {job.tags && job.tags.length > 0
-                                                    ? job.tags.map((t: JobTag) => <TagBadge key={t.id} tag={t} small />)
-                                                    : <span className="text-xs text-muted-foreground">—</span>}
-                                            </div>
-                                        </td>
-                                        <td className="px-4 py-2.5">
-                                            {job.assigned_techs?.map((p: any) => p.name).join(', ') || '—'}
-                                        </td>
-                                        <td className="px-4 py-2.5 text-xs">
-                                            {(() => {
-                                                const s = formatSchedule(job.start_date, job.end_date);
-                                                return <div><div className="whitespace-nowrap">{s.date}</div>{s.time && <div className="text-muted-foreground whitespace-nowrap">{s.time}</div>}</div>;
-                                            })()}
-                                        </td>
+                                        {visibleFields.map(fk => {
+                                            const col = ALL_COLUMNS[fk];
+                                            if (!col) return null;
+                                            return <td key={fk} className="px-4 py-2.5">{col.render(job)}</td>;
+                                        })}
                                     </tr>
                                 ))}
                             </tbody>
