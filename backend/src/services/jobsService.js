@@ -450,7 +450,7 @@ async function forceSyncOnZbError(job, action, error) {
     } catch (syncErr) {
         console.error(`[JobsService] Force-sync failed for job ${job.id}: ${syncErr.message}`);
     }
-    const err = new Error('An error occurred. Please try again in 5 seconds. If the problem persists, contact the developer.');
+    const err = new Error('An error occurred. Please refresh the page and try again in 5 seconds. If the problem persists, contact the developer.');
     err.statusCode = 409;
     throw err;
 }
