@@ -46,6 +46,15 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(requestId);
 
+// Disable ETag + prevent caching on API routes
+app.set('etag', false);
+app.use('/api', (req, res, next) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    next();
+});
+
 // Logging middleware
 app.use((req, res, next) => {
     console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
