@@ -320,12 +320,25 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null) {
     const cols = zbJobToColumns(zbData);
     const newBlancStatus = computeBlancStatusFromZb(cols.zb_status, cols.zb_canceled, cols.zb_rescheduled);
 
+    // Try to match ZB customer → Blanc contact
+    let contactId = null;
+    const zbCustomerId = zbData.customer?.id ? String(zbData.customer.id) : null;
+    if (zbCustomerId) {
+        const { rows: contactRows } = await db.query(
+            'SELECT id FROM contacts WHERE zenbooker_customer_id = $1 LIMIT 1',
+            [zbCustomerId]
+        );
+        if (contactRows.length > 0) {
+            contactId = contactRows[0].id;
+            console.log(`[JobsService] Matched ZB customer ${zbCustomerId} → contact ${contactId}`);
+        }
+    }
+
     // Check if job exists
     const existing = await getJobByZbId(zbJobId);
 
     if (existing) {
-        // Update existing — but don't override manual blanc_status if not a flag/status event
-        // Only override if the computed status actually differs from what priority rules dictate
+        // Update existing job + link contact if not already linked
         await db.query(`
             UPDATE jobs SET
                 zb_status = $1, zb_canceled = $2, zb_rescheduled = $3,
@@ -344,6 +357,7 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null) {
                 assigned_techs = $16::jsonb,
                 notes = $17::jsonb,
                 zb_raw = $18::jsonb,
+                contact_id = COALESCE($20, contact_id),
                 updated_at = NOW()
             WHERE zenbooker_job_id = $19
         `, [
@@ -353,15 +367,15 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null) {
             cols.customer_name, cols.customer_phone, cols.customer_email, cols.address,
             cols.territory, cols.invoice_total, cols.invoice_status,
             cols.assigned_techs, cols.notes, cols.zb_raw,
-            zbJobId,
+            zbJobId, contactId,
         ]);
 
         console.log(`[JobsService] Synced job ${zbJobId}: blanc_status ${existing.blanc_status} → ${newBlancStatus}`);
         return { updated: true, job_id: existing.id, blanc_status: newBlancStatus };
     } else {
-        // Create new (orphan — no lead linkage yet)
-        const job = await createJob({ zenbookerJobId: zbJobId, zbData, companyId });
-        console.log(`[JobsService] Created local job for zb_id=${zbJobId}, id=${job.id}`);
+        // Create new job linked to contact
+        const job = await createJob({ zenbookerJobId: zbJobId, zbData, companyId, contactId });
+        console.log(`[JobsService] Created local job for zb_id=${zbJobId}, id=${job.id}, contact=${contactId}`);
         return { updated: true, job_id: job.id, blanc_status: job.blanc_status, created: true };
     }
 }
