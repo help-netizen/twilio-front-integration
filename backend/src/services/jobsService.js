@@ -218,7 +218,7 @@ async function getJobByZbId(zbJobId) {
     return rowToJob(rows[0]);
 }
 
-async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 50, companyId, contactId, sortBy, sortOrder, onlyOpen, startDate, endDate, serviceName, provider, tagIds } = {}) {
+async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 50, companyId, contactId, sortBy, sortOrder, onlyOpen, startDate, endDate, serviceName, provider, tagIds, tagMatch } = {}) {
     const conditions = [];
     const params = [];
     let idx = 0;
@@ -290,12 +290,23 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
     if (tagIds) {
         const ids = tagIds.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
         if (ids.length > 0) {
-            const placeholders = ids.map(() => { idx++; return `$${idx}`; });
-            conditions.push(`EXISTS (
-                SELECT 1 FROM job_tag_assignments jta3
-                WHERE jta3.job_id = j.id AND jta3.tag_id IN (${placeholders.join(',')})
-            )`);
-            params.push(...ids);
+            if (tagMatch === 'all' && ids.length > 1) {
+                // ALL mode: job must have ALL selected tags
+                const placeholders = ids.map(() => { idx++; return `$${idx}`; });
+                conditions.push(`(
+                    SELECT COUNT(DISTINCT jta3.tag_id) FROM job_tag_assignments jta3
+                    WHERE jta3.job_id = j.id AND jta3.tag_id IN (${placeholders.join(',')})
+                ) = ${ids.length}`);
+                params.push(...ids);
+            } else {
+                // ANY mode (default): job has at least one of selected tags
+                const placeholders = ids.map(() => { idx++; return `$${idx}`; });
+                conditions.push(`EXISTS (
+                    SELECT 1 FROM job_tag_assignments jta3
+                    WHERE jta3.job_id = j.id AND jta3.tag_id IN (${placeholders.join(',')})
+                )`);
+                params.push(...ids);
+            }
         }
     }
 
@@ -623,6 +634,29 @@ async function updateJobTags(jobId, tagIds) {
     const client = await db.pool.connect();
     try {
         await client.query('BEGIN');
+
+        // Get currently assigned tag IDs
+        const { rows: currentRows } = await client.query(
+            'SELECT tag_id FROM job_tag_assignments WHERE job_id = $1', [jobId]
+        );
+        const currentTagIds = new Set(currentRows.map(r => r.tag_id));
+
+        // Validate: new tags must be active
+        if (tagIds && tagIds.length > 0) {
+            const newTagIds = tagIds.filter(id => !currentTagIds.has(id));
+            if (newTagIds.length > 0) {
+                const { rows: tagRows } = await client.query(
+                    'SELECT id, is_active FROM job_tags WHERE id = ANY($1)', [newTagIds]
+                );
+                const inactiveNew = tagRows.filter(r => !r.is_active);
+                if (inactiveNew.length > 0) {
+                    throw Object.assign(
+                        new Error(`Cannot assign archived tags: ${inactiveNew.map(r => r.id).join(', ')}`),
+                        { statusCode: 400 }
+                    );
+                }
+            }
+        }
 
         // Remove all existing assignments
         await client.query('DELETE FROM job_tag_assignments WHERE job_id = $1', [jobId]);

@@ -79,6 +79,7 @@ export interface JobsListParams {
     service_name?: string;
     provider?: string;
     tag_ids?: string;
+    tag_match?: 'any' | 'all';
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

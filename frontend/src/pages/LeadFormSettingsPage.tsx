@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { authedFetch } from '../services/apiClient';
+import * as jobsApi from '../services/jobsApi';
+import type { JobTag } from '../services/jobsApi';
 import './LeadFormSettingsPage.css';
 import { toast } from 'sonner';
 import {
@@ -113,6 +115,142 @@ function SortableField({
     );
 }
 
+// ─── Color Palette ──────────────────────────────────────────────────────────
+const TAG_PALETTE = [
+    '#EF4444', '#FCA5A5', // red
+    '#F97316', '#FDBA74', // orange
+    '#EAB308', '#FDE047', // yellow
+    '#22C55E', '#86EFAC', // green
+    '#14B8A6', '#5EEAD4', // teal
+    '#3B82F6', '#93C5FD', // blue
+    '#8B5CF6', '#C4B5FD', // violet
+    '#000000', '#FFFFFF',
+];
+
+function getContrastText(hex: string): string {
+    const c = hex.replace('#', '');
+    const r = parseInt(c.substring(0, 2), 16);
+    const g = parseInt(c.substring(2, 4), 16);
+    const b = parseInt(c.substring(4, 6), 16);
+    return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.6 ? '#000' : '#fff';
+}
+
+function SortableTag({
+    item,
+    onArchive,
+    onColorChange,
+    onRename,
+}: {
+    item: JobTag;
+    onArchive: () => void;
+    onColorChange: (color: string) => void;
+    onRename: (name: string) => void;
+}) {
+    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+        id: `tag-${item.id}`,
+    });
+    const [showPalette, setShowPalette] = useState(false);
+    const [editing, setEditing] = useState(false);
+    const [editName, setEditName] = useState(item.name);
+
+    const style = {
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : 1,
+    };
+
+    const isWhite = item.color.toLowerCase() === '#ffffff' || item.color.toLowerCase() === '#fff';
+
+    return (
+        <div ref={setNodeRef} style={style} className={`lfsp-sortable-item lfsp-tag-item ${!item.is_active ? 'lfsp-tag-archived' : ''}`}>
+            <span {...attributes} {...listeners} className="lfsp-drag-handle" title="Drag to reorder">☰</span>
+
+            {/* Color dot + palette */}
+            <span className="lfsp-tag-color-wrapper">
+                <button
+                    className="lfsp-tag-color-dot"
+                    style={{
+                        backgroundColor: item.color,
+                        border: isWhite ? '1px solid #d1d5db' : '2px solid transparent',
+                    }}
+                    onClick={() => setShowPalette(!showPalette)}
+                    title="Change color"
+                />
+                {showPalette && (
+                    <div className="lfsp-tag-palette">
+                        {TAG_PALETTE.map(c => (
+                            <button
+                                key={c}
+                                className={`lfsp-tag-palette-swatch ${c === item.color ? 'lfsp-swatch-active' : ''}`}
+                                style={{
+                                    backgroundColor: c,
+                                    border: c === '#FFFFFF' ? '1px solid #d1d5db' : 'none',
+                                }}
+                                onClick={() => { onColorChange(c); setShowPalette(false); }}
+                            />
+                        ))}
+                    </div>
+                )}
+            </span>
+
+            {/* Badge preview */}
+            <span
+                className="lfsp-tag-badge-preview"
+                style={{
+                    backgroundColor: item.color,
+                    color: getContrastText(item.color),
+                    border: isWhite ? '1px solid #d1d5db' : 'none',
+                }}
+            >
+                {item.name}
+            </span>
+
+            {/* Name — click to edit */}
+            {editing ? (
+                <input
+                    className="lfsp-input lfsp-tag-name-input"
+                    value={editName}
+                    onChange={e => setEditName(e.target.value)}
+                    onBlur={() => {
+                        if (editName.trim() && editName.trim() !== item.name) {
+                            onRename(editName.trim());
+                        }
+                        setEditing(false);
+                    }}
+                    onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                            if (editName.trim() && editName.trim() !== item.name) {
+                                onRename(editName.trim());
+                            }
+                            setEditing(false);
+                        }
+                        if (e.key === 'Escape') { setEditName(item.name); setEditing(false); }
+                    }}
+                    autoFocus
+                />
+            ) : (
+                <span
+                    className="lfsp-item-name lfsp-tag-name-editable"
+                    onClick={() => { setEditName(item.name); setEditing(true); }}
+                    title="Click to rename"
+                >
+                    {item.name}
+                </span>
+            )}
+
+            {!item.is_active && <span className="lfsp-tag-archived-label">Archived</span>}
+
+            <button
+                className="lfsp-remove-btn"
+                onClick={onArchive}
+                title={item.is_active ? 'Archive tag' : 'Restore tag'}
+            >
+                {item.is_active ? '🗑' : '♻️'}
+            </button>
+        </div>
+    );
+}
+
 // ─── Page ───────────────────────────────────────────────────────────────────
 export default function LeadFormSettingsPage() {
     const [jobTypes, setJobTypes] = useState<JobType[]>([]);
@@ -120,6 +258,11 @@ export default function LeadFormSettingsPage() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [dirty, setDirty] = useState(false);
+
+    // Job Tags
+    const [tags, setTags] = useState<JobTag[]>([]);
+    const [newTagName, setNewTagName] = useState('');
+    const [newTagColor, setNewTagColor] = useState('#3B82F6');
 
     // New job type input
     const [newJobType, setNewJobType] = useState('');
@@ -153,6 +296,15 @@ export default function LeadFormSettingsPage() {
     }, []);
 
     useEffect(() => { load(); }, [load]);
+
+    // Load tags
+    const loadTags = useCallback(async () => {
+        try {
+            const data = await jobsApi.listJobTags();
+            setTags(data);
+        } catch { /* silent */ }
+    }, []);
+    useEffect(() => { loadTags(); }, [loadTags]);
 
     // ── Save ──
     const handleSave = async () => {
@@ -251,6 +403,64 @@ export default function LeadFormSettingsPage() {
         const newIndex = fields.findIndex((f) => `cf-${f.id ?? f.api_name}` === over.id);
         setFields(arrayMove(fields, oldIndex, newIndex));
         setDirty(true);
+    };
+
+    // ── Tag Operations ──
+    const addTag = async () => {
+        const name = newTagName.trim();
+        if (!name) return;
+        try {
+            await jobsApi.createJobTag(name, newTagColor);
+            setNewTagName('');
+            setNewTagColor('#3B82F6');
+            loadTags();
+            toast.success('Tag created');
+        } catch (err: any) {
+            toast.error(err.message || 'Failed to create tag');
+        }
+    };
+
+    const handleTagArchiveToggle = async (tag: JobTag) => {
+        try {
+            await jobsApi.updateJobTag(tag.id, { is_active: !tag.is_active });
+            loadTags();
+            toast.success(tag.is_active ? 'Tag archived' : 'Tag restored');
+        } catch (err: any) {
+            toast.error(err.message || 'Failed');
+        }
+    };
+
+    const handleTagColorChange = async (tagId: number, color: string) => {
+        try {
+            await jobsApi.updateJobTag(tagId, { color });
+            loadTags();
+        } catch (err: any) {
+            toast.error(err.message || 'Failed');
+        }
+    };
+
+    const handleTagRename = async (tagId: number, name: string) => {
+        try {
+            await jobsApi.updateJobTag(tagId, { name });
+            loadTags();
+            toast.success('Tag renamed');
+        } catch (err: any) {
+            toast.error(err.message || 'Failed');
+        }
+    };
+
+    const handleTagDragEnd = async (event: DragEndEvent) => {
+        const { active, over } = event;
+        if (!over || active.id === over.id) return;
+        const oldIndex = tags.findIndex(t => `tag-${t.id}` === active.id);
+        const newIndex = tags.findIndex(t => `tag-${t.id}` === over.id);
+        const reordered = arrayMove(tags, oldIndex, newIndex);
+        setTags(reordered);
+        try {
+            await jobsApi.reorderJobTags(reordered.map(t => t.id));
+        } catch {
+            loadTags(); // revert on error
+        }
     };
 
     if (loading) {
@@ -370,6 +580,55 @@ export default function LeadFormSettingsPage() {
                         + Add Field
                     </button>
                 )}
+            </section>
+
+            {/* ── Job Tags ── */}
+            <section className="lfsp-section">
+                <h2 className="lfsp-section-title">Job Tags</h2>
+                <p className="lfsp-section-desc">Manage tags that can be assigned to jobs. Drag to reorder, click color dot to change, click name to rename.</p>
+
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleTagDragEnd}>
+                    <SortableContext
+                        items={tags.map(t => `tag-${t.id}`)}
+                        strategy={verticalListSortingStrategy}
+                    >
+                        <div className="lfsp-list">
+                            {tags.map(tag => (
+                                <SortableTag
+                                    key={`tag-${tag.id}`}
+                                    item={tag}
+                                    onArchive={() => handleTagArchiveToggle(tag)}
+                                    onColorChange={(c) => handleTagColorChange(tag.id, c)}
+                                    onRename={(n) => handleTagRename(tag.id, n)}
+                                />
+                            ))}
+                        </div>
+                    </SortableContext>
+                </DndContext>
+
+                <div className="lfsp-add-row lfsp-tag-add-row">
+                    <input
+                        className="lfsp-input"
+                        value={newTagName}
+                        onChange={e => setNewTagName(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && addTag()}
+                        placeholder="New tag name"
+                    />
+                    <div className="lfsp-tag-new-palette">
+                        {TAG_PALETTE.slice(0, 8).map(c => (
+                            <button
+                                key={c}
+                                className={`lfsp-tag-palette-swatch lfsp-swatch-small ${c === newTagColor ? 'lfsp-swatch-active' : ''}`}
+                                style={{
+                                    backgroundColor: c,
+                                    border: c === '#FFFFFF' ? '1px solid #d1d5db' : 'none',
+                                }}
+                                onClick={() => setNewTagColor(c)}
+                            />
+                        ))}
+                    </div>
+                    <button className="lfsp-add-btn" onClick={addTag}>+ Add Tag</button>
+                </div>
             </section>
         </div>
     );

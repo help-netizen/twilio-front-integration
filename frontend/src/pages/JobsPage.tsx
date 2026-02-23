@@ -460,7 +460,10 @@ export function JobsPage() {
                                             {job.assigned_techs?.map((p: any) => p.name).join(', ') || '—'}
                                         </td>
                                         <td className="px-4 py-2.5">
-                                            <div className="flex flex-wrap gap-1">
+                                            <div
+                                                className="flex flex-wrap gap-1"
+                                                title={job.tags && job.tags.length > 0 ? job.tags.map(t => t.name).join(', ') : ''}
+                                            >
                                                 {job.tags && job.tags.length > 0
                                                     ? job.tags.map((t: JobTag) => <TagBadge key={t.id} tag={t} small />)
                                                     : <span className="text-xs text-muted-foreground">—</span>}
@@ -819,9 +822,16 @@ function JobDetailPanel({
                             </span>
                         )}
 
-                        {/* Tag badges */}
+                        {/* Tag badges — click to filter */}
                         {job.tags && job.tags.length > 0 && job.tags.map((t: JobTag) => (
-                            <TagBadge key={t.id} tag={t} />
+                            <button
+                                key={t.id}
+                                onClick={() => navigate(`/jobs?tag_ids=${t.id}`)}
+                                className="cursor-pointer hover:opacity-80 transition-opacity"
+                                title={`Filter by "${t.name}"`}
+                            >
+                                <TagBadge tag={t} />
+                            </button>
                         ))}
                     </div>
 
@@ -907,31 +917,44 @@ function JobDetailPanel({
                                 <Plus className="size-3" /> Add
                             </button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start" className="max-h-64 overflow-y-auto">
-                            {allTags.filter(t => t.is_active).map(t => {
-                                const isAssigned = job.tags?.some(jt => jt.id === t.id);
-                                return (
-                                    <DropdownMenuItem
-                                        key={t.id}
-                                        onClick={() => {
-                                            const currentIds = (job.tags || []).map(x => x.id);
-                                            const newIds = isAssigned
-                                                ? currentIds.filter(id => id !== t.id)
-                                                : [...currentIds, t.id];
-                                            onTagsChange(job.id, newIds);
-                                        }}
-                                    >
-                                        <span className="flex items-center gap-2 w-full">
-                                            <span
-                                                className="size-3 rounded-full shrink-0"
-                                                style={{ backgroundColor: t.color }}
-                                            />
-                                            <span className="flex-1">{t.name}</span>
-                                            {isAssigned && <CheckCircle2 className="size-3.5 text-primary" />}
-                                        </span>
-                                    </DropdownMenuItem>
-                                );
-                            })}
+                        <DropdownMenuContent align="start" className="w-56 max-h-72 overflow-y-auto p-1">
+                            {/* Build tag list: active tags + inactive-but-assigned tags */}
+                            {(() => {
+                                const assignedIds = new Set((job.tags || []).map(t => t.id));
+                                const activeTags = allTags.filter(t => t.is_active);
+                                const inactiveAssigned = allTags.filter(t => !t.is_active && assignedIds.has(t.id));
+                                const combined = [...activeTags, ...inactiveAssigned];
+                                return combined.map(t => {
+                                    const isAssigned = assignedIds.has(t.id);
+                                    const isInactive = !t.is_active;
+                                    return (
+                                        <DropdownMenuItem
+                                            key={t.id}
+                                            disabled={isInactive && !isAssigned}
+                                            onClick={() => {
+                                                if (isInactive && !isAssigned) return;
+                                                const currentIds = (job.tags || []).map(x => x.id);
+                                                const newIds = isAssigned
+                                                    ? currentIds.filter(id => id !== t.id)
+                                                    : [...currentIds, t.id];
+                                                onTagsChange(job.id, newIds);
+                                            }}
+                                        >
+                                            <span className="flex items-center gap-2 w-full">
+                                                <span
+                                                    className={`size-3 rounded-full shrink-0 ${isInactive ? 'opacity-40' : ''}`}
+                                                    style={{ backgroundColor: t.color }}
+                                                />
+                                                <span className={`flex-1 ${isInactive ? 'text-muted-foreground' : ''}`}>
+                                                    {t.name}
+                                                    {isInactive && <span className="text-[10px] ml-1 text-muted-foreground">(Archived)</span>}
+                                                </span>
+                                                {isAssigned && <CheckCircle2 className="size-3.5 text-primary" />}
+                                            </span>
+                                        </DropdownMenuItem>
+                                    );
+                                });
+                            })()}
                         </DropdownMenuContent>
                     </DropdownMenu>
                 </div>
