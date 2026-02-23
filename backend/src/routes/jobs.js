@@ -84,7 +84,7 @@ router.post('/:id/cancel', async (req, res) => {
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Jobs API] Cancel error:', err.message);
-        res.status(500).json({ ok: false, error: err.message });
+        res.status(err.statusCode || 500).json({ ok: false, error: err.message });
     }
 });
 
@@ -96,7 +96,7 @@ router.post('/:id/enroute', async (req, res) => {
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Jobs API] En-route error:', err.message);
-        res.status(500).json({ ok: false, error: err.message });
+        res.status(err.statusCode || 500).json({ ok: false, error: err.message });
     }
 });
 
@@ -108,7 +108,7 @@ router.post('/:id/start', async (req, res) => {
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Jobs API] Start error:', err.message);
-        res.status(500).json({ ok: false, error: err.message });
+        res.status(err.statusCode || 500).json({ ok: false, error: err.message });
     }
 });
 
@@ -120,7 +120,7 @@ router.post('/:id/complete', async (req, res) => {
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Jobs API] Complete error:', err.message);
-        res.status(500).json({ ok: false, error: err.message });
+        res.status(err.statusCode || 500).json({ ok: false, error: err.message });
     }
 });
 
