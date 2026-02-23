@@ -273,7 +273,7 @@ async function pushExistingAddresses(contactId, zbCustomerId) {
  *
  * @param {Object} payload - { event, data, account, webhook_id, retry_count }
  */
-async function handleWebhookPayload(payload) {
+async function handleWebhookPayload(payload, companyId = null) {
     assertEnabled();
 
     const { event, data, account } = payload;
@@ -284,6 +284,20 @@ async function handleWebhookPayload(payload) {
 
     const customerId = String(data.id);
     console.log(`[ZbSync] Processing webhook event=${event} customer=${customerId}`);
+
+    // Parse name — ZB may send `name` (full) or `first_name`/`last_name`
+    let firstName = (data.first_name || '').trim() || null;
+    let lastName = (data.last_name || '').trim() || null;
+    let fullName = (data.name || '').trim() || null;
+
+    if (!firstName && !lastName && fullName) {
+        const parts = fullName.split(/\s+/);
+        firstName = parts[0] || null;
+        lastName = parts.length > 1 ? parts.slice(1).join(' ') : null;
+    }
+    if (!fullName && (firstName || lastName)) {
+        fullName = [firstName, lastName].filter(Boolean).join(' ');
+    }
 
     // 1. Try exact match by zenbooker_customer_id
     const { rows: exact } = await db.query(
@@ -299,8 +313,6 @@ async function handleWebhookPayload(payload) {
 
     // 2. Try match by name + phone
     const phone = normalizePhone(data.phone);
-    const firstName = (data.first_name || '').trim().toLowerCase();
-    const lastName = (data.last_name || '').trim().toLowerCase();
     const email = (data.email || '').trim().toLowerCase();
 
     if (phone && firstName && lastName) {
@@ -309,7 +321,7 @@ async function handleWebhookPayload(payload) {
              WHERE LOWER(TRIM(first_name)) = $1
                AND LOWER(TRIM(last_name)) = $2
                AND phone_e164 = $3`,
-            [firstName, lastName, phone]
+            [(firstName || '').toLowerCase(), (lastName || '').toLowerCase(), phone]
         );
         if (byPhone.length === 1) {
             await linkAndUpdate(byPhone[0].id, customerId, data, account);
@@ -324,7 +336,7 @@ async function handleWebhookPayload(payload) {
              WHERE LOWER(TRIM(first_name)) = $1
                AND LOWER(TRIM(last_name)) = $2
                AND LOWER(TRIM(email)) = $3`,
-            [firstName, lastName, email]
+            [(firstName || '').toLowerCase(), (lastName || '').toLowerCase(), email]
         );
         if (byEmail.length === 1) {
             await linkAndUpdate(byEmail[0].id, customerId, data, account);
@@ -333,20 +345,20 @@ async function handleWebhookPayload(payload) {
     }
 
     // 4. No match — create new Blanc contact
-    const fullName = [data.first_name, data.last_name].filter(Boolean).join(' ') || null;
     const { rows: newRows } = await db.query(
         `INSERT INTO contacts (full_name, first_name, last_name, phone_e164, email,
                                zenbooker_customer_id, zenbooker_account_id,
-                               zenbooker_sync_status, zenbooker_synced_at, zenbooker_data)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'linked', NOW(), $8::jsonb)
+                               zenbooker_sync_status, zenbooker_synced_at, zenbooker_data,
+                               company_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'linked', NOW(), $8::jsonb, $9)
          ON CONFLICT (zenbooker_customer_id) DO UPDATE SET
              zenbooker_data = EXCLUDED.zenbooker_data,
              zenbooker_synced_at = NOW()
          RETURNING id`,
-        [fullName, data.first_name || null, data.last_name || null,
+        [fullName, firstName, lastName,
             phone || null, data.email || null,
             customerId, account || null,
-            JSON.stringify(data)]
+            JSON.stringify(data), companyId]
     );
     console.log(`[ZbSync] Created new contact ${newRows[0]?.id} from Zenbooker customer ${customerId}`);
 
@@ -380,18 +392,42 @@ async function linkAndUpdate(contactId, zbCustomerId, data, account) {
 }
 
 async function updateContactFromZenbooker(contactId, data, account) {
-    // Update zenbooker_data and sync timestamp, but don't overwrite Blanc master fields
+    // Parse name — ZB sends `name` (full) or `first_name`/`last_name`
+    let firstName = data.first_name || null;
+    let lastName = data.last_name || null;
+    let fullName = data.name || null;
+
+    if (!firstName && !lastName && fullName) {
+        const parts = fullName.trim().split(/\s+/);
+        firstName = parts[0] || null;
+        lastName = parts.length > 1 ? parts.slice(1).join(' ') : null;
+    }
+    if (!fullName && (firstName || lastName)) {
+        fullName = [firstName, lastName].filter(Boolean).join(' ');
+    }
+
+    const phone = normalizePhone(data.phone);
+    const email = (data.email || '').trim() || null;
+
+    // Update master fields + zenbooker_data using COALESCE (preserve existing if ZB sends null)
     await db.query(
         `UPDATE contacts
          SET zenbooker_data = $1::jsonb,
              zenbooker_synced_at = NOW(),
              zenbooker_account_id = COALESCE($2, zenbooker_account_id),
              zenbooker_sync_status = 'linked',
-             zenbooker_last_error = NULL
-         WHERE id = $3`,
-        [JSON.stringify(data), account || null, contactId]
+             zenbooker_last_error = NULL,
+             full_name = COALESCE($3, full_name),
+             first_name = COALESCE($4, first_name),
+             last_name = COALESCE($5, last_name),
+             phone_e164 = COALESCE($6, phone_e164),
+             email = COALESCE($7, email)
+         WHERE id = $8`,
+        [JSON.stringify(data), account || null,
+            fullName, firstName, lastName, phone, email,
+            contactId]
     );
-    console.log(`[ZbSync] Updated Zenbooker data for contact ${contactId}`);
+    console.log(`[ZbSync] Updated contact ${contactId} from Zenbooker (name=${fullName}, phone=${phone}, email=${email})`);
 
     if (data.addresses?.length) {
         await importAddresses(contactId, data.id ? String(data.id) : null, data.addresses);

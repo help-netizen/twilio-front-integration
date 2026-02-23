@@ -121,6 +121,10 @@ async function processEvent(inboxEvent) {
             await processRecordingEvent(payload, traceId);
         } else if (source === 'transcription') {
             await processTranscriptionEvent(payload, traceId);
+        } else if (source === 'zenbooker') {
+            // Zenbooker events are processed inline by the webhook route.
+            // Nothing to do here — just mark as processed.
+            console.log(`[${traceId}] Zenbooker event — already processed inline, skipping`);
         } else {
             throw new Error(`Unknown source: ${source}`);
         }
