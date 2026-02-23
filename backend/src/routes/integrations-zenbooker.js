@@ -58,7 +58,7 @@ async function processWebhookPayload(reqId, payload, headers, companyId = null) 
     // Process event
     if (event.startsWith('customer.') && zenbookerSyncService.FEATURE_ENABLED) {
         try {
-            await zenbookerSyncService.handleWebhookPayload(payload);
+            await zenbookerSyncService.handleWebhookPayload(payload, companyId);
             await db.query(
                 `UPDATE webhook_inbox SET status = 'processed', processed_at = NOW(), attempts = attempts + 1
                  WHERE event_key = $1 AND provider = 'zenbooker'`,
