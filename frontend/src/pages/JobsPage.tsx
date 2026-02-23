@@ -149,11 +149,11 @@ const STATIC_COLUMNS: Record<string, ColumnDef> = {
         ),
     },
     customer_phone: {
-        key: 'customer_phone', label: 'Phone',
+        key: 'customer_phone', label: 'Phone', sortKey: 'customer_phone',
         render: (j) => <span>{j.customer_phone || '—'}</span>,
     },
     customer_email: {
-        key: 'customer_email', label: 'Email',
+        key: 'customer_email', label: 'Email', sortKey: 'customer_email',
         render: (j) => <span className="truncate max-w-[10rem] block">{j.customer_email || '—'}</span>,
     },
     service_name: {
@@ -170,7 +170,7 @@ const STATIC_COLUMNS: Record<string, ColumnDef> = {
         ),
     },
     zb_status: {
-        key: 'zb_status', label: 'ZB Status',
+        key: 'zb_status', label: 'ZB Status', sortKey: 'zb_status',
         render: (j) => <ZbBadge status={j.zb_status} />,
     },
     tags: {
@@ -193,11 +193,11 @@ const STATIC_COLUMNS: Record<string, ColumnDef> = {
         },
     },
     address: {
-        key: 'address', label: 'Address',
+        key: 'address', label: 'Address', sortKey: 'address',
         render: (j) => <span className="line-clamp-2 text-xs">{j.address || '—'}</span>,
     },
     territory: {
-        key: 'territory', label: 'Territory',
+        key: 'territory', label: 'Territory', sortKey: 'territory',
         render: (j) => <span className="line-clamp-2 text-xs">{j.territory || '—'}</span>,
     },
     invoice_total: {
@@ -205,23 +205,23 @@ const STATIC_COLUMNS: Record<string, ColumnDef> = {
         render: (j) => <span>{j.invoice_total != null ? `$${Number(j.invoice_total).toFixed(2)}` : '—'}</span>,
     },
     invoice_status: {
-        key: 'invoice_status', label: 'Inv. Status',
+        key: 'invoice_status', label: 'Inv. Status', sortKey: 'invoice_status',
         render: (j) => <span>{j.invoice_status || '—'}</span>,
     },
     job_type: {
-        key: 'job_type', label: 'Job Type',
+        key: 'job_type', label: 'Job Type', sortKey: 'job_type',
         render: (j) => <span>{j.job_type || '—'}</span>,
     },
     description: {
-        key: 'description', label: 'Description',
+        key: 'description', label: 'Description', sortKey: 'description',
         render: (j) => <span className="line-clamp-2 text-xs">{j.description || '—'}</span>,
     },
     comments: {
-        key: 'comments', label: 'Comments',
+        key: 'comments', label: 'Comments', sortKey: 'comments',
         render: (j) => <span className="line-clamp-2 text-xs">{j.comments || '—'}</span>,
     },
     job_source: {
-        key: 'job_source', label: 'Source',
+        key: 'job_source', label: 'Source', sortKey: 'job_source',
         render: (j) => j.job_source ? (
             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-muted">{j.job_source}</span>
         ) : <span className="text-xs text-muted-foreground">—</span>,

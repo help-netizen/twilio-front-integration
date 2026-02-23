@@ -322,10 +322,22 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
     const SORTABLE_COLUMNS = {
         job_number: 'j.job_number',
         customer_name: 'j.customer_name',
+        customer_phone: 'j.customer_phone',
+        customer_email: 'j.customer_email',
         service_name: 'j.service_name',
         start_date: 'j.start_date',
+        end_date: 'j.end_date',
         blanc_status: 'j.blanc_status',
+        zb_status: 'j.zb_status',
+        address: 'j.address',
+        territory: 'j.territory',
+        invoice_total: 'j.invoice_total',
+        invoice_status: 'j.invoice_status',
+        job_type: 'j.job_type',
+        job_source: 'j.job_source',
+        description: 'j.description',
         created_at: 'j.created_at',
+        updated_at: 'j.updated_at',
     };
     const sortCol = SORTABLE_COLUMNS[sortBy] || 'j.created_at';
     const sortDir = sortOrder === 'asc' ? 'ASC' : 'DESC';
