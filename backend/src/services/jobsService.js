@@ -325,7 +325,7 @@ async function updateBlancStatus(jobId, newStatus) {
  * Sync a Zenbooker job event into the local jobs table.
  * Creates or updates the local job, recalculates blanc_status.
  */
-async function syncFromZenbooker(zbJobId, zbData) {
+async function syncFromZenbooker(zbJobId, zbData, companyId = null) {
     const cols = zbJobToColumns(zbData);
     const newBlancStatus = computeBlancStatusFromZb(cols.zb_status, cols.zb_canceled, cols.zb_rescheduled);
 
@@ -369,7 +369,7 @@ async function syncFromZenbooker(zbJobId, zbData) {
         return { updated: true, job_id: existing.id, blanc_status: newBlancStatus };
     } else {
         // Create new (orphan — no lead linkage yet)
-        const job = await createJob({ zenbookerJobId: zbJobId, zbData });
+        const job = await createJob({ zenbookerJobId: zbJobId, zbData, companyId });
         console.log(`[JobsService] Created local job for zb_id=${zbJobId}, id=${job.id}`);
         return { updated: true, job_id: job.id, blanc_status: job.blanc_status, created: true };
     }

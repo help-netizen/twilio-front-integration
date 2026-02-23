@@ -80,7 +80,7 @@ async function processWebhookPayload(reqId, payload, headers, companyId = null) 
 
             const zbJobId = payload.data?.id || payload.data?.job_id;
             if (zbJobId) {
-                const localResult = await jobsService.syncFromZenbooker(zbJobId, payload.data);
+                const localResult = await jobsService.syncFromZenbooker(zbJobId, payload.data, companyId);
                 console.log(`[ZbWebhook][${reqId}] Local job sync:`, JSON.stringify(localResult));
             }
 
