@@ -66,6 +66,8 @@ export interface JobsListParams {
     only_open?: boolean;
     start_date?: string;
     end_date?: string;
+    service_name?: string;
+    provider?: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

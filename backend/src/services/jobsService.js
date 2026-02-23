@@ -203,7 +203,7 @@ async function getJobByZbId(zbJobId) {
     return rowToJob(rows[0]);
 }
 
-async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 50, companyId, contactId, sortBy, sortOrder, onlyOpen, startDate, endDate } = {}) {
+async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 50, companyId, contactId, sortBy, sortOrder, onlyOpen, startDate, endDate, serviceName, provider } = {}) {
     const conditions = [];
     const params = [];
     let idx = 0;
@@ -212,7 +212,15 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
         idx++; conditions.push(`j.company_id = $${idx}`); params.push(companyId);
     }
     if (blancStatus) {
-        idx++; conditions.push(`j.blanc_status = $${idx}`); params.push(blancStatus);
+        // Support comma-separated multi-value: "Submitted,Rescheduled"
+        const statuses = blancStatus.split(',').map(s => s.trim()).filter(Boolean);
+        if (statuses.length === 1) {
+            idx++; conditions.push(`j.blanc_status = $${idx}`); params.push(statuses[0]);
+        } else if (statuses.length > 1) {
+            const placeholders = statuses.map(() => { idx++; return `$${idx}`; });
+            conditions.push(`j.blanc_status IN (${placeholders.join(',')})`);
+            params.push(...statuses);
+        }
     }
     if (zbCanceled !== undefined) {
         idx++; conditions.push(`j.zb_canceled = $${idx}`); params.push(zbCanceled === 'true' || zbCanceled === true);
@@ -239,6 +247,25 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
     }
     if (endDate) {
         idx++; conditions.push(`j.start_date <= $${idx}`); params.push(endDate + ' 23:59:59');
+    }
+    if (serviceName) {
+        const names = serviceName.split(',').map(s => s.trim()).filter(Boolean);
+        if (names.length === 1) {
+            idx++; conditions.push(`j.service_name = $${idx}`); params.push(names[0]);
+        } else if (names.length > 1) {
+            const placeholders = names.map(() => { idx++; return `$${idx}`; });
+            conditions.push(`j.service_name IN (${placeholders.join(',')})`);
+            params.push(...names);
+        }
+    }
+    if (provider) {
+        const providers = provider.split(',').map(s => s.trim()).filter(Boolean);
+        // assigned_techs is JSONB array — search for matching provider name
+        const providerConditions = providers.map(() => {
+            idx++; return `j.assigned_techs::text ILIKE $${idx}`;
+        });
+        conditions.push(`(${providerConditions.join(' OR ')})`);
+        params.push(...providers.map(p => `%${p}%`));
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';

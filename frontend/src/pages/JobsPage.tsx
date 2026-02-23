@@ -128,6 +128,9 @@ export function JobsPage() {
             if (sortOrder) params.sort_order = sortOrder;
             if (onlyOpen) params.only_open = true;
             if (startDate) params.start_date = startDate;
+            if (statusFilter.length > 0) params.blanc_status = statusFilter.join(',');
+            if (jobTypeFilter.length > 0) params.service_name = jobTypeFilter.join(',');
+            if (providerFilter.length > 0) params.provider = providerFilter.join(',');
 
             const data = await jobsApi.listJobs(params);
             setJobs(data.results || []);
@@ -141,27 +144,16 @@ export function JobsPage() {
         } finally {
             setLoading(false);
         }
-    }, [searchQuery, sortBy, sortOrder, onlyOpen, startDate]);
+    }, [searchQuery, sortBy, sortOrder, onlyOpen, startDate, statusFilter, jobTypeFilter, providerFilter]);
 
-    // Client-side filtering (applied on top of server results)
+    // Client-side filtering (only for filters not yet supported server-side)
     const filteredJobs = useMemo(() => {
         let result = jobs;
-        if (statusFilter.length > 0) {
-            result = result.filter(j => j.blanc_status && statusFilter.includes(j.blanc_status));
-        }
         if (sourceFilter.length > 0) {
             result = result.filter(j => j.job_source && sourceFilter.includes(j.job_source));
         }
-        if (jobTypeFilter.length > 0) {
-            result = result.filter(j => j.service_name && jobTypeFilter.includes(j.service_name));
-        }
-        if (providerFilter.length > 0) {
-            result = result.filter(j =>
-                j.assigned_techs?.some((t: any) => providerFilter.includes(t.name))
-            );
-        }
         return result;
-    }, [jobs, statusFilter, sourceFilter, jobTypeFilter, providerFilter]);
+    }, [jobs, sourceFilter]);
 
     useEffect(() => { loadJobs(0); }, [loadJobs]);
 

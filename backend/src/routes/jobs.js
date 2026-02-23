@@ -12,7 +12,7 @@ const jobsService = require('../services/jobsService');
 
 router.get('/', async (req, res) => {
     try {
-        const { blanc_status, canceled, search, offset, limit, contact_id, sort_by, sort_order, only_open, start_date, end_date } = req.query;
+        const { blanc_status, canceled, search, offset, limit, contact_id, sort_by, sort_order, only_open, start_date, end_date, service_name, provider } = req.query;
         const result = await jobsService.listJobs({
             blancStatus: blanc_status || undefined,
             zbCanceled: canceled,
@@ -26,6 +26,8 @@ router.get('/', async (req, res) => {
             onlyOpen: only_open === 'true' || undefined,
             startDate: start_date || undefined,
             endDate: end_date || undefined,
+            serviceName: service_name || undefined,
+            provider: provider || undefined,
         });
         res.json({ ok: true, data: result });
     } catch (err) {
