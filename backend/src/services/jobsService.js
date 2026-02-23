@@ -87,7 +87,23 @@ function zbJobToColumns(zbJob) {
         job_number: zbJob.job_number || null,
         service_name: zbJob.service_name || zbJob.services?.[0]?.service_name || null,
         start_date: zbJob.start_date || null,
-        end_date: zbJob.end_date || null,
+        // ZB end_date = start + job duration, but UI shows arrival window (time_slot).
+        // Use time_slot to compute the correct end time matching ZB display.
+        end_date: (() => {
+            if (zbJob.time_slot?.end_time && zbJob.start_date) {
+                // time_slot has local times (e.g. "12:00"), start_date has the date in UTC
+                // Compute offset from start_time to end_time and apply to start_date
+                const startMinutes = zbJob.time_slot.start_time
+                    ? parseInt(zbJob.time_slot.start_time.split(':')[0]) * 60 + parseInt(zbJob.time_slot.start_time.split(':')[1])
+                    : null;
+                const endMinutes = parseInt(zbJob.time_slot.end_time.split(':')[0]) * 60 + parseInt(zbJob.time_slot.end_time.split(':')[1]);
+                if (startMinutes !== null) {
+                    const diffMs = (endMinutes - startMinutes) * 60 * 1000;
+                    return new Date(new Date(zbJob.start_date).getTime() + diffMs).toISOString();
+                }
+            }
+            return zbJob.end_date || null;
+        })(),
         customer_name: zbJob.customer?.name || null,
         customer_phone: zbJob.customer?.phone || null,
         customer_email: zbJob.customer?.email || null,
