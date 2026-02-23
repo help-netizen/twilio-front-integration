@@ -36,8 +36,8 @@ async function processWebhookPayload(reqId, payload, headers, companyId = null) 
 
     console.log(`[ZbWebhook][${reqId}] Received event=${event} data.id=${dataId} webhook_id=${webhookId} retry=${retryCount}`);
 
-    // Store in webhook_inbox for idempotency
-    const eventKey = `zenbooker:${event}:${dataId}:${webhookId}`;
+    // Store in webhook_inbox for audit (reqId is unique per HTTP request)
+    const eventKey = `zenbooker:${event}:${dataId}:${reqId}`;
     try {
         await db.query(
             `INSERT INTO webhook_inbox (provider, event_key, source, event_type, call_sid, payload, headers, company_id)
