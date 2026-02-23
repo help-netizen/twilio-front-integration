@@ -241,6 +241,7 @@ function makeMetaColumn(apiName: string, displayName: string): ColumnDef {
     return {
         key: `meta:${apiName}`,
         label: displayName,
+        sortKey: `meta:${apiName}`,
         render: (j) => {
             const val = j.metadata?.[apiName];
             return <span className="line-clamp-2 text-xs">{val || '—'}</span>;

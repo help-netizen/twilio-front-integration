@@ -339,7 +339,12 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
         created_at: 'j.created_at',
         updated_at: 'j.updated_at',
     };
-    const sortCol = SORTABLE_COLUMNS[sortBy] || 'j.created_at';
+    let sortCol = SORTABLE_COLUMNS[sortBy] || 'j.created_at';
+    // Support sorting by metadata fields: meta:field_name → j.metadata->>'field_name'
+    if (sortBy && sortBy.startsWith('meta:')) {
+        const metaKey = sortBy.slice(5).replace(/[^a-zA-Z0-9_]/g, ''); // sanitize
+        if (metaKey) sortCol = `j.metadata->>'${metaKey}'`;
+    }
     const sortDir = sortOrder === 'asc' ? 'ASC' : 'DESC';
     const orderClause = `ORDER BY ${sortCol} ${sortDir} NULLS LAST`;
 
