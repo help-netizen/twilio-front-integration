@@ -134,7 +134,7 @@ interface ColumnDef {
     render: (job: LocalJob) => React.ReactNode;
 }
 
-const ALL_COLUMNS: Record<string, ColumnDef> = {
+const STATIC_COLUMNS: Record<string, ColumnDef> = {
     job_number: {
         key: 'job_number', label: '#', sortKey: 'job_number', width: 'w-20',
         render: (j) => <span className="font-mono text-xs text-muted-foreground">{j.job_number || '—'}</span>,
@@ -208,6 +208,18 @@ const ALL_COLUMNS: Record<string, ColumnDef> = {
         key: 'invoice_status', label: 'Inv. Status',
         render: (j) => <span>{j.invoice_status || '—'}</span>,
     },
+    job_type: {
+        key: 'job_type', label: 'Job Type',
+        render: (j) => <span>{j.job_type || '—'}</span>,
+    },
+    description: {
+        key: 'description', label: 'Description',
+        render: (j) => <span className="line-clamp-2 text-xs">{j.description || '—'}</span>,
+    },
+    comments: {
+        key: 'comments', label: 'Comments',
+        render: (j) => <span className="line-clamp-2 text-xs">{j.comments || '—'}</span>,
+    },
     job_source: {
         key: 'job_source', label: 'Source',
         render: (j) => j.job_source ? (
@@ -218,10 +230,26 @@ const ALL_COLUMNS: Record<string, ColumnDef> = {
         key: 'created_at', label: 'Created', sortKey: 'created_at',
         render: (j) => <span className="text-xs whitespace-nowrap">{formatSchedule(j.created_at).date}</span>,
     },
+    updated_at: {
+        key: 'updated_at', label: 'Updated', sortKey: 'updated_at',
+        render: (j) => <span className="text-xs whitespace-nowrap">{formatSchedule(j.updated_at).date}</span>,
+    },
 };
 
+/** Build a dynamic column for a metadata custom field */
+function makeMetaColumn(apiName: string, displayName: string): ColumnDef {
+    return {
+        key: `meta:${apiName}`,
+        label: displayName,
+        render: (j) => {
+            const val = j.metadata?.[apiName];
+            return <span className="line-clamp-2 text-xs">{val || '—'}</span>;
+        },
+    };
+}
+
+const STATIC_FIELD_KEYS = Object.keys(STATIC_COLUMNS);
 const DEFAULT_VISIBLE_FIELDS = ['job_number', 'customer_name', 'service_name', 'blanc_status', 'tags', 'assigned_techs', 'start_date'];
-const ALL_FIELD_KEYS = Object.keys(ALL_COLUMNS);
 
 // ─── Jobs Page ───────────────────────────────────────────────────────────────
 
@@ -266,6 +294,23 @@ export function JobsPage() {
     const [pendingFields, setPendingFields] = useState<string[]>([]);
     const [savingFields, setSavingFields] = useState(false);
 
+    // Custom fields for dynamic metadata columns
+    const [customFields, setCustomFields] = useState<Array<{ api_name: string; display_name: string; is_system: boolean }>>([]);
+
+    // Build full column map: static + dynamic metadata
+    const allColumns = useMemo<Record<string, ColumnDef>>(() => {
+        const cols: Record<string, ColumnDef> = { ...STATIC_COLUMNS };
+        for (const cf of customFields) {
+            if (cf.is_system) continue;
+            cols[`meta:${cf.api_name}`] = makeMetaColumn(cf.api_name, cf.display_name);
+        }
+        return cols;
+    }, [customFields]);
+
+    const allFieldKeys = useMemo(() => {
+        return [...STATIC_FIELD_KEYS, ...customFields.filter(f => !f.is_system).map(f => `meta:${f.api_name}`)];
+    }, [customFields]);
+
     const loadJobs = useCallback(async (newOffset = 0) => {
         setLoading(true);
         try {
@@ -297,9 +342,15 @@ export function JobsPage() {
         }
     }, [searchQuery, sortBy, sortOrder, onlyOpen, startDate, statusFilter, jobTypeFilter, providerFilter, tagFilter]);
 
-    // Load tag catalog on mount
+    // Load tag catalog + custom fields on mount
     useEffect(() => {
         jobsApi.listJobTags().then(setAllTags).catch(() => { });
+        authedFetch('/api/settings/lead-form')
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) setCustomFields(data.customFields || []);
+            })
+            .catch(() => { });
     }, []);
 
     // Load column config on mount
@@ -499,7 +550,7 @@ export function JobsPage() {
                                     <div className="max-h-80 overflow-auto p-1">
                                         {/* Visible fields (ordered) */}
                                         {pendingFields.map((fk, idx) => {
-                                            const col = ALL_COLUMNS[fk];
+                                            const col = allColumns[fk];
                                             if (!col) return null;
                                             return (
                                                 <div key={fk} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted/50 group">
@@ -543,14 +594,14 @@ export function JobsPage() {
                                             );
                                         })}
                                         {/* Hidden fields */}
-                                        {ALL_FIELD_KEYS.filter(k => !pendingFields.includes(k)).length > 0 && (
+                                        {allFieldKeys.filter((k: string) => !pendingFields.includes(k)).length > 0 && (
                                             <>
                                                 <Separator className="my-1" />
                                                 <div className="px-2 py-1 text-xs text-muted-foreground font-medium">Hidden</div>
                                             </>
                                         )}
-                                        {ALL_FIELD_KEYS.filter(k => !pendingFields.includes(k)).map(fk => {
-                                            const col = ALL_COLUMNS[fk];
+                                        {allFieldKeys.filter((k: string) => !pendingFields.includes(k)).map(fk => {
+                                            const col = allColumns[fk];
                                             return (
                                                 <div key={fk} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-muted/50">
                                                     <Checkbox
@@ -629,7 +680,7 @@ export function JobsPage() {
                             <thead className="bg-white sticky top-0 z-10 shadow-[0_1px_0_0_hsl(var(--border))]">
                                 <tr className="border-b text-left">
                                     {visibleFields.map(fk => {
-                                        const col = ALL_COLUMNS[fk];
+                                        const col = allColumns[fk];
                                         if (!col) return null;
                                         return (
                                             <th
@@ -668,7 +719,7 @@ export function JobsPage() {
                                         onClick={() => handleSelectJob(job)}
                                     >
                                         {visibleFields.map(fk => {
-                                            const col = ALL_COLUMNS[fk];
+                                            const col = allColumns[fk];
                                             if (!col) return null;
                                             return <td key={fk} className="px-4 py-2.5">{col.render(job)}</td>;
                                         })}

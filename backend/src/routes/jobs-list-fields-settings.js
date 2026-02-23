@@ -10,12 +10,19 @@ const db = require('../db/connection');
 const router = express.Router();
 
 // ─── Whitelist of allowed field keys ─────────────────────────────────────────
+// Static fields from the job model
 const ALLOWED_FIELDS = new Set([
     'job_number', 'customer_name', 'customer_phone', 'customer_email',
     'service_name', 'blanc_status', 'zb_status', 'tags', 'assigned_techs',
     'start_date', 'address', 'territory', 'invoice_total', 'invoice_status',
-    'job_source', 'created_at',
+    'job_source', 'created_at', 'updated_at',
+    'job_type', 'description', 'comments', 'zb_rescheduled', 'zb_canceled',
 ]);
+
+// Dynamic metadata fields are prefixed with "meta:" (e.g. "meta:claim_id")
+function isFieldAllowed(key) {
+    return ALLOWED_FIELDS.has(key) || key.startsWith('meta:');
+}
 
 const DEFAULT_FIELDS = [
     'job_number', 'customer_name', 'service_name', 'blanc_status',
@@ -62,7 +69,7 @@ router.put('/', async (req, res) => {
         }
 
         // Validate all fields are allowed
-        const invalid = ordered_visible_fields.filter(f => !ALLOWED_FIELDS.has(f));
+        const invalid = ordered_visible_fields.filter(f => !isFieldAllowed(f));
         if (invalid.length > 0) {
             return res.status(400).json({
                 ok: false,
