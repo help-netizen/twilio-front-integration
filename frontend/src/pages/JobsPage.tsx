@@ -9,7 +9,7 @@ import {
     User2, FileText, Play, CheckCircle2, Navigation, Ban,
     Loader2, Phone, Mail, Tag,
     Calendar, ChevronDown, CornerDownLeft, ArrowUpDown, ArrowUp, ArrowDown,
-    Plus,
+    Plus, CircleDot,
 } from 'lucide-react';
 import { authedFetch } from '../services/apiClient';
 import * as jobsApi from '../services/jobsApi';
@@ -39,23 +39,21 @@ const BLANC_STATUSES = [
 // ─── Status helpers ──────────────────────────────────────────────────────────
 
 const BLANC_STATUS_COLORS: Record<string, string> = {
-    'Submitted': 'bg-blue-100 text-blue-800',
-    'Waiting for parts': 'bg-amber-100 text-amber-800',
-    'Follow Up with Client': 'bg-purple-100 text-purple-800',
-    'Visit completed': 'bg-green-100 text-green-700',
-    'Job is Done': 'bg-gray-200 text-gray-700',
-    'Rescheduled': 'bg-orange-100 text-orange-800',
-    'Canceled': 'bg-red-100 text-red-700',
+    'Submitted': '#3B82F6',
+    'Waiting for parts': '#F59E0B',
+    'Follow Up with Client': '#8B5CF6',
+    'Visit completed': '#22C55E',
+    'Job is Done': '#6B7280',
+    'Rescheduled': '#F97316',
+    'Canceled': '#EF4444',
 };
 
-/** Auto-contrast: returns 'white' or 'black' text depending on background luminance */
 function getContrastText(hex: string): string {
     const c = hex.replace('#', '');
     const r = parseInt(c.substring(0, 2), 16);
     const g = parseInt(c.substring(2, 4), 16);
     const b = parseInt(c.substring(4, 6), 16);
-    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-    return luminance > 0.6 ? '#000000' : '#ffffff';
+    return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.6 ? '#000' : '#fff';
 }
 
 function TagBadge({ tag, small }: { tag: JobTag; small?: boolean }) {
@@ -63,7 +61,7 @@ function TagBadge({ tag, small }: { tag: JobTag; small?: boolean }) {
     const isWhite = tag.color.toLowerCase() === '#ffffff' || tag.color.toLowerCase() === '#fff';
     return (
         <span
-            className={`inline-flex items-center rounded-full font-medium ${small ? 'px-1.5 py-0 text-[10px]' : 'px-2 py-0.5 text-xs'}`}
+            className={`inline-flex items-center rounded-full font-medium ${small ? 'px-2.5 py-0.5 text-xs' : 'px-3 py-1 text-sm'}`}
             style={{
                 backgroundColor: tag.color,
                 color: textColor,
@@ -83,9 +81,10 @@ const ZB_STATUS_COLORS: Record<string, string> = {
 };
 
 function BlancBadge({ status }: { status: string }) {
-    const cls = BLANC_STATUS_COLORS[status] || 'bg-gray-100 text-gray-500';
+    const dotColor = BLANC_STATUS_COLORS[status] || '#9CA3AF';
     return (
-        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${cls}`}>
+        <span className="inline-flex items-center gap-1.5 px-1 py-0.5 text-sm font-medium text-gray-700">
+            <span className="shrink-0 rounded-full" style={{ backgroundColor: dotColor, width: 10, height: 10 }} />
             {status}
         </span>
     );
@@ -100,14 +99,25 @@ function ZbBadge({ status }: { status: string }) {
     );
 }
 
-function formatDate(iso?: string | null): string {
-    if (!iso) return '—';
+function formatSchedule(startIso?: string | null, endIso?: string | null): { date: string; time: string } {
+    if (!startIso) return { date: '—', time: '' };
     try {
-        return new Intl.DateTimeFormat('en-US', {
-            month: 'short', day: 'numeric', year: 'numeric',
+        const start = new Date(startIso);
+        const date = new Intl.DateTimeFormat('en-US', {
+            weekday: 'long', month: 'short', day: 'numeric', year: 'numeric',
+        }).format(start);
+        const startTime = new Intl.DateTimeFormat('en-US', {
             hour: 'numeric', minute: '2-digit',
-        }).format(new Date(iso));
-    } catch { return iso; }
+        }).format(start);
+        if (endIso) {
+            const end = new Date(endIso);
+            const endTime = new Intl.DateTimeFormat('en-US', {
+                hour: 'numeric', minute: '2-digit',
+            }).format(end);
+            return { date, time: `${startTime} - ${endTime}` };
+        }
+        return { date, time: startTime };
+    } catch { return { date: startIso, time: '' }; }
 }
 
 // ─── Jobs Page ───────────────────────────────────────────────────────────────
@@ -396,17 +406,17 @@ export function JobsPage() {
                             <thead className="bg-white sticky top-0 z-10 shadow-[0_1px_0_0_hsl(var(--border))]">
                                 <tr className="border-b text-left">
                                     {[
-                                        { key: 'job_number', label: '#' },
-                                        { key: 'customer_name', label: 'Customer' },
-                                        { key: 'service_name', label: 'Service' },
-                                        { key: 'start_date', label: 'Date' },
-                                        { key: 'blanc_status', label: 'Status' },
-                                        { key: '', label: 'Techs' },
-                                        { key: '', label: 'Tags' },
+                                        { key: 'job_number', label: '#', width: 'w-20' },
+                                        { key: 'customer_name', label: 'Customer', width: 'w-48 max-w-[12rem]' },
+                                        { key: 'service_name', label: 'Service', width: 'w-40 max-w-[10rem]' },
+                                        { key: 'blanc_status', label: 'Status', width: '' },
+                                        { key: '', label: 'Tags', width: '' },
+                                        { key: '', label: 'Techs', width: '' },
+                                        { key: 'start_date', label: 'Schedule', width: '' },
                                     ].map(col => (
                                         <th
                                             key={col.label}
-                                            className={`px-4 py-2.5 font-medium ${col.key ? 'cursor-pointer select-none hover:bg-muted/30 transition-colors' : ''}`}
+                                            className={`px-4 py-2.5 font-medium ${col.width} ${col.key ? 'cursor-pointer select-none hover:bg-muted/30 transition-colors' : ''}`}
                                             onClick={() => {
                                                 if (!col.key) return;
                                                 if (sortBy === col.key) {
@@ -442,22 +452,18 @@ export function JobsPage() {
                                         <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">
                                             {job.job_number || '—'}
                                         </td>
-                                        <td className="px-4 py-2.5">
-                                            <div className="font-medium">{job.customer_name || '—'}</div>
+                                        <td className="px-4 py-2.5 max-w-[12rem]">
+                                            <div className="font-medium truncate">{job.customer_name || '—'}</div>
                                             {job.customer_phone && (
                                                 <div className="text-xs text-muted-foreground">{job.customer_phone}</div>
                                             )}
                                         </td>
-                                        <td className="px-4 py-2.5">{job.service_name || '—'}</td>
-                                        <td className="px-4 py-2.5 text-xs">{formatDate(job.start_date)}</td>
+                                        <td className="px-4 py-2.5 max-w-[10rem] truncate">{job.service_name || '—'}</td>
                                         <td className="px-4 py-2.5">
                                             <div className="flex flex-col gap-1">
                                                 <BlancBadge status={job.blanc_status} />
                                                 <ZbBadge status={job.zb_status} />
                                             </div>
-                                        </td>
-                                        <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                                            {job.assigned_techs?.map((p: any) => p.name).join(', ') || '—'}
                                         </td>
                                         <td className="px-4 py-2.5">
                                             <div
@@ -468,6 +474,15 @@ export function JobsPage() {
                                                     ? job.tags.map((t: JobTag) => <TagBadge key={t.id} tag={t} small />)
                                                     : <span className="text-xs text-muted-foreground">—</span>}
                                             </div>
+                                        </td>
+                                        <td className="px-4 py-2.5">
+                                            {job.assigned_techs?.map((p: any) => p.name).join(', ') || '—'}
+                                        </td>
+                                        <td className="px-4 py-2.5 text-xs">
+                                            {(() => {
+                                                const s = formatSchedule(job.start_date, job.end_date);
+                                                return <div><div className="whitespace-nowrap">{s.date}</div>{s.time && <div className="text-muted-foreground whitespace-nowrap">{s.time}</div>}</div>;
+                                            })()}
                                         </td>
                                     </tr>
                                 ))}
@@ -568,7 +583,7 @@ function JobMetadataSection({ job }: { job: LocalJob }) {
                             <Calendar className="size-4 shrink-0 text-muted-foreground" />
                             <div className="flex-1">
                                 <Label className="text-xs text-muted-foreground">Created Date</Label>
-                                <div className="text-sm font-medium mt-1">{formatDate(job.created_at)}</div>
+                                <div className="text-sm font-medium mt-1">{formatSchedule(job.created_at).date}</div>
                             </div>
                         </div>
                     )}
@@ -716,7 +731,7 @@ function JobDetailPanel({
                             </div>
                         )}
                         {note.created && (
-                            <p className="text-xs text-muted-foreground">{formatDate(note.created)}</p>
+                            <p className="text-xs text-muted-foreground">{formatSchedule(note.created).date}</p>
                         )}
                         {!note.text && (!note.images || note.images.length === 0) && (
                             <p className="text-xs text-muted-foreground italic">Empty note</p>
@@ -760,7 +775,22 @@ function JobDetailPanel({
                         <Button variant="ghost" size="sm" className="md:hidden text-white hover:bg-white/20" onClick={onClose}>
                             ← Back
                         </Button>
-                        <h2 className="text-2xl font-bold hidden md:block">{job.service_name || 'Job'}</h2>
+                        <h2 className="text-2xl font-bold hidden md:flex items-center gap-2">
+                            {job.zenbooker_job_id ? (
+                                <a
+                                    href={`https://zenbooker.com/app?view=jobs&view-job=${job.zenbooker_job_id}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="font-mono text-blue-100 hover:text-white hover:underline"
+                                    onClick={(e) => e.stopPropagation()}
+                                >
+                                    #{job.job_number || job.id}
+                                </a>
+                            ) : (
+                                <span className="font-mono text-blue-100">#{job.job_number || job.id}</span>
+                            )}
+                            {job.service_name || 'Job'}
+                        </h2>
                         <div className="flex items-center gap-1 ml-auto">
                             <Button variant="ghost" size="sm"
                                 className="md:hidden text-white hover:bg-white/20"
@@ -774,65 +804,15 @@ function JobDetailPanel({
                             </Button>
                         </div>
                     </div>
-                    {/* Mobile service name */}
+                    {/* Mobile title */}
                     <h2 className="text-2xl font-bold mb-2 md:hidden">{job.service_name || 'Job'}</h2>
 
                     <div className="flex items-center gap-2 mb-2 flex-wrap">
-                        {/* Job number as ZB link */}
-                        {job.zenbooker_job_id ? (
-                            <a
-                                href={`https://zenbooker.com/app?view=jobs&view-job=${job.zenbooker_job_id}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="font-mono text-sm text-blue-100 hover:text-white hover:underline"
-                                onClick={(e) => e.stopPropagation()}
-                            >
-                                #{job.job_number || job.id}
-                            </a>
-                        ) : (
-                            <span className="font-mono text-sm text-blue-100">#{job.job_number || job.id}</span>
-                        )}
-
-                        {/* Blanc status badge dropdown */}
-                        <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                                <button className="inline-flex items-center gap-1 focus:outline-none rounded-sm">
-                                    <BlancBadge status={job.blanc_status} />
-                                    <ChevronDown className="size-3 text-blue-200" />
-                                </button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="start">
-                                {BLANC_STATUSES.map(s => (
-                                    <DropdownMenuItem
-                                        key={s}
-                                        onClick={() => onBlancStatusChange(job.id, s)}
-                                        className={s === job.blanc_status ? 'bg-accent' : ''}
-                                    >
-                                        {s}
-                                    </DropdownMenuItem>
-                                ))}
-                            </DropdownMenuContent>
-                        </DropdownMenu>
-
-                        {job.zb_status && <ZbBadge status={job.zb_status} />}
-
                         {job.job_source && (
                             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-white/20 text-white">
                                 {job.job_source}
                             </span>
                         )}
-
-                        {/* Tag badges — click to filter */}
-                        {job.tags && job.tags.length > 0 && job.tags.map((t: JobTag) => (
-                            <button
-                                key={t.id}
-                                onClick={() => navigate(`/jobs?tag_ids=${t.id}`)}
-                                className="cursor-pointer hover:opacity-80 transition-opacity"
-                                title={`Filter by "${t.name}"`}
-                            >
-                                <TagBadge tag={t} />
-                            </button>
-                        ))}
                     </div>
 
                     <p className="text-blue-100">
@@ -894,70 +874,6 @@ function JobDetailPanel({
                     </div>
                 )}
 
-                {/* Tag selector */}
-                <div className="flex items-center gap-2 px-4 py-2 border-b bg-muted/20 flex-wrap">
-                    <Tag className="size-3.5 text-muted-foreground shrink-0" />
-                    {job.tags && job.tags.length > 0 && job.tags.map((t: JobTag) => (
-                        <button
-                            key={t.id}
-                            onClick={() => {
-                                const newIds = (job.tags || []).filter(x => x.id !== t.id).map(x => x.id);
-                                onTagsChange(job.id, newIds);
-                            }}
-                            className="group relative"
-                            title={`Remove "${t.name}"`}
-                        >
-                            <TagBadge tag={t} small />
-                            <span className="absolute -top-1 -right-1 size-3 bg-destructive text-white rounded-full text-[8px] leading-3 text-center hidden group-hover:block">×</span>
-                        </button>
-                    ))}
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <button className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs text-muted-foreground hover:bg-muted transition-colors">
-                                <Plus className="size-3" /> Add
-                            </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start" className="w-56 max-h-72 overflow-y-auto p-1">
-                            {/* Build tag list: active tags + inactive-but-assigned tags */}
-                            {(() => {
-                                const assignedIds = new Set((job.tags || []).map(t => t.id));
-                                const activeTags = allTags.filter(t => t.is_active);
-                                const inactiveAssigned = allTags.filter(t => !t.is_active && assignedIds.has(t.id));
-                                const combined = [...activeTags, ...inactiveAssigned];
-                                return combined.map(t => {
-                                    const isAssigned = assignedIds.has(t.id);
-                                    const isInactive = !t.is_active;
-                                    return (
-                                        <DropdownMenuItem
-                                            key={t.id}
-                                            disabled={isInactive && !isAssigned}
-                                            onClick={() => {
-                                                if (isInactive && !isAssigned) return;
-                                                const currentIds = (job.tags || []).map(x => x.id);
-                                                const newIds = isAssigned
-                                                    ? currentIds.filter(id => id !== t.id)
-                                                    : [...currentIds, t.id];
-                                                onTagsChange(job.id, newIds);
-                                            }}
-                                        >
-                                            <span className="flex items-center gap-2 w-full">
-                                                <span
-                                                    className={`size-3 rounded-full shrink-0 ${isInactive ? 'opacity-40' : ''}`}
-                                                    style={{ backgroundColor: t.color }}
-                                                />
-                                                <span className={`flex-1 ${isInactive ? 'text-muted-foreground' : ''}`}>
-                                                    {t.name}
-                                                    {isInactive && <span className="text-[10px] ml-1 text-muted-foreground">(Archived)</span>}
-                                                </span>
-                                                {isAssigned && <CheckCircle2 className="size-3.5 text-primary" />}
-                                            </span>
-                                        </DropdownMenuItem>
-                                    );
-                                });
-                            })()}
-                        </DropdownMenuContent>
-                    </DropdownMenu>
-                </div>
                 {/* Scrollable content */}
                 {detailLoading ? (
                     <div className="flex-1 flex items-center justify-center text-muted-foreground">
@@ -1119,6 +1035,97 @@ function JobDetailPanel({
             <div className="w-full md:w-1/2 flex-col overflow-hidden border-l hidden md:flex">
                 <div className="border-b p-4 flex items-center justify-between">
                     <h3 className="text-lg font-semibold">Details and Notes</h3>
+                </div>
+
+                {/* Status row */}
+                <div className="flex items-center gap-2 px-4 py-3">
+                    <CircleDot className="size-4 text-muted-foreground shrink-0" />
+                    <span className="text-sm text-muted-foreground font-medium shrink-0">Status:</span>
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <button className="inline-flex items-center gap-1 focus:outline-none rounded-sm">
+                                <BlancBadge status={job.blanc_status} />
+                                <ChevronDown className="size-3 text-muted-foreground" />
+                            </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start">
+                            {BLANC_STATUSES.map(s => (
+                                <DropdownMenuItem
+                                    key={s}
+                                    onClick={() => onBlancStatusChange(job.id, s)}
+                                    className={s === job.blanc_status ? 'bg-accent' : ''}
+                                >
+                                    {s}
+                                </DropdownMenuItem>
+                            ))}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+                    {job.zb_status && <ZbBadge status={job.zb_status} />}
+                </div>
+
+                {/* Tag selector */}
+                <div className="flex items-center gap-2 px-4 py-3 flex-wrap">
+                    <Tag className="size-4 text-muted-foreground shrink-0" />
+                    <span className="text-sm text-muted-foreground font-medium shrink-0">Tags:</span>
+                    {job.tags && job.tags.length > 0 && job.tags.map((t: JobTag) => (
+                        <button
+                            key={t.id}
+                            onClick={() => {
+                                const newIds = (job.tags || []).filter(x => x.id !== t.id).map(x => x.id);
+                                onTagsChange(job.id, newIds);
+                            }}
+                            className="group relative"
+                            title={`Remove "${t.name}"`}
+                        >
+                            <TagBadge tag={t} />
+                            <span className="absolute -top-1.5 -right-1.5 size-4 bg-destructive text-white rounded-full text-[9px] leading-4 text-center hidden group-hover:block">×</span>
+                        </button>
+                    ))}
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <button className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs text-muted-foreground hover:bg-muted transition-colors">
+                                <Plus className="size-3" /> Add
+                            </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="w-56 max-h-72 overflow-y-auto p-1">
+                            {(() => {
+                                const assignedIds = new Set((job.tags || []).map(t => t.id));
+                                const activeTags = allTags.filter(t => t.is_active);
+                                const inactiveAssigned = allTags.filter(t => !t.is_active && assignedIds.has(t.id));
+                                const combined = [...activeTags, ...inactiveAssigned];
+                                return combined.map(t => {
+                                    const isAssigned = assignedIds.has(t.id);
+                                    const isInactive = !t.is_active;
+                                    return (
+                                        <DropdownMenuItem
+                                            key={t.id}
+                                            disabled={isInactive && !isAssigned}
+                                            onClick={() => {
+                                                if (isInactive && !isAssigned) return;
+                                                const currentIds = (job.tags || []).map(x => x.id);
+                                                const newIds = isAssigned
+                                                    ? currentIds.filter(id => id !== t.id)
+                                                    : [...currentIds, t.id];
+                                                onTagsChange(job.id, newIds);
+                                            }}
+                                        >
+                                            <span className="flex items-center gap-2 w-full">
+                                                <span
+                                                    className={`size-3 rounded-full shrink-0 ${isInactive ? 'opacity-40' : ''}`}
+                                                    style={{ backgroundColor: t.color }}
+                                                />
+                                                <span className={`flex-1 ${isInactive ? 'text-muted-foreground' : ''}`}>
+                                                    {t.name}
+                                                    {isInactive && <span className="text-[10px] ml-1 text-muted-foreground">(Archived)</span>}
+                                                </span>
+                                                {isAssigned && <CheckCircle2 className="size-3.5 text-primary" />}
+                                            </span>
+                                        </DropdownMenuItem>
+                                    );
+                                });
+                            })()}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-4 space-y-6">
