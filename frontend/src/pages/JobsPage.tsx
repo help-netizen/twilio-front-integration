@@ -14,7 +14,7 @@ import {
 import { authedFetch } from '../services/apiClient';
 import * as jobsApi from '../services/jobsApi';
 import * as contactsApi from '../services/contactsApi';
-import type { LocalJob, JobsListParams } from '../services/jobsApi';
+import type { LocalJob, JobsListParams, JobTag } from '../services/jobsApi';
 import { formatPhone } from '../lib/formatPhone';
 import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -47,6 +47,33 @@ const BLANC_STATUS_COLORS: Record<string, string> = {
     'Rescheduled': 'bg-orange-100 text-orange-800',
     'Canceled': 'bg-red-100 text-red-700',
 };
+
+/** Auto-contrast: returns 'white' or 'black' text depending on background luminance */
+function getContrastText(hex: string): string {
+    const c = hex.replace('#', '');
+    const r = parseInt(c.substring(0, 2), 16);
+    const g = parseInt(c.substring(2, 4), 16);
+    const b = parseInt(c.substring(4, 6), 16);
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return luminance > 0.6 ? '#000000' : '#ffffff';
+}
+
+function TagBadge({ tag, small }: { tag: JobTag; small?: boolean }) {
+    const textColor = getContrastText(tag.color);
+    const isWhite = tag.color.toLowerCase() === '#ffffff' || tag.color.toLowerCase() === '#fff';
+    return (
+        <span
+            className={`inline-flex items-center rounded-full font-medium ${small ? 'px-1.5 py-0 text-[10px]' : 'px-2 py-0.5 text-xs'}`}
+            style={{
+                backgroundColor: tag.color,
+                color: textColor,
+                border: isWhite ? '1px solid #d1d5db' : 'none',
+            }}
+        >
+            {tag.name}
+        </span>
+    );
+}
 
 const ZB_STATUS_COLORS: Record<string, string> = {
     scheduled: 'bg-blue-50 text-blue-600 border border-blue-200',
@@ -106,8 +133,12 @@ export function JobsPage() {
     const [providerFilter, setProviderFilter] = useState<string[]>([]);
     const [sourceFilter, setSourceFilter] = useState<string[]>([]);
     const [jobTypeFilter, setJobTypeFilter] = useState<string[]>([]);
+    const [tagFilter, setTagFilter] = useState<number[]>([]);
     const [onlyOpen, setOnlyOpen] = useState(false);
     const [startDate, setStartDate] = useState<string | undefined>(undefined);
+
+    // Tag catalog
+    const [allTags, setAllTags] = useState<JobTag[]>([]);
 
     // Sort
     const [sortBy, setSortBy] = useState<string>('created_at');
@@ -131,6 +162,7 @@ export function JobsPage() {
             if (statusFilter.length > 0) params.blanc_status = statusFilter.join(',');
             if (jobTypeFilter.length > 0) params.service_name = jobTypeFilter.join(',');
             if (providerFilter.length > 0) params.provider = providerFilter.join(',');
+            if (tagFilter.length > 0) params.tag_ids = tagFilter.join(',');
 
             const data = await jobsApi.listJobs(params);
             setJobs(data.results || []);
@@ -144,7 +176,12 @@ export function JobsPage() {
         } finally {
             setLoading(false);
         }
-    }, [searchQuery, sortBy, sortOrder, onlyOpen, startDate, statusFilter, jobTypeFilter, providerFilter]);
+    }, [searchQuery, sortBy, sortOrder, onlyOpen, startDate, statusFilter, jobTypeFilter, providerFilter, tagFilter]);
+
+    // Load tag catalog on mount
+    useEffect(() => {
+        jobsApi.listJobTags().then(setAllTags).catch(() => { });
+    }, []);
 
     // Client-side filtering (only for filters not yet supported server-side)
     const filteredJobs = useMemo(() => {
@@ -279,6 +316,19 @@ export function JobsPage() {
         }
     };
 
+    const handleTagsChange = async (jobId: number, tagIds: number[]) => {
+        try {
+            const updated = await jobsApi.updateJobTags(jobId, tagIds);
+            // Update local state
+            setJobs(prev => prev.map(j => j.id === jobId ? { ...j, tags: updated.tags } : j));
+            if (selectedJob?.id === jobId) {
+                setSelectedJob(prev => prev ? { ...prev, tags: updated.tags } : prev);
+            }
+        } catch (err) {
+            toast.error('Failed to update tags', { description: err instanceof Error ? err.message : '' });
+        }
+    };
+
     // ─── Note ────────────────────────────────────────────────────────
     const [noteText, setNoteText] = useState('');
     const [noteJobId, setNoteJobId] = useState<number | null>(null);
@@ -324,6 +374,9 @@ export function JobsPage() {
                         onStartDateChange={setStartDate}
                         onlyOpen={onlyOpen}
                         onOnlyOpenChange={setOnlyOpen}
+                        tagFilter={tagFilter}
+                        onTagFilterChange={setTagFilter}
+                        allTags={allTags}
                         jobs={jobs}
                     />
                 </div>
@@ -349,6 +402,7 @@ export function JobsPage() {
                                         { key: 'start_date', label: 'Date' },
                                         { key: 'blanc_status', label: 'Status' },
                                         { key: '', label: 'Techs' },
+                                        { key: '', label: 'Tags' },
                                     ].map(col => (
                                         <th
                                             key={col.label}
@@ -405,6 +459,13 @@ export function JobsPage() {
                                         <td className="px-4 py-2.5 text-xs text-muted-foreground">
                                             {job.assigned_techs?.map((p: any) => p.name).join(', ') || '—'}
                                         </td>
+                                        <td className="px-4 py-2.5">
+                                            <div className="flex flex-wrap gap-1">
+                                                {job.tags && job.tags.length > 0
+                                                    ? job.tags.map((t: JobTag) => <TagBadge key={t.id} tag={t} small />)
+                                                    : <span className="text-xs text-muted-foreground">—</span>}
+                                            </div>
+                                        </td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -444,6 +505,8 @@ export function JobsPage() {
                     onMarkComplete={handleMarkComplete}
                     onCancel={handleCancel}
                     navigate={navigate}
+                    allTags={allTags}
+                    onTagsChange={handleTagsChange}
                 />
             )}
         </div>
@@ -543,6 +606,8 @@ interface JobDetailPanelProps {
     onMarkComplete: (id: number) => void;
     onCancel: (id: number) => void;
     navigate: (path: string) => void;
+    allTags: JobTag[];
+    onTagsChange: (jobId: number, tagIds: number[]) => void;
 }
 
 function JobDetailPanel({
@@ -550,7 +615,7 @@ function JobDetailPanel({
     noteJobId, noteText, setNoteText, setNoteJobId,
     onClose, onBlancStatusChange, onAddNote,
     onMarkEnroute, onMarkInProgress, onMarkComplete, onCancel,
-    navigate,
+    navigate, allTags, onTagsChange,
 }: JobDetailPanelProps) {
     const [comments, setComments] = useState(job.comments || '');
     const [isFocused, setIsFocused] = useState(false);
@@ -753,6 +818,11 @@ function JobDetailPanel({
                                 {job.job_source}
                             </span>
                         )}
+
+                        {/* Tag badges */}
+                        {job.tags && job.tags.length > 0 && job.tags.map((t: JobTag) => (
+                            <TagBadge key={t.id} tag={t} />
+                        ))}
                     </div>
 
                     <p className="text-blue-100">
@@ -814,6 +884,57 @@ function JobDetailPanel({
                     </div>
                 )}
 
+                {/* Tag selector */}
+                <div className="flex items-center gap-2 px-4 py-2 border-b bg-muted/20 flex-wrap">
+                    <Tag className="size-3.5 text-muted-foreground shrink-0" />
+                    {job.tags && job.tags.length > 0 && job.tags.map((t: JobTag) => (
+                        <button
+                            key={t.id}
+                            onClick={() => {
+                                const newIds = (job.tags || []).filter(x => x.id !== t.id).map(x => x.id);
+                                onTagsChange(job.id, newIds);
+                            }}
+                            className="group relative"
+                            title={`Remove "${t.name}"`}
+                        >
+                            <TagBadge tag={t} small />
+                            <span className="absolute -top-1 -right-1 size-3 bg-destructive text-white rounded-full text-[8px] leading-3 text-center hidden group-hover:block">×</span>
+                        </button>
+                    ))}
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <button className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs text-muted-foreground hover:bg-muted transition-colors">
+                                <Plus className="size-3" /> Add
+                            </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="max-h-64 overflow-y-auto">
+                            {allTags.filter(t => t.is_active).map(t => {
+                                const isAssigned = job.tags?.some(jt => jt.id === t.id);
+                                return (
+                                    <DropdownMenuItem
+                                        key={t.id}
+                                        onClick={() => {
+                                            const currentIds = (job.tags || []).map(x => x.id);
+                                            const newIds = isAssigned
+                                                ? currentIds.filter(id => id !== t.id)
+                                                : [...currentIds, t.id];
+                                            onTagsChange(job.id, newIds);
+                                        }}
+                                    >
+                                        <span className="flex items-center gap-2 w-full">
+                                            <span
+                                                className="size-3 rounded-full shrink-0"
+                                                style={{ backgroundColor: t.color }}
+                                            />
+                                            <span className="flex-1">{t.name}</span>
+                                            {isAssigned && <CheckCircle2 className="size-3.5 text-primary" />}
+                                        </span>
+                                    </DropdownMenuItem>
+                                );
+                            })}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+                </div>
                 {/* Scrollable content */}
                 {detailLoading ? (
                     <div className="flex-1 flex items-center justify-center text-muted-foreground">

@@ -74,11 +74,24 @@ function rowToJob(row) {
         invoice_status: row.invoice_status,
         assigned_techs: row.assigned_techs || [],
         notes: row.notes || [],
+        tags: row.tags || [],
 
         company_id: row.company_id,
         created_at: row.created_at ? row.created_at.toISOString() : null,
         updated_at: row.updated_at ? row.updated_at.toISOString() : null,
     };
+}
+
+/** Fetch tags for a single job */
+async function getTagsForJob(jobId) {
+    const { rows } = await db.query(`
+        SELECT t.id, t.name, t.color, t.is_active
+        FROM job_tag_assignments jta
+        JOIN job_tags t ON t.id = jta.tag_id
+        WHERE jta.job_id = $1
+        ORDER BY t.sort_order, t.id
+    `, [jobId]);
+    return rows;
 }
 
 /** Map a Zenbooker API job object to flat columns for upsert */
@@ -194,7 +207,9 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
 async function getJobById(id) {
     const { rows } = await db.query('SELECT * FROM jobs WHERE id = $1', [id]);
     if (rows.length === 0) return null;
-    return rowToJob(rows[0]);
+    const job = rowToJob(rows[0]);
+    job.tags = await getTagsForJob(id);
+    return job;
 }
 
 async function getJobByZbId(zbJobId) {
@@ -203,7 +218,7 @@ async function getJobByZbId(zbJobId) {
     return rowToJob(rows[0]);
 }
 
-async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 50, companyId, contactId, sortBy, sortOrder, onlyOpen, startDate, endDate, serviceName, provider } = {}) {
+async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 50, companyId, contactId, sortBy, sortOrder, onlyOpen, startDate, endDate, serviceName, provider, tagIds } = {}) {
     const conditions = [];
     const params = [];
     let idx = 0;
@@ -232,7 +247,12 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
             j.service_name ILIKE $${idx} OR
             j.customer_name ILIKE $${idx} OR
             j.customer_phone ILIKE $${idx} OR
-            j.address ILIKE $${idx}
+            j.address ILIKE $${idx} OR
+            EXISTS (
+                SELECT 1 FROM job_tag_assignments jta2
+                JOIN job_tags t2 ON t2.id = jta2.tag_id
+                WHERE jta2.job_id = j.id AND t2.name ILIKE $${idx}
+            )
         )`);
         params.push(`%${search}%`);
     }
@@ -267,6 +287,17 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
         conditions.push(`(${providerConditions.join(' OR ')})`);
         params.push(...providers.map(p => `%${p}%`));
     }
+    if (tagIds) {
+        const ids = tagIds.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+        if (ids.length > 0) {
+            const placeholders = ids.map(() => { idx++; return `$${idx}`; });
+            conditions.push(`EXISTS (
+                SELECT 1 FROM job_tag_assignments jta3
+                WHERE jta3.job_id = j.id AND jta3.tag_id IN (${placeholders.join(',')})
+            )`);
+            params.push(...ids);
+        }
+    }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
@@ -299,8 +330,31 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
         LIMIT $${idx - 1} OFFSET $${idx}
     `, params);
 
+    // Fetch tags for all jobs in batch
+    const jobIds = rows.map(r => r.id);
+    let tagsMap = {};
+    if (jobIds.length > 0) {
+        const { rows: tagRows } = await db.query(`
+            SELECT jta.job_id, t.id, t.name, t.color, t.is_active
+            FROM job_tag_assignments jta
+            JOIN job_tags t ON t.id = jta.tag_id
+            WHERE jta.job_id = ANY($1)
+            ORDER BY t.sort_order, t.id
+        `, [jobIds]);
+        for (const tr of tagRows) {
+            if (!tagsMap[tr.job_id]) tagsMap[tr.job_id] = [];
+            tagsMap[tr.job_id].push({ id: tr.id, name: tr.name, color: tr.color, is_active: tr.is_active });
+        }
+    }
+
+    const results = rows.map(r => {
+        const job = rowToJob(r);
+        job.tags = tagsMap[r.id] || [];
+        return job;
+    });
+
     return {
-        results: rows.map(rowToJob),
+        results,
         total,
         offset,
         limit,
@@ -555,6 +609,47 @@ async function markComplete(jobId) {
 }
 
 // =============================================================================
+// Job Tags
+// =============================================================================
+
+/**
+ * Update tags assigned to a job.
+ * Only active tags can be newly assigned; existing inactive tags are preserved if re-sent.
+ */
+async function updateJobTags(jobId, tagIds) {
+    const job = await getJobById(jobId);
+    if (!job) throw new Error(`Job #${jobId} not found`);
+
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // Remove all existing assignments
+        await client.query('DELETE FROM job_tag_assignments WHERE job_id = $1', [jobId]);
+
+        // Insert new assignments
+        if (tagIds && tagIds.length > 0) {
+            for (const tagId of tagIds) {
+                await client.query(
+                    'INSERT INTO job_tag_assignments (job_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+                    [jobId, tagId]
+                );
+            }
+        }
+
+        await client.query('COMMIT');
+    } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+    } finally {
+        client.release();
+    }
+
+    const tags = await getTagsForJob(jobId);
+    return { ...job, tags };
+}
+
+// =============================================================================
 // Exports
 // =============================================================================
 module.exports = {
@@ -573,4 +668,6 @@ module.exports = {
     ALLOWED_TRANSITIONS,
     zbJobToColumns,
     computeBlancStatusFromZb,
+    updateJobTags,
+    getTagsForJob,
 };

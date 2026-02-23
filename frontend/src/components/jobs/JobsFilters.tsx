@@ -3,6 +3,7 @@ import { Button } from '../ui/button';
 import { Switch } from '../ui/switch';
 import { Label } from '../ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
+import type { JobTag } from '../../services/jobsApi';
 import { Calendar } from '../ui/calendar';
 import { Badge } from '../ui/badge';
 import { CalendarIcon, Search, X, Check } from 'lucide-react';
@@ -47,6 +48,10 @@ interface JobsFiltersProps {
     onlyOpen: boolean;
     onOnlyOpenChange: (v: boolean) => void;
 
+    tagFilter: number[];
+    onTagFilterChange: (v: number[]) => void;
+    allTags: JobTag[];
+
     /** All loaded jobs — used to extract unique provider names */
     jobs: LocalJob[];
 }
@@ -61,6 +66,7 @@ export function JobsFilters({
     jobTypeFilter, onJobTypeFilterChange,
     startDate, onStartDateChange,
     onlyOpen, onOnlyOpenChange,
+    tagFilter, onTagFilterChange, allTags,
     jobs,
 }: JobsFiltersProps) {
     const [datePickerOpen, setDatePickerOpen] = useState(false);
@@ -98,13 +104,22 @@ export function JobsFilters({
     };
 
     const activeFilterCount =
-        statusFilter.length + providerFilter.length + sourceFilter.length + jobTypeFilter.length;
+        statusFilter.length + providerFilter.length + sourceFilter.length + jobTypeFilter.length + tagFilter.length;
 
     const clearAllFilters = () => {
         onStatusFilterChange([]);
         onProviderFilterChange([]);
         onSourceFilterChange([]);
         onJobTypeFilterChange([]);
+        onTagFilterChange([]);
+    };
+
+    const toggleTag = (tagId: number) => {
+        onTagFilterChange(
+            tagFilter.includes(tagId)
+                ? tagFilter.filter(id => id !== tagId)
+                : [...tagFilter, tagId]
+        );
     };
 
     const handleDateSelect = (date: Date | undefined) => {
@@ -164,6 +179,16 @@ export function JobsFilters({
                                         <X className="size-3 cursor-pointer" onClick={() => toggle(jobTypeFilter, t, onJobTypeFilterChange)} />
                                     </Badge>
                                 ))}
+                                {tagFilter.map(id => {
+                                    const tag = allTags.find(t => t.id === id);
+                                    return tag ? (
+                                        <Badge key={`tag-${id}`} variant="outline" className="gap-1 text-xs">
+                                            <span className="size-2 rounded-full" style={{ backgroundColor: tag.color }} />
+                                            {tag.name}
+                                            <X className="size-3 cursor-pointer" onClick={() => toggleTag(id)} />
+                                        </Badge>
+                                    ) : null;
+                                })}
                                 <button
                                     onClick={clearAllFilters}
                                     className="text-xs text-muted-foreground hover:text-foreground ml-1"
@@ -174,7 +199,7 @@ export function JobsFilters({
                         )}
 
                         {/* Columns */}
-                        <div className="grid grid-cols-4 divide-x p-3 gap-0">
+                        <div className="grid grid-cols-5 divide-x p-3 gap-0">
                             <FilterColumn
                                 title="STATUS"
                                 items={BLANC_STATUSES}
@@ -199,6 +224,31 @@ export function JobsFilters({
                                 selected={jobTypeFilter}
                                 onToggle={item => toggle(jobTypeFilter, item, onJobTypeFilterChange)}
                             />
+                            {/* Tag filter column */}
+                            <div className="px-3">
+                                <div className="text-xs font-semibold text-muted-foreground mb-2">TAGS</div>
+                                <div className="space-y-1 max-h-56 overflow-y-auto">
+                                    {allTags.filter(t => t.is_active).map(tag => (
+                                        <label
+                                            key={tag.id}
+                                            className={`flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer text-sm transition-colors
+                                                ${tagFilter.includes(tag.id) ? 'bg-primary/10 font-medium' : 'hover:bg-muted/50'}`}
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                checked={tagFilter.includes(tag.id)}
+                                                onChange={() => toggleTag(tag.id)}
+                                                className="sr-only"
+                                            />
+                                            <span
+                                                className={`size-3 rounded-full shrink-0 border ${tagFilter.includes(tag.id) ? 'ring-2 ring-primary ring-offset-1' : ''}`}
+                                                style={{ backgroundColor: tag.color }}
+                                            />
+                                            {tag.name}
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
                         </div>
                     </div>
                 )}

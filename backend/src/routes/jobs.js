@@ -12,7 +12,7 @@ const jobsService = require('../services/jobsService');
 
 router.get('/', async (req, res) => {
     try {
-        const { blanc_status, canceled, search, offset, limit, contact_id, sort_by, sort_order, only_open, start_date, end_date, service_name, provider } = req.query;
+        const { blanc_status, canceled, search, offset, limit, contact_id, sort_by, sort_order, only_open, start_date, end_date, service_name, provider, tag_ids } = req.query;
         const result = await jobsService.listJobs({
             blancStatus: blanc_status || undefined,
             zbCanceled: canceled,
@@ -28,6 +28,7 @@ router.get('/', async (req, res) => {
             endDate: end_date || undefined,
             serviceName: service_name || undefined,
             provider: provider || undefined,
+            tagIds: tag_ids || undefined,
         });
         res.json({ ok: true, data: result });
     } catch (err) {
@@ -46,6 +47,20 @@ router.get('/:id', async (req, res) => {
     } catch (err) {
         console.error('[Jobs API] Get error:', err.message);
         res.status(500).json({ ok: false, error: err.message });
+    }
+});
+
+// ─── Update Job Tags ─────────────────────────────────────────────────────────
+
+router.patch('/:id/tags', async (req, res) => {
+    try {
+        const { tag_ids } = req.body;
+        if (!Array.isArray(tag_ids)) return res.status(400).json({ ok: false, error: 'tag_ids array required' });
+        const result = await jobsService.updateJobTags(parseInt(req.params.id, 10), tag_ids);
+        res.json({ ok: true, data: result });
+    } catch (err) {
+        console.error('[Jobs API] Update tags error:', err.message);
+        res.status(err.statusCode || 500).json({ ok: false, error: err.message });
     }
 });
 
