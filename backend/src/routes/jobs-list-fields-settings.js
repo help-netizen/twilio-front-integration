@@ -34,7 +34,7 @@ const SETTING_KEY = 'jobs_list_fields';
 // ─── GET /api/settings/jobs-list-fields ──────────────────────────────────────
 router.get('/', async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = req.companyFilter?.company_id || req.companyId;
         if (!companyId) {
             return res.json({ ok: true, ordered_visible_fields: DEFAULT_FIELDS });
         }
@@ -86,7 +86,7 @@ router.put('/', async (req, res) => {
             return true;
         });
 
-        const companyId = req.companyId;
+        const companyId = req.companyFilter?.company_id || req.companyId;
         if (!companyId) {
             return res.status(400).json({ ok: false, error: 'No company context' });
         }
