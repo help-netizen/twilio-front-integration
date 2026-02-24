@@ -5,6 +5,7 @@ import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Badge } from '../ui/badge';
 import { Textarea } from '../ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { toast } from 'sonner';
 import type { Lead } from '../../types/lead';
 import * as leadsApi from '../../services/leadsApi';
@@ -343,20 +344,19 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
             <div>
                 <Label htmlFor="cj-svc-name">Service Name *</Label>
                 {jobTypes.length > 0 ? (
-                    <select
-                        id="cj-svc-name"
-                        value={serviceName}
-                        onChange={(e) => setServiceName(e.target.value)}
-                        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                    >
-                        <option value="">Select service type</option>
-                        {jobTypes.map(jt => (
-                            <option key={jt} value={jt}>{jt}</option>
-                        ))}
-                        {serviceName && !jobTypes.includes(serviceName) && (
-                            <option value={serviceName}>{serviceName}</option>
-                        )}
-                    </select>
+                    <Select value={serviceName} onValueChange={setServiceName}>
+                        <SelectTrigger id="cj-svc-name">
+                            <SelectValue placeholder="Select service type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {jobTypes.map(jt => (
+                                <SelectItem key={jt} value={jt}>{jt}</SelectItem>
+                            ))}
+                            {serviceName && !jobTypes.includes(serviceName) && (
+                                <SelectItem key={serviceName} value={serviceName}>{serviceName}</SelectItem>
+                            )}
+                        </SelectContent>
+                    </Select>
                 ) : (
                     <Input id="cj-svc-name" value={serviceName} onChange={(e) => setServiceName(e.target.value)} placeholder="Plumbing Repair" />
                 )}
