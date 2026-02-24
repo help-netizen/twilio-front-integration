@@ -603,7 +603,13 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
     // 4. Update local job with ZB data and link contact
     if (zenbookerJobId) {
         try {
-            const jobDetail = await zenbookerClient.getJob(zenbookerJobId);
+            let jobDetail = await zenbookerClient.getJob(zenbookerJobId);
+            // ZB may not assign job_number immediately — retry once after a short delay
+            if (!jobDetail?.job_number) {
+                console.log(`[ConvertLead] job_number not yet assigned, retrying in 2s...`);
+                await new Promise(r => setTimeout(r, 2000));
+                jobDetail = await zenbookerClient.getJob(zenbookerJobId);
+            }
             console.log(`[ConvertLead] Fetched ZB job detail for sync:`, jobDetail?.job_number, jobDetail?.start_date);
 
             // Sync ALL ZB fields back into local job (schedule, territory, techs, invoice, etc.)
