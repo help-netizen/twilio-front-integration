@@ -4,6 +4,8 @@ import { authedFetch } from '../../services/apiClient';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../ui/dialog';
+import { Button } from '../ui/button';
 import {
     DropdownMenu,
     DropdownMenuTrigger,
@@ -477,55 +479,25 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                 </main>
 
                 {/* SoftPhone warm-up modal */}
-                {showWarmUp && (
-                    <div style={{
-                        position: 'fixed',
-                        inset: 0,
-                        zIndex: 10000,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        background: 'rgba(0, 0, 0, 0.4)',
-                        backdropFilter: 'blur(4px)',
-                    }}>
-                        <div style={{
-                            background: '#fff',
-                            borderRadius: '16px',
-                            padding: '32px 40px',
-                            maxWidth: '360px',
-                            textAlign: 'center',
-                            boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
-                        }}>
-                            <div style={{ fontSize: '40px', marginBottom: '12px' }}>📞</div>
-                            <h3 style={{ margin: '0 0 8px', fontSize: '18px', fontWeight: 600, color: '#1a1a1a' }}>
-                                SoftPhone Ready
-                            </h3>
-                            <p style={{ margin: '0 0 20px', fontSize: '14px', color: '#666', lineHeight: '1.5' }}>
-                                Click below to enable incoming call ringtone.
-                            </p>
-                            <button
-                                onClick={handleWarmUpDismiss}
-                                style={{
-                                    background: '#16a34a',
-                                    color: '#fff',
-                                    border: 'none',
-                                    borderRadius: '10px',
-                                    padding: '12px 32px',
-                                    fontSize: '15px',
-                                    fontWeight: 600,
-                                    cursor: 'pointer',
-                                    transition: 'background 0.15s',
-                                    width: '100%',
-                                }}
-                                onMouseOver={(e) => (e.currentTarget.style.background = '#15803d')}
-                                onMouseOut={(e) => (e.currentTarget.style.background = '#16a34a')}
-                            >
-                                <Phone size={16} style={{ verticalAlign: 'middle', marginRight: '8px' }} />
+                <Dialog open={showWarmUp} onOpenChange={(open) => { if (!open) handleWarmUpDismiss(); }}>
+                    <DialogContent className="sm:max-w-[360px]" onPointerDownOutside={(e) => e.preventDefault()}>
+                        <DialogHeader className="text-center sm:text-center">
+                            <div className="flex justify-center mb-2">
+                                <Phone className="size-8 text-primary" />
+                            </div>
+                            <DialogTitle>SoftPhone Ready</DialogTitle>
+                            <DialogDescription>
+                                Enable incoming call ringtone so you don't miss any calls.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <DialogFooter className="sm:justify-center">
+                            <Button onClick={handleWarmUpDismiss} size="lg" className="w-full">
+                                <Phone />
                                 Enable Ringtone
-                            </button>
-                        </div>
-                    </div>
-                )}
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
 
                 {/* SoftPhone Panel */}
                 <SoftPhoneWidget
