@@ -1047,15 +1047,7 @@ function JobDetailPanel({
                     {/* Mobile title */}
                     <h2 className="text-2xl font-bold mb-2 md:hidden">{job.service_name || 'Job'}</h2>
 
-                    <div className="flex items-center gap-2 mb-2 flex-wrap">
-                        {job.job_source && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-white/20 text-white">
-                                {job.job_source}
-                            </span>
-                        )}
-                    </div>
-
-                    <p className="text-blue-100">
+                    <p className="text-blue-100 flex items-center gap-2">
                         {contactInfo ? (
                             <span
                                 className="hover:text-white hover:underline cursor-pointer transition-colors"
@@ -1065,6 +1057,11 @@ function JobDetailPanel({
                             </span>
                         ) : (
                             job.customer_name || '—'
+                        )}
+                        {job.job_source && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-white/20 text-white">
+                                {job.job_source}
+                            </span>
                         )}
                     </p>
                 </div>
