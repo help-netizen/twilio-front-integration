@@ -9,7 +9,8 @@ import { Badge } from '../ui/badge';
 import { CalendarIcon, Search, X, Check } from 'lucide-react';
 import { format } from 'date-fns';
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { JOB_SOURCES, JOB_TYPES } from '../../types/lead';
+import { JOB_SOURCES } from '../../types/lead';
+import { authedFetch } from '../../services/apiClient';
 import type { LocalJob } from '../../services/jobsApi';
 
 /* ─── Constants ─────────────────────────────── */
@@ -72,8 +73,21 @@ export function JobsFilters({
     const [datePickerOpen, setDatePickerOpen] = useState(false);
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
+    const [dynamicJobTypes, setDynamicJobTypes] = useState<string[]>([]);
 
     const startDateObj = startDate ? new Date(startDate + 'T00:00:00') : undefined;
+
+    // Fetch job types from API
+    useEffect(() => {
+        authedFetch('/api/settings/lead-form')
+            .then(r => r.json())
+            .then(data => {
+                if (data.success && data.jobTypes?.length > 0) {
+                    setDynamicJobTypes(data.jobTypes.map((jt: { name: string }) => jt.name));
+                }
+            })
+            .catch(() => { });
+    }, []);
 
     // Derive unique provider names from loaded jobs
     const providerNames = useMemo(() => {
@@ -220,7 +234,7 @@ export function JobsFilters({
                             />
                             <FilterColumn
                                 title="JOB TYPE"
-                                items={JOB_TYPES as unknown as string[]}
+                                items={dynamicJobTypes}
                                 selected={jobTypeFilter}
                                 onToggle={item => toggle(jobTypeFilter, item, onJobTypeFilterChange)}
                             />
