@@ -11,6 +11,7 @@ import * as leadsApi from '../../services/leadsApi';
 import { authedFetch } from '../../services/apiClient';
 import type { ServiceAreaResult, Timeslot, TimeslotDay } from '../../services/zenbookerApi';
 import * as zenbookerApi from '../../services/zenbookerApi';
+import { AddressAutocomplete, type AddressFields, EMPTY_ADDRESS } from '../AddressAutocomplete';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -30,13 +31,6 @@ const STEP_TITLES: Record<Step, string> = {
     4: 'Review & Confirm',
 };
 
-const US_STATES = [
-    'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA',
-    'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
-    'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT',
-    'VA', 'WA', 'WV', 'WI', 'WY',
-];
-
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: ConvertToJobDialogProps) {
@@ -47,11 +41,7 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
     const [name, setName] = useState('');
     const [phone, setPhone] = useState('');
     const [email, setEmail] = useState('');
-    const [address, setAddress] = useState('');
-    const [unit, setUnit] = useState('');
-    const [city, setCity] = useState('');
-    const [state, setState] = useState('');
-    const [postalCode, setPostalCode] = useState('');
+    const [addressFields, setAddressFields] = useState<AddressFields>(EMPTY_ADDRESS);
 
     // Territory check
     const [territoryResult, setTerritoryResult] = useState<ServiceAreaResult | null>(null);
@@ -97,11 +87,15 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
             setName([lead.FirstName, lead.LastName].filter(Boolean).join(' ') || '');
             setPhone(lead.Phone || '');
             setEmail(lead.Email || '');
-            setAddress(lead.Address || '');
-            setUnit(lead.Unit || '');
-            setCity(lead.City || '');
-            setState(lead.State || '');
-            setPostalCode(lead.PostalCode || '');
+            setAddressFields({
+                street: lead.Address || '',
+                apt: lead.Unit || '',
+                city: lead.City || '',
+                state: lead.State || '',
+                zip: lead.PostalCode || '',
+                lat: lead.Latitude != null ? Number(lead.Latitude) : null,
+                lng: lead.Longitude != null ? Number(lead.Longitude) : null,
+            });
 
             setServiceName(lead.JobType || 'General Service');
             setServiceDescription(lead.Description || lead.Comments || '');
@@ -153,12 +147,12 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
     // Auto-check territory when postal code changes
     useEffect(() => {
         const timer = setTimeout(() => {
-            if (postalCode.trim().length >= 4) {
-                checkTerritory(postalCode.trim());
+            if (addressFields.zip.trim().length >= 4) {
+                checkTerritory(addressFields.zip.trim());
             }
         }, 600);
         return () => clearTimeout(timer);
-    }, [postalCode, checkTerritory]);
+    }, [addressFields.zip, checkTerritory]);
 
     // ── Fetch timeslots ──
     const fetchTimeslots = useCallback(async () => {
@@ -213,11 +207,11 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
                     ...(email && { email }),
                 },
                 address: {
-                    ...(address && { line1: address }),
-                    ...(unit && { line2: unit }),
-                    ...(city && { city }),
-                    ...(state && { state }),
-                    ...(postalCode && { postal_code: postalCode }),
+                    ...(addressFields.street && { line1: addressFields.street }),
+                    ...(addressFields.apt && { line2: addressFields.apt }),
+                    ...(addressFields.city && { city: addressFields.city }),
+                    ...(addressFields.state && { state: addressFields.state }),
+                    ...(addressFields.zip && { postal_code: addressFields.zip }),
                     country: 'US',
                 },
                 services: [
@@ -242,8 +236,8 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
                 service: { name: serviceName, description: serviceDescription },
                 customer: { name, phone, email },
                 address: {
-                    line1: address, line2: unit,
-                    city, state, postal_code: postalCode,
+                    line1: addressFields.street, line2: addressFields.apt,
+                    city: addressFields.city, state: addressFields.state, postal_code: addressFields.zip,
                 },
             });
 
@@ -271,7 +265,7 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
     };
 
     // ── Validation ──
-    const canProceedStep1 = !!(postalCode.trim() && territoryResult?.in_service_area && name.trim());
+    const canProceedStep1 = !!(addressFields.zip.trim() && territoryResult?.in_service_area && name.trim());
     const canProceedStep2 = !!(serviceName.trim() && Number(serviceDuration) > 0);
     const canProceedStep3 = !!selectedTimeslot;
 
@@ -313,40 +307,21 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
                 <Label htmlFor="cj-email">Email</Label>
                 <Input id="cj-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@example.com" />
             </div>
-            <div className="grid grid-cols-3 gap-3">
-                <div className="col-span-2">
-                    <Label htmlFor="cj-address">Address</Label>
-                    <Input id="cj-address" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="123 Main St" />
-                </div>
-                <div>
-                    <Label htmlFor="cj-unit">Unit / Apt</Label>
-                    <Input id="cj-unit" value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="Apt 4B" />
-                </div>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-                <div>
-                    <Label htmlFor="cj-city">City</Label>
-                    <Input id="cj-city" value={city} onChange={(e) => setCity(e.target.value)} placeholder="Boston" />
-                </div>
-                <div>
-                    <Label htmlFor="cj-state">State</Label>
-                    <select
-                        id="cj-state"
-                        value={state}
-                        onChange={(e) => setState(e.target.value)}
-                        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                    >
-                        <option value="">—</option>
-                        {US_STATES.map((s) => (
-                            <option key={s} value={s}>{s}</option>
-                        ))}
-                    </select>
-                </div>
-                <div>
-                    <Label htmlFor="cj-zip">Postal Code *</Label>
-                    <Input id="cj-zip" value={postalCode} onChange={(e) => setPostalCode(e.target.value)} placeholder="02101" />
-                </div>
-            </div>
+
+            {/* Address with Google Places autocomplete */}
+            <AddressAutocomplete
+                header={<Label className="text-sm font-medium">Address</Label>}
+                idPrefix="cj"
+                defaultUseDetails={true}
+                value={addressFields}
+                onChange={(addr) => {
+                    setAddressFields(addr);
+                    // Update coords from Places if available
+                    if (addr.lat && addr.lng) {
+                        setCoords({ lat: addr.lat, lng: addr.lng });
+                    }
+                }}
+            />
 
             {/* Territory status */}
             <div className="flex items-center gap-2 min-h-[28px]">
@@ -476,8 +451,8 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
 
             <h4 className="font-semibold">Address</h4>
             <div className="bg-muted/50 rounded-md p-3">
-                <p>{[address, unit].filter(Boolean).join(', ') || '—'}</p>
-                <p>{[city, state, postalCode].filter(Boolean).join(', ')}</p>
+                <p>{[addressFields.street, addressFields.apt].filter(Boolean).join(', ') || '—'}</p>
+                <p>{[addressFields.city, addressFields.state, addressFields.zip].filter(Boolean).join(', ')}</p>
             </div>
 
             <h4 className="font-semibold">Service</h4>
