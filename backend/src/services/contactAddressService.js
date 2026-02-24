@@ -72,6 +72,30 @@ function formatAddressOneLine(row) {
 }
 
 // =============================================================================
+// Set Default Address (enforce single primary per contact)
+// =============================================================================
+
+/**
+ * Atomically set one address as the default (is_primary=true) for a contact.
+ * Clears is_primary on all other addresses for this contact first.
+ *
+ * @param {number} contactId
+ * @param {number} addressId
+ */
+async function setDefaultAddress(contactId, addressId) {
+    // Clear all existing defaults for this contact
+    await db.query(
+        `UPDATE contact_addresses SET is_primary = false WHERE contact_id = $1 AND is_primary = true`,
+        [contactId]
+    );
+    // Set the chosen one
+    await db.query(
+        `UPDATE contact_addresses SET is_primary = true WHERE id = $1 AND contact_id = $2`,
+        [addressId, contactId]
+    );
+}
+
+// =============================================================================
 // Resolve address — dedupe or create
 // =============================================================================
 
@@ -145,7 +169,12 @@ async function resolveAddress(contactId, { street, apt, city, state, zip, lat, l
     );
 
     if (rows.length > 0) {
-        return { contact_address_id: Number(rows[0].id), status: 'created_new' };
+        const newId = Number(rows[0].id);
+        // If this became primary, ensure no other address is also primary
+        if (isPrimary) {
+            await setDefaultAddress(contactId, newId);
+        }
+        return { contact_address_id: newId, status: 'created_new' };
     }
 
     // ON CONFLICT hit — race condition, re-fetch
@@ -180,5 +209,6 @@ module.exports = {
     getAddressesForContact,
     resolveAddress,
     validateAddressBelongsToContact,
+    setDefaultAddress,
     computeNormalizedHash,
 };

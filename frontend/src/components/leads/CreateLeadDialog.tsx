@@ -336,6 +336,7 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
         // Fill secondary phone if available
         if (candidate.secondary_phone) {
             newFormData.SecondPhone = candidate.secondary_phone;
+            newFormData.SecondPhoneName = candidate.secondary_phone_name || '';
             setShowSecondary(true);
         }
 

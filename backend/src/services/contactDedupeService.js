@@ -177,7 +177,7 @@ async function searchCandidates({ first_name, last_name, phone, email }, company
         }
         queries.push(`
             SELECT c.id, c.full_name, c.first_name, c.last_name,
-                   c.phone_e164, c.secondary_phone, c.email, c.company_name,
+                   c.phone_e164, c.secondary_phone, c.secondary_phone_name, c.email, c.company_name,
                    TRUE AS name_match, FALSE AS phone_match, FALSE AS email_match
             FROM contacts c
             WHERE ${nameConditions.join(' AND ')}
@@ -225,12 +225,12 @@ async function searchCandidates({ first_name, last_name, phone, email }, company
         WITH matches AS (
             ${queries.join('\n            UNION ALL\n            ')}
         )
-        SELECT id, full_name, first_name, last_name, phone_e164, secondary_phone, email, company_name,
+        SELECT id, full_name, first_name, last_name, phone_e164, secondary_phone, secondary_phone_name, email, company_name,
                BOOL_OR(name_match) AS name_match,
                BOOL_OR(phone_match) AS phone_match,
                BOOL_OR(email_match) AS email_match
         FROM matches
-        GROUP BY id, full_name, first_name, last_name, phone_e164, secondary_phone, email, company_name
+        GROUP BY id, full_name, first_name, last_name, phone_e164, secondary_phone, secondary_phone_name, email, company_name
         ORDER BY phone_match DESC, email_match DESC, name_match DESC
         LIMIT 10
     `;

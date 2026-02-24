@@ -299,4 +299,33 @@ router.patch('/:id/addresses/:addressId', async (req, res) => {
     }
 });
 
+// =============================================================================
+// PUT /api/contacts/:id/addresses/:addressId/default — Set default address
+// =============================================================================
+router.put('/:id/addresses/:addressId/default', async (req, res) => {
+    const reqId = requestId();
+    try {
+        const contactId = Number(req.params.id);
+        const addressId = Number(req.params.addressId);
+        if (isNaN(contactId) || isNaN(addressId)) {
+            return res.status(400).json(errorResponse('INVALID_ID', 'IDs must be numbers', reqId));
+        }
+
+        const contactAddressService = require('../services/contactAddressService');
+
+        // Verify address belongs to contact
+        const valid = await contactAddressService.validateAddressBelongsToContact(addressId, contactId);
+        if (!valid) {
+            return res.status(404).json(errorResponse('NOT_FOUND', 'Address not found for this contact', reqId));
+        }
+
+        await contactAddressService.setDefaultAddress(contactId, addressId);
+        const addresses = await contactAddressService.getAddressesForContact(contactId);
+        res.json(successResponse({ addresses }, reqId));
+    } catch (err) {
+        console.error(`[ContactsAPI][${reqId}] Error:`, err);
+        res.status(500).json(errorResponse('INTERNAL_ERROR', 'An unexpected error occurred', reqId));
+    }
+});
+
 module.exports = router;

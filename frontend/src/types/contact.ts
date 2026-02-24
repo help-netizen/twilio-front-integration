@@ -49,6 +49,7 @@ export type DedupeCandidate = {
     last_name: string | null;
     phone_e164: string | null;
     secondary_phone: string | null;
+    secondary_phone_name: string | null;
     email: string | null;
     company_name: string | null;
     city: string | null;
