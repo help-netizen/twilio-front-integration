@@ -109,18 +109,15 @@ function SortableField({
             <span className="lfsp-field-display">{item.display_name}</span>
             <code className="lfsp-field-api">{item.api_name}</code>
             <span className="lfsp-field-type-badge">{typeLabel}</span>
-            <label
-                className="lfsp-searchable-toggle"
-                title={item.is_system ? 'System field — always searchable' : (item.is_searchable ? 'Included in search' : 'Not included in search')}
+            <button
+                type="button"
+                className={`lfsp-searchable-pill ${item.is_searchable ? 'lfsp-searchable-on' : 'lfsp-searchable-off'}`}
+                onClick={item.is_system ? undefined : onToggleSearchable}
+                disabled={item.is_system}
+                title={item.is_system ? 'System field — always included in search' : (item.is_searchable ? 'Click to exclude from search' : 'Click to include in search')}
             >
-                <input
-                    type="checkbox"
-                    checked={item.is_searchable}
-                    onChange={onToggleSearchable}
-                    disabled={item.is_system}
-                />
-                <span className="lfsp-searchable-label">{item.is_searchable ? '🔍' : ''}</span>
-            </label>
+                {item.is_searchable ? 'Searchable' : 'Not searchable'}
+            </button>
             {item.is_system ? (
                 <span className="lfsp-lock" title="System field — cannot delete">🔒</span>
             ) : (
@@ -572,41 +569,47 @@ export default function LeadFormSettingsPage() {
                 </DndContext>
 
                 {showNewField ? (
-                    <div className="lfsp-new-field-row">
-                        <input
-                            className="lfsp-input"
-                            value={newFieldName}
-                            onChange={(e) => {
-                                const val = e.target.value.replace(/[^A-Za-z ]/g, '');
-                                setNewFieldName(val);
-                            }}
-                            placeholder="Display Name"
-                            autoFocus
-                        />
-                        <div className="lfsp-api-preview">
-                            {toApiName(newFieldName) || 'api_name'}
-                        </div>
-                        <select
-                            className="lfsp-select"
-                            value={newFieldType}
-                            onChange={(e) => setNewFieldType(e.target.value)}
-                        >
-                            {FIELD_TYPES.map((t) => (
-                                <option key={t.value} value={t.value}>{t.label}</option>
-                            ))}
-                        </select>
-                        <label className="lfsp-searchable-checkbox">
+                    <div className="lfsp-new-field-form">
+                        <div className="lfsp-new-field-row">
                             <input
-                                type="checkbox"
-                                checked={newFieldSearchable}
-                                onChange={(e) => setNewFieldSearchable(e.target.checked)}
+                                className="lfsp-input"
+                                value={newFieldName}
+                                onChange={(e) => {
+                                    const val = e.target.value.replace(/[^A-Za-z ]/g, '');
+                                    setNewFieldName(val);
+                                }}
+                                placeholder="Display Name"
+                                autoFocus
                             />
-                            Include in search
-                        </label>
-                        <button className="lfsp-add-btn" onClick={addField}>Add</button>
-                        <button className="lfsp-cancel-btn" onClick={() => { setShowNewField(false); setNewFieldName(''); }}>
-                            Cancel
-                        </button>
+                            <div className="lfsp-api-preview">
+                                {toApiName(newFieldName) || 'api_name'}
+                            </div>
+                            <select
+                                className="lfsp-select"
+                                value={newFieldType}
+                                onChange={(e) => setNewFieldType(e.target.value)}
+                            >
+                                {FIELD_TYPES.map((t) => (
+                                    <option key={t.value} value={t.value}>{t.label}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="lfsp-new-field-actions">
+                            <label className="lfsp-searchable-checkbox">
+                                <input
+                                    type="checkbox"
+                                    checked={newFieldSearchable}
+                                    onChange={(e) => setNewFieldSearchable(e.target.checked)}
+                                />
+                                Include in search
+                            </label>
+                            <div className="lfsp-new-field-buttons">
+                                <button className="lfsp-add-btn" onClick={addField}>Add</button>
+                                <button className="lfsp-cancel-btn" onClick={() => { setShowNewField(false); setNewFieldName(''); }}>
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 ) : (
                     <button className="lfsp-add-btn" style={{ marginTop: 8 }} onClick={() => setShowNewField(true)}>
