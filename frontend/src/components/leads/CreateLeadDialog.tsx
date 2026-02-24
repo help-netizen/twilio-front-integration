@@ -34,13 +34,16 @@ const DEFAULT_JOB_TYPES = ['COD Service', 'COD Repair', 'Warranty', 'INS Service
 const JOB_SOURCES = ['eLocals', 'ServiceDirect', 'Inquirly', 'Rely', 'LHG', 'NSA', 'Other'];
 import { AddressAutocomplete } from '../AddressAutocomplete';
 
-// Debounce helper
+// Debounce helper — uses ref to avoid stale closure
 function useDebounce<T extends (...args: unknown[]) => void>(fn: T, delay: number): T {
     const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const fnRef = useRef(fn);
+    fnRef.current = fn; // Always keep latest fn
+
     return useCallback((...args: unknown[]) => {
         if (timerRef.current) clearTimeout(timerRef.current);
-        timerRef.current = setTimeout(() => fn(...args), delay);
-    }, [fn, delay]) as unknown as T;
+        timerRef.current = setTimeout(() => fnRef.current(...args), delay);
+    }, [delay]) as unknown as T;
 }
 
 // Snapshot of contact fields for change detection
@@ -476,6 +479,41 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                         <div className="space-y-4" ref={dropdownRef}>
                             <h3 className="font-medium">Contact Information</h3>
 
+                            {/* Selected contact indicator */}
+                            {selectedContactId && (
+                                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-green-50 border border-green-200">
+                                    <Check className="size-4 text-green-600 shrink-0" />
+                                    <span className="text-sm text-green-800 font-medium flex-1">
+                                        Selected existing contact: {selectedContactName}
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={handleRemoveContact}
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium text-red-600 hover:bg-red-50 rounded transition-colors"
+                                    >
+                                        <X className="size-3" />
+                                        Remove
+                                    </button>
+                                </div>
+                            )}
+
+                            {/* Soft warning */}
+                            {softWarning && (
+                                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200">
+                                    <AlertTriangle className="size-4 text-amber-600 shrink-0" />
+                                    <span className="text-xs text-amber-800">
+                                        A contact with this phone/email already exists.{' '}
+                                        <button
+                                            type="button"
+                                            onClick={() => { setActiveSearchField('phone'); setShowDropdown(true); }}
+                                            className="underline font-medium hover:text-amber-900"
+                                        >
+                                            Select it to avoid duplicates.
+                                        </button>
+                                    </span>
+                                </div>
+                            )}
+
                             {/* Name row + dropdown anchor */}
                             <div className="relative">
                                 <div className="grid grid-cols-2 gap-4">
@@ -572,40 +610,6 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                                 />
                             </div>
 
-                            {/* Selected contact indicator */}
-                            {selectedContactId && (
-                                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-green-50 border border-green-200">
-                                    <Check className="size-4 text-green-600 shrink-0" />
-                                    <span className="text-sm text-green-800 font-medium flex-1">
-                                        Selected existing contact: {selectedContactName}
-                                    </span>
-                                    <button
-                                        type="button"
-                                        onClick={handleRemoveContact}
-                                        className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium text-red-600 hover:bg-red-50 rounded transition-colors"
-                                    >
-                                        <X className="size-3" />
-                                        Remove
-                                    </button>
-                                </div>
-                            )}
-
-                            {/* Soft warning */}
-                            {softWarning && (
-                                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200">
-                                    <AlertTriangle className="size-4 text-amber-600 shrink-0" />
-                                    <span className="text-xs text-amber-800">
-                                        A contact with this phone/email already exists.{' '}
-                                        <button
-                                            type="button"
-                                            onClick={() => { setActiveSearchField('phone'); setShowDropdown(true); }}
-                                            className="underline font-medium hover:text-amber-900"
-                                        >
-                                            Select it to avoid duplicates.
-                                        </button>
-                                    </span>
-                                </div>
-                            )}
                         </div>
 
                         {/* Address */}
