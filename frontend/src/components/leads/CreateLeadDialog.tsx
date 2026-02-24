@@ -771,7 +771,7 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                             }}
                             disabled={loading}
                         >
-                            Only lead
+                            New contact
                         </Button>
                         <Button
                             variant="ghost"

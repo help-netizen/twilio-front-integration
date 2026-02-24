@@ -113,6 +113,15 @@ router.get('/:id', async (req, res) => {
         const uniqueLocal = mergedAddresses.filter(a => !zbStreets.has((a.line1 || '').toLowerCase().trim()));
         contact.addresses = [...(contact.addresses || []), ...uniqueLocal];
 
+        // Enforce single default: if multiple addresses are flagged as default, keep only the first
+        const defaultAddrs = contact.addresses.filter(a => a.is_default_address_for_customer);
+        if (defaultAddrs.length > 1) {
+            // Keep the first default, clear the rest
+            for (let i = 1; i < defaultAddrs.length; i++) {
+                defaultAddrs[i].is_default_address_for_customer = false;
+            }
+        }
+
         res.json(successResponse({ contact, leads }, reqId));
     } catch (err) {
         if (err.code === 'NOT_FOUND') {
