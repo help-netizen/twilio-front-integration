@@ -709,19 +709,13 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
         WHERE ${updateConditions.join(' AND ')}
     `, updateParams);
 
-    // 6. Add lead comments/description as job notes (syncs to Zenbooker)
+    // 6. Add lead comments as job notes (syncs to Zenbooker)
     try {
         const jobsService = require('./jobsService');
         const commentText = leadRow.comments?.trim();
-        const descriptionText = (overrides.service?.description || leadRow.lead_notes || '')?.trim();
 
-        // Add description as note if present
-        if (descriptionText) {
-            await jobsService.addNote(localJobId, `[Lead Description] ${descriptionText}`);
-            console.log(`[ConvertLead] Added description as note to job ${localJobId}`);
-        }
-        // Add comments as note if present and different from description
-        if (commentText && commentText !== descriptionText) {
+        // Add comments as note if present
+        if (commentText) {
             await jobsService.addNote(localJobId, `[Lead Comment] ${commentText}`);
             console.log(`[ConvertLead] Added comments as note to job ${localJobId}`);
         }
