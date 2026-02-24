@@ -76,6 +76,13 @@ function rowToJob(row) {
         notes: row.notes || [],
         tags: row.tags || [],
 
+        // Lead-inherited fields
+        job_type: row.job_type || null,
+        job_source: row.job_source || null,
+        description: row.description || null,
+        comments: row.comments || null,
+        metadata: row.metadata || {},
+
         company_id: row.company_id,
         created_at: row.created_at ? row.created_at.toISOString() : null,
         updated_at: row.updated_at ? row.updated_at.toISOString() : null,
