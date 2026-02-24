@@ -74,14 +74,14 @@ export async function getContact(id: number): Promise<ContactDetailResponse> {
  * Search for candidate contacts for deduplication (used by create lead form)
  */
 export async function searchCandidates(params: {
-    first_name: string;
-    last_name: string;
+    first_name?: string;
+    last_name?: string;
     phone?: string;
     email?: string;
 }): Promise<SearchCandidatesResponse> {
     const sp = new URLSearchParams();
-    sp.set('first_name', params.first_name);
-    sp.set('last_name', params.last_name);
+    if (params.first_name) sp.set('first_name', params.first_name);
+    if (params.last_name) sp.set('last_name', params.last_name);
     if (params.phone) sp.set('phone', params.phone);
     if (params.email) sp.set('email', params.email);
     return request<SearchCandidatesResponse>(`${API_BASE}/search-candidates?${sp.toString()}`);

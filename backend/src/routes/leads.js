@@ -140,7 +140,7 @@ router.get('/:uuid', async (req, res) => {
 });
 
 // =============================================================================
-// POST /api/leads — Create lead (with contact deduplication)
+// POST /api/leads — Create lead (with contact resolution)
 // =============================================================================
 router.post('/', async (req, res) => {
     const reqId = requestId();
@@ -160,30 +160,135 @@ router.post('/', async (req, res) => {
         const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
         const companyId = req.companyFilter?.company_id || req.user?.company_id || DEFAULT_COMPANY_ID;
 
-        // Contact deduplication: resolve or create contact
-        const contactResolution = await contactDedupeService.resolveContact({
-            first_name: body.FirstName,
-            last_name: body.LastName,
-            phone: body.Phone,
-            email: body.Email,
-        }, companyId);
+        // Extract contact resolution params
+        const selectedContactId = body.selected_contact_id || null;
+        const contactUpdateMode = body.contact_update_mode || null;
+        // Clean these from the lead body to avoid them being inserted as lead columns
+        delete body.selected_contact_id;
+        delete body.contact_update_mode;
 
-        // If ambiguous, return 409 with candidates for UI/API to resolve
-        if (contactResolution.status === 'ambiguous') {
-            return res.status(409).json({
-                ok: false,
-                error: {
-                    code: 'CONTACT_AMBIGUOUS',
-                    message: contactResolution.warnings.join('; '),
-                    correlation_id: reqId,
-                },
-                contact_resolution: contactResolution,
-            });
-        }
+        let contactResolution = { contact_id: null, status: 'created', matched_by: 'none', email_enriched: false, warnings: [] };
 
-        // Set contact_id on the lead body so createLead links it
-        if (contactResolution.contact_id) {
-            body.contact_id = contactResolution.contact_id;
+        if (selectedContactId && contactUpdateMode === 'update_contact') {
+            // Mode: attach to existing contact AND update its fields
+            try {
+                const db = require('../db/connection');
+                const { toE164 } = require('../utils/phoneUtils');
+
+                // Update contact fields
+                const updates = [];
+                const params = [];
+                let idx = 1;
+
+                const fullName = [body.FirstName, body.LastName].filter(Boolean).join(' ');
+                updates.push(`full_name = $${idx++}`); params.push(fullName);
+                updates.push(`first_name = $${idx++}`); params.push(body.FirstName || null);
+                updates.push(`last_name = $${idx++}`); params.push(body.LastName || null);
+                updates.push(`phone_e164 = $${idx++}`); params.push(toE164(body.Phone) || body.Phone);
+                if (body.Email !== undefined) { updates.push(`email = $${idx++}`); params.push(body.Email || null); }
+                if (body.SecondPhone !== undefined) { updates.push(`secondary_phone = $${idx++}`); params.push(toE164(body.SecondPhone) || body.SecondPhone || null); }
+                if (body.SecondPhoneName !== undefined) { updates.push(`secondary_phone_name = $${idx++}`); params.push(body.SecondPhoneName || null); }
+                if (body.Company !== undefined) { updates.push(`company_name = $${idx++}`); params.push(body.Company || null); }
+                updates.push(`updated_at = NOW()`);
+
+                params.push(selectedContactId);
+                await db.query(
+                    `UPDATE contacts SET ${updates.join(', ')} WHERE id = $${idx}`,
+                    params
+                );
+
+                // Add new address as additional (not replace)
+                if (body.Address) {
+                    await contactAddressService.resolveAddress(
+                        selectedContactId,
+                        {
+                            street: body.Address,
+                            apt: body.Unit || null,
+                            city: body.City || '',
+                            state: body.State || '',
+                            zip: body.PostalCode || '',
+                            lat: body.Latitude || null,
+                            lng: body.Longitude || null,
+                            placeId: body.google_place_id || null,
+                        }
+                    );
+                }
+
+                console.log(`[LeadsAPI][${reqId}] Updated contact ${selectedContactId} from lead form`);
+            } catch (updateErr) {
+                console.error(`[LeadsAPI][${reqId}] Contact update error (non-blocking):`, updateErr.message);
+            }
+
+            body.contact_id = selectedContactId;
+            contactResolution = { contact_id: selectedContactId, status: 'matched', matched_by: 'explicit', email_enriched: false, warnings: [] };
+
+        } else if (selectedContactId && (!contactUpdateMode || contactUpdateMode === 'attach')) {
+            // Mode: attach to existing contact without updating
+            body.contact_id = selectedContactId;
+            contactResolution = { contact_id: selectedContactId, status: 'matched', matched_by: 'explicit', email_enriched: false, warnings: [] };
+
+            // Sync Company to contact if provided and missing
+            if (body.Company) {
+                try {
+                    await require('../db/connection').query(
+                        'UPDATE contacts SET company_name = COALESCE(NULLIF(company_name, \'\'), $1), updated_at = NOW() WHERE id = $2',
+                        [body.Company, selectedContactId]
+                    );
+                } catch { /* non-blocking */ }
+            }
+
+        } else if (contactUpdateMode === 'only_lead') {
+            // Mode: create new contact (detach from selected), lead gets new contact
+            contactResolution = await contactDedupeService.resolveContact({
+                first_name: body.FirstName,
+                last_name: body.LastName,
+                phone: body.Phone,
+                email: body.Email,
+            }, companyId);
+
+            // Force create new contact even if resolveContact matched
+            if (contactResolution.status === 'matched' || contactResolution.status === 'ambiguous') {
+                const { createNewContact } = require('../services/contactDedupeService');
+                // We need to create a fresh contact, so we use the service
+                const newContactId = await contactDedupeService.createNewContactPublic({
+                    first_name: body.FirstName,
+                    last_name: body.LastName,
+                    phone: body.Phone,
+                    email: body.Email,
+                }, companyId);
+                contactResolution = { contact_id: newContactId, status: 'created', matched_by: 'none', email_enriched: false, warnings: [] };
+            }
+
+            if (contactResolution.contact_id) {
+                body.contact_id = contactResolution.contact_id;
+            }
+
+        } else {
+            // Default mode: automatic contact resolution (create_new or no selection)
+            contactResolution = await contactDedupeService.resolveContact({
+                first_name: body.FirstName,
+                last_name: body.LastName,
+                phone: body.Phone,
+                email: body.Email,
+            }, companyId);
+
+            // If ambiguous, return 409 with candidates for UI/API to resolve
+            if (contactResolution.status === 'ambiguous') {
+                return res.status(409).json({
+                    ok: false,
+                    error: {
+                        code: 'CONTACT_AMBIGUOUS',
+                        message: contactResolution.warnings.join('; '),
+                        correlation_id: reqId,
+                    },
+                    contact_resolution: contactResolution,
+                });
+            }
+
+            // Set contact_id on the lead body so createLead links it
+            if (contactResolution.contact_id) {
+                body.contact_id = contactResolution.contact_id;
+            }
         }
 
         const result = await leadsService.createLead(body, companyId);
@@ -196,21 +301,11 @@ router.post('/', async (req, res) => {
                     [contactResolution.contact_id, result.ClientId]
                 );
             } catch { /* ignore if already linked */ }
-
-            // Sync Company to contact if provided
-            if (body.Company) {
-                try {
-                    await require('../db/connection').query(
-                        'UPDATE contacts SET company_name = COALESCE(NULLIF(company_name, \'\'), $1), updated_at = NOW() WHERE id = $2',
-                        [body.Company, contactResolution.contact_id]
-                    );
-                } catch { /* non-blocking */ }
-            }
         }
 
         // Address sync: persist lead address to contact_addresses
         let addressResolution = { contact_address_id: null, status: 'none' };
-        if (contactResolution.contact_id && body.Address) {
+        if (contactResolution.contact_id && body.Address && contactUpdateMode !== 'update_contact') {
             try {
                 addressResolution = await contactAddressService.resolveAddress(
                     contactResolution.contact_id,

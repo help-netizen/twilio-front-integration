@@ -13,7 +13,7 @@ import * as contactsApi from '../../services/contactsApi';
 import type { Lead, CreateLeadInput } from '../../types/lead';
 import type { DedupeCandidate } from '../../types/contact';
 import type { SavedAddress } from '../../services/contactsApi';
-import { User, Check, AlertTriangle, Mail } from 'lucide-react';
+import { User, Check, AlertTriangle, X, Phone, Mail, Building2, MapPin } from 'lucide-react';
 
 interface CreateLeadDialogProps {
     open: boolean;
@@ -43,6 +43,56 @@ function useDebounce<T extends (...args: unknown[]) => void>(fn: T, delay: numbe
     }, [fn, delay]) as unknown as T;
 }
 
+// Snapshot of contact fields for change detection
+interface ContactSnapshot {
+    FirstName: string;
+    LastName: string;
+    Phone: string;
+    Email: string;
+    SecondPhone?: string;
+    SecondPhoneName?: string;
+    Company: string;
+    Address: string;
+    Unit?: string;
+    City: string;
+    State: string;
+    PostalCode: string;
+}
+
+function snapshotFromForm(f: CreateLeadInput): ContactSnapshot {
+    return {
+        FirstName: f.FirstName || '',
+        LastName: f.LastName || '',
+        Phone: f.Phone || '',
+        Email: f.Email || '',
+        SecondPhone: f.SecondPhone || '',
+        SecondPhoneName: f.SecondPhoneName || '',
+        Company: f.Company || '',
+        Address: f.Address || '',
+        Unit: f.Unit || '',
+        City: f.City || '',
+        State: f.State || '',
+        PostalCode: f.PostalCode || '',
+    };
+}
+
+function hasFieldChanges(current: ContactSnapshot, original: ContactSnapshot): boolean {
+    return (
+        current.FirstName !== original.FirstName ||
+        current.LastName !== original.LastName ||
+        current.Phone !== original.Phone ||
+        current.Email !== original.Email ||
+        (current.SecondPhone || '') !== (original.SecondPhone || '') ||
+        (current.SecondPhoneName || '') !== (original.SecondPhoneName || '') ||
+        current.Company !== original.Company ||
+        current.Address !== original.Address ||
+        (current.Unit || '') !== (original.Unit || '') ||
+        current.City !== original.City ||
+        current.State !== original.State ||
+        current.PostalCode !== original.PostalCode
+    );
+}
+
 export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDialogProps) {
     const [loading, setLoading] = useState(false);
     const [showSecondary, setShowSecondary] = useState(false);
@@ -65,12 +115,18 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
         Metadata: {},
     });
 
-    // Dedupe state
+    // Contact lookup state
     const [candidates, setCandidates] = useState<DedupeCandidate[]>([]);
-    const [matchHint, setMatchHint] = useState<string>('none');
-    const [willEnrichEmail, setWillEnrichEmail] = useState(false);
     const [selectedContactId, setSelectedContactId] = useState<number | null>(null);
+    const [selectedContactName, setSelectedContactName] = useState<string>('');
+    const [contactSnapshot, setContactSnapshot] = useState<ContactSnapshot | null>(null);
     const [searchingContacts, setSearchingContacts] = useState(false);
+    const [showDropdown, setShowDropdown] = useState(false);
+    const dropdownRef = useRef<HTMLDivElement>(null);
+
+    // Confirmation modal state
+    const [showConfirmModal, setShowConfirmModal] = useState(false);
+    const [pendingSubmitData, setPendingSubmitData] = useState<CreateLeadInput | null>(null);
 
     // Address state
     const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
@@ -87,7 +143,6 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                         (f: CustomFieldDef) => !f.is_system
                     );
                     setCustomFields(userFields);
-                    // Use dynamic job types from settings
                     if (data.jobTypes && data.jobTypes.length > 0) {
                         setJobTypes(data.jobTypes.map((jt: { name: string }) => jt.name));
                     }
@@ -96,15 +151,18 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
             .catch(() => { });
     }, [open]);
 
-    // Reset dedupe state when dialog opens
+    // Reset state when dialog closes
     useEffect(() => {
         if (!open) {
             setCandidates([]);
-            setMatchHint('none');
-            setWillEnrichEmail(false);
             setSelectedContactId(null);
+            setSelectedContactName('');
+            setContactSnapshot(null);
             setSavedAddresses([]);
             setSelectedContactAddressId(null);
+            setShowDropdown(false);
+            setShowConfirmModal(false);
+            setPendingSubmitData(null);
         }
     }, [open]);
 
@@ -120,54 +178,122 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
             .catch(() => setSavedAddresses([]));
     }, [selectedContactId]);
 
+    // Close dropdown on outside click
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+                setShowDropdown(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
     // Contact search function
     const runContactSearch = useCallback(async () => {
+        // Don't search if we already have a selected contact
+        if (selectedContactId) return;
+
         const fn = formData.FirstName.trim();
         const ln = formData.LastName.trim();
-        if (!fn || !ln) {
+        const phone = formData.Phone ? toE164(formData.Phone) : '';
+        const email = formData.Email?.trim() || '';
+
+        // Check minimum search criteria
+        const hasName = fn.length >= 2 || ln.length >= 2;
+        const hasPhone = phone.replace(/\D/g, '').length >= 4;
+        const hasEmail = email.length >= 3 || email.includes('@');
+
+        if (!hasName && !hasPhone && !hasEmail) {
             setCandidates([]);
-            setMatchHint('none');
-            setWillEnrichEmail(false);
-            setSelectedContactId(null);
+            setShowDropdown(false);
             return;
         }
 
         setSearchingContacts(true);
         try {
             const result = await contactsApi.searchCandidates({
-                first_name: fn,
-                last_name: ln,
-                phone: formData.Phone ? toE164(formData.Phone) : undefined,
-                email: formData.Email || undefined,
+                first_name: fn || undefined,
+                last_name: ln || undefined,
+                phone: phone || undefined,
+                email: email || undefined,
             });
             const data = result.data;
             setCandidates(data.candidates);
-            setMatchHint(data.match_hint);
-            setWillEnrichEmail(data.will_enrich_email);
-
-            // Auto-select if exactly one phone or email match
-            if (data.match_hint === 'phone' || data.match_hint === 'email') {
-                const match = data.candidates.find(c => c.phone_match || c.email_match);
-                setSelectedContactId(match ? match.id : null);
-            } else {
-                setSelectedContactId(null);
-            }
+            setShowDropdown(data.candidates.length > 0);
         } catch {
-            // Silently fail — dedupe is non-blocking
+            // Silently fail — search is non-blocking
         } finally {
             setSearchingContacts(false);
         }
-    }, [formData.FirstName, formData.LastName, formData.Phone, formData.Email]);
+    }, [formData.FirstName, formData.LastName, formData.Phone, formData.Email, selectedContactId]);
 
-    const debouncedSearch = useDebounce(runContactSearch, 400);
+    const debouncedSearch = useDebounce(runContactSearch, 350);
 
-    // Re-search on field blur (name, phone, email)
-    const handleFieldBlur = () => {
-        if (formData.FirstName.trim() && formData.LastName.trim()) {
+    // Trigger search on field change
+    const handleContactFieldChange = (field: string, value: string) => {
+        setFormData(prev => ({ ...prev, [field]: value }));
+        // Only trigger search if no contact is selected
+        if (!selectedContactId) {
             debouncedSearch();
         }
     };
 
+    // Select a candidate contact
+    const handleSelectCandidate = async (candidate: DedupeCandidate) => {
+        setSelectedContactId(candidate.id);
+        setSelectedContactName(candidate.full_name || `${candidate.first_name || ''} ${candidate.last_name || ''}`.trim());
+        setShowDropdown(false);
+        setCandidates([]);
+
+        // Auto-fill form fields
+        const newFormData: CreateLeadInput = {
+            ...formData,
+            FirstName: candidate.first_name || '',
+            LastName: candidate.last_name || '',
+            Phone: candidate.phone_e164 || formData.Phone,
+            Email: candidate.email || formData.Email || '',
+            Company: candidate.company_name || formData.Company || '',
+        };
+
+        // Fill secondary phone if available
+        if (candidate.secondary_phone) {
+            newFormData.SecondPhone = candidate.secondary_phone;
+            setShowSecondary(true);
+        }
+
+        // Fetch and fill default address
+        try {
+            const addrRes = await contactsApi.getContactAddresses(candidate.id);
+            const addresses = addrRes.data.addresses;
+            if (addresses.length > 0) {
+                const defaultAddr = addresses.find((a: SavedAddress) => a.is_primary) || addresses[0];
+                newFormData.Address = defaultAddr.street_line1 || '';
+                newFormData.Unit = defaultAddr.street_line2 || '';
+                newFormData.City = defaultAddr.city || '';
+                newFormData.State = defaultAddr.state || '';
+                newFormData.PostalCode = defaultAddr.postal_code || '';
+            }
+        } catch {
+            // Address fetch failed — use city/state from candidate if available
+            if (candidate.city) newFormData.City = candidate.city;
+            if (candidate.state) newFormData.State = candidate.state;
+        }
+
+        setFormData(newFormData);
+        setContactSnapshot(snapshotFromForm(newFormData));
+    };
+
+    // Remove/detach selected contact
+    const handleRemoveContact = () => {
+        setSelectedContactId(null);
+        setSelectedContactName('');
+        setContactSnapshot(null);
+        setSavedAddresses([]);
+        setSelectedContactAddressId(null);
+    };
+
+    // Submit logic
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
@@ -176,27 +302,47 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
             return;
         }
 
-        // If ambiguous and no selection, block
-        if (matchHint === 'phone_ambiguous' || matchHint === 'email_ambiguous' || matchHint === 'name_only') {
-            if (candidates.length > 0 && selectedContactId === null) {
-                toast.error('Please select an existing contact or confirm creating a new one');
+        // If we have a selected contact, check for changes
+        if (selectedContactId && contactSnapshot) {
+            const currentSnapshot = snapshotFromForm(formData);
+            if (hasFieldChanges(currentSnapshot, contactSnapshot)) {
+                // Show confirmation modal
+                setPendingSubmitData(formData);
+                setShowConfirmModal(true);
                 return;
             }
         }
 
+        // No changes or no contact selected — submit directly
+        await submitLead(formData, selectedContactId ? 'attach' : 'create_new');
+    };
+
+    // Do the actual submission
+    const submitLead = async (data: CreateLeadInput, mode: string) => {
         setLoading(true);
+        setShowConfirmModal(false);
         try {
-            const submitData = { ...formData, Phone: toE164(formData.Phone) };
-            const result = await leadsApi.createLead(submitData);
+            const submitData: Record<string, unknown> = {
+                ...data,
+                Phone: toE164(data.Phone),
+            };
+
+            if (selectedContactId && mode !== 'only_lead') {
+                submitData.selected_contact_id = selectedContactId;
+                submitData.contact_update_mode = mode === 'update_contact' ? 'update_contact' : undefined;
+            }
+            if (mode === 'only_lead') {
+                submitData.contact_update_mode = 'only_lead';
+            }
+
+            const result = await leadsApi.createLead(submitData as CreateLeadInput);
             const detail = await leadsApi.getLeadByUUID(result.data.UUID!);
             onSuccess(detail.data.lead);
 
-            // Show enrichment toast
-            if (result.data.contact_resolution?.email_enriched) {
-                toast.info('Email added to existing contact');
-            }
             if (result.data.contact_resolution?.status === 'matched') {
-                toast.success(`Lead linked to existing contact`);
+                toast.success(mode === 'update_contact'
+                    ? 'Lead created & contact updated'
+                    : 'Lead linked to existing contact');
             }
 
             // Reset form
@@ -217,20 +363,17 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                 Metadata: {},
             });
             setCandidates([]);
-            setMatchHint('none');
-            setWillEnrichEmail(false);
             setSelectedContactId(null);
+            setSelectedContactName('');
+            setContactSnapshot(null);
         } catch (error: unknown) {
             const err = error as { response?: { status?: number }; message?: string };
-            if (err.response?.status === 409) {
-                toast.error('Multiple matching contacts found. Please select one above.');
-            } else {
-                toast.error('Failed to create lead', {
-                    description: err.message || 'Unknown error'
-                });
-            }
+            toast.error('Failed to create lead', {
+                description: err.message || 'Unknown error'
+            });
         } finally {
             setLoading(false);
+            setPendingSubmitData(null);
         }
     };
 
@@ -241,423 +384,382 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
         }));
     };
 
+    // Soft warning: phone/email match exists but user hasn't selected
+    const softWarning = !selectedContactId && candidates.length > 0 && !showDropdown
+        && candidates.some(c => c.phone_match || c.email_match);
+
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                <DialogHeader>
-                    <DialogTitle>Create New Lead</DialogTitle>
-                    <DialogDescription>Enter the lead's details below to create a new lead.</DialogDescription>
-                </DialogHeader>
+        <>
+            <Dialog open={open} onOpenChange={onOpenChange}>
+                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle>Create New Lead</DialogTitle>
+                        <DialogDescription>Enter the lead's details below to create a new lead.</DialogDescription>
+                    </DialogHeader>
 
-                <form onSubmit={handleSubmit} className="space-y-6">
-                    {/* Contact Information */}
-                    <div className="space-y-4">
-                        <h3 className="font-medium">Contact Information</h3>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <Label htmlFor="firstName" className="mb-2">
-                                    First Name <span className="text-destructive">*</span>
-                                </Label>
-                                <Input
-                                    id="firstName"
-                                    value={formData.FirstName}
-                                    onChange={(e) => setFormData({ ...formData, FirstName: e.target.value })}
-                                    onBlur={handleFieldBlur}
-                                    required
-                                />
-                            </div>
-                            <div>
-                                <Label htmlFor="lastName" className="mb-2">
-                                    Last Name <span className="text-destructive">*</span>
-                                </Label>
-                                <Input
-                                    id="lastName"
-                                    value={formData.LastName}
-                                    onChange={(e) => setFormData({ ...formData, LastName: e.target.value })}
-                                    onBlur={handleFieldBlur}
-                                    required
-                                />
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <Label htmlFor="phone" className="mb-2">
-                                    Phone <span className="text-destructive">*</span>
-                                </Label>
-                                <PhoneInput
-                                    id="phone"
-                                    value={formData.Phone}
-                                    onChange={(formatted) => setFormData({ ...formData, Phone: formatted })}
-                                    onBlur={handleFieldBlur}
-                                    required
-                                />
-                            </div>
-                            <div>
-                                <Label htmlFor="email" className="mb-2">Email</Label>
-                                <Input
-                                    id="email"
-                                    type="email"
-                                    value={formData.Email}
-                                    onChange={(e) => setFormData({ ...formData, Email: e.target.value })}
-                                    onBlur={handleFieldBlur}
-                                />
-                            </div>
-                        </div>
-
-                        {!showSecondary ? (
-                            <button
-                                type="button"
-                                onClick={() => setShowSecondary(true)}
-                                className="text-xs text-primary hover:underline"
-                            >
-                                + Secondary Phone
-                            </button>
-                        ) : (
+                    <form onSubmit={handleSubmit} className="space-y-6">
+                        {/* Contact Information */}
+                        <div className="space-y-4 relative" ref={dropdownRef}>
+                            <h3 className="font-medium">Contact Information</h3>
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
-                                    <Label htmlFor="secondPhone" className="mb-2">Secondary Phone</Label>
-                                    <PhoneInput
-                                        id="secondPhone"
-                                        value={formData.SecondPhone || ''}
-                                        onChange={(formatted) => setFormData({ ...formData, SecondPhone: formatted })}
+                                    <Label htmlFor="firstName" className="mb-2">
+                                        First Name <span className="text-destructive">*</span>
+                                    </Label>
+                                    <Input
+                                        id="firstName"
+                                        value={formData.FirstName}
+                                        onChange={(e) => handleContactFieldChange('FirstName', e.target.value)}
+                                        required
                                     />
                                 </div>
                                 <div>
-                                    <Label htmlFor="secondPhoneName" className="mb-2">Secondary Name</Label>
+                                    <Label htmlFor="lastName" className="mb-2">
+                                        Last Name <span className="text-destructive">*</span>
+                                    </Label>
                                     <Input
-                                        id="secondPhoneName"
-                                        value={formData.SecondPhoneName || ''}
-                                        onChange={(e) => setFormData({ ...formData, SecondPhoneName: e.target.value })}
-                                        placeholder="e.g. Tenant, Wife"
+                                        id="lastName"
+                                        value={formData.LastName}
+                                        onChange={(e) => handleContactFieldChange('LastName', e.target.value)}
+                                        required
                                     />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <Label htmlFor="phone" className="mb-2">
+                                        Phone <span className="text-destructive">*</span>
+                                    </Label>
+                                    <PhoneInput
+                                        id="phone"
+                                        value={formData.Phone}
+                                        onChange={(formatted) => handleContactFieldChange('Phone', formatted)}
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <Label htmlFor="email" className="mb-2">Email</Label>
+                                    <Input
+                                        id="email"
+                                        type="email"
+                                        value={formData.Email}
+                                        onChange={(e) => handleContactFieldChange('Email', e.target.value)}
+                                    />
+                                </div>
+                            </div>
+
+                            {!showSecondary ? (
+                                <button
+                                    type="button"
+                                    onClick={() => setShowSecondary(true)}
+                                    className="text-xs text-primary hover:underline"
+                                >
+                                    + Secondary Phone
+                                </button>
+                            ) : (
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <Label htmlFor="secondPhone" className="mb-2">Secondary Phone</Label>
+                                        <PhoneInput
+                                            id="secondPhone"
+                                            value={formData.SecondPhone || ''}
+                                            onChange={(formatted) => setFormData({ ...formData, SecondPhone: formatted })}
+                                        />
+                                    </div>
+                                    <div>
+                                        <Label htmlFor="secondPhoneName" className="mb-2">Secondary Name</Label>
+                                        <Input
+                                            id="secondPhoneName"
+                                            value={formData.SecondPhoneName || ''}
+                                            onChange={(e) => setFormData({ ...formData, SecondPhoneName: e.target.value })}
+                                            placeholder="e.g. Tenant, Wife"
+                                        />
+                                    </div>
+                                </div>
+                            )}
+
+                            <div>
+                                <Label htmlFor="company" className="mb-2">Company</Label>
+                                <Input
+                                    id="company"
+                                    value={formData.Company}
+                                    onChange={(e) => setFormData({ ...formData, Company: e.target.value })}
+                                />
+                            </div>
+
+                            {/* Typeahead dropdown */}
+                            {showDropdown && candidates.length > 0 && (
+                                <div className="absolute left-0 right-0 z-50 bg-white border rounded-lg shadow-lg max-h-64 overflow-y-auto"
+                                    style={{ top: '100%', marginTop: '4px' }}
+                                >
+                                    <div className="px-3 py-2 text-xs font-medium text-muted-foreground border-b bg-muted/30">
+                                        {candidates.length} existing contact{candidates.length !== 1 ? 's' : ''} found
+                                    </div>
+                                    {candidates.map((c) => (
+                                        <div
+                                            key={c.id}
+                                            onClick={() => handleSelectCandidate(c)}
+                                            className="flex items-center gap-3 px-3 py-2.5 hover:bg-muted/50 cursor-pointer transition-colors border-b last:border-b-0"
+                                        >
+                                            <div className="size-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                                                <User className="size-4 text-primary" />
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                    <span className="text-sm font-medium truncate">
+                                                        {c.full_name || `${c.first_name || ''} ${c.last_name || ''}`.trim()}
+                                                    </span>
+                                                    {c.phone_match && (
+                                                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-green-100 text-green-700">
+                                                            Phone match
+                                                        </span>
+                                                    )}
+                                                    {c.email_match && (
+                                                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">
+                                                            Email match
+                                                        </span>
+                                                    )}
+                                                    {c.name_match && !c.phone_match && !c.email_match && (
+                                                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">
+                                                            Name match
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
+                                                    {c.phone_e164 && (
+                                                        <span className="inline-flex items-center gap-1">
+                                                            <Phone className="size-3" />{c.phone_e164}
+                                                        </span>
+                                                    )}
+                                                    {c.email && (
+                                                        <span className="inline-flex items-center gap-1">
+                                                            <Mail className="size-3" />{c.email}
+                                                        </span>
+                                                    )}
+                                                    {c.company_name && (
+                                                        <span className="inline-flex items-center gap-1">
+                                                            <Building2 className="size-3" />{c.company_name}
+                                                        </span>
+                                                    )}
+                                                    {(c.city || c.state) && (
+                                                        <span className="inline-flex items-center gap-1">
+                                                            <MapPin className="size-3" />{[c.city, c.state].filter(Boolean).join(', ')}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* Selected contact indicator */}
+                            {selectedContactId && (
+                                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-green-50 border border-green-200">
+                                    <Check className="size-4 text-green-600 shrink-0" />
+                                    <span className="text-sm text-green-800 font-medium flex-1">
+                                        Selected existing contact: {selectedContactName}
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={handleRemoveContact}
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium text-red-600 hover:bg-red-50 rounded transition-colors"
+                                    >
+                                        <X className="size-3" />
+                                        Remove
+                                    </button>
+                                </div>
+                            )}
+
+                            {/* Soft warning */}
+                            {softWarning && (
+                                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200">
+                                    <AlertTriangle className="size-4 text-amber-600 shrink-0" />
+                                    <span className="text-xs text-amber-800">
+                                        A contact with this phone/email already exists.{' '}
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowDropdown(true)}
+                                            className="underline font-medium hover:text-amber-900"
+                                        >
+                                            Select it to avoid duplicates.
+                                        </button>
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Address */}
+                        <div className="space-y-4">
+                            <AddressAutocomplete
+                                header={<h3 className="font-medium">Address</h3>}
+                                idPrefix="create-lead"
+                                defaultUseDetails={true}
+                                savedAddresses={savedAddresses}
+                                onSelectSaved={(id) => setSelectedContactAddressId(id)}
+                                value={{
+                                    street: formData.Address || '',
+                                    apt: formData.Unit || '',
+                                    city: formData.City || '',
+                                    state: formData.State || '',
+                                    zip: formData.PostalCode || '',
+                                }}
+                                onChange={(addr) => {
+                                    setSelectedContactAddressId(null);
+                                    setFormData({
+                                        ...formData,
+                                        Address: addr.street,
+                                        Unit: addr.apt || '',
+                                        City: addr.city,
+                                        State: addr.state,
+                                        PostalCode: addr.zip,
+                                        Latitude: addr.lat ?? null,
+                                        Longitude: addr.lng ?? null,
+                                    });
+                                }}
+                            />
+                        </div>
+
+                        {/* Job Details */}
+                        <div className="space-y-4">
+                            <h3 className="font-medium">Job Details</h3>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <Label htmlFor="jobType" className="mb-2">Job Type</Label>
+                                    <Select
+                                        value={formData.JobType}
+                                        onValueChange={(value) => setFormData({ ...formData, JobType: value })}
+                                    >
+                                        <SelectTrigger id="jobType">
+                                            <SelectValue placeholder="Select job type" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {jobTypes.map((type) => (
+                                                <SelectItem key={type} value={type}>
+                                                    {type}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div>
+                                    <Label htmlFor="jobSource" className="mb-2">Job Source</Label>
+                                    <Select
+                                        value={formData.JobSource}
+                                        onValueChange={(value) => setFormData({ ...formData, JobSource: value })}
+                                    >
+                                        <SelectTrigger id="jobSource">
+                                            <SelectValue placeholder="Select source" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {JOB_SOURCES.map((source) => (
+                                                <SelectItem key={source} value={source}>
+                                                    {source}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                            </div>
+
+                            <div>
+                                <Label htmlFor="leadNotes" className="mb-2">Description</Label>
+                                <Textarea
+                                    id="leadNotes"
+                                    value={formData.Description}
+                                    onChange={(e) => setFormData({ ...formData, Description: e.target.value })}
+                                    rows={3}
+                                    placeholder="Additional notes about this lead..."
+                                />
+                            </div>
+                        </div>
+
+                        {/* Custom Metadata Fields */}
+                        {customFields.length > 0 && (
+                            <div className="space-y-4">
+                                <h3 className="font-medium">Metadata</h3>
+                                <div className="grid grid-cols-2 gap-4">
+                                    {customFields.map((field) => (
+                                        <div key={field.id} className={field.field_type === 'textarea' || field.field_type === 'richtext' ? 'col-span-2' : ''}>
+                                            <Label htmlFor={`meta-${field.api_name}`} className="mb-2">
+                                                {field.display_name}
+                                            </Label>
+                                            {field.field_type === 'textarea' || field.field_type === 'richtext' ? (
+                                                <Textarea
+                                                    id={`meta-${field.api_name}`}
+                                                    value={formData.Metadata?.[field.api_name] || ''}
+                                                    onChange={(e) => updateMetadata(field.api_name, e.target.value)}
+                                                    rows={3}
+                                                />
+                                            ) : (
+                                                <Input
+                                                    id={`meta-${field.api_name}`}
+                                                    type={field.field_type === 'number' ? 'number' : 'text'}
+                                                    value={formData.Metadata?.[field.api_name] || ''}
+                                                    onChange={(e) => updateMetadata(field.api_name, e.target.value)}
+                                                />
+                                            )}
+                                        </div>
+                                    ))}
                                 </div>
                             </div>
                         )}
 
-                        <div>
-                            <Label htmlFor="company" className="mb-2">Company</Label>
-                            <Input
-                                id="company"
-                                value={formData.Company}
-                                onChange={(e) => setFormData({ ...formData, Company: e.target.value })}
-                            />
-                        </div>
-                    </div>
+                        <DialogFooter>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => onOpenChange(false)}
+                                disabled={loading}
+                            >
+                                Cancel
+                            </Button>
+                            <Button type="submit" disabled={loading}>
+                                {loading ? 'Creating...' : 'Create Lead'}
+                            </Button>
+                        </DialogFooter>
+                    </form>
+                </DialogContent>
+            </Dialog>
 
-                    {/* Contact Match Card */}
-                    {(candidates.length > 0 || searchingContacts) && (
-                        <ContactMatchSection
-                            candidates={candidates}
-                            matchHint={matchHint}
-                            willEnrichEmail={willEnrichEmail}
-                            selectedContactId={selectedContactId}
-                            onSelect={setSelectedContactId}
-                            searching={searchingContacts}
-                        />
-                    )}
-
-                    {/* Address */}
-                    <div className="space-y-4">
-                        <AddressAutocomplete
-                            header={<h3 className="font-medium">Address</h3>}
-                            idPrefix="create-lead"
-                            defaultUseDetails={true}
-                            savedAddresses={savedAddresses}
-                            onSelectSaved={(id) => setSelectedContactAddressId(id)}
-                            value={{
-                                street: formData.Address || '',
-                                apt: formData.Unit || '',
-                                city: formData.City || '',
-                                state: formData.State || '',
-                                zip: formData.PostalCode || '',
-                            }}
-                            onChange={(addr) => {
-                                setSelectedContactAddressId(null); // clear selection when typing new
-                                setFormData({
-                                    ...formData,
-                                    Address: addr.street,
-                                    Unit: addr.apt || '',
-                                    City: addr.city,
-                                    State: addr.state,
-                                    PostalCode: addr.zip,
-                                    Latitude: addr.lat ?? null,
-                                    Longitude: addr.lng ?? null,
-                                });
-                            }}
-                        />
-                    </div>
-
-                    {/* Job Details */}
-                    <div className="space-y-4">
-                        <h3 className="font-medium">Job Details</h3>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <Label htmlFor="jobType" className="mb-2">Job Type</Label>
-                                <Select
-                                    value={formData.JobType}
-                                    onValueChange={(value) => setFormData({ ...formData, JobType: value })}
-                                >
-                                    <SelectTrigger id="jobType">
-                                        <SelectValue placeholder="Select job type" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {jobTypes.map((type) => (
-                                            <SelectItem key={type} value={type}>
-                                                {type}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div>
-                                <Label htmlFor="jobSource" className="mb-2">Job Source</Label>
-                                <Select
-                                    value={formData.JobSource}
-                                    onValueChange={(value) => setFormData({ ...formData, JobSource: value })}
-                                >
-                                    <SelectTrigger id="jobSource">
-                                        <SelectValue placeholder="Select source" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {JOB_SOURCES.map((source) => (
-                                            <SelectItem key={source} value={source}>
-                                                {source}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                        </div>
-
-                        <div>
-                            <Label htmlFor="leadNotes" className="mb-2">Description</Label>
-                            <Textarea
-                                id="leadNotes"
-                                value={formData.Description}
-                                onChange={(e) => setFormData({ ...formData, Description: e.target.value })}
-                                rows={3}
-                                placeholder="Additional notes about this lead..."
-                            />
-                        </div>
-                    </div>
-
-                    {/* Custom Metadata Fields */}
-                    {customFields.length > 0 && (
-                        <div className="space-y-4">
-                            <h3 className="font-medium">Metadata</h3>
-                            <div className="grid grid-cols-2 gap-4">
-                                {customFields.map((field) => (
-                                    <div key={field.id} className={field.field_type === 'textarea' || field.field_type === 'richtext' ? 'col-span-2' : ''}>
-                                        <Label htmlFor={`meta-${field.api_name}`} className="mb-2">
-                                            {field.display_name}
-                                        </Label>
-                                        {field.field_type === 'textarea' || field.field_type === 'richtext' ? (
-                                            <Textarea
-                                                id={`meta-${field.api_name}`}
-                                                value={formData.Metadata?.[field.api_name] || ''}
-                                                onChange={(e) => updateMetadata(field.api_name, e.target.value)}
-                                                rows={3}
-                                            />
-                                        ) : (
-                                            <Input
-                                                id={`meta-${field.api_name}`}
-                                                type={field.field_type === 'number' ? 'number' : 'text'}
-                                                value={formData.Metadata?.[field.api_name] || ''}
-                                                onChange={(e) => updateMetadata(field.api_name, e.target.value)}
-                                            />
-                                        )}
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    <DialogFooter>
+            {/* Confirmation Modal: "Change client" */}
+            <Dialog open={showConfirmModal} onOpenChange={setShowConfirmModal}>
+                <DialogContent className="max-w-sm">
+                    <DialogHeader>
+                        <DialogTitle>Change client</DialogTitle>
+                        <DialogDescription>
+                            Do you want these changes to also be applied to the client?
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="flex flex-col gap-2 pt-2">
                         <Button
-                            type="button"
+                            onClick={() => {
+                                if (pendingSubmitData) submitLead(pendingSubmitData, 'update_contact');
+                            }}
+                            disabled={loading}
+                        >
+                            {loading ? 'Saving...' : 'Update contact'}
+                        </Button>
+                        <Button
                             variant="outline"
-                            onClick={() => onOpenChange(false)}
+                            onClick={() => {
+                                if (pendingSubmitData) submitLead(pendingSubmitData, 'only_lead');
+                            }}
+                            disabled={loading}
+                        >
+                            Only lead
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            onClick={() => { setShowConfirmModal(false); setPendingSubmitData(null); }}
                             disabled={loading}
                         >
                             Cancel
                         </Button>
-                        <Button type="submit" disabled={loading}>
-                            {loading ? 'Creating...' : 'Create Lead'}
-                        </Button>
-                    </DialogFooter>
-                </form>
-            </DialogContent>
-        </Dialog>
-    );
-}
-
-// =============================================================================
-// Contact Match Section — shows candidate cards
-// =============================================================================
-
-function ContactMatchSection({
-    candidates,
-    matchHint,
-    willEnrichEmail,
-    selectedContactId,
-    onSelect,
-    searching,
-}: {
-    candidates: DedupeCandidate[];
-    matchHint: string;
-    willEnrichEmail: boolean;
-    selectedContactId: number | null;
-    onSelect: (id: number | null) => void;
-    searching: boolean;
-}) {
-    if (searching) {
-        return (
-            <div style={{
-                padding: '12px 16px',
-                backgroundColor: '#f0f9ff',
-                borderRadius: '8px',
-                border: '1px solid #bae6fd',
-                fontSize: '13px',
-                color: '#0369a1',
-            }}>
-                Searching for existing contacts...
-            </div>
-        );
-    }
-
-    if (candidates.length === 0) return null;
-
-    const isAutoSelected = matchHint === 'phone' || matchHint === 'email';
-    const isAmbiguous = matchHint === 'phone_ambiguous' || matchHint === 'email_ambiguous' || matchHint === 'name_only';
-
-    return (
-        <div style={{
-            borderRadius: '10px',
-            border: isAutoSelected ? '1px solid #86efac' : '1px solid #fde68a',
-            backgroundColor: isAutoSelected ? '#f0fdf4' : '#fffbeb',
-            padding: '14px 16px',
-        }}>
-            <div style={{
-                display: 'flex', alignItems: 'center', gap: '8px',
-                marginBottom: '10px', fontSize: '13px', fontWeight: 600,
-                color: isAutoSelected ? '#166534' : '#92400e',
-            }}>
-                {isAutoSelected ? (
-                    <>
-                        <Check style={{ width: '16px', height: '16px' }} />
-                        Using existing contact
-                    </>
-                ) : (
-                    <>
-                        <AlertTriangle style={{ width: '16px', height: '16px' }} />
-                        {isAmbiguous
-                            ? `${candidates.length} matching contact(s) found — please select one or create new`
-                            : 'Similar contacts found'}
-                    </>
-                )}
-            </div>
-
-            {/* Email enrichment notice */}
-            {willEnrichEmail && (
-                <div style={{
-                    display: 'flex', alignItems: 'center', gap: '6px',
-                    padding: '8px 12px', marginBottom: '10px',
-                    backgroundColor: '#eff6ff', borderRadius: '6px',
-                    fontSize: '12px', color: '#1e40af',
-                    border: '1px solid #bfdbfe',
-                }}>
-                    <Mail style={{ width: '14px', height: '14px' }} />
-                    Email will be added to this client's additional emails
-                </div>
-            )}
-
-            {/* Candidate cards */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                {candidates.map((c) => {
-                    const isSelected = selectedContactId === c.id;
-                    return (
-                        <div
-                            key={c.id}
-                            onClick={() => onSelect(isSelected ? null : c.id)}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: '10px',
-                                padding: '10px 12px',
-                                borderRadius: '8px',
-                                border: isSelected ? '2px solid #22c55e' : '1px solid #e5e7eb',
-                                backgroundColor: isSelected ? '#f0fdf4' : '#fff',
-                                cursor: isAmbiguous ? 'pointer' : 'default',
-                                transition: 'all 0.15s',
-                            }}
-                        >
-                            <div style={{
-                                width: '32px', height: '32px', borderRadius: '50%',
-                                backgroundColor: isSelected ? '#dcfce7' : '#e0e7ff',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                flexShrink: 0,
-                            }}>
-                                {isSelected
-                                    ? <Check style={{ width: '16px', height: '16px', color: '#16a34a' }} />
-                                    : <User style={{ width: '16px', height: '16px', color: '#4f46e5' }} />
-                                }
-                            </div>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontSize: '14px', fontWeight: 500, color: '#111827' }}>
-                                    {c.full_name || `${c.first_name} ${c.last_name}`}
-                                    {c.phone_match && (
-                                        <span style={{
-                                            marginLeft: '8px', fontSize: '10px', fontWeight: 600,
-                                            padding: '1px 6px', borderRadius: '4px',
-                                            backgroundColor: '#dcfce7', color: '#166534',
-                                        }}>PHONE MATCH</span>
-                                    )}
-                                    {c.email_match && (
-                                        <span style={{
-                                            marginLeft: '8px', fontSize: '10px', fontWeight: 600,
-                                            padding: '1px 6px', borderRadius: '4px',
-                                            backgroundColor: '#dbeafe', color: '#1e40af',
-                                        }}>EMAIL MATCH</span>
-                                    )}
-                                </div>
-                                <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>
-                                    {c.phone_e164 || '—'}
-                                    {c.email && ` · ${c.email}`}
-                                    {c.additional_emails.length > 0 && ` (+${c.additional_emails.length} emails)`}
-                                </div>
-                            </div>
-                        </div>
-                    );
-                })}
-
-                {/* "Create new" option for ambiguous cases */}
-                {isAmbiguous && (
-                    <div
-                        onClick={() => onSelect(null)}
-                        style={{
-                            display: 'flex', alignItems: 'center', gap: '10px',
-                            padding: '10px 12px',
-                            borderRadius: '8px',
-                            border: selectedContactId === null ? '2px solid #3b82f6' : '1px dashed #d1d5db',
-                            backgroundColor: selectedContactId === null ? '#eff6ff' : '#fafafa',
-                            cursor: 'pointer',
-                            transition: 'all 0.15s',
-                        }}
-                    >
-                        <div style={{
-                            width: '32px', height: '32px', borderRadius: '50%',
-                            backgroundColor: selectedContactId === null ? '#dbeafe' : '#f3f4f6',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            flexShrink: 0, fontSize: '16px', fontWeight: 600,
-                            color: selectedContactId === null ? '#2563eb' : '#9ca3af',
-                        }}>
-                            +
-                        </div>
-                        <div style={{ fontSize: '13px', fontWeight: 500, color: '#374151' }}>
-                            Create new contact
-                        </div>
                     </div>
-                )}
-            </div>
-        </div>
+                </DialogContent>
+            </Dialog>
+        </>
     );
 }

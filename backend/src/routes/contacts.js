@@ -57,20 +57,16 @@ router.get('/', async (req, res) => {
 });
 
 // =============================================================================
-// GET /api/contacts/search-candidates — Dedupe search for UI
+// GET /api/contacts/search-candidates — Contact lookup for UI
 // =============================================================================
 router.get('/search-candidates', async (req, res) => {
     const reqId = requestId();
     try {
         const { first_name, last_name, phone, email } = req.query;
 
-        if (!first_name || !last_name) {
-            return res.json(successResponse({ candidates: [], match_hint: 'none', will_enrich_email: false }, reqId));
-        }
-
         const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
         const result = await contactDedupeService.searchCandidates(
-            { first_name, last_name, phone: phone || null, email: email || null },
+            { first_name: first_name || '', last_name: last_name || '', phone: phone || null, email: email || null },
             companyId
         );
 

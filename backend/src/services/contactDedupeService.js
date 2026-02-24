@@ -145,38 +145,107 @@ async function searchCandidates({ first_name, last_name, phone, email }, company
     const phoneNorm = normalizePhone(phone);
     const emailNorm = normalizeEmail(email);
 
-    if (!fnNorm || !lnNorm) return { candidates: [], match_hint: 'none' };
+    // Must have at least one searchable criterion
+    const hasName = (fnNorm && fnNorm.length >= 2) || (lnNorm && lnNorm.length >= 2);
+    const hasPhone = phoneNorm && phoneNorm.length >= 4;
+    const hasEmail = emailNorm && emailNorm.length >= 3;
 
-    const candidates = await findCandidatesByName(fnNorm, lnNorm, companyId);
-
-    if (candidates.length === 0) return { candidates: [], match_hint: 'none' };
-
-    // Enrich each candidate with additional_emails
-    for (const c of candidates) {
-        c.additional_emails = await getAdditionalEmails(c.id);
+    if (!hasName && !hasPhone && !hasEmail) {
+        return { candidates: [] };
     }
 
-    // Determine match_hint
-    let matchHint = 'name_only';
-    if (phoneNorm) {
-        const phoneMatches = candidates.filter(c => normalizePhone(c.phone_e164) === phoneNorm);
-        if (phoneMatches.length === 1) matchHint = 'phone';
-        else if (phoneMatches.length > 1) matchHint = 'phone_ambiguous';
-    } else if (emailNorm) {
-        const emailMatches = await filterByEmail(candidates, emailNorm);
-        if (emailMatches.length === 1) matchHint = 'email';
-        else if (emailMatches.length > 1) matchHint = 'email_ambiguous';
+    // Build union queries for each criterion
+    const queries = [];
+    const allParams = [];
+    let paramIdx = 1;
+
+    // Company filter helper
+    const companyCondition = companyId ? `AND c.company_id = '${companyId}'` : '';
+
+    // 1. Name search (requires both first + last, min 2 chars each)
+    if (fnNorm && fnNorm.length >= 2 && lnNorm && lnNorm.length >= 2) {
+        queries.push(`
+            SELECT c.id, c.full_name, c.first_name, c.last_name,
+                   c.phone_e164, c.secondary_phone, c.email, c.company_name,
+                   TRUE AS name_match, FALSE AS phone_match, FALSE AS email_match
+            FROM contacts c
+            WHERE LOWER(TRIM(c.first_name)) = $${paramIdx}
+              AND LOWER(TRIM(c.last_name)) = $${paramIdx + 1}
+              ${companyCondition}
+        `);
+        allParams.push(fnNorm, lnNorm);
+        paramIdx += 2;
     }
 
-    // Check if email enrichment will happen
-    let will_enrich_email = false;
-    if (matchHint === 'phone' && emailNorm) {
-        const match = candidates.find(c => normalizePhone(c.phone_e164) === phoneNorm);
-        if (match) {
-            const allEmails = [match.email, ...(match.additional_emails || [])].filter(Boolean).map(e => e.toLowerCase().trim());
-            if (!allEmails.includes(emailNorm)) {
-                will_enrich_email = true;
-            }
+    // 2. Phone search (independent — min 4 digits)
+    if (hasPhone) {
+        // Match last 10 digits against phone_e164 and secondary_phone
+        queries.push(`
+            SELECT c.id, c.full_name, c.first_name, c.last_name,
+                   c.phone_e164, c.secondary_phone, c.email, c.company_name,
+                   FALSE AS name_match, TRUE AS phone_match, FALSE AS email_match
+            FROM contacts c
+            WHERE (
+                RIGHT(REGEXP_REPLACE(c.phone_e164, '[^0-9]', '', 'g'), 10) = $${paramIdx}
+                OR RIGHT(REGEXP_REPLACE(COALESCE(c.secondary_phone, ''), '[^0-9]', '', 'g'), 10) = $${paramIdx}
+            )
+            ${companyCondition}
+        `);
+        allParams.push(phoneNorm.slice(-10));
+        paramIdx += 1;
+    }
+
+    // 3. Email search (independent — min 3 chars)
+    if (hasEmail) {
+        queries.push(`
+            SELECT c.id, c.full_name, c.first_name, c.last_name,
+                   c.phone_e164, c.secondary_phone, c.email, c.company_name,
+                   FALSE AS name_match, FALSE AS phone_match, TRUE AS email_match
+            FROM contacts c
+            WHERE LOWER(TRIM(c.email)) = $${paramIdx}
+            ${companyCondition}
+        `);
+        allParams.push(emailNorm);
+        paramIdx += 1;
+    }
+
+    if (queries.length === 0) {
+        return { candidates: [] };
+    }
+
+    const unionSql = `
+        WITH matches AS (
+            ${queries.join('\n            UNION ALL\n            ')}
+        )
+        SELECT id, full_name, first_name, last_name, phone_e164, secondary_phone, email, company_name,
+               BOOL_OR(name_match) AS name_match,
+               BOOL_OR(phone_match) AS phone_match,
+               BOOL_OR(email_match) AS email_match
+        FROM matches
+        GROUP BY id, full_name, first_name, last_name, phone_e164, secondary_phone, email, company_name
+        ORDER BY phone_match DESC, email_match DESC, name_match DESC
+        LIMIT 10
+    `;
+
+    const { rows: candidates } = await db.query(unionSql, allParams);
+
+    // Enrich with default address city/state
+    if (candidates.length > 0) {
+        const contactIds = candidates.map(c => c.id);
+        const { rows: addresses } = await db.query(`
+            SELECT DISTINCT ON (contact_id) contact_id, city, state
+            FROM contact_addresses
+            WHERE contact_id = ANY($1)
+            ORDER BY contact_id, is_primary DESC, created_at ASC
+        `, [contactIds]);
+        const addrMap = {};
+        for (const a of addresses) {
+            addrMap[a.contact_id] = { city: a.city, state: a.state };
+        }
+        for (const c of candidates) {
+            const addr = addrMap[c.id];
+            c.city = addr?.city || null;
+            c.state = addr?.state || null;
         }
     }
 
@@ -187,16 +256,15 @@ async function searchCandidates({ first_name, last_name, phone, email }, company
             first_name: c.first_name,
             last_name: c.last_name,
             phone_e164: c.phone_e164,
+            secondary_phone: c.secondary_phone || null,
             email: c.email,
-            additional_emails: c.additional_emails || [],
-            phone_match: phoneNorm ? normalizePhone(c.phone_e164) === phoneNorm : false,
-            email_match: emailNorm ? (
-                (c.email && c.email.toLowerCase().trim() === emailNorm) ||
-                (c.additional_emails || []).some(e => e.toLowerCase().trim() === emailNorm)
-            ) : false,
+            company_name: c.company_name || null,
+            city: c.city || null,
+            state: c.state || null,
+            name_match: c.name_match,
+            phone_match: c.phone_match,
+            email_match: c.email_match,
         })),
-        match_hint: matchHint,
-        will_enrich_email,
     };
 }
 
@@ -348,4 +416,5 @@ module.exports = {
     normalizePhone,
     normalizeEmail,
     normalizeName,
+    createNewContactPublic: createNewContact,
 };

@@ -48,8 +48,12 @@ export type DedupeCandidate = {
     first_name: string | null;
     last_name: string | null;
     phone_e164: string | null;
+    secondary_phone: string | null;
     email: string | null;
-    additional_emails: string[];
+    company_name: string | null;
+    city: string | null;
+    state: string | null;
+    name_match: boolean;
     phone_match: boolean;
     email_match: boolean;
 };
@@ -58,8 +62,6 @@ export type SearchCandidatesResponse = {
     ok: true;
     data: {
         candidates: DedupeCandidate[];
-        match_hint: 'none' | 'name_only' | 'phone' | 'phone_ambiguous' | 'email' | 'email_ambiguous';
-        will_enrich_email: boolean;
     };
     meta: { request_id: string; timestamp: string };
 };
