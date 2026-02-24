@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -43,6 +44,7 @@ const DEFAULT_JOB_TYPES = ['COD Service', 'COD Repair', 'Warranty', 'INS Service
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: CreateLeadJobWizardProps) {
+    const navigate = useNavigate();
     const queryClient = useQueryClient();
     const [step, setStep] = useState<Step>(1);
     const [submitting, setSubmitting] = useState(false);
@@ -287,7 +289,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
                     duration: 10000,
                     action: jobId ? {
                         label: 'Open Job',
-                        onClick: () => window.location.href = `/jobs/${jobId}`,
+                        onClick: () => navigate(`/jobs/${jobId}`),
                     } : undefined,
                 });
             } else {

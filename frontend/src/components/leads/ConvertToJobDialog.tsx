@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -44,6 +45,7 @@ interface CustomFieldDef {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: ConvertToJobDialogProps) {
+    const navigate = useNavigate();
     const [step, setStep] = useState<Step>(1);
     const [submitting, setSubmitting] = useState(false);
 
@@ -266,7 +268,7 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
                 duration: 10000,
                 action: jobId ? {
                     label: 'Open Job',
-                    onClick: () => window.location.href = `/jobs/${jobId}`,
+                    onClick: () => navigate(`/jobs/${jobId}`),
                 } : undefined,
             });
 
