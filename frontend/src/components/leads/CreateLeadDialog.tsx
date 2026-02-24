@@ -122,6 +122,7 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
     const [contactSnapshot, setContactSnapshot] = useState<ContactSnapshot | null>(null);
     const [_searchingContacts, setSearchingContacts] = useState(false);
     const [showDropdown, setShowDropdown] = useState(false);
+    const [activeSearchField, setActiveSearchField] = useState<'name' | 'phone' | 'email' | null>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
 
     // Confirmation modal state
@@ -233,10 +234,83 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
     // Trigger search on field change
     const handleContactFieldChange = (field: string, value: string) => {
         setFormData(prev => ({ ...prev, [field]: value }));
+        // Track which field group is active for dropdown positioning
+        if (field === 'FirstName' || field === 'LastName') setActiveSearchField('name');
+        else if (field === 'Phone') setActiveSearchField('phone');
+        else if (field === 'Email') setActiveSearchField('email');
         // Only trigger search if no contact is selected
         if (!selectedContactId) {
             debouncedSearch();
         }
+    };
+
+    // Render dropdown under the active field group
+    const renderDropdown = (fieldGroup: 'name' | 'phone' | 'email') => {
+        if (!showDropdown || candidates.length === 0 || activeSearchField !== fieldGroup) return null;
+        return (
+            <div className="absolute left-0 right-0 z-50 bg-white border rounded-lg shadow-lg max-h-64 overflow-y-auto"
+                style={{ top: '100%', marginTop: '4px' }}
+            >
+                <div className="px-3 py-2 text-xs font-medium text-muted-foreground border-b bg-muted/30">
+                    {candidates.length} existing contact{candidates.length !== 1 ? 's' : ''} found
+                </div>
+                {candidates.map((c) => (
+                    <div
+                        key={c.id}
+                        onClick={() => handleSelectCandidate(c)}
+                        className="flex items-center gap-3 px-3 py-2.5 hover:bg-muted/50 cursor-pointer transition-colors border-b last:border-b-0"
+                    >
+                        <div className="size-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                            <User className="size-4 text-primary" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-medium truncate">
+                                    {c.full_name || `${c.first_name || ''} ${c.last_name || ''}`.trim()}
+                                </span>
+                                {c.phone_match && (
+                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-green-100 text-green-700">
+                                        Phone match
+                                    </span>
+                                )}
+                                {c.email_match && (
+                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">
+                                        Email match
+                                    </span>
+                                )}
+                                {c.name_match && !c.phone_match && !c.email_match && (
+                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">
+                                        Name match
+                                    </span>
+                                )}
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
+                                {c.phone_e164 && (
+                                    <span className="inline-flex items-center gap-1">
+                                        <Phone className="size-3" />{c.phone_e164}
+                                    </span>
+                                )}
+                                {c.email && (
+                                    <span className="inline-flex items-center gap-1">
+                                        <Mail className="size-3" />{c.email}
+                                    </span>
+                                )}
+                                {c.company_name && (
+                                    <span className="inline-flex items-center gap-1">
+                                        <Building2 className="size-3" />{c.company_name}
+                                    </span>
+                                )}
+                                {(c.city || c.state) && (
+                                    <span className="inline-flex items-center gap-1">
+                                        <MapPin className="size-3" />{[c.city, c.state].filter(Boolean).join(', ')}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        );
     };
 
     // Select a candidate contact
@@ -399,54 +473,64 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
 
                     <form onSubmit={handleSubmit} className="space-y-6">
                         {/* Contact Information */}
-                        <div className="space-y-4 relative" ref={dropdownRef}>
+                        <div className="space-y-4" ref={dropdownRef}>
                             <h3 className="font-medium">Contact Information</h3>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <Label htmlFor="firstName" className="mb-2">
-                                        First Name <span className="text-destructive">*</span>
-                                    </Label>
-                                    <Input
-                                        id="firstName"
-                                        value={formData.FirstName}
-                                        onChange={(e) => handleContactFieldChange('FirstName', e.target.value)}
-                                        required
-                                    />
+
+                            {/* Name row + dropdown anchor */}
+                            <div className="relative">
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <Label htmlFor="firstName" className="mb-2">
+                                            First Name <span className="text-destructive">*</span>
+                                        </Label>
+                                        <Input
+                                            id="firstName"
+                                            value={formData.FirstName}
+                                            onChange={(e) => handleContactFieldChange('FirstName', e.target.value)}
+                                            required
+                                        />
+                                    </div>
+                                    <div>
+                                        <Label htmlFor="lastName" className="mb-2">
+                                            Last Name <span className="text-destructive">*</span>
+                                        </Label>
+                                        <Input
+                                            id="lastName"
+                                            value={formData.LastName}
+                                            onChange={(e) => handleContactFieldChange('LastName', e.target.value)}
+                                            required
+                                        />
+                                    </div>
                                 </div>
-                                <div>
-                                    <Label htmlFor="lastName" className="mb-2">
-                                        Last Name <span className="text-destructive">*</span>
-                                    </Label>
-                                    <Input
-                                        id="lastName"
-                                        value={formData.LastName}
-                                        onChange={(e) => handleContactFieldChange('LastName', e.target.value)}
-                                        required
-                                    />
-                                </div>
+                                {renderDropdown('name')}
                             </div>
 
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <Label htmlFor="phone" className="mb-2">
-                                        Phone <span className="text-destructive">*</span>
-                                    </Label>
-                                    <PhoneInput
-                                        id="phone"
-                                        value={formData.Phone}
-                                        onChange={(formatted) => handleContactFieldChange('Phone', formatted)}
-                                        required
-                                    />
+                            {/* Phone / Email row + dropdown anchor */}
+                            <div className="relative">
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <Label htmlFor="phone" className="mb-2">
+                                            Phone <span className="text-destructive">*</span>
+                                        </Label>
+                                        <PhoneInput
+                                            id="phone"
+                                            value={formData.Phone}
+                                            onChange={(formatted) => handleContactFieldChange('Phone', formatted)}
+                                            required
+                                        />
+                                    </div>
+                                    <div>
+                                        <Label htmlFor="email" className="mb-2">Email</Label>
+                                        <Input
+                                            id="email"
+                                            type="email"
+                                            value={formData.Email}
+                                            onChange={(e) => handleContactFieldChange('Email', e.target.value)}
+                                        />
+                                    </div>
                                 </div>
-                                <div>
-                                    <Label htmlFor="email" className="mb-2">Email</Label>
-                                    <Input
-                                        id="email"
-                                        type="email"
-                                        value={formData.Email}
-                                        onChange={(e) => handleContactFieldChange('Email', e.target.value)}
-                                    />
-                                </div>
+                                {renderDropdown('phone')}
+                                {renderDropdown('email')}
                             </div>
 
                             {!showSecondary ? (
@@ -488,72 +572,6 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                                 />
                             </div>
 
-                            {/* Typeahead dropdown */}
-                            {showDropdown && candidates.length > 0 && (
-                                <div className="absolute left-0 right-0 z-50 bg-white border rounded-lg shadow-lg max-h-64 overflow-y-auto"
-                                    style={{ top: '100%', marginTop: '4px' }}
-                                >
-                                    <div className="px-3 py-2 text-xs font-medium text-muted-foreground border-b bg-muted/30">
-                                        {candidates.length} existing contact{candidates.length !== 1 ? 's' : ''} found
-                                    </div>
-                                    {candidates.map((c) => (
-                                        <div
-                                            key={c.id}
-                                            onClick={() => handleSelectCandidate(c)}
-                                            className="flex items-center gap-3 px-3 py-2.5 hover:bg-muted/50 cursor-pointer transition-colors border-b last:border-b-0"
-                                        >
-                                            <div className="size-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                                                <User className="size-4 text-primary" />
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex items-center gap-2 flex-wrap">
-                                                    <span className="text-sm font-medium truncate">
-                                                        {c.full_name || `${c.first_name || ''} ${c.last_name || ''}`.trim()}
-                                                    </span>
-                                                    {c.phone_match && (
-                                                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-green-100 text-green-700">
-                                                            Phone match
-                                                        </span>
-                                                    )}
-                                                    {c.email_match && (
-                                                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">
-                                                            Email match
-                                                        </span>
-                                                    )}
-                                                    {c.name_match && !c.phone_match && !c.email_match && (
-                                                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">
-                                                            Name match
-                                                        </span>
-                                                    )}
-                                                </div>
-                                                <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
-                                                    {c.phone_e164 && (
-                                                        <span className="inline-flex items-center gap-1">
-                                                            <Phone className="size-3" />{c.phone_e164}
-                                                        </span>
-                                                    )}
-                                                    {c.email && (
-                                                        <span className="inline-flex items-center gap-1">
-                                                            <Mail className="size-3" />{c.email}
-                                                        </span>
-                                                    )}
-                                                    {c.company_name && (
-                                                        <span className="inline-flex items-center gap-1">
-                                                            <Building2 className="size-3" />{c.company_name}
-                                                        </span>
-                                                    )}
-                                                    {(c.city || c.state) && (
-                                                        <span className="inline-flex items-center gap-1">
-                                                            <MapPin className="size-3" />{[c.city, c.state].filter(Boolean).join(', ')}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-
                             {/* Selected contact indicator */}
                             {selectedContactId && (
                                 <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-green-50 border border-green-200">
@@ -580,7 +598,7 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                                         A contact with this phone/email already exists.{' '}
                                         <button
                                             type="button"
-                                            onClick={() => setShowDropdown(true)}
+                                            onClick={() => { setActiveSearchField('phone'); setShowDropdown(true); }}
                                             className="underline font-medium hover:text-amber-900"
                                         >
                                             Select it to avoid duplicates.
