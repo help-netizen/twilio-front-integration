@@ -32,11 +32,13 @@ function formatDuration(seconds: number): string {
     return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-function SoftPhoneHeaderButton({ voice, softPhoneOpen, softPhoneMinimized, onOpenOrRestore }: {
+function SoftPhoneHeaderButton({ voice, softPhoneOpen, softPhoneMinimized, onOpenOrRestore, onAcceptIncoming, incomingCallerName }: {
     voice: ReturnType<typeof useTwilioDevice>;
     softPhoneOpen: boolean;
     softPhoneMinimized: boolean;
     onOpenOrRestore: () => void;
+    onAcceptIncoming?: () => void;
+    incomingCallerName?: string | null;
 }) {
     const { activeCallContact } = useSoftPhone();
     const { callState, callDuration, isMuted, toggleMute } = voice;
@@ -60,20 +62,36 @@ function SoftPhoneHeaderButton({ voice, softPhoneOpen, softPhoneMinimized, onOpe
 
     // Active call state — show status pill
     if (showCallState) {
+        // Incoming call: show caller + Accept button
+        if (callState === 'incoming') {
+            const callerDisplay = incomingCallerName
+                || activeCallContact
+                || (voice.callerInfo?.number ? formatPhoneDisplay(voice.callerInfo.number) : 'Unknown');
+            return (
+                <button
+                    onClick={onAcceptIncoming || onOpenOrRestore}
+                    className="softphone-header-btn active-incoming"
+                    title="Click to accept incoming call"
+                >
+                    <PhoneIncoming size={14} />
+                    <span className="softphone-header-contact">{callerDisplay}</span>
+                    <span className="softphone-header-status">— Accept</span>
+                </button>
+            );
+        }
+
         const statusClass =
             callState === 'connected' ? 'active-connected' :
                 callState === 'connecting' || callState === 'ringing' ? 'active-ringing' :
-                    callState === 'incoming' ? 'active-incoming' :
-                        callState === 'ended' ? 'active-ended' :
-                            callState === 'failed' ? 'active-failed' : '';
+                    callState === 'ended' ? 'active-ended' :
+                        callState === 'failed' ? 'active-failed' : '';
 
         const statusLabel =
             callState === 'connected' ? formatDuration(callDuration) :
                 callState === 'connecting' ? 'Connecting...' :
                     callState === 'ringing' ? 'Ringing...' :
-                        callState === 'incoming' ? 'Incoming...' :
-                            callState === 'ended' ? 'Call Ended' :
-                                callState === 'failed' ? 'Call Failed' : '';
+                        callState === 'ended' ? 'Call Ended' :
+                            callState === 'failed' ? 'Call Failed' : '';
 
         return (
             <button
@@ -290,24 +308,13 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                             </Tabs>
                         </div>
                         <div className="header-actions">
-                            {/* Global incoming call button */}
-                            {voice.incomingCall && (
-                                <button
-                                    className="incoming-call-btn"
-                                    onClick={handleAcceptIncoming}
-                                >
-                                    <PhoneIncoming size={16} />
-                                    <span>
-                                        {incomingCallerName || (voice.callerInfo?.number ? formatPhoneDisplay(voice.callerInfo.number) : 'Unknown')}
-                                    </span>
-                                    — Accept
-                                </button>
-                            )}
                             {voice.phoneAllowed && (
                                 <SoftPhoneHeaderButton
                                     voice={voice}
                                     softPhoneOpen={softPhoneOpen}
                                     softPhoneMinimized={softPhoneMinimized}
+                                    onAcceptIncoming={handleAcceptIncoming}
+                                    incomingCallerName={incomingCallerName}
                                     onOpenOrRestore={() => {
                                         if (softPhoneMinimized) {
                                             setSoftPhoneMinimized(false);
