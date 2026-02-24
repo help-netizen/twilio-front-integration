@@ -141,7 +141,7 @@
 /* Field item layout */
 .lfsp-field-item {
     display: grid;
-    grid-template-columns: 24px 1fr 1fr 120px 32px;
+    grid-template-columns: 24px 1fr 1fr 120px 40px 32px;
     gap: 12px;
     align-items: center;
 }
@@ -176,6 +176,50 @@
     border-radius: 12px;
     text-align: center;
     white-space: nowrap;
+}
+
+/* Searchable toggle in field list */
+.lfsp-searchable-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    justify-content: center;
+}
+
+.lfsp-searchable-toggle input[type="checkbox"] {
+    width: 15px;
+    height: 15px;
+    accent-color: #2563eb;
+    cursor: pointer;
+}
+
+.lfsp-searchable-toggle input[type="checkbox"]:disabled {
+    cursor: not-allowed;
+    opacity: 0.4;
+}
+
+.lfsp-searchable-label {
+    font-size: 14px;
+    line-height: 1;
+}
+
+/* Searchable checkbox in add-field form */
+.lfsp-searchable-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: #374151;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.lfsp-searchable-checkbox input[type="checkbox"] {
+    width: 15px;
+    height: 15px;
+    accent-color: #2563eb;
+    cursor: pointer;
 }
 
 .lfsp-lock {

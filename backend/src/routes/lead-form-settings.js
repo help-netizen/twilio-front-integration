@@ -11,7 +11,7 @@ router.get('/', async (req, res) => {
         const params = companyId ? [companyId] : [];
         const [jobTypesResult, fieldsResult] = await Promise.all([
             db.query(`SELECT id, name, sort_order FROM lead_job_types ${companyWhere} ORDER BY sort_order, id`, params),
-            db.query(`SELECT id, display_name, api_name, field_type, is_system, sort_order FROM lead_custom_fields ${companyWhere} ORDER BY sort_order, id`, params),
+            db.query(`SELECT id, display_name, api_name, field_type, is_system, is_searchable, sort_order FROM lead_custom_fields ${companyWhere} ORDER BY sort_order, id`, params),
         ]);
 
         res.json({
@@ -81,16 +81,16 @@ router.put('/', async (req, res) => {
                         );
                     } else {
                         await client.query(
-                            'UPDATE lead_custom_fields SET display_name = $1, api_name = $2, field_type = $3, sort_order = $4 WHERE id = $5',
-                            [displayName, apiName, fieldType, i, f.id],
+                            'UPDATE lead_custom_fields SET display_name = $1, api_name = $2, field_type = $3, sort_order = $4, is_searchable = $5 WHERE id = $6',
+                            [displayName, apiName, fieldType, i, f.is_searchable !== false, f.id],
                         );
                     }
                     keepIds.push(f.id);
                 } else {
                     // Insert new
                     const result = await client.query(
-                        'INSERT INTO lead_custom_fields (display_name, api_name, field_type, is_system, sort_order) VALUES ($1, $2, $3, $4, $5) RETURNING id',
-                        [displayName, apiName, fieldType, false, i],
+                        'INSERT INTO lead_custom_fields (display_name, api_name, field_type, is_system, sort_order, is_searchable) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
+                        [displayName, apiName, fieldType, false, i, f.is_searchable !== false],
                     );
                     keepIds.push(result.rows[0].id);
                 }
@@ -114,7 +114,7 @@ router.put('/', async (req, res) => {
         const returnParams = companyId ? [companyId] : [];
         const [jobTypesResult, fieldsResult] = await Promise.all([
             db.query(`SELECT id, name, sort_order FROM lead_job_types ${companyWhere} ORDER BY sort_order, id`, returnParams),
-            db.query(`SELECT id, display_name, api_name, field_type, is_system, sort_order FROM lead_custom_fields ${companyWhere} ORDER BY sort_order, id`, returnParams),
+            db.query(`SELECT id, display_name, api_name, field_type, is_system, is_searchable, sort_order FROM lead_custom_fields ${companyWhere} ORDER BY sort_order, id`, returnParams),
         ]);
 
         res.json({

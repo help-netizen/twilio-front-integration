@@ -249,18 +249,35 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
     }
     if (search) {
         idx++;
-        conditions.push(`(
-            j.job_number ILIKE $${idx} OR
-            j.service_name ILIKE $${idx} OR
-            j.customer_name ILIKE $${idx} OR
-            j.customer_phone ILIKE $${idx} OR
-            j.address ILIKE $${idx} OR
-            EXISTS (
+        const searchClauses = [
+            `j.job_number ILIKE $${idx}`,
+            `j.service_name ILIKE $${idx}`,
+            `j.customer_name ILIKE $${idx}`,
+            `j.customer_phone ILIKE $${idx}`,
+            `j.address ILIKE $${idx}`,
+            `EXISTS (
                 SELECT 1 FROM job_tag_assignments jta2
                 JOIN job_tags t2 ON t2.id = jta2.tag_id
                 WHERE jta2.job_id = j.id AND t2.name ILIKE $${idx}
-            )
-        )`);
+            )`,
+        ];
+
+        // Add searchable metadata fields
+        try {
+            const { rows: searchableFields } = await db.query(
+                `SELECT api_name FROM lead_custom_fields WHERE is_searchable = true AND is_system = false`
+            );
+            for (const f of searchableFields) {
+                const key = f.api_name.replace(/[^a-zA-Z0-9_]/g, ''); // sanitize
+                if (key) {
+                    searchClauses.push(`j.metadata->>'${key}' ILIKE $${idx}`);
+                }
+            }
+        } catch (err) {
+            console.warn('[JobsService] Could not load searchable fields:', err.message);
+        }
+
+        conditions.push(`(${searchClauses.join(' OR\n            ')})`);
         params.push(`%${search}%`);
     }
     if (contactId) {

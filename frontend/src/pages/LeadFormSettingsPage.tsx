@@ -29,6 +29,7 @@ interface CustomField {
     api_name: string;
     field_type: string;
     is_system: boolean;
+    is_searchable: boolean;
     sort_order: number;
 }
 
@@ -84,9 +85,11 @@ function SortableJobType({
 function SortableField({
     item,
     onRemove,
+    onToggleSearchable,
 }: {
     item: CustomField;
     onRemove: () => void;
+    onToggleSearchable: () => void;
 }) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
         id: `cf-${item.id ?? item.api_name}`,
@@ -106,6 +109,18 @@ function SortableField({
             <span className="lfsp-field-display">{item.display_name}</span>
             <code className="lfsp-field-api">{item.api_name}</code>
             <span className="lfsp-field-type-badge">{typeLabel}</span>
+            <label
+                className="lfsp-searchable-toggle"
+                title={item.is_system ? 'System field — always searchable' : (item.is_searchable ? 'Included in search' : 'Not included in search')}
+            >
+                <input
+                    type="checkbox"
+                    checked={item.is_searchable}
+                    onChange={onToggleSearchable}
+                    disabled={item.is_system}
+                />
+                <span className="lfsp-searchable-label">{item.is_searchable ? '🔍' : ''}</span>
+            </label>
             {item.is_system ? (
                 <span className="lfsp-lock" title="System field — cannot delete">🔒</span>
             ) : (
@@ -271,6 +286,7 @@ export default function LeadFormSettingsPage() {
     const [showNewField, setShowNewField] = useState(false);
     const [newFieldName, setNewFieldName] = useState('');
     const [newFieldType, setNewFieldType] = useState('text');
+    const [newFieldSearchable, setNewFieldSearchable] = useState(true);
 
     const sensors = useSensors(
         useSensor(PointerSensor),
@@ -381,11 +397,13 @@ export default function LeadFormSettingsPage() {
                 api_name: apiName,
                 field_type: newFieldType,
                 is_system: false,
+                is_searchable: newFieldSearchable,
                 sort_order: fields.length,
             },
         ]);
         setNewFieldName('');
         setNewFieldType('text');
+        setNewFieldSearchable(true);
         setShowNewField(false);
         setDirty(true);
     };
@@ -540,6 +558,13 @@ export default function LeadFormSettingsPage() {
                                     key={`cf-${f.id ?? f.api_name}`}
                                     item={f}
                                     onRemove={() => removeField(i)}
+                                    onToggleSearchable={() => {
+                                        if (f.is_system) return;
+                                        const updated = [...fields];
+                                        updated[i] = { ...updated[i], is_searchable: !updated[i].is_searchable };
+                                        setFields(updated);
+                                        setDirty(true);
+                                    }}
                                 />
                             ))}
                         </div>
@@ -570,6 +595,14 @@ export default function LeadFormSettingsPage() {
                                 <option key={t.value} value={t.value}>{t.label}</option>
                             ))}
                         </select>
+                        <label className="lfsp-searchable-checkbox">
+                            <input
+                                type="checkbox"
+                                checked={newFieldSearchable}
+                                onChange={(e) => setNewFieldSearchable(e.target.checked)}
+                            />
+                            Include in search
+                        </label>
                         <button className="lfsp-add-btn" onClick={addField}>Add</button>
                         <button className="lfsp-cancel-btn" onClick={() => { setShowNewField(false); setNewFieldName(''); }}>
                             Cancel

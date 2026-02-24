@@ -11,6 +11,7 @@ import { ConvertToJobDialog } from '../components/leads/ConvertToJobDialog';
 import { Button } from '../components/ui/button';
 import { Plus, Settings } from 'lucide-react';
 import * as leadsApi from '../services/leadsApi';
+import { authedFetch } from '../services/apiClient';
 import type { Lead, LeadsListParams, TableColumn } from '../types/lead';
 import { DEFAULT_COLUMNS } from '../types/lead';
 
@@ -46,6 +47,23 @@ export function LeadsPage() {
     const [sourceFilter, setSourceFilter] = useState<string[]>([]);
     const [jobTypeFilter, setJobTypeFilter] = useState<string[]>([]);
     const [hasMore, setHasMore] = useState(false);
+
+    // Searchable custom field definitions (for metadata search)
+    const [searchableFields, setSearchableFields] = useState<{ api_name: string }[]>([]);
+    useEffect(() => {
+        authedFetch('/api/settings/lead-form')
+            .then(res => res.json())
+            .then(data => {
+                if (data.success && data.customFields) {
+                    setSearchableFields(
+                        data.customFields
+                            .filter((f: any) => f.is_searchable && !f.is_system)
+                            .map((f: any) => ({ api_name: f.api_name }))
+                    );
+                }
+            })
+            .catch(() => { /* best-effort */ });
+    }, []);
 
     // Load leads
     const loadLeads = async (newFilters?: LeadsListParams) => {
@@ -92,14 +110,27 @@ export function LeadsPage() {
         // Text search
         if (searchQuery.trim()) {
             const query = searchQuery.toLowerCase();
-            result = result.filter(lead =>
-                lead.FirstName?.toLowerCase().includes(query) ||
-                lead.LastName?.toLowerCase().includes(query) ||
-                lead.Company?.toLowerCase().includes(query) ||
-                lead.Phone?.includes(query) ||
-                lead.Email?.toLowerCase().includes(query) ||
-                String(lead.SerialId)?.includes(query)
-            );
+            result = result.filter(lead => {
+                // Standard fields
+                if (
+                    lead.FirstName?.toLowerCase().includes(query) ||
+                    lead.LastName?.toLowerCase().includes(query) ||
+                    lead.Company?.toLowerCase().includes(query) ||
+                    lead.Phone?.includes(query) ||
+                    lead.Email?.toLowerCase().includes(query) ||
+                    String(lead.SerialId)?.includes(query)
+                ) return true;
+
+                // Searchable metadata fields
+                if (lead.Metadata && searchableFields.length > 0) {
+                    for (const f of searchableFields) {
+                        const val = (lead.Metadata as any)[f.api_name];
+                        if (val && String(val).toLowerCase().includes(query)) return true;
+                    }
+                }
+
+                return false;
+            });
         }
 
         // Source filter
@@ -117,7 +148,7 @@ export function LeadsPage() {
         }
 
         return result;
-    }, [leads, searchQuery, sourceFilter, jobTypeFilter]);
+    }, [leads, searchQuery, sourceFilter, jobTypeFilter, searchableFields]);
 
     // Handle filter changes
     const handleFiltersChange = (newFilters: Partial<LeadsListParams>) => {
