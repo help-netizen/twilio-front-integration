@@ -161,6 +161,23 @@ export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({
         sendDigits(digit);
     };
 
+    // Reset contact name on call transitions to prevent stale data across calls
+    const [lastCallPhone, setLastCallPhone] = useState<string | null>(null);
+    useEffect(() => {
+        if (callState === 'incoming') {
+            // New incoming call — clear stale name from previous call
+            const incomingPhone = callerInfo?.number || null;
+            if (incomingPhone !== lastCallPhone) {
+                setSelectedContactName(null);
+                setLastCallPhone(incomingPhone);
+            }
+        } else if (callState === 'idle') {
+            // Call ended and returned to idle — clear everything for next call
+            setSelectedContactName(null);
+            setLastCallPhone(null);
+        }
+    }, [callState, callerInfo?.number]); // eslint-disable-line react-hooks/exhaustive-deps
+
     // Auto-resolve contact name when call starts without a contact selected
     useEffect(() => {
         if (callState === 'idle' || selectedContactName) return;
@@ -307,8 +324,8 @@ export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({
                             <div className="softphone-call-number">
                                 {callerInfo?.number ? formatPhoneDisplay(callerInfo.number) : 'Unknown'}
                             </div>
-                            {callerInfo?.contactName && (
-                                <div className="softphone-call-name">{callerInfo.contactName}</div>
+                            {selectedContactName && (
+                                <div className="softphone-call-name">{selectedContactName}</div>
                             )}
                             <div className={`softphone-call-status ${status.className}`}>
                                 <PhoneIncoming size={16} />
