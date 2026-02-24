@@ -32,6 +32,15 @@ const STEP_TITLES: Record<Step, string> = {
     4: 'Review & Confirm',
 };
 
+interface CustomFieldDef {
+    id: string;
+    display_name: string;
+    api_name: string;
+    field_type: string;
+    is_system: boolean;
+    sort_order: number;
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: ConvertToJobDialogProps) {
@@ -67,15 +76,22 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
 
     // Dynamic job types from settings
     const [jobTypes, setJobTypes] = useState<string[]>([]);
+    // Custom field definitions for metadata display
+    const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
 
-    // ── Fetch job types on open ──
+    // ── Fetch job types and custom fields on open ──
     useEffect(() => {
         if (!open) return;
         authedFetch('/api/settings/lead-form')
             .then(r => r.json())
             .then(data => {
-                if (data.success && data.jobTypes?.length) {
-                    setJobTypes(data.jobTypes.map((jt: { name: string }) => jt.name));
+                if (data.success) {
+                    if (data.jobTypes?.length) {
+                        setJobTypes(data.jobTypes.map((jt: { name: string }) => jt.name));
+                    }
+                    if (data.customFields) {
+                        setCustomFields(data.customFields.filter((f: CustomFieldDef) => !f.is_system));
+                    }
                 }
             })
             .catch(() => { });
@@ -468,6 +484,32 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
                     <p>{selectedTimeslot.formatted} — {new Date(selectedTimeslot.start).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</p>
                 ) : (
                     <p className="text-destructive">No timeslot selected</p>
+                )}
+            </div>
+
+            {/* Lead details passed to Job */}
+            <h4 className="font-semibold">Lead Details</h4>
+            <div className="bg-muted/50 rounded-md p-3 space-y-1">
+                {lead.JobSource && (
+                    <p><span className="text-muted-foreground">Job Source:</span> {lead.JobSource}</p>
+                )}
+                {(lead.Description || lead.Comments) && (
+                    <p><span className="text-muted-foreground">Notes:</span> {lead.Description || lead.Comments}</p>
+                )}
+                {lead.Metadata && Object.keys(lead.Metadata).length > 0 && (
+                    <>
+                        {Object.entries(lead.Metadata).map(([key, value]) => {
+                            if (!value) return null;
+                            const fieldDef = customFields.find(f => f.api_name === key);
+                            const label = fieldDef?.display_name || key;
+                            return (
+                                <p key={key}><span className="text-muted-foreground">{label}:</span> {value}</p>
+                            );
+                        })}
+                    </>
+                )}
+                {!lead.JobSource && !lead.Description && !lead.Comments && (!lead.Metadata || Object.keys(lead.Metadata).length === 0) && (
+                    <p className="text-muted-foreground">No additional details</p>
                 )}
             </div>
 
