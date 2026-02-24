@@ -17,6 +17,7 @@ import { useTwilioDevice } from '../../hooks/useTwilioDevice';
 import { SoftPhoneWidget } from '../softphone/SoftPhoneWidget';
 import { SoftPhoneProvider, useSoftPhone } from '../../contexts/SoftPhoneContext';
 import { formatPhoneDisplay } from '../../utils/phoneUtils';
+import { warmUpAudio } from '../../utils/ringtone';
 import './AppLayout.css';
 
 interface AppLayoutProps {
@@ -151,6 +152,20 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
     const voice = useTwilioDevice();
     const [softPhoneOpen, setSoftPhoneOpen] = useState(false);
     const [softPhoneMinimized, setSoftPhoneMinimized] = useState(false);
+
+    // --- SoftPhone warm-up modal ---
+    const [showWarmUp, setShowWarmUp] = useState(false);
+    useEffect(() => {
+        // Show warm-up modal once the device is registered and phone is allowed
+        if (voice.phoneAllowed && voice.deviceReady) {
+            setShowWarmUp(true);
+        }
+    }, [voice.phoneAllowed, voice.deviceReady]);
+
+    const handleWarmUpDismiss = useCallback(() => {
+        warmUpAudio();
+        setShowWarmUp(false);
+    }, []);
 
     // Auto-open SoftPhone on incoming call + navigate to caller's timeline
     const handleAcceptIncoming = useCallback(() => {
@@ -460,6 +475,57 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                     )}
                     {children}
                 </main>
+
+                {/* SoftPhone warm-up modal */}
+                {showWarmUp && (
+                    <div style={{
+                        position: 'fixed',
+                        inset: 0,
+                        zIndex: 10000,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        background: 'rgba(0, 0, 0, 0.4)',
+                        backdropFilter: 'blur(4px)',
+                    }}>
+                        <div style={{
+                            background: '#fff',
+                            borderRadius: '16px',
+                            padding: '32px 40px',
+                            maxWidth: '360px',
+                            textAlign: 'center',
+                            boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
+                        }}>
+                            <div style={{ fontSize: '40px', marginBottom: '12px' }}>📞</div>
+                            <h3 style={{ margin: '0 0 8px', fontSize: '18px', fontWeight: 600, color: '#1a1a1a' }}>
+                                SoftPhone Ready
+                            </h3>
+                            <p style={{ margin: '0 0 20px', fontSize: '14px', color: '#666', lineHeight: '1.5' }}>
+                                Click below to enable incoming call ringtone.
+                            </p>
+                            <button
+                                onClick={handleWarmUpDismiss}
+                                style={{
+                                    background: '#16a34a',
+                                    color: '#fff',
+                                    border: 'none',
+                                    borderRadius: '10px',
+                                    padding: '12px 32px',
+                                    fontSize: '15px',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    transition: 'background 0.15s',
+                                    width: '100%',
+                                }}
+                                onMouseOver={(e) => (e.currentTarget.style.background = '#15803d')}
+                                onMouseOut={(e) => (e.currentTarget.style.background = '#16a34a')}
+                            >
+                                <Phone size={16} style={{ verticalAlign: 'middle', marginRight: '8px' }} />
+                                Enable Ringtone
+                            </button>
+                        </div>
+                    </div>
+                )}
 
                 {/* SoftPhone Panel */}
                 <SoftPhoneWidget
