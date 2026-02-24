@@ -9,6 +9,15 @@ const JOBS_BASE = '/api/jobs';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+export interface JobTag {
+    id: number;
+    name: string;
+    color: string;
+    is_active: boolean;
+    sort_order?: number;
+    archived_at?: string | null;
+}
+
 export interface LocalJob {
     id: number;
     lead_id: number | null;
@@ -33,6 +42,7 @@ export interface LocalJob {
     invoice_status?: string;
     assigned_techs?: Array<{ id: string; name: string }>;
     notes?: Array<{ text: string; created: string }>;
+    tags?: JobTag[];
 
     // Lead-like fields (unified)
     job_type?: string;
@@ -63,6 +73,13 @@ export interface JobsListParams {
     contact_id?: number;
     sort_by?: string;
     sort_order?: 'asc' | 'desc';
+    only_open?: boolean;
+    start_date?: string;
+    end_date?: string;
+    service_name?: string;
+    provider?: string;
+    tag_ids?: string;
+    tag_match?: 'any' | 'all';
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -124,4 +141,67 @@ export async function markInProgress(id: number): Promise<void> {
 
 export async function markComplete(id: number): Promise<void> {
     await jobsRequest(`${JOBS_BASE}/${id}/complete`, { method: 'POST' });
+}
+
+export async function updateJobTags(id: number, tagIds: number[]): Promise<LocalJob> {
+    return jobsRequest<LocalJob>(`${JOBS_BASE}/${id}/tags`, {
+        method: 'PATCH',
+        body: JSON.stringify({ tag_ids: tagIds }),
+    });
+}
+
+// ─── Tag Settings API ─────────────────────────────────────────────────────────
+
+const TAGS_BASE = '/api/settings/job-tags';
+
+export async function listJobTags(): Promise<JobTag[]> {
+    return jobsRequest<JobTag[]>(TAGS_BASE);
+}
+
+export async function createJobTag(name: string, color: string): Promise<JobTag> {
+    return jobsRequest<JobTag>(TAGS_BASE, {
+        method: 'POST',
+        body: JSON.stringify({ name, color }),
+    });
+}
+
+export async function updateJobTag(id: number, data: Partial<{ name: string; color: string; is_active: boolean }>): Promise<JobTag> {
+    return jobsRequest<JobTag>(`${TAGS_BASE}/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+    });
+}
+
+export async function reorderJobTags(orderedIds: number[]): Promise<JobTag[]> {
+    return jobsRequest<JobTag[]>(`${TAGS_BASE}/reorder`, {
+        method: 'POST',
+        body: JSON.stringify({ ordered_ids: orderedIds }),
+    });
+}
+
+export async function archiveJobTag(id: number): Promise<JobTag> {
+    return jobsRequest<JobTag>(`${TAGS_BASE}/${id}`, {
+        method: 'DELETE',
+    });
+}
+
+// ─── Jobs List Fields (column config) API ─────────────────────────────────────
+
+const FIELDS_BASE = '/api/settings/jobs-list-fields';
+
+export async function getJobsListFields(): Promise<string[]> {
+    const res = await authedFetch(FIELDS_BASE);
+    const json = await res.json();
+    return json.ordered_visible_fields || [];
+}
+
+export async function saveJobsListFields(fields: string[]): Promise<string[]> {
+    const res = await authedFetch(FIELDS_BASE, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ordered_visible_fields: fields }),
+    });
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error || 'Failed to save');
+    return json.ordered_visible_fields;
 }

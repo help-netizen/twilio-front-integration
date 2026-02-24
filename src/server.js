@@ -7,12 +7,16 @@ const callsRouter = require('../backend/src/routes/calls');
 const syncRouter = require('../backend/src/routes/sync');
 const eventsRouter = require('../backend/src/routes/events');
 const twimlRouter = require('../backend/src/routes/twiml');
+const { tokenRouter: voiceTokenRouter, twimlRouter: voiceTwimlRouter } = require('../backend/src/routes/voice');
+const phoneSettingsRouter = require('../backend/src/routes/phoneSettings');
 const leadsRouter = require('../backend/src/routes/leads');
 const contactsRouter = require('../backend/src/routes/contacts');
 const zenbookerRouter = require('../backend/src/routes/zenbooker');
 const integrationsLeadsRouter = require('../backend/src/routes/integrations-leads');
 const integrationsAdminRouter = require('../backend/src/routes/integrations-admin');
 const leadFormSettingsRouter = require('../backend/src/routes/lead-form-settings');
+const jobTagsSettingsRouter = require('../backend/src/routes/job-tags-settings');
+const jobsListFieldsRouter = require('../backend/src/routes/jobs-list-fields-settings');
 const usersRouter = require('../backend/src/routes/users');
 const messagingRouter = require('../backend/src/routes/messaging');
 const pulseRouter = require('../backend/src/routes/pulse');
@@ -44,6 +48,15 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(requestId);
 
+// Disable ETag + prevent caching on API routes
+app.set('etag', false);
+app.use('/api', (req, res, next) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    next();
+});
+
 // Logging middleware
 app.use((req, res, next) => {
     console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
@@ -54,9 +67,11 @@ app.use((req, res, next) => {
 app.use('/health', healthRouter);
 app.use('/webhooks', webhooksRouter);
 app.use('/twiml', twimlRouter);
+app.use('/api/voice', voiceTwimlRouter); // TwiML endpoints (Twilio-called, no auth)
 app.use('/events', eventsRouter);
 
 // Auth + tenant-scoped CRM API routes
+app.use('/api/voice', authenticate, requireCompanyAccess, voiceTokenRouter); // Voice token (Keycloak-authed)
 app.use('/api/calls', authenticate, requireCompanyAccess, callsRouter);
 // Media proxy — no auth (browser <img src> can't send JWT; UUID provides security)
 // Proxies media content through the backend to avoid CORS and expired-URL issues
@@ -103,6 +118,7 @@ if (process.env.FEATURE_LEADS_TAB !== 'false') {
 
 // Contacts API
 app.use('/api/contacts', authenticate, requireCompanyAccess, contactsRouter);
+app.use('/api/phone-settings', authenticate, requireCompanyAccess, phoneSettingsRouter);
 
 // Zenbooker scheduling proxy
 const zenbookerPaymentsRouter = require('../backend/src/routes/zenbooker/payments');
@@ -120,6 +136,8 @@ const integrationsZenbookerRouter = require('../backend/src/routes/integrations-
 app.use('/api/integrations/zenbooker', integrationsZenbookerRouter);
 app.use('/api/admin/integrations', authenticate, requireRole('company_admin'), requireCompanyAccess, integrationsAdminRouter);
 app.use('/api/settings/lead-form', authenticate, requireRole('company_admin'), requireCompanyAccess, leadFormSettingsRouter);
+app.use('/api/settings/job-tags', authenticate, requireRole('company_admin'), requireCompanyAccess, jobTagsSettingsRouter);
+app.use('/api/settings/jobs-list-fields', authenticate, requireCompanyAccess, jobsListFieldsRouter);
 
 // User management API (§5, §6)
 app.use('/api/users', authenticate, requireRole('company_admin'), requireCompanyAccess, usersRouter);

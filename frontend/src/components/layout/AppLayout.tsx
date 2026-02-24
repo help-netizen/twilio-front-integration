@@ -11,12 +11,105 @@ import {
     DropdownMenuItem,
     DropdownMenuSeparator,
 } from '../ui/dropdown-menu';
-import { Phone, MessageSquare, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase } from 'lucide-react';
+import { Phone, PhoneIncoming, MessageSquare, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase, Mic, MicOff } from 'lucide-react';
 import { useRealtimeEvents } from '../../hooks/useRealtimeEvents';
+import { useTwilioDevice } from '../../hooks/useTwilioDevice';
+import { SoftPhoneWidget } from '../softphone/SoftPhoneWidget';
+import { SoftPhoneProvider, useSoftPhone } from '../../contexts/SoftPhoneContext';
+import { formatPhoneDisplay } from '../../utils/phoneUtils';
 import './AppLayout.css';
 
 interface AppLayoutProps {
     children: React.ReactNode;
+}
+
+// ─── Unified SoftPhone Header Button ─────────────────────────────────────────
+// Shows "SoftPhone" when idle; transforms into a call status pill during calls
+
+function formatDuration(seconds: number): string {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function SoftPhoneHeaderButton({ voice, softPhoneOpen, softPhoneMinimized, onOpenOrRestore }: {
+    voice: ReturnType<typeof useTwilioDevice>;
+    softPhoneOpen: boolean;
+    softPhoneMinimized: boolean;
+    onOpenOrRestore: () => void;
+}) {
+    const { activeCallContact } = useSoftPhone();
+    const { callState, callDuration, isMuted, toggleMute } = voice;
+
+    const isInCall = ['connecting', 'ringing', 'connected', 'incoming'].includes(callState);
+    const showCallState = isInCall || callState === 'ended' || callState === 'failed';
+
+    // When panel is fully open (not minimized), just show the simple SoftPhone button
+    if (softPhoneOpen && !softPhoneMinimized) {
+        return (
+            <button
+                onClick={onOpenOrRestore}
+                className="softphone-header-btn"
+                title="SoftPhone is open"
+            >
+                <Phone size={15} />
+                <span>SoftPhone</span>
+            </button>
+        );
+    }
+
+    // Active call state — show status pill
+    if (showCallState) {
+        const statusClass =
+            callState === 'connected' ? 'active-connected' :
+                callState === 'connecting' || callState === 'ringing' ? 'active-ringing' :
+                    callState === 'incoming' ? 'active-incoming' :
+                        callState === 'ended' ? 'active-ended' :
+                            callState === 'failed' ? 'active-failed' : '';
+
+        const statusLabel =
+            callState === 'connected' ? formatDuration(callDuration) :
+                callState === 'connecting' ? 'Connecting...' :
+                    callState === 'ringing' ? 'Ringing...' :
+                        callState === 'incoming' ? 'Incoming...' :
+                            callState === 'ended' ? 'Call Ended' :
+                                callState === 'failed' ? 'Call Failed' : '';
+
+        return (
+            <button
+                onClick={onOpenOrRestore}
+                className={`softphone-header-btn ${statusClass}`}
+                title="Click to restore SoftPhone"
+            >
+                <Phone size={14} />
+                {activeCallContact && (
+                    <span className="softphone-header-contact">{activeCallContact}</span>
+                )}
+                <span className="softphone-header-status">{statusLabel}</span>
+                {isInCall && (
+                    <span
+                        className={`softphone-header-mute ${isMuted ? 'muted' : ''}`}
+                        onClick={(e) => { e.stopPropagation(); toggleMute(); }}
+                        title={isMuted ? 'Unmute' : 'Mute'}
+                    >
+                        {isMuted ? <MicOff size={13} /> : <Mic size={13} />}
+                    </span>
+                )}
+            </button>
+        );
+    }
+
+    // Idle — standard green SoftPhone button
+    return (
+        <button
+            onClick={onOpenOrRestore}
+            className="softphone-header-btn"
+            title="Open SoftPhone"
+        >
+            <Phone size={15} />
+            <span>SoftPhone</span>
+        </button>
+    );
 }
 
 export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
@@ -35,6 +128,50 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                                 : 'pulse';
 
     const { accessDeniedMessage, clearAccessDenied, logout, hasRole } = useAuth();
+
+    // --- SoftPhone ---
+    const voice = useTwilioDevice();
+    const [softPhoneOpen, setSoftPhoneOpen] = useState(false);
+    const [softPhoneMinimized, setSoftPhoneMinimized] = useState(false);
+
+    // Auto-open SoftPhone on incoming call + navigate to caller's timeline
+    const handleAcceptIncoming = useCallback(() => {
+        setSoftPhoneOpen(true);
+        setSoftPhoneMinimized(false);
+        // Small delay to let the modal render, then accept
+        setTimeout(() => voice.acceptCall(), 100);
+
+        // Navigate to the caller's timeline
+        const callerNumber = voice.callerInfo?.number;
+        if (callerNumber) {
+            authedFetch(`/api/pulse/timeline-by-phone?phone=${encodeURIComponent(callerNumber)}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.timelineId) {
+                        navigate(`/pulse/timeline/${data.timelineId}`);
+                    }
+                })
+                .catch(() => { /* navigation is best-effort */ });
+        }
+    }, [voice, navigate]);
+
+    // Resolve incoming caller's contact name
+    const [incomingCallerName, setIncomingCallerName] = useState<string | null>(null);
+    useEffect(() => {
+        if (!voice.incomingCall) {
+            setIncomingCallerName(null);
+            return;
+        }
+        const phone = voice.callerInfo?.number;
+        if (!phone) return;
+
+        authedFetch(`/api/pulse/timeline-by-phone?phone=${encodeURIComponent(phone)}`)
+            .then(res => res.json())
+            .then(data => {
+                if (data.contactName) setIncomingCallerName(data.contactName);
+            })
+            .catch(() => { });
+    }, [voice.incomingCall, voice.callerInfo?.number]);
 
     // --- Pulse unread badge ---
     const [pulseUnreadCount, setPulseUnreadCount] = useState(0);
@@ -84,204 +221,249 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
     };
 
     return (
-        <div className="app-layout">
-            <header className="app-header">
-                <div className="header-content">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
-                        <h1 className="text-2xl font-semibold" style={{ margin: 0, color: '#202223' }}>Blanc</h1>
-                        <Tabs value={activeTab} className="w-auto">
-                            <TabsList>
-                                <TabsTrigger
-                                    value="pulse"
-                                    className="flex items-center gap-2"
-                                    onClick={() => navigate('/pulse')}
-                                    style={{ position: 'relative' }}
-                                >
-                                    <Activity className="size-4" />
-                                    Pulse
-                                    {pulseUnreadCount > 0 && (
-                                        <span
-                                            className="pulse-unread-badge"
-                                            title={`${pulseUnreadCount} unread`}
-                                        >
-                                            {pulseUnreadCount > 9 ? '9+' : pulseUnreadCount}
-                                        </span>
-                                    )}
-                                </TabsTrigger>
-                                <TabsTrigger
-                                    value="calls"
-                                    className="flex items-center gap-2"
-                                    onClick={() => navigate('/calls')}
-                                >
-                                    <Phone className="size-4" />
-                                    Calls
-                                </TabsTrigger>
-                                <TabsTrigger
-                                    value="messages"
-                                    className="flex items-center gap-2"
-                                    onClick={() => navigate('/messages')}
-                                >
-                                    <MessageSquare className="size-4" />
-                                    Messages
-                                </TabsTrigger>
-                                <TabsTrigger
-                                    value="leads"
-                                    className="flex items-center gap-2"
-                                    onClick={() => navigate('/leads')}
-                                >
-                                    <Users className="size-4" />
-                                    Leads
-                                </TabsTrigger>
-                                <TabsTrigger
-                                    value="jobs"
-                                    className="flex items-center gap-2"
-                                    onClick={() => navigate('/jobs')}
-                                >
-                                    <Briefcase className="size-4" />
-                                    Jobs
-                                </TabsTrigger>
-                                <TabsTrigger
-                                    value="contacts"
-                                    className="flex items-center gap-2"
-                                    onClick={() => navigate('/contacts')}
-                                >
-                                    <Contact2 className="size-4" />
-                                    Contacts
-                                </TabsTrigger>
-                            </TabsList>
-                        </Tabs>
-                    </div>
-                    <div className="header-actions">
-                        {activeTab === 'calls' && (
-                            <button
-                                onClick={handleRefresh}
-                                disabled={isRefreshing}
-                                className="refresh-button"
-                                title="Refresh calls from last 3 days from Twilio"
-                            >
-                                {isRefreshing ? '🔄 Refreshing...' : '🔄 Refresh'}
-                            </button>
-                        )}
-                        <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
+        <SoftPhoneProvider onOpenRequested={() => { setSoftPhoneOpen(true); setSoftPhoneMinimized(false); }}>
+            <div className="app-layout">
+                <header className="app-header">
+                    <div className="header-content">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
+                            <h1 className="text-2xl font-semibold" style={{ margin: 0, color: '#202223' }}>Blanc</h1>
+                            <Tabs value={activeTab} className="w-auto">
+                                <TabsList>
+                                    <TabsTrigger
+                                        value="pulse"
+                                        className="flex items-center gap-2"
+                                        onClick={() => navigate('/pulse')}
+                                        style={{ position: 'relative' }}
+                                    >
+                                        <Activity className="size-4" />
+                                        Pulse
+                                        {pulseUnreadCount > 0 && (
+                                            <span
+                                                className="pulse-unread-badge"
+                                                title={`${pulseUnreadCount} unread`}
+                                            >
+                                                {pulseUnreadCount > 9 ? '9+' : pulseUnreadCount}
+                                            </span>
+                                        )}
+                                    </TabsTrigger>
+                                    <TabsTrigger
+                                        value="calls"
+                                        className="flex items-center gap-2"
+                                        onClick={() => navigate('/calls')}
+                                    >
+                                        <Phone className="size-4" />
+                                        Calls
+                                    </TabsTrigger>
+                                    <TabsTrigger
+                                        value="messages"
+                                        className="flex items-center gap-2"
+                                        onClick={() => navigate('/messages')}
+                                    >
+                                        <MessageSquare className="size-4" />
+                                        Messages
+                                    </TabsTrigger>
+                                    <TabsTrigger
+                                        value="leads"
+                                        className="flex items-center gap-2"
+                                        onClick={() => navigate('/leads')}
+                                    >
+                                        <Users className="size-4" />
+                                        Leads
+                                    </TabsTrigger>
+                                    <TabsTrigger
+                                        value="jobs"
+                                        className="flex items-center gap-2"
+                                        onClick={() => navigate('/jobs')}
+                                    >
+                                        <Briefcase className="size-4" />
+                                        Jobs
+                                    </TabsTrigger>
+                                    <TabsTrigger
+                                        value="contacts"
+                                        className="flex items-center gap-2"
+                                        onClick={() => navigate('/contacts')}
+                                    >
+                                        <Contact2 className="size-4" />
+                                        Contacts
+                                    </TabsTrigger>
+                                </TabsList>
+                            </Tabs>
+                        </div>
+                        <div className="header-actions">
+                            {/* Global incoming call button */}
+                            {voice.incomingCall && (
                                 <button
-                                    className="user-menu"
-                                    style={{ cursor: 'pointer', fontWeight: activeTab === 'settings' ? 600 : 400 }}
+                                    className="incoming-call-btn"
+                                    onClick={handleAcceptIncoming}
                                 >
-                                    <Settings className="size-4" style={{ display: 'inline', verticalAlign: 'middle', marginRight: '4px' }} />
-                                    Settings
+                                    <PhoneIncoming size={16} />
+                                    <span>
+                                        {incomingCallerName || (voice.callerInfo?.number ? formatPhoneDisplay(voice.callerInfo.number) : 'Unknown')}
+                                    </span>
+                                    — Accept
                                 </button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="w-48">
-                                <DropdownMenuItem
-                                    className="flex items-center gap-2 cursor-pointer"
-                                    onClick={() => navigate('/settings/integrations')}
+                            )}
+                            {voice.phoneAllowed && (
+                                <SoftPhoneHeaderButton
+                                    voice={voice}
+                                    softPhoneOpen={softPhoneOpen}
+                                    softPhoneMinimized={softPhoneMinimized}
+                                    onOpenOrRestore={() => {
+                                        if (softPhoneMinimized) {
+                                            setSoftPhoneMinimized(false);
+                                        } else {
+                                            setSoftPhoneOpen(true);
+                                        }
+                                    }}
+                                />
+                            )}
+                            {activeTab === 'calls' && (
+                                <button
+                                    onClick={handleRefresh}
+                                    disabled={isRefreshing}
+                                    className="refresh-button"
+                                    title="Refresh calls from last 3 days from Twilio"
                                 >
-                                    <Key className="size-4" />
-                                    Integrations
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                    className="flex items-center gap-2 cursor-pointer"
-                                    onClick={() => navigate('/settings/lead-form')}
-                                >
-                                    <FileText className="size-4" />
-                                    Lead & Job
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                    className="flex items-center gap-2 cursor-pointer"
-                                    onClick={() => navigate('/settings/quick-messages')}
-                                >
-                                    <MessageSquareText className="size-4" />
-                                    Quick Messages
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                    className="flex items-center gap-2 cursor-pointer"
-                                    onClick={() => navigate('/settings/payments')}
-                                >
-                                    <DollarSign className="size-4" />
-                                    Payments
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                    className="flex items-center gap-2 cursor-pointer"
-                                    onClick={() => navigate('/settings/api-docs')}
-                                >
-                                    <BookOpen className="size-4" />
-                                    API Docs
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                    className="flex items-center gap-2 cursor-pointer"
-                                    onClick={() => navigate('/settings/users')}
-                                >
-                                    <Users className="size-4" />
-                                    Users
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                    className="flex items-center gap-2 cursor-pointer"
-                                    onClick={() => navigate('/settings/providers')}
-                                >
-                                    <Wrench className="size-4" />
-                                    Providers
-                                </DropdownMenuItem>
-                                {hasRole('super_admin') && (
-                                    <>
-                                        <DropdownMenuSeparator />
-                                        <DropdownMenuItem
-                                            className="flex items-center gap-2 cursor-pointer"
-                                            onClick={() => navigate('/settings/admin')}
-                                        >
-                                            <Shield className="size-4" />
-                                            Super Admin
-                                        </DropdownMenuItem>
-                                    </>
-                                )}
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                    className="flex items-center gap-2 cursor-pointer text-red-600"
-                                    onClick={logout}
-                                >
-                                    <LogOut className="size-4" />
-                                    Log Out
-                                </DropdownMenuItem>
-                            </DropdownMenuContent>
-                        </DropdownMenu>
+                                    {isRefreshing ? '🔄 Refreshing...' : '🔄 Refresh'}
+                                </button>
+                            )}
+                            <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                    <button
+                                        className="user-menu"
+                                        style={{ cursor: 'pointer', fontWeight: activeTab === 'settings' ? 600 : 400 }}
+                                    >
+                                        <Settings className="size-4" style={{ display: 'inline', verticalAlign: 'middle', marginRight: '4px' }} />
+                                        Settings
+                                    </button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-48">
+                                    <DropdownMenuItem
+                                        className="flex items-center gap-2 cursor-pointer"
+                                        onClick={() => navigate('/settings/integrations')}
+                                    >
+                                        <Key className="size-4" />
+                                        Integrations
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                        className="flex items-center gap-2 cursor-pointer"
+                                        onClick={() => navigate('/settings/lead-form')}
+                                    >
+                                        <FileText className="size-4" />
+                                        Lead & Job
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                        className="flex items-center gap-2 cursor-pointer"
+                                        onClick={() => navigate('/settings/quick-messages')}
+                                    >
+                                        <MessageSquareText className="size-4" />
+                                        Quick Messages
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                        className="flex items-center gap-2 cursor-pointer"
+                                        onClick={() => navigate('/settings/payments')}
+                                    >
+                                        <DollarSign className="size-4" />
+                                        Payments
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                        className="flex items-center gap-2 cursor-pointer"
+                                        onClick={() => navigate('/settings/api-docs')}
+                                    >
+                                        <BookOpen className="size-4" />
+                                        API Docs
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                        className="flex items-center gap-2 cursor-pointer"
+                                        onClick={() => navigate('/settings/users')}
+                                    >
+                                        <Users className="size-4" />
+                                        Users
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                        className="flex items-center gap-2 cursor-pointer"
+                                        onClick={() => navigate('/settings/providers')}
+                                    >
+                                        <Wrench className="size-4" />
+                                        Providers
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                        className="flex items-center gap-2 cursor-pointer"
+                                        onClick={() => navigate('/settings/phone-calls')}
+                                    >
+                                        <Phone className="size-4" />
+                                        Phone Calls
+                                    </DropdownMenuItem>
+                                    {hasRole('super_admin') && (
+                                        <>
+                                            <DropdownMenuSeparator />
+                                            <DropdownMenuItem
+                                                className="flex items-center gap-2 cursor-pointer"
+                                                onClick={() => navigate('/settings/admin')}
+                                            >
+                                                <Shield className="size-4" />
+                                                Super Admin
+                                            </DropdownMenuItem>
+                                        </>
+                                    )}
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                        className="flex items-center gap-2 cursor-pointer text-red-600"
+                                        onClick={logout}
+                                    >
+                                        <LogOut className="size-4" />
+                                        Log Out
+                                    </DropdownMenuItem>
+                                </DropdownMenuContent>
+                            </DropdownMenu>
+                        </div>
                     </div>
-                </div>
-            </header>
+                </header>
 
-            <main className="app-main">
-                {accessDeniedMessage && (
-                    <div style={{
-                        position: 'fixed',
-                        top: '72px',
-                        left: '50%',
-                        transform: 'translateX(-50%)',
-                        zIndex: 9999,
-                        background: '#dc2626',
-                        color: '#fff',
-                        padding: '12px 24px',
-                        borderRadius: '8px',
-                        fontWeight: 500,
-                        fontSize: '14px',
-                        boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '12px',
-                    }}>
-                        <span>🚫 {accessDeniedMessage}</span>
-                        <button
-                            onClick={clearAccessDenied}
-                            style={{
-                                background: 'none', border: 'none', color: '#fff',
-                                cursor: 'pointer', fontSize: '16px', padding: 0,
-                            }}
-                        >
-                            ×
-                        </button>
-                    </div>
-                )}
-                {children}
-            </main>
-        </div>
+                <main className="app-main">
+                    {accessDeniedMessage && (
+                        <div style={{
+                            position: 'fixed',
+                            top: '72px',
+                            left: '50%',
+                            transform: 'translateX(-50%)',
+                            zIndex: 9999,
+                            background: '#dc2626',
+                            color: '#fff',
+                            padding: '12px 24px',
+                            borderRadius: '8px',
+                            fontWeight: 500,
+                            fontSize: '14px',
+                            boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '12px',
+                        }}>
+                            <span>🚫 {accessDeniedMessage}</span>
+                            <button
+                                onClick={clearAccessDenied}
+                                style={{
+                                    background: 'none', border: 'none', color: '#fff',
+                                    cursor: 'pointer', fontSize: '16px', padding: 0,
+                                }}
+                            >
+                                ×
+                            </button>
+                        </div>
+                    )}
+                    {children}
+                </main>
+
+                {/* SoftPhone Panel */}
+                <SoftPhoneWidget
+                    voice={voice}
+                    open={softPhoneOpen}
+                    minimized={softPhoneMinimized}
+                    onClose={() => { setSoftPhoneOpen(false); setSoftPhoneMinimized(false); }}
+                    onMinimize={() => setSoftPhoneMinimized(true)}
+                />
+            </div>
+        </SoftPhoneProvider>
     );
 };
 

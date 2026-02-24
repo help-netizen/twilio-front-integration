@@ -277,3 +277,121 @@
     border-color: #2563eb;
     box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 }
+
+/* ─── Job Tags ────────────────────────────────────────────────────────────── */
+.lfsp-tag-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.lfsp-tag-archived {
+    opacity: 0.55;
+    background: #f9fafb;
+}
+
+.lfsp-tag-color-wrapper {
+    position: relative;
+    flex-shrink: 0;
+}
+
+.lfsp-tag-color-dot {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: transform 0.15s;
+    padding: 0;
+    background: none;
+}
+
+.lfsp-tag-color-dot:hover {
+    transform: scale(1.15);
+}
+
+.lfsp-tag-palette {
+    position: absolute;
+    top: 28px;
+    left: -4px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    z-index: 100;
+    min-width: 110px;
+}
+
+.lfsp-tag-palette-swatch {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: transform 0.1s, box-shadow 0.1s;
+    padding: 0;
+}
+
+.lfsp-tag-palette-swatch:hover {
+    transform: scale(1.2);
+}
+
+.lfsp-swatch-active {
+    box-shadow: 0 0 0 2px #fff, 0 0 0 4px #2563eb;
+}
+
+.lfsp-tag-badge-preview {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.lfsp-tag-name-editable {
+    cursor: text;
+    border-bottom: 1px dashed transparent;
+    transition: border-color 0.15s;
+}
+
+.lfsp-tag-name-editable:hover {
+    border-bottom-color: #93c5fd;
+}
+
+.lfsp-tag-name-input {
+    max-width: 200px;
+    padding: 4px 8px !important;
+    font-size: 14px;
+}
+
+.lfsp-tag-archived-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: #9ca3af;
+    background: #f3f4f6;
+    padding: 2px 8px;
+    border-radius: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    flex-shrink: 0;
+}
+
+.lfsp-tag-add-row {
+    align-items: center;
+}
+
+.lfsp-tag-new-palette {
+    display: flex;
+    gap: 3px;
+    align-items: center;
+}
+
+.lfsp-swatch-small {
+    width: 18px;
+    height: 18px;
+}

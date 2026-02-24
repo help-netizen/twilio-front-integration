@@ -147,6 +147,7 @@ class RealtimeService extends EventEmitter {
             duration_sec: data.duration_sec,
             answered_by: data.answered_by,
             contact_id: data.contact_id,
+            timeline_id: data.timeline_id,
             contact: data.contact ? (typeof data.contact === 'string' ? JSON.parse(data.contact) : data.contact) : undefined,
             updated_at: data.updated_at || new Date(),
             created_at: data.created_at,

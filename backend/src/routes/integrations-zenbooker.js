@@ -28,7 +28,7 @@ function requestId() {
 // =============================================================================
 // Shared: process webhook payload (used by both legacy and per-company routes)
 // =============================================================================
-async function processWebhookPayload(reqId, payload, headers) {
+async function processWebhookPayload(reqId, payload, headers, companyId = null) {
     const event = payload.event || 'unknown';
     const dataId = payload.data?.id ? String(payload.data.id) : 'unknown';
     const webhookId = payload.webhook_id || '';
@@ -36,15 +36,15 @@ async function processWebhookPayload(reqId, payload, headers) {
 
     console.log(`[ZbWebhook][${reqId}] Received event=${event} data.id=${dataId} webhook_id=${webhookId} retry=${retryCount}`);
 
-    // Store in webhook_inbox for idempotency
-    const eventKey = `zenbooker:${event}:${dataId}:${webhookId}`;
+    // Store in webhook_inbox for audit (reqId is unique per HTTP request)
+    const eventKey = `zenbooker:${event}:${dataId}:${reqId}`;
     try {
         await db.query(
-            `INSERT INTO webhook_inbox (provider, event_key, source, event_type, call_sid, payload, headers)
-             VALUES ('zenbooker', $1, 'zenbooker', $2, NULL, $3::jsonb, $4::jsonb)
+            `INSERT INTO webhook_inbox (provider, event_key, source, event_type, call_sid, payload, headers, company_id)
+             VALUES ('zenbooker', $1, 'zenbooker', $2, NULL, $3::jsonb, $4::jsonb, $5)
              ON CONFLICT (event_key) DO NOTHING
              RETURNING id`,
-            [eventKey, event, JSON.stringify(payload), JSON.stringify(headers)]
+            [eventKey, event, JSON.stringify(payload), JSON.stringify(headers), companyId]
         );
     } catch (dbErr) {
         if (dbErr.code === '23505') {
@@ -58,7 +58,7 @@ async function processWebhookPayload(reqId, payload, headers) {
     // Process event
     if (event.startsWith('customer.') && zenbookerSyncService.FEATURE_ENABLED) {
         try {
-            await zenbookerSyncService.handleWebhookPayload(payload);
+            await zenbookerSyncService.handleWebhookPayload(payload, companyId);
             await db.query(
                 `UPDATE webhook_inbox SET status = 'processed', processed_at = NOW(), attempts = attempts + 1
                  WHERE event_key = $1 AND provider = 'zenbooker'`,
@@ -80,7 +80,7 @@ async function processWebhookPayload(reqId, payload, headers) {
 
             const zbJobId = payload.data?.id || payload.data?.job_id;
             if (zbJobId) {
-                const localResult = await jobsService.syncFromZenbooker(zbJobId, payload.data);
+                const localResult = await jobsService.syncFromZenbooker(zbJobId, payload.data, companyId, event);
                 console.log(`[ZbWebhook][${reqId}] Local job sync:`, JSON.stringify(localResult));
             }
 
@@ -154,7 +154,7 @@ router.post('/wh/:key', async (req, res) => {
         res.status(200).json({ ok: true, request_id: reqId });
 
         // Process async
-        await processWebhookPayload(reqId, req.body, req.headers);
+        await processWebhookPayload(reqId, req.body, req.headers, company.id);
     } catch (err) {
         console.error(`[ZbWebhook][${reqId}] Unexpected error:`, err);
         if (!res.headersSent) {

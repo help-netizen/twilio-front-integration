@@ -154,6 +154,15 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                     if (!transcriptionText && t.text) setTranscriptionText(t.text);
                     if (entities.length === 0 && t.entities?.length) setEntities(t.entities);
                     if (sentimentScore === null && t.sentimentScore != null) setSentimentScore(t.sentimentScore);
+                    // Eagerly load Gemini summary/entities
+                    if (t.gemini_summary) {
+                        setGeminiSummary(t.gemini_summary);
+                        setGeminiEntities(t.gemini_entities || []);
+                        setGeminiStatus('ready');
+                        geminiLoadedRef.current = true;
+                        // Auto-open Summary tab if nothing is open yet
+                        setActiveSection(prev => prev ?? 'summary');
+                    }
                 }
             } catch { /* ignore */ }
         })();

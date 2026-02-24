@@ -12,6 +12,7 @@ import { AddressAutocomplete, type AddressFields } from '../AddressAutocomplete'
 import * as contactsApi from '../../services/contactsApi';
 import * as jobsApi from '../../services/jobsApi';
 import { EditContactDialog } from './EditContactDialog';
+import { ClickToCallButton } from '../softphone/ClickToCallButton';
 
 interface ContactDetailPanelProps {
     contact: Contact;
@@ -521,8 +522,30 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
                 padding: '16px 20px', marginBottom: '24px',
             }}>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 24px' }}>
-                    <InfoRow label="Phone" value={formatPhone(contact.phone_e164)} icon={<Phone style={{ width: '14px', height: '14px' }} />} />
-                    <InfoRow label={contact.secondary_phone_name ? `Secondary Phone (${contact.secondary_phone_name})` : 'Secondary Phone'} value={formatPhone(contact.secondary_phone)} icon={<Phone style={{ width: '14px', height: '14px' }} />} />
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '6px 0' }} className="click-to-call-row">
+                        <div style={{ color: '#94a3b8', marginTop: '1px', flexShrink: 0 }}>
+                            <Phone style={{ width: '14px', height: '14px' }} />
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                            <div style={labelStyle}>Phone</div>
+                            <div style={{ fontSize: '14px', color: contact.phone_e164 ? '#111827' : '#cbd5e1', fontWeight: contact.phone_e164 ? 500 : 400, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                {formatPhone(contact.phone_e164) || '—'}
+                                {contact.phone_e164 && <ClickToCallButton phone={contact.phone_e164} contactName={contact.full_name || undefined} />}
+                            </div>
+                        </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '6px 0' }} className="click-to-call-row">
+                        <div style={{ color: '#94a3b8', marginTop: '1px', flexShrink: 0 }}>
+                            <Phone style={{ width: '14px', height: '14px' }} />
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                            <div style={labelStyle}>{contact.secondary_phone_name ? `Secondary Phone (${contact.secondary_phone_name})` : 'Secondary Phone'}</div>
+                            <div style={{ fontSize: '14px', color: contact.secondary_phone ? '#111827' : '#cbd5e1', fontWeight: contact.secondary_phone ? 500 : 400, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                {formatPhone(contact.secondary_phone) || '—'}
+                                {contact.secondary_phone && <ClickToCallButton phone={contact.secondary_phone} contactName={contact.full_name || undefined} />}
+                            </div>
+                        </div>
+                    </div>
                     <InfoRow label="Email" value={contact.email || ''} icon={<Mail style={{ width: '14px', height: '14px' }} />} />
                     {contact.zenbooker_id ? (
                         <div style={{ marginBottom: '4px' }}>
