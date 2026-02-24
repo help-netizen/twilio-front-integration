@@ -667,17 +667,45 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
         }
     }
 
-    // 5. Mark lead as converted
+    // 5. Mark lead as converted + sync overridden fields back to lead
+    const setClauses = [
+        'converted_to_job = true',
+        'status = $2',
+        'zenbooker_job_id = COALESCE($3, zenbooker_job_id)',
+    ];
+    const updateParams = [uuid, 'Converted', zenbookerJobId];
+    let pIdx = 3;
+
+    // Sync back job type if changed in wizard
+    if (overrides.service?.name && overrides.service.name !== leadRow.job_type) {
+        pIdx++; setClauses.push(`job_type = $${pIdx}`); updateParams.push(overrides.service.name);
+    }
+    // Sync back description if changed
+    if (overrides.service?.description && overrides.service.description !== (leadRow.lead_notes || '')) {
+        pIdx++; setClauses.push(`lead_notes = $${pIdx}`); updateParams.push(overrides.service.description);
+    }
+    // Sync back address if overridden
+    if (overrides.address) {
+        if (overrides.address.line1 != null) { pIdx++; setClauses.push(`address = $${pIdx}`); updateParams.push(overrides.address.line1); }
+        if (overrides.address.line2 != null) { pIdx++; setClauses.push(`unit = $${pIdx}`); updateParams.push(overrides.address.line2); }
+        if (overrides.address.city != null) { pIdx++; setClauses.push(`city = $${pIdx}`); updateParams.push(overrides.address.city); }
+        if (overrides.address.state != null) { pIdx++; setClauses.push(`state = $${pIdx}`); updateParams.push(overrides.address.state); }
+        if (overrides.address.postal_code != null) { pIdx++; setClauses.push(`postal_code = $${pIdx}`); updateParams.push(overrides.address.postal_code); }
+    }
+    // Sync back customer fields if overridden
+    if (overrides.customer?.phone && overrides.customer.phone !== leadRow.phone) {
+        pIdx++; setClauses.push(`phone = $${pIdx}`); updateParams.push(overrides.customer.phone);
+    }
+    if (overrides.customer?.email && overrides.customer.email !== leadRow.email) {
+        pIdx++; setClauses.push(`email = $${pIdx}`); updateParams.push(overrides.customer.email);
+    }
+
     const updateConditions = ['uuid = $1'];
-    const updateParams = [uuid, zenbookerJobId];
     if (companyId) {
-        updateConditions.push(`company_id = $3`);
-        updateParams.push(companyId);
+        pIdx++; updateConditions.push(`company_id = $${pIdx}`); updateParams.push(companyId);
     }
     await db.query(`
-        UPDATE leads
-        SET converted_to_job = true, status = 'Converted',
-            zenbooker_job_id = COALESCE($2, zenbooker_job_id)
+        UPDATE leads SET ${setClauses.join(', ')}
         WHERE ${updateConditions.join(' AND ')}
     `, updateParams);
 
