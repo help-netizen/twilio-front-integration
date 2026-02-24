@@ -120,7 +120,7 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
     const [selectedContactId, setSelectedContactId] = useState<number | null>(null);
     const [selectedContactName, setSelectedContactName] = useState<string>('');
     const [contactSnapshot, setContactSnapshot] = useState<ContactSnapshot | null>(null);
-    const [searchingContacts, setSearchingContacts] = useState(false);
+    const [_searchingContacts, setSearchingContacts] = useState(false);
     const [showDropdown, setShowDropdown] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
 
