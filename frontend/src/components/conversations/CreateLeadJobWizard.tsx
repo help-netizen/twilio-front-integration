@@ -5,8 +5,10 @@ import { Label } from '../ui/label';
 import { PhoneInput, formatUSPhone, toE164 } from '../ui/PhoneInput';
 import { Badge } from '../ui/badge';
 import { Textarea } from '../ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
+import { authedFetch } from '../../services/apiClient';
 import * as zenbookerApi from '../../services/zenbookerApi';
 import * as leadsApi from '../../services/leadsApi';
 import type { ServiceAreaResult, Timeslot, TimeslotDay } from '../../services/zenbookerApi';
@@ -35,6 +37,8 @@ const STEP_LABELS: Record<Step, string> = {
     3: 'Schedule',
     4: 'Confirm',
 };
+
+const DEFAULT_JOB_TYPES = ['COD Service', 'COD Repair', 'Warranty', 'INS Service', 'INS Repair'];
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -65,6 +69,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
     const [state, setState] = useState('MA');
 
     // Step 2 — service
+    const [jobTypes, setJobTypes] = useState<string[]>(DEFAULT_JOB_TYPES);
     const [jobType, setJobType] = useState('');
     const [description, setDescription] = useState('');
     const [duration, setDuration] = useState('60');
@@ -77,6 +82,18 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
     const [timeslotsLoading, setTimeslotsLoading] = useState(false);
     const [timeslotsError, setTimeslotsError] = useState('');
     const [timeslotSkipped, setTimeslotSkipped] = useState(false);
+
+    // Fetch job types from settings (same source as CreateLeadDialog)
+    useEffect(() => {
+        authedFetch('/api/settings/lead-form')
+            .then((r) => r.json())
+            .then((data) => {
+                if (data.success && data.jobTypes && data.jobTypes.length > 0) {
+                    setJobTypes(data.jobTypes.map((jt: { name: string }) => jt.name));
+                }
+            })
+            .catch(() => { /* keep defaults */ });
+    }, []);
 
     // Init default date
     useEffect(() => {
@@ -395,7 +412,16 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
 
             <div className="wizard__field">
                 <Label htmlFor="wz-jobtype">Job Type</Label>
-                <Input id="wz-jobtype" value={jobType} onChange={(e) => setJobType(e.target.value)} placeholder="e.g. Plumbing Repair" />
+                <Select value={jobType} onValueChange={setJobType}>
+                    <SelectTrigger id="wz-jobtype">
+                        <SelectValue placeholder="Select job type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        {jobTypes.map((type) => (
+                            <SelectItem key={type} value={type}>{type}</SelectItem>
+                        ))}
+                    </SelectContent>
+                </Select>
             </div>
             <div className="wizard__field">
                 <Label htmlFor="wz-desc">Description</Label>
@@ -609,7 +635,16 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
                 <h4 className="wizard__review-title"><Briefcase className="w-3.5" /> Service</h4>
                 <div className="wizard__field">
                     <Label htmlFor="wz4-jobtype">Job Type</Label>
-                    <Input id="wz4-jobtype" value={jobType} onChange={(e) => setJobType(e.target.value)} placeholder="e.g. Plumbing Repair" />
+                    <Select value={jobType} onValueChange={setJobType}>
+                        <SelectTrigger id="wz4-jobtype">
+                            <SelectValue placeholder="Select job type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {jobTypes.map((type) => (
+                                <SelectItem key={type} value={type}>{type}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
                 </div>
                 <div className="wizard__field">
                     <Label htmlFor="wz4-desc">Description</Label>

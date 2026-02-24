@@ -29,11 +29,7 @@ interface CustomFieldDef {
     sort_order: number;
 }
 
-const JOB_TYPES = [
-    { value: 'COD', label: 'COD Call of Demand' },
-    { value: 'INS', label: 'INS Insurance' },
-    { value: 'RUW', label: 'Recall under Warranty' },
-];
+const DEFAULT_JOB_TYPES = ['COD Service', 'COD Repair', 'Warranty', 'INS Service', 'INS Repair'];
 
 const JOB_SOURCES = [
     'eLocals',
@@ -51,6 +47,7 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
     const [loading, setLoading] = useState(false);
     const [showSecondary, setShowSecondary] = useState(!!(lead.SecondPhone || lead.SecondPhoneName));
     const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
+    const [jobTypes, setJobTypes] = useState<string[]>(DEFAULT_JOB_TYPES);
     const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
     const [_selectedContactAddressId, setSelectedContactAddressId] = useState<number | null>(null);
     const [formData, setFormData] = useState<UpdateLeadInput>({
@@ -83,6 +80,9 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
                         (f: CustomFieldDef) => !f.is_system
                     );
                     setCustomFields(userFields);
+                    if (data.jobTypes && data.jobTypes.length > 0) {
+                        setJobTypes(data.jobTypes.map((jt: { name: string }) => jt.name));
+                    }
                 }
             })
             .catch(() => { });
@@ -296,9 +296,9 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
                                         <SelectValue placeholder="Select job type" />
                                     </SelectTrigger>
                                     <SelectContent>
-                                        {JOB_TYPES.map((type) => (
-                                            <SelectItem key={type.value} value={type.value}>
-                                                {type.label}
+                                        {jobTypes.map((type) => (
+                                            <SelectItem key={type} value={type}>
+                                                {type}
                                             </SelectItem>
                                         ))}
                                     </SelectContent>
