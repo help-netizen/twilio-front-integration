@@ -162,19 +162,27 @@ async function searchCandidates({ first_name, last_name, phone, email }, company
     // Company filter helper
     const companyCondition = companyId ? `AND c.company_id = '${companyId}'` : '';
 
-    // 1. Name search (requires both first + last, min 2 chars each)
-    if (fnNorm && fnNorm.length >= 2 && lnNorm && lnNorm.length >= 2) {
+    // 1. Name search (requires at least one name, min 2 chars)
+    if (hasName) {
+        const nameConditions = [];
+        if (fnNorm && fnNorm.length >= 2) {
+            nameConditions.push(`LOWER(TRIM(c.first_name)) = $${paramIdx}`);
+            allParams.push(fnNorm);
+            paramIdx += 1;
+        }
+        if (lnNorm && lnNorm.length >= 2) {
+            nameConditions.push(`LOWER(TRIM(c.last_name)) = $${paramIdx}`);
+            allParams.push(lnNorm);
+            paramIdx += 1;
+        }
         queries.push(`
             SELECT c.id, c.full_name, c.first_name, c.last_name,
                    c.phone_e164, c.secondary_phone, c.email, c.company_name,
                    TRUE AS name_match, FALSE AS phone_match, FALSE AS email_match
             FROM contacts c
-            WHERE LOWER(TRIM(c.first_name)) = $${paramIdx}
-              AND LOWER(TRIM(c.last_name)) = $${paramIdx + 1}
+            WHERE ${nameConditions.join(' AND ')}
               ${companyCondition}
         `);
-        allParams.push(fnNorm, lnNorm);
-        paramIdx += 2;
     }
 
     // 2. Phone search (independent — min 4 digits)
