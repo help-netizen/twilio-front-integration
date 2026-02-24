@@ -493,8 +493,8 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
                 {lead.JobSource && (
                     <p><span className="text-muted-foreground">Job Source:</span> {lead.JobSource}</p>
                 )}
-                {(lead.Description || lead.Comments) && (
-                    <p><span className="text-muted-foreground">Notes:</span> {lead.Description || lead.Comments}</p>
+                {lead.Comments && lead.Comments !== lead.Description && (
+                    <p><span className="text-muted-foreground">Comments:</span> {lead.Comments}</p>
                 )}
                 {lead.Metadata && Object.keys(lead.Metadata).length > 0 && (
                     <>
@@ -508,7 +508,7 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
                         })}
                     </>
                 )}
-                {!lead.JobSource && !lead.Description && !lead.Comments && (!lead.Metadata || Object.keys(lead.Metadata).length === 0) && (
+                {!lead.JobSource && !lead.Comments && (!lead.Metadata || Object.keys(lead.Metadata).length === 0) && (
                     <p className="text-muted-foreground">No additional details</p>
                 )}
             </div>
