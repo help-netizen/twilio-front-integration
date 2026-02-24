@@ -248,8 +248,6 @@ router.post('/', async (req, res) => {
 
             // Force create new contact even if resolveContact matched
             if (contactResolution.status === 'matched' || contactResolution.status === 'ambiguous') {
-                const { createNewContact } = require('../services/contactDedupeService');
-                // We need to create a fresh contact, so we use the service
                 const newContactId = await contactDedupeService.createNewContactPublic({
                     first_name: body.FirstName,
                     last_name: body.LastName,
@@ -259,8 +257,57 @@ router.post('/', async (req, res) => {
                 contactResolution = { contact_id: newContactId, status: 'created', matched_by: 'none', email_enriched: false, warnings: [] };
             }
 
+            // Enrich new contact with extra fields (secondary_phone, company, address)
             if (contactResolution.contact_id) {
                 body.contact_id = contactResolution.contact_id;
+                try {
+                    const db = require('../db/connection');
+                    const { toE164 } = require('../utils/phoneUtils');
+                    const enrichUpdates = [];
+                    const enrichParams = [];
+                    let eIdx = 1;
+
+                    if (body.SecondPhone) {
+                        enrichUpdates.push(`secondary_phone = $${eIdx++}`);
+                        enrichParams.push(toE164(body.SecondPhone) || body.SecondPhone);
+                    }
+                    if (body.SecondPhoneName) {
+                        enrichUpdates.push(`secondary_phone_name = $${eIdx++}`);
+                        enrichParams.push(body.SecondPhoneName);
+                    }
+                    if (body.Company) {
+                        enrichUpdates.push(`company_name = $${eIdx++}`);
+                        enrichParams.push(body.Company);
+                    }
+                    if (enrichUpdates.length > 0) {
+                        enrichUpdates.push('updated_at = NOW()');
+                        enrichParams.push(contactResolution.contact_id);
+                        await db.query(
+                            `UPDATE contacts SET ${enrichUpdates.join(', ')} WHERE id = $${eIdx}`,
+                            enrichParams
+                        );
+                    }
+
+                    // Add address to new contact
+                    if (body.Address) {
+                        await contactAddressService.resolveAddress(
+                            contactResolution.contact_id,
+                            {
+                                street: body.Address,
+                                apt: body.Unit || null,
+                                city: body.City || '',
+                                state: body.State || '',
+                                zip: body.PostalCode || '',
+                                lat: body.Latitude || null,
+                                lng: body.Longitude || null,
+                                placeId: body.google_place_id || null,
+                            }
+                        );
+                    }
+                    console.log(`[LeadsAPI][${reqId}] Enriched new contact ${contactResolution.contact_id} (only_lead mode)`);
+                } catch (enrichErr) {
+                    console.error(`[LeadsAPI][${reqId}] Contact enrichment error (non-blocking):`, enrichErr.message);
+                }
             }
 
         } else {

@@ -190,7 +190,7 @@ async function searchCandidates({ first_name, last_name, phone, email }, company
         // Match last 10 digits against phone_e164 and secondary_phone
         queries.push(`
             SELECT c.id, c.full_name, c.first_name, c.last_name,
-                   c.phone_e164, c.secondary_phone, c.email, c.company_name,
+                   c.phone_e164, c.secondary_phone, c.secondary_phone_name, c.email, c.company_name,
                    FALSE AS name_match, TRUE AS phone_match, FALSE AS email_match
             FROM contacts c
             WHERE (
@@ -207,7 +207,7 @@ async function searchCandidates({ first_name, last_name, phone, email }, company
     if (hasEmail) {
         queries.push(`
             SELECT c.id, c.full_name, c.first_name, c.last_name,
-                   c.phone_e164, c.secondary_phone, c.email, c.company_name,
+                   c.phone_e164, c.secondary_phone, c.secondary_phone_name, c.email, c.company_name,
                    FALSE AS name_match, FALSE AS phone_match, TRUE AS email_match
             FROM contacts c
             WHERE LOWER(TRIM(c.email)) = $${paramIdx}
