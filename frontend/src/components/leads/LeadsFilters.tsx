@@ -9,7 +9,8 @@ import { CalendarIcon, Search, X, Check } from 'lucide-react';
 import { format } from 'date-fns';
 import { useState, useRef, useEffect } from 'react';
 import type { LeadsListParams } from '../../types/lead';
-import { LEAD_STATUSES, JOB_SOURCES, JOB_TYPES } from '../../types/lead';
+import { LEAD_STATUSES, JOB_SOURCES } from '../../types/lead';
+import { authedFetch } from '../../services/apiClient';
 
 interface LeadsFiltersProps {
     filters: LeadsListParams;
@@ -35,8 +36,21 @@ export function LeadsFilters({
     const [datePickerOpen, setDatePickerOpen] = useState(false);
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
+    const [dynamicJobTypes, setDynamicJobTypes] = useState<string[]>([]);
 
     const startDate = filters.start_date ? new Date(filters.start_date) : undefined;
+
+    // Fetch job types from API
+    useEffect(() => {
+        authedFetch('/api/settings/lead-form')
+            .then(r => r.json())
+            .then(data => {
+                if (data.success && data.jobTypes?.length > 0) {
+                    setDynamicJobTypes(data.jobTypes.map((jt: { name: string }) => jt.name));
+                }
+            })
+            .catch(() => { });
+    }, []);
 
     // Close dropdown on outside click
     useEffect(() => {
@@ -163,7 +177,7 @@ export function LeadsFilters({
                             {/* Job Type Column */}
                             <FilterColumn
                                 title="JOB TYPE"
-                                items={JOB_TYPES as unknown as string[]}
+                                items={dynamicJobTypes}
                                 selected={jobTypeFilter}
                                 onToggle={toggleJobType}
                             />
@@ -269,8 +283,8 @@ function FilterColumn({
                             type="button"
                             onClick={() => onToggle(item)}
                             className={`flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-md text-sm transition-colors ${isSelected
-                                    ? 'bg-primary/10 text-primary font-medium'
-                                    : 'hover:bg-muted text-foreground'
+                                ? 'bg-primary/10 text-primary font-medium'
+                                : 'hover:bg-muted text-foreground'
                                 }`}
                         >
                             <div className={`size-4 border rounded flex items-center justify-center shrink-0 ${isSelected ? 'bg-primary border-primary' : 'border-input'

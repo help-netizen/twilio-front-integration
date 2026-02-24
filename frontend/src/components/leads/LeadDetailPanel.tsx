@@ -118,11 +118,6 @@ interface LeadDetailPanelProps {
     onDelete: (uuid: string) => void;
 }
 
-const JOB_TYPES = [
-    { value: 'COD', label: 'COD Call of Demand' },
-    { value: 'INS', label: 'INS Insurance' },
-    { value: 'RUW', label: 'Recall under Warranty' },
-];
 
 const JOB_SOURCES = [
     'Website',
@@ -430,8 +425,7 @@ export function LeadDetailPanel({
                                 <Label className="text-xs text-muted-foreground">Job Type</Label>
                                 <div className="text-sm font-medium mt-1">
                                     {lead.JobType
-                                        ? JOB_TYPES.find((t) => t.value === lead.JobType)?.label ||
-                                        lead.JobType
+                                        ? lead.JobType
                                         : <span className="text-muted-foreground">N/A</span>}
                                 </div>
                             </div>
