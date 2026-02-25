@@ -19,18 +19,18 @@ function Calendar({
       className={cn("p-3", className)}
       classNames={{
         // v9 UI keys
-        months: "flex flex-col sm:flex-row gap-2",
+        months: "relative flex flex-col sm:flex-row gap-2",
         month: "flex flex-col gap-4",
-        month_caption: "flex justify-center pt-1 relative items-center w-full",
+        month_caption: "flex justify-center pt-1 items-center h-7",
         caption_label: "text-sm font-medium",
-        nav: "absolute inset-x-1 top-0 flex items-center justify-between pt-1",
+        nav: "absolute inset-x-0 top-0 flex items-center justify-between pt-1 z-10 pointer-events-none",
         button_previous: cn(
           buttonVariants({ variant: "outline" }),
-          "size-7 bg-transparent p-0 opacity-50 hover:opacity-100",
+          "size-7 bg-transparent p-0 opacity-50 hover:opacity-100 pointer-events-auto",
         ),
         button_next: cn(
           buttonVariants({ variant: "outline" }),
-          "size-7 bg-transparent p-0 opacity-50 hover:opacity-100",
+          "size-7 bg-transparent p-0 opacity-50 hover:opacity-100 pointer-events-auto",
         ),
         month_grid: "w-full border-collapse",
         weekdays: "flex",
