@@ -21,6 +21,7 @@ import * as contactsApi from '../../services/contactsApi';
 import * as jobsApi from '../../services/jobsApi';
 import { EditContactDialog } from './EditContactDialog';
 import { ClickToCallButton } from '../softphone/ClickToCallButton';
+import { OpenTimelineButton } from '../softphone/OpenTimelineButton';
 import type { Contact, ContactLead, ContactAddress } from '../../types/contact';
 
 /* ────────────────────────────────────────────────────
@@ -335,6 +336,7 @@ export function PulseContactPanel({ contact, leads, loading, onAddressesChanged,
                                             {formatPhone(contact.phone_e164)}
                                         </a>
                                         <ClickToCallButton phone={contact.phone_e164 || ''} contactName={contact.full_name || undefined} />
+                                        <OpenTimelineButton phone={contact.phone_e164 || ''} contactId={contact.id} />
                                     </div>
                                 </div>
                             </div>
@@ -353,6 +355,7 @@ export function PulseContactPanel({ contact, leads, loading, onAddressesChanged,
                                                     {formatPhone(contact.secondary_phone)}
                                                 </a>
                                                 <ClickToCallButton phone={contact.secondary_phone} contactName={contact.full_name || undefined} />
+                                                <OpenTimelineButton phone={contact.secondary_phone || ''} contactId={contact.id} />
                                             </div>
                                         ) : <span className="text-muted-foreground">—</span>}
                                     </div>

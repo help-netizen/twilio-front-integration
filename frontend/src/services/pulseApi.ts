@@ -28,4 +28,9 @@ export const pulseApi = {
         const response = await apiClient.get<PulseTimelineResponse>(`/pulse/timeline-by-id/${timelineId}`);
         return response.data;
     },
+    /** Find or create a timeline for a phone number, optionally linking to a contact */
+    ensureTimeline: async (phone: string, contactId?: number): Promise<{ timelineId: number; contactId: number | null; created: boolean }> => {
+        const response = await apiClient.post<{ timelineId: number; contactId: number | null; created: boolean }>('/pulse/ensure-timeline', { phone, contactId });
+        return response.data;
+    },
 };

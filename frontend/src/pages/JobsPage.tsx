@@ -20,6 +20,7 @@ import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu';
 import { ClickToCallButton } from '../components/softphone/ClickToCallButton';
+import { OpenTimelineButton } from '../components/softphone/OpenTimelineButton';
 import { JobsFilters } from '../components/jobs/JobsFilters';
 import {
     Popover, PopoverContent, PopoverTrigger,
@@ -1216,6 +1217,10 @@ function JobDetailPanel({
                                                 <ClickToCallButton
                                                     phone={contactInfo?.phone || job.customer_phone || ''}
                                                     contactName={contactInfo?.name || job.customer_name || undefined}
+                                                />
+                                                <OpenTimelineButton
+                                                    phone={contactInfo?.phone || job.customer_phone || ''}
+                                                    contactId={contactInfo?.id}
                                                 />
                                             </div>
                                         </div>

@@ -285,4 +285,64 @@ router.get('/timeline-by-phone', async (req, res) => {
     }
 });
 
+// =============================================================================
+// POST /api/pulse/ensure-timeline — find or create a timeline for a phone number
+// Optionally link it to a contact (for new leads from API with no history).
+// Body: { phone: string, contactId?: number }
+// Returns: { timelineId, contactId, created }
+// =============================================================================
+router.post('/ensure-timeline', async (req, res) => {
+    try {
+        const { phone, contactId } = req.body;
+        if (!phone) {
+            return res.status(400).json({ error: 'phone is required' });
+        }
+
+        const companyId = req.user?.company_id || null;
+
+        // If contactId is provided, resolve timeline for this specific contact
+        if (contactId) {
+            const existing = await db.query(
+                'SELECT id FROM timelines WHERE contact_id = $1 LIMIT 1',
+                [contactId]
+            );
+            if (existing.rows[0]) {
+                return res.json({
+                    timelineId: existing.rows[0].id,
+                    contactId,
+                    created: false,
+                });
+            }
+
+            // No timeline for this contact — create one linked to the contact
+            const newTl = await db.query(
+                `INSERT INTO timelines (contact_id, company_id)
+                 VALUES ($1, $2)
+                 ON CONFLICT (contact_id) WHERE contact_id IS NOT NULL
+                 DO UPDATE SET updated_at = now()
+                 RETURNING *`,
+                [contactId, companyId]
+            );
+            console.log(`[Pulse] ensure-timeline: created timeline ${newTl.rows[0].id} for contact ${contactId}`);
+            return res.json({
+                timelineId: newTl.rows[0].id,
+                contactId,
+                created: true,
+            });
+        }
+
+        // No contactId — resolve by phone number (orphan or contact-linked)
+        const timeline = await queries.findOrCreateTimeline(phone, companyId);
+
+        res.json({
+            timelineId: timeline.id,
+            contactId: timeline.contact_id || null,
+            created: false,
+        });
+    } catch (error) {
+        console.error('[Pulse] POST /ensure-timeline error:', error);
+        res.status(500).json({ error: 'Failed to ensure timeline' });
+    }
+});
+
 module.exports = router;

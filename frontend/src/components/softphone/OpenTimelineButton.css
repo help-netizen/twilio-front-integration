@@ -1,0 +1,58 @@
+/* OpenTimelineButton — hover-reveal message button */
+
+.open-timeline-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    /* Visual size stays small, but clickable area is bigger via padding */
+    padding: 4px 6px;
+    background: linear-gradient(135deg, #6366f1, #818cf8);
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    opacity: 0;
+    transform: scale(0.9);
+    transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease;
+    vertical-align: middle;
+    line-height: 1;
+    margin-left: 2px;
+    /* Invisible extended hit area around button */
+    position: relative;
+}
+
+/* Extend clickable area with pseudo-element */
+.open-timeline-btn::before {
+    content: '';
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    bottom: -6px;
+    left: -6px;
+}
+
+.open-timeline-btn:hover {
+    background: linear-gradient(135deg, #4f46e5, #6366f1);
+}
+
+.open-timeline-btn:disabled {
+    cursor: wait;
+    opacity: 0.7 !important;
+}
+
+/* Show on parent hover — parent needs .click-to-call-row class */
+.click-to-call-row:hover .open-timeline-btn {
+    opacity: 1;
+    transform: scale(1);
+}
+
+/* Also support any ancestor hover (for flex containers with gap) */
+*:hover>.open-timeline-btn,
+*:hover>*>.open-timeline-btn,
+*:hover>*>*>.open-timeline-btn {
+    opacity: 1;
+    transform: scale(1);
+}

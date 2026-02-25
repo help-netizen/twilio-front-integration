@@ -36,7 +36,7 @@ export function LeadsPage() {
 
     // Filters state
     const [filters, setFilters] = useState<LeadsListParams>({
-        start_date: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        start_date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
         offset: 0,
         records: 100,
         only_open: true,
@@ -112,9 +112,9 @@ export function LeadsPage() {
             const query = searchQuery.toLowerCase();
             result = result.filter(lead => {
                 // Standard fields
+                const fullName = `${lead.FirstName || ''} ${lead.LastName || ''}`.toLowerCase();
                 if (
-                    lead.FirstName?.toLowerCase().includes(query) ||
-                    lead.LastName?.toLowerCase().includes(query) ||
+                    fullName.includes(query) ||
                     lead.Company?.toLowerCase().includes(query) ||
                     lead.Phone?.includes(query) ||
                     lead.Email?.toLowerCase().includes(query) ||

@@ -13,6 +13,7 @@ import * as contactsApi from '../../services/contactsApi';
 import * as jobsApi from '../../services/jobsApi';
 import { EditContactDialog } from './EditContactDialog';
 import { ClickToCallButton } from '../softphone/ClickToCallButton';
+import { OpenTimelineButton } from '../softphone/OpenTimelineButton';
 
 interface ContactDetailPanelProps {
     contact: Contact;
@@ -531,6 +532,7 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
                             <div style={{ fontSize: '14px', color: contact.phone_e164 ? '#111827' : '#cbd5e1', fontWeight: contact.phone_e164 ? 500 : 400, display: 'flex', alignItems: 'center', gap: '4px' }}>
                                 {formatPhone(contact.phone_e164) || '—'}
                                 {contact.phone_e164 && <ClickToCallButton phone={contact.phone_e164} contactName={contact.full_name || undefined} />}
+                                {contact.phone_e164 && <OpenTimelineButton phone={contact.phone_e164} contactId={contact.id} />}
                             </div>
                         </div>
                     </div>
@@ -543,6 +545,7 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
                             <div style={{ fontSize: '14px', color: contact.secondary_phone ? '#111827' : '#cbd5e1', fontWeight: contact.secondary_phone ? 500 : 400, display: 'flex', alignItems: 'center', gap: '4px' }}>
                                 {formatPhone(contact.secondary_phone) || '—'}
                                 {contact.secondary_phone && <ClickToCallButton phone={contact.secondary_phone} contactName={contact.full_name || undefined} />}
+                                {contact.secondary_phone && <OpenTimelineButton phone={contact.secondary_phone} contactId={contact.id} />}
                             </div>
                         </div>
                     </div>

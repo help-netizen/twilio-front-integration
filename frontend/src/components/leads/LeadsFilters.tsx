@@ -199,7 +199,9 @@ export function LeadsFilters({
                 <PopoverTrigger asChild>
                     <Button variant="outline" className="gap-2">
                         <CalendarIcon className="size-4" />
-                        {startDate ? format(startDate, 'MMM dd, yyyy') : 'Start Date'}
+                        {startDate
+                            ? `${format(startDate, 'MMM dd, yyyy')} — ${format(new Date(), 'MMM dd, yyyy')}`
+                            : 'Start Date'}
                     </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-auto p-0" align="start">
