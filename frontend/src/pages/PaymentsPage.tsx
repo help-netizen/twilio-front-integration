@@ -10,7 +10,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     Loader2, Download, Search, DollarSign, X,
-    ChevronLeft, ChevronRight, FileText,
+    ChevronLeft, ChevronRight, FileText, RotateCcw,
     User2, MapPin, Receipt, ChevronDown, ImageIcon, ExternalLink,
     RefreshCw, CalendarIcon,
 } from 'lucide-react';
@@ -895,6 +895,7 @@ function PaymentDetailPanel({
 }) {
     const [showMetadata, setShowMetadata] = useState(false);
     const [galleryIndex, setGalleryIndex] = useState(0);
+    const [rotation, setRotation] = useState(0);
     const [showLargePreview, setShowLargePreview] = useState(false);
 
     // Reset gallery when detail changes
@@ -1118,7 +1119,7 @@ function PaymentDetailPanel({
                                     <div className="attachments-preview-controls">
                                         <button
                                             disabled={galleryIndex === 0}
-                                            onClick={() => setGalleryIndex(i => i - 1)}
+                                            onClick={() => { setGalleryIndex(i => i - 1); setRotation(0); }}
                                         >
                                             <ChevronLeft size={16} />
                                         </button>
@@ -1127,9 +1128,15 @@ function PaymentDetailPanel({
                                         </span>
                                         <button
                                             disabled={galleryIndex >= allAttachments.length - 1}
-                                            onClick={() => setGalleryIndex(i => i + 1)}
+                                            onClick={() => { setGalleryIndex(i => i + 1); setRotation(0); }}
                                         >
                                             <ChevronRight size={16} />
+                                        </button>
+                                        <button
+                                            onClick={() => setRotation(r => r - 90)}
+                                            title="Rotate 90° counter-clockwise"
+                                        >
+                                            <RotateCcw size={14} />
                                         </button>
                                         <a
                                             href={allAttachments[galleryIndex].url}
@@ -1145,6 +1152,7 @@ function PaymentDetailPanel({
                                             <img
                                                 src={allAttachments[galleryIndex].url}
                                                 alt={allAttachments[galleryIndex].filename}
+                                                style={rotation ? { transform: `rotate(${rotation}deg)` } : undefined}
                                             />
                                         ) : (
                                             <div className="attachment-file-preview">
