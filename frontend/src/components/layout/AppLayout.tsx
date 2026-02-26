@@ -420,6 +420,13 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                                         <Phone className="size-4" />
                                         Phone Calls
                                     </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                        className="flex items-center gap-2 cursor-pointer"
+                                        onClick={() => navigate('/settings/action-required')}
+                                    >
+                                        <Activity className="size-4" />
+                                        Action Required
+                                    </DropdownMenuItem>
                                     {hasRole('super_admin') && (
                                         <>
                                             <DropdownMenuSeparator />

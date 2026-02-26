@@ -53,4 +53,8 @@ export const pulseApi = {
         const response = await apiClient.post(`/pulse/threads/${timelineId}/tasks`, data);
         return response.data;
     },
+    /** Manually set Action Required on a thread */
+    setActionRequired: async (timelineId: number): Promise<void> => {
+        await apiClient.post(`/pulse/threads/${timelineId}/set-action-required`);
+    },
 };

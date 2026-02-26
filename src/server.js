@@ -138,6 +138,8 @@ app.use('/api/admin/integrations', authenticate, requireRole('company_admin'), r
 app.use('/api/settings/lead-form', authenticate, requireRole('company_admin'), requireCompanyAccess, leadFormSettingsRouter);
 app.use('/api/settings/job-tags', authenticate, requireRole('company_admin'), requireCompanyAccess, jobTagsSettingsRouter);
 app.use('/api/settings/jobs-list-fields', authenticate, requireCompanyAccess, jobsListFieldsRouter);
+const actionRequiredSettingsRouter = require('../backend/src/routes/action-required-settings');
+app.use('/api/settings/action-required', authenticate, requireRole('company_admin'), requireCompanyAccess, actionRequiredSettingsRouter);
 
 // User management API (§5, §6)
 app.use('/api/users', authenticate, requireRole('company_admin'), requireCompanyAccess, usersRouter);

@@ -458,4 +458,25 @@ router.post('/threads/:id/tasks', async (req, res) => {
     }
 });
 
+// =============================================================================
+// POST /api/pulse/threads/:id/set-action-required — manually flag a thread
+// =============================================================================
+router.post('/threads/:id/set-action-required', async (req, res) => {
+    try {
+        const timelineId = parseInt(req.params.id);
+        if (isNaN(timelineId)) return res.status(400).json({ error: 'Invalid timeline id' });
+
+        const tl = await queries.setActionRequired(timelineId, 'manual', 'user');
+        if (!tl) return res.status(404).json({ error: 'Timeline not found' });
+
+        const realtimeService = require('../services/realtimeService');
+        realtimeService.broadcast('thread.action_required', { timelineId, reason: 'manual' });
+
+        res.json({ timeline: tl });
+    } catch (error) {
+        console.error('[Pulse] set-action-required error:', error);
+        res.status(500).json({ error: 'Failed to set action required' });
+    }
+});
+
 module.exports = router;

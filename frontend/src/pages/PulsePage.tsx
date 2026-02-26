@@ -68,11 +68,13 @@ const REASON_LABELS: Record<string, string> = {
     time_confirmed: 'Time confirmed',
 };
 
-function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, onSnooze }: {
+function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, onSnooze, onSetActionRequired, onRead }: {
     call: Call; isActive: boolean;
     onMarkUnread?: (timelineId: number) => void;
     onMarkHandled?: (timelineId: number) => void;
     onSnooze?: (timelineId: number, until: string) => void;
+    onSetActionRequired?: (timelineId: number) => void;
+    onRead?: () => void;
 }) {
     const navigate = useNavigate();
     // Prefer timeline_id for navigation, fall back to contact_id (legacy)
@@ -165,7 +167,7 @@ function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, onSnooz
                 navigate(targetPath);
                 // Mark read on explicit user click — clear timeline + SMS sources
                 if (hasUnread && tlId) {
-                    callsApi.markTimelineRead(tlId).catch(() => { });
+                    callsApi.markTimelineRead(tlId).then(() => { onRead?.(); }).catch(() => { });
                     if ((call as any).sms_conversation_id) {
                         messagingApi.markRead((call as any).sms_conversation_id).catch(() => { });
                     }
@@ -257,6 +259,29 @@ function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, onSnooz
                                     <EyeOff className="size-3.5" />
                                     Mark as Unread
                                 </div>
+                                {/* Set Action Required — only when NOT action required */}
+                                {!isActionRequired && (
+                                    <div
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setMenuOpen(false);
+                                            if (tlId && onSetActionRequired) onSetActionRequired(tlId);
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                e.stopPropagation();
+                                                setMenuOpen(false);
+                                                if (tlId && onSetActionRequired) onSetActionRequired(tlId);
+                                            }
+                                        }}
+                                        className="flex items-center gap-2 px-3 py-2 text-sm text-orange-700 hover:bg-orange-50 cursor-pointer w-full"
+                                    >
+                                        <AlertTriangle className="size-3.5" />
+                                        Action Required
+                                    </div>
+                                )}
                                 {/* Mark Handled — only when action required */}
                                 {isActionRequired && (
                                     <div
@@ -441,7 +466,7 @@ export const PulsePage: React.FC = () => {
         },
         onGenericEvent: (eventType: string, _data: any) => {
             // Action Required SSE events: refetch contact list to update badges/sort
-            if (['thread.action_required', 'thread.handled', 'thread.snoozed', 'thread.unsnoozed', 'thread.assigned'].includes(eventType)) {
+            if (['thread.action_required', 'thread.handled', 'thread.snoozed', 'thread.unsnoozed', 'thread.assigned', 'timeline.read', 'timeline.unread'].includes(eventType)) {
                 refetchContacts();
             }
         },
@@ -781,6 +806,14 @@ export const PulsePage: React.FC = () => {
                                             refetchContacts();
                                             toast.success('Thread snoozed');
                                         } catch { toast.error('Failed to snooze'); }
+                                    }}
+                                    onRead={() => refetchContacts()}
+                                    onSetActionRequired={async (timelineId) => {
+                                        try {
+                                            await pulseApi.setActionRequired(timelineId);
+                                            refetchContacts();
+                                            toast.success('Marked as Action Required');
+                                        } catch { toast.error('Failed to set Action Required'); }
                                     }}
                                 />
                             );
