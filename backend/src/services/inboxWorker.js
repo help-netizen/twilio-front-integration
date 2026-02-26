@@ -183,6 +183,40 @@ async function processVoiceEvent(payload, eventType, traceId) {
                 }
             }
         }
+
+        // Action Required auto-trigger for inbound calls
+        if (timelineId && processed.direction === 'inbound' && !normalized.parentCallSid) {
+            try {
+                await queries.setActionRequired(timelineId, 'new_call', 'system');
+                const contactName = await (async () => {
+                    if (contactId) {
+                        try {
+                            const { rows } = await db.query('SELECT full_name FROM contacts WHERE id = $1', [contactId]);
+                            return rows[0]?.full_name || externalParty?.formatted || 'Unknown';
+                        } catch { return externalParty?.formatted || 'Unknown'; }
+                    }
+                    return externalParty?.formatted || 'Unknown';
+                })();
+                const dueAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+                await queries.createTask({
+                    companyId: null, // resolved from timeline inside createTask
+                    threadId: timelineId,
+                    subjectType: 'contact',
+                    subjectId: contactId,
+                    title: `New call from ${contactName}`,
+                    priority: 'p1',
+                    dueAt,
+                    createdBy: 'system',
+                });
+                const realtimeService = require('./realtimeService');
+                realtimeService.broadcast('thread.action_required', {
+                    timelineId, reason: 'new_call',
+                });
+                console.log(`[${traceId}] Action Required set for inbound call on timeline ${timelineId}`);
+            } catch (e) {
+                console.warn(`[${traceId}] Failed to set AR for inbound call:`, e.message);
+            }
+        }
     }
 
     const isFinal = isFinalStatus(normalized.eventStatus);

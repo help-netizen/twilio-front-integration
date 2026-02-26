@@ -10,6 +10,7 @@ import * as contactsApi from '../services/contactsApi';
 import { useRealtimeEvents, type SSECallEvent, type SSETranscriptDeltaEvent, type SSETranscriptFinalizedEvent } from '../hooks/useRealtimeEvents';
 import { appendTranscriptDelta, finalizeTranscript } from '../hooks/useLiveTranscript';
 import { callsApi } from '../services/api';
+import { authedFetch } from '../services/apiClient';
 import { PulseTimeline } from '../components/pulse/PulseTimeline';
 import { SmsForm } from '../components/pulse/SmsForm';
 import { LeadDetailPanel } from '../components/leads/LeadDetailPanel';
@@ -21,7 +22,7 @@ import { formatPhoneNumber } from '../utils/formatters';
 import { useLeadByPhone } from '../hooks/useLeadByPhone';
 import { Input } from '../components/ui/input';
 import { Skeleton } from '../components/ui/skeleton';
-import { Search, PhoneOff, Activity, PhoneIncoming, PhoneOutgoing, ArrowLeftRight, MessageSquare, MessageSquareReply, MoreVertical, EyeOff, Clock, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Search, PhoneOff, Activity, PhoneIncoming, PhoneOutgoing, ArrowLeftRight, MessageSquare, MessageSquareReply, MoreVertical, EyeOff, Clock, CheckCircle2, AlertTriangle, UserRound } from 'lucide-react';
 import type { Call } from '../types/models';
 import type { Lead } from '../types/lead';
 import type { ContactLead } from '../types/contact';
@@ -63,6 +64,7 @@ function getSnoozeUntil(option: typeof SNOOZE_OPTIONS[number]): string {
 // Reason labels
 const REASON_LABELS: Record<string, string> = {
     new_message: 'New message',
+    new_call: 'New call',
     manual: 'Manual',
     estimate_approved: 'Estimate approved',
     time_confirmed: 'Time confirmed',
@@ -165,9 +167,11 @@ function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, onSnooz
             onClick={() => {
                 if (!targetPath) return;
                 navigate(targetPath);
-                // Mark read on explicit user click — clear timeline + SMS sources
-                if (hasUnread && tlId) {
-                    callsApi.markTimelineRead(tlId).then(() => { onRead?.(); }).catch(() => { });
+                // Always mark timeline as read on click
+                if (tlId) {
+                    callsApi.markTimelineRead(tlId)
+                        .then(() => { console.log('[Pulse] Marked timeline read:', tlId); onRead?.(); })
+                        .catch((err) => { console.error('[Pulse] Failed to mark timeline read:', tlId, err); });
                     if ((call as any).sms_conversation_id) {
                         messagingApi.markRead((call as any).sms_conversation_id).catch(() => { });
                     }
@@ -395,6 +399,80 @@ function callToCallData(call: any): CallData {
         summary: call.transcript?.gemini_summary || undefined,
         answeredBy: call.answered_by || undefined,
     };
+}
+
+// =============================================================================
+// AssignOwnerDropdown — selects a team member and assigns them as thread owner
+// =============================================================================
+function AssignOwnerDropdown({ timelineId, onAssigned }: { timelineId: number | null; onAssigned?: () => void }) {
+    const [open, setOpen] = useState(false);
+    const [members, setMembers] = useState<Array<{ id: string; name: string }>>([]);
+    const [loaded, setLoaded] = useState(false);
+    const ref = useRef<HTMLDivElement>(null);
+
+    // Close on outside click
+    useEffect(() => {
+        if (!open) return;
+        const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [open]);
+
+    // Fetch team members on first open
+    useEffect(() => {
+        if (!open || loaded) return;
+        const API_BASE = import.meta.env.VITE_API_URL || '/api';
+        authedFetch(`${API_BASE}/users`)
+            .then(r => r.json())
+            .then(data => {
+                const users = (data.users || data || []).map((u: any) => ({
+                    id: u.id || u.user_id || u.keycloak_id,
+                    name: u.full_name || u.name || u.email || u.username || 'Unknown',
+                }));
+                setMembers(users);
+                setLoaded(true);
+            })
+            .catch(() => setLoaded(true));
+    }, [open, loaded]);
+
+    return (
+        <div className="relative" ref={ref}>
+            <button
+                onClick={() => setOpen(!open)}
+                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition-colors"
+            >
+                <UserRound className="size-3" /> Assign
+            </button>
+            {open && (
+                <div className="absolute left-0 top-full mt-1 z-50 bg-white rounded-md shadow-lg border border-gray-200 py-1 min-w-[180px] max-h-[200px] overflow-y-auto">
+                    {!loaded ? (
+                        <div className="px-3 py-2 text-xs text-gray-400">Loading…</div>
+                    ) : members.length === 0 ? (
+                        <div className="px-3 py-2 text-xs text-gray-400">No team members</div>
+                    ) : (
+                        members.map(m => (
+                            <div
+                                key={m.id}
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => {
+                                    if (timelineId) {
+                                        pulseApi.assignThread(timelineId, m.id)
+                                            .then(() => { toast.success(`Assigned to ${m.name}`); onAssigned?.(); })
+                                            .catch(() => toast.error('Failed to assign'));
+                                    }
+                                    setOpen(false);
+                                }}
+                                className="px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer"
+                            >
+                                {m.name}
+                            </div>
+                        ))
+                    )}
+                </div>
+            )}
+        </div>
+    );
 }
 
 // =============================================================================
@@ -828,8 +906,85 @@ export const PulsePage: React.FC = () => {
                 </div>
             </div>
 
-            {/* Middle column: Lead Detail Panel / Contact Detail / Create Lead */}
+            {/* Middle column: AR Header + Lead Detail Panel / Contact Detail / Create Lead */}
             <div className="w-[400px] shrink-0 border-r bg-background flex flex-col overflow-hidden">
+                {/* Action Required Header Bar — above contact/lead panels */}
+                {(() => {
+                    const conv = selectedConv as any;
+                    if (!conv?.is_action_required) return null;
+                    const isSnoozed = conv.snoozed_until && new Date(conv.snoozed_until) > new Date();
+                    const tlId = conv.timeline_id;
+                    return (
+                        <div className="border-b" style={{ backgroundColor: isSnoozed ? '#f3f4f6' : '#fff7ed' }}>
+                            <div className="flex items-center gap-2 px-4 py-2">
+                                <span className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold"
+                                    style={{ backgroundColor: isSnoozed ? '#e5e7eb' : '#fed7aa', color: isSnoozed ? '#4b5563' : '#9a3412' }}>
+                                    {isSnoozed ? <Clock className="size-3" /> : <AlertTriangle className="size-3" />}
+                                    {isSnoozed ? 'Snoozed' : 'Action Required'}
+                                </span>
+                                {conv.action_required_reason && (
+                                    <span className="text-xs text-gray-500">{REASON_LABELS[conv.action_required_reason] || conv.action_required_reason}</span>
+                                )}
+                                {conv.open_task?.due_at && !isSnoozed && (
+                                    <span className="text-xs text-red-500">
+                                        Due {new Date(conv.open_task.due_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                                    </span>
+                                )}
+                                {isSnoozed && (
+                                    <span className="text-xs text-gray-500">
+                                        until {new Date(conv.snoozed_until).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                                    </span>
+                                )}
+                            </div>
+                            {!isSnoozed && (
+                                <div className="flex items-center gap-2 px-4 pb-2">
+                                    <button
+                                        onClick={() => {
+                                            if (tlId) pulseApi.markHandled(tlId).then(() => { refetchContacts(); toast.success('Marked as handled'); }).catch(() => toast.error('Failed'));
+                                        }}
+                                        className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded transition-colors"
+                                    >
+                                        <CheckCircle2 className="size-3" /> Handled
+                                    </button>
+                                    <div className="relative group">
+                                        <button className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded transition-colors">
+                                            <Clock className="size-3" /> Snooze
+                                        </button>
+                                        <div className="absolute left-0 top-full mt-1 z-50 bg-white rounded-md shadow-lg border border-gray-200 py-1 min-w-[170px] hidden group-hover:block">
+                                            {SNOOZE_OPTIONS.map(opt => (
+                                                <div
+                                                    key={opt.label}
+                                                    role="button"
+                                                    tabIndex={0}
+                                                    onClick={() => {
+                                                        if (tlId) pulseApi.snoozeThread(tlId, getSnoozeUntil(opt)).then(() => { refetchContacts(); toast.success('Snoozed'); }).catch(() => toast.error('Failed'));
+                                                    }}
+                                                    className="px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer"
+                                                >
+                                                    {opt.label}
+                                                </div>
+                                            ))}
+                                            <div className="border-t mt-1 pt-1 px-3 py-1">
+                                                <label className="text-[10px] text-gray-400 block mb-1">Specific date</label>
+                                                <input
+                                                    type="date"
+                                                    className="text-xs border rounded px-2 py-1 w-full"
+                                                    min={new Date().toISOString().split('T')[0]}
+                                                    onChange={(e) => {
+                                                        if (!e.target.value || !tlId) return;
+                                                        const d = new Date(e.target.value + 'T09:00:00');
+                                                        pulseApi.snoozeThread(tlId, d.toISOString()).then(() => { refetchContacts(); toast.success('Snoozed'); }).catch(() => toast.error('Failed'));
+                                                    }}
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <AssignOwnerDropdown timelineId={tlId} onAssigned={() => refetchContacts()} />
+                                </div>
+                            )}
+                        </div>
+                    );
+                })()}
                 {(contactId || timelineId) && phone ? (
                     lead ? (
                         <LeadDetailPanel
@@ -882,68 +1037,7 @@ export const PulsePage: React.FC = () => {
                     </div>
                 ) : (
                     <>
-                        {/* Action Required Header Bar */}
-                        {(() => {
-                            const conv = selectedConv as any;
-                            if (!conv?.is_action_required) return null;
-                            const isSnoozed = conv.snoozed_until && new Date(conv.snoozed_until) > new Date();
-                            const tlId = conv.timeline_id;
-                            return (
-                                <div className="flex items-center gap-2 px-4 py-2 border-b" style={{ backgroundColor: isSnoozed ? '#f3f4f6' : '#fff7ed' }}>
-                                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold"
-                                        style={{ backgroundColor: isSnoozed ? '#e5e7eb' : '#fed7aa', color: isSnoozed ? '#4b5563' : '#9a3412' }}>
-                                        {isSnoozed ? <Clock className="size-3" /> : <AlertTriangle className="size-3" />}
-                                        {isSnoozed ? 'Snoozed' : 'Action Required'}
-                                    </span>
-                                    {conv.action_required_reason && (
-                                        <span className="text-xs text-gray-500">{REASON_LABELS[conv.action_required_reason] || conv.action_required_reason}</span>
-                                    )}
-                                    {conv.open_task?.due_at && !isSnoozed && (
-                                        <span className="text-xs text-red-500">
-                                            Due {new Date(conv.open_task.due_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
-                                        </span>
-                                    )}
-                                    {isSnoozed && (
-                                        <span className="text-xs text-gray-500">
-                                            until {new Date(conv.snoozed_until).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                                        </span>
-                                    )}
-                                    <div className="flex-1" />
-                                    {!isSnoozed && (
-                                        <>
-                                            <button
-                                                onClick={() => {
-                                                    if (tlId) pulseApi.markHandled(tlId).then(() => { refetchContacts(); toast.success('Marked as handled'); }).catch(() => toast.error('Failed'));
-                                                }}
-                                                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded transition-colors"
-                                            >
-                                                <CheckCircle2 className="size-3" /> Handled
-                                            </button>
-                                            <div className="relative group">
-                                                <button className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded transition-colors">
-                                                    <Clock className="size-3" /> Snooze
-                                                </button>
-                                                <div className="absolute right-0 top-full mt-1 z-50 bg-white rounded-md shadow-lg border border-gray-200 py-1 min-w-[140px] hidden group-hover:block">
-                                                    {SNOOZE_OPTIONS.map(opt => (
-                                                        <div
-                                                            key={opt.label}
-                                                            role="button"
-                                                            tabIndex={0}
-                                                            onClick={() => {
-                                                                if (tlId) pulseApi.snoozeThread(tlId, getSnoozeUntil(opt)).then(() => { refetchContacts(); toast.success('Snoozed'); }).catch(() => toast.error('Failed'));
-                                                            }}
-                                                            className="px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer"
-                                                        >
-                                                            {opt.label}
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        </>
-                                    )}
-                                </div>
-                            );
-                        })()}
+
                         <div className="pulse-timeline-scroll">
                             <PulseTimeline
                                 calls={callDataItems}
