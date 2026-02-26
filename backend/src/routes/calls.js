@@ -110,6 +110,18 @@ router.get('/by-contact', async (req, res) => {
                 last_interaction_at,
                 last_interaction_type,
                 last_interaction_phone,
+                // Action Required fields
+                is_action_required: c.is_action_required || false,
+                action_required_reason: c.action_required_reason || null,
+                action_required_set_at: c.action_required_set_at || null,
+                snoozed_until: c.snoozed_until || null,
+                owner_user_id: c.owner_user_id || null,
+                open_task: c.open_task_id ? {
+                    id: c.open_task_id,
+                    title: c.open_task_title,
+                    due_at: c.open_task_due_at,
+                    priority: c.open_task_priority,
+                } : null,
             };
         });
 
@@ -288,9 +300,19 @@ router.get('/by-contact', async (req, res) => {
             conversations = deduped;
         }
 
-        // Final sort: unread first, then by last interaction (most recent first)
+        // Final sort: action_required (not snoozed) first, then unread, then by last interaction
         conversations.sort((a, b) => {
+            // 1. Action Required (not snoozed) — highest priority
+            const now = new Date();
+            const aAR = a.is_action_required && (!a.snoozed_until || new Date(a.snoozed_until) <= now);
+            const bAR = b.is_action_required && (!b.snoozed_until || new Date(b.snoozed_until) <= now);
+            if (aAR !== bAR) return aAR ? -1 : 1;
+            if (aAR && bAR) {
+                return new Date(b.action_required_set_at || 0) - new Date(a.action_required_set_at || 0);
+            }
+            // 2. Unread
             if (a.has_unread !== b.has_unread) return a.has_unread ? -1 : 1;
+            // 3. By last interaction (most recent first)
             const ta = new Date(a.last_interaction_at || 0);
             const tb = new Date(b.last_interaction_at || 0);
             return tb - ta;
