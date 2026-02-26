@@ -337,6 +337,44 @@ async function handleMessageAdded(payload) {
         } catch (e) {
             console.error('[ConvService] Failed to mark contact unread for SMS:', e.message);
         }
+
+        // Action Required auto-trigger: set AR + create task for inbound SMS
+        try {
+            const timeline = await queries.findOrCreateTimeline(conv.customer_e164, conv.company_id);
+            if (timeline && timeline.id) {
+                // Mark timeline unread too
+                await queries.markTimelineUnread(timeline.id);
+
+                // Set action_required (clears any snooze)
+                await queries.setActionRequired(timeline.id, 'new_message', 'system');
+
+                // Create task with 10 min SLA
+                const contactName = await (async () => {
+                    const c = await queries.findContactByPhoneOrSecondary(conv.customer_e164);
+                    return c?.full_name || conv.customer_e164;
+                })();
+                const dueAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+                await queries.createTask({
+                    companyId: conv.company_id || timeline.company_id,
+                    threadId: timeline.id,
+                    subjectType: 'contact',
+                    subjectId: timeline.contact_id,
+                    title: `New message from ${contactName}`,
+                    priority: 'p1',
+                    dueAt,
+                    createdBy: 'system',
+                });
+
+                // SSE broadcast
+                realtimeService.broadcast('thread.action_required', {
+                    timelineId: timeline.id,
+                    reason: 'new_message',
+                });
+                console.log(`[ConvService] Action Required set on timeline ${timeline.id} for inbound SMS from ${conv.customer_e164}`);
+            }
+        } catch (e) {
+            console.error('[ConvService] Failed to set action_required for inbound SMS:', e.message);
+        }
     }
 
     // SSE push

@@ -30,6 +30,10 @@ if (process.env.WORKER_MAX_RETRIES) {
 console.log('Starting Twilio Inbox Worker...');
 console.log('Configuration:', CONFIG);
 
+// Start snooze scheduler (unsnoozes expired threads every 60s)
+const snoozeScheduler = require('../services/snoozeScheduler');
+snoozeScheduler.start();
+
 startWorker().catch(error => {
     console.error('Fatal error:', error);
     process.exit(1);
