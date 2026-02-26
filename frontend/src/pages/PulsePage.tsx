@@ -849,6 +849,68 @@ export const PulsePage: React.FC = () => {
                     </div>
                 ) : (
                     <>
+                        {/* Action Required Header Bar */}
+                        {(() => {
+                            const conv = selectedConv as any;
+                            if (!conv?.is_action_required) return null;
+                            const isSnoozed = conv.snoozed_until && new Date(conv.snoozed_until) > new Date();
+                            const tlId = conv.timeline_id;
+                            return (
+                                <div className="flex items-center gap-2 px-4 py-2 border-b" style={{ backgroundColor: isSnoozed ? '#f3f4f6' : '#fff7ed' }}>
+                                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold"
+                                        style={{ backgroundColor: isSnoozed ? '#e5e7eb' : '#fed7aa', color: isSnoozed ? '#4b5563' : '#9a3412' }}>
+                                        {isSnoozed ? <Clock className="size-3" /> : <AlertTriangle className="size-3" />}
+                                        {isSnoozed ? 'Snoozed' : 'Action Required'}
+                                    </span>
+                                    {conv.action_required_reason && (
+                                        <span className="text-xs text-gray-500">{REASON_LABELS[conv.action_required_reason] || conv.action_required_reason}</span>
+                                    )}
+                                    {conv.open_task?.due_at && !isSnoozed && (
+                                        <span className="text-xs text-red-500">
+                                            Due {new Date(conv.open_task.due_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                                        </span>
+                                    )}
+                                    {isSnoozed && (
+                                        <span className="text-xs text-gray-500">
+                                            until {new Date(conv.snoozed_until).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                                        </span>
+                                    )}
+                                    <div className="flex-1" />
+                                    {!isSnoozed && (
+                                        <>
+                                            <button
+                                                onClick={() => {
+                                                    if (tlId) pulseApi.markHandled(tlId).then(() => { refetchContacts(); toast.success('Marked as handled'); }).catch(() => toast.error('Failed'));
+                                                }}
+                                                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded transition-colors"
+                                            >
+                                                <CheckCircle2 className="size-3" /> Handled
+                                            </button>
+                                            <div className="relative group">
+                                                <button className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded transition-colors">
+                                                    <Clock className="size-3" /> Snooze
+                                                </button>
+                                                <div className="absolute right-0 top-full mt-1 z-50 bg-white rounded-md shadow-lg border border-gray-200 py-1 min-w-[140px] hidden group-hover:block">
+                                                    {SNOOZE_OPTIONS.map(opt => (
+                                                        <div
+                                                            key={opt.label}
+                                                            role="button"
+                                                            tabIndex={0}
+                                                            onClick={() => {
+                                                                if (tlId) pulseApi.snoozeThread(tlId, getSnoozeUntil(opt)).then(() => { refetchContacts(); toast.success('Snoozed'); }).catch(() => toast.error('Failed'));
+                                                            }}
+                                                            className="px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer"
+                                                        >
+                                                            {opt.label}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+                            );
+                        })()}
                         <div className="pulse-timeline-scroll">
                             <PulseTimeline
                                 calls={callDataItems}
