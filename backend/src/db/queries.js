@@ -643,6 +643,22 @@ async function markContactRead(contactId) {
     return result.rows[0] || null;
 }
 
+async function markTimelineUnread(timelineId) {
+    const result = await db.query(
+        `UPDATE timelines SET has_unread = true, updated_at = now() WHERE id = $1 RETURNING *`,
+        [timelineId]
+    );
+    return result.rows[0] || null;
+}
+
+async function markTimelineRead(timelineId) {
+    const result = await db.query(
+        `UPDATE timelines SET has_unread = false, last_read_at = now(), updated_at = now() WHERE id = $1 RETURNING *`,
+        [timelineId]
+    );
+    return result.rows[0] || null;
+}
+
 // =============================================================================
 // Timeline operations
 // =============================================================================
@@ -777,6 +793,7 @@ async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, se
                 c.*,
                 to_json(co) as contact,
                 tl.id as tl_id,
+                tl.has_unread as tl_has_unread,
                 COALESCE(tl.phone_e164, co.phone_e164) as tl_phone,
                 tl.sms_last_at,
                 -- SMS enrichment via LEFT JOIN (using pre-computed customer_digits)
@@ -841,6 +858,8 @@ module.exports = {
     findOrCreateContact,
     markContactUnread,
     markContactRead,
+    markTimelineUnread,
+    markTimelineRead,
 
     // Timelines
     findOrCreateTimeline,

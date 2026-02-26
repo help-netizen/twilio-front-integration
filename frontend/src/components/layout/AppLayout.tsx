@@ -144,9 +144,10 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
             : location.pathname.startsWith('/leads') ? 'leads'
                 : location.pathname.startsWith('/jobs') ? 'jobs'
                     : location.pathname.startsWith('/contacts') ? 'contacts'
-                        : location.pathname.startsWith('/settings') ? 'settings'
-                            : location.pathname.startsWith('/calls') || location.pathname.startsWith('/contact/') ? 'calls'
-                                : 'pulse';
+                        : location.pathname.startsWith('/payments') ? 'payments'
+                            : location.pathname.startsWith('/settings') ? 'settings'
+                                : location.pathname.startsWith('/calls') || location.pathname.startsWith('/contact/') ? 'calls'
+                                    : 'pulse';
 
     const { accessDeniedMessage, clearAccessDenied, logout, hasRole } = useAuth();
 
@@ -321,6 +322,14 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                                         <Contact2 className="size-4" />
                                         Contacts
                                     </TabsTrigger>
+                                    <TabsTrigger
+                                        value="payments"
+                                        className="flex items-center gap-2"
+                                        onClick={() => navigate('/payments')}
+                                    >
+                                        <DollarSign className="size-4" />
+                                        Payments
+                                    </TabsTrigger>
                                 </TabsList>
                             </Tabs>
                         </div>
@@ -382,13 +391,6 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                                     >
                                         <MessageSquareText className="size-4" />
                                         Quick Messages
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                        className="flex items-center gap-2 cursor-pointer"
-                                        onClick={() => navigate('/settings/payments')}
-                                    >
-                                        <DollarSign className="size-4" />
-                                        Payments
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
                                         className="flex items-center gap-2 cursor-pointer"

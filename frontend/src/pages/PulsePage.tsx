@@ -44,12 +44,15 @@ const STATUS_ICON_COLORS: Record<string, string> = {
     'voicemail_left': '#dc2626',
 };
 
-function PulseContactItem({ call, isActive, onMarkUnread }: { call: Call; isActive: boolean; onMarkUnread?: (contactId: number | null, smsConversationId: string | null) => void }) {
+function PulseContactItem({ call, isActive, onMarkUnread }: { call: Call; isActive: boolean; onMarkUnread?: (timelineId: number) => void }) {
     const navigate = useNavigate();
     // Prefer timeline_id for navigation, fall back to contact_id (legacy)
     const tlId = (call as any).timeline_id;
     const contactId = call.contact?.id || call.id;
     const targetPath = tlId ? `/pulse/timeline/${tlId}` : (contactId ? `/pulse/contact/${contactId}` : null);
+
+    // Unified unread state: timeline OR SMS OR contact level
+    const hasUnread = (call as any).tl_has_unread || (call as any).sms_has_unread || call.has_unread;
 
     const rawPhone = (call as any).tl_phone || call.contact?.phone_e164 || call.from_number || call.to_number || call.call_sid;
 
@@ -123,13 +126,11 @@ function PulseContactItem({ call, isActive, onMarkUnread }: { call: Call; isActi
             onClick={() => {
                 if (!targetPath) return;
                 navigate(targetPath);
-                // Mark read on explicit user click — clear BOTH sources
-                if (call.has_unread) {
-                    if (call.sms_conversation_id) {
-                        messagingApi.markRead(call.sms_conversation_id).catch(() => { });
-                    }
-                    if (call.contact?.id) {
-                        callsApi.markContactRead(call.contact.id).catch(() => { });
+                // Mark read on explicit user click — clear timeline + SMS sources
+                if (hasUnread && tlId) {
+                    callsApi.markTimelineRead(tlId).catch(() => { });
+                    if ((call as any).sms_conversation_id) {
+                        messagingApi.markRead((call as any).sms_conversation_id).catch(() => { });
                     }
                 }
             }}
@@ -137,7 +138,7 @@ function PulseContactItem({ call, isActive, onMarkUnread }: { call: Call; isActi
             style={{ outline: 'none' }}
         >
             {/* Unread left bar */}
-            {call.has_unread && (
+            {hasUnread && (
                 <div
                     className="absolute left-0 top-0 bottom-0 w-[3px] rounded-r"
                     style={{ backgroundColor: '#2563eb' }}
@@ -149,7 +150,7 @@ function PulseContactItem({ call, isActive, onMarkUnread }: { call: Call; isActi
                 </div>
                 <div className="min-w-0 flex-1">
                     <div className="flex items-baseline justify-between mb-1">
-                        <span className={`text-sm truncate ${call.has_unread ? 'font-semibold text-gray-900' : 'font-medium text-gray-900'}`}>{primaryText}</span>
+                        <span className={`text-sm truncate ${hasUnread ? 'font-semibold text-gray-900' : 'font-medium text-gray-900'}`}>{primaryText}</span>
                     </div>
                     {showSecondaryPhone && (
                         <div className="text-xs text-gray-600 mb-1 font-mono">{formatPhoneNumber(displayPhone)}</div>
@@ -181,13 +182,13 @@ function PulseContactItem({ call, isActive, onMarkUnread }: { call: Call; isActi
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         setMenuOpen(false);
-                                        onMarkUnread?.(call.contact?.id || null, (call as any).sms_conversation_id || null);
+                                        if (tlId && onMarkUnread) onMarkUnread(tlId);
                                     }}
                                     onKeyDown={(e) => {
                                         if (e.key === 'Enter') {
                                             e.stopPropagation();
                                             setMenuOpen(false);
-                                            onMarkUnread?.(call.contact?.id || null, (call as any).sms_conversation_id || null);
+                                            if (tlId && onMarkUnread) onMarkUnread(tlId);
                                         }
                                     }}
                                     className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer w-full"
@@ -635,13 +636,9 @@ export const PulsePage: React.FC = () => {
                                     key={tlId ?? call.id ?? `c-${call.contact?.id ?? (call.from_number || idx)}`}
                                     call={call}
                                     isActive={isActive}
-                                    onMarkUnread={async (contactId, smsConversationId) => {
+                                    onMarkUnread={async (timelineId) => {
                                         try {
-                                            const promises: Promise<any>[] = [];
-                                            if (contactId) promises.push(callsApi.markContactUnread(contactId));
-                                            if (smsConversationId) promises.push(messagingApi.markUnread(smsConversationId));
-                                            if (promises.length === 0) { toast.error('Nothing to mark'); return; }
-                                            await Promise.all(promises);
+                                            await callsApi.markTimelineUnread(timelineId);
                                             refetchContacts();
                                             toast.success('Marked as unread');
                                         } catch { toast.error('Failed to mark as unread'); }

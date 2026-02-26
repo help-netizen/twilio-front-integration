@@ -103,7 +103,9 @@ router.get('/by-contact', async (req, res) => {
                 ...formatted,
                 timeline_id: c.tl_id || c.timeline_id || null,
                 tl_phone: tlPhone,
-                has_unread: c.sms_has_unread || false,
+                tl_has_unread: c.tl_has_unread || false,
+                has_unread: c.tl_has_unread || c.sms_has_unread || false,
+                sms_has_unread: c.sms_has_unread || false,
                 sms_conversation_id: c.sms_conversation_id || null,
                 last_interaction_at,
                 last_interaction_type,
@@ -348,6 +350,48 @@ router.post('/contact/:contactId/mark-unread', async (req, res) => {
     } catch (error) {
         console.error('Error marking contact unread:', error);
         res.status(500).json({ error: 'Failed to mark contact unread' });
+    }
+});
+
+// =============================================================================
+// POST /api/calls/timeline/:timelineId/mark-read — mark timeline as read
+// =============================================================================
+router.post('/timeline/:timelineId/mark-read', async (req, res) => {
+    try {
+        const { timelineId } = req.params;
+        const tl = await queries.markTimelineRead(parseInt(timelineId));
+        if (!tl) return res.status(404).json({ error: 'Timeline not found' });
+        // Also mark contact read if linked
+        if (tl.contact_id) {
+            await queries.markContactRead(tl.contact_id).catch(() => { });
+        }
+        const realtimeService = require('../services/realtimeService');
+        realtimeService.broadcast('timeline.read', { timelineId: parseInt(timelineId) });
+        res.json({ timeline: tl });
+    } catch (error) {
+        console.error('Error marking timeline read:', error);
+        res.status(500).json({ error: 'Failed to mark timeline read' });
+    }
+});
+
+// =============================================================================
+// POST /api/calls/timeline/:timelineId/mark-unread — mark timeline as unread
+// =============================================================================
+router.post('/timeline/:timelineId/mark-unread', async (req, res) => {
+    try {
+        const { timelineId } = req.params;
+        const tl = await queries.markTimelineUnread(parseInt(timelineId));
+        if (!tl) return res.status(404).json({ error: 'Timeline not found' });
+        // Also mark contact unread if linked
+        if (tl.contact_id) {
+            await queries.markContactUnread(tl.contact_id).catch(() => { });
+        }
+        const realtimeService = require('../services/realtimeService');
+        realtimeService.broadcast('timeline.unread', { timelineId: parseInt(timelineId) });
+        res.json({ timeline: tl });
+    } catch (error) {
+        console.error('Error marking timeline unread:', error);
+        res.status(500).json({ error: 'Failed to mark timeline unread' });
     }
 });
 

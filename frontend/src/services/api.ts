@@ -98,6 +98,16 @@ export const callsApi = {
     markContactUnread: async (contactId: number): Promise<void> => {
         await apiClient.post(`/calls/contact/${contactId}/mark-unread`);
     },
+
+    /** Mark a timeline as read (team-wide) */
+    markTimelineRead: async (timelineId: number): Promise<void> => {
+        await apiClient.post(`/calls/timeline/${timelineId}/mark-read`);
+    },
+
+    /** Mark a timeline as unread (team-wide) */
+    markTimelineUnread: async (timelineId: number): Promise<void> => {
+        await apiClient.post(`/calls/timeline/${timelineId}/mark-unread`);
+    },
 };
 
 export default apiClient;
