@@ -166,8 +166,10 @@ async function processVoiceEvent(payload, eventType, traceId) {
         timelineId = timeline.id;
         contactId = timeline.contact_id || null;
 
-        // Mark timeline + contact unread for inbound calls (parent only)
-        if (timelineId && processed.direction === 'inbound' && !normalized.parentCallSid) {
+        // Mark timeline + contact unread for MISSED inbound calls only (not completed/answered)
+        const answeredStatuses = ['completed', 'in-progress'];
+        if (timelineId && processed.direction === 'inbound' && !normalized.parentCallSid
+            && !answeredStatuses.includes(normalized.eventStatus)) {
             try {
                 await queries.markTimelineUnread(timelineId);
             } catch (e) {
