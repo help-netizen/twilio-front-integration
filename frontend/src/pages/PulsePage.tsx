@@ -44,7 +44,7 @@ const STATUS_ICON_COLORS: Record<string, string> = {
     'voicemail_left': '#dc2626',
 };
 
-function PulseContactItem({ call, isActive, onMarkUnread }: { call: Call; isActive: boolean; onMarkUnread?: (timelineId: number) => void }) {
+function PulseContactItem({ call, isActive, onMarkUnread, onRead }: { call: Call; isActive: boolean; onMarkUnread?: (timelineId: number) => void; onRead?: () => void }) {
     const navigate = useNavigate();
     // Prefer timeline_id for navigation, fall back to contact_id (legacy)
     const tlId = (call as any).timeline_id;
@@ -126,9 +126,11 @@ function PulseContactItem({ call, isActive, onMarkUnread }: { call: Call; isActi
             onClick={() => {
                 if (!targetPath) return;
                 navigate(targetPath);
-                // Mark read on explicit user click — clear timeline + SMS sources
-                if (hasUnread && tlId) {
-                    callsApi.markTimelineRead(tlId).catch(() => { });
+                // Always mark timeline as read on click
+                if (tlId) {
+                    callsApi.markTimelineRead(tlId)
+                        .then(() => { onRead?.(); })
+                        .catch((err) => { console.error('[Pulse] mark-read failed:', err); });
                     if ((call as any).sms_conversation_id) {
                         messagingApi.markRead((call as any).sms_conversation_id).catch(() => { });
                     }
@@ -643,6 +645,7 @@ export const PulsePage: React.FC = () => {
                                             toast.success('Marked as unread');
                                         } catch { toast.error('Failed to mark as unread'); }
                                     }}
+                                    onRead={() => refetchContacts()}
                                 />
                             );
                         })

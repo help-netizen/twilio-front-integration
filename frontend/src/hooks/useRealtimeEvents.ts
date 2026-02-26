@@ -218,6 +218,14 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
                 onContactReadRef.current?.(data);
             });
 
+            // Timeline read/unread events — reuse onContactRead to trigger refetch
+            eventSource.addEventListener('timeline.read', (e) => {
+                try { const data = JSON.parse(e.data); console.log('[SSE] Timeline read:', data); onContactReadRef.current?.(data); } catch { }
+            });
+            eventSource.addEventListener('timeline.unread', (e) => {
+                try { const data = JSON.parse(e.data); console.log('[SSE] Timeline unread:', data); onContactReadRef.current?.(data); } catch { }
+            });
+
             // Realtime transcription events
             eventSource.addEventListener('transcript.delta', (e) => {
                 const data = JSON.parse(e.data) as SSETranscriptDeltaEvent;
