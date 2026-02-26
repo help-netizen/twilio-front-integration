@@ -74,7 +74,12 @@ function App() {
                   <QuickMessagesPage />
                 </ProtectedRoute>
               } />
-              <Route path="/settings/payments" element={
+              <Route path="/payments" element={
+                <ProtectedRoute roles={['company_admin']}>
+                  <PaymentsPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/payments/:paymentId" element={
                 <ProtectedRoute roles={['company_admin']}>
                   <PaymentsPage />
                 </ProtectedRoute>

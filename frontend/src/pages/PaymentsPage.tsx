@@ -1,17 +1,25 @@
 /**
  * PaymentsPage — Zenbooker Payments (Split-View)
- * Settings sub-page at /settings/payments
+ * Page at /payments
  *
  * Left:  filterable, sortable, searchable payments table
  * Right: PaymentDetailPanel with invoice, job, providers, attachments gallery
  */
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import {
     Loader2, Download, Search, DollarSign, X,
     ChevronLeft, ChevronRight, FileText,
     User2, MapPin, Receipt, ChevronDown, ImageIcon, ExternalLink,
+    RefreshCw, CalendarIcon,
 } from 'lucide-react';
+import { Input } from '../components/ui/input';
+import { Button } from '../components/ui/button';
+import { Badge } from '../components/ui/badge';
+import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
+import { Calendar } from '../components/ui/calendar';
+import { format } from 'date-fns';
 import { authedFetch } from '../services/apiClient';
 import './PaymentsPage.css';
 
@@ -20,6 +28,7 @@ const API_BASE = import.meta.env.VITE_API_URL || '';
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface PaymentRow {
+    id: number;
     job_number: string;
     client: string;
     job_type: string;
@@ -41,6 +50,7 @@ interface PaymentRow {
     invoice_amount_paid: string | null;
     invoice_amount_due: string | null;
     invoice_paid_in_full: boolean;
+    check_deposited: boolean;
 }
 
 interface Attachment {
@@ -58,7 +68,9 @@ interface Provider {
     phone: string | null;
 }
 
-interface PaymentDetail extends PaymentRow {
+interface PaymentDetail extends Omit<PaymentRow, 'check_deposited'> {
+    id: number;
+    check_deposited: boolean;
     invoice: {
         status: string;
         total: string;
@@ -85,7 +97,7 @@ interface PaymentDetail extends PaymentRow {
     _warning: string | null;
 }
 
-type SortField = 'payment_date' | 'amount_paid' | 'job_number' | 'client' | 'payment_methods';
+type SortField = 'payment_date' | 'amount_paid' | 'invoice_amount_due' | 'job_number' | 'client' | 'payment_methods' | 'tech';
 type SortDir = 'asc' | 'desc';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -139,14 +151,19 @@ function paymentMethodIcon(method: string): string {
 const COLUMNS: { key: keyof PaymentRow; label: string; sortable?: boolean; className?: string }[] = [
     { key: 'payment_date', label: 'Date', sortable: true },
     { key: 'amount_paid', label: 'Amount', sortable: true, className: 'amount-cell' },
+    { key: 'invoice_amount_due', label: 'Due', sortable: true, className: 'due-cell' },
     { key: 'payment_methods', label: 'Method', sortable: true },
     { key: 'job_number', label: 'Job #', sortable: true },
     { key: 'client', label: 'Customer', sortable: true },
+    { key: 'tech', label: 'Provider', sortable: true },
 ];
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export default function PaymentsPage() {
+    const { paymentId: urlPaymentId } = useParams<{ paymentId?: string }>();
+    const navigate = useNavigate();
+
     // Filter state
     const [dateFrom, setDateFrom] = useState(defaultDateFrom);
     const [dateTo, setDateTo] = useState(defaultDateTo);
@@ -168,9 +185,32 @@ export default function PaymentsPage() {
     const perPage = 50;
 
     // Detail panel
-    const [selectedTxnId, setSelectedTxnId] = useState<string | null>(null);
+    const [selectedId, setSelectedId] = useState<number | null>(urlPaymentId ? parseInt(urlPaymentId, 10) || null : null);
     const [detail, setDetail] = useState<PaymentDetail | null>(null);
     const [detailLoading, setDetailLoading] = useState(false);
+
+    // Sync state
+    const [syncing, setSyncing] = useState(false);
+    const [syncResult, setSyncResult] = useState<string | null>(null);
+
+    // Advanced filters
+    const [providerFilter, setProviderFilter] = useState('');
+    const [paidFilter, setPaidFilter] = useState<'' | 'paid' | 'due'>('');
+    const [filtersOpen, setFiltersOpen] = useState(false);
+    const [datePickerOpen, setDatePickerOpen] = useState(false);
+    const [quickFilter, setQuickFilter] = useState<'all' | 'new_checks'>('all');
+    const filterRef = useRef<HTMLDivElement>(null);
+
+    // Close filters dropdown on outside click
+    useEffect(() => {
+        const handler = (e: MouseEvent) => {
+            if (filterRef.current && !filterRef.current.contains(e.target as Node)) {
+                setFiltersOpen(false);
+            }
+        };
+        if (filtersOpen) document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [filtersOpen]);
 
     // Search debounce
     const searchTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -212,13 +252,38 @@ export default function PaymentsPage() {
     // Auto-load on filter change
     useEffect(() => { fetchPayments(); }, [fetchPayments]);
 
+    // ── Sync payments ─────────────────────────────────────────────────────────
+
+    const handleSync = useCallback(async () => {
+        setSyncing(true);
+        setSyncResult(null);
+        try {
+            const res = await authedFetch(`${API_BASE}/api/zenbooker/payments/sync`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ date_from: dateFrom, date_to: dateTo }),
+            });
+            const json = await res.json();
+            if (!res.ok || !json.ok) {
+                throw new Error(json.error || 'Sync failed');
+            }
+            setSyncResult(`Synced ${json.data.synced} payments`);
+            // Reload list after sync
+            fetchPayments();
+        } catch (err: any) {
+            setSyncResult(`Sync error: ${err.message}`);
+        } finally {
+            setSyncing(false);
+            setTimeout(() => setSyncResult(null), 5000);
+        }
+    }, [dateFrom, dateTo, fetchPayments]);
+
     // ── Fetch detail ──────────────────────────────────────────────────────────
 
-    const fetchDetail = useCallback(async (txnId: string) => {
+    const fetchDetail = useCallback(async (paymentId: number) => {
         setDetailLoading(true);
         try {
-            const qs = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
-            const res = await authedFetch(`${API_BASE}/api/zenbooker/payments/${txnId}?${qs.toString()}`);
+            const res = await authedFetch(`${API_BASE}/api/zenbooker/payments/${paymentId}`);
             const json = await res.json();
             if (!res.ok || !json.ok) {
                 throw new Error(json.error || 'Failed to load detail');
@@ -230,17 +295,49 @@ export default function PaymentsPage() {
         } finally {
             setDetailLoading(false);
         }
-    }, [dateFrom, dateTo]);
+    }, []);
 
-    const handleSelectRow = (txnId: string) => {
-        setSelectedTxnId(txnId);
-        fetchDetail(txnId);
+    const handleSelectRow = (paymentId: number) => {
+        setSelectedId(paymentId);
+        navigate(`/payments/${paymentId}`, { replace: true });
+        fetchDetail(paymentId);
     };
 
     const handleCloseDetail = () => {
-        setSelectedTxnId(null);
+        setSelectedId(null);
         setDetail(null);
+        navigate('/payments', { replace: true });
     };
+
+    // Toggle check_deposited flag
+    const handleToggleDeposited = useCallback(async (deposited: boolean) => {
+        if (!detail || !selectedId) return;
+        try {
+            const res = await authedFetch(`${API_BASE}/api/zenbooker/payments/${selectedId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ check_deposited: deposited }),
+            });
+            const json = await res.json();
+            if (!res.ok || !json.ok) throw new Error(json.error || 'Failed');
+            // Update detail
+            setDetail(prev => prev ? { ...prev, check_deposited: deposited } : prev);
+            // Update rows list
+            setRows(prev => prev.map(r =>
+                r.id === selectedId ? { ...r, check_deposited: deposited } : r
+            ));
+        } catch (err: any) {
+            console.error('Toggle deposited error:', err);
+        }
+    }, [detail, selectedId]);
+
+    useEffect(() => {
+        const parsedId = urlPaymentId ? parseInt(urlPaymentId, 10) : null;
+        if (parsedId && parsedId !== selectedId) {
+            setSelectedId(parsedId);
+            fetchDetail(parsedId);
+        }
+    }, [urlPaymentId]);
 
     // ── Sorting ───────────────────────────────────────────────────────────────
 
@@ -254,13 +351,67 @@ export default function PaymentsPage() {
         setPage(0);
     };
 
-    const sortedRows = useMemo(() => {
-        const sorted = [...rows];
-        sorted.sort((a, b) => {
-            let va: string | number = a[sortField];
-            let vb: string | number = b[sortField];
+    // ── Client-side filter helpers ────────────────────────────────────────────
 
-            if (sortField === 'amount_paid') {
+    const uniqueMethods = useMemo(() => {
+        const set = new Set<string>();
+        rows.forEach(r => { if (r.display_payment_method) set.add(r.display_payment_method); });
+        return [...set].sort();
+    }, [rows]);
+
+    const uniqueProviders = useMemo(() => {
+        const set = new Set<string>();
+        rows.forEach(r => {
+            if (r.tech && r.tech !== '—') {
+                r.tech.split(',').forEach((t: string) => { const name = t.trim(); if (name) set.add(name); });
+            }
+        });
+        return [...set].sort();
+    }, [rows]);
+
+    const activeFilterCount = (methodFilter ? 1 : 0) + (providerFilter ? 1 : 0) + (paidFilter ? 1 : 0);
+
+    const clearAllFilters = () => {
+        setMethodFilter('');
+        setProviderFilter('');
+        setPaidFilter('');
+    };
+
+    // ── Sorting + client-side filter ────────────────────────────────────────
+
+    // Count of undeposited checks (respects date range via rows which are already date-filtered)
+    const undepositedCheckCount = useMemo(() =>
+        rows.filter(r => (r.display_payment_method || '').toLowerCase() === 'check' && !r.check_deposited).length,
+        [rows]
+    );
+
+    const sortedRows = useMemo(() => {
+        let filtered = [...rows];
+
+        // Quick filter
+        if (quickFilter === 'new_checks') {
+            filtered = filtered.filter(r =>
+                (r.display_payment_method || '').toLowerCase() === 'check' && !r.check_deposited
+            );
+        }
+
+        // Client-side paid filter
+        if (paidFilter === 'paid') {
+            filtered = filtered.filter(r => r.invoice_paid_in_full === true);
+        } else if (paidFilter === 'due') {
+            filtered = filtered.filter(r => r.invoice_paid_in_full !== true);
+        }
+
+        // Client-side provider filter
+        if (providerFilter) {
+            filtered = filtered.filter(r => r.tech && r.tech.includes(providerFilter));
+        }
+
+        filtered.sort((a, b) => {
+            let va: string | number = (a[sortField] ?? '') as string;
+            let vb: string | number = (b[sortField] ?? '') as string;
+
+            if (sortField === 'amount_paid' || sortField === 'invoice_amount_due') {
                 va = parseFloat(va as string) || 0;
                 vb = parseFloat(vb as string) || 0;
             } else if (sortField === 'payment_date') {
@@ -275,8 +426,8 @@ export default function PaymentsPage() {
             if (va > vb) return sortDir === 'asc' ? 1 : -1;
             return 0;
         });
-        return sorted;
-    }, [rows, sortField, sortDir]);
+        return filtered;
+    }, [rows, sortField, sortDir, paidFilter, providerFilter, quickFilter]);
 
     // ── Pagination ────────────────────────────────────────────────────────────
 
@@ -343,74 +494,280 @@ export default function PaymentsPage() {
     return (
         <div className="payments-split-container">
             {/* ── Left: List Panel ─────────────────────────────────── */}
-            <div className={`payments-list-panel ${selectedTxnId ? 'has-detail' : ''}`}>
+            <div className={`payments-list-panel ${selectedId ? 'has-detail' : ''}`}>
                 {/* Header */}
-                <div className="payments-list-header">
-                    <div className="payments-list-title-row">
-                        <h1>Payments</h1>
-                        <button
-                            className="payments-btn payments-btn-secondary"
-                            onClick={handleExportCSV}
-                            disabled={sortedRows.length === 0}
-                        >
-                            <Download size={14} /> Export
-                        </button>
+                <div className="border-b p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <h2 className="text-xl font-semibold">Payments</h2>
+                            <div className="flex gap-1">
+                                <Button
+                                    variant={quickFilter === 'all' ? 'default' : 'ghost'}
+                                    size="sm"
+                                    onClick={() => { setQuickFilter('all'); setPage(0); }}
+                                >
+                                    All
+                                </Button>
+                                <Button
+                                    variant={quickFilter === 'new_checks' ? 'default' : 'ghost'}
+                                    size="sm"
+                                    onClick={() => { setQuickFilter('new_checks'); setPage(0); }}
+                                    className="gap-1.5"
+                                >
+                                    New checks
+                                    {undepositedCheckCount > 0 && (
+                                        <Badge variant="destructive" className="text-[10px] px-1.5 py-0 min-w-[18px] h-[18px] justify-center">
+                                            {undepositedCheckCount}
+                                        </Badge>
+                                    )}
+                                </Button>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-1">
+                            {syncResult && (
+                                <span style={{ fontSize: '12px', color: syncResult.startsWith('Sync error') ? '#ef4444' : '#22c55e' }}>
+                                    {syncResult}
+                                </span>
+                            )}
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={handleSync}
+                                disabled={syncing}
+                            >
+                                <RefreshCw className={`size-4 mr-1 ${syncing ? 'animate-spin' : ''}`} />
+                                {syncing ? 'Syncing…' : 'Sync'}
+                            </Button>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={handleExportCSV}
+                                disabled={sortedRows.length === 0}
+                            >
+                                <Download className="size-4 mr-1" /> Export
+                            </Button>
+                        </div>
                     </div>
 
-                    {/* Filters */}
-                    <div className="payments-filters-bar">
-                        <div className="payments-search-wrap">
-                            <Search size={14} className="payments-search-icon" />
-                            <input
-                                type="text"
-                                placeholder="Search customer, job #, memo…"
+                    {/* Filters — Jobs-style */}
+                    <div className="flex flex-wrap gap-3 items-center">
+                        {/* Search + Filter Dropdown */}
+                        <div className="relative flex-1 min-w-[200px]" ref={filterRef}>
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground z-10" />
+                            <Input
+                                placeholder="Search customer, job #, provider…"
                                 value={searchInput}
                                 onChange={e => setSearchInput(e.target.value)}
-                                className="payments-search-input"
+                                onFocus={() => setFiltersOpen(true)}
+                                className="pl-9"
                             />
-                            {searchInput && (
-                                <button
-                                    className="payments-search-clear"
-                                    onClick={() => { setSearchInput(''); setSearchQuery(''); }}
-                                >
-                                    <X size={12} />
-                                </button>
+
+                            {/* Filter Dropdown Panel */}
+                            {filtersOpen && (
+                                <div className="absolute top-full left-0 right-0 mt-1 bg-popover border rounded-lg shadow-lg z-50 p-0 overflow-hidden">
+                                    {/* Active filter badges */}
+                                    {activeFilterCount > 0 && (
+                                        <div className="flex flex-wrap gap-1.5 p-3 pb-0 items-center">
+                                            {methodFilter && (
+                                                <Badge variant="secondary" className="gap-1 text-xs">
+                                                    {methodFilter}
+                                                    <X className="size-3 cursor-pointer" onClick={() => setMethodFilter('')} />
+                                                </Badge>
+                                            )}
+                                            {providerFilter && (
+                                                <Badge variant="outline" className="gap-1 text-xs">
+                                                    {providerFilter}
+                                                    <X className="size-3 cursor-pointer" onClick={() => setProviderFilter('')} />
+                                                </Badge>
+                                            )}
+                                            {paidFilter && (
+                                                <Badge variant="default" className="gap-1 text-xs">
+                                                    {paidFilter === 'paid' ? 'Paid in Full' : 'Has Balance Due'}
+                                                    <X className="size-3 cursor-pointer" onClick={() => setPaidFilter('')} />
+                                                </Badge>
+                                            )}
+                                            <button
+                                                onClick={clearAllFilters}
+                                                className="text-xs text-muted-foreground hover:text-foreground ml-1"
+                                            >
+                                                Clear all
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    {/* Columns */}
+                                    <div className="grid grid-cols-3 divide-x p-3 gap-0">
+                                        {/* Payment Method */}
+                                        <div className="px-3">
+                                            <div className="text-[11px] font-semibold text-muted-foreground tracking-wider uppercase mb-2">PAYMENT METHOD</div>
+                                            <div className="space-y-0.5 max-h-[240px] overflow-y-auto">
+                                                {uniqueMethods.length === 0 && (
+                                                    <div className="text-xs text-muted-foreground italic py-1">None available</div>
+                                                )}
+                                                {uniqueMethods.map(m => {
+                                                    const isSelected = methodFilter === m;
+                                                    return (
+                                                        <button
+                                                            key={m}
+                                                            type="button"
+                                                            onClick={() => setMethodFilter(isSelected ? '' : m)}
+                                                            className={`flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-md text-sm transition-colors ${isSelected
+                                                                ? 'bg-primary/10 text-primary font-medium'
+                                                                : 'hover:bg-muted text-foreground'
+                                                                }`}
+                                                        >
+                                                            <div className={`size-4 border rounded flex items-center justify-center shrink-0 ${isSelected ? 'bg-primary border-primary' : 'border-input'}`}>
+                                                                {isSelected && <span className="text-[10px] text-primary-foreground">✓</span>}
+                                                            </div>
+                                                            {m}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+
+                                        {/* Provider */}
+                                        <div className="px-3">
+                                            <div className="text-[11px] font-semibold text-muted-foreground tracking-wider uppercase mb-2">PROVIDER</div>
+                                            <div className="space-y-0.5 max-h-[240px] overflow-y-auto">
+                                                {uniqueProviders.length === 0 && (
+                                                    <div className="text-xs text-muted-foreground italic py-1">None available</div>
+                                                )}
+                                                {uniqueProviders.map(p => {
+                                                    const isSelected = providerFilter === p;
+                                                    return (
+                                                        <button
+                                                            key={p}
+                                                            type="button"
+                                                            onClick={() => setProviderFilter(isSelected ? '' : p)}
+                                                            className={`flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-md text-sm transition-colors ${isSelected
+                                                                ? 'bg-primary/10 text-primary font-medium'
+                                                                : 'hover:bg-muted text-foreground'
+                                                                }`}
+                                                        >
+                                                            <div className={`size-4 border rounded flex items-center justify-center shrink-0 ${isSelected ? 'bg-primary border-primary' : 'border-input'}`}>
+                                                                {isSelected && <span className="text-[10px] text-primary-foreground">✓</span>}
+                                                            </div>
+                                                            {p}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+
+                                        {/* Invoice Status */}
+                                        <div className="px-3">
+                                            <div className="text-[11px] font-semibold text-muted-foreground tracking-wider uppercase mb-2">INVOICE STATUS</div>
+                                            <div className="space-y-0.5">
+                                                {(['paid', 'due'] as const).map(val => {
+                                                    const isSelected = paidFilter === val;
+                                                    const label = val === 'paid' ? 'Paid in Full' : 'Has Balance Due';
+                                                    return (
+                                                        <button
+                                                            key={val}
+                                                            type="button"
+                                                            onClick={() => setPaidFilter(isSelected ? '' : val)}
+                                                            className={`flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-md text-sm transition-colors ${isSelected
+                                                                ? 'bg-primary/10 text-primary font-medium'
+                                                                : 'hover:bg-muted text-foreground'
+                                                                }`}
+                                                        >
+                                                            <div className={`size-4 border rounded flex items-center justify-center shrink-0 ${isSelected ? 'bg-primary border-primary' : 'border-input'}`}>
+                                                                {isSelected && <span className="text-[10px] text-primary-foreground">✓</span>}
+                                                            </div>
+                                                            {label}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                             )}
                         </div>
 
-                        <div className="payments-filter-row">
-                            <input
-                                type="date"
-                                value={dateFrom}
-                                onChange={e => setDateFrom(e.target.value)}
-                                className="payments-date-input"
-                            />
-                            <span className="payments-date-sep">→</span>
-                            <input
-                                type="date"
-                                value={dateTo}
-                                onChange={e => setDateTo(e.target.value)}
-                                className="payments-date-input"
-                            />
-                            <select
-                                value={methodFilter}
-                                onChange={e => setMethodFilter(e.target.value)}
-                                className="payments-method-select"
-                            >
-                                <option value="">All Methods</option>
-                                <option value="stripe">Stripe</option>
-                                <option value="cash">Cash</option>
-                                <option value="check">Check</option>
-                                <option value="credit_card">Credit Card</option>
-                                <option value="custom">Custom</option>
-                            </select>
-                        </div>
+                        {/* Active filter count badge */}
+                        {activeFilterCount > 0 && (
+                            <Badge variant="secondary" className="gap-1">
+                                {activeFilterCount} filter{activeFilterCount > 1 ? 's' : ''}
+                                <X className="size-3 cursor-pointer" onClick={clearAllFilters} />
+                            </Badge>
+                        )}
+
+                        {/* Date Range Picker */}
+                        <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
+                            <PopoverTrigger asChild>
+                                <Button variant="outline" className="gap-2">
+                                    <CalendarIcon className="size-4" />
+                                    {dateFrom && dateTo
+                                        ? `${format(new Date(dateFrom + 'T00:00:00'), 'MMM dd')} – ${format(new Date(dateTo + 'T00:00:00'), 'MMM dd, yyyy')}`
+                                        : dateFrom
+                                            ? `From ${format(new Date(dateFrom + 'T00:00:00'), 'MMM dd, yyyy')}`
+                                            : 'Date Range'
+                                    }
+                                </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-0" align="end">
+                                <div className="flex">
+                                    <div className="border-r p-3 space-y-1">
+                                        <div className="text-sm font-medium mb-2">Presets</div>
+                                        <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => {
+                                            const today = new Date();
+                                            setDateFrom(format(today, 'yyyy-MM-dd'));
+                                            setDateTo(format(today, 'yyyy-MM-dd'));
+                                            setDatePickerOpen(false);
+                                        }}>Today</Button>
+                                        <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => {
+                                            const d = new Date(); d.setDate(d.getDate() - 7);
+                                            setDateFrom(format(d, 'yyyy-MM-dd'));
+                                            setDateTo(format(new Date(), 'yyyy-MM-dd'));
+                                            setDatePickerOpen(false);
+                                        }}>Last 7 days</Button>
+                                        <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => {
+                                            const d = new Date(); d.setDate(d.getDate() - 30);
+                                            setDateFrom(format(d, 'yyyy-MM-dd'));
+                                            setDateTo(format(new Date(), 'yyyy-MM-dd'));
+                                            setDatePickerOpen(false);
+                                        }}>Last 30 days</Button>
+                                        <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => {
+                                            const now = new Date();
+                                            setDateFrom(format(new Date(now.getFullYear(), now.getMonth(), 1), 'yyyy-MM-dd'));
+                                            setDateTo(format(now, 'yyyy-MM-dd'));
+                                            setDatePickerOpen(false);
+                                        }}>This Month</Button>
+                                        <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => {
+                                            const now = new Date();
+                                            const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+                                            const last = new Date(now.getFullYear(), now.getMonth(), 0);
+                                            setDateFrom(format(prev, 'yyyy-MM-dd'));
+                                            setDateTo(format(last, 'yyyy-MM-dd'));
+                                            setDatePickerOpen(false);
+                                        }}>Last Month</Button>
+                                    </div>
+                                    <div className="p-3">
+                                        <div className="text-xs text-muted-foreground mb-1">From</div>
+                                        <Calendar
+                                            mode="single"
+                                            selected={dateFrom ? new Date(dateFrom + 'T00:00:00') : undefined}
+                                            onSelect={(date) => { if (date) setDateFrom(format(date, 'yyyy-MM-dd')); }}
+                                        />
+                                        <div className="text-xs text-muted-foreground mb-1 mt-2">To</div>
+                                        <Calendar
+                                            mode="single"
+                                            selected={dateTo ? new Date(dateTo + 'T00:00:00') : undefined}
+                                            onSelect={(date) => { if (date) setDateTo(format(date, 'yyyy-MM-dd')); }}
+                                        />
+                                    </div>
+                                </div>
+                            </PopoverContent>
+                        </Popover>
                     </div>
 
                     {/* Summary bar */}
                     {rows.length > 0 && (
                         <div className="payments-summary-bar">
                             <span>{sortedRows.length} transactions</span>
+                            <span>·</span>
                             <span className="payments-summary-amount">{formatCurrency(totalAmount.toFixed(2))}</span>
                         </div>
                     )}
@@ -462,12 +819,15 @@ export default function PaymentsPage() {
                             <tbody>
                                 {pagedRows.map(row => (
                                     <tr
-                                        key={row.transaction_id}
-                                        className={selectedTxnId === row.transaction_id ? 'selected' : ''}
-                                        onClick={() => handleSelectRow(row.transaction_id)}
+                                        key={row.id}
+                                        className={selectedId === row.id ? 'selected' : ''}
+                                        onClick={() => handleSelectRow(row.id)}
                                     >
                                         <td>{formatPaymentDate(row.payment_date)}</td>
                                         <td className="amount-cell">{formatCurrency(row.amount_paid)}</td>
+                                        <td className={`due-cell${row.invoice_amount_due && parseFloat(row.invoice_amount_due) > 0 ? ' due-outstanding' : ''}`}>
+                                            {row.invoice_amount_due ? formatCurrency(row.invoice_amount_due) : '—'}
+                                        </td>
                                         <td>
                                             <span className="payments-method-badge">
                                                 {paymentMethodIcon(row.payment_methods)} {row.display_payment_method || row.payment_methods}
@@ -479,6 +839,7 @@ export default function PaymentsPage() {
                                         <td className={row.missing_job_link ? 'missing' : ''}>
                                             {row.client}
                                         </td>
+                                        <td>{row.tech || '—'}</td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -505,11 +866,12 @@ export default function PaymentsPage() {
             </div>
 
             {/* ── Right: Detail Panel ──────────────────────────────── */}
-            {selectedTxnId && (
+            {selectedId && (
                 <PaymentDetailPanel
                     detail={detail}
                     loading={detailLoading}
                     onClose={handleCloseDetail}
+                    onToggleDeposited={handleToggleDeposited}
                 />
             )}
         </div>
@@ -524,10 +886,12 @@ function PaymentDetailPanel({
     detail,
     loading,
     onClose,
+    onToggleDeposited,
 }: {
     detail: PaymentDetail | null;
     loading: boolean;
     onClose: () => void;
+    onToggleDeposited: (deposited: boolean) => void;
 }) {
     const [showMetadata, setShowMetadata] = useState(false);
     const [galleryIndex, setGalleryIndex] = useState(0);
@@ -543,6 +907,9 @@ function PaymentDetailPanel({
     if (loading) {
         return (
             <div className="payment-detail-panel">
+                <button className="payment-detail-close" onClick={onClose}>
+                    <X size={18} />
+                </button>
                 <div className="payment-detail-loading">
                     <Loader2 size={24} className="animate-spin" style={{ color: '#9ca3af' }} />
                 </div>
@@ -553,6 +920,9 @@ function PaymentDetailPanel({
     if (!detail) {
         return (
             <div className="payment-detail-panel">
+                <button className="payment-detail-close" onClick={onClose}>
+                    <X size={18} />
+                </button>
                 <div className="payment-detail-empty">
                     <Receipt size={40} style={{ color: '#d1d5db' }} />
                     <p>Unable to load payment details.</p>
@@ -599,6 +969,33 @@ function PaymentDetailPanel({
                             <span className={`payment-badge ${detail.invoice.paid_in_full ? 'badge-success' : 'badge-warning'}`}>
                                 {detail.invoice.paid_in_full ? '✓ Paid in Full' : `Invoice: ${detail.invoice.status}`}
                             </span>
+                        )}
+                        {(detail.display_payment_method || '').toLowerCase() === 'check' && (
+                            <Popover>
+                                <PopoverTrigger asChild>
+                                    <button
+                                        className={`payment-badge cursor-pointer border-0 ${detail.check_deposited ? 'badge-success' : 'badge-danger'}`}
+                                    >
+                                        {detail.check_deposited ? 'Deposited' : 'Not Deposited'}
+                                    </button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-auto p-1" align="start">
+                                    <button
+                                        className="flex items-center gap-2 w-full text-left px-3 py-1.5 rounded text-sm hover:bg-muted"
+                                        onClick={() => onToggleDeposited(true)}
+                                    >
+                                        <span className="size-2 rounded-full bg-green-500" />
+                                        Deposited
+                                    </button>
+                                    <button
+                                        className="flex items-center gap-2 w-full text-left px-3 py-1.5 rounded text-sm hover:bg-muted"
+                                        onClick={() => onToggleDeposited(false)}
+                                    >
+                                        <span className="size-2 rounded-full bg-red-500" />
+                                        Not Deposited
+                                    </button>
+                                </PopoverContent>
+                            </Popover>
                         )}
                     </div>
                 </div>

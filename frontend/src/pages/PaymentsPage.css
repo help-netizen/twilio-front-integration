@@ -36,6 +36,9 @@
     padding: 16px;
     border-bottom: 1px solid #e5e7eb;
     background: #fff;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
 }
 
 .payments-list-title-row {
@@ -60,10 +63,18 @@
     gap: 8px;
 }
 
+.payments-search-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 .payments-search-wrap {
     position: relative;
     display: flex;
     align-items: center;
+    flex: 1;
+    min-width: 0;
 }
 
 .payments-search-icon {
@@ -71,50 +82,170 @@
     left: 10px;
     color: #9ca3af;
     pointer-events: none;
+    z-index: 1;
 }
 
-.payments-search-input {
-    width: 100%;
-    padding: 7px 30px 7px 32px;
-    font-size: 13px;
-    border: 1px solid #d1d5db;
-    border-radius: 6px;
-    background: #f9fafb;
-    color: #111827;
-    outline: none;
-    transition: border-color 0.15s, background 0.15s;
-}
+/* ── Filter Dropdown ───────────────────────────────────── */
 
-.payments-search-input:focus {
-    border-color: #2563eb;
-    background: #fff;
-    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.08);
-}
-
-.payments-search-clear {
+.payments-filter-dropdown {
     position: absolute;
-    right: 8px;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin-top: 4px;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    z-index: 50;
+    overflow: hidden;
+}
+
+.payments-filter-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 12px 12px 0;
+    align-items: center;
+}
+
+.payments-filter-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    color: #374151;
+    cursor: default;
+}
+
+.payments-filter-badge svg {
+    cursor: pointer;
+    color: #9ca3af;
+}
+
+.payments-filter-badge svg:hover {
+    color: #374151;
+}
+
+.payments-filter-clear-all {
+    font-size: 11px;
+    color: #9ca3af;
     background: none;
     border: none;
     cursor: pointer;
-    color: #9ca3af;
-    padding: 2px;
-    display: flex;
-    align-items: center;
-    border-radius: 50%;
+    margin-left: 4px;
 }
 
-.payments-search-clear:hover {
+.payments-filter-clear-all:hover {
+    color: #111827;
+}
+
+.payments-filter-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0;
+    padding: 12px;
+}
+
+.payments-filter-col {
+    padding: 0 10px;
+    border-right: 1px solid #f3f4f6;
+}
+
+.payments-filter-col:last-child {
+    border-right: none;
+}
+
+.payments-filter-col-title {
+    font-size: 10px;
+    font-weight: 700;
+    color: #9ca3af;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 6px;
+}
+
+.payments-filter-col-items {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 240px;
+    overflow-y: auto;
+}
+
+.payments-filter-col-empty {
+    font-size: 12px;
+    color: #9ca3af;
+    font-style: italic;
+    padding: 4px 0;
+}
+
+.payments-filter-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    text-align: left;
+    padding: 5px 8px;
+    border-radius: 6px;
+    font-size: 13px;
+    border: none;
+    background: none;
+    cursor: pointer;
     color: #374151;
+    transition: background 0.1s;
+}
+
+.payments-filter-item:hover {
     background: #f3f4f6;
 }
 
-.payments-filter-row {
+.payments-filter-item.active {
+    background: rgba(37, 99, 235, 0.08);
+    color: #2563eb;
+    font-weight: 600;
+}
+
+.payments-filter-check {
     display: flex;
     align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border: 1px solid #d1d5db;
+    border-radius: 3px;
+    font-size: 10px;
+    color: #fff;
+    flex-shrink: 0;
+    transition: all 0.1s;
 }
+
+.payments-filter-check.checked {
+    background: #2563eb;
+    border-color: #2563eb;
+}
+
+.payments-active-filter-count {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    color: #374151;
+    white-space: nowrap;
+}
+
+
+
 
 .payments-date-input {
     padding: 5px 8px;
@@ -158,18 +289,14 @@
 .payments-summary-bar {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    margin-top: 10px;
-    padding-top: 8px;
-    border-top: 1px solid #f3f4f6;
-    font-size: 12px;
+    gap: 6px;
+    font-size: 13px;
     color: #6b7280;
 }
 
 .payments-summary-amount {
     font-weight: 700;
-    color: #111827;
-    font-size: 13px;
+    color: #6b7280;
 }
 
 /* ── Buttons ───────────────────────────────────────────── */
@@ -200,6 +327,20 @@
 
 .payments-btn-secondary:disabled {
     opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.payments-btn-primary {
+    color: #fff;
+    background: #2563eb;
+}
+
+.payments-btn-primary:hover {
+    background: #1d4ed8;
+}
+
+.payments-btn-primary:disabled {
+    opacity: 0.5;
     cursor: not-allowed;
 }
 
@@ -286,6 +427,21 @@
 .payments-table td.missing {
     color: #9ca3af;
     font-style: italic;
+}
+
+.payments-table td.due-cell {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    color: #6b7280;
+}
+
+.payments-table td.due-outstanding {
+    color: #dc2626;
+}
+
+.payments-table th.due-cell {
+    text-align: right;
 }
 
 .payments-method-badge {
@@ -385,6 +541,7 @@
    ══════════════════════════════════════════════════════════ */
 
 .payment-detail-panel {
+    position: relative;
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -427,17 +584,22 @@
     position: absolute;
     top: 12px;
     right: 12px;
+    z-index: 20;
     background: rgba(255, 255, 255, 0.15);
     border: none;
     color: #fff;
-    width: 28px;
-    height: 28px;
+    width: 32px;
+    height: 32px;
     border-radius: 50%;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     transition: background 0.15s;
+}
+
+.payment-detail-close svg {
+    pointer-events: none;
 }
 
 .payment-detail-close:hover {
@@ -516,6 +678,11 @@
 .badge-neutral {
     background: rgba(255, 255, 255, 0.12);
     color: rgba(255, 255, 255, 0.8);
+}
+
+.badge-danger {
+    background: #dc2626;
+    color: #fff;
 }
 
 /* ── Detail Body ───────────────────────────────────────── */
