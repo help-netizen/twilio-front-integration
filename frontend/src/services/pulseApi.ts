@@ -33,4 +33,24 @@ export const pulseApi = {
         const response = await apiClient.post<{ timelineId: number; contactId: number | null; created: boolean }>('/pulse/ensure-timeline', { phone, contactId });
         return response.data;
     },
+
+    // ─── Action Required ───
+
+    /** Mark thread as handled: clears action_required + closes open task */
+    markHandled: async (timelineId: number): Promise<void> => {
+        await apiClient.post(`/pulse/threads/${timelineId}/mark-handled`);
+    },
+    /** Snooze thread until a specific time */
+    snoozeThread: async (timelineId: number, snoozedUntil: string): Promise<void> => {
+        await apiClient.post(`/pulse/threads/${timelineId}/snooze`, { snoozed_until: snoozedUntil });
+    },
+    /** Assign owner to thread */
+    assignThread: async (timelineId: number, ownerUserId: string): Promise<void> => {
+        await apiClient.post(`/pulse/threads/${timelineId}/assign`, { owner_user_id: ownerUserId });
+    },
+    /** Create a task on a thread (also sets action_required) */
+    createTask: async (timelineId: number, data: { title: string; description?: string; priority?: string; due_at?: string }): Promise<any> => {
+        const response = await apiClient.post(`/pulse/threads/${timelineId}/tasks`, data);
+        return response.data;
+    },
 };

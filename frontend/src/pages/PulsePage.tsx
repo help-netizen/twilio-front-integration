@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { useCallsByContact } from '../hooks/useConversations';
 import { usePulseTimeline } from '../hooks/usePulseTimeline';
 import { messagingApi } from '../services/messagingApi';
+import { pulseApi } from '../services/pulseApi';
 import * as leadsApi from '../services/leadsApi';
 import * as contactsApi from '../services/contactsApi';
 import { useRealtimeEvents, type SSECallEvent, type SSETranscriptDeltaEvent, type SSETranscriptFinalizedEvent } from '../hooks/useRealtimeEvents';
@@ -20,7 +21,7 @@ import { formatPhoneNumber } from '../utils/formatters';
 import { useLeadByPhone } from '../hooks/useLeadByPhone';
 import { Input } from '../components/ui/input';
 import { Skeleton } from '../components/ui/skeleton';
-import { Search, PhoneOff, Activity, PhoneIncoming, PhoneOutgoing, ArrowLeftRight, MessageSquare, MessageSquareReply, MoreVertical, EyeOff } from 'lucide-react';
+import { Search, PhoneOff, Activity, PhoneIncoming, PhoneOutgoing, ArrowLeftRight, MessageSquare, MessageSquareReply, MoreVertical, EyeOff, Clock, CheckCircle2, AlertTriangle } from 'lucide-react';
 import type { Call } from '../types/models';
 import type { Lead } from '../types/lead';
 import type { ContactLead } from '../types/contact';
@@ -44,7 +45,35 @@ const STATUS_ICON_COLORS: Record<string, string> = {
     'voicemail_left': '#dc2626',
 };
 
-function PulseContactItem({ call, isActive, onMarkUnread }: { call: Call; isActive: boolean; onMarkUnread?: (timelineId: number) => void }) {
+// SNOOZE_OPTIONS used in quick-action dropdown
+const SNOOZE_OPTIONS = [
+    { label: '30 min', ms: 30 * 60 * 1000 },
+    { label: '2 hours', ms: 2 * 60 * 60 * 1000 },
+    { label: 'Tomorrow 9 AM', ms: null as number | null },
+    // 'Specific Date' handled separately
+];
+function getSnoozeUntil(option: typeof SNOOZE_OPTIONS[number]): string {
+    if (option.ms) return new Date(Date.now() + option.ms).toISOString();
+    // Tomorrow 9 AM
+    const d = new Date();
+    d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0);
+    return d.toISOString();
+}
+
+// Reason labels
+const REASON_LABELS: Record<string, string> = {
+    new_message: 'New message',
+    manual: 'Manual',
+    estimate_approved: 'Estimate approved',
+    time_confirmed: 'Time confirmed',
+};
+
+function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, onSnooze }: {
+    call: Call; isActive: boolean;
+    onMarkUnread?: (timelineId: number) => void;
+    onMarkHandled?: (timelineId: number) => void;
+    onSnooze?: (timelineId: number, until: string) => void;
+}) {
     const navigate = useNavigate();
     // Prefer timeline_id for navigation, fall back to contact_id (legacy)
     const tlId = (call as any).timeline_id;
@@ -70,6 +99,14 @@ function PulseContactItem({ call, isActive, onMarkUnread }: { call: Call; isActi
     // Use last_interaction_at (call or SMS), falling back to call time
     const displayDate = new Date(call.last_interaction_at || call.started_at || call.created_at);
     const interactionType = call.last_interaction_type || 'call';
+
+    // Action Required state from API
+    const isActionRequired = (call as any).is_action_required || false;
+    const arReason = (call as any).action_required_reason || null;
+    const snoozedUntil = (call as any).snoozed_until;
+    const isSnoozed = snoozedUntil && new Date(snoozedUntil) > new Date();
+    const openTask = (call as any).open_task || null;
+    const [snoozeMenuOpen, setSnoozeMenuOpen] = React.useState(false);
 
 
     // Icon logic: show last interaction type
@@ -160,6 +197,29 @@ function PulseContactItem({ call, isActive, onMarkUnread }: { call: Call; isActi
                         <span className="text-gray-400">•</span>
                         <span>{getFullDateTime(displayDate)}</span>
                     </div>
+                    {/* Action Required badge + quick actions */}
+                    {isActionRequired && !isSnoozed && (
+                        <div className="flex items-center gap-1.5 mt-1">
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-orange-100 text-orange-800">
+                                <AlertTriangle className="size-3" />
+                                Action Required
+                            </span>
+                            {arReason && <span className="text-[10px] text-gray-500">{REASON_LABELS[arReason] || arReason}</span>}
+                            {openTask?.due_at && (
+                                <span className="text-[10px] text-red-500">
+                                    Due {new Date(openTask.due_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                                </span>
+                            )}
+                        </div>
+                    )}
+                    {isSnoozed && (
+                        <div className="flex items-center gap-1 mt-1">
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-600">
+                                <Clock className="size-3" />
+                                Snoozed until {new Date(snoozedUntil).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                            </span>
+                        </div>
+                    )}
                 </div>
                 {/* 3-dot menu — only on active item */}
                 {isActive && (
@@ -175,7 +235,8 @@ function PulseContactItem({ call, isActive, onMarkUnread }: { call: Call; isActi
                             <MoreVertical className="size-4 text-gray-500" />
                         </div>
                         {menuOpen && (
-                            <div className="absolute right-0 top-full mt-1 z-50 bg-white rounded-md shadow-lg border border-gray-200 py-1 min-w-[160px]">
+                            <div className="absolute right-0 top-full mt-1 z-50 bg-white rounded-md shadow-lg border border-gray-200 py-1 min-w-[180px]">
+                                {/* Mark as Unread */}
                                 <div
                                     role="button"
                                     tabIndex={0}
@@ -196,6 +257,64 @@ function PulseContactItem({ call, isActive, onMarkUnread }: { call: Call; isActi
                                     <EyeOff className="size-3.5" />
                                     Mark as Unread
                                 </div>
+                                {/* Mark Handled — only when action required */}
+                                {isActionRequired && (
+                                    <div
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setMenuOpen(false);
+                                            if (tlId && onMarkHandled) onMarkHandled(tlId);
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                e.stopPropagation();
+                                                setMenuOpen(false);
+                                                if (tlId && onMarkHandled) onMarkHandled(tlId);
+                                            }
+                                        }}
+                                        className="flex items-center gap-2 px-3 py-2 text-sm text-green-700 hover:bg-green-50 cursor-pointer w-full"
+                                    >
+                                        <CheckCircle2 className="size-3.5" />
+                                        Mark Handled
+                                    </div>
+                                )}
+                                {/* Snooze — only when action required */}
+                                {isActionRequired && (
+                                    <div className="relative">
+                                        <div
+                                            role="button"
+                                            tabIndex={0}
+                                            onClick={(e) => { e.stopPropagation(); setSnoozeMenuOpen(prev => !prev); }}
+                                            onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setSnoozeMenuOpen(prev => !prev); } }}
+                                            className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer w-full"
+                                        >
+                                            <Clock className="size-3.5" />
+                                            Snooze…
+                                        </div>
+                                        {snoozeMenuOpen && (
+                                            <div className="absolute left-full top-0 ml-1 z-50 bg-white rounded-md shadow-lg border border-gray-200 py-1 min-w-[140px]">
+                                                {SNOOZE_OPTIONS.map(opt => (
+                                                    <div
+                                                        key={opt.label}
+                                                        role="button"
+                                                        tabIndex={0}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setMenuOpen(false);
+                                                            setSnoozeMenuOpen(false);
+                                                            if (tlId && onSnooze) onSnooze(tlId, getSnoozeUntil(opt));
+                                                        }}
+                                                        className="px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer"
+                                                    >
+                                                        {opt.label}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
@@ -319,6 +438,12 @@ export const PulsePage: React.FC = () => {
         },
         onContactRead: () => {
             refetchContacts();
+        },
+        onGenericEvent: (eventType: string, _data: any) => {
+            // Action Required SSE events: refetch contact list to update badges/sort
+            if (['thread.action_required', 'thread.handled', 'thread.snoozed', 'thread.unsnoozed', 'thread.assigned'].includes(eventType)) {
+                refetchContacts();
+            }
         },
         onTranscriptDelta: (event: SSETranscriptDeltaEvent) => {
             appendTranscriptDelta(event.callSid, {
@@ -642,6 +767,20 @@ export const PulsePage: React.FC = () => {
                                             refetchContacts();
                                             toast.success('Marked as unread');
                                         } catch { toast.error('Failed to mark as unread'); }
+                                    }}
+                                    onMarkHandled={async (timelineId) => {
+                                        try {
+                                            await pulseApi.markHandled(timelineId);
+                                            refetchContacts();
+                                            toast.success('Marked as handled');
+                                        } catch { toast.error('Failed to mark handled'); }
+                                    }}
+                                    onSnooze={async (timelineId, until) => {
+                                        try {
+                                            await pulseApi.snoozeThread(timelineId, until);
+                                            refetchContacts();
+                                            toast.success('Thread snoozed');
+                                        } catch { toast.error('Failed to snooze'); }
                                     }}
                                 />
                             );

@@ -93,6 +93,7 @@ interface UseRealtimeEventsOptions {
     onContactRead?: (event: SSEContactReadEvent) => void;
     onTranscriptDelta?: (event: SSETranscriptDeltaEvent) => void;
     onTranscriptFinalized?: (event: SSETranscriptFinalizedEvent) => void;
+    onGenericEvent?: (eventType: string, data: any) => void;
     onConnected?: (event: SSEConnectionEvent) => void;
     onError?: (error: Error) => void;
     autoReconnect?: boolean;
@@ -120,6 +121,7 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
     const onContactReadRef = useRef(options.onContactRead);
     const onTranscriptDeltaRef = useRef(options.onTranscriptDelta);
     const onTranscriptFinalizedRef = useRef(options.onTranscriptFinalized);
+    const onGenericEventRef = useRef(options.onGenericEvent);
     const onConnectedRef = useRef(options.onConnected);
     const onErrorRef = useRef(options.onError);
 
@@ -132,6 +134,7 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
     onContactReadRef.current = options.onContactRead;
     onTranscriptDeltaRef.current = options.onTranscriptDelta;
     onTranscriptFinalizedRef.current = options.onTranscriptFinalized;
+    onGenericEventRef.current = options.onGenericEvent;
     onConnectedRef.current = options.onConnected;
     onErrorRef.current = options.onError;
 
@@ -229,6 +232,21 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
                 console.log('[SSE] Transcript finalized:', data.callSid, data.segmentCount, 'segments');
                 onTranscriptFinalizedRef.current?.(data);
             });
+
+            // Generic events (action required, snooze, assign, etc.)
+            const genericEventTypes = [
+                'thread.action_required', 'thread.handled',
+                'thread.snoozed', 'thread.unsnoozed', 'thread.assigned',
+            ];
+            for (const eventType of genericEventTypes) {
+                eventSource.addEventListener(eventType, (e) => {
+                    try {
+                        const data = JSON.parse(e.data);
+                        console.log(`[SSE] ${eventType}:`, data);
+                        onGenericEventRef.current?.(eventType, data);
+                    } catch { /* ignore parse errors */ }
+                });
+            }
 
             // Error handling
             eventSource.onerror = () => {
