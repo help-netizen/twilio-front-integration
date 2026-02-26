@@ -323,7 +323,7 @@ function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, onSnooz
                                             Snooze…
                                         </div>
                                         {snoozeMenuOpen && (
-                                            <div className="absolute left-full top-0 ml-1 z-50 bg-white rounded-md shadow-lg border border-gray-200 py-1 min-w-[140px]">
+                                            <div className="absolute right-full top-0 mr-1 z-[100] bg-white rounded-md shadow-lg border border-gray-200 py-1 min-w-[140px]">
                                                 {SNOOZE_OPTIONS.map(opt => (
                                                     <div
                                                         key={opt.label}
@@ -598,7 +598,8 @@ export const PulsePage: React.FC = () => {
     // Phone: try timeline data, then call contact, then call from/to, then sidebar contact, then SMS conversation
     const selectedConv = filteredCalls.find((c: Call) => {
         const tlId = (c as any).timeline_id;
-        return tlId ? tlId === timelineId : c.contact?.id === contactId;
+        // Use == to handle string/number mismatch (API returns string, URL param is number)
+        return tlId ? Number(tlId) === timelineId : c.contact?.id === contactId;
     });
     const phone = contact?.phone_e164
         || (selectedConv as any)?.tl_phone
