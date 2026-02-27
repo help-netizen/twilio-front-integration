@@ -603,7 +603,6 @@ async function handleVoiceFallback(req, res) {
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Say language="en-US">We are experiencing technical difficulties. Please try again later.</Say>
-    <Say language="ru-RU">В данный момент наблюдаются технические проблемы. Пожалуйста, перезвоните позже.</Say>
     <Hangup />
 </Response>`;
 
