@@ -839,7 +839,19 @@ async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, se
                ${searchFilter}
              ORDER BY c.timeline_id, c.started_at DESC NULLS LAST
          ) sub
-         ORDER BY GREATEST(sub.started_at, sub.sms_last_at) DESC NULLS LAST
+         ORDER BY
+           -- Tier 1: Action Required (non-snoozed) at top
+           CASE WHEN sub.is_action_required = true
+                 AND (sub.snoozed_until IS NULL OR sub.snoozed_until <= now())
+                THEN 0
+           -- Tier 2: Unread threads next
+                WHEN sub.tl_has_unread = true OR sub.sms_has_unread = true
+                THEN 1
+           -- Tier 3: Everything else
+                ELSE 2
+           END ASC,
+           -- Within each tier: most recent interaction first
+           GREATEST(sub.started_at, sub.sms_last_message_at) DESC NULLS LAST
          LIMIT $1 OFFSET $2`,
         params
     );
