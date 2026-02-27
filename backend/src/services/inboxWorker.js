@@ -258,6 +258,14 @@ async function processVoiceEvent(payload, eventType, traceId) {
         } catch (e) { /* proceed with upsert if check fails */ }
     }
 
+    // Guard: call.fallback means the primary TwiML URL (voice-inbound) failed.
+    // Twilio returned <Hangup/> via fallback, so no further status webhooks will arrive.
+    // Treat as terminal 'failed' immediately to prevent the call from being stuck forever.
+    if (eventType === 'call.fallback') {
+        console.log(`[${traceId}] call.fallback event → forcing status to 'failed' (primary TwiML URL failed)`);
+        normalized.eventStatus = 'failed';
+    }
+
     // Guard: for INBOUND parent calls, Twilio sends "in-progress" when TwiML starts
     // (Dial begins ringing agents), not when someone answers. Keep as "ringing"
     // until a child leg actually reaches "in-progress".
