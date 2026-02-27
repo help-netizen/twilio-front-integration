@@ -748,12 +748,12 @@ async function findContactByPhoneOrSecondary(phoneE164) {
 }
 
 /**
- * Get calls grouped by timeline (replaces getCallsByContact).
- * Returns latest call per timeline with call count.
- * Sorts by most recent interaction (call OR SMS) via GREATEST().
+ * Get timelines with latest call + SMS enrichment.
+ * Starts FROM timelines so SMS-only threads (no calls) are included.
+ * 3-tier sort: action_required > unread > rest, then by most recent interaction.
  */
 async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, search = null } = {}) {
-    const companyFilter = companyId ? `AND c.company_id = $3` : '';
+    const companyFilter = companyId ? `AND tl.company_id = $3` : '';
     const params = [limit, offset];
     if (companyId) params.push(companyId);
 
@@ -767,7 +767,7 @@ async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, se
         const textIdx = params.length + 1;
         params.push('%' + searchTerm + '%');
         conditions.push('co.full_name ILIKE $' + textIdx);
-        conditions.push('c.call_sid ILIKE $' + textIdx);
+        conditions.push('latest_call.call_sid ILIKE $' + textIdx);
         conditions.push(
             "EXISTS (SELECT 1 FROM leads l WHERE regexp_replace(l.phone, E'\\\\D', '', 'g') = regexp_replace(co.phone_e164, E'\\\\D', '', 'g') AND (l.first_name ILIKE $" + textIdx + " OR l.last_name ILIKE $" + textIdx + " OR CONCAT(l.first_name, ' ', l.last_name) ILIKE $" + textIdx + "))"
         );
@@ -779,8 +779,8 @@ async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, se
             const digitIdx = params.length + 1;
             params.push('%' + digits + '%');
             conditions.push("regexp_replace(co.phone_e164, E'\\\\D', '', 'g') LIKE $" + digitIdx);
-            conditions.push("regexp_replace(c.from_number, E'\\\\D', '', 'g') LIKE $" + digitIdx);
-            conditions.push("regexp_replace(c.to_number, E'\\\\D', '', 'g') LIKE $" + digitIdx);
+            conditions.push("regexp_replace(latest_call.from_number, E'\\\\D', '', 'g') LIKE $" + digitIdx);
+            conditions.push("regexp_replace(latest_call.to_number, E'\\\\D', '', 'g') LIKE $" + digitIdx);
             conditions.push("regexp_replace(tl.phone_e164, E'\\\\D', '', 'g') LIKE $" + digitIdx);
         }
 
@@ -788,70 +788,77 @@ async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, se
     }
 
     const result = await db.query(
-        `SELECT * FROM (
-            SELECT DISTINCT ON (c.timeline_id)
-                c.*,
-                to_json(co) as contact,
-                tl.id as tl_id,
-                tl.has_unread as tl_has_unread,
-                COALESCE(tl.phone_e164, co.phone_e164) as tl_phone,
-                tl.sms_last_at,
-                -- Action Required fields
-                tl.is_action_required,
-                tl.action_required_reason,
-                tl.action_required_set_at,
-                tl.action_required_set_by,
-                tl.snoozed_until,
-                tl.owner_user_id,
-                -- Open task summary (at most 1 per thread)
-                open_task.id as open_task_id,
-                open_task.title as open_task_title,
-                open_task.due_at as open_task_due_at,
-                open_task.priority as open_task_priority,
-                -- SMS enrichment via LEFT JOIN (using pre-computed customer_digits)
-                sms.last_message_at as sms_last_message_at,
-                sms.last_message_direction as sms_last_message_direction,
-                sms.last_message_preview as sms_last_message_preview,
-                sms.has_unread as sms_has_unread,
-                sms.sms_conversation_id
-             FROM calls c
-             LEFT JOIN timelines tl ON c.timeline_id = tl.id
-             LEFT JOIN contacts co ON tl.contact_id = co.id
-             -- Open task (at most 1 per thread due to unique partial index)
-             LEFT JOIN tasks open_task ON open_task.thread_id = tl.id AND open_task.status = 'open'
-             -- SMS enrichment: find matching conversation by customer_digits
-             LEFT JOIN LATERAL (
-                 SELECT sc.last_message_at, sc.last_message_direction,
-                        sc.last_message_preview, sc.has_unread, sc.id as sms_conversation_id
-                 FROM sms_conversations sc
-                 WHERE sc.customer_digits IN (
-                     regexp_replace(COALESCE(tl.phone_e164, co.phone_e164), '[^0-9]', '', 'g'),
-                     CASE WHEN co.secondary_phone IS NOT NULL
-                          THEN regexp_replace(co.secondary_phone, '[^0-9]', '', 'g')
-                          ELSE NULL END
-                 )
-                 ORDER BY sc.last_message_at DESC NULLS LAST
-                 LIMIT 1
-             ) sms ON true
-             WHERE c.timeline_id IS NOT NULL
-               AND c.parent_call_sid IS NULL
-               ${companyFilter}
-               ${searchFilter}
-             ORDER BY c.timeline_id, c.started_at DESC NULLS LAST
-         ) sub
+        `SELECT
+             -- Call fields (may be NULL for SMS-only timelines)
+             latest_call.*,
+             to_json(co) as contact,
+             tl.id as tl_id,
+             tl.id as timeline_id,
+             tl.has_unread as tl_has_unread,
+             COALESCE(tl.phone_e164, co.phone_e164) as tl_phone,
+             tl.sms_last_at,
+             -- Action Required fields
+             tl.is_action_required,
+             tl.action_required_reason,
+             tl.action_required_set_at,
+             tl.action_required_set_by,
+             tl.snoozed_until,
+             tl.owner_user_id,
+             -- Open task summary
+             open_task.id as open_task_id,
+             open_task.title as open_task_title,
+             open_task.due_at as open_task_due_at,
+             open_task.priority as open_task_priority,
+             -- SMS enrichment
+             sms.last_message_at as sms_last_message_at,
+             sms.last_message_direction as sms_last_message_direction,
+             sms.last_message_preview as sms_last_message_preview,
+             sms.has_unread as sms_has_unread,
+             sms.sms_conversation_id
+         FROM timelines tl
+         LEFT JOIN contacts co ON tl.contact_id = co.id
+         -- Latest parent call per timeline
+         LEFT JOIN LATERAL (
+             SELECT c2.*
+             FROM calls c2
+             WHERE c2.timeline_id = tl.id
+               AND c2.parent_call_sid IS NULL
+             ORDER BY c2.started_at DESC NULLS LAST
+             LIMIT 1
+         ) latest_call ON true
+         -- Open task (at most 1 per thread due to unique partial index)
+         LEFT JOIN tasks open_task ON open_task.thread_id = tl.id AND open_task.status = 'open'
+         -- SMS enrichment
+         LEFT JOIN LATERAL (
+             SELECT sc.last_message_at, sc.last_message_direction,
+                    sc.last_message_preview, sc.has_unread, sc.id as sms_conversation_id
+             FROM sms_conversations sc
+             WHERE sc.customer_digits IN (
+                 regexp_replace(COALESCE(tl.phone_e164, co.phone_e164), '[^0-9]', '', 'g'),
+                 CASE WHEN co.secondary_phone IS NOT NULL
+                      THEN regexp_replace(co.secondary_phone, '[^0-9]', '', 'g')
+                      ELSE NULL END
+             )
+             ORDER BY sc.last_message_at DESC NULLS LAST
+             LIMIT 1
+         ) sms ON true
+         WHERE (latest_call.id IS NOT NULL OR sms.sms_conversation_id IS NOT NULL
+                OR tl.is_action_required = true OR tl.has_unread = true)
+           ${companyFilter}
+           ${searchFilter}
          ORDER BY
            -- Tier 1: Action Required (non-snoozed) at top
-           CASE WHEN sub.is_action_required = true
-                 AND (sub.snoozed_until IS NULL OR sub.snoozed_until <= now())
+           CASE WHEN tl.is_action_required = true
+                 AND (tl.snoozed_until IS NULL OR tl.snoozed_until <= now())
                 THEN 0
            -- Tier 2: Unread threads next
-                WHEN sub.tl_has_unread = true OR sub.sms_has_unread = true
+                WHEN tl.has_unread = true OR sms.has_unread = true
                 THEN 1
            -- Tier 3: Everything else
                 ELSE 2
            END ASC,
            -- Within each tier: most recent interaction first
-           GREATEST(sub.started_at, sub.sms_last_message_at) DESC NULLS LAST
+           GREATEST(latest_call.started_at, sms.last_message_at) DESC NULLS LAST
          LIMIT $1 OFFSET $2`,
         params
     );
