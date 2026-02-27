@@ -237,6 +237,7 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
             const genericEventTypes = [
                 'thread.action_required', 'thread.handled',
                 'thread.snoozed', 'thread.unsnoozed', 'thread.assigned',
+                'timeline.read', 'timeline.unread', 'contact.unread',
             ];
             for (const eventType of genericEventTypes) {
                 eventSource.addEventListener(eventType, (e) => {
