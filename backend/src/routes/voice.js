@@ -90,6 +90,7 @@ tokenRouter.get('/check-busy', async (req, res) => {
              WHERE parent_call_sid IS NULL
                AND status IN ('initiated', 'ringing', 'in-progress', 'queued')
                AND (from_number = $1 OR to_number = $1)
+               AND started_at > now() - interval '2 hours'
              LIMIT 1`,
             [normalized]
         );
