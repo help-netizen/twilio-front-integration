@@ -988,18 +988,20 @@ export const PulsePage: React.FC = () => {
                 })()}
                 {(contactId || timelineId) && phone ? (
                     lead ? (
-                        <LeadDetailPanel
-                            lead={lead}
-                            onClose={() => { }}
-                            onEdit={(lead) => setEditingLead(lead)}
-                            onMarkLost={handleMarkLost}
-                            onActivate={handleActivate}
-                            onConvert={handleConvert}
-                            onUpdateComments={handleUpdateComments}
-                            onUpdateStatus={handleUpdateStatus}
-                            onUpdateSource={handleUpdateSource}
-                            onDelete={handleDelete}
-                        />
+                        <div className="flex-1 overflow-y-auto">
+                            <LeadDetailPanel
+                                lead={lead}
+                                onClose={() => { }}
+                                onEdit={(lead) => setEditingLead(lead)}
+                                onMarkLost={handleMarkLost}
+                                onActivate={handleActivate}
+                                onConvert={handleConvert}
+                                onUpdateComments={handleUpdateComments}
+                                onUpdateStatus={handleUpdateStatus}
+                                onUpdateSource={handleUpdateSource}
+                                onDelete={handleDelete}
+                            />
+                        </div>
                     ) : !leadLoading && contact?.id && contactDetail ? (
                         <div className="flex-1 overflow-y-auto">
                             <PulseContactPanel
