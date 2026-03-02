@@ -558,7 +558,7 @@ async function listPaymentsForExport(companyId, { dateFrom, dateTo, paymentMetho
             const parts = [];
             for (const [key, val] of Object.entries(r.blanc_metadata)) {
                 if (val != null && val !== '') {
-                    parts.push(`${key}: ${val}`);
+                    parts.push(String(val));
                 }
             }
             customFields = parts.join('; ');
