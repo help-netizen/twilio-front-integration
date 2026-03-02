@@ -51,6 +51,7 @@ interface PaymentRow {
     invoice_amount_due: string | null;
     invoice_paid_in_full: boolean;
     check_deposited: boolean;
+    custom_fields: string;
 }
 
 interface Attachment {
@@ -439,54 +440,69 @@ export default function PaymentsPage() {
         [rows]
     );
 
-    // ── CSV Export ─────────────────────────────────────────────────────────────
+    const [exporting, setExporting] = useState(false);
 
-    const handleExportCSV = () => {
+    const handleExportCSV = async () => {
         if (sortedRows.length === 0) return;
+        setExporting(true);
+        try {
+            const qs = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
+            if (methodFilter) qs.set('payment_method', methodFilter);
+            if (searchQuery) qs.set('search', searchQuery);
 
-        const headers = [
-            'Date', 'Amount', 'Method', 'Job #', 'Customer', 'Job Type',
-            'Status', 'Tags', 'Source', 'Tech', 'Invoice Status', 'Paid in Full',
-            'Transaction ID', 'Invoice ID', 'Job ID',
-        ];
+            const res = await authedFetch(`${API_BASE}/api/zenbooker/payments/export?${qs.toString()}`);
+            const json = await res.json();
 
-        const csvRows = sortedRows.map(r => [
-            r.payment_date,
-            r.amount_paid,
-            r.payment_methods,
-            r.job_number,
-            r.client,
-            r.job_type,
-            r.status,
-            r.tags,
-            r.source,
-            r.tech,
-            r.invoice_status || '',
-            r.invoice_paid_in_full ? 'Yes' : 'No',
-            r.transaction_id,
-            r.invoice_id,
-            r.job_id,
-        ]);
-
-        const escape = (val: string) => {
-            if (val.includes(',') || val.includes('"') || val.includes('\n')) {
-                return `"${val.replace(/"/g, '""')}"`;
+            if (!res.ok || !json.ok) {
+                throw new Error(json.error || 'Export failed');
             }
-            return val;
-        };
 
-        const csv = [
-            headers.map(escape).join(','),
-            ...csvRows.map(row => row.map(escape).join(',')),
-        ].join('\n');
+            const exportRows: Record<string, string>[] = json.data;
 
-        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `payments_${dateFrom}_${dateTo}.csv`;
-        a.click();
-        URL.revokeObjectURL(url);
+            const headers = [
+                'Job #', 'Client', 'Job Type', 'Status',
+                'Payment Methods', 'Amount Paid', 'Tags',
+                'Date', 'Source', 'Tech', 'Claim ID and Other',
+            ];
+
+            const csvRows = exportRows.map(r => [
+                r.job_number || '',
+                r.client || '',
+                r.job_type || '',
+                r.status || '',
+                r.payment_methods || '',
+                r.amount_paid || '',
+                r.tags || '',
+                r.payment_date || '',
+                r.source || '',
+                r.tech || '',
+                r.custom_fields || '',
+            ]);
+
+            const escape = (val: string) => {
+                if (val.includes(',') || val.includes('"') || val.includes('\n')) {
+                    return `"${val.replace(/"/g, '""')}"`;
+                }
+                return val;
+            };
+
+            const csv = [
+                headers.map(escape).join(','),
+                ...csvRows.map(row => row.map(escape).join(',')),
+            ].join('\n');
+
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `payments_${dateFrom}_${dateTo}.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (err: any) {
+            console.error('Export error:', err);
+        } finally {
+            setExporting(false);
+        }
     };
 
     // ── Render ─────────────────────────────────────────────────────────────────
@@ -542,9 +558,14 @@ export default function PaymentsPage() {
                                 variant="outline"
                                 size="sm"
                                 onClick={handleExportCSV}
-                                disabled={sortedRows.length === 0}
+                                disabled={sortedRows.length === 0 || exporting}
                             >
-                                <Download className="size-4 mr-1" /> Export
+                                {exporting ? (
+                                    <Loader2 className="size-4 mr-1 animate-spin" />
+                                ) : (
+                                    <Download className="size-4 mr-1" />
+                                )}
+                                {exporting ? 'Exporting…' : 'Export'}
                             </Button>
                         </div>
                     </div>
