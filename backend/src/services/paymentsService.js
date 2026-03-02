@@ -531,7 +531,7 @@ async function listPaymentsForExport(companyId, { dateFrom, dateTo, paymentMetho
                 WHERE jta.job_id = j.id
             ) as blanc_tags
         FROM zb_payments p
-        LEFT JOIN jobs j ON j.job_number = p.job_number AND j.company_id = p.company_id
+        LEFT JOIN jobs j ON j.job_number = p.job_number
         WHERE ${where}
         ORDER BY p.payment_date DESC`,
         params
