@@ -5,7 +5,7 @@ import { Button } from '../components/ui/button';
 import { Separator } from '../components/ui/separator';
 import {
     RefreshCw, Loader2, ArrowUp, ArrowDown,
-    SlidersHorizontal,
+    SlidersHorizontal, Download,
 } from 'lucide-react';
 import { authedFetch } from '../services/apiClient';
 import * as jobsApi from '../services/jobsApi';
@@ -303,6 +303,58 @@ export function JobsPage() {
         setSortOrder(order);
     };
 
+    // ─── CSV Export ──────────────────────────────────────────────────
+    const handleExportCSV = () => {
+        if (filteredJobs.length === 0) return;
+
+        const headers = [
+            'Job #', 'Tags', 'Job Type', 'Job End',
+            'Status', 'Tech', 'Amount Paid', 'Job Date',
+            'Claim ID and Other',
+        ];
+
+        const formatDateOnly = (d?: string) => {
+            if (!d) return '';
+            try {
+                return new Date(d).toLocaleDateString('en-US', {
+                    month: '2-digit', day: '2-digit', year: '2-digit',
+                });
+            } catch { return ''; }
+        };
+
+        const csvRows = filteredJobs.map(j => [
+            j.job_number || '',
+            (j.tags || []).map(t => t.name).join(', '),
+            j.service_name || j.job_type || '',
+            formatDateOnly(j.end_date),
+            j.blanc_status || '',
+            (j.assigned_techs || []).map(t => t.name).filter(Boolean).join(', '),
+            j.invoice_total || '',
+            formatDateOnly(j.start_date),
+            j.metadata ? Object.values(j.metadata).filter(v => v != null && v !== '').join('; ') : '',
+        ]);
+
+        const escape = (val: string) => {
+            if (val.includes(',') || val.includes('"') || val.includes('\n')) {
+                return `"${val.replace(/"/g, '""')}"`;
+            }
+            return val;
+        };
+
+        const csv = [
+            headers.map(escape).join(','),
+            ...csvRows.map(row => row.map(escape).join(',')),
+        ].join('\n');
+
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `jobs_export_${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
     // ─── Render ──────────────────────────────────────────────────────
 
     return (
@@ -420,6 +472,10 @@ export function JobsPage() {
                             <Button variant="outline" size="sm" onClick={() => loadJobs(offset)} disabled={loading}>
                                 <RefreshCw className={`size-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
                                 Refresh
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={handleExportCSV} disabled={filteredJobs.length === 0}>
+                                <Download className="size-4 mr-1" />
+                                Export
                             </Button>
                         </div>
                     </div>
