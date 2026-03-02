@@ -37,6 +37,7 @@ export function LeadsPage() {
     // Filters state
     const [filters, setFilters] = useState<LeadsListParams>({
         start_date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        end_date: new Date().toISOString().split('T')[0],
         offset: 0,
         records: 100,
         only_open: true,
@@ -84,7 +85,7 @@ export function LeadsPage() {
 
     useEffect(() => {
         loadLeads();
-    }, [filters.start_date, filters.only_open, filters.status, filters.offset]);
+    }, [filters.start_date, filters.end_date, filters.only_open, filters.status, filters.offset]);
 
     // Auto-open lead from URL param (e.g. /leads/:leadId)
     useEffect(() => {

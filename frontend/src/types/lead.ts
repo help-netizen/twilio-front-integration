@@ -52,6 +52,7 @@ export type Lead = {
 
 export type LeadsListParams = {
     start_date?: string; // YYYY-MM-DD
+    end_date?: string;   // YYYY-MM-DD
     offset?: number;
     records?: number;
     only_open?: boolean;

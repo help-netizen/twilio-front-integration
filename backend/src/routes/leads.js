@@ -50,7 +50,7 @@ function errorResponse(code, message, reqId, details = null) {
 router.get('/', async (req, res) => {
     const reqId = requestId();
     try {
-        const { start_date, offset, records, only_open, status } = req.query;
+        const { start_date, end_date, offset, records, only_open, status } = req.query;
 
         // Validate
         if (offset !== undefined && (isNaN(Number(offset)) || Number(offset) < 0)) {
@@ -62,6 +62,7 @@ router.get('/', async (req, res) => {
 
         const params = {
             start_date,
+            end_date,
             offset: offset ? Number(offset) : 0,
             records: records ? Number(records) : 100,
             only_open: only_open !== 'false',

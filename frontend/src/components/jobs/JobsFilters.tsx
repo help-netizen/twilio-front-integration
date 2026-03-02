@@ -1,17 +1,14 @@
 import { Input } from '../ui/input';
-import { Button } from '../ui/button';
 import { Switch } from '../ui/switch';
 import { Label } from '../ui/label';
-import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import type { JobTag } from '../../services/jobsApi';
-import { Calendar } from '../ui/calendar';
 import { Badge } from '../ui/badge';
-import { CalendarIcon, Search, X, Check } from 'lucide-react';
-import { format } from 'date-fns';
+import { Search, X, Check } from 'lucide-react';
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { JOB_SOURCES } from '../../types/lead';
 import { authedFetch } from '../../services/apiClient';
 import type { LocalJob } from '../../services/jobsApi';
+import { DateRangePickerPopover } from '../ui/DateRangePickerPopover';
 
 /* ─── Constants ─────────────────────────────── */
 
@@ -45,6 +42,8 @@ interface JobsFiltersProps {
 
     startDate?: string;
     onStartDateChange: (d: string | undefined) => void;
+    endDate?: string;
+    onEndDateChange: (d: string | undefined) => void;
 
     onlyOpen: boolean;
     onOnlyOpenChange: (v: boolean) => void;
@@ -66,16 +65,16 @@ export function JobsFilters({
     sourceFilter, onSourceFilterChange,
     jobTypeFilter, onJobTypeFilterChange,
     startDate, onStartDateChange,
+    endDate, onEndDateChange,
     onlyOpen, onOnlyOpenChange,
     tagFilter, onTagFilterChange, allTags,
     jobs,
 }: JobsFiltersProps) {
-    const [datePickerOpen, setDatePickerOpen] = useState(false);
+
+
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
     const [dynamicJobTypes, setDynamicJobTypes] = useState<string[]>([]);
-
-    const startDateObj = startDate ? new Date(startDate + 'T00:00:00') : undefined;
 
     // Fetch job types from API
     useEffect(() => {
@@ -134,20 +133,6 @@ export function JobsFilters({
                 ? tagFilter.filter(id => id !== tagId)
                 : [...tagFilter, tagId]
         );
-    };
-
-    const handleDateSelect = (date: Date | undefined) => {
-        if (date) {
-            onStartDateChange(format(date, 'yyyy-MM-dd'));
-            setDatePickerOpen(false);
-        }
-    };
-
-    const handleDatePreset = (days: number) => {
-        const d = new Date();
-        d.setDate(d.getDate() - days);
-        onStartDateChange(format(d, 'yyyy-MM-dd'));
-        setDatePickerOpen(false);
     };
 
     return (
@@ -277,35 +262,12 @@ export function JobsFilters({
             )}
 
             {/* Date Range Picker */}
-            <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
-                <PopoverTrigger asChild>
-                    <Button variant="outline" className="gap-2">
-                        <CalendarIcon className="size-4" />
-                        {startDateObj ? format(startDateObj, 'MMM dd, yyyy') : 'Start Date'}
-                    </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                    <div className="flex">
-                        <div className="border-r p-3 space-y-1">
-                            <div className="text-sm font-medium mb-2">Presets</div>
-                            <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => handleDatePreset(0)}>Today</Button>
-                            <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => handleDatePreset(7)}>Last 7 days</Button>
-                            <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => handleDatePreset(30)}>Last 30 days</Button>
-                            {startDate && (
-                                <Button variant="ghost" size="sm" className="w-full justify-start text-muted-foreground" onClick={() => { onStartDateChange(undefined); setDatePickerOpen(false); }}>
-                                    Clear
-                                </Button>
-                            )}
-                        </div>
-                        <Calendar
-                            mode="single"
-                            selected={startDateObj}
-                            onSelect={handleDateSelect}
-                            initialFocus
-                        />
-                    </div>
-                </PopoverContent>
-            </Popover>
+            <DateRangePickerPopover
+                dateFrom={startDate}
+                dateTo={endDate}
+                onDateFromChange={(d) => onStartDateChange(d)}
+                onDateToChange={(d) => onEndDateChange(d)}
+            />
 
             {/* Only Open Toggle */}
             <div className="flex items-center gap-2 px-3 py-2 border rounded-md">

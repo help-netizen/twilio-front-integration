@@ -55,6 +55,7 @@ export class LeadsApiError extends Error {
 export async function listLeads(params: LeadsListParams): Promise<LeadsListResponse> {
     const searchParams = new URLSearchParams();
     if (params.start_date) searchParams.set('start_date', params.start_date);
+    if (params.end_date) searchParams.set('end_date', params.end_date);
     if (params.offset !== undefined) searchParams.set('offset', String(params.offset));
     if (params.records !== undefined) searchParams.set('records', String(params.records));
     if (params.only_open !== undefined) searchParams.set('only_open', String(params.only_open));
