@@ -9,6 +9,7 @@ interface PulseTimelineProps {
     calls: CallData[];
     messages: SmsMessage[];
     loading: boolean;
+    timelineKey?: string | number;
 }
 
 const TZ = 'America/New_York';
@@ -28,7 +29,7 @@ function formatDateSeparator(date: Date): string {
     return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: TZ });
 }
 
-export function PulseTimeline({ calls, messages, loading }: PulseTimelineProps) {
+export function PulseTimeline({ calls, messages, loading, timelineKey }: PulseTimelineProps) {
     const endRef = useRef<HTMLDivElement>(null);
 
     // Build a sorted timeline from calls + messages
@@ -59,18 +60,18 @@ export function PulseTimeline({ calls, messages, loading }: PulseTimelineProps) 
         return items;
     }, [calls, messages]);
 
-    // Auto-scroll to bottom when timeline loads
+    // Auto-scroll to bottom when timeline loads or switches
     useEffect(() => {
         if (!loading && timeline.length > 0) {
-            // Use rAF to ensure DOM is painted before scrolling
+            // Double-rAF ensures DOM is fully laid out before reading scrollHeight
             requestAnimationFrame(() => {
-                const scrollContainer = endRef.current?.closest('.pulse-timeline-scroll');
-                if (scrollContainer) {
-                    scrollContainer.scrollTop = scrollContainer.scrollHeight;
-                }
+                requestAnimationFrame(() => {
+                    const el = endRef.current?.closest('.pulse-timeline-scroll');
+                    if (el) el.scrollTop = el.scrollHeight;
+                });
             });
         }
-    }, [timeline.length, loading]);
+    }, [timeline.length, loading, timelineKey]);
 
     if (loading) {
         return (

@@ -1046,6 +1046,7 @@ export const PulsePage: React.FC = () => {
                                 calls={callDataItems}
                                 messages={messages}
                                 loading={timelineLoading}
+                                timelineKey={timelineId || contactId}
                             />
                         </div>
                         {phone && (

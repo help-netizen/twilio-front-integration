@@ -329,6 +329,7 @@ export function JobsPage() {
 
             const res = await authedFetch(`/api/jobs?${qs.toString()}`);
             const json = await res.json();
+            console.log('[Export] Fetched from backend:', { url: `/api/jobs?${qs.toString()}`, ok: json.ok, count: json.data?.results?.length, total: json.data?.total });
             if (!json.ok) throw new Error(json.error || 'Export failed');
             const allJobs: LocalJob[] = json.data.results || [];
 
