@@ -63,13 +63,16 @@ export function PulseTimeline({ calls, messages, loading, timelineKey }: PulseTi
     // Auto-scroll to bottom when timeline loads or switches
     useEffect(() => {
         if (!loading && timeline.length > 0) {
-            // Double-rAF ensures DOM is fully laid out before reading scrollHeight
+            const scrollToEnd = () => {
+                endRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' });
+            };
+            // Immediate scroll after paint
             requestAnimationFrame(() => {
-                requestAnimationFrame(() => {
-                    const el = endRef.current?.closest('.pulse-timeline-scroll');
-                    if (el) el.scrollTop = el.scrollHeight;
-                });
+                scrollToEnd();
             });
+            // Safety-net: scroll again after a short delay to catch any late layout
+            const timer = setTimeout(scrollToEnd, 150);
+            return () => clearTimeout(timer);
         }
     }, [timeline.length, loading, timelineKey]);
 
