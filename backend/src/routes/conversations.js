@@ -53,6 +53,27 @@ router.get('/active', async (req, res) => {
 });
 
 /**
+ * GET /api/conversations/default-proxy
+ * Returns the default proxy (Twilio) phone number from the most recently used SMS conversation.
+ * Used as fallback when a timeline has no prior calls/conversations.
+ */
+router.get('/default-proxy', async (req, res) => {
+    try {
+        const db = require('../db/connection');
+        const result = await db.query(
+            `SELECT proxy_e164 FROM sms_conversations
+             WHERE proxy_e164 IS NOT NULL
+             ORDER BY last_message_at DESC NULLS LAST
+             LIMIT 1`
+        );
+        res.json({ proxy_e164: result.rows[0]?.proxy_e164 || null });
+    } catch (error) {
+        console.error('Error fetching default proxy:', error);
+        res.json({ proxy_e164: null });
+    }
+});
+
+/**
  * GET /api/conversations/:id
  * Get single conversation by ID
  */

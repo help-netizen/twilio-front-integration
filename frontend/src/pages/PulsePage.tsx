@@ -773,7 +773,7 @@ export const PulsePage: React.FC = () => {
     };
 
     // Derive our Twilio proxy number from call data (for starting new conversations)
-    const proxyPhone = useMemo(() => {
+    const derivedProxy = useMemo(() => {
         if (conversations.length) return conversations[0].proxy_e164 || '';
         // For call-only contacts, our number is the other side of the call
         const firstCall = contactCalls[0];
@@ -782,6 +782,19 @@ export const PulsePage: React.FC = () => {
         // Inbound call: our number is to_number; Outbound: our number is from_number
         return dir.includes('inbound') ? (firstCall.to_number || '') : (firstCall.from_number || '');
     }, [conversations, contactCalls]);
+
+    // Fallback: if no proxy from timeline data, fetch the default from the server
+    const [fallbackProxy, setFallbackProxy] = useState('');
+    useEffect(() => {
+        if (derivedProxy || !phone) return;
+        // Fetch default proxy phone (most recently used for any conversation)
+        const API_BASE = import.meta.env.VITE_API_URL || '/api';
+        authedFetch(`${API_BASE}/conversations/default-proxy`)
+            .then(r => r.json())
+            .then(data => { if (data.proxy_e164) setFallbackProxy(data.proxy_e164); })
+            .catch(() => { });
+    }, [derivedProxy, phone]);
+    const proxyPhone = derivedProxy || fallbackProxy;
 
     // Send SMS handler
     const handleSendMessage = async (message: string, files?: File[], targetPhone?: string) => {
@@ -806,6 +819,9 @@ export const PulsePage: React.FC = () => {
                 proxyE164: toE164(proxyPhone),
                 initialMessage: message,
             });
+        } else if (sendTo && !proxyPhone) {
+            toast.error('Cannot send SMS: no proxy phone number available');
+            return;
         }
         refetchTimeline();
     };
