@@ -314,7 +314,44 @@ router.post('/ensure-timeline', async (req, res) => {
                 });
             }
 
-            // No timeline for this contact — create one linked to the contact
+            // No timeline linked to this contact yet.
+            // Before creating a new one, check if there's an orphan timeline for the contact's phone.
+            const contactResult = await db.query(
+                'SELECT phone_e164, secondary_phone FROM contacts WHERE id = $1',
+                [contactId]
+            );
+            const contactRow = contactResult.rows[0];
+            if (contactRow) {
+                const phonesToCheck = [contactRow.phone_e164, contactRow.secondary_phone]
+                    .filter(Boolean)
+                    .map(p => p.replace(/\D/g, ''));
+
+                if (phonesToCheck.length > 0) {
+                    const orphan = await db.query(
+                        `SELECT id FROM timelines
+                         WHERE contact_id IS NULL
+                           AND regexp_replace(phone_e164, '\\D', '', 'g') = ANY($1)
+                         ORDER BY updated_at DESC NULLS LAST
+                         LIMIT 1`,
+                        [phonesToCheck]
+                    );
+                    if (orphan.rows[0]) {
+                        // Adopt the orphan: link it to this contact
+                        await db.query(
+                            `UPDATE timelines SET contact_id = $1, phone_e164 = NULL, updated_at = now() WHERE id = $2`,
+                            [contactId, orphan.rows[0].id]
+                        );
+                        console.log(`[Pulse] ensure-timeline: adopted orphan timeline ${orphan.rows[0].id} for contact ${contactId}`);
+                        return res.json({
+                            timelineId: orphan.rows[0].id,
+                            contactId,
+                            created: false,
+                        });
+                    }
+                }
+            }
+
+            // No orphan found — create a new timeline linked to the contact
             const newTl = await db.query(
                 `INSERT INTO timelines (contact_id, company_id)
                  VALUES ($1, $2)
