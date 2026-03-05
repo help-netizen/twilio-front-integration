@@ -789,7 +789,7 @@ export const PulsePage: React.FC = () => {
         if (derivedProxy || !phone) return;
         // Fetch default proxy phone (most recently used for any conversation)
         const API_BASE = import.meta.env.VITE_API_URL || '/api';
-        authedFetch(`${API_BASE}/conversations/default-proxy`)
+        authedFetch(`${API_BASE}/pulse/default-proxy`)
             .then(r => r.json())
             .then(data => { if (data.proxy_e164) setFallbackProxy(data.proxy_e164); })
             .catch(() => { });

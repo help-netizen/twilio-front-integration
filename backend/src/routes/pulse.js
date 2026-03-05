@@ -286,6 +286,25 @@ router.get('/timeline-by-phone', async (req, res) => {
 });
 
 // =============================================================================
+// GET /api/pulse/default-proxy — return the company's default Twilio proxy number
+// Used as fallback when a timeline has no prior calls/conversations.
+// =============================================================================
+router.get('/default-proxy', async (req, res) => {
+    try {
+        const result = await db.query(
+            `SELECT proxy_e164 FROM sms_conversations
+             WHERE proxy_e164 IS NOT NULL
+             ORDER BY last_message_at DESC NULLS LAST
+             LIMIT 1`
+        );
+        res.json({ proxy_e164: result.rows[0]?.proxy_e164 || null });
+    } catch (error) {
+        console.error('[Pulse] default-proxy error:', error);
+        res.json({ proxy_e164: null });
+    }
+});
+
+// =============================================================================
 // POST /api/pulse/ensure-timeline — find or create a timeline for a phone number
 // Optionally link it to a contact (for new leads from API with no history).
 // Body: { phone: string, contactId?: number }
