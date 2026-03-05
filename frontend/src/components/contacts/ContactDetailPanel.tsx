@@ -11,6 +11,7 @@ import type { Contact, ContactLead, ContactAddress } from '../../types/contact';
 import { AddressAutocomplete, type AddressFields } from '../AddressAutocomplete';
 import * as contactsApi from '../../services/contactsApi';
 import * as jobsApi from '../../services/jobsApi';
+import { pulseApi } from '../../services/pulseApi';
 import { EditContactDialog } from './EditContactDialog';
 import { ClickToCallButton } from '../softphone/ClickToCallButton';
 import { OpenTimelineButton } from '../softphone/OpenTimelineButton';
@@ -422,7 +423,21 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
                                 {contact.full_name || 'Unknown'}
                             </h2>
                             <button
-                                onClick={() => navigate(`/pulse/contact/${contact.id}`)}
+                                onClick={async () => {
+                                    if (contact.phone_e164) {
+                                        try {
+                                            const result = await pulseApi.ensureTimeline(contact.phone_e164, contact.id);
+                                            if (result.timelineId) {
+                                                navigate(`/pulse/timeline/${result.timelineId}`);
+                                                return;
+                                            }
+                                        } catch (err) {
+                                            console.error('Failed to resolve timeline:', err);
+                                        }
+                                    }
+                                    // Fallback: navigate to timeline search
+                                    navigate('/pulse');
+                                }}
                                 title="View in Pulse"
                                 style={{
                                     background: 'none', border: 'none', cursor: 'pointer',
