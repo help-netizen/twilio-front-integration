@@ -1,5 +1,6 @@
 import ELK from "elkjs/lib/elk.bundled.js";
-import { Edge, Node, Position, MarkerType } from "@xyflow/react";
+import type { Edge, Node } from "@xyflow/react";
+import { Position, MarkerType } from "@xyflow/react";
 
 export type WorkflowPortSide = "NORTH" | "SOUTH" | "EAST" | "WEST";
 

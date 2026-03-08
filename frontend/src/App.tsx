@@ -29,6 +29,13 @@ import UserGroupDetailPage from './pages/telephony/UserGroupDetailPage';
 import CallFlowsPage from './pages/telephony/CallFlowsPage';
 import CallFlowDetailPage from './pages/telephony/CallFlowDetailPage';
 import CallFlowBuilderPage from './pages/telephony/CallFlowBuilderPage';
+import PhoneNumbersPage from './pages/telephony/PhoneNumbersPage';
+import AudioLibraryPage from './pages/telephony/AudioLibraryPage';
+import ProviderSettingsPage from './pages/telephony/ProviderSettingsPage';
+import RoutingLogsPage from './pages/telephony/RoutingLogsPage';
+import OperationsDashboardPage from './pages/telephony/OperationsDashboardPage';
+import QueueOperationsPage from './pages/telephony/QueueOperationsPage';
+import ActiveCallWorkspacePage from './pages/telephony/ActiveCallWorkspacePage';
 import { EventNotification } from './components/EventNotification';
 import { Toaster } from './components/ui/sonner';
 import './App.css';
@@ -164,6 +171,45 @@ function App() {
               <Route path="/settings/telephony/call-flows/:flowId/builder/:versionId" element={
                 <ProtectedRoute roles={['company_admin']}>
                   <CallFlowBuilderPage />
+                </ProtectedRoute>
+              } />
+
+              {/* Admin — Phone Numbers, Audio, Provider, Logs */}
+              <Route path="/settings/telephony/phone-numbers" element={
+                <ProtectedRoute roles={['company_admin']}>
+                  <PhoneNumbersPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/settings/telephony/audio-library" element={
+                <ProtectedRoute roles={['company_admin']}>
+                  <AudioLibraryPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/settings/telephony/provider-settings" element={
+                <ProtectedRoute roles={['company_admin']}>
+                  <ProviderSettingsPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/settings/telephony/routing-logs" element={
+                <ProtectedRoute roles={['company_admin']}>
+                  <RoutingLogsPage />
+                </ProtectedRoute>
+              } />
+
+              {/* Operations — Dashboard, Queue, Active Call */}
+              <Route path="/calls/dashboard" element={
+                <ProtectedRoute roles={['company_admin']}>
+                  <OperationsDashboardPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/calls/queue" element={
+                <ProtectedRoute roles={['company_admin']}>
+                  <QueueOperationsPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/calls/live/:callId" element={
+                <ProtectedRoute roles={['company_admin']}>
+                  <ActiveCallWorkspacePage />
                 </ProtectedRoute>
               } />
 
