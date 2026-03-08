@@ -19,6 +19,17 @@ import PaymentsPage from './pages/PaymentsPage';
 import ProvidersPage from './pages/ProvidersPage';
 import PhoneCallsSettingsPage from './pages/PhoneCallsSettingsPage';
 import JobsPage from './pages/JobsPage';
+import RouteManagerOverviewPage from './pages/telephony/RouteManagerOverviewPage';
+import CallFlowsPage from './pages/telephony/CallFlowsPage';
+import CallFlowBuilderPage from './pages/telephony/CallFlowBuilderPage';
+import PhoneNumbersPage from './pages/telephony/PhoneNumbersPage';
+import AudioLibraryPage from './pages/telephony/AudioLibraryPage';
+import ProviderSettingsPage from './pages/telephony/ProviderSettingsPage';
+import RoutingLogsPage from './pages/telephony/RoutingLogsPage';
+import OperationsDashboardPage from './pages/telephony/OperationsDashboardPage';
+import QueueOperationsPage from './pages/telephony/QueueOperationsPage';
+import ActiveCallWorkspacePage from './pages/telephony/ActiveCallWorkspacePage';
+import TelephonyLayout from './components/telephony/TelephonyLayout';
 import { EventNotification } from './components/EventNotification';
 import { Toaster } from './components/ui/sonner';
 import './App.css';
@@ -104,6 +115,24 @@ function App() {
                   <SuperAdminPage />
                 </ProtectedRoute>
               } />
+
+              {/* Telephony — Configuration (with sidebar) */}
+              <Route path="/settings/telephony" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><RouteManagerOverviewPage /></TelephonyLayout></ProtectedRoute>} />
+              <Route path="/settings/telephony/call-flows" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><CallFlowsPage /></TelephonyLayout></ProtectedRoute>} />
+              <Route path="/settings/telephony/phone-numbers" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><PhoneNumbersPage /></TelephonyLayout></ProtectedRoute>} />
+              <Route path="/settings/telephony/audio-library" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><AudioLibraryPage /></TelephonyLayout></ProtectedRoute>} />
+              <Route path="/settings/telephony/provider-settings" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><ProviderSettingsPage /></TelephonyLayout></ProtectedRoute>} />
+              <Route path="/settings/telephony/routing-logs" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><RoutingLogsPage /></TelephonyLayout></ProtectedRoute>} />
+
+              {/* Call Flow Builder — full-screen, no sidebar, opens directly at /call-flows/:flowId */}
+              <Route path="/settings/telephony/call-flows/:flowId" element={<ProtectedRoute roles={['company_admin']}><CallFlowBuilderPage /></ProtectedRoute>} />
+
+              {/* Operations — Dashboard & Queue (with sidebar) */}
+              <Route path="/calls/dashboard" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><OperationsDashboardPage /></TelephonyLayout></ProtectedRoute>} />
+              <Route path="/calls/queue" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><QueueOperationsPage /></TelephonyLayout></ProtectedRoute>} />
+
+              {/* Active Call Workspace — full-screen */}
+              <Route path="/calls/live/:callId" element={<ProtectedRoute roles={['company_admin']}><ActiveCallWorkspacePage /></ProtectedRoute>} />
 
             </Routes>
           </AppLayout>
