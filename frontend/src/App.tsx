@@ -19,6 +19,13 @@ import PaymentsPage from './pages/PaymentsPage';
 import ProvidersPage from './pages/ProvidersPage';
 import PhoneCallsSettingsPage from './pages/PhoneCallsSettingsPage';
 import JobsPage from './pages/JobsPage';
+import RouteManagerOverviewPage from './pages/telephony/RouteManagerOverviewPage';
+import PhoneNumberGroupsPage from './pages/telephony/PhoneNumberGroupsPage';
+import PhoneNumberGroupDetailPage from './pages/telephony/PhoneNumberGroupDetailPage';
+import SchedulesPage from './pages/telephony/SchedulesPage';
+import ScheduleDetailPage from './pages/telephony/ScheduleDetailPage';
+import UserGroupsPage from './pages/telephony/UserGroupsPage';
+import UserGroupDetailPage from './pages/telephony/UserGroupDetailPage';
 import { EventNotification } from './components/EventNotification';
 import { Toaster } from './components/ui/sonner';
 import './App.css';
@@ -102,6 +109,42 @@ function App() {
               <Route path="/settings/admin" element={
                 <ProtectedRoute roles={['super_admin']}>
                   <SuperAdminPage />
+                </ProtectedRoute>
+              } />
+              {/* Telephony Admin */}
+              <Route path="/settings/telephony" element={
+                <ProtectedRoute roles={['company_admin']}>
+                  <RouteManagerOverviewPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/settings/telephony/groups" element={
+                <ProtectedRoute roles={['company_admin']}>
+                  <PhoneNumberGroupsPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/settings/telephony/groups/:groupId" element={
+                <ProtectedRoute roles={['company_admin']}>
+                  <PhoneNumberGroupDetailPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/settings/telephony/schedules" element={
+                <ProtectedRoute roles={['company_admin']}>
+                  <SchedulesPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/settings/telephony/schedules/:scheduleId" element={
+                <ProtectedRoute roles={['company_admin']}>
+                  <ScheduleDetailPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/settings/telephony/user-groups" element={
+                <ProtectedRoute roles={['company_admin']}>
+                  <UserGroupsPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/settings/telephony/user-groups/:groupId" element={
+                <ProtectedRoute roles={['company_admin']}>
+                  <UserGroupDetailPage />
                 </ProtectedRoute>
               } />
 

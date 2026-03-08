@@ -415,6 +415,13 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
                                         className="flex items-center gap-2 cursor-pointer"
+                                        onClick={() => navigate('/settings/telephony')}
+                                    >
+                                        <PhoneIncoming className="size-4" />
+                                        Telephony
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                        className="flex items-center gap-2 cursor-pointer"
                                         onClick={() => navigate('/settings/phone-calls')}
                                     >
                                         <Phone className="size-4" />
