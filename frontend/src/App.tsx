@@ -26,6 +26,9 @@ import SchedulesPage from './pages/telephony/SchedulesPage';
 import ScheduleDetailPage from './pages/telephony/ScheduleDetailPage';
 import UserGroupsPage from './pages/telephony/UserGroupsPage';
 import UserGroupDetailPage from './pages/telephony/UserGroupDetailPage';
+import CallFlowsPage from './pages/telephony/CallFlowsPage';
+import CallFlowDetailPage from './pages/telephony/CallFlowDetailPage';
+import CallFlowBuilderPage from './pages/telephony/CallFlowBuilderPage';
 import { EventNotification } from './components/EventNotification';
 import { Toaster } from './components/ui/sonner';
 import './App.css';
@@ -145,6 +148,22 @@ function App() {
               <Route path="/settings/telephony/user-groups/:groupId" element={
                 <ProtectedRoute roles={['company_admin']}>
                   <UserGroupDetailPage />
+                </ProtectedRoute>
+              } />
+              {/* Call Flows */}
+              <Route path="/settings/telephony/call-flows" element={
+                <ProtectedRoute roles={['company_admin']}>
+                  <CallFlowsPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/settings/telephony/call-flows/:flowId" element={
+                <ProtectedRoute roles={['company_admin']}>
+                  <CallFlowDetailPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/settings/telephony/call-flows/:flowId/builder/:versionId" element={
+                <ProtectedRoute roles={['company_admin']}>
+                  <CallFlowBuilderPage />
                 </ProtectedRoute>
               } />
 
