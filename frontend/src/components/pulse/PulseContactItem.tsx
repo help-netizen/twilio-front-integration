@@ -1,7 +1,7 @@
 /**
  * PulseContactItem — a single contact row in the Pulse sidebar.
  */
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { callsApi } from '../../services/api';
 import { messagingApi } from '../../services/messagingApi';

@@ -65,7 +65,7 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
 
     const handleRemoveContact = () => { setSelectedContactId(null); cs.setSelectedName(''); setContactSnapshot(null); cs.setSavedAddresses([]); cs.setSelectedAddrId(null); };
 
-    const handleSelectCandidate = async (c: any) => { const id = await cs.selectCandidate(c); setSelectedContactId(id); };
+
 
     const submitLead = async (data: CreateLeadInput, mode: string) => {
         setLoading(true); setShowConfirmModal(false);
