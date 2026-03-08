@@ -1,0 +1,11 @@
+# ============================================================
+# Twilio CLI Profile — UAT (example)
+# ============================================================
+
+profile:
+  name: "abc-uat"
+  account_sid: "ACXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"  # ← replace
+  region: "us1"
+  edge: "ashburn"
+  output_format: "json"
+  note: "UAT environment — pre-production validation"

@@ -1,0 +1,26 @@
+# ============================================================
+# VAPI Voice Agent — UAT Environment Configuration
+# ============================================================
+
+environment: uat
+
+twilio:
+  profile: "abc-uat"
+  account_scope: "subaccount or isolated profile"
+  account_sid_env: "TWILIO_ACCOUNT_SID_UAT"
+  auth_token_env: "TWILIO_AUTH_TOKEN_UAT"
+  inbound_number:
+    e164: "+1XXXXXXXXXX"          # ← replace with actual UAT number
+    sid: "PNXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+    friendly_name: "appliance-inbound-uat"
+
+vapi:
+  org: "abc-uat"
+  api_key_env: "VAPI_API_KEY_UAT"
+  phone_alias: "appliance-inbound-uat"
+  squad_slug: "appliance_inbound_entry_uat"
+  assistant_slug: "entry_greeter_uat"
+
+naming:
+  prefix: "uat"
+  separator: "_"

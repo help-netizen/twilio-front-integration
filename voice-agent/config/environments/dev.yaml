@@ -1,0 +1,33 @@
+# ============================================================
+# VAPI Voice Agent — DEV Environment Configuration
+# ============================================================
+# This file defines all environment-specific identifiers for the
+# DEV environment. Actual secrets (API keys, auth tokens) must
+# NEVER be stored here — use environment variables instead.
+# ============================================================
+
+environment: dev
+
+twilio:
+  profile: "abc-dev"
+  account_scope: "subaccount or isolated profile"
+  # Twilio Account SID — set via env var TWILIO_ACCOUNT_SID_DEV
+  account_sid_env: "TWILIO_ACCOUNT_SID_DEV"
+  # Auth Token — set via env var TWILIO_AUTH_TOKEN_DEV
+  auth_token_env: "TWILIO_AUTH_TOKEN_DEV"
+  inbound_number:
+    e164: "+1XXXXXXXXXX"          # ← replace with actual DEV number
+    sid: "PNXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+    friendly_name: "appliance-inbound-dev"
+
+vapi:
+  org: "abc-dev"
+  # Vapi API Key — set via env var VAPI_API_KEY_DEV
+  api_key_env: "VAPI_API_KEY_DEV"
+  phone_alias: "appliance-inbound-dev"
+  squad_slug: "appliance_inbound_entry_dev"
+  assistant_slug: "entry_greeter_dev"
+
+naming:
+  prefix: "dev"
+  separator: "_"

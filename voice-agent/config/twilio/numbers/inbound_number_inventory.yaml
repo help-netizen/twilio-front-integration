@@ -1,0 +1,33 @@
+# ============================================================
+# Twilio Number Inventory — Inbound Number
+# ============================================================
+# Tracks the current state of the Twilio number used for
+# inbound voice calls. Updated whenever voice_url changes.
+# ============================================================
+
+number:
+  e164: "+1XXXXXXXXXX"            # ← replace with actual number
+  sid: "PNXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+  friendly_name: "appliance-inbound-dev"
+  environment: "dev"
+
+current_routing:
+  voice_url: ""                   # ← will be set by Vapi import
+  voice_method: "POST"
+  voice_fallback_url: ""
+  voice_application_sid: ""       # must be empty for voice_url to work
+  trunk_sid: ""                   # must be empty for voice_url to work
+  status: "active"
+
+last_known_good:
+  voice_url: ""
+  voice_method: "POST"
+  verified_at: ""                 # ISO 8601 timestamp
+  verified_by: ""
+
+change_log:
+  # - date: "2026-03-08T16:00:00-04:00"
+  #   action: "imported into Vapi"
+  #   by: "robert"
+  #   previous_voice_url: ""
+  #   new_voice_url: "https://vapi-managed-endpoint/voice"

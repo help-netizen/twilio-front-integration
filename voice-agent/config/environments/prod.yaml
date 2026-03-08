@@ -1,0 +1,26 @@
+# ============================================================
+# VAPI Voice Agent — PROD Environment Configuration
+# ============================================================
+
+environment: prod
+
+twilio:
+  profile: "abc-prod"
+  account_scope: "subaccount or isolated profile"
+  account_sid_env: "TWILIO_ACCOUNT_SID_PROD"
+  auth_token_env: "TWILIO_AUTH_TOKEN_PROD"
+  inbound_number:
+    e164: "+1XXXXXXXXXX"          # ← replace with actual PROD number
+    sid: "PNXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+    friendly_name: "appliance-inbound-prod"
+
+vapi:
+  org: "abc-prod"
+  api_key_env: "VAPI_API_KEY_PROD"
+  phone_alias: "appliance-inbound-prod"
+  squad_slug: "appliance_inbound_entry_prod"
+  assistant_slug: "entry_greeter_prod"
+
+naming:
+  prefix: "prod"
+  separator: "_"

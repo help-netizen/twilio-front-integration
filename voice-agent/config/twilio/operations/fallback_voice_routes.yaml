@@ -1,0 +1,33 @@
+# ============================================================
+# Twilio Voice Routes — Fallback Configuration
+# ============================================================
+# Predefined fallback voice URLs for break-glass scenarios.
+# Used by scripts/twilio/rollback-voice-url.sh
+# ============================================================
+
+fallback_routes:
+  # Primary route — Vapi-managed (normal operation)
+  primary:
+    voice_url: ""                 # ← set after Vapi import
+    voice_method: "POST"
+    description: "Vapi-managed inbound path"
+
+  # Diagnostic route — for testing Twilio→app path directly
+  diagnostic:
+    voice_url: "https://httpbin.org/post"
+    voice_method: "POST"
+    description: "Echo endpoint for connectivity testing"
+
+  # Emergency — simple TwiML response (no external dependency)
+  emergency_twiml:
+    voice_url: ""                 # ← set to a TwiML Bin URL
+    voice_method: "POST"
+    description: >-
+      Static TwiML response: 'We are experiencing technical difficulties.
+      Please try again later or call our office directly.'
+
+rules:
+  - "Always verify current voice_url BEFORE changing it"
+  - "Always record the previous URL in the inventory file"
+  - "Always use the correct Twilio CLI profile (-p flag)"
+  - "Primary route should only be restored once Vapi is confirmed working"

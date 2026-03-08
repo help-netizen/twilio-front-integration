@@ -1,0 +1,11 @@
+# ============================================================
+# Twilio CLI Profile — PROD (example)
+# ============================================================
+
+profile:
+  name: "abc-prod"
+  account_sid: "ACXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"  # ← replace
+  region: "us1"
+  edge: "ashburn"
+  output_format: "json"
+  note: "PROD environment — production traffic, handle with care"

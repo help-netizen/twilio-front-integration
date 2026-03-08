@@ -1,0 +1,14 @@
+# ============================================================
+# Twilio CLI Profile — DEV (example)
+# ============================================================
+# This is a TEMPLATE. Actual credentials must be configured via:
+#   twilio profiles:create --account-sid <SID> --auth-token <TOKEN> -p abc-dev
+# ============================================================
+
+profile:
+  name: "abc-dev"
+  account_sid: "ACXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"  # ← replace
+  region: "us1"
+  edge: "ashburn"
+  output_format: "json"
+  note: "DEV environment — safe for testing and local development"

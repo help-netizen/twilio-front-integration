@@ -1,0 +1,42 @@
+# ============================================================
+# Vapi Phone Number — Inbound Number Binding
+# ============================================================
+# Purpose: Bind the imported Twilio number to the Vapi squad.
+# Mode:    Static binding via squadId (no dynamic server URL).
+# ============================================================
+
+phone_number:
+  alias: "appliance-inbound"
+  provider: "byo-phone-number"
+  source_provider: "Twilio"
+
+  # --- Twilio Credentials (for import) ---
+  # Required when importing the number into Vapi Dashboard:
+  #   - Twilio Account SID
+  #   - Twilio Auth Token
+  #   - Phone number in E.164 format
+  twilio:
+    number: "+1XXXXXXXXXX"        # ← replace with actual number
+    account_sid_env: "TWILIO_ACCOUNT_SID"
+    auth_token_env: "TWILIO_AUTH_TOKEN"
+
+  # --- Vapi Binding ---
+  binding_mode: "static"
+  vapi_target:
+    # After creating the squad, set the squadId here:
+    squadId: "<VAPI_SQUAD_ID>"
+    # squadRef: "appliance_inbound_entry"  # human-readable reference
+
+  # --- Server URL (disabled for Stage 1) ---
+  server_url_mode:
+    enabled: false
+    note: >-
+      Dynamic assistant/squad resolution deferred to later stage.
+      Enable when needed for: per-brand routing, office-hours,
+      anti-spam, caller-history personalization.
+
+  # --- Inbound Settings ---
+  inbound:
+    # Vapi will answer all inbound calls to this number
+    # and route them to the configured squad.
+    fallbackDestination: null
