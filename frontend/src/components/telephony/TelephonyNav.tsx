@@ -1,7 +1,7 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-    LayoutDashboard, Phone, PhoneIncoming, Users, Calendar, GitBranch, Music,
-    Shield, FileText, Hash, ListOrdered,
+    LayoutDashboard, Phone, PhoneIncoming, Users, Calendar, Music,
+    Shield, FileText, ListOrdered,
 } from 'lucide-react';
 
 const sections = [
@@ -16,11 +16,9 @@ const sections = [
         title: 'Configuration',
         items: [
             { label: 'Overview', path: '/settings/telephony', icon: <LayoutDashboard size={15} /> },
-            { label: 'Number Groups', path: '/settings/telephony/groups', icon: <Hash size={15} /> },
             { label: 'Phone Numbers', path: '/settings/telephony/phone-numbers', icon: <Phone size={15} /> },
             { label: 'User Groups', path: '/settings/telephony/user-groups', icon: <Users size={15} /> },
             { label: 'Schedules', path: '/settings/telephony/schedules', icon: <Calendar size={15} /> },
-            { label: 'Call Flows', path: '/settings/telephony/call-flows', icon: <GitBranch size={15} /> },
             { label: 'Audio Library', path: '/settings/telephony/audio-library', icon: <Music size={15} /> },
         ],
     },

@@ -1,13 +1,13 @@
-import { Phone, GitBranch, Users, Calendar, LayoutDashboard } from 'lucide-react';
+import { Phone, Users, Calendar, LayoutDashboard, Music } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 export default function RouteManagerOverviewPage() {
     const navigate = useNavigate();
     const cards = [
-        { title: 'Call Flows', desc: 'Visual call routing', icon: <GitBranch size={24} style={{ color: '#6366f1' }} />, path: '/settings/telephony/call-flows', count: '2 flows' },
+        { title: 'User Groups', desc: 'Agent groups with numbers & call flows', icon: <Users size={24} style={{ color: '#f59e0b' }} />, path: '/settings/telephony/user-groups', count: '2 groups' },
         { title: 'Phone Numbers', desc: 'Manage Twilio numbers', icon: <Phone size={24} style={{ color: '#10b981' }} />, path: '/settings/telephony/phone-numbers', count: '4 numbers' },
-        { title: 'User Groups', desc: 'Agent groups & skills', icon: <Users size={24} style={{ color: '#f59e0b' }} />, path: '/settings/telephony/user-groups', count: '2 groups' },
         { title: 'Schedules', desc: 'Business hours', icon: <Calendar size={24} style={{ color: '#3b82f6' }} />, path: '/settings/telephony/schedules', count: '1 schedule' },
+        { title: 'Audio Library', desc: 'Greetings, prompts, hold music', icon: <Music size={24} style={{ color: '#8b5cf6' }} />, path: '/settings/telephony/audio-library', count: '3 assets' },
         { title: 'Dashboard', desc: 'Live operations', icon: <LayoutDashboard size={24} style={{ color: '#ef4444' }} />, path: '/calls/dashboard', count: 'Live' },
     ];
     return (

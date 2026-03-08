@@ -90,7 +90,9 @@ function graphToReactFlow(states: CFNode[], transitions: CallFlowTransition[]) {
 
 // ─── Builder ──────────────────────────────────────────────────────────────────
 export default function CallFlowBuilderPage() {
-    const { flowId } = useParams<{ flowId: string }>();
+    const { groupId } = useParams<{ groupId: string }>();
+    // Each User Group has exactly one Call Flow — map groupId to flowId
+    const flowId = groupId ? `cf-${groupId.replace('ug-', '')}` : undefined;
     const navigate = useNavigate();
     const [flow, setFlow] = useState<CallFlow | null>(null);
     const [loading, setLoading] = useState(true);
@@ -213,7 +215,7 @@ export default function CallFlowBuilderPage() {
             {/* Toolbar */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', background: '#fff', borderBottom: '1px solid #e5e7eb', flexShrink: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <button onClick={() => navigate('/settings/telephony/call-flows')} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#6366f1', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}><ArrowLeft size={14} />Back</button>
+                    <button onClick={() => navigate(`/settings/telephony/user-groups/${groupId}`)} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#6366f1', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}><ArrowLeft size={14} />Back to Group</button>
                     <span style={{ fontSize: 14, fontWeight: 600, color: '#111' }}>{flow?.name || 'Flow Builder'}</span>
                     <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: flow?.status === 'draft' ? '#fef3c7' : '#d1fae5', color: flow?.status === 'draft' ? '#92400e' : '#065f46' }}>{flow?.status}</span>
                 </div>
