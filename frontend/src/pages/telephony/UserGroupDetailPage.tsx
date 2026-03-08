@@ -1,15 +1,17 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Users, Settings, GitBranch, Play, Phone } from 'lucide-react';
+import { ArrowLeft, Users, Settings, GitBranch, Play, Phone, Calendar, Clock } from 'lucide-react';
 import type { CallFlowGraph } from '../../types/telephony';
 import { NODE_KIND_META, type CallFlowNodeKind } from '../../types/telephony';
 
-// User Group = members + assigned numbers + Call Flow (1:1, auto-created skeleton)
+// User Group = members + assigned numbers + schedule (1:1) + call flow (1:1)
+interface ScheduleDay { day: string; open: string; close: string }
 interface UserGroupData {
     name: string;
     desc: string;
     strategy: string;
     members: { id: string; name: string; status: string }[];
     numbers: { id: string; number: string; friendly_name: string }[];
+    schedule: { timezone: string; hours: ScheduleDay[] };
     flow: { id: string; status: 'draft' | 'published'; updated_at: string; graph: CallFlowGraph };
 }
 
@@ -24,6 +26,15 @@ const MOCK: Record<string, UserGroupData> = {
             { id: 'pn-1', number: '+1 (617) 555-0101', friendly_name: 'Main Line' },
             { id: 'pn-2', number: '+1 (617) 555-0102', friendly_name: 'Sales Line' },
         ],
+        schedule: {
+            timezone: 'America/New_York',
+            hours: [
+                { day: 'Mon', open: '09:00', close: '18:00' }, { day: 'Tue', open: '09:00', close: '18:00' },
+                { day: 'Wed', open: '09:00', close: '18:00' }, { day: 'Thu', open: '09:00', close: '18:00' },
+                { day: 'Fri', open: '09:00', close: '17:00' }, { day: 'Sat', open: 'Closed', close: '' },
+                { day: 'Sun', open: 'Closed', close: '' },
+            ],
+        },
         flow: {
             id: 'cf-1', status: 'published', updated_at: '2026-03-06',
             graph: {
@@ -58,6 +69,15 @@ const MOCK: Record<string, UserGroupData> = {
         numbers: [
             { id: 'pn-3', number: '+1 (617) 555-0103', friendly_name: 'Support Line' },
         ],
+        schedule: {
+            timezone: 'America/New_York',
+            hours: [
+                { day: 'Mon', open: '08:00', close: '22:00' }, { day: 'Tue', open: '08:00', close: '22:00' },
+                { day: 'Wed', open: '08:00', close: '22:00' }, { day: 'Thu', open: '08:00', close: '22:00' },
+                { day: 'Fri', open: '08:00', close: '20:00' }, { day: 'Sat', open: '10:00', close: '16:00' },
+                { day: 'Sun', open: 'Closed', close: '' },
+            ],
+        },
         flow: {
             id: 'cf-2', status: 'draft', updated_at: '2026-03-07',
             graph: {
@@ -105,9 +125,8 @@ export default function UserGroupDetailPage() {
                 {g.desc} · Ring strategy: <strong>{g.strategy}</strong>
             </p>
 
-            {/* Top row: Members + Numbers */}
+            {/* Row 1: Members + Assigned Numbers */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-                {/* Members */}
                 <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: 20 }}>
                     <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
                         <Users size={15} />Members ({g.members.length})
@@ -124,7 +143,6 @@ export default function UserGroupDetailPage() {
                     })}
                 </div>
 
-                {/* Assigned Numbers — inbound calls on these go to this group's flow */}
                 <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: 20 }}>
                     <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
                         <Phone size={15} style={{ color: '#10b981' }} />Assigned Numbers ({g.numbers.length})
@@ -140,40 +158,60 @@ export default function UserGroupDetailPage() {
                 </div>
             </div>
 
-            {/* Call Flow (1:1 per group) */}
-            <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: 20 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <GitBranch size={15} style={{ color: '#6366f1' }} />Call Flow
+            {/* Row 2: Schedule + Call Flow */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                {/* Schedule */}
+                <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: 20 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <Calendar size={15} style={{ color: '#3b82f6' }} />Schedule
+                        </div>
+                        <span style={{ fontSize: 11, color: '#6b7280' }}>{g.schedule.timezone}</span>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: g.flow.status === 'published' ? '#d1fae5' : '#fef3c7', color: g.flow.status === 'published' ? '#065f46' : '#92400e' }}>
-                            {g.flow.status}
-                        </span>
-                        <button
-                            onClick={() => navigate(`/settings/telephony/user-groups/${groupId}/flow`)}
-                            style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 12px', fontSize: 12, fontWeight: 600, background: '#6366f1', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}
-                        >
-                            <Play size={12} />Open Builder
-                        </button>
-                    </div>
+                    {g.schedule.hours.map(h => (
+                        <div key={h.day} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid #f3f4f6', fontSize: 12 }}>
+                            <span style={{ fontWeight: 500, minWidth: 40 }}>{h.day}</span>
+                            <span style={{ color: h.open === 'Closed' ? '#ef4444' : '#374151', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                {h.open === 'Closed' ? 'Closed' : <><Clock size={10} />{h.open} — {h.close}</>}
+                            </span>
+                        </div>
+                    ))}
                 </div>
 
-                <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 12 }}>
-                    Updated {g.flow.updated_at} · {g.flow.graph.states.length} states · {g.flow.graph.transitions.length} transitions
-                </div>
+                {/* Call Flow */}
+                <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: 20 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <GitBranch size={15} style={{ color: '#6366f1' }} />Call Flow
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: g.flow.status === 'published' ? '#d1fae5' : '#fef3c7', color: g.flow.status === 'published' ? '#065f46' : '#92400e' }}>
+                                {g.flow.status}
+                            </span>
+                            <button
+                                onClick={() => navigate(`/settings/telephony/user-groups/${groupId}/flow`)}
+                                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 12px', fontSize: 12, fontWeight: 600, background: '#6366f1', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}
+                            >
+                                <Play size={12} />Open Builder
+                            </button>
+                        </div>
+                    </div>
 
-                {/* Flow preview — compact state list */}
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {g.flow.graph.states.map(s => {
-                        const meta = NODE_KIND_META[s.kind as CallFlowNodeKind] || { icon: '?', label: s.kind, color: '#6b7280' };
-                        return (
-                            <div key={s.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: '#f9fafb', borderRadius: 6, fontSize: 12, border: '1px solid #e5e7eb' }}>
-                                <span>{meta.icon}</span>
-                                <span style={{ fontWeight: 500 }}>{s.name}</span>
-                            </div>
-                        );
-                    })}
+                    <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 12 }}>
+                        Updated {g.flow.updated_at} · {g.flow.graph.states.length} states · {g.flow.graph.transitions.length} transitions
+                    </div>
+
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {g.flow.graph.states.map(s => {
+                            const meta = NODE_KIND_META[s.kind as CallFlowNodeKind] || { icon: '?', label: s.kind, color: '#6b7280' };
+                            return (
+                                <div key={s.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: '#f9fafb', borderRadius: 6, fontSize: 12, border: '1px solid #e5e7eb' }}>
+                                    <span>{meta.icon}</span>
+                                    <span style={{ fontWeight: 500 }}>{s.name}</span>
+                                </div>
+                            );
+                        })}
+                    </div>
                 </div>
             </div>
         </div>

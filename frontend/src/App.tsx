@@ -30,8 +30,6 @@ import QueueOperationsPage from './pages/telephony/QueueOperationsPage';
 import ActiveCallWorkspacePage from './pages/telephony/ActiveCallWorkspacePage';
 import UserGroupsPage from './pages/telephony/UserGroupsPage';
 import UserGroupDetailPage from './pages/telephony/UserGroupDetailPage';
-import SchedulesPage from './pages/telephony/SchedulesPage';
-import ScheduleDetailPage from './pages/telephony/ScheduleDetailPage';
 import TelephonyLayout from './components/telephony/TelephonyLayout';
 import { EventNotification } from './components/EventNotification';
 import { Toaster } from './components/ui/sonner';
@@ -124,8 +122,6 @@ function App() {
               <Route path="/settings/telephony/user-groups" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><UserGroupsPage /></TelephonyLayout></ProtectedRoute>} />
               <Route path="/settings/telephony/user-groups/:groupId" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><UserGroupDetailPage /></TelephonyLayout></ProtectedRoute>} />
               <Route path="/settings/telephony/phone-numbers" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><PhoneNumbersPage /></TelephonyLayout></ProtectedRoute>} />
-              <Route path="/settings/telephony/schedules" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><SchedulesPage /></TelephonyLayout></ProtectedRoute>} />
-              <Route path="/settings/telephony/schedules/:scheduleId" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><ScheduleDetailPage /></TelephonyLayout></ProtectedRoute>} />
               <Route path="/settings/telephony/audio-library" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><AudioLibraryPage /></TelephonyLayout></ProtectedRoute>} />
               <Route path="/settings/telephony/provider-settings" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><ProviderSettingsPage /></TelephonyLayout></ProtectedRoute>} />
               <Route path="/settings/telephony/routing-logs" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><RoutingLogsPage /></TelephonyLayout></ProtectedRoute>} />
