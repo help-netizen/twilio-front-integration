@@ -1,4 +1,3 @@
-import { useRef } from 'react';
 import { Variable } from 'lucide-react';
 
 interface VariablePickerProps {
