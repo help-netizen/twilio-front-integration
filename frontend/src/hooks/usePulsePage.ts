@@ -1,15 +1,15 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useParams, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useCallsByContact } from './useConversations';
 import { usePulseTimeline } from './usePulseTimeline';
 import { messagingApi } from '../services/messagingApi';
-import { pulseApi } from '../services/pulseApi';
+
 import * as leadsApi from '../services/leadsApi';
 import * as contactsApi from '../services/contactsApi';
 import { useRealtimeEvents, type SSECallEvent, type SSETranscriptDeltaEvent, type SSETranscriptFinalizedEvent } from './useRealtimeEvents';
 import { appendTranscriptDelta, finalizeTranscript } from './useLiveTranscript';
-import { callsApi } from '../services/api';
+
 import { authedFetch } from '../services/apiClient';
 import { useLeadByPhone } from './useLeadByPhone';
 import { callToCallData } from '../components/pulse/pulseHelpers';

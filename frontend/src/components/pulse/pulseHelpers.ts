@@ -1,8 +1,3 @@
-import { useState, useEffect, useRef } from 'react';
-import { pulseApi } from '../../services/pulseApi';
-import { authedFetch } from '../../services/apiClient';
-import { toast } from 'sonner';
-import { UserRound } from 'lucide-react';
 import type { CallData } from '../call-list-item';
 
 // =============================================================================
