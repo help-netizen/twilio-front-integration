@@ -6,7 +6,7 @@ import { Phone, MessageSquare, Users, Settings, Key, BookOpen, FileText, LogOut,
 
 interface AppNavProps { activeTab: string; pulseUnreadCount: number; hasRole: (r: string) => boolean; logout: () => void; }
 
-export const AppNavTabs: React.FC<AppNavProps> = ({ activeTab, pulseUnreadCount, hasRole, logout }) => {
+export const AppNavTabs: React.FC<AppNavProps> = ({ activeTab, pulseUnreadCount }) => {
     const navigate = useNavigate();
     return (
         <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>

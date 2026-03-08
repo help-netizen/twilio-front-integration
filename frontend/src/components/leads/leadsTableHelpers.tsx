@@ -3,7 +3,7 @@ import { TableCell } from '../ui/table';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { formatPhone } from '../../lib/formatPhone';
-import { Phone, Copy } from 'lucide-react';
+import { Copy } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import type { Lead } from '../../types/lead';
