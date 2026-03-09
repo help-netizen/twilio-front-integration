@@ -83,9 +83,6 @@ export default function UserGroupDetailPage() {
                             <GitBranch size={15} style={{ color: '#6366f1' }} />Call Flow
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: g.flow.status === 'published' ? '#d1fae5' : '#fef3c7', color: g.flow.status === 'published' ? '#065f46' : '#92400e' }}>
-                                {g.flow.status}
-                            </span>
                             <button
                                 onClick={() => navigate(`/settings/telephony/user-groups/${groupId}/flow`)}
                                 style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 12px', fontSize: 12, fontWeight: 600, background: '#6366f1', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}
