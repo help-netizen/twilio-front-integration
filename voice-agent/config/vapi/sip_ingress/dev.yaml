@@ -17,12 +17,12 @@ sip_ingress:
   # Vapi will call serverUrl with assistant-request event.
   # Blanc runtime resolver returns the correct assistantId.
   assistantId: null
-  serverUrl: "https://dev-blanc.example.com/api/vapi/runtime"
+  serverUrl: "https://abc-metrics.fly.dev/api/vapi/runtime"
 
-  # --- After creating in Vapi, record: ---
-  # vapi_phone_number_id: ""
-  # created_at: ""
-  # created_by: ""
+  # --- Provisioned in Vapi ---
+  vapi_phone_number_id: "d446b324-f016-48ba-b536-78c61652184d"
+  created_at: "2026-03-10T14:13:12.460Z"
+  created_by: "robert"
 
   # --- SIP Headers Blanc will send ---
   expected_headers:

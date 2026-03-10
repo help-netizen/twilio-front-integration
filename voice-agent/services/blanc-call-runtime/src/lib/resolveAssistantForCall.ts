@@ -37,8 +37,7 @@ export interface AssistantResolutionResult {
  * Later, this could be backed by a database or config service.
  */
 const ASSISTANT_PROFILES: Record<string, string> = {
-    // Set these after creating assistants in Vapi:
-    // greeting_only_v1: 'asst_xxxxxxxxxxxxxxxxxxxxxxxxx',
+    greeting_only_v1: '4339f404-9b71-454b-ba6d-8167392304f0',
 };
 
 /**

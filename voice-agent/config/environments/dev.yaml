@@ -8,7 +8,7 @@
 environment: dev
 
 blanc:
-  base_url: "https://dev-blanc.example.com"
+  base_url: "https://abc-metrics.fly.dev"
   runtime_resolver_path: "/api/vapi/runtime"
   dial_action_path: "/api/twilio/vapi-agent-action"
 
@@ -19,11 +19,13 @@ twilio:
   auth_token_env: "TWILIO_AUTH_TOKEN_DEV"
 
 vapi:
-  org: "abc-dev"
+  org: "help@bostonmasters.com's Org"
+  org_id: "243930a0-b2f1-4a84-b511-916f5d1f6a3b"
   api_key_env: "VAPI_API_KEY_DEV"
   sip_uri: "sip:blanc-ai-dev@sip.vapi.ai"
-  assistant_id_greeting: ""       # ← set after creating assistant
-  runtime_resolver_url: "https://dev-blanc.example.com/api/vapi/runtime"
+  sip_phone_number_id: "d446b324-f016-48ba-b536-78c61652184d"
+  assistant_id_greeting: "4339f404-9b71-454b-ba6d-8167392304f0"
+  runtime_resolver_url: "https://abc-metrics.fly.dev/api/vapi/runtime"
 
 naming:
   prefix: "dev"

@@ -2,69 +2,170 @@ import ELK from 'elkjs/lib/elk.bundled.js';
 
 const elk = new ELK();
 
+const NODE_W = 200;
+const NODE_H = 60;
+const V_GAP = 80;   // vertical gap between nodes in a branch
+const H_GAP = 350;  // horizontal gap between branch columns
+
 /**
  * Manual positions for skeleton v2 visible nodes.
  *
  * Layout:  Hours Check (center, top)
- *          ├─ Business Hours edge → Current Group (left) → VM BH (left)
- *          └─ After Hours edge → VM AH (right)
+ *          ├─ Business Hours → Current Group → VM BH (left column)
+ *          └─ After Hours → VM AH (right column)
  *
- * Start + hidden finals are not rendered, so no positions for them.
+ * Both Voicemail nodes sit at the same Y level.
  */
 const SKELETON_POSITIONS: Record<string, { x: number; y: number }> = {
     'sk-hours-check': { x: 275, y: 0 },
     // Left branch (Business Hours)
     'sk-current-group': { x: 0, y: 160 },
     'sk-vm-business-hours': { x: 0, y: 310 },
-    // Right branch (After Hours)
-    'sk-vm-after-hours': { x: 550, y: 160 },
+    // Right branch (After Hours) — VM at same Y as BH VM
+    'sk-vm-after-hours': { x: 550, y: 310 },
 };
 
+/** Skeleton node IDs that anchor the branches */
+const BH_TERMINAL = 'sk-vm-business-hours';
+const AH_TERMINAL = 'sk-vm-after-hours';
+const BH_BRANCH_START = 'sk-current-group';
+const AH_BRANCH_START = 'sk-vm-after-hours';
+const HOURS_CHECK = 'sk-hours-check';
+
+/**
+ * Build adjacency list (source→targets) from edges.
+ */
+function buildAdj(edges: { source: string; target: string }[]): Map<string, string[]> {
+    const adj = new Map<string, string[]>();
+    for (const e of edges) {
+        if (!adj.has(e.source)) adj.set(e.source, []);
+        adj.get(e.source)!.push(e.target);
+    }
+    return adj;
+}
+
+/**
+ * Walk a branch chain: given a starting node, follow the single outgoing edge
+ * until we hit a known terminal or a node with no outgoing edges.
+ * Returns the ordered list of node IDs in the chain (including start and end).
+ */
+function walkChain(startId: string, terminalId: string, adj: Map<string, string[]>, nodeSet: Set<string>): string[] {
+    const chain: string[] = [startId];
+    let current = startId;
+    const visited = new Set<string>();
+    visited.add(current);
+    while (current !== terminalId) {
+        const targets = (adj.get(current) || []).filter(t => nodeSet.has(t) && !visited.has(t));
+        if (targets.length === 0) break;
+        // Prefer the path toward the terminal
+        const next = targets.find(t => t === terminalId) || targets[0];
+        chain.push(next);
+        visited.add(next);
+        current = next;
+    }
+    return chain;
+}
+
 export async function layoutWithElkLayered(
-    nodes: { id: string; position: { x: number; y: number }; measured?: { width?: number; height?: number }; data?: { kind?: string; config?: Record<string, unknown> } }[],
+    nodes: { id: string; position: { x: number; y: number }; measured?: { width?: number; height?: number }; data?: any }[],
     edges: { id: string; source: string; target: string }[],
 ) {
-    // If all visible nodes are skeleton nodes, use manual positions (fast path)
+    // Fast path: pure skeleton (no user-added nodes)
     const allSkeleton = nodes.every(n => SKELETON_POSITIONS[n.id]);
     if (allSkeleton) {
         return {
-            nodes: nodes.map(n => ({
-                ...n,
-                position: SKELETON_POSITIONS[n.id] || n.position,
-            })),
+            nodes: nodes.map(n => ({ ...n, position: SKELETON_POSITIONS[n.id] || n.position })),
             edges,
         };
     }
 
-    // Mixed graph: use ELK for layout but override skeleton positions
-    const graph = {
-        id: 'root',
-        layoutOptions: {
-            'elk.algorithm': 'layered',
-            'elk.direction': 'DOWN',
-            'elk.spacing.nodeNode': '200',
-            'elk.layered.spacing.nodeNodeBetweenLayers': '80',
-            'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
-            'elk.separateConnectedComponents': 'false',
-        },
-        children: nodes.map(n => ({
-            id: n.id,
-            width: n.measured?.width || 200,
-            height: n.measured?.height || 60,
-        })),
-        edges: edges.map(e => ({ id: e.id, sources: [e.source], targets: [e.target] })),
-    };
+    // ── Branch-aware layout for mixed graphs ────────────────────────────────
+    const nodeSet = new Set(nodes.map(n => n.id));
+    const adj = buildAdj(edges);
 
-    const laid = await elk.layout(graph);
+    // Determine BH chain: sk-current-group → ... → sk-vm-business-hours
+    const bhChain = nodeSet.has(BH_BRANCH_START) && nodeSet.has(BH_TERMINAL)
+        ? walkChain(BH_BRANCH_START, BH_TERMINAL, adj, nodeSet)
+        : [];
+    // Determine AH chain: sk-vm-after-hours (or inserted nodes before it)
+    // For AH, the chain starts from Hours Check's AH target
+    const ahTargets = (adj.get(HOURS_CHECK) || []).filter(t => t !== BH_BRANCH_START && nodeSet.has(t));
+    const ahStart = ahTargets[0] || AH_BRANCH_START;
+    const ahChain = nodeSet.has(ahStart) && nodeSet.has(AH_TERMINAL)
+        ? (ahStart === AH_TERMINAL ? [AH_TERMINAL] : walkChain(ahStart, AH_TERMINAL, adj, nodeSet))
+        : [];
+
+    // Position Hours Check at the top center
+    const bhCount = bhChain.length;
+    const ahCount = ahChain.length;
+    const maxChainLen = Math.max(bhCount, ahCount, 1);
+
+    // Compute positions
+    const positions = new Map<string, { x: number; y: number }>();
+
+    // BH branch: left column, vertically stacked
+    const bhX = 0;
+    const branchTopY = 160; // first row under Hours Check
+    for (let i = 0; i < bhChain.length; i++) {
+        positions.set(bhChain[i], { x: bhX, y: branchTopY + i * (NODE_H + V_GAP) });
+    }
+
+    // AH branch: right column, vertically stacked
+    const ahX = H_GAP + NODE_W;
+    for (let i = 0; i < ahChain.length; i++) {
+        positions.set(ahChain[i], { x: ahX, y: branchTopY + i * (NODE_H + V_GAP) });
+    }
+
+    // Align terminal nodes (Voicemails) at the same Y — the maximum of the two
+    const bhTermY = positions.get(BH_TERMINAL)?.y ?? branchTopY;
+    const ahTermY = positions.get(AH_TERMINAL)?.y ?? branchTopY;
+    const terminalY = Math.max(bhTermY, ahTermY);
+    if (positions.has(BH_TERMINAL)) positions.set(BH_TERMINAL, { x: positions.get(BH_TERMINAL)!.x, y: terminalY });
+    if (positions.has(AH_TERMINAL)) positions.set(AH_TERMINAL, { x: positions.get(AH_TERMINAL)!.x, y: terminalY });
+
+    // Hours Check: centered above the two columns
+    const leftX = bhX;
+    const rightX = ahX;
+    const centerX = (leftX + rightX) / 2;
+    positions.set(HOURS_CHECK, { x: centerX, y: 0 });
+
+    // Any nodes not in either chain (shouldn't happen normally, but fallback)
+    const positioned = new Set(positions.keys());
+    const unpositioned = nodes.filter(n => !positioned.has(n.id));
+    if (unpositioned.length > 0) {
+        // Use ELK for any remaining nodes
+        const graph = {
+            id: 'root',
+            layoutOptions: {
+                'elk.algorithm': 'layered',
+                'elk.direction': 'DOWN',
+                'elk.spacing.nodeNode': '60',
+                'elk.layered.spacing.nodeNodeBetweenLayers': '80',
+            },
+            children: unpositioned.map(n => ({ id: n.id, width: NODE_W, height: NODE_H })),
+            edges: edges.filter(e =>
+                !positioned.has(e.source) && !positioned.has(e.target) &&
+                unpositioned.some(n => n.id === e.source) && unpositioned.some(n => n.id === e.target)
+            ).map(e => ({ id: e.id, sources: [e.source], targets: [e.target] })),
+        };
+        try {
+            const laid = await elk.layout(graph);
+            for (const n of unpositioned) {
+                const elkN = laid.children?.find(c => c.id === n.id);
+                positions.set(n.id, { x: (elkN?.x ?? 0) + centerX, y: (elkN?.y ?? 0) + terminalY + NODE_H + V_GAP });
+            }
+        } catch {
+            for (const n of unpositioned) {
+                positions.set(n.id, n.position);
+            }
+        }
+    }
 
     return {
-        nodes: nodes.map(n => {
-            if (SKELETON_POSITIONS[n.id]) {
-                return { ...n, position: SKELETON_POSITIONS[n.id] };
-            }
-            const elkNode = laid.children?.find(c => c.id === n.id);
-            return { ...n, position: { x: elkNode?.x ?? n.position.x, y: elkNode?.y ?? n.position.y } };
-        }),
+        nodes: nodes.map(n => ({
+            ...n,
+            position: positions.get(n.id) || n.position,
+        })),
         edges,
     };
 }
