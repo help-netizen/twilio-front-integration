@@ -1,25 +1,26 @@
 # ============================================================
-# VAPI Voice Agent — PROD Environment Configuration
+# VAPI Voice Agent — PROD Environment Configuration (v2.0)
 # ============================================================
 
 environment: prod
+
+blanc:
+  base_url: "https://blanc.example.com"
+  runtime_resolver_path: "/api/vapi/runtime"
+  dial_action_path: "/api/twilio/vapi-agent-action"
 
 twilio:
   profile: "abc-prod"
   account_scope: "subaccount or isolated profile"
   account_sid_env: "TWILIO_ACCOUNT_SID_PROD"
   auth_token_env: "TWILIO_AUTH_TOKEN_PROD"
-  inbound_number:
-    e164: "+1XXXXXXXXXX"          # ← replace with actual PROD number
-    sid: "PNXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
-    friendly_name: "appliance-inbound-prod"
 
 vapi:
   org: "abc-prod"
   api_key_env: "VAPI_API_KEY_PROD"
-  phone_alias: "appliance-inbound-prod"
-  squad_slug: "appliance_inbound_entry_prod"
-  assistant_slug: "entry_greeter_prod"
+  sip_uri: "sip:blanc-ai-prod@sip.vapi.ai"
+  assistant_id_greeting: ""
+  runtime_resolver_url: "https://blanc.example.com/api/vapi/runtime"
 
 naming:
   prefix: "prod"

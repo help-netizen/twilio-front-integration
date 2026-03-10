@@ -13,7 +13,62 @@ import { NODE_KIND_META, type CallFlowNodeKind, type CallFlow, type CallFlowNode
 import { layoutWithElkLayered } from '../../utils/elkLayout';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type FlowNodeData = { label: string; kind: string; isInitial?: boolean; config?: Record<string, unknown> };
+type FlowNodeData = {
+    label: string; kind: string; isInitial?: boolean; isProtected?: boolean;
+    system?: boolean; immutable?: boolean; uiTerminal?: boolean; hidden?: boolean;
+    labelExpr?: string; groupRef?: string;
+    config?: Record<string, unknown>;
+};
+
+// ── SCXML generator (blanc namespace) ────────────────────────────────────────
+function graphToScxml(allNodes: Node<FlowNodeData>[], allEdges: Edge[]): string {
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const initialNode = allNodes.find(n => n.data?.isInitial) || allNodes[0];
+    let xml = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+    xml += `<scxml\n  xmlns="http://www.w3.org/2005/07/scxml"\n  xmlns:blanc="https://blanc.app/fsm"\n  version="1.0" datamodel="ecmascript"\n  initial="${esc(initialNode?.id || '')}"\n  blanc:machineType="call_flow" blanc:schemaVersion="2" blanc:skeleton="call_flow_skeleton_v2"\n>\n`;
+    xml += `  <datamodel>\n    <data id="isBusinessHours" expr="false" />\n    <data id="currentGroupName" expr="'Current Group'" />\n  </datamodel>\n\n`;
+    for (const node of allNodes) {
+        const d = node.data;
+        const kind = d?.kind || 'unknown';
+        const outEdges = allEdges.filter(e => e.source === node.id);
+        const isFinal = kind === 'final';
+        const tag = isFinal ? 'final' : 'state';
+        const ba: string[] = [`blanc:kind="${esc(kind)}"`];
+        if (d?.labelExpr) ba.push(`blanc:labelExpr="${esc(d.labelExpr)}"`);
+        else ba.push(`blanc:label="${esc(String(d?.label || ''))}"`);
+        if (d?.groupRef) ba.push(`blanc:groupRef="${esc(d.groupRef)}"`);
+        if (d?.system) ba.push(`blanc:system="true"`);
+        if (d?.immutable) ba.push(`blanc:immutable="true"`);
+        if (d?.isProtected) ba.push(`blanc:deletable="false"`);
+        if (d?.uiTerminal) ba.push(`blanc:uiTerminal="true"`);
+        if (d?.hidden) ba.push(`blanc:hidden="true"`);
+        if (isFinal && outEdges.length === 0) {
+            xml += `  <${tag} id="${esc(node.id)}" ${ba.join(' ')} />\n\n`;
+        } else {
+            xml += `  <${tag}\n    id="${esc(node.id)}"\n    ${ba.join('\n    ')}\n  >\n`;
+            for (const edge of outEdges) {
+                const ed = (edge as any).data || {};
+                const ta: string[] = [];
+                if (ed.condExpr) ta.push(`cond="${esc(ed.condExpr)}"`);
+                if (ed.event_key) ta.push(`event="${esc(ed.event_key)}"`);
+                ta.push(`target="${esc(edge.target)}"`);
+                if (ed.system) ta.push(`blanc:system="true"`);
+                if (ed.immutable) ta.push(`blanc:immutable="true"`);
+                if (ed.hidden) ta.push(`blanc:hidden="true"`);
+                if (ed.deletable === false) ta.push(`blanc:deletable="false"`);
+                if (ed.edgeLabel) ta.push(`blanc:edgeLabel="${esc(ed.edgeLabel)}"`);
+                if (ed.branchKey) ta.push(`blanc:branchKey="${esc(ed.branchKey)}"`);
+                if (ed.edgeRole) ta.push(`blanc:edgeRole="${esc(ed.edgeRole)}"`);
+                if (ed.insertable) ta.push(`blanc:insertable="true"`);
+                if (ed.insertMode) ta.push(`blanc:insertMode="${esc(ed.insertMode)}"`);
+                xml += `    <transition ${ta.join(' ')} />\n`;
+            }
+            xml += `  </${tag}>\n\n`;
+        }
+    }
+    xml += `</scxml>`;
+    return xml;
+}
 
 // ─── Undo/Redo ────────────────────────────────────────────────────────────────
 interface Snapshot { nodes: Node<FlowNodeData>[]; edges: Edge[] }
@@ -76,14 +131,39 @@ const nodeTypes: NodeTypes = { flowNode: FlowNodeComponent };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function graphToReactFlow(states: CFNode[], transitions: CallFlowTransition[]) {
-    const nodes: Node<FlowNodeData>[] = states.map((s, i) => ({
+    const visibleStates = states.filter(s => !s.hidden);
+    const visibleTransitions = transitions.filter(t => !t.hidden);
+    const nodes: Node<FlowNodeData>[] = visibleStates.map((s, i) => ({
         id: s.id, type: 'flowNode' as const, position: { x: 200, y: i * 120 },
-        data: { label: s.name, kind: s.kind, isInitial: s.isInitial, config: s.config },
+        data: {
+            label: s.name, kind: s.kind, isInitial: s.isInitial, isProtected: s.protected,
+            system: s.system, immutable: s.immutable, uiTerminal: s.uiTerminal, hidden: s.hidden,
+            labelExpr: s.labelExpr, groupRef: s.groupRef, config: s.config,
+        },
     }));
-    const edges: Edge[] = transitions.map(t => ({
+    const edges: Edge[] = visibleTransitions.map(t => ({
         id: t.id, source: t.from_state_id, target: t.to_state_id, type: 'smoothstep',
-        label: t.label || t.event_key, markerEnd: { type: MarkerType.ArrowClosed },
+        label: t.label || t.edgeLabel || t.event_key,
+        markerEnd: { type: MarkerType.ArrowClosed },
         style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' },
+        data: {
+            system: t.system, immutable: t.immutable, deletable: t.deletable, hidden: t.hidden,
+            insertable: t.insertable, insertMode: t.insertMode, edgeLabel: t.edgeLabel,
+            branchKey: t.branchKey, edgeRole: t.edgeRole, transitionMode: t.transitionMode,
+            condExpr: t.condExpr, event_key: t.event_key
+        },
+    }));
+    return { nodes, edges };
+}
+function graphHiddenElements(states: CFNode[], transitions: CallFlowTransition[]) {
+    const nodes: Node<FlowNodeData>[] = states.filter(s => s.hidden).map(s => ({
+        id: s.id, type: 'flowNode' as const, position: { x: 0, y: 0 },
+        data: { label: s.name, kind: s.kind, system: s.system, hidden: s.hidden, config: s.config },
+    }));
+    const edges: Edge[] = transitions.filter(t => t.hidden).map(t => ({
+        id: t.id, source: t.from_state_id, target: t.to_state_id, type: 'default',
+        markerEnd: { type: MarkerType.ArrowClosed },
+        data: { system: t.system, hidden: t.hidden, edgeRole: t.edgeRole, transitionMode: t.transitionMode, event_key: t.event_key, condExpr: t.condExpr },
     }));
     return { nodes, edges };
 }
@@ -98,6 +178,8 @@ export default function CallFlowBuilderPage() {
     const [loading, setLoading] = useState(true);
     const [nodes, setNodes, onNodesChange] = useNodesState<Node<FlowNodeData>>([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+    const hiddenNodesRef = useRef<Node<FlowNodeData>[]>([]);
+    const hiddenEdgesRef = useRef<Edge[]>([]);
     const [selectedNode, setSelectedNode] = useState<Node<FlowNodeData> | null>(null);
     const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
     const [saving, setSaving] = useState(false);
@@ -117,6 +199,9 @@ export default function CallFlowBuilderPage() {
             if (f) {
                 setFlow(f);
                 const { nodes: n, edges: e } = graphToReactFlow(f.graph.states, f.graph.transitions);
+                const hid = graphHiddenElements(f.graph.states, f.graph.transitions);
+                hiddenNodesRef.current = hid.nodes;
+                hiddenEdgesRef.current = hid.edges;
                 try { const laid = await layoutWithElkLayered(n as any, e as any); setNodes(laid.nodes as any); setEdges(laid.edges as any); }
                 catch { setNodes(n as any); setEdges(e as any); }
             }
@@ -206,7 +291,7 @@ export default function CallFlowBuilderPage() {
 
     // Filter palette: no 'start' since flow always has exactly one start node
     const paletteKinds = (Object.entries(NODE_KIND_META) as [CallFlowNodeKind, (typeof NODE_KIND_META)['start']][])
-        .filter(([kind]) => kind !== 'start');
+        .filter(([kind]) => kind !== 'start' && kind !== 'final');
 
     if (loading) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}><div style={{ width: 32, height: 32, border: '3px solid #e5e7eb', borderTopColor: '#6366f1', borderRadius: '50%', animation: 'spin 1s linear infinite' }} /></div>;
 
@@ -313,6 +398,20 @@ export default function CallFlowBuilderPage() {
                                     {validation.warnings.map((w, i) => <div key={i} style={{ fontSize: 11, color: '#f59e0b', marginBottom: 4, padding: '4px 8px', background: '#fffbeb', borderRadius: 4 }}>⚠ {w.message}</div>)}
                                 </div>
                             )}
+                            {/* SCXML */}
+                            <div style={{ marginTop: 20 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                                    <div style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>SCXML</div>
+                                    <button onClick={() => { navigator.clipboard.writeText(graphToScxml([...nodes as Node<FlowNodeData>[], ...hiddenNodesRef.current], [...edges, ...hiddenEdgesRef.current])); }}
+                                        title="Copy SCXML"
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', padding: 2, borderRadius: 4 }}
+                                        onMouseEnter={e => (e.currentTarget.style.color = '#6366f1')}
+                                        onMouseLeave={e => (e.currentTarget.style.color = '#9ca3af')}>
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+                                    </button>
+                                </div>
+                                <pre style={{ fontSize: 9, lineHeight: 1.5, background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6, padding: 10, overflow: 'auto', maxHeight: 300, whiteSpace: 'pre', color: '#374151', fontFamily: 'ui-monospace, monospace', margin: 0 }}>{graphToScxml([...nodes as Node<FlowNodeData>[], ...hiddenNodesRef.current], [...edges, ...hiddenEdgesRef.current])}</pre>
+                            </div>
                         </div>
                     )}
                     {selectedNode && (

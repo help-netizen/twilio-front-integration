@@ -2,7 +2,8 @@
 
 export type CallFlowNodeKind =
     | 'start' | 'greeting' | 'menu' | 'queue' | 'branch'
-    | 'transfer' | 'voicemail' | 'hangup' | 'play_audio' | 'collect_input';
+    | 'transfer' | 'voicemail' | 'hangup' | 'play_audio' | 'collect_input'
+    | 'final';
 
 export interface NodeKindMeta {
     label: string;
@@ -21,6 +22,7 @@ export const NODE_KIND_META: Record<CallFlowNodeKind, NodeKindMeta> = {
     hangup: { label: 'Hang Up', color: '#6b7280', icon: '📵' },
     play_audio: { label: 'Play Audio', color: '#ec4899', icon: '🔊' },
     collect_input: { label: 'Collect Input', color: '#14b8a6', icon: '⌨️' },
+    final: { label: 'Final', color: '#9ca3af', icon: '⏹' },
 };
 
 export interface CallFlowNode {
@@ -28,7 +30,18 @@ export interface CallFlowNode {
     name: string;
     kind: CallFlowNodeKind;
     isInitial?: boolean;
+    protected?: boolean;
     config?: Record<string, unknown>;
+    // blanc metadata
+    system?: boolean;
+    immutable?: boolean;
+    deletable?: boolean;
+    renamable?: boolean;
+    draggable?: boolean;
+    uiTerminal?: boolean;
+    hidden?: boolean;
+    labelExpr?: string;
+    groupRef?: string;
 }
 
 export interface CallFlowTransition {
@@ -37,6 +50,18 @@ export interface CallFlowTransition {
     to_state_id: string;
     event_key?: string;
     label?: string;
+    // blanc metadata
+    system?: boolean;
+    immutable?: boolean;
+    deletable?: boolean;
+    hidden?: boolean;
+    insertable?: boolean;
+    insertMode?: string;
+    edgeLabel?: string;
+    branchKey?: string;
+    edgeRole?: string;
+    transitionMode?: string;
+    condExpr?: string;
 }
 
 export interface CallFlowGraph {
