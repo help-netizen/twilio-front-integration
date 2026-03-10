@@ -75,12 +75,27 @@ const ALL_NUMBERS = [
     { id: 'pn-5', number: '+1 (617) 555-0105', friendly_name: 'Emergency' },
 ];
 
+const RING_STRATEGIES = ['Round Robin', 'Simultaneous', 'Most Idle', 'Sequential', 'Weighted'];
+
 function EditNumbersModal({ group, onClose }: { group: UserGroupData; onClose: () => void }) {
     const [nums, setNums] = useState(group.numbers.map(n => n.id));
+    const [strategy, setStrategy] = useState(group.strategy);
     const available = ALL_NUMBERS.filter(n => !nums.includes(n.id));
     return (
-        <Modal title={`Assigned Numbers — ${group.name}`} onClose={onClose}>
-            <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 12 }}>Current numbers ({nums.length})</div>
+        <Modal title={`Numbers & Ring Strategy — ${group.name}`} onClose={onClose}>
+            {/* Ring Strategy */}
+            <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #e5e7eb' }}>
+                <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>Ring Strategy</div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {RING_STRATEGIES.map(s => (
+                        <button key={s} onClick={() => setStrategy(s)}
+                            style={{ padding: '5px 12px', fontSize: 12, fontWeight: strategy === s ? 600 : 400, background: strategy === s ? '#6366f1' : '#f3f4f6', color: strategy === s ? '#fff' : '#374151', border: strategy === s ? 'none' : '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer' }}>
+                            {s}
+                        </button>
+                    ))}
+                </div>
+            </div>
+            <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 12 }}>Assigned numbers ({nums.length})</div>
             {nums.length === 0 && <div style={{ fontSize: 13, color: '#ef4444', padding: '8px 0' }}>No numbers assigned — calls won't reach this group</div>}
             {nums.map(id => {
                 const n = ALL_NUMBERS.find(x => x.id === id);
@@ -202,7 +217,6 @@ export default function UserGroupsPage() {
                                 </div>
                                 <div>
                                     <div style={{ fontSize: 16, fontWeight: 700, color: '#111' }}>{g.name}</div>
-                                    <div style={{ fontSize: 13, color: '#6b7280' }}>{g.strategy}</div>
                                 </div>
                             </div>
                             <button onClick={(e) => { e.stopPropagation(); navigate(`/settings/telephony/user-groups/${g.id}/flow`); }}
@@ -237,6 +251,7 @@ export default function UserGroupsPage() {
                                 <div style={{ padding: '16px 20px' }}>
                                     <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
                                         <Phone size={13} />Numbers ({g.numbers.length})
+                                        <span style={{ fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 4, background: '#ede9fe', color: '#6366f1', textTransform: 'none', letterSpacing: 0 }}>{g.strategy}</span>
                                         <PenBtn onClick={() => setModal({ type: 'numbers', group: g })} />
                                     </div>
                                     {g.numbers.length === 0 && <div style={{ fontSize: 12, color: '#ef4444' }}>No numbers — calls won't reach this group</div>}
