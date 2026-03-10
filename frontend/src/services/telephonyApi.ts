@@ -2,60 +2,29 @@ import type {
     CallFlow, PhoneNumber, AudioAsset, RoutingLogEntry, AgentStatus,
     QueuedCall, DashboardKPI, ProviderInfo, ActiveCallInfo,
 } from '../types/telephony';
+import { createSkeletonFlow } from '../utils/skeletonFlow';
 
 // ─── Call Flows (no versioning) ────────────────────────────────────────────
 
 const MOCK_FLOWS: CallFlow[] = [
     {
         id: 'cf-1',
-        name: 'Main Inbound Flow',
-        description: 'Primary inbound call routing with business hours check',
+        name: 'Sales Team Flow',
+        description: 'Skeleton v2 call flow for Sales Team group',
         status: 'published',
         created_at: '2026-02-15',
-        updated_at: '2026-03-06',
-        graph: {
-            states: [
-                { id: 's-start', name: 'Call Received', kind: 'start', isInitial: true },
-                { id: 's-greeting', name: 'Welcome Greeting', kind: 'greeting', config: { message: 'Thank you for calling. How can I help?' } },
-                { id: 's-hours', name: 'Business Hours?', kind: 'branch', config: { condition: 'schedule.isOpen' } },
-                { id: 's-menu', name: 'Main Menu', kind: 'menu', config: { options: ['Sales', 'Support', 'Billing'] } },
-                { id: 's-queue', name: 'Agent Queue', kind: 'queue', config: { queue_name: 'general', timeout_sec: 120 } },
-                { id: 's-voicemail', name: 'Leave Message', kind: 'voicemail', config: { greeting: 'after_hours_greeting' } },
-                { id: 's-hangup', name: 'End Call', kind: 'hangup' },
-            ],
-            transitions: [
-                { id: 't-1', from_state_id: 's-start', to_state_id: 's-greeting', label: 'answer' },
-                { id: 't-2', from_state_id: 's-greeting', to_state_id: 's-hours', label: 'check hours' },
-                { id: 't-3', from_state_id: 's-hours', to_state_id: 's-menu', label: 'open' },
-                { id: 't-4', from_state_id: 's-hours', to_state_id: 's-voicemail', label: 'closed' },
-                { id: 't-5', from_state_id: 's-menu', to_state_id: 's-queue', label: 'selected' },
-                { id: 't-6', from_state_id: 's-queue', to_state_id: 's-hangup', label: 'connected' },
-                { id: 't-7', from_state_id: 's-queue', to_state_id: 's-voicemail', label: 'timeout' },
-                { id: 't-8', from_state_id: 's-voicemail', to_state_id: 's-hangup', label: 'recorded' },
-            ],
-        },
-        validation: { valid: true, errors: [], warnings: [{ message: 'Queue timeout may be too long (120s)' }] },
+        updated_at: '2026-03-10',
+        graph: createSkeletonFlow('Sales Team'),
+        validation: { valid: true, errors: [], warnings: [] },
     },
     {
         id: 'cf-2',
-        name: 'After-Hours Flow',
-        description: 'Simple voicemail flow for after hours',
+        name: 'Support Team Flow',
+        description: 'Skeleton v2 call flow for Support Team group',
         status: 'draft',
         created_at: '2026-03-01',
-        updated_at: '2026-03-07',
-        graph: {
-            states: [
-                { id: 's-start', name: 'Call Received', kind: 'start', isInitial: true },
-                { id: 's-msg', name: 'After Hours Message', kind: 'play_audio', config: { file: 'after_hours.mp3' } },
-                { id: 's-vm', name: 'Voicemail', kind: 'voicemail' },
-                { id: 's-end', name: 'End Call', kind: 'hangup' },
-            ],
-            transitions: [
-                { id: 't-1', from_state_id: 's-start', to_state_id: 's-msg', label: 'answer' },
-                { id: 't-2', from_state_id: 's-msg', to_state_id: 's-vm', label: 'played' },
-                { id: 't-3', from_state_id: 's-vm', to_state_id: 's-end', label: 'recorded' },
-            ],
-        },
+        updated_at: '2026-03-10',
+        graph: createSkeletonFlow('Support Team'),
         validation: { valid: true, errors: [], warnings: [] },
     },
 ];
