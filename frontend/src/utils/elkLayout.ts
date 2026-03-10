@@ -28,8 +28,6 @@ const SKELETON_POSITIONS: Record<string, { x: number; y: number }> = {
 /** Skeleton node IDs that anchor the branches */
 const BH_TERMINAL = 'sk-vm-business-hours';
 const AH_TERMINAL = 'sk-vm-after-hours';
-const BH_BRANCH_START = 'sk-current-group';
-const AH_BRANCH_START = 'sk-vm-after-hours';
 const HOURS_CHECK = 'sk-hours-check';
 
 /**
@@ -83,22 +81,41 @@ export async function layoutWithElkLayered(
     const nodeSet = new Set(nodes.map(n => n.id));
     const adj = buildAdj(edges);
 
-    // Determine BH chain: sk-current-group → ... → sk-vm-business-hours
-    const bhChain = nodeSet.has(BH_BRANCH_START) && nodeSet.has(BH_TERMINAL)
-        ? walkChain(BH_BRANCH_START, BH_TERMINAL, adj, nodeSet)
+    // Discover BH and AH chains by walking from Hours Check's targets
+    // Each target leads to one of the two terminals
+    const hcTargets = (adj.get(HOURS_CHECK) || []).filter(t => nodeSet.has(t));
+
+    /**  Check if nodeA can reach nodeB via adjacency */
+    function canReach(from: string, to: string): boolean {
+        const visited = new Set<string>();
+        const queue = [from];
+        while (queue.length > 0) {
+            const cur = queue.shift()!;
+            if (cur === to) return true;
+            if (visited.has(cur)) continue;
+            visited.add(cur);
+            for (const next of (adj.get(cur) || [])) {
+                if (nodeSet.has(next) && !visited.has(next)) queue.push(next);
+            }
+        }
+        return false;
+    }
+
+    // Classify Hours Check targets into BH/AH branches by reachability
+    let bhStart: string | null = null;
+    let ahStart: string | null = null;
+    for (const t of hcTargets) {
+        if (!bhStart && canReach(t, BH_TERMINAL)) bhStart = t;
+        else if (!ahStart && canReach(t, AH_TERMINAL)) ahStart = t;
+    }
+
+    const bhChain = bhStart && nodeSet.has(BH_TERMINAL)
+        ? walkChain(bhStart, BH_TERMINAL, adj, nodeSet)
         : [];
-    // Determine AH chain: sk-vm-after-hours (or inserted nodes before it)
-    // For AH, the chain starts from Hours Check's AH target
-    const ahTargets = (adj.get(HOURS_CHECK) || []).filter(t => t !== BH_BRANCH_START && nodeSet.has(t));
-    const ahStart = ahTargets[0] || AH_BRANCH_START;
-    const ahChain = nodeSet.has(ahStart) && nodeSet.has(AH_TERMINAL)
-        ? (ahStart === AH_TERMINAL ? [AH_TERMINAL] : walkChain(ahStart, AH_TERMINAL, adj, nodeSet))
+    const ahChain = ahStart && nodeSet.has(AH_TERMINAL)
+        ? walkChain(ahStart, AH_TERMINAL, adj, nodeSet)
         : [];
 
-    // Position Hours Check at the top center
-    const bhCount = bhChain.length;
-    const ahCount = ahChain.length;
-    const maxChainLen = Math.max(bhCount, ahCount, 1);
 
     // Compute positions
     const positions = new Map<string, { x: number; y: number }>();
