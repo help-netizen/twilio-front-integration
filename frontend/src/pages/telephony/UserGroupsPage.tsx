@@ -47,6 +47,26 @@ const DEFAULT_HOURS: ScheduleDay[] = [
     { day: 'Sun', open: 'Closed', close: '' },
 ];
 
+// ── 30-minute time slot options (12h AM/PM ↔ 24h) ───────────────────────────
+const TIME_OPTIONS: { value: string; label: string }[] = [];
+for (let h = 0; h < 24; h++) {
+    for (const m of [0, 30]) {
+        const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+        const ampm = h < 12 ? 'AM' : 'PM';
+        const label = `${h12}:${m === 0 ? '00' : '30'} ${ampm}`;
+        const value = `${String(h).padStart(2, '0')}:${m === 0 ? '00' : '30'}`;
+        TIME_OPTIONS.push({ value, label });
+    }
+}
+
+/** Snap a 24h time string to the nearest 30-min slot */
+function snapTo30(time: string): string {
+    const [hh, mm] = time.split(':').map(Number);
+    const snappedMin = mm < 15 ? 0 : mm < 45 ? 30 : 0;
+    const snappedHour = mm >= 45 ? (hh + 1) % 24 : hh;
+    return `${String(snappedHour).padStart(2, '0')}:${snappedMin === 0 ? '00' : '30'}`;
+}
+
 const sectionLabel = { fontSize: 12, fontWeight: 600 as const, color: '#6b7280', textTransform: 'uppercase' as const, letterSpacing: '0.05em', marginBottom: 10, display: 'flex', alignItems: 'center' as const, gap: 6 };
 
 // ── Unified Group Form Modal ─────────────────────────────────────────────────
@@ -170,11 +190,15 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
                             </label>
                             {isOpen && (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                    <input type="time" value={h.open} onChange={e => setTime(i, 'open', e.target.value)}
-                                        style={{ padding: '3px 6px', fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 6, color: '#374151' }} />
-                                    <span style={{ color: '#9ca3af', fontSize: 12 }}>→</span>
-                                    <input type="time" value={h.close} onChange={e => setTime(i, 'close', e.target.value)}
-                                        style={{ padding: '3px 6px', fontSize: 12, border: '1px solid #e5e7eb', borderRadius: 6, color: '#374151' }} />
+                                    <select value={snapTo30(h.open)} onChange={e => setTime(i, 'open', e.target.value)}
+                                        style={{ minWidth: 100, maxWidth: 100, height: 36, padding: '0 15px 0 6px', fontSize: 14, fontWeight: 600, background: 'rgba(9,30,66,0.04)', border: '1px solid #f6f6f6', borderRadius: 8, color: '#0c0c0d', cursor: 'pointer', appearance: 'auto' }}>
+                                        {TIME_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                    </select>
+                                    <span style={{ color: '#a3a3a3', fontSize: 14 }}>—</span>
+                                    <select value={snapTo30(h.close)} onChange={e => setTime(i, 'close', e.target.value)}
+                                        style={{ minWidth: 100, maxWidth: 100, height: 36, padding: '0 15px 0 6px', fontSize: 14, fontWeight: 600, background: 'rgba(9,30,66,0.04)', border: '1px solid #f6f6f6', borderRadius: 8, color: '#0c0c0d', cursor: 'pointer', appearance: 'auto' }}>
+                                        {TIME_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                    </select>
                                 </div>
                             )}
                         </div>
