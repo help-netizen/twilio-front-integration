@@ -3,11 +3,11 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
     ReactFlow, Background, Controls, MiniMap,
     useNodesState, useEdgesState, addEdge, MarkerType,
-    type Node, type Edge, type Connection, type NodeTypes,
-    Handle, Position,
+    type Node, type Edge, type Connection, type NodeTypes, type EdgeTypes,
+    Handle, Position, getBezierPath, BaseEdge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { ArrowLeft, Save, Upload, AlertCircle, CheckCircle, Undo2, Redo2, LayoutGrid, Search, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Save, AlertCircle, CheckCircle, Undo2, Redo2, LayoutGrid, Trash2, X, Plus, Lock } from 'lucide-react';
 import { telephonyApi } from '../../services/telephonyApi';
 import { NODE_KIND_META, type CallFlowNodeKind, type CallFlow, type CallFlowNode as CFNode, type CallFlowTransition } from '../../types/telephony';
 import { layoutWithElkLayered } from '../../utils/elkLayout';
@@ -25,7 +25,7 @@ function graphToScxml(allNodes: Node<FlowNodeData>[], allEdges: Edge[]): string 
     const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     const initialNode = allNodes.find(n => n.data?.isInitial) || allNodes[0];
     let xml = `<?xml version="1.0" encoding="UTF-8"?>\n`;
-    xml += `<scxml\n  xmlns="http://www.w3.org/2005/07/scxml"\n  xmlns:blanc="https://blanc.app/fsm"\n  version="1.0" datamodel="ecmascript"\n  initial="${esc(initialNode?.id || '')}"\n  blanc:machineType="call_flow" blanc:schemaVersion="2" blanc:skeleton="call_flow_skeleton_v2"\n>\n`;
+    xml += `<scxml\n  xmlns="http://www.w3.org/2005/07/scxml"\n  xmlns:blanc="https://blanc.app/fsm"\n  version="1.0" datamodel="ecmascript"\n  initial="${esc(initialNode?.id || '')}"\n  blanc:machineType="call_flow"\n  blanc:schemaVersion="2"\n  blanc:skeleton="call_flow_skeleton_v2"\n>\n`;
     xml += `  <datamodel>\n    <data id="isBusinessHours" expr="false" />\n    <data id="currentGroupName" expr="'Current Group'" />\n  </datamodel>\n\n`;
     for (const node of allNodes) {
         const d = node.data;
@@ -33,7 +33,8 @@ function graphToScxml(allNodes: Node<FlowNodeData>[], allEdges: Edge[]): string 
         const outEdges = allEdges.filter(e => e.source === node.id);
         const isFinal = kind === 'final';
         const tag = isFinal ? 'final' : 'state';
-        const ba: string[] = [`blanc:kind="${esc(kind)}"`];
+        const ba: string[] = [];
+        ba.push(`blanc:kind="${esc(kind)}"`);
         if (d?.labelExpr) ba.push(`blanc:labelExpr="${esc(d.labelExpr)}"`);
         else ba.push(`blanc:label="${esc(String(d?.label || ''))}"`);
         if (d?.groupRef) ba.push(`blanc:groupRef="${esc(d.groupRef)}"`);
@@ -121,16 +122,46 @@ function FlowNodeComponent({ data, selected }: { data: FlowNodeData; selected?: 
                     <div style={{ fontSize: 10, color: meta.color, fontWeight: 500 }}>{meta.label}</div>
                 </div>
             </div>
-            {data.kind !== 'hangup' && data.kind !== 'voicemail' && (
-                <Handle type="source" position={Position.Bottom} style={{ background: meta.color, width: 8, height: 8 }} />
-            )}
+            <Handle type="source" position={Position.Bottom} style={{ background: meta.color, width: 8, height: 8 }} />
         </div>
     );
 }
 const nodeTypes: NodeTypes = { flowNode: FlowNodeComponent };
 
+// ─── Custom Edge with + button ────────────────────────────────────────────────
+let _onEdgeInsert: ((edgeId: string, sourceX: number, sourceY: number, targetX: number, targetY: number) => void) | null = null;
+
+function InsertableEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, style, markerEnd, label, labelStyle }: any) {
+    const [hovered, setHovered] = useState(false);
+    const [edgePath, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
+    return (
+        <>
+            <BaseEdge path={edgePath} markerEnd={markerEnd} style={style} />
+            {label && <text x={labelX} y={labelY - 10} textAnchor="middle" style={labelStyle}>{label}</text>}
+            {/* Wide invisible interaction path for reliable hover */}
+            <path d={edgePath} fill="none" stroke="transparent" strokeWidth={24}
+                style={{ pointerEvents: 'stroke' }}
+                onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} />
+            {hovered && (
+                <foreignObject x={labelX - 14} y={labelY - 14} width={28} height={28}
+                    style={{ overflow: 'visible', pointerEvents: 'none' }}>
+                    <div style={{ pointerEvents: 'auto' }}>
+                        <button onClick={(e) => { e.stopPropagation(); _onEdgeInsert?.(id, sourceX, sourceY, targetX, targetY); }}
+                            onMouseEnter={() => setHovered(true)}
+                            style={{ width: 28, height: 28, borderRadius: '50%', border: '2px solid #6366f1', background: '#fff', color: '#6366f1', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.18)', fontSize: 0 }}>
+                            <Plus size={16} />
+                        </button>
+                    </div>
+                </foreignObject>
+            )}
+        </>
+    );
+}
+const edgeTypes: EdgeTypes = { insertable: InsertableEdge };
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function graphToReactFlow(states: CFNode[], transitions: CallFlowTransition[]) {
+    // Filter out hidden nodes (finals) and hidden edges
     const visibleStates = states.filter(s => !s.hidden);
     const visibleTransitions = transitions.filter(t => !t.hidden);
     const nodes: Node<FlowNodeData>[] = visibleStates.map((s, i) => ({
@@ -142,7 +173,8 @@ function graphToReactFlow(states: CFNode[], transitions: CallFlowTransition[]) {
         },
     }));
     const edges: Edge[] = visibleTransitions.map(t => ({
-        id: t.id, source: t.from_state_id, target: t.to_state_id, type: 'smoothstep',
+        id: t.id, source: t.from_state_id, target: t.to_state_id,
+        type: t.insertable ? 'insertable' : 'default',
         label: t.label || t.edgeLabel || t.event_key,
         markerEnd: { type: MarkerType.ArrowClosed },
         style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' },
@@ -155,15 +187,27 @@ function graphToReactFlow(states: CFNode[], transitions: CallFlowTransition[]) {
     }));
     return { nodes, edges };
 }
+
+/** Create React Flow nodes/edges for hidden elements (used in SCXML output only) */
 function graphHiddenElements(states: CFNode[], transitions: CallFlowTransition[]) {
-    const nodes: Node<FlowNodeData>[] = states.filter(s => s.hidden).map(s => ({
+    const hiddenStates = states.filter(s => s.hidden);
+    const hiddenTransitions = transitions.filter(t => t.hidden);
+    const nodes: Node<FlowNodeData>[] = hiddenStates.map(s => ({
         id: s.id, type: 'flowNode' as const, position: { x: 0, y: 0 },
-        data: { label: s.name, kind: s.kind, system: s.system, hidden: s.hidden, config: s.config },
+        data: {
+            label: s.name, kind: s.kind, isInitial: s.isInitial, isProtected: s.protected,
+            system: s.system, immutable: s.immutable, uiTerminal: s.uiTerminal, hidden: s.hidden,
+            labelExpr: s.labelExpr, groupRef: s.groupRef, config: s.config,
+        },
     }));
-    const edges: Edge[] = transitions.filter(t => t.hidden).map(t => ({
+    const edges: Edge[] = hiddenTransitions.map(t => ({
         id: t.id, source: t.from_state_id, target: t.to_state_id, type: 'default',
         markerEnd: { type: MarkerType.ArrowClosed },
-        data: { system: t.system, hidden: t.hidden, edgeRole: t.edgeRole, transitionMode: t.transitionMode, event_key: t.event_key, condExpr: t.condExpr },
+        data: {
+            system: t.system, immutable: t.immutable, deletable: t.deletable, hidden: t.hidden,
+            edgeRole: t.edgeRole, transitionMode: t.transitionMode, event_key: t.event_key,
+            condExpr: t.condExpr
+        },
     }));
     return { nodes, edges };
 }
@@ -183,11 +227,9 @@ export default function CallFlowBuilderPage() {
     const [selectedNode, setSelectedNode] = useState<Node<FlowNodeData> | null>(null);
     const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
     const [saving, setSaving] = useState(false);
-    const [leftTab, setLeftTab] = useState<'palette' | 'outline'>('palette');
-    const [outlineSearch, setOutlineSearch] = useState('');
-    const [showPublishModal, setShowPublishModal] = useState(false);
-    const [publishNote, setPublishNote] = useState('');
     const [showDeleteConfirm, setShowDeleteConfirm] = useState<{ type: 'node' | 'edge'; id: string; label: string } | null>(null);
+    const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+    const pendingLayoutRef = useRef(false);
 
     const { push: pushSnap, undo, redo, canUndo, canRedo } = useUndoRedo(nodes as any, edges, setNodes as any, setEdges as any);
 
@@ -221,7 +263,7 @@ export default function CallFlowBuilderPage() {
 
     const onConnect = useCallback((p: Connection) => {
         pushSnap();
-        setEdges(eds => addEdge({ ...p, type: 'smoothstep', markerEnd: { type: MarkerType.ArrowClosed }, label: 'transition', style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' } }, eds) as any);
+        setEdges(eds => addEdge({ ...p, type: 'insertable', markerEnd: { type: MarkerType.ArrowClosed }, label: 'transition', style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' } }, eds) as any);
     }, [setEdges, pushSnap]);
 
     const onNodeClick = useCallback((_: React.MouseEvent, n: Node) => { setSelectedNode(n as Node<FlowNodeData>); setSelectedEdge(null); }, []);
@@ -235,38 +277,90 @@ export default function CallFlowBuilderPage() {
         setSaving(false);
     }, [flowId, flow]);
 
-    const addNode = useCallback((kind: CallFlowNodeKind) => {
+    // ── Add node (palette — kept for insert picker reuse) ────────────────────
+    // addNode is no longer used directly (palette removed), but insertNodeOnEdge references paletteKinds
+
+    // ── Insert node on edge (edge + button) ──────────────────────────────────
+    const [insertTarget, setInsertTarget] = useState<{ edgeId: string; midX: number; midY: number } | null>(null);
+
+    const insertNodeOnEdge = useCallback((kind: CallFlowNodeKind) => {
+        if (!insertTarget) return;
         pushSnap();
+        const edge = (edges as any[]).find((e: any) => e.id === insertTarget.edgeId);
+        if (!edge) { setInsertTarget(null); return; }
         const meta = NODE_KIND_META[kind];
         const id = `n-${Date.now()}`;
         const newNode: Node<FlowNodeData> = {
-            id, type: 'flowNode', position: { x: 300 + Math.random() * 200, y: 200 + Math.random() * 200 },
+            id, type: 'flowNode', position: { x: insertTarget.midX - 90, y: insertTarget.midY },
             data: { label: meta.label, kind },
         };
+        // Split: remove old edge, add A→New and New→B
+        const newEdge1: Edge = { id: `e-${Date.now()}-a`, source: edge.source, target: id, type: 'insertable', label: edge.label, markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' } };
+        const newEdge2: Edge = { id: `e-${Date.now()}-b`, source: id, target: edge.target, type: 'insertable', label: 'next', markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' } };
         setNodes(nds => [...nds, newNode] as any);
-    }, [setNodes, pushSnap]);
+        setEdges(eds => [...(eds as any[]).filter((e: any) => e.id !== insertTarget.edgeId), newEdge1, newEdge2] as any);
+        setInsertTarget(null);
+        pendingLayoutRef.current = true; // trigger auto-layout after state settles
+    }, [insertTarget, edges, pushSnap, setNodes, setEdges]);
 
+    // Wire global edge insert handler
+    useEffect(() => {
+        _onEdgeInsert = (edgeId, sourceX, sourceY, targetX, targetY) => {
+            const midX = (sourceX + targetX) / 2;
+            const midY = (sourceY + targetY) / 2;
+            setInsertTarget({ edgeId, midX, midY });
+        };
+        return () => { _onEdgeInsert = null; };
+    }, []);
+
+    // ── Delete with edge healing ─────────────────────────────────────────────
     const confirmDelete = useCallback(() => {
         if (!showDeleteConfirm) return;
         pushSnap();
         if (showDeleteConfirm.type === 'node') {
             const id = showDeleteConfirm.id;
+            const theNode = (nodes as any[]).find((n: any) => n.id === id);
+            if (theNode?.data?.isProtected) { setShowDeleteConfirm(null); return; } // Guard
+            // Edge healing: find incoming and outgoing edges, reconnect
+            const incoming = (edges as any[]).filter((e: any) => e.target === id);
+            const outgoing = (edges as any[]).filter((e: any) => e.source === id);
+            const healEdges: Edge[] = [];
+            for (const inc of incoming) {
+                for (const out of outgoing) {
+                    healEdges.push({ id: `heal-${Date.now()}-${Math.random()}`, source: inc.source, target: out.target, type: 'insertable', label: inc.label || 'reconnect', markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' } });
+                }
+            }
             setNodes(nds => (nds as any[]).filter((n: any) => n.id !== id) as any);
-            setEdges(eds => (eds as any[]).filter((e: any) => e.source !== id && e.target !== id) as any);
+            setEdges(eds => [...(eds as any[]).filter((e: any) => e.source !== id && e.target !== id), ...healEdges] as any);
             setSelectedNode(null);
         } else {
             const id = showDeleteConfirm.id;
+            // Guard: don't delete edges between two protected nodes
+            const edge = (edges as any[]).find((e: any) => e.id === id);
+            if (edge) {
+                const src = (nodes as any[]).find((n: any) => n.id === edge.source);
+                const tgt = (nodes as any[]).find((n: any) => n.id === edge.target);
+                if (src?.data?.isProtected && tgt?.data?.isProtected) { setShowDeleteConfirm(null); return; }
+            }
             setEdges(eds => (eds as any[]).filter((e: any) => e.id !== id) as any);
             setSelectedEdge(null);
         }
         setShowDeleteConfirm(null);
-    }, [showDeleteConfirm, setNodes, setEdges, pushSnap]);
+    }, [showDeleteConfirm, nodes, edges, setNodes, setEdges, pushSnap]);
 
     const runAutoLayout = useCallback(async () => {
         pushSnap();
         try { const laid = await layoutWithElkLayered(nodes as any, edges as any); setNodes(laid.nodes as any); setEdges(laid.edges as any); }
         catch { /* keep */ }
     }, [nodes, edges, setNodes, setEdges, pushSnap]);
+
+    // Auto-layout after node insertion
+    useEffect(() => {
+        if (pendingLayoutRef.current) {
+            pendingLayoutRef.current = false;
+            runAutoLayout();
+        }
+    }, [nodes.length, runAutoLayout]);
 
     const updateNodeName = useCallback((id: string, name: string) => {
         pushSnap();
@@ -285,9 +379,6 @@ export default function CallFlowBuilderPage() {
     const warnCount = validation?.warnings.length || 0;
     const getNodeLabel = (id: string) => (nodes as any[]).find((n: any) => n.id === id)?.data?.label || id;
 
-    const outlineNodes = (nodes as any[]).filter((n: any) =>
-        !outlineSearch || (n.data?.label || '').toLowerCase().includes(outlineSearch.toLowerCase())
-    );
 
     // Filter palette: no 'start' since flow always has exactly one start node
     const paletteKinds = (Object.entries(NODE_KIND_META) as [CallFlowNodeKind, (typeof NODE_KIND_META)['start']][])
@@ -300,9 +391,8 @@ export default function CallFlowBuilderPage() {
             {/* Toolbar */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 16px', background: '#fff', borderBottom: '1px solid #e5e7eb', flexShrink: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <button onClick={() => navigate(`/settings/telephony/user-groups/${groupId}`)} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#6366f1', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}><ArrowLeft size={14} />Back to Group</button>
+                    <button onClick={() => navigate('/settings/telephony/user-groups')} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#6366f1', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}><ArrowLeft size={14} />Back to Groups</button>
                     <span style={{ fontSize: 14, fontWeight: 600, color: '#111' }}>{flow?.name || 'Flow Builder'}</span>
-                    <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: flow?.status === 'draft' ? '#fef3c7' : '#d1fae5', color: flow?.status === 'draft' ? '#92400e' : '#065f46' }}>{flow?.status}</span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <button onClick={undo} disabled={!canUndo} title="Undo ⌘Z" style={{ padding: '5px 8px', fontSize: 12, background: canUndo ? '#f3f4f6' : '#fafafa', color: canUndo ? '#374151' : '#d1d5db', border: '1px solid #e5e7eb', borderRadius: 6, cursor: canUndo ? 'pointer' : 'default', display: 'flex', alignItems: 'center' }}><Undo2 size={13} /></button>
@@ -315,59 +405,12 @@ export default function CallFlowBuilderPage() {
                     {errCount === 0 && warnCount === 0 && <span style={{ fontSize: 11, color: '#10b981', display: 'flex', alignItems: 'center', gap: 3 }}><CheckCircle size={13} />Valid</span>}
                     <div style={{ width: 1, height: 20, background: '#e5e7eb', margin: '0 4px' }} />
                     <button onClick={handleSave} disabled={saving} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 14px', fontSize: 12, fontWeight: 500, background: '#6366f1', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}><Save size={13} />{saving ? 'Saving...' : 'Save'}</button>
-                    <button onClick={() => errCount === 0 && setShowPublishModal(true)} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 14px', fontSize: 12, fontWeight: 500, background: errCount > 0 ? '#e5e7eb' : '#10b981', color: '#fff', border: 'none', borderRadius: 6, cursor: errCount > 0 ? 'not-allowed' : 'pointer' }}><Upload size={13} />Publish</button>
+                    <button onClick={() => setShowCancelConfirm(true)} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 14px', fontSize: 12, fontWeight: 500, background: '#f3f4f6', color: '#374151', border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer' }}>Cancel</button>
                 </div>
             </div>
 
             {/* Main */}
             <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-                {/* Left Panel */}
-                <div style={{ width: 220, background: '#f9fafb', borderRight: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-                    <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb' }}>
-                        {(['palette', 'outline'] as const).map(t => (
-                            <button key={t} onClick={() => setLeftTab(t)} style={{
-                                flex: 1, padding: 8, fontSize: 11, fontWeight: leftTab === t ? 600 : 400,
-                                color: leftTab === t ? '#6366f1' : '#6b7280', background: 'none', border: 'none',
-                                borderBottom: leftTab === t ? '2px solid #6366f1' : '2px solid transparent', cursor: 'pointer',
-                            }}>{t === 'palette' ? 'Palette' : 'Outline'}</button>
-                        ))}
-                    </div>
-                    <div style={{ flex: 1, overflowY: 'auto', padding: 10 }}>
-                        {leftTab === 'palette' && (
-                            <>
-                                <div style={{ fontSize: 10, fontWeight: 600, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Add Node</div>
-                                {paletteKinds.map(([kind, meta]) => (
-                                    <button key={kind} onClick={() => addNode(kind)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '7px 10px', fontSize: 12, fontWeight: 500, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', marginBottom: 3, color: '#374151', textAlign: 'left' }}>
-                                        <span style={{ fontSize: 14 }}>{meta.icon}</span><span>{meta.label}</span>
-                                    </button>
-                                ))}
-                            </>
-                        )}
-                        {leftTab === 'outline' && (
-                            <>
-                                <div style={{ position: 'relative', marginBottom: 8 }}>
-                                    <Search size={13} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
-                                    <input value={outlineSearch} onChange={e => setOutlineSearch(e.target.value)} placeholder="Search states..." style={{ width: '100%', padding: '6px 8px 6px 28px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 11, outline: 'none' }} />
-                                </div>
-                                <div style={{ fontSize: 10, color: '#9ca3af', marginBottom: 6 }}>{outlineNodes.length} states</div>
-                                {outlineNodes.map((n: any) => {
-                                    const meta = NODE_KIND_META[n.data?.kind as CallFlowNodeKind] || { color: '#6b7280', icon: '?' };
-                                    const isSel = selectedNode?.id === n.id;
-                                    return (
-                                        <button key={n.id} onClick={() => { setSelectedNode(n); setSelectedEdge(null); }} style={{
-                                            display: 'flex', alignItems: 'center', gap: 6, width: '100%', padding: '6px 8px', fontSize: 11,
-                                            fontWeight: isSel ? 600 : 400, background: isSel ? '#ede9fe' : 'transparent',
-                                            color: isSel ? '#6366f1' : '#374151', border: 'none', borderRadius: 4, cursor: 'pointer', marginBottom: 2, textAlign: 'left',
-                                        }}>
-                                            <span style={{ color: meta.color, fontSize: 12 }}>{meta.icon}</span>
-                                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.data?.label}</span>
-                                        </button>
-                                    );
-                                })}
-                            </>
-                        )}
-                    </div>
-                </div>
 
                 {/* Canvas */}
                 <div style={{ flex: 1 }}>
@@ -375,7 +418,7 @@ export default function CallFlowBuilderPage() {
                         nodes={nodes} edges={edges}
                         onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
                         onConnect={onConnect} onNodeClick={onNodeClick} onEdgeClick={onEdgeClick} onPaneClick={onPaneClick}
-                        nodeTypes={nodeTypes} fitView fitViewOptions={{ padding: 0.3 }} deleteKeyCode="Delete"
+                        nodeTypes={nodeTypes} edgeTypes={edgeTypes} fitView fitViewOptions={{ padding: 0.3 }} deleteKeyCode={null}
                     >
                         <Background gap={20} size={1} /><Controls /><MiniMap style={{ width: 120, height: 90 }} />
                     </ReactFlow>
@@ -417,9 +460,17 @@ export default function CallFlowBuilderPage() {
                     {selectedNode && (
                         <div>
                             <div style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>Node Inspector</div>
+                            {selectedNode.data?.isProtected && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', background: '#fefce8', borderRadius: 6, marginBottom: 12, fontSize: 11, color: '#92400e', fontWeight: 500 }}>
+                                    <Lock size={12} />System protected — cannot be deleted
+                                </div>
+                            )}
                             <div style={{ marginBottom: 12 }}>
                                 <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 4 }}>Name</label>
-                                <input value={String(selectedNode.data?.label || '')} onChange={e => updateNodeName(selectedNode.id, e.target.value)} style={{ width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }} />
+                                {selectedNode.data?.isProtected
+                                    ? <div style={{ fontSize: 13, fontWeight: 500, color: '#374151', padding: '6px 10px', background: '#f9fafb', borderRadius: 6 }}>{selectedNode.data?.label}</div>
+                                    : <input value={String(selectedNode.data?.label || '')} onChange={e => updateNodeName(selectedNode.id, e.target.value)} style={{ width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }} />
+                                }
                             </div>
                             <div style={{ marginBottom: 12 }}>
                                 <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 4 }}>Kind</label>
@@ -438,8 +489,8 @@ export default function CallFlowBuilderPage() {
                                     <pre style={{ fontSize: 10, background: '#f9fafb', padding: 8, borderRadius: 6, overflow: 'auto', maxHeight: 200 }}>{JSON.stringify(selectedNode.data.config, null, 2)}</pre>
                                 </div>
                             )}
-                            {/* Start node is undeletable */}
-                            {selectedNode.data?.kind !== 'start' && (
+                            {/* Only show delete for non-protected, non-start nodes */}
+                            {!selectedNode.data?.isProtected && (
                                 <button onClick={() => setShowDeleteConfirm({ type: 'node', id: selectedNode.id, label: String(selectedNode.data?.label || selectedNode.id) })}
                                     style={{ marginTop: 12, width: '100%', padding: 8, fontSize: 12, fontWeight: 500, background: '#fef2f2', color: '#ef4444', border: '1px solid #fca5a5', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
                                     <Trash2 size={13} />Delete Node
@@ -447,67 +498,103 @@ export default function CallFlowBuilderPage() {
                             )}
                         </div>
                     )}
-                    {selectedEdge && (
-                        <div>
-                            <div style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>Edge Inspector</div>
-                            <div style={{ marginBottom: 12 }}>
-                                <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 4 }}>From → To</label>
-                                <div style={{ fontSize: 12 }}><span style={{ fontWeight: 500 }}>{getNodeLabel(selectedEdge.source)}</span><span style={{ color: '#9ca3af' }}> → </span><span style={{ fontWeight: 500 }}>{getNodeLabel(selectedEdge.target)}</span></div>
+                    {selectedEdge && (() => {
+                        const srcNode = (nodes as any[]).find((n: any) => n.id === selectedEdge.source);
+                        const tgtNode = (nodes as any[]).find((n: any) => n.id === selectedEdge.target);
+                        const isSystemEdge = !!(srcNode?.data?.isProtected && tgtNode?.data?.isProtected);
+                        return (
+                            <div>
+                                <div style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>Edge Inspector</div>
+                                {isSystemEdge && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', background: '#fefce8', borderRadius: 6, marginBottom: 12, fontSize: 11, color: '#92400e', fontWeight: 500 }}>
+                                        <Lock size={12} />System edge — cannot be deleted
+                                    </div>
+                                )}
+                                <div style={{ marginBottom: 12 }}>
+                                    <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 4 }}>From → To</label>
+                                    <div style={{ fontSize: 12 }}><span style={{ fontWeight: 500 }}>{getNodeLabel(selectedEdge.source)}</span><span style={{ color: '#9ca3af' }}> → </span><span style={{ fontWeight: 500 }}>{getNodeLabel(selectedEdge.target)}</span></div>
+                                </div>
+                                <div style={{ marginBottom: 12 }}>
+                                    <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 4 }}>Label / Event Key</label>
+                                    {isSystemEdge
+                                        ? <div style={{ fontSize: 13, fontWeight: 500, color: '#374151', padding: '6px 10px', background: '#f9fafb', borderRadius: 6 }}>{selectedEdge.label || '—'}</div>
+                                        : <input value={String(selectedEdge.label || '')} onChange={e => updateEdgeLabel(selectedEdge.id, e.target.value)} style={{ width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }} />
+                                    }
+                                </div>
+                                {!isSystemEdge && (
+                                    <button onClick={() => setShowDeleteConfirm({ type: 'edge', id: selectedEdge.id, label: `${getNodeLabel(selectedEdge.source)} → ${getNodeLabel(selectedEdge.target)}` })}
+                                        style={{ marginTop: 12, width: '100%', padding: 8, fontSize: 12, fontWeight: 500, background: '#fef2f2', color: '#ef4444', border: '1px solid #fca5a5', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                                        <Trash2 size={13} />Delete Edge
+                                    </button>
+                                )}
                             </div>
-                            <div style={{ marginBottom: 12 }}>
-                                <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 4 }}>Label / Event Key</label>
-                                <input value={String(selectedEdge.label || '')} onChange={e => updateEdgeLabel(selectedEdge.id, e.target.value)} style={{ width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }} />
-                            </div>
-                            <button onClick={() => setShowDeleteConfirm({ type: 'edge', id: selectedEdge.id, label: `${getNodeLabel(selectedEdge.source)} → ${getNodeLabel(selectedEdge.target)}` })}
-                                style={{ marginTop: 12, width: '100%', padding: 8, fontSize: 12, fontWeight: 500, background: '#fef2f2', color: '#ef4444', border: '1px solid #fca5a5', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-                                <Trash2 size={13} />Delete Edge
-                            </button>
-                        </div>
-                    )}
+                        );
+                    })()}
                 </div>
             </div>
 
             {/* Delete Confirm */}
-            {showDeleteConfirm && (
-                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowDeleteConfirm(null)}>
-                    <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 12, padding: 24, maxWidth: 400, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                            <h3 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Delete {showDeleteConfirm.type}?</h3>
-                            <button onClick={() => setShowDeleteConfirm(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: 0 }}><X size={18} /></button>
-                        </div>
-                        <p style={{ fontSize: 13, color: '#6b7280', margin: '0 0 8px' }}>Delete <strong>{showDeleteConfirm.label}</strong>?</p>
-                        {showDeleteConfirm.type === 'node' && <p style={{ fontSize: 12, color: '#f59e0b', margin: '0 0 16px' }}>⚠ All connected edges will also be removed.</p>}
-                        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                            <button onClick={() => setShowDeleteConfirm(null)} style={{ padding: '8px 16px', fontSize: 13, background: '#f3f4f6', color: '#374151', border: 'none', borderRadius: 6, cursor: 'pointer' }}>Cancel</button>
-                            <button onClick={confirmDelete} style={{ padding: '8px 16px', fontSize: 13, background: '#ef4444', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>Delete</button>
+            {
+                showDeleteConfirm && (
+                    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowDeleteConfirm(null)}>
+                        <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 12, padding: 24, maxWidth: 400, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                                <h3 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Delete {showDeleteConfirm.type}?</h3>
+                                <button onClick={() => setShowDeleteConfirm(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: 0 }}><X size={18} /></button>
+                            </div>
+                            <p style={{ fontSize: 13, color: '#6b7280', margin: '0 0 8px' }}>Delete <strong>{showDeleteConfirm.label}</strong>?</p>
+                            {showDeleteConfirm.type === 'node' && <p style={{ fontSize: 12, color: '#f59e0b', margin: '0 0 16px' }}>⚠ All connected edges will also be removed.</p>}
+                            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                                <button onClick={() => setShowDeleteConfirm(null)} style={{ padding: '8px 16px', fontSize: 13, background: '#f3f4f6', color: '#374151', border: 'none', borderRadius: 6, cursor: 'pointer' }}>Cancel</button>
+                                <button onClick={confirmDelete} style={{ padding: '8px 16px', fontSize: 13, background: '#ef4444', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>Delete</button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )
+            }
 
-            {/* Publish Modal */}
-            {showPublishModal && (
-                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowPublishModal(false)}>
-                    <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 12, padding: 24, maxWidth: 440, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                            <h3 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Publish Flow</h3>
-                            <button onClick={() => setShowPublishModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: 0 }}><X size={18} /></button>
-                        </div>
-                        <p style={{ fontSize: 13, color: '#6b7280', margin: '0 0 16px' }}>Publishing makes this flow <strong>live</strong> and routes calls through it.</p>
-                        <div style={{ marginBottom: 16 }}>
-                            <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 4 }}>Change Note (optional)</label>
-                            <textarea value={publishNote} onChange={e => setPublishNote(e.target.value)} rows={3} placeholder="Describe what changed..." style={{ width: '100%', padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, fontFamily: 'inherit', resize: 'none' }} />
-                        </div>
-                        <div style={{ padding: '10px 12px', background: '#f0fdf4', borderRadius: 8, marginBottom: 16 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><CheckCircle size={14} style={{ color: '#10b981' }} /><span style={{ fontSize: 12, fontWeight: 500, color: '#065f46' }}>Validation passed — {nodes.length} states, {edges.length} transitions</span></div>
-                        </div>
-                        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                            <button onClick={() => setShowPublishModal(false)} style={{ padding: '8px 16px', fontSize: 13, background: '#f3f4f6', color: '#374151', border: 'none', borderRadius: 6, cursor: 'pointer' }}>Cancel</button>
-                            <button onClick={() => { setShowPublishModal(false); setPublishNote(''); }} style={{ padding: '8px 16px', fontSize: 13, fontWeight: 600, background: '#10b981', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>Publish Now</button>
+
+            {/* Insert Node Picker (appears when + clicked on edge) */}
+            {
+                insertTarget && (
+                    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setInsertTarget(null)}>
+                        <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 12, padding: 20, maxWidth: 360, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                                <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Insert Node</h3>
+                                <button onClick={() => setInsertTarget(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: 0 }}><X size={16} /></button>
+                            </div>
+                            <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 10 }}>Choose a node type to insert into this branch:</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                                {paletteKinds.map(([kind, meta]) => (
+                                    <button key={kind} onClick={() => insertNodeOnEdge(kind)}
+                                        style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px', fontSize: 12, fontWeight: 500, background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', color: '#374151', textAlign: 'left' }}>
+                                        <span style={{ fontSize: 14 }}>{meta.icon}</span><span>{meta.label}</span>
+                                    </button>
+                                ))}
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
-        </div>
+                )
+            }
+
+            {/* Cancel Confirm */}
+            {
+                showCancelConfirm && (
+                    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={() => setShowCancelConfirm(false)}>
+                        <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 12, padding: 24, maxWidth: 400, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                                <h3 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>Discard changes?</h3>
+                                <button onClick={() => setShowCancelConfirm(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: 0 }}><X size={18} /></button>
+                            </div>
+                            <p style={{ fontSize: 13, color: '#6b7280', margin: '0 0 16px' }}>Any unsaved changes to this flow will be lost.</p>
+                            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                                <button onClick={() => setShowCancelConfirm(false)} style={{ padding: '8px 16px', fontSize: 13, background: '#f3f4f6', color: '#374151', border: 'none', borderRadius: 6, cursor: 'pointer' }}>Keep Editing</button>
+                                <button onClick={() => navigate('/settings/telephony/user-groups')} style={{ padding: '8px 16px', fontSize: 13, fontWeight: 600, background: '#ef4444', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' }}>Discard & Close</button>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
+        </div >
     );
 }

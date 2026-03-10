@@ -29,7 +29,7 @@ import OperationsDashboardPage from './pages/telephony/OperationsDashboardPage';
 import QueueOperationsPage from './pages/telephony/QueueOperationsPage';
 import ActiveCallWorkspacePage from './pages/telephony/ActiveCallWorkspacePage';
 import UserGroupsPage from './pages/telephony/UserGroupsPage';
-import UserGroupDetailPage from './pages/telephony/UserGroupDetailPage';
+
 import TelephonyLayout from './components/telephony/TelephonyLayout';
 import { EventNotification } from './components/EventNotification';
 import { Toaster } from './components/ui/sonner';
@@ -120,7 +120,7 @@ function App() {
               {/* Telephony — Configuration (with sidebar) */}
               <Route path="/settings/telephony" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><RouteManagerOverviewPage /></TelephonyLayout></ProtectedRoute>} />
               <Route path="/settings/telephony/user-groups" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><UserGroupsPage /></TelephonyLayout></ProtectedRoute>} />
-              <Route path="/settings/telephony/user-groups/:groupId" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><UserGroupDetailPage /></TelephonyLayout></ProtectedRoute>} />
+
               <Route path="/settings/telephony/phone-numbers" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><PhoneNumbersPage /></TelephonyLayout></ProtectedRoute>} />
               <Route path="/settings/telephony/audio-library" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><AudioLibraryPage /></TelephonyLayout></ProtectedRoute>} />
               <Route path="/settings/telephony/provider-settings" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><ProviderSettingsPage /></TelephonyLayout></ProtectedRoute>} />

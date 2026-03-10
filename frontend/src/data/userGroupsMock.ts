@@ -1,4 +1,5 @@
-import type { CallFlowGraph } from '../../types/telephony';
+import type { CallFlowGraph } from '../types/telephony';
+import { createSkeletonFlow } from '../utils/skeletonFlow';
 
 // Shared User Group data (used by list page, detail page, and builder)
 export interface ScheduleDay { day: string; open: string; close: string }
@@ -35,27 +36,7 @@ export const USER_GROUPS: UserGroupData[] = [
         },
         flow: {
             id: 'cf-1', status: 'published', updated_at: '2026-03-06',
-            graph: {
-                states: [
-                    { id: 's-start', name: 'Call Received', kind: 'start', isInitial: true },
-                    { id: 's-greeting', name: 'Welcome Greeting', kind: 'greeting' },
-                    { id: 's-hours', name: 'Business Hours?', kind: 'branch' },
-                    { id: 's-menu', name: 'Main Menu', kind: 'menu' },
-                    { id: 's-queue', name: 'Agent Queue', kind: 'queue' },
-                    { id: 's-voicemail', name: 'Leave Message', kind: 'voicemail' },
-                    { id: 's-hangup', name: 'End Call', kind: 'hangup' },
-                ],
-                transitions: [
-                    { id: 't-1', from_state_id: 's-start', to_state_id: 's-greeting', label: 'answer' },
-                    { id: 't-2', from_state_id: 's-greeting', to_state_id: 's-hours', label: 'check hours' },
-                    { id: 't-3', from_state_id: 's-hours', to_state_id: 's-menu', label: 'open' },
-                    { id: 't-4', from_state_id: 's-hours', to_state_id: 's-voicemail', label: 'closed' },
-                    { id: 't-5', from_state_id: 's-menu', to_state_id: 's-queue', label: 'selected' },
-                    { id: 't-6', from_state_id: 's-queue', to_state_id: 's-hangup', label: 'connected' },
-                    { id: 't-7', from_state_id: 's-queue', to_state_id: 's-voicemail', label: 'timeout' },
-                    { id: 't-8', from_state_id: 's-voicemail', to_state_id: 's-hangup', label: 'recorded' },
-                ],
-            },
+            graph: createSkeletonFlow('Sales Team'),
         },
     },
     {
@@ -78,19 +59,7 @@ export const USER_GROUPS: UserGroupData[] = [
         },
         flow: {
             id: 'cf-2', status: 'draft', updated_at: '2026-03-07',
-            graph: {
-                states: [
-                    { id: 's-start', name: 'Call Received', kind: 'start', isInitial: true },
-                    { id: 's-msg', name: 'After Hours Message', kind: 'play_audio' },
-                    { id: 's-vm', name: 'Voicemail', kind: 'voicemail' },
-                    { id: 's-end', name: 'End Call', kind: 'hangup' },
-                ],
-                transitions: [
-                    { id: 't-1', from_state_id: 's-start', to_state_id: 's-msg', label: 'answer' },
-                    { id: 't-2', from_state_id: 's-msg', to_state_id: 's-vm', label: 'played' },
-                    { id: 't-3', from_state_id: 's-vm', to_state_id: 's-end', label: 'recorded' },
-                ],
-            },
+            graph: createSkeletonFlow('Support Team'),
         },
     },
 ];

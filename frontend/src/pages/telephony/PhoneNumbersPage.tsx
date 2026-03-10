@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Phone, Search } from 'lucide-react';
+import { Phone, Search, Plus } from 'lucide-react';
 import { telephonyApi } from '../../services/telephonyApi';
 import type { PhoneNumber } from '../../types/telephony';
 
@@ -13,9 +13,14 @@ export default function PhoneNumbersPage() {
         <div style={{ padding: 24 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
                 <div><h1 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>Phone Numbers</h1><p style={{ fontSize: 13, color: '#6b7280', margin: '4px 0 0' }}>Manage Twilio numbers</p></div>
-                <div style={{ position: 'relative' }}>
-                    <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
-                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..." style={{ padding: '8px 12px 8px 32px', border: '1px solid #d1d5db', borderRadius: 8, fontSize: 13, width: 240 }} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ position: 'relative' }}>
+                        <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+                        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..." style={{ padding: '8px 12px 8px 32px', border: '1px solid #d1d5db', borderRadius: 8, fontSize: 13, width: 240 }} />
+                    </div>
+                    <button style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '8px 14px', fontSize: 13, fontWeight: 600, background: '#6366f1', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer' }}>
+                        <Plus size={14} />Get New Number
+                    </button>
                 </div>
             </div>
             {loading ? <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>Loading...</div> : (
