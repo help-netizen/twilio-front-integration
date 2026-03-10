@@ -1,0 +1,36 @@
+# ============================================================
+# Vapi SIP Ingress — DEV Environment
+# ============================================================
+# This is a Vapi phone number resource of type SIP.
+# Twilio sends calls here via <Dial><Sip>.
+# assistantId is null — Blanc runtime resolver decides.
+# ============================================================
+
+sip_ingress:
+  environment: dev
+  provider: "vapi"
+  transport: "sip"
+  sipUri: "sip:blanc-ai-dev@sip.vapi.ai"
+
+  # --- Dynamic Resolution ---
+  # assistantId is intentionally null.
+  # Vapi will call serverUrl with assistant-request event.
+  # Blanc runtime resolver returns the correct assistantId.
+  assistantId: null
+  serverUrl: "https://dev-blanc.example.com/api/vapi/runtime"
+
+  # --- After creating in Vapi, record: ---
+  # vapi_phone_number_id: ""
+  # created_at: ""
+  # created_by: ""
+
+  # --- SIP Headers Blanc will send ---
+  expected_headers:
+    - "x-blanc-company-id"
+    - "x-blanc-group-id"
+    - "x-blanc-flow-id"
+    - "x-blanc-node-id"
+    - "x-blanc-called-number"
+    - "x-blanc-language-hint"
+    - "x-blanc-assistant-profile"
+    - "x-blanc-after-ai-policy"

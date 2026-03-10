@@ -1,0 +1,22 @@
+# ============================================================
+# Blanc Node Defaults — Vapi Agent
+# ============================================================
+# Default values when adding a new Vapi Agent node in the
+# flow editor. Users can override any field.
+# ============================================================
+
+node_type: vapi_agent
+
+defaults:
+  enabled: true
+  environment: prod
+  transport: sip
+  sip_ingress_alias: "blanc-ai-prod"
+  runtime_resolution_mode: assistant-request
+  assistant_profile_id: "greeting_only_v1"
+  on_complete: resume_flow
+  on_error: fallback_branch
+  on_timeout: fallback_branch
+  allow_immediate_transfer: false
+  max_duration_seconds: 300
+  language_hint: en

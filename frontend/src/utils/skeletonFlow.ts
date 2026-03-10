@@ -17,7 +17,7 @@ export function createSkeletonFlow(groupName: string): CallFlowGraph {
         // ── Visible states ──
         {
             id: 'sk-start', name: 'Start', kind: 'start', isInitial: true,
-            protected: true, system: true, immutable: true, deletable: false, renamable: false, draggable: false
+            protected: true, system: true, immutable: true, deletable: false, renamable: false, draggable: false, hidden: true
         },
 
         {

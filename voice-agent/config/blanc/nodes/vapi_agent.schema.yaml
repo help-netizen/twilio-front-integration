@@ -1,0 +1,159 @@
+# ============================================================
+# Blanc Node Schema — Vapi Agent Node
+# ============================================================
+# Defines the contract for the Vapi Agent node type used
+# in Blanc group call flows. The node is reusable across
+# groups — runtime context is injected automatically.
+# ============================================================
+
+node_type: vapi_agent
+version: "1.0.0"
+
+# --- Runtime Input Contract ---
+# These fields are populated automatically by the flow engine
+# when the node executes. The flow editor user does NOT fill these.
+runtime_inputs:
+  call:
+    parent_call_sid:
+      type: string
+      source: twilio
+      description: "Twilio parent call SID"
+    from_number:
+      type: string
+      format: e164
+      source: twilio
+      description: "Caller phone number"
+    to_number:
+      type: string
+      format: e164
+      source: twilio
+      description: "Called phone number (group DID)"
+    direction:
+      type: string
+      enum: [inbound]
+      source: twilio
+
+  blanc:
+    company_id:
+      type: string
+      source: session
+      description: "Tenant/company ID"
+    group_id:
+      type: string
+      source: session
+      description: "Group ID that owns the flow"
+    group_name:
+      type: string
+      source: session
+      description: "Group display name"
+    flow_id:
+      type: string
+      source: session
+      description: "Current flow ID"
+    branch_id:
+      type: string
+      source: session
+      description: "Current branch ID"
+    node_id:
+      type: string
+      source: session
+      description: "This node's ID"
+    language_hint:
+      type: string
+      enum: [en, ru, auto]
+      default: en
+      source: config
+
+# --- Node Configuration (flow editor fields) ---
+node_config:
+  enabled:
+    type: boolean
+    default: true
+    description: "Enable/disable the AI node"
+  environment:
+    type: string
+    enum: [dev, uat, prod]
+    default: prod
+    description: "Which Vapi environment to use"
+  transport:
+    type: string
+    enum: [sip]
+    default: sip
+    description: "Transport mechanism"
+  sip_ingress_alias:
+    type: string
+    default: "blanc-ai-prod"
+    description: "SIP URI alias (prefix of @sip.vapi.ai)"
+  runtime_resolution_mode:
+    type: string
+    enum: [assistant-request]
+    default: assistant-request
+    description: "How Vapi selects the assistant"
+  assistant_profile_id:
+    type: string
+    default: "greeting_only_v1"
+    description: "Which assistant profile to load"
+  on_complete:
+    type: string
+    enum: [resume_flow, end_call]
+    default: resume_flow
+    description: "What to do after AI conversation ends"
+  on_error:
+    type: string
+    enum: [fallback_branch, end_call]
+    default: fallback_branch
+    description: "What to do on error"
+  on_timeout:
+    type: string
+    enum: [fallback_branch, end_call]
+    default: fallback_branch
+    description: "What to do on timeout"
+  allow_immediate_transfer:
+    type: boolean
+    default: false
+    description: "Allow AI to transfer during conversation (Stage 2+)"
+  max_duration_seconds:
+    type: integer
+    default: 300
+    description: "Max time for the AI leg"
+
+# --- Node Outputs ---
+# These are the possible exit paths from the node.
+# The flow editor connects edges to these outputs.
+outputs:
+  - name: completed
+    description: "AI conversation ended normally"
+  - name: transferred
+    description: "AI initiated a live transfer"
+  - name: skipped
+    description: "Node was disabled or bypassed"
+  - name: error
+    description: "SIP connection or runtime error"
+  - name: timeout
+    description: "AI leg exceeded max duration"
+  - name: caller_hangup
+    description: "Caller hung up during AI conversation"
+
+# --- Transfer Context (Stage 2+) ---
+transfer_context:
+  allowed_targets:
+    type: array
+    items:
+      type: string
+      enum: [dispatcher, group_main_hunt, voicemail]
+    default: []
+    description: "Transfer destinations the AI can use"
+  default_target:
+    type: string
+    default: "dispatcher"
+
+# --- SIP Headers Published ---
+sip_headers:
+  - "x-blanc-company-id"
+  - "x-blanc-group-id"
+  - "x-blanc-flow-id"
+  - "x-blanc-node-id"
+  - "x-blanc-called-number"
+  - "x-blanc-language-hint"
+  - "x-blanc-assistant-profile"
+  - "x-blanc-after-ai-policy"

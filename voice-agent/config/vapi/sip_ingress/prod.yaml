@@ -1,0 +1,18 @@
+# Vapi SIP Ingress — PROD Environment
+
+sip_ingress:
+  environment: prod
+  provider: "vapi"
+  transport: "sip"
+  sipUri: "sip:blanc-ai-prod@sip.vapi.ai"
+  assistantId: null
+  serverUrl: "https://blanc.example.com/api/vapi/runtime"
+  expected_headers:
+    - "x-blanc-company-id"
+    - "x-blanc-group-id"
+    - "x-blanc-flow-id"
+    - "x-blanc-node-id"
+    - "x-blanc-called-number"
+    - "x-blanc-language-hint"
+    - "x-blanc-assistant-profile"
+    - "x-blanc-after-ai-policy"
