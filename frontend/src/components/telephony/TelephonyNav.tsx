@@ -1,7 +1,7 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
     LayoutDashboard, Phone, PhoneIncoming, Users, Music,
-    Shield, FileText, ListOrdered,
+    Shield, FileText,
 } from 'lucide-react';
 
 const sections = [
@@ -9,7 +9,7 @@ const sections = [
         title: 'Operations',
         items: [
             { label: 'Dashboard', path: '/calls/dashboard', icon: <LayoutDashboard size={15} /> },
-            { label: 'Queue', path: '/calls/queue', icon: <ListOrdered size={15} /> },
+
         ],
     },
     {

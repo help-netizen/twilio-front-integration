@@ -26,7 +26,7 @@ import AudioLibraryPage from './pages/telephony/AudioLibraryPage';
 import ProviderSettingsPage from './pages/telephony/ProviderSettingsPage';
 import RoutingLogsPage from './pages/telephony/RoutingLogsPage';
 import OperationsDashboardPage from './pages/telephony/OperationsDashboardPage';
-import QueueOperationsPage from './pages/telephony/QueueOperationsPage';
+
 import ActiveCallWorkspacePage from './pages/telephony/ActiveCallWorkspacePage';
 import UserGroupsPage from './pages/telephony/UserGroupsPage';
 
@@ -131,7 +131,7 @@ function App() {
 
               {/* Operations — Dashboard & Queue (with sidebar) */}
               <Route path="/calls/dashboard" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><OperationsDashboardPage /></TelephonyLayout></ProtectedRoute>} />
-              <Route path="/calls/queue" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><QueueOperationsPage /></TelephonyLayout></ProtectedRoute>} />
+
 
               {/* Active Call Workspace — full-screen */}
               <Route path="/calls/live/:callId" element={<ProtectedRoute roles={['company_admin']}><ActiveCallWorkspacePage /></ProtectedRoute>} />

@@ -3,6 +3,7 @@
 export type CallFlowNodeKind =
     | 'start' | 'greeting' | 'menu' | 'queue' | 'branch'
     | 'transfer' | 'voicemail' | 'hangup' | 'play_audio' | 'collect_input'
+    | 'vapi_agent'
     | 'final';
 
 export interface NodeKindMeta {
@@ -22,6 +23,7 @@ export const NODE_KIND_META: Record<CallFlowNodeKind, NodeKindMeta> = {
     hangup: { label: 'Hang Up', color: '#6b7280', icon: '📵' },
     play_audio: { label: 'Play Audio', color: '#ec4899', icon: '🔊' },
     collect_input: { label: 'Collect Input', color: '#14b8a6', icon: '⌨️' },
+    vapi_agent: { label: 'VAPI AI Agent', color: '#7c3aed', icon: '🤖' },
     final: { label: 'Final', color: '#9ca3af', icon: '⏹' },
 };
 
@@ -42,6 +44,10 @@ export interface CallFlowNode {
     hidden?: boolean;
     labelExpr?: string;
     groupRef?: string;
+    /** Provider name (e.g. 'vapi') — used by AI node kinds */
+    provider?: string;
+    /** Reference to node config in call_flow_node_configs table */
+    configRef?: string;
 }
 
 export interface CallFlowTransition {

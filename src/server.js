@@ -9,6 +9,7 @@ const eventsRouter = require('../backend/src/routes/events');
 const twimlRouter = require('../backend/src/routes/twiml');
 const { tokenRouter: voiceTokenRouter, twimlRouter: voiceTwimlRouter } = require('../backend/src/routes/voice');
 const phoneSettingsRouter = require('../backend/src/routes/phoneSettings');
+const vapiRouter = require('../backend/src/routes/vapi');
 const leadsRouter = require('../backend/src/routes/leads');
 const contactsRouter = require('../backend/src/routes/contacts');
 const zenbookerRouter = require('../backend/src/routes/zenbooker');
@@ -119,6 +120,7 @@ if (process.env.FEATURE_LEADS_TAB !== 'false') {
 // Contacts API
 app.use('/api/contacts', authenticate, requireCompanyAccess, contactsRouter);
 app.use('/api/phone-settings', authenticate, requireCompanyAccess, phoneSettingsRouter);
+app.use('/api/vapi', authenticate, requireCompanyAccess, vapiRouter);
 
 // Zenbooker scheduling proxy
 const zenbookerPaymentsRouter = require('../backend/src/routes/zenbooker/payments');
