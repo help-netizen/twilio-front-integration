@@ -11,6 +11,8 @@ import { ArrowLeft, Save, AlertCircle, CheckCircle, Undo2, Redo2, LayoutGrid, Tr
 import { telephonyApi } from '../../services/telephonyApi';
 import { NODE_KIND_META, type CallFlowNodeKind, type CallFlow, type CallFlowNode as CFNode, type CallFlowTransition } from '../../types/telephony';
 import { layoutWithElkLayered } from '../../utils/elkLayout';
+import { NodeKindInspector } from './nodeInspectors';
+import { NODE_DEFAULTS, TERMINAL_KINDS, DISABLED_KINDS, LOCKED_KINDS, PALETTE_ORDER } from './nodeDefaults';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type FlowNodeData = {
@@ -316,15 +318,23 @@ export default function CallFlowBuilderPage() {
             setNodes(nds => [...nds, newNode] as any);
             setEdges(eds => [...(eds as any[]).filter((e: any) => e.id !== insertTarget.edgeId), eIn, eCompleted, eFallback] as any);
         } else {
-            // ── Generic node insertion (existing logic)
+            // ── Generic node insertion with kind-specific defaults
+            const defaultConfig = NODE_DEFAULTS[kind] ? { ...NODE_DEFAULTS[kind] } : undefined;
+            const isTerminal = TERMINAL_KINDS.has(kind);
             const newNode: Node<FlowNodeData> = {
                 id, type: 'flowNode', position: { x: insertTarget.midX - 90, y: insertTarget.midY },
-                data: { label: meta.label, kind },
+                data: { label: meta.label, kind, config: defaultConfig, uiTerminal: isTerminal || undefined },
             };
             const newEdge1: Edge = { id: `e-${Date.now()}-a`, source: edge.source, target: id, type: 'insertable', label: edge.label, markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' } };
-            const newEdge2: Edge = { id: `e-${Date.now()}-b`, source: id, target: edge.target, type: 'insertable', label: 'next', markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' } };
-            setNodes(nds => [...nds, newNode] as any);
-            setEdges(eds => [...(eds as any[]).filter((e: any) => e.id !== insertTarget.edgeId), newEdge1, newEdge2] as any);
+            if (isTerminal) {
+                // Terminal nodes: only incoming edge, no outgoing
+                setNodes(nds => [...nds, newNode] as any);
+                setEdges(eds => [...(eds as any[]).filter((e: any) => e.id !== insertTarget.edgeId), newEdge1] as any);
+            } else {
+                const newEdge2: Edge = { id: `e-${Date.now()}-b`, source: id, target: edge.target, type: 'insertable', label: 'next', markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' } };
+                setNodes(nds => [...nds, newNode] as any);
+                setEdges(eds => [...(eds as any[]).filter((e: any) => e.id !== insertTarget.edgeId), newEdge1, newEdge2] as any);
+            }
         }
 
         setInsertTarget(null);
@@ -408,9 +418,8 @@ export default function CallFlowBuilderPage() {
     const getNodeLabel = (id: string) => (nodes as any[]).find((n: any) => n.id === id)?.data?.label || id;
 
 
-    // Filter palette: no 'start' since flow always has exactly one start node
-    const paletteKinds = (Object.entries(NODE_KIND_META) as [CallFlowNodeKind, (typeof NODE_KIND_META)['start']][])
-        .filter(([kind]) => kind !== 'start' && kind !== 'final');
+    // Palette: ordered, with disabled/locked states
+    const paletteKinds = PALETTE_ORDER.map(k => [k, NODE_KIND_META[k]] as [CallFlowNodeKind, (typeof NODE_KIND_META)['start']]);
 
     if (loading) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}><div style={{ width: 32, height: 32, border: '3px solid #e5e7eb', borderTopColor: '#6366f1', borderRadius: '50%', animation: 'spin 1s linear infinite' }} /></div>;
 
@@ -511,12 +520,21 @@ export default function CallFlowBuilderPage() {
                                 <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 4 }}>ID</label>
                                 <div style={{ fontSize: 11, fontFamily: 'monospace', color: '#9ca3af' }}>{selectedNode.id}</div>
                             </div>
-                            {selectedNode.data?.config && selectedNode.data?.kind !== 'vapi_agent' && (
-                                <div style={{ marginBottom: 12 }}>
-                                    <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 4 }}>Config</label>
-                                    <pre style={{ fontSize: 10, background: '#f9fafb', padding: 8, borderRadius: 6, overflow: 'auto', maxHeight: 200 }}>{JSON.stringify(selectedNode.data.config, null, 2)}</pre>
-                                </div>
-                            )}
+                            {/* Kind-specific inspector for non-vapi nodes */}
+                            {selectedNode.data?.kind !== 'vapi_agent' && selectedNode.data?.kind !== 'start' && selectedNode.data?.kind !== 'final' && (() => {
+                                const cfg = (selectedNode.data?.config || {}) as Record<string, unknown>;
+                                const updateCfg = (key: string, val: unknown) => {
+                                    pushSnap();
+                                    setNodes(nds => (nds as any[]).map((n: any) => n.id === selectedNode.id ? { ...n, data: { ...n.data, config: { ...n.data.config, [key]: val } } } : n) as any);
+                                    setSelectedNode(p => p && p.id === selectedNode.id ? { ...p, data: { ...p.data, config: { ...p.data.config, [key]: val } } } : p);
+                                };
+                                return (
+                                    <div style={{ marginBottom: 12 }}>
+                                        <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 6, borderTop: '1px solid #e5e7eb', paddingTop: 10 }}>Configuration</label>
+                                        <NodeKindInspector kind={selectedNode.data?.kind as CallFlowNodeKind} cfg={cfg} updateCfg={updateCfg} isProtected={selectedNode.data?.isProtected} />
+                                    </div>
+                                );
+                            })()}
                             {/* ── Vapi Agent Inspector ── */}
                             {selectedNode.data?.kind === 'vapi_agent' && (() => {
                                 const cfg = (selectedNode.data?.config || {}) as Record<string, unknown>;
@@ -676,12 +694,26 @@ export default function CallFlowBuilderPage() {
                             </div>
                             <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 10 }}>Choose a node type to insert into this branch:</div>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-                                {paletteKinds.map(([kind, meta]) => (
-                                    <button key={kind} onClick={() => insertNodeOnEdge(kind)}
-                                        style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px', fontSize: 12, fontWeight: 500, background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', color: '#374151', textAlign: 'left' }}>
-                                        <span style={{ fontSize: 14 }}>{meta.icon}</span><span>{meta.label}</span>
-                                    </button>
-                                ))}
+                                {paletteKinds.map(([kind, meta]) => {
+                                    const isDisabled = DISABLED_KINDS.has(kind);
+                                    const isLocked = LOCKED_KINDS.has(kind);
+                                    return (
+                                        <button key={kind} onClick={() => !isDisabled && !isLocked && insertNodeOnEdge(kind)}
+                                            title={isDisabled ? 'Planned later; not in current scope' : isLocked ? 'Managed separately' : meta.label}
+                                            style={{
+                                                display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px', fontSize: 12, fontWeight: 500,
+                                                background: isDisabled || isLocked ? '#f3f4f6' : '#f9fafb',
+                                                border: `1px solid ${isDisabled || isLocked ? '#e5e7eb' : '#d1d5db'}`,
+                                                borderRadius: 6, cursor: isDisabled || isLocked ? 'not-allowed' : 'pointer',
+                                                color: isDisabled || isLocked ? '#9ca3af' : '#374151', textAlign: 'left',
+                                                opacity: isDisabled || isLocked ? 0.5 : 1,
+                                            }}>
+                                            <span style={{ fontSize: 14 }}>{meta.icon}</span>
+                                            <span>{meta.label}</span>
+                                            {isLocked && <span style={{ fontSize: 9, marginLeft: 'auto', color: '#9ca3af' }}>🔒</span>}
+                                        </button>
+                                    );
+                                })}
                             </div>
                         </div>
                     </div>
