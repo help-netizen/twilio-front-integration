@@ -5,17 +5,17 @@ import type {
 import { createSkeletonFlow as _createSkeletonFlow } from '../utils/skeletonFlow';
 void _createSkeletonFlow; // suppress unused — still needed for future mock fallback
 
+import { authedFetch } from './apiClient';
+
 // ─── API Base ─────────────────────────────────────────────────────────────────
 
 const API_BASE = '/api';
 
 async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
-    const token = localStorage.getItem('keycloak_token') || '';
-    const res = await fetch(`${API_BASE}${path}`, {
+    const res = await authedFetch(`${API_BASE}${path}`, {
         ...opts,
         headers: {
             'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
             ...(opts?.headers || {}),
         },
     });

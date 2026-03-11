@@ -23,7 +23,7 @@ function genId(prefix = 'ug') {
 async function buildGroupPayload(group, companyId) {
     const [membersRes, numbersRes, hoursRes, flowRes] = await Promise.all([
         db.query(`
-            SELECT ugm.user_id AS id, cu.name, 'available' AS status
+            SELECT ugm.user_id AS id, cu.full_name AS name, 'available' AS status
             FROM user_group_members ugm
             LEFT JOIN crm_users cu ON cu.id = ugm.user_id
             WHERE ugm.group_id = $1
@@ -79,12 +79,57 @@ function safeParseJSON(str) {
     try { return JSON.parse(str || '{}'); } catch { return {}; }
 }
 
+/**
+ * Auto-provision default "Dispatch Team" for a company if no groups exist.
+ * Adds all active crm_users for that company as members.
+ */
+async function ensureDefaultGroup(companyId) {
+    const existing = await db.query(
+        `SELECT id FROM user_groups WHERE company_id = $1 LIMIT 1`,
+        [companyId]
+    );
+    if (existing.rows.length > 0) return; // already has groups
+
+    console.log('[UserGroups] Auto-provisioning Dispatch Team for company', companyId);
+    const groupId = genId('ug');
+    await db.query(
+        `INSERT INTO user_groups (id, company_id, name, description, strategy) VALUES ($1, $2, 'Dispatch Team', 'Default group — all agents', 'Simultaneous')`,
+        [groupId, companyId]
+    );
+
+    // Add all active users
+    await db.query(
+        `INSERT INTO user_group_members (group_id, user_id) SELECT $1, id FROM crm_users WHERE company_id = $2 AND status = 'active'`,
+        [groupId, companyId]
+    );
+
+    // Default hours Mon-Fri 9-17
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    for (const day of days) {
+        const isWeekday = !['Sat', 'Sun'].includes(day);
+        await db.query(
+            `INSERT INTO user_group_hours (group_id, day_of_week, is_open, open_time, close_time) VALUES ($1, $2, $3, $4, $5)`,
+            [groupId, day, isWeekday, isWeekday ? '09:00' : null, isWeekday ? '17:00' : null]
+        );
+    }
+
+    // Default call flow
+    const flowId = genId('cf');
+    await db.query(
+        `INSERT INTO call_flows (id, company_id, group_id, name, status, graph_json) VALUES ($1, $2, $3, 'Dispatch Team Flow', 'draft', '{}')`,
+        [flowId, companyId, groupId]
+    );
+}
+
 // ─── LIST ─────────────────────────────────────────────────────────────────────
 
 router.get('/', async (req, res) => {
     try {
         const companyId = req.user?.company_id;
         if (!companyId) return res.status(401).json({ ok: false, error: 'No company context' });
+
+        // Auto-provision default group if needed
+        await ensureDefaultGroup(companyId);
 
         const result = await db.query(
             `SELECT * FROM user_groups WHERE company_id = $1 ORDER BY created_at`,
@@ -214,14 +259,8 @@ router.put('/:id', async (req, res) => {
 
         await client.query('BEGIN');
 
-        // Update base
+        // Update base fields
         if (name !== undefined || strategy !== undefined) {
-            const sets = [];
-            const vals = [];
-            let idx = 1;
-            if (name !== undefined) { sets.push(`name = $${idx++}`); vals.push(name.trim()); }
-            if (strategy !== undefined) { sets.push(`name = $${idx}`); vals.push(strategy); idx++; }
-            // fix: use correct column
             const setClauses = [];
             const setVals = [];
             let si = 1;

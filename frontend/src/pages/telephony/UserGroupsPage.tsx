@@ -21,10 +21,7 @@ const STATUS_COLORS: Record<string, { bg: string; dot: string }> = {
     offline: { bg: '#f3f4f6', dot: '#9ca3af' },
 };
 
-const apiHeaders = () => {
-    const token = localStorage.getItem('keycloak_token') || '';
-    return { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
-};
+import { authedFetch } from '../../services/apiClient';
 
 // ── Modal backdrop ───────────────────────────────────────────────────────────
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
@@ -239,7 +236,7 @@ export default function UserGroupsPage() {
 
     const fetchGroups = async () => {
         try {
-            const res = await fetch('/api/user-groups', { headers: apiHeaders() });
+            const res = await authedFetch('/api/user-groups');
             const json = await res.json();
             if (json.ok) setGroups(json.data);
         } catch { /* fallback: empty */ }
@@ -249,12 +246,12 @@ export default function UserGroupsPage() {
     useEffect(() => {
         fetchGroups();
         // Load agents from existing /api/users endpoint
-        fetch('/api/users', { headers: apiHeaders() })
+        authedFetch('/api/users')
             .then(r => r.json())
             .then(j => { if (j.ok && j.data) _allAgents = j.data.map((u: any) => ({ id: String(u.id), name: u.name || u.email })); })
             .catch(() => { });
         // Load phone numbers from existing API
-        fetch('/api/phone-numbers', { headers: apiHeaders() })
+        authedFetch('/api/phone-numbers')
             .then(r => r.json())
             .then(j => { if (j.ok && j.data) _allNumbers = j.data.map((n: any) => ({ id: String(n.id), number: n.number, friendly_name: n.friendly_name || '' })); })
             .catch(() => { });
