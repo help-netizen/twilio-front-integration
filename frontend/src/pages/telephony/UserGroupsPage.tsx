@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Users, Phone, Calendar, Play, Pencil, X, Trash2 } from 'lucide-react';
+import { Plus, Users, Phone, Calendar, Play, Pencil, X, Trash2, Shuffle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 // ── Types (kept local, matches API response) ─────────────────────────────────
@@ -96,7 +96,15 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
     group?.members.forEach(m => memberNameMap.set(m.id, m.name || m.id));
     _allAgents.forEach(a => { if (!memberNameMap.has(a.id)) memberNameMap.set(a.id, a.name); });
 
-    const availableAgents = _allAgents.filter((a: { id: string }) => !members.includes(a.id));
+    // Merge group's original members into the agent pool so removed members can be re-added
+    const allKnownAgents: { id: string; name: string }[] = [..._allAgents];
+    group?.members.forEach(m => {
+        if (!allKnownAgents.some(a => a.id === m.id)) {
+            allKnownAgents.push({ id: m.id, name: m.name || m.id });
+        }
+    });
+
+    const availableAgents = allKnownAgents.filter(a => !members.includes(a.id));
     const availableNums = _allNumbers.filter((n: { id: string }) => !nums.includes(n.id));
 
     const toggleDay = (i: number) => {
@@ -135,7 +143,7 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
         <Modal title={isNew ? 'New Group' : `Edit Group — ${group.name}`} onClose={onClose}>
             {/* Group Name */}
             <div style={{ marginBottom: 20 }}>
-                <label style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 6 }}>Group Name</label>
+                <div style={sectionLabel}><Pencil size={13} />Group Name</div>
                 <input value={name} onChange={e => setName(e.target.value)} placeholder="Enter group name..."
                     style={{ width: '100%', padding: '8px 12px', fontSize: 14, fontWeight: 500, border: '1px solid #d1d5db', borderRadius: 8, outline: 'none', color: '#111', boxSizing: 'border-box' }}
                     autoFocus={isNew} />
@@ -172,21 +180,9 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
 
             <div style={{ height: 1, background: '#e5e7eb', margin: '0 -20px 20px' }} />
 
-            {/* Numbers + Ring Strategy */}
+            {/* Numbers */}
             <div style={{ marginBottom: 20 }}>
                 <div style={sectionLabel}><Phone size={13} />Numbers ({nums.length})</div>
-                {/* Ring Strategy */}
-                <div style={{ marginBottom: 12 }}>
-                    <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 6 }}>Ring Strategy</div>
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                        {Object.entries(RING_STRATEGIES).map(([s, tip]) => (
-                            <button key={s} onClick={() => setStrategy(s)} title={tip}
-                                style={{ padding: '4px 10px', fontSize: 11, fontWeight: strategy === s ? 600 : 400, background: strategy === s ? '#6366f1' : '#f3f4f6', color: strategy === s ? '#fff' : '#374151', border: strategy === s ? 'none' : '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer' }}>
-                                {s}
-                            </button>
-                        ))}
-                    </div>
-                </div>
                 {nums.length === 0 && <div style={{ fontSize: 12, color: '#ef4444', padding: '4px 0' }}>No numbers assigned — calls won't reach this group</div>}
                 {nums.map(id => {
                     const n = _allNumbers.find((x: { id: string }) => x.id === id);
@@ -194,8 +190,7 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
                         <div key={id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f3f4f6' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                 <Phone size={13} style={{ color: '#6366f1' }} />
-                                <span style={{ fontSize: 13, fontWeight: 500 }}>{n?.number}</span>
-                                <span style={{ fontSize: 11, color: '#9ca3af' }}>{n?.friendly_name}</span>
+                                <span style={{ fontSize: 13, fontWeight: 500 }}>{n?.friendly_name || n?.number}</span>
                             </div>
                             <button onClick={() => setNums(m => m.filter(x => x !== id))}
                                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: 4 }}>
@@ -205,15 +200,30 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
                     );
                 })}
                 {availableNums.length > 0 && (
-                    <div style={{ marginTop: 10 }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
                         {availableNums.map(n => (
                             <button key={n.id} onClick={() => setNums(m => [...m, n.id])}
-                                style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', padding: '6px 10px', marginBottom: 4, fontSize: 12, fontWeight: 500, background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', color: '#374151', textAlign: 'left' }}>
-                                <Plus size={12} style={{ color: '#6366f1' }} />{n.number} <span style={{ color: '#9ca3af' }}>· {n.friendly_name}</span>
+                                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', fontSize: 12, fontWeight: 500, background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', color: '#374151' }}>
+                                <Plus size={12} style={{ color: '#6366f1' }} />{n.friendly_name || n.number}
                             </button>
                         ))}
                     </div>
                 )}
+            </div>
+
+            <div style={{ height: 1, background: '#e5e7eb', margin: '0 -20px 20px' }} />
+
+            {/* Ring Strategy */}
+            <div style={{ marginBottom: 20 }}>
+                <div style={sectionLabel}><Shuffle size={13} />Ring Strategy</div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {Object.entries(RING_STRATEGIES).map(([s, tip]) => (
+                        <button key={s} onClick={() => setStrategy(s)} title={tip}
+                            style={{ padding: '4px 10px', fontSize: 11, fontWeight: strategy === s ? 600 : 400, background: strategy === s ? '#6366f1' : '#f3f4f6', color: strategy === s ? '#fff' : '#374151', border: strategy === s ? 'none' : '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer' }}>
+                            {s}
+                        </button>
+                    ))}
+                </div>
             </div>
 
             <div style={{ height: 1, background: '#e5e7eb', margin: '0 -20px 20px' }} />
@@ -279,13 +289,20 @@ export default function UserGroupsPage() {
         // Load agents from existing /api/users endpoint
         authedFetch('/api/users')
             .then(r => r.json())
-            .then(j => { if (j.ok && j.data) _allAgents = j.data.map((u: any) => ({ id: String(u.id), name: u.name || u.email })); })
-            .catch(() => { });
+            .then(j => {
+                console.log('[UserGroups] /api/users response:', j.ok, 'users:', j.users?.length ?? j.data?.length ?? 0);
+                const list = j.users || j.data || [];
+                if (list.length) _allAgents = list.map((u: any) => ({ id: String(u.id), name: u.full_name || u.name || u.email }));
+            })
+            .catch(err => console.error('[UserGroups] /api/users failed:', err));
         // Load phone numbers from existing API
         authedFetch('/api/phone-numbers')
             .then(r => r.json())
-            .then(j => { if (j.ok && j.data) _allNumbers = j.data.map((n: any) => ({ id: String(n.id), number: n.number, friendly_name: n.friendly_name || '' })); })
-            .catch(() => { });
+            .then(j => {
+                const list = j.data || j.numbers || [];
+                if (list.length) _allNumbers = list.map((n: any) => ({ id: String(n.id), number: n.number || n.phone_number, friendly_name: n.friendly_name || '' }));
+            })
+            .catch(err => console.error('[UserGroups] /api/phone-numbers failed:', err));
     }, []);
 
     return (
@@ -396,7 +413,7 @@ export default function UserGroupsPage() {
             {editGroup !== null && (
                 <GroupFormModal
                     group={editGroup === 'new' ? null : editGroup}
-                    onClose={() => setEditGroup(null)}
+                    onClose={() => { setEditGroup(null); fetchGroups(); }}
                 />
             )}
         </div>

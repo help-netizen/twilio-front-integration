@@ -13,6 +13,31 @@ const router = express.Router();
 const db = require('../db/connection');
 const crypto = require('crypto');
 
+/** Generate the default skeleton v2 call flow graph JSON for a group */
+function createSkeletonJSON(groupName) {
+    return JSON.stringify({
+        states: [
+            { id: 'sk-start', name: 'Start', kind: 'start', isInitial: true, protected: true, system: true, immutable: true, deletable: false, renamable: false, draggable: false, hidden: true },
+            { id: 'sk-hours-check', name: 'Hours Check', kind: 'branch', protected: true, system: true, immutable: true, deletable: false, renamable: false, draggable: false },
+            { id: 'sk-current-group', name: groupName, kind: 'queue', protected: true, system: true, immutable: true, deletable: false, renamable: false, draggable: false, labelExpr: 'currentGroupName', groupRef: 'group.current', config: { queue_name: 'group_agents', timeout_sec: 120 } },
+            { id: 'sk-vm-business-hours', name: 'Voicemail', kind: 'voicemail', protected: true, system: true, immutable: true, deletable: false, renamable: false, draggable: false, uiTerminal: true, config: { greeting: 'missed_call', branchKey: 'business_hours' } },
+            { id: 'sk-vm-after-hours', name: 'Voicemail', kind: 'voicemail', protected: true, system: true, immutable: true, deletable: false, renamable: false, draggable: false, uiTerminal: true, config: { greeting: 'after_hours', branchKey: 'after_hours' } },
+            { id: 'sk-done-routed', name: 'Done', kind: 'final', protected: true, system: true, hidden: true },
+            { id: 'sk-done-voicemail-business-hours', name: 'Done', kind: 'final', protected: true, system: true, hidden: true },
+            { id: 'sk-done-voicemail-after-hours', name: 'Done', kind: 'final', protected: true, system: true, hidden: true },
+        ],
+        transitions: [
+            { id: 'skt-entry', from_state_id: 'sk-start', to_state_id: 'sk-hours-check', system: true, immutable: true, deletable: false, hidden: true, edgeRole: 'entry', transitionMode: 'eventless' },
+            { id: 'skt-bh', from_state_id: 'sk-hours-check', to_state_id: 'sk-current-group', label: 'Business Hours', system: true, immutable: true, deletable: false, edgeLabel: 'Business Hours', branchKey: 'business_hours', insertable: true, insertMode: 'between', transitionMode: 'conditional', condExpr: 'isBusinessHours === true' },
+            { id: 'skt-ah', from_state_id: 'sk-hours-check', to_state_id: 'sk-vm-after-hours', label: 'After Hours', system: true, immutable: true, deletable: false, edgeLabel: 'After Hours', branchKey: 'after_hours', insertable: true, insertMode: 'between', transitionMode: 'conditional', condExpr: 'isBusinessHours === false' },
+            { id: 'skt-fallback', from_state_id: 'sk-current-group', to_state_id: 'sk-vm-business-hours', label: 'Not answered / timeout', system: true, immutable: true, deletable: false, edgeLabel: 'Not answered / timeout', edgeRole: 'fallback', insertable: true, insertMode: 'between', transitionMode: 'event', event_key: 'queue.timeout queue.not_answered queue.failed' },
+            { id: 'skt-success', from_state_id: 'sk-current-group', to_state_id: 'sk-done-routed', system: true, immutable: true, hidden: true, edgeRole: 'success', transitionMode: 'event', event_key: 'queue.connected call.handoff' },
+            { id: 'skt-vm-bh-done', from_state_id: 'sk-vm-business-hours', to_state_id: 'sk-done-voicemail-business-hours', system: true, immutable: true, hidden: true, edgeRole: 'completion', transitionMode: 'event', event_key: 'voicemail.recorded voicemail.completed' },
+            { id: 'skt-vm-ah-done', from_state_id: 'sk-vm-after-hours', to_state_id: 'sk-done-voicemail-after-hours', system: true, immutable: true, hidden: true, edgeRole: 'completion', transitionMode: 'event', event_key: 'voicemail.recorded voicemail.completed' },
+        ],
+    });
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function genId(prefix = 'ug') {
@@ -116,8 +141,8 @@ async function ensureDefaultGroup(companyId) {
     // Default call flow
     const flowId = genId('cf');
     await db.query(
-        `INSERT INTO call_flows (id, company_id, group_id, name, status, graph_json) VALUES ($1, $2, $3, 'Dispatch Team Flow', 'draft', '{}')`,
-        [flowId, companyId, groupId]
+        `INSERT INTO call_flows (id, company_id, group_id, name, status, graph_json) VALUES ($1, $2, $3, 'Dispatch Team Flow', 'draft', $4)`,
+        [flowId, companyId, groupId, createSkeletonJSON('Dispatch Team')]
     );
 }
 
@@ -225,8 +250,8 @@ router.post('/', async (req, res) => {
         // Create default call flow for group
         const flowId = genId('cf');
         await client.query(
-            `INSERT INTO call_flows (id, company_id, group_id, name, status, graph_json) VALUES ($1, $2, $3, $4, 'draft', '{}')`,
-            [flowId, companyId, groupId, `${name.trim()} Flow`]
+            `INSERT INTO call_flows (id, company_id, group_id, name, status, graph_json) VALUES ($1, $2, $3, $4, 'draft', $5)`,
+            [flowId, companyId, groupId, `${name.trim()} Flow`, createSkeletonJSON(name.trim())]
         );
 
         await client.query('COMMIT');

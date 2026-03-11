@@ -162,8 +162,8 @@ const edgeTypes: EdgeTypes = { insertable: InsertableEdge };
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function graphToReactFlow(states: CFNode[], transitions: CallFlowTransition[]) {
     // Filter out hidden nodes (finals) and hidden edges
-    const visibleStates = states.filter(s => !s.hidden);
-    const visibleTransitions = transitions.filter(t => !t.hidden);
+    const visibleStates = (states || []).filter(s => !s.hidden);
+    const visibleTransitions = (transitions || []).filter(t => !t.hidden);
     const nodes: Node<FlowNodeData>[] = visibleStates.map((s, i) => ({
         id: s.id, type: 'flowNode' as const, position: { x: 200, y: i * 120 },
         data: {
@@ -240,8 +240,11 @@ export default function CallFlowBuilderPage() {
             const f = await telephonyApi.getFlow(flowId);
             if (f) {
                 setFlow(f);
-                const { nodes: n, edges: e } = graphToReactFlow(f.graph.states, f.graph.transitions);
-                const hid = graphHiddenElements(f.graph.states, f.graph.transitions);
+                const graph = f.graph || { states: [], transitions: [] };
+                const sts = graph.states || [];
+                const trs = graph.transitions || [];
+                const { nodes: n, edges: e } = graphToReactFlow(sts, trs);
+                const hid = graphHiddenElements(sts, trs);
                 hiddenNodesRef.current = hid.nodes;
                 hiddenEdgesRef.current = hid.edges;
                 try { const laid = await layoutWithElkLayered(n as any, e as any); setNodes(laid.nodes as any); setEdges(laid.edges as any); }
