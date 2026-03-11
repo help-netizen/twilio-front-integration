@@ -45,6 +45,7 @@ function graphToScxml(allNodes: Node<FlowNodeData>[], allEdges: Edge[]): string 
         if (d?.isProtected) ba.push(`blanc:deletable="false"`);
         if (d?.uiTerminal) ba.push(`blanc:uiTerminal="true"`);
         if (d?.hidden) ba.push(`blanc:hidden="true"`);
+        if (d?.config) ba.push(`blanc:configRef="${esc(JSON.stringify(d.config))}"`);
         if (isFinal && outEdges.length === 0) {
             xml += `  <${tag} id="${esc(node.id)}" ${ba.join(' ')} />\n\n`;
         } else {
@@ -64,6 +65,8 @@ function graphToScxml(allNodes: Node<FlowNodeData>[], allEdges: Edge[]): string 
                 if (ed.edgeRole) ta.push(`blanc:edgeRole="${esc(ed.edgeRole)}"`);
                 if (ed.insertable) ta.push(`blanc:insertable="true"`);
                 if (ed.insertMode) ta.push(`blanc:insertMode="${esc(ed.insertMode)}"`);
+                if (ed.conditionType) ta.push(`blanc:conditionType="${esc(ed.conditionType)}"`);
+                if (ed.conditionJson) ta.push(`blanc:conditionJson="${esc(JSON.stringify(ed.conditionJson))}"`);
                 xml += `    <transition ${ta.join(' ')} />\n`;
             }
             xml += `  </${tag}>\n\n`;
