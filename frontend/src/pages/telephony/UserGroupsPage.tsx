@@ -1,7 +1,30 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Plus, Users, Phone, Calendar, Play, Pencil, X, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { USER_GROUPS, STATUS_COLORS, type UserGroupData, type ScheduleDay } from '../../data/userGroupsMock';
+
+// ── Types (kept local, matches API response) ─────────────────────────────────
+interface ScheduleDay { day: string; open: string; close: string }
+interface UserGroupData {
+    id: string;
+    name: string;
+    desc: string;
+    strategy: string;
+    members: { id: string; name: string; status: string }[];
+    numbers: { id: string; number: string; friendly_name: string }[];
+    schedule: { timezone: string; hours: ScheduleDay[] };
+    flow: { id: string; status: 'draft' | 'published'; updated_at: string; graph: unknown } | null;
+}
+const STATUS_COLORS: Record<string, { bg: string; dot: string }> = {
+    available: { bg: '#d1fae5', dot: '#10b981' },
+    on_call: { bg: '#dbeafe', dot: '#3b82f6' },
+    away: { bg: '#fef3c7', dot: '#f59e0b' },
+    offline: { bg: '#f3f4f6', dot: '#9ca3af' },
+};
+
+const apiHeaders = () => {
+    const token = localStorage.getItem('keycloak_token') || '';
+    return { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+};
 
 // ── Modal backdrop ───────────────────────────────────────────────────────────
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
@@ -21,18 +44,10 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 }
 
 // ── Constants ────────────────────────────────────────────────────────────────
-const ALL_AGENTS = [
-    { id: 'ag-1', name: 'Sarah Johnson' }, { id: 'ag-2', name: 'Mike Chen' },
-    { id: 'ag-3', name: 'Lisa Park' }, { id: 'ag-4', name: 'Tom Rivera' },
-    { id: 'ag-5', name: 'Alex Kim' }, { id: 'ag-6', name: 'Emma Davis' },
-];
-const ALL_NUMBERS = [
-    { id: 'pn-1', number: '+1 (617) 555-0101', friendly_name: 'Main Line' },
-    { id: 'pn-2', number: '+1 (617) 555-0102', friendly_name: 'Sales Line' },
-    { id: 'pn-3', number: '+1 (617) 555-0103', friendly_name: 'Support Line' },
-    { id: 'pn-4', number: '+1 (617) 555-0104', friendly_name: 'Billing Line' },
-    { id: 'pn-5', number: '+1 (617) 555-0105', friendly_name: 'Emergency' },
-];
+// Agents and phone numbers for form dropdowns — loaded from API
+let _allAgents: { id: string; name: string }[] = [];
+let _allNumbers: { id: string; number: string; friendly_name: string }[] = [];
+
 const RING_STRATEGIES: Record<string, string> = {
     'Round Robin': 'Distributes calls evenly across agents in rotation',
     'Simultaneous': 'Rings all available agents at the same time',
@@ -78,8 +93,8 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
     const [strategy, setStrategy] = useState(group?.strategy || 'Round Robin');
     const [hours, setHours] = useState<ScheduleDay[]>(group ? [...group.schedule.hours] : [...DEFAULT_HOURS]);
 
-    const availableAgents = ALL_AGENTS.filter(a => !members.includes(a.id));
-    const availableNums = ALL_NUMBERS.filter(n => !nums.includes(n.id));
+    const availableAgents = _allAgents.filter((a: { id: string }) => !members.includes(a.id));
+    const availableNums = _allNumbers.filter((n: { id: string }) => !nums.includes(n.id));
 
     const toggleDay = (i: number) => {
         setHours(h => h.map((d, idx) => idx === i ? (d.open === 'Closed' ? { ...d, open: '09:00', close: '17:00' } : { ...d, open: 'Closed', close: '' }) : d));
@@ -104,7 +119,7 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
             <div style={{ marginBottom: 20 }}>
                 <div style={sectionLabel}><Users size={13} />Members ({members.length})</div>
                 {members.map(id => {
-                    const a = ALL_AGENTS.find(x => x.id === id);
+                    const a = _allAgents.find((x: { id: string }) => x.id === id);
                     return (
                         <div key={id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f3f4f6' }}>
                             <span style={{ fontSize: 13, fontWeight: 500 }}>{a?.name}</span>
@@ -146,7 +161,7 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
                 </div>
                 {nums.length === 0 && <div style={{ fontSize: 12, color: '#ef4444', padding: '4px 0' }}>No numbers assigned — calls won't reach this group</div>}
                 {nums.map(id => {
-                    const n = ALL_NUMBERS.find(x => x.id === id);
+                    const n = _allNumbers.find((x: { id: string }) => x.id === id);
                     return (
                         <div key={id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f3f4f6' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -219,6 +234,31 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
 export default function UserGroupsPage() {
     const navigate = useNavigate();
     const [editGroup, setEditGroup] = useState<UserGroupData | null | 'new'>(null);
+    const [groups, setGroups] = useState<UserGroupData[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    const fetchGroups = async () => {
+        try {
+            const res = await fetch('/api/user-groups', { headers: apiHeaders() });
+            const json = await res.json();
+            if (json.ok) setGroups(json.data);
+        } catch { /* fallback: empty */ }
+        setLoading(false);
+    };
+
+    useEffect(() => {
+        fetchGroups();
+        // Load agents from existing /api/users endpoint
+        fetch('/api/users', { headers: apiHeaders() })
+            .then(r => r.json())
+            .then(j => { if (j.ok && j.data) _allAgents = j.data.map((u: any) => ({ id: String(u.id), name: u.name || u.email })); })
+            .catch(() => { });
+        // Load phone numbers from existing API
+        fetch('/api/phone-numbers', { headers: apiHeaders() })
+            .then(r => r.json())
+            .then(j => { if (j.ok && j.data) _allNumbers = j.data.map((n: any) => ({ id: String(n.id), number: n.number, friendly_name: n.friendly_name || '' })); })
+            .catch(() => { });
+    }, []);
 
     return (
         <div style={{ padding: 24 }}>
@@ -233,7 +273,8 @@ export default function UserGroupsPage() {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-                {USER_GROUPS.map(g => (
+                {loading ? <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>Loading...</div> : groups.length === 0 ? <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>No groups yet. Click "New Group" to get started.</div> : null}
+                {groups.map(g => (
                     <div key={g.id} style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 14, overflow: 'hidden', transition: 'box-shadow 0.15s' }}
                         onMouseEnter={e => (e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.07)')}
                         onMouseLeave={e => (e.currentTarget.style.boxShadow = 'none')}>

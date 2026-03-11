@@ -1,12 +1,18 @@
+import { useState, useEffect } from 'react';
 import { Phone, Users, LayoutDashboard, Music } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { telephonyApi } from '../../services/telephonyApi';
 
 export default function RouteManagerOverviewPage() {
     const navigate = useNavigate();
+    const [counts, setCounts] = useState({ user_groups_count: 0, phone_numbers_count: 0, call_flows_count: 0 });
+
+    useEffect(() => { telephonyApi.getOverview().then(setCounts); }, []);
+
     const cards = [
-        { title: 'User Groups', desc: 'Agent groups with numbers, schedules & call flows', icon: <Users size={24} style={{ color: '#f59e0b' }} />, path: '/settings/telephony/user-groups', count: '2 groups' },
-        { title: 'Phone Numbers', desc: 'Manage Twilio numbers', icon: <Phone size={24} style={{ color: '#10b981' }} />, path: '/settings/telephony/phone-numbers', count: '4 numbers' },
-        { title: 'Audio Library', desc: 'Greetings, prompts, hold music', icon: <Music size={24} style={{ color: '#8b5cf6' }} />, path: '/settings/telephony/audio-library', count: '3 assets' },
+        { title: 'User Groups', desc: 'Agent groups with numbers, schedules & call flows', icon: <Users size={24} style={{ color: '#f59e0b' }} />, path: '/settings/telephony/user-groups', count: `${counts.user_groups_count} groups` },
+        { title: 'Phone Numbers', desc: 'Manage Twilio numbers', icon: <Phone size={24} style={{ color: '#10b981' }} />, path: '/settings/telephony/phone-numbers', count: `${counts.phone_numbers_count} numbers` },
+        { title: 'Audio Library', desc: 'Greetings, prompts, hold music', icon: <Music size={24} style={{ color: '#8b5cf6' }} />, path: '/settings/telephony/audio-library', count: '—' },
         { title: 'Dashboard', desc: 'Live operations', icon: <LayoutDashboard size={24} style={{ color: '#ef4444' }} />, path: '/calls/dashboard', count: 'Live' },
     ];
     return (

@@ -122,6 +122,16 @@ app.use('/api/contacts', authenticate, requireCompanyAccess, contactsRouter);
 app.use('/api/phone-settings', authenticate, requireCompanyAccess, phoneSettingsRouter);
 app.use('/api/vapi', authenticate, requireCompanyAccess, vapiRouter);
 
+// Telephony Admin routes
+const userGroupsRouter = require('../backend/src/routes/userGroups');
+const callFlowsRouter = require('../backend/src/routes/callFlows');
+const phoneNumbersRouter = require('../backend/src/routes/phoneNumbers');
+const telephonyOverviewRouter = require('../backend/src/routes/telephonyOverview');
+app.use('/api/user-groups', authenticate, requireCompanyAccess, userGroupsRouter);
+app.use('/api/call-flows', authenticate, requireCompanyAccess, callFlowsRouter);
+app.use('/api/phone-numbers', authenticate, requireCompanyAccess, phoneNumbersRouter);
+app.use('/api/telephony/overview', authenticate, requireCompanyAccess, telephonyOverviewRouter);
+
 // Zenbooker scheduling proxy
 const zenbookerPaymentsRouter = require('../backend/src/routes/zenbooker/payments');
 const zenbookerJobsRouter = require('../backend/src/routes/zenbooker/jobs');
