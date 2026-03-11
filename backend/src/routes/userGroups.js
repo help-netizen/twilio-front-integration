@@ -25,7 +25,7 @@ async function buildGroupPayload(group, companyId) {
         db.query(`
             SELECT ugm.user_id AS id, cu.full_name AS name, 'available' AS status
             FROM user_group_members ugm
-            LEFT JOIN crm_users cu ON cu.id = ugm.user_id
+            LEFT JOIN crm_users cu ON cu.id = ugm.user_id::uuid
             WHERE ugm.group_id = $1
             ORDER BY ugm.priority, ugm.created_at
         `, [group.id]),
@@ -126,6 +126,7 @@ async function ensureDefaultGroup(companyId) {
 router.get('/', async (req, res) => {
     try {
         const companyId = req.user?.company_id;
+        console.log('[UserGroups] GET list — companyId:', companyId, 'user:', req.user?.email);
         if (!companyId) return res.status(401).json({ ok: false, error: 'No company context' });
 
         // Auto-provision default group if needed
@@ -135,6 +136,7 @@ router.get('/', async (req, res) => {
             `SELECT * FROM user_groups WHERE company_id = $1 ORDER BY created_at`,
             [companyId]
         );
+        console.log('[UserGroups] Found', result.rows.length, 'groups for company', companyId);
 
         const groups = await Promise.all(
             result.rows.map(g => buildGroupPayload(g, companyId))
