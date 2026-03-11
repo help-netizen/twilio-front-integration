@@ -89,6 +89,12 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
     const [nums, setNums] = useState<string[]>(group?.numbers.map(n => n.id) || []);
     const [strategy, setStrategy] = useState(group?.strategy || 'Round Robin');
     const [hours, setHours] = useState<ScheduleDay[]>(group ? [...group.schedule.hours] : [...DEFAULT_HOURS]);
+    const [saving, setSaving] = useState(false);
+
+    // Build a name map from the group's existing member data + _allAgents
+    const memberNameMap = new Map<string, string>();
+    group?.members.forEach(m => memberNameMap.set(m.id, m.name || m.id));
+    _allAgents.forEach(a => { if (!memberNameMap.has(a.id)) memberNameMap.set(a.id, a.name); });
 
     const availableAgents = _allAgents.filter((a: { id: string }) => !members.includes(a.id));
     const availableNums = _allNumbers.filter((n: { id: string }) => !nums.includes(n.id));
@@ -98,6 +104,31 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
     };
     const setTime = (i: number, field: 'open' | 'close', val: string) => {
         setHours(h => h.map((d, idx) => idx === i ? { ...d, [field]: val } : d));
+    };
+
+    const handleSave = async () => {
+        if (!name.trim()) return;
+        setSaving(true);
+        try {
+            const payload = {
+                name, strategy, members, numbers: nums.map(id => {
+                    const n = _allNumbers.find(x => x.id === id);
+                    return n ? { number: n.number, friendly_name: n.friendly_name } : { number: id };
+                }), hours
+            };
+
+            if (isNew) {
+                await authedFetch('/api/user-groups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            } else {
+                await authedFetch(`/api/user-groups/${group.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            }
+            onClose(); // will trigger parent refetch
+        } catch (err) {
+            console.error('[UserGroups] Save failed:', err);
+            alert('Failed to save group');
+        } finally {
+            setSaving(false);
+        }
     };
 
     return (
@@ -116,10 +147,10 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
             <div style={{ marginBottom: 20 }}>
                 <div style={sectionLabel}><Users size={13} />Members ({members.length})</div>
                 {members.map(id => {
-                    const a = _allAgents.find((x: { id: string }) => x.id === id);
+                    const displayName = memberNameMap.get(id) || id;
                     return (
                         <div key={id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f3f4f6' }}>
-                            <span style={{ fontSize: 13, fontWeight: 500 }}>{a?.name}</span>
+                            <span style={{ fontSize: 13, fontWeight: 500 }}>{displayName}</span>
                             <button onClick={() => setMembers(m => m.filter(x => x !== id))}
                                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: 4 }}>
                                 <Trash2 size={14} />
@@ -130,7 +161,7 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
                 {availableAgents.length > 0 && (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
                         {availableAgents.map(a => (
-                            <button key={a.id} onClick={() => setMembers(m => [...m, a.id])}
+                            <button key={a.id} onClick={() => { memberNameMap.set(a.id, a.name); setMembers(m => [...m, a.id]); }}
                                 style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', fontSize: 12, fontWeight: 500, background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', color: '#374151' }}>
                                 <Plus size={12} />{a.name}
                             </button>
@@ -203,12 +234,12 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
                             {isOpen && (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                     <select value={snapTo30(h.open)} onChange={e => setTime(i, 'open', e.target.value)}
-                                        style={{ minWidth: 100, maxWidth: 100, height: 36, padding: '0 15px 0 6px', fontSize: 14, fontWeight: 600, background: 'rgba(9,30,66,0.04)', border: '1px solid #f6f6f6', borderRadius: 8, color: '#0c0c0d', cursor: 'pointer', appearance: 'auto' }}>
+                                        style={{ minWidth: 100, maxWidth: 100, height: 36, padding: '0 15px 0 6px', fontSize: 14, fontWeight: 600, background: 'rgba(9,30,66,0.04)', border: '1px solid #f6f6f6', borderRadius: 8, color: '#0c0c0d', cursor: 'pointer', appearance: 'auto' as const }}>
                                         {TIME_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                                     </select>
                                     <span style={{ color: '#a3a3a3', fontSize: 14 }}>—</span>
                                     <select value={snapTo30(h.close)} onChange={e => setTime(i, 'close', e.target.value)}
-                                        style={{ minWidth: 100, maxWidth: 100, height: 36, padding: '0 15px 0 6px', fontSize: 14, fontWeight: 600, background: 'rgba(9,30,66,0.04)', border: '1px solid #f6f6f6', borderRadius: 8, color: '#0c0c0d', cursor: 'pointer', appearance: 'auto' }}>
+                                        style={{ minWidth: 100, maxWidth: 100, height: 36, padding: '0 15px 0 6px', fontSize: 14, fontWeight: 600, background: 'rgba(9,30,66,0.04)', border: '1px solid #f6f6f6', borderRadius: 8, color: '#0c0c0d', cursor: 'pointer', appearance: 'auto' as const }}>
                                         {TIME_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                                     </select>
                                 </div>
@@ -221,7 +252,7 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
             {/* Footer */}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20, paddingTop: 16, borderTop: '1px solid #e5e7eb' }}>
                 <button onClick={onClose} style={{ padding: '8px 16px', fontSize: 13, background: '#f3f4f6', color: '#374151', border: '1px solid #e5e7eb', borderRadius: 8, cursor: 'pointer' }}>Cancel</button>
-                <button onClick={onClose} disabled={!name.trim()} style={{ padding: '8px 16px', fontSize: 13, fontWeight: 600, background: name.trim() ? '#6366f1' : '#d1d5db', color: '#fff', border: 'none', borderRadius: 8, cursor: name.trim() ? 'pointer' : 'default' }}>{isNew ? 'Create Group' : 'Save Changes'}</button>
+                <button onClick={handleSave} disabled={!name.trim() || saving} style={{ padding: '8px 16px', fontSize: 13, fontWeight: 600, background: name.trim() && !saving ? '#6366f1' : '#d1d5db', color: '#fff', border: 'none', borderRadius: 8, cursor: name.trim() && !saving ? 'pointer' : 'default' }}>{saving ? 'Saving...' : isNew ? 'Create Group' : 'Save Changes'}</button>
             </div>
         </Modal>
     );
