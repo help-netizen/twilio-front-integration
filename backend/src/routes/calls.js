@@ -219,7 +219,20 @@ router.get('/by-contact', async (req, res) => {
 
                 for (const smsRow of smsOnlyRows) {
                     const contact = contactByDigits[smsRow.customer_digits] || null;
-                    const timeline = timelineByDigits[smsRow.customer_digits] || null;
+                    let timeline = timelineByDigits[smsRow.customer_digits] || null;
+
+                    // Auto-create timeline for SMS-only entries so Action Required
+                    // and other timeline-dependent actions work
+                    if (!timeline && smsRow.customer_e164) {
+                        try {
+                            timeline = await queries.findOrCreateTimeline(
+                                smsRow.customer_e164,
+                                companyId || null
+                            );
+                        } catch (e) {
+                            console.warn('[by-contact] Auto-create timeline failed for', smsRow.customer_e164, e.message);
+                        }
+                    }
 
                     conversations.push({
                         id: null,
@@ -247,7 +260,10 @@ router.get('/by-contact', async (req, res) => {
                         } : null,
                         timeline_id: timeline?.id || null,
                         tl_phone: smsRow.customer_e164,
-                        has_unread: smsRow.has_unread || false,
+                        has_unread: timeline?.has_unread || smsRow.has_unread || false,
+                        is_action_required: timeline?.is_action_required || false,
+                        action_required_reason: timeline?.action_required_reason || null,
+                        snoozed_until: timeline?.snoozed_until || null,
                         sms_conversation_id: smsRow.id || null,
                         last_interaction_at: smsRow.last_message_at,
                         last_interaction_type: smsRow.last_message_direction === 'inbound' ? 'sms_inbound' : 'sms_outbound',
