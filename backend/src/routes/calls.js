@@ -403,6 +403,30 @@ router.post('/timeline/:timelineId/mark-read', async (req, res) => {
         if (tl.contact_id) {
             await queries.markContactRead(tl.contact_id).catch(() => { });
         }
+        // Also mark linked SMS conversations as read
+        try {
+            const dbConn = require('../db/connection');
+            const digits = new Set();
+            if (tl.phone_e164) digits.add(tl.phone_e164.replace(/\D/g, ''));
+            if (tl.contact_id) {
+                const cResult = await dbConn.query(
+                    'SELECT phone_e164, secondary_phone FROM contacts WHERE id = $1',
+                    [tl.contact_id]
+                );
+                const co = cResult.rows[0];
+                if (co?.phone_e164) digits.add(co.phone_e164.replace(/\D/g, ''));
+                if (co?.secondary_phone) digits.add(co.secondary_phone.replace(/\D/g, ''));
+            }
+            if (digits.size > 0) {
+                await dbConn.query(
+                    `UPDATE sms_conversations SET has_unread = false, last_read_at = now(), updated_at = now()
+                     WHERE has_unread = true AND customer_digits = ANY($1)`,
+                    [[...digits]]
+                );
+            }
+        } catch (smsErr) {
+            console.warn('[mark-read] SMS conversation mark-read failed:', smsErr.message);
+        }
         const realtimeService = require('../services/realtimeService');
         realtimeService.broadcast('timeline.read', { timelineId: parseInt(timelineId) });
         res.json({ timeline: tl });

@@ -4,7 +4,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { callsApi } from '../../services/api';
-import { messagingApi } from '../../services/messagingApi';
 import { formatPhoneNumber } from '../../utils/formatters';
 import { useLeadByPhone } from '../../hooks/useLeadByPhone';
 import {
@@ -127,11 +126,8 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                 navigate(targetPath);
                 if (tlId) {
                     callsApi.markTimelineRead(tlId)
-                        .then(() => { console.log('[Pulse] Marked timeline read:', tlId); onRead?.(); })
+                        .then(() => { console.log('[Pulse] Marked timeline+SMS read:', tlId); onRead?.(); })
                         .catch((err) => { console.error('[Pulse] Failed to mark timeline read:', tlId, err); });
-                    if ((call as any).sms_conversation_id) {
-                        messagingApi.markRead((call as any).sms_conversation_id).catch(() => { });
-                    }
                 }
             }}
             className={`w-full text-left px-4 py-3 transition-colors border-b border-gray-100 relative ${isActive ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
