@@ -50,6 +50,27 @@ function extractTags(job) {
     return '';
 }
 
+function extractCustomFields(job) {
+    if (!job || !Array.isArray(job.service_fields)) return '';
+    const parts = [];
+    for (const field of job.service_fields) {
+        const name = (field.field_name || '').trim();
+        if (!name) continue;
+        // Skip fields already extracted as source
+        const lowerName = name.toLowerCase();
+        if (SOURCE_MATCH_KEYS.some(k => lowerName.includes(k))) continue;
+        // Get the value
+        let val = '';
+        if (field.text_value) {
+            val = field.text_value;
+        } else if (Array.isArray(field.selected_options) && field.selected_options.length > 0) {
+            val = field.selected_options.map(o => o.text || o.display_label).filter(Boolean).join(', ');
+        }
+        if (val) parts.push(`${name}: ${val}`);
+    }
+    return parts.join('; ');
+}
+
 function formatPaymentMethod(txn) {
     const method = txn.payment_method || '';
     if (method === 'stripe' && txn.stripe_card_brand) {
@@ -211,6 +232,7 @@ function assembleRow(txn, invoice, job) {
         payment_date: txn.payment_date || txn.created || '',
         source: extractSource(job),
         tech,
+        custom_fields: extractCustomFields(job),
         transaction_id: txn.id,
         invoice_id: txn.invoice_id || '',
         job_id: invoice?.job_id || '',
@@ -293,7 +315,8 @@ async function syncPayments(companyId, dateFrom, dateTo) {
                 invoice_status, invoice_total, invoice_amount_paid,
                 invoice_amount_due, invoice_paid_in_full,
                 job_detail, invoice_detail, attachments, metadata,
-                zb_raw_transaction, zb_raw_invoice, zb_raw_job
+                zb_raw_transaction, zb_raw_invoice, zb_raw_job,
+                custom_fields
             ) VALUES (
                 $1, $2, $3, $4,
                 $5, $6, $7, $8,
@@ -303,7 +326,8 @@ async function syncPayments(companyId, dateFrom, dateTo) {
                 $18, $19, $20,
                 $21, $22,
                 $23, $24, $25, $26,
-                $27, $28, $29
+                $27, $28, $29,
+                $30
             )
             ON CONFLICT (company_id, transaction_id) DO UPDATE SET
                 invoice_id = EXCLUDED.invoice_id,
@@ -333,6 +357,7 @@ async function syncPayments(companyId, dateFrom, dateTo) {
                 zb_raw_transaction = EXCLUDED.zb_raw_transaction,
                 zb_raw_invoice = EXCLUDED.zb_raw_invoice,
                 zb_raw_job = EXCLUDED.zb_raw_job,
+                custom_fields = EXCLUDED.custom_fields,
                 updated_at = now()
         `, [
             companyId, row.transaction_id, row.invoice_id || null, row.job_id || null,
@@ -346,6 +371,7 @@ async function syncPayments(companyId, dateFrom, dateTo) {
             JSON.stringify(row.attachments), JSON.stringify(row.metadata),
             JSON.stringify(txn), invoice ? JSON.stringify(invoice) : null,
             job ? JSON.stringify(job) : null,
+            row.custom_fields || '',
         ]);
 
         upsertedCount++;
@@ -425,7 +451,8 @@ async function listPayments(companyId, {
             invoice_amount_paid::text as invoice_amount_paid,
             invoice_amount_due::text as invoice_amount_due,
             invoice_paid_in_full,
-            check_deposited
+            check_deposited,
+            custom_fields
         FROM zb_payments
         WHERE ${where}
         ORDER BY ${safeSortField} ${safeSortDir}
@@ -443,6 +470,114 @@ async function listPayments(companyId, {
         })),
         total,
     };
+}
+
+// =============================================================================
+// listPaymentsForExport — Enriched with Blanc job data (source, custom fields)
+// =============================================================================
+
+async function listPaymentsForExport(companyId, { dateFrom, dateTo, paymentMethod, search } = {}) {
+    const conditions = ['p.company_id = $1'];
+    const params = [companyId];
+    let paramIdx = 2;
+
+    if (dateFrom) {
+        conditions.push(`p.payment_date >= $${paramIdx}`);
+        params.push(dateFrom);
+        paramIdx++;
+    }
+    if (dateTo) {
+        conditions.push(`p.payment_date < ($${paramIdx}::date + interval '1 day')`);
+        params.push(dateTo);
+        paramIdx++;
+    }
+    if (paymentMethod) {
+        conditions.push(`p.payment_methods ILIKE $${paramIdx}`);
+        params.push(`%${paymentMethod}%`);
+        paramIdx++;
+    }
+    if (search && search.trim()) {
+        const q = `%${search.trim()}%`;
+        conditions.push(`(
+            p.client ILIKE $${paramIdx}
+            OR p.job_number ILIKE $${paramIdx}
+            OR p.tags ILIKE $${paramIdx}
+            OR p.source ILIKE $${paramIdx}
+            OR p.transaction_id ILIKE $${paramIdx}
+        )`);
+        params.push(q);
+        paramIdx++;
+    }
+
+    const where = conditions.join(' AND ');
+
+    const result = await db.query(
+        `SELECT
+            p.job_number,
+            p.payment_methods,
+            p.amount_paid::text as amount_paid,
+            p.payment_date,
+            j.id as blanc_job_id,
+            j.customer_name as blanc_client,
+            j.service_name as blanc_job_type,
+            j.blanc_status,
+            j.job_source as blanc_source,
+            j.assigned_techs as blanc_techs,
+            j.metadata as blanc_metadata,
+            (
+                SELECT string_agg(t.name, ', ' ORDER BY t.sort_order, t.id)
+                FROM job_tag_assignments jta
+                JOIN job_tags t ON t.id = jta.tag_id
+                WHERE jta.job_id = j.id
+            ) as blanc_tags
+        FROM zb_payments p
+        LEFT JOIN jobs j ON j.job_number = p.job_number
+        WHERE ${where}
+        ORDER BY p.payment_date DESC`,
+        params
+    );
+
+    const NOT_FOUND = 'ERROR: JOB DOES NOT EXIST IN BLANC';
+
+    return result.rows.map(r => {
+        const inBlanc = r.blanc_job_id != null;
+
+        // Tech (providers) from Blanc assigned_techs JSONB array
+        let tech = '';
+        if (inBlanc && Array.isArray(r.blanc_techs)) {
+            tech = r.blanc_techs.map(t => t.name).filter(Boolean).join(', ');
+        } else if (!inBlanc) {
+            tech = NOT_FOUND;
+        }
+
+        // Custom fields from Blanc metadata (e.g. claim_id)
+        let customFields = '';
+        if (!inBlanc) {
+            customFields = NOT_FOUND;
+        } else if (r.blanc_metadata && typeof r.blanc_metadata === 'object') {
+            const parts = [];
+            for (const [key, val] of Object.entries(r.blanc_metadata)) {
+                if (val != null && val !== '') {
+                    parts.push(String(val));
+                }
+            }
+            customFields = parts.join('; ');
+        }
+
+        return {
+            job_number: r.job_number || '—',
+            client: inBlanc ? (r.blanc_client || '—') : NOT_FOUND,
+            job_type: inBlanc ? (r.blanc_job_type || '—') : NOT_FOUND,
+            status: inBlanc ? (r.blanc_status || '—') : NOT_FOUND,
+            payment_methods: r.payment_methods,
+            amount_paid: r.amount_paid || '0.00',
+            tags: inBlanc ? (r.blanc_tags || '') : NOT_FOUND,
+            payment_date: r.payment_date,
+            source: inBlanc ? (r.blanc_source || '') : NOT_FOUND,
+            tech,
+            custom_fields: customFields,
+        };
+    });
 }
 
 // =============================================================================
@@ -528,6 +663,7 @@ async function updateCheckDeposited(companyId, paymentId, deposited) {
 module.exports = {
     syncPayments,
     listPayments,
+    listPaymentsForExport,
     getPaymentDetail,
     updateCheckDeposited,
     // Exported for testing
@@ -538,4 +674,5 @@ module.exports = {
     displayPaymentMethod,
     buildInvoiceSummary,
     extractAttachments,
+    extractCustomFields,
 };

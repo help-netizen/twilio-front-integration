@@ -18,6 +18,7 @@ import QuickMessagesPage from './pages/QuickMessagesPage';
 import PaymentsPage from './pages/PaymentsPage';
 import ProvidersPage from './pages/ProvidersPage';
 import PhoneCallsSettingsPage from './pages/PhoneCallsSettingsPage';
+import ActionRequiredSettingsPage from './pages/ActionRequiredSettingsPage';
 import JobsPage from './pages/JobsPage';
 import RouteManagerOverviewPage from './pages/telephony/RouteManagerOverviewPage';
 import CallFlowBuilderPage from './pages/telephony/CallFlowBuilderPage';
@@ -104,6 +105,11 @@ function App() {
               <Route path="/settings/phone-calls" element={
                 <ProtectedRoute roles={['company_admin']}>
                   <PhoneCallsSettingsPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/settings/action-required" element={
+                <ProtectedRoute roles={['company_admin']}>
+                  <ActionRequiredSettingsPage />
                 </ProtectedRoute>
               } />
               <Route path="/settings/users" element={

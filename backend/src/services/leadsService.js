@@ -172,7 +172,7 @@ function mapFieldsToColumns(fields) {
 // =============================================================================
 // List Leads
 // =============================================================================
-async function listLeads({ start_date, offset = 0, records = 100, only_open = true, status, companyId } = {}) {
+async function listLeads({ start_date, end_date, offset = 0, records = 100, only_open = true, status, companyId } = {}) {
     const conditions = [];
     const params = [];
     let paramIdx = 0;
@@ -191,6 +191,12 @@ async function listLeads({ start_date, offset = 0, records = 100, only_open = tr
         paramIdx++;
         conditions.push(`l.created_at >= $${paramIdx}::date`);
         params.push(start_date);
+    }
+
+    if (end_date) {
+        paramIdx++;
+        conditions.push(`l.created_at < ($${paramIdx}::date + interval '1 day')`);
+        params.push(end_date);
     }
 
     if (status && status.length > 0) {

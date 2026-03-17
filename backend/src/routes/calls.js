@@ -110,6 +110,18 @@ router.get('/by-contact', async (req, res) => {
                 last_interaction_at,
                 last_interaction_type,
                 last_interaction_phone,
+                // Action Required fields
+                is_action_required: c.is_action_required || false,
+                action_required_reason: c.action_required_reason || null,
+                action_required_set_at: c.action_required_set_at || null,
+                snoozed_until: c.snoozed_until || null,
+                owner_user_id: c.owner_user_id || null,
+                open_task: c.open_task_id ? {
+                    id: c.open_task_id,
+                    title: c.open_task_title,
+                    due_at: c.open_task_due_at,
+                    priority: c.open_task_priority,
+                } : null,
             };
         });
 
@@ -207,7 +219,20 @@ router.get('/by-contact', async (req, res) => {
 
                 for (const smsRow of smsOnlyRows) {
                     const contact = contactByDigits[smsRow.customer_digits] || null;
-                    const timeline = timelineByDigits[smsRow.customer_digits] || null;
+                    let timeline = timelineByDigits[smsRow.customer_digits] || null;
+
+                    // Auto-create timeline for SMS-only entries so Action Required
+                    // and other timeline-dependent actions work
+                    if (!timeline && smsRow.customer_e164) {
+                        try {
+                            timeline = await queries.findOrCreateTimeline(
+                                smsRow.customer_e164,
+                                companyId || null
+                            );
+                        } catch (e) {
+                            console.warn('[by-contact] Auto-create timeline failed for', smsRow.customer_e164, e.message);
+                        }
+                    }
 
                     conversations.push({
                         id: null,
@@ -235,7 +260,10 @@ router.get('/by-contact', async (req, res) => {
                         } : null,
                         timeline_id: timeline?.id || null,
                         tl_phone: smsRow.customer_e164,
-                        has_unread: smsRow.has_unread || false,
+                        has_unread: timeline?.has_unread || smsRow.has_unread || false,
+                        is_action_required: timeline?.is_action_required || false,
+                        action_required_reason: timeline?.action_required_reason || null,
+                        snoozed_until: timeline?.snoozed_until || null,
                         sms_conversation_id: smsRow.id || null,
                         last_interaction_at: smsRow.last_message_at,
                         last_interaction_type: smsRow.last_message_direction === 'inbound' ? 'sms_inbound' : 'sms_outbound',
@@ -288,9 +316,19 @@ router.get('/by-contact', async (req, res) => {
             conversations = deduped;
         }
 
-        // Final sort: unread first, then by last interaction (most recent first)
+        // Final sort: action_required (not snoozed) first, then unread, then by last interaction
         conversations.sort((a, b) => {
+            // 1. Action Required (not snoozed) — highest priority
+            const now = new Date();
+            const aAR = a.is_action_required && (!a.snoozed_until || new Date(a.snoozed_until) <= now);
+            const bAR = b.is_action_required && (!b.snoozed_until || new Date(b.snoozed_until) <= now);
+            if (aAR !== bAR) return aAR ? -1 : 1;
+            if (aAR && bAR) {
+                return new Date(b.action_required_set_at || 0) - new Date(a.action_required_set_at || 0);
+            }
+            // 2. Unread
             if (a.has_unread !== b.has_unread) return a.has_unread ? -1 : 1;
+            // 3. By last interaction (most recent first)
             const ta = new Date(a.last_interaction_at || 0);
             const tb = new Date(b.last_interaction_at || 0);
             return tb - ta;
@@ -364,6 +402,30 @@ router.post('/timeline/:timelineId/mark-read', async (req, res) => {
         // Also mark contact read if linked
         if (tl.contact_id) {
             await queries.markContactRead(tl.contact_id).catch(() => { });
+        }
+        // Also mark linked SMS conversations as read
+        try {
+            const dbConn = require('../db/connection');
+            const digits = new Set();
+            if (tl.phone_e164) digits.add(tl.phone_e164.replace(/\D/g, ''));
+            if (tl.contact_id) {
+                const cResult = await dbConn.query(
+                    'SELECT phone_e164, secondary_phone FROM contacts WHERE id = $1',
+                    [tl.contact_id]
+                );
+                const co = cResult.rows[0];
+                if (co?.phone_e164) digits.add(co.phone_e164.replace(/\D/g, ''));
+                if (co?.secondary_phone) digits.add(co.secondary_phone.replace(/\D/g, ''));
+            }
+            if (digits.size > 0) {
+                await dbConn.query(
+                    `UPDATE sms_conversations SET has_unread = false, last_read_at = now(), updated_at = now()
+                     WHERE has_unread = true AND customer_digits = ANY($1)`,
+                    [[...digits]]
+                );
+            }
+        } catch (smsErr) {
+            console.warn('[mark-read] SMS conversation mark-read failed:', smsErr.message);
         }
         const realtimeService = require('../services/realtimeService');
         realtimeService.broadcast('timeline.read', { timelineId: parseInt(timelineId) });

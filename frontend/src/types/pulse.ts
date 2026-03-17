@@ -45,3 +45,20 @@ export interface PulseTimelineResponse {
     messages: SmsMessage[];
     conversations: SmsConversation[];
 }
+
+// Action Required types
+export interface PulseTask {
+    id: number;
+    title: string;
+    due_at: string | null;
+    priority: 'p1' | 'p2' | 'p3';
+}
+
+export interface ActionRequiredState {
+    is_action_required: boolean;
+    action_required_reason: string | null;
+    action_required_set_at: string | null;
+    snoozed_until: string | null;
+    owner_user_id: string | null;
+    open_task: PulseTask | null;
+}

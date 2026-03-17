@@ -42,6 +42,37 @@ router.post('/sync', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// GET /api/zenbooker/payments/export  — Export data enriched with Blanc job info
+// ═══════════════════════════════════════════════════════════════════════════════
+
+router.get('/export', async (req, res) => {
+    try {
+        const companyId = req.user.company_id;
+        if (!companyId) {
+            return res.status(403).json({ ok: false, error: 'No company context' });
+        }
+
+        const { date_from, date_to, payment_method, search } = req.query;
+
+        if (!date_from || !date_to) {
+            return res.status(400).json({ ok: false, error: 'date_from and date_to are required' });
+        }
+
+        const rows = await paymentsService.listPaymentsForExport(companyId, {
+            dateFrom: date_from,
+            dateTo: date_to,
+            paymentMethod: payment_method || undefined,
+            search: search || undefined,
+        });
+
+        res.json({ ok: true, data: rows });
+    } catch (err) {
+        console.error('[Payments] Export error:', err.message);
+        res.status(500).json({ ok: false, error: err.message });
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // GET /api/zenbooker/payments  — List payments from local DB
 // ═══════════════════════════════════════════════════════════════════════════════
 

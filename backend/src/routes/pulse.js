@@ -286,6 +286,25 @@ router.get('/timeline-by-phone', async (req, res) => {
 });
 
 // =============================================================================
+// GET /api/pulse/default-proxy — return the company's default Twilio proxy number
+// Used as fallback when a timeline has no prior calls/conversations.
+// =============================================================================
+router.get('/default-proxy', async (req, res) => {
+    try {
+        const result = await db.query(
+            `SELECT proxy_e164 FROM sms_conversations
+             WHERE proxy_e164 IS NOT NULL
+             ORDER BY last_message_at DESC NULLS LAST
+             LIMIT 1`
+        );
+        res.json({ proxy_e164: result.rows[0]?.proxy_e164 || null });
+    } catch (error) {
+        console.error('[Pulse] default-proxy error:', error);
+        res.json({ proxy_e164: null });
+    }
+});
+
+// =============================================================================
 // POST /api/pulse/ensure-timeline — find or create a timeline for a phone number
 // Optionally link it to a contact (for new leads from API with no history).
 // Body: { phone: string, contactId?: number }
@@ -314,7 +333,44 @@ router.post('/ensure-timeline', async (req, res) => {
                 });
             }
 
-            // No timeline for this contact — create one linked to the contact
+            // No timeline linked to this contact yet.
+            // Before creating a new one, check if there's an orphan timeline for the contact's phone.
+            const contactResult = await db.query(
+                'SELECT phone_e164, secondary_phone FROM contacts WHERE id = $1',
+                [contactId]
+            );
+            const contactRow = contactResult.rows[0];
+            if (contactRow) {
+                const phonesToCheck = [contactRow.phone_e164, contactRow.secondary_phone]
+                    .filter(Boolean)
+                    .map(p => p.replace(/\D/g, ''));
+
+                if (phonesToCheck.length > 0) {
+                    const orphan = await db.query(
+                        `SELECT id FROM timelines
+                         WHERE contact_id IS NULL
+                           AND regexp_replace(phone_e164, '\\D', '', 'g') = ANY($1)
+                         ORDER BY updated_at DESC NULLS LAST
+                         LIMIT 1`,
+                        [phonesToCheck]
+                    );
+                    if (orphan.rows[0]) {
+                        // Adopt the orphan: link it to this contact
+                        await db.query(
+                            `UPDATE timelines SET contact_id = $1, phone_e164 = NULL, updated_at = now() WHERE id = $2`,
+                            [contactId, orphan.rows[0].id]
+                        );
+                        console.log(`[Pulse] ensure-timeline: adopted orphan timeline ${orphan.rows[0].id} for contact ${contactId}`);
+                        return res.json({
+                            timelineId: orphan.rows[0].id,
+                            contactId,
+                            created: false,
+                        });
+                    }
+                }
+            }
+
+            // No orphan found — create a new timeline linked to the contact
             const newTl = await db.query(
                 `INSERT INTO timelines (contact_id, company_id)
                  VALUES ($1, $2)
@@ -342,6 +398,140 @@ router.post('/ensure-timeline', async (req, res) => {
     } catch (error) {
         console.error('[Pulse] POST /ensure-timeline error:', error);
         res.status(500).json({ error: 'Failed to ensure timeline' });
+    }
+});
+
+// =============================================================================
+// POST /api/pulse/threads/:id/mark-handled — clear Action Required + close task
+// =============================================================================
+router.post('/threads/:id/mark-handled', async (req, res) => {
+    try {
+        const timelineId = parseInt(req.params.id);
+        if (isNaN(timelineId)) return res.status(400).json({ error: 'Invalid timeline id' });
+
+        const tl = await queries.markThreadHandled(timelineId);
+        if (!tl) return res.status(404).json({ error: 'Timeline not found' });
+
+        const realtimeService = require('../services/realtimeService');
+        realtimeService.broadcast('thread.handled', { timelineId });
+
+        res.json({ timeline: tl });
+    } catch (error) {
+        console.error('[Pulse] mark-handled error:', error);
+        res.status(500).json({ error: 'Failed to mark handled' });
+    }
+});
+
+// =============================================================================
+// POST /api/pulse/threads/:id/snooze — snooze until given time
+// =============================================================================
+router.post('/threads/:id/snooze', async (req, res) => {
+    try {
+        const timelineId = parseInt(req.params.id);
+        if (isNaN(timelineId)) return res.status(400).json({ error: 'Invalid timeline id' });
+
+        const { snoozed_until } = req.body;
+        if (!snoozed_until) return res.status(400).json({ error: 'snoozed_until is required' });
+
+        const tl = await queries.snoozeThread(timelineId, snoozed_until);
+        if (!tl) return res.status(404).json({ error: 'Timeline not found' });
+
+        const realtimeService = require('../services/realtimeService');
+        realtimeService.broadcast('thread.snoozed', { timelineId, snoozed_until });
+
+        res.json({ timeline: tl });
+    } catch (error) {
+        console.error('[Pulse] snooze error:', error);
+        res.status(500).json({ error: 'Failed to snooze thread' });
+    }
+});
+
+// =============================================================================
+// POST /api/pulse/threads/:id/assign — assign owner
+// =============================================================================
+router.post('/threads/:id/assign', async (req, res) => {
+    try {
+        const timelineId = parseInt(req.params.id);
+        if (isNaN(timelineId)) return res.status(400).json({ error: 'Invalid timeline id' });
+
+        const { owner_user_id } = req.body;
+        if (!owner_user_id) return res.status(400).json({ error: 'owner_user_id is required' });
+
+        const tl = await queries.assignThread(timelineId, owner_user_id);
+        if (!tl) return res.status(404).json({ error: 'Timeline not found' });
+
+        const realtimeService = require('../services/realtimeService');
+        realtimeService.broadcast('thread.assigned', { timelineId, owner_user_id });
+
+        res.json({ timeline: tl });
+    } catch (error) {
+        console.error('[Pulse] assign error:', error);
+        res.status(500).json({ error: 'Failed to assign thread' });
+    }
+});
+
+// =============================================================================
+// POST /api/pulse/threads/:id/tasks — create task + set Action Required
+// =============================================================================
+router.post('/threads/:id/tasks', async (req, res) => {
+    try {
+        const timelineId = parseInt(req.params.id);
+        if (isNaN(timelineId)) return res.status(400).json({ error: 'Invalid timeline id' });
+
+        const { title, description, priority, due_at } = req.body;
+        if (!title) return res.status(400).json({ error: 'title is required' });
+
+        // Get timeline to resolve company_id and subject
+        const tlResult = await db.query('SELECT * FROM timelines WHERE id = $1', [timelineId]);
+        const tl = tlResult.rows[0];
+        if (!tl) return res.status(404).json({ error: 'Timeline not found' });
+
+        const task = await queries.createTask({
+            companyId: tl.company_id,
+            threadId: timelineId,
+            subjectType: 'contact',
+            subjectId: tl.contact_id,
+            title,
+            description,
+            priority,
+            dueAt: due_at,
+            ownerUserId: tl.owner_user_id,
+            createdBy: 'user',
+        });
+
+        // Set action_required if not already set
+        if (!tl.is_action_required) {
+            await queries.setActionRequired(timelineId, 'manual', 'user');
+        }
+
+        const realtimeService = require('../services/realtimeService');
+        realtimeService.broadcast('thread.action_required', { timelineId, reason: 'manual', task });
+
+        res.json({ task });
+    } catch (error) {
+        console.error('[Pulse] create task error:', error);
+        res.status(500).json({ error: 'Failed to create task' });
+    }
+});
+
+// =============================================================================
+// POST /api/pulse/threads/:id/set-action-required — manually flag a thread
+// =============================================================================
+router.post('/threads/:id/set-action-required', async (req, res) => {
+    try {
+        const timelineId = parseInt(req.params.id);
+        if (isNaN(timelineId)) return res.status(400).json({ error: 'Invalid timeline id' });
+
+        const tl = await queries.setActionRequired(timelineId, 'manual', 'user');
+        if (!tl) return res.status(404).json({ error: 'Timeline not found' });
+
+        const realtimeService = require('../services/realtimeService');
+        realtimeService.broadcast('thread.action_required', { timelineId, reason: 'manual' });
+
+        res.json({ timeline: tl });
+    } catch (error) {
+        console.error('[Pulse] set-action-required error:', error);
+        res.status(500).json({ error: 'Failed to set action required' });
     }
 });
 

@@ -183,6 +183,53 @@ async function processVoiceEvent(payload, eventType, traceId) {
                 }
             }
         }
+
+        // Action Required auto-trigger for inbound calls — check per-company settings
+        if (timelineId && processed.direction === 'inbound' && !normalized.parentCallSid) {
+            try {
+                const { getTriggerConfig } = require('./arConfigHelper');
+                // Resolve company_id from timeline
+                const tlRow = await db.query('SELECT company_id FROM timelines WHERE id = $1', [timelineId]);
+                const companyId = tlRow.rows[0]?.company_id || null;
+                const triggerCfg = await getTriggerConfig(companyId, 'missed_call');
+
+                if (triggerCfg.enabled) {
+                    await queries.setActionRequired(timelineId, 'new_call', 'system');
+
+                    if (triggerCfg.create_task) {
+                        const contactName = await (async () => {
+                            if (contactId) {
+                                try {
+                                    const { rows } = await db.query('SELECT full_name FROM contacts WHERE id = $1', [contactId]);
+                                    return rows[0]?.full_name || externalParty?.formatted || 'Unknown';
+                                } catch { return externalParty?.formatted || 'Unknown'; }
+                            }
+                            return externalParty?.formatted || 'Unknown';
+                        })();
+                        const slaMs = (triggerCfg.task_sla_minutes || 30) * 60 * 1000;
+                        const dueAt = new Date(Date.now() + slaMs).toISOString();
+                        await queries.createTask({
+                            companyId,
+                            threadId: timelineId,
+                            subjectType: 'contact',
+                            subjectId: contactId,
+                            title: `New call from ${contactName}`,
+                            priority: triggerCfg.task_priority || 'p2',
+                            dueAt,
+                            createdBy: 'system',
+                        });
+                    }
+
+                    const realtimeService = require('./realtimeService');
+                    realtimeService.broadcast('thread.action_required', {
+                        timelineId, reason: 'new_call',
+                    });
+                    console.log(`[${traceId}] Action Required set for inbound call on timeline ${timelineId}`);
+                }
+            } catch (e) {
+                console.warn(`[${traceId}] Failed to set AR for inbound call:`, e.message);
+            }
+        }
     }
 
     const isFinal = isFinalStatus(normalized.eventStatus);
