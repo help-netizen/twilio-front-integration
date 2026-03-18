@@ -70,7 +70,7 @@ export function PaymentDetailPanel({
                     </div>
                     <div className="payment-detail-date">{formatPaymentDate(detail.payment_date)}</div>
                     <div className="payment-detail-badges">
-                        <span className={`payment-badge ${detail.transaction_status === 'succeeded' ? 'badge-success' : 'badge-neutral'}`}>
+                        <span className={`payment-badge ${detail.transaction_status === 'succeeded' ? 'badge-success' : detail.transaction_status === 'voided' ? 'badge-danger' : 'badge-neutral'}`}>
                             {detail.transaction_status}
                         </span>
                         {detail.invoice && (
