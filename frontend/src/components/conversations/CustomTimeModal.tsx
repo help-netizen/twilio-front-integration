@@ -17,13 +17,8 @@ function generateArrivalWindows(date: Date) {
     for (let h = 8; h <= 18; h++) {
         const start = new Date(date); start.setHours(h, 0, 0, 0);
         const end = new Date(date); end.setHours(h + 2, 0, 0, 0);
-        const fmt = (d: Date) => {
-            const hours = d.getHours();
-            const ampm = hours >= 12 ? 'pm' : 'am';
-            const h12 = hours % 12 || 12;
-            return `${h12}${ampm}`;
-        };
-        windows.push({ label: `${fmt(start)}–${fmt(end)}`, start, end });
+        const fmt = (d: Date) => d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        windows.push({ label: `${fmt(start)} - ${fmt(end)}`, start, end });
     }
     return windows;
 }
@@ -53,7 +48,8 @@ export function CustomTimeModal({ open, onClose, onConfirm }: CustomTimeModalPro
     const handleConfirm = () => {
         if (selectedWindow === null) return;
         const w = windows[selectedWindow];
-        const formatted = `${w.label} — ${formatDateLabel(dateObj)}`;
+        const dateLabel = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+        const formatted = `${w.label} — ${dateLabel}`;
         onConfirm({
             type: 'arrival_window',
             start: w.start.toISOString(),

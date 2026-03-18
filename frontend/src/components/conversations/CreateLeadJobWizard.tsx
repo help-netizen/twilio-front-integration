@@ -106,7 +106,14 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
 
             if (withJob && createdUUID) {
                 const territoryId = territoryResult?.service_territory?.id;
-                if (!territoryId) throw new Error('No territory for job creation');
+                if (!territoryId) {
+                    // Territory not loaded yet (Zenbooker still loading in background) — create lead only
+                    toast.warning('Lead created, but job creation requires territory data', { description: 'Zenbooker territory is still loading. Try converting the lead to a job later.' });
+                    queryClient.invalidateQueries({ queryKey: ['lead-by-phone', phone] });
+                    onLeadCreated?.();
+                    setSubmitting(false);
+                    return;
+                }
                 const zbJobPayload: Record<string, unknown> = {
                     territory_id: territoryId,
                     customer: { name: [firstName, lastName].filter(Boolean).join(' ') || 'Unknown', ...(phoneNumber && { phone: toE164(phoneNumber) }), ...(email && { email }) },
@@ -114,8 +121,18 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
                     services: [{ custom_service: { name: jobType || 'General Service', description: description || '', price: Number(price) || 95, duration: Number(duration) || 120, taxable: false } }],
                     assignment_method: 'auto', sms_notifications: true, email_notifications: true,
                 };
-                if (selectedTimeslot) { zbJobPayload.timeslot_id = selectedTimeslot.id; }
-                else { const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(8, 0, 0, 0); const end = new Date(tomorrow.getTime() + 4 * 60 * 60 * 1000); zbJobPayload.timeslot = { type: 'arrival_window', start: tomorrow.toISOString(), end: end.toISOString() }; }
+                if (selectedTimeslot?.id) {
+                    // Zenbooker timeslot — use timeslot_id
+                    zbJobPayload.timeslot_id = selectedTimeslot.id;
+                } else if (selectedTimeslot?.type === 'arrival_window') {
+                    // Custom timeslot — use arrival window object
+                    zbJobPayload.timeslot = { type: 'arrival_window', start: selectedTimeslot.start, end: selectedTimeslot.end };
+                } else {
+                    // No timeslot — default arrival window
+                    const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(8, 0, 0, 0);
+                    const end = new Date(tomorrow.getTime() + 4 * 60 * 60 * 1000);
+                    zbJobPayload.timeslot = { type: 'arrival_window', start: tomorrow.toISOString(), end: end.toISOString() };
+                }
                 const result = await leadsApi.convertLead(createdUUID, {
                     zb_job_payload: zbJobPayload, service: { name: jobType || 'General Service' },
                     customer: { name: [firstName, lastName].filter(Boolean).join(' ') || 'Unknown', phone: toE164(phoneNumber), email: email || undefined },
