@@ -4,7 +4,6 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Clock } from 'lucide-react';
-import type { Step } from './wizardTypes';
 
 interface CustomTimeModalProps {
     open: boolean;
