@@ -19,6 +19,7 @@ export function WizardStep1(s: WizardState) {
                     {s.territoryLoading && <span className="text-sm text-muted-foreground animate-pulse">Checking…</span>}
                     {s.zipExists && <Badge variant="default" className="bg-green-600">✓ {s.zipArea || s.territoryResult?.service_territory?.name || 'In service area'}</Badge>}
                     {s.territoryError && !s.territoryLoading && <Badge variant="destructive">✗ {s.territoryError}</Badge>}
+                    {s.zipSource && <span className="text-xs text-muted-foreground" style={{ opacity: 0.6 }}>via {s.zipSource === 'fast' ? '⚡ fast API' : s.zipSource === 'zenbooker' ? '🔄 zenbooker fallback' : '❌ none'}</span>}
                 </div>
             </div>
             <div className="wizard__divider" />

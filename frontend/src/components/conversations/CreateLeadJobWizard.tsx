@@ -39,6 +39,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
 
     const [zipExists, setZipExists] = useState<boolean | null>(null);
     const [zipArea, setZipArea] = useState('');
+    const [zipSource, setZipSource] = useState('');
 
     const [phoneNumber, setPhoneNumber] = useState(formatUSPhone(phone));
     const [firstName, setFirstName] = useState('');
@@ -73,8 +74,10 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
     useEffect(() => { if (step === 4 && postalCode && !streetAddress) setStreetAddress(postalCode + ' '); }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const checkTerritory = useCallback(async (zip: string) => {
-        if (!zip || zip.length < 3) { setTerritoryResult(null); setTerritoryError(''); setZipExists(null); setZipArea(''); return; }
-        setTerritoryLoading(true); setTerritoryError(''); setZipExists(null); setZipArea('');
+        if (!zip || zip.length < 3) { setTerritoryResult(null); setTerritoryError(''); setZipExists(null); setZipArea(''); setZipSource(''); return; }
+        setTerritoryLoading(true); setTerritoryError(''); setZipExists(null); setZipArea(''); setZipSource('');
+
+        console.log('[ZipCheck] Starting parallel checks for zip:', zip);
 
         // Fire both APIs in parallel: fast check for UI, Zenbooker for timeslots
         const [fastResult, zbResult] = await Promise.allSettled([
@@ -82,21 +85,30 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
             zenbookerApi.checkServiceArea(zip),
         ]);
 
+        console.log('[ZipCheck] Fast API result:', fastResult.status, fastResult.status === 'fulfilled' ? fastResult.value : fastResult.reason);
+        console.log('[ZipCheck] Zenbooker result:', zbResult.status, zbResult.status === 'fulfilled' ? zbResult.value : zbResult.reason);
+
         // Process fast zip check (drives the UI badge & Next button)
         if (fastResult.status === 'fulfilled') {
             const fast = fastResult.value;
             setZipExists(fast.exists);
             setZipArea(fast.area || '');
+            setZipSource('fast');
+            console.log('[ZipCheck] ✓ Using FAST API:', { exists: fast.exists, area: fast.area });
             if (!fast.exists) setTerritoryError('Zip code is not in any service area');
         } else {
             // Fast API failed — fall back to Zenbooker result for UI
-            console.warn('[ZipCheck] fast check failed, falling back to Zenbooker:', fastResult.reason);
+            console.warn('[ZipCheck] ✗ Fast API FAILED, falling back to Zenbooker:', fastResult.reason?.message || fastResult.reason);
             if (zbResult.status === 'fulfilled') {
                 setZipExists(zbResult.value.in_service_area);
                 setZipArea(zbResult.value.service_territory?.name || '');
+                setZipSource('zenbooker');
+                console.log('[ZipCheck] ↩ Fallback to Zenbooker:', { in_service_area: zbResult.value.in_service_area, territory: zbResult.value.service_territory?.name });
                 if (!zbResult.value.in_service_area) setTerritoryError('Zip code is not in any service area');
             } else {
                 setZipExists(false);
+                setZipSource('none');
+                console.error('[ZipCheck] ✗ Both APIs failed!');
                 setTerritoryError('Service area check failed');
             }
         }
@@ -106,7 +118,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
             setTerritoryResult(zbResult.value);
             if (zbResult.value.customer_location?.coordinates) setCoords(zbResult.value.customer_location.coordinates);
         } else {
-            console.warn('[ZipCheck] Zenbooker service-area-check failed:', zbResult.reason);
+            console.warn('[ZipCheck] Zenbooker service-area-check failed:', zbResult.reason?.message || zbResult.reason);
             setTerritoryResult(null);
         }
 
@@ -187,7 +199,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
     const canProceedStep3 = !!selectedTimeslot || timeslotSkipped;
 
     const ws = {
-        postalCode, setPostalCode, territoryResult, territoryLoading, territoryError, zipExists, zipArea,
+        postalCode, setPostalCode, territoryResult, territoryLoading, territoryError, zipExists, zipArea, zipSource,
         firstName, setFirstName, lastName, setLastName, phoneNumber, setPhoneNumber, email, setEmail,
         jobTypes, jobType, setJobType, description, setDescription, duration, setDuration, price, setPrice,
         selectedDate, setSelectedDate, timeslotDays, selectedTimeslot, setSelectedTimeslot,
