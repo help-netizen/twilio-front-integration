@@ -37,6 +37,9 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
     const [territoryError, setTerritoryError] = useState('');
     const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
 
+    const [zipExists, setZipExists] = useState<boolean | null>(null);
+    const [zipArea, setZipArea] = useState('');
+
     const [phoneNumber, setPhoneNumber] = useState(formatUSPhone(phone));
     const [firstName, setFirstName] = useState('');
     const [lastName, setLastName] = useState('');
@@ -70,15 +73,44 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
     useEffect(() => { if (step === 4 && postalCode && !streetAddress) setStreetAddress(postalCode + ' '); }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const checkTerritory = useCallback(async (zip: string) => {
-        if (!zip || zip.length < 3) { setTerritoryResult(null); setTerritoryError(''); return; }
-        setTerritoryLoading(true); setTerritoryError('');
-        try {
-            const result = await zenbookerApi.checkServiceArea(zip);
-            setTerritoryResult(result);
-            if (result.customer_location?.coordinates) setCoords(result.customer_location.coordinates);
-            if (!result.in_service_area) setTerritoryError('Zip code is not in any service area');
-        } catch (err) { setTerritoryError(err instanceof Error ? err.message : 'Service area check failed'); setTerritoryResult(null); }
-        finally { setTerritoryLoading(false); }
+        if (!zip || zip.length < 3) { setTerritoryResult(null); setTerritoryError(''); setZipExists(null); setZipArea(''); return; }
+        setTerritoryLoading(true); setTerritoryError(''); setZipExists(null); setZipArea('');
+
+        // Fire both APIs in parallel: fast check for UI, Zenbooker for timeslots
+        const [fastResult, zbResult] = await Promise.allSettled([
+            zenbookerApi.checkZipCode(zip),
+            zenbookerApi.checkServiceArea(zip),
+        ]);
+
+        // Process fast zip check (drives the UI badge & Next button)
+        if (fastResult.status === 'fulfilled') {
+            const fast = fastResult.value;
+            setZipExists(fast.exists);
+            setZipArea(fast.area || '');
+            if (!fast.exists) setTerritoryError('Zip code is not in any service area');
+        } else {
+            // Fast API failed — fall back to Zenbooker result for UI
+            console.warn('[ZipCheck] fast check failed, falling back to Zenbooker:', fastResult.reason);
+            if (zbResult.status === 'fulfilled') {
+                setZipExists(zbResult.value.in_service_area);
+                setZipArea(zbResult.value.service_territory?.name || '');
+                if (!zbResult.value.in_service_area) setTerritoryError('Zip code is not in any service area');
+            } else {
+                setZipExists(false);
+                setTerritoryError('Service area check failed');
+            }
+        }
+
+        // Process Zenbooker result (needed for territory ID & coords for timeslots)
+        if (zbResult.status === 'fulfilled') {
+            setTerritoryResult(zbResult.value);
+            if (zbResult.value.customer_location?.coordinates) setCoords(zbResult.value.customer_location.coordinates);
+        } else {
+            console.warn('[ZipCheck] Zenbooker service-area-check failed:', zbResult.reason);
+            setTerritoryResult(null);
+        }
+
+        setTerritoryLoading(false);
     }, []);
 
     useEffect(() => {
@@ -150,12 +182,12 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
         finally { setSubmitting(false); }
     };
 
-    const canProceedStep1 = !!(postalCode.trim() && territoryResult?.in_service_area);
+    const canProceedStep1 = !!(postalCode.trim() && zipExists);
     const canProceedStep2 = !!(Number(duration) > 0);
     const canProceedStep3 = !!selectedTimeslot || timeslotSkipped;
 
     const ws = {
-        postalCode, setPostalCode, territoryResult, territoryLoading, territoryError,
+        postalCode, setPostalCode, territoryResult, territoryLoading, territoryError, zipExists, zipArea,
         firstName, setFirstName, lastName, setLastName, phoneNumber, setPhoneNumber, email, setEmail,
         jobTypes, jobType, setJobType, description, setDescription, duration, setDuration, price, setPrice,
         selectedDate, setSelectedDate, timeslotDays, selectedTimeslot, setSelectedTimeslot,

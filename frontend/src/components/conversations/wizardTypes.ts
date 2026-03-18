@@ -13,6 +13,7 @@ export interface WizardState {
     // Step 1
     postalCode: string; setPostalCode: (v: string) => void;
     territoryResult: any; territoryLoading: boolean; territoryError: string;
+    zipExists: boolean | null; zipArea: string;
     firstName: string; setFirstName: (v: string) => void;
     lastName: string; setLastName: (v: string) => void;
     phoneNumber: string; setPhoneNumber: (v: string) => void;

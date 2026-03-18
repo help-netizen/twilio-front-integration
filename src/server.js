@@ -132,6 +132,10 @@ app.use('/api/call-flows', authenticate, requireCompanyAccess, callFlowsRouter);
 app.use('/api/phone-numbers', authenticate, requireCompanyAccess, phoneNumbersRouter);
 app.use('/api/telephony/overview', authenticate, requireCompanyAccess, telephonyOverviewRouter);
 
+// Fast zip-code check (rely-lead-processor)
+const zipCheckRouter = require('../backend/src/routes/zip-check');
+app.use('/api/zip-check', authenticate, requireCompanyAccess, zipCheckRouter);
+
 // Zenbooker scheduling proxy
 const zenbookerPaymentsRouter = require('../backend/src/routes/zenbooker/payments');
 const zenbookerJobsRouter = require('../backend/src/routes/zenbooker/jobs');

@@ -86,6 +86,18 @@ export interface CreateJobResult {
     status: string;
 }
 
+// ─── Fast Zip Check (rely-lead-processor) ─────────────────────────────────────
+
+export interface ZipCheckResult {
+    success: boolean;
+    exists: boolean;
+    area: string;
+}
+
+export async function checkZipCode(zip: string): Promise<ZipCheckResult> {
+    return zbRequest<ZipCheckResult>(`/api/zip-check?zip=${encodeURIComponent(zip)}`);
+}
+
 // ─── API calls ────────────────────────────────────────────────────────────────
 
 export async function checkServiceArea(postalCode: string): Promise<ServiceAreaResult> {

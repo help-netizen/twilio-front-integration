@@ -17,7 +17,7 @@ export function WizardStep1(s: WizardState) {
                 </div>
                 <div className="wizard__territory-status">
                     {s.territoryLoading && <span className="text-sm text-muted-foreground animate-pulse">Checking…</span>}
-                    {s.territoryResult?.in_service_area && <Badge variant="default" className="bg-green-600">✓ {s.territoryResult.service_territory?.name || 'In service area'}</Badge>}
+                    {s.zipExists && <Badge variant="default" className="bg-green-600">✓ {s.zipArea || s.territoryResult?.service_territory?.name || 'In service area'}</Badge>}
                     {s.territoryError && !s.territoryLoading && <Badge variant="destructive">✗ {s.territoryError}</Badge>}
                 </div>
             </div>
