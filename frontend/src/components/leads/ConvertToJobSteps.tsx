@@ -17,6 +17,7 @@ interface StepProps {
     addressFields: AddressFields; setAddressFields: (v: AddressFields) => void;
     setCoords: (v: { lat: number; lng: number } | null) => void;
     territoryLoading: boolean; territoryResult: ServiceAreaResult | null; territoryError: string;
+    zipExists: boolean | null; zipArea: string; zipSource: string;
     serviceName: string; setServiceName: (v: string) => void;
     serviceDescription: string; setServiceDescription: (v: string) => void;
     servicePrice: string; setServicePrice: (v: string) => void;
@@ -43,7 +44,7 @@ export function StepIndicator({ step }: { step: Step }) {
     );
 }
 
-export function ConvertStep1({ name, setName, phone, setPhone, email, setEmail, addressFields, setAddressFields, setCoords, territoryLoading, territoryResult, territoryError }: StepProps) {
+export function ConvertStep1({ name, setName, phone, setPhone, email, setEmail, addressFields, setAddressFields, setCoords, territoryLoading, territoryResult, territoryError, zipExists, zipArea, zipSource }: StepProps) {
     return (
         <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3"><div><Label htmlFor="cj-name">Full Name *</Label><Input id="cj-name" value={name} onChange={e => setName(e.target.value)} placeholder="John Doe" /></div><div><Label htmlFor="cj-phone">Phone</Label><Input id="cj-phone" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+1..." /></div></div>
@@ -51,8 +52,9 @@ export function ConvertStep1({ name, setName, phone, setPhone, email, setEmail, 
             <AddressAutocomplete header={<Label className="text-sm font-medium">Address</Label>} idPrefix="cj" defaultUseDetails={true} value={addressFields} onChange={addr => { setAddressFields(addr); if (addr.lat && addr.lng) setCoords({ lat: addr.lat, lng: addr.lng }); }} />
             <div className="flex items-center gap-2 min-h-[28px]">
                 {territoryLoading && <span className="text-sm text-muted-foreground animate-pulse">Checking service area…</span>}
-                {territoryResult?.in_service_area && <Badge variant="default" className="bg-green-600">✓ {territoryResult.service_territory?.name || 'In service area'}</Badge>}
+                {zipExists && <Badge variant="default" className="bg-green-600">✓ {zipArea || territoryResult?.service_territory?.name || 'In service area'}</Badge>}
                 {territoryError && !territoryLoading && <Badge variant="destructive">✗ {territoryError}</Badge>}
+                {zipSource && <span className="text-xs text-muted-foreground" style={{ opacity: 0.6 }}>via {zipSource === 'fast' ? '⚡ fast API' : zipSource === 'zenbooker' ? '🔄 zenbooker fallback' : '❌ none'}</span>}
             </div>
         </div>
     );
@@ -83,7 +85,7 @@ export function ConvertStep3({ selectedDate, setSelectedDate, timeslotsLoading, 
     );
 }
 
-export function ConvertStep4({ name, phone, email, addressFields, serviceName, serviceDescription, servicePrice, serviceDuration, selectedTimeslot, territoryResult, lead, customFields }: StepProps) {
+export function ConvertStep4({ name, phone, email, addressFields, serviceName, serviceDescription, servicePrice, serviceDuration, selectedTimeslot, territoryResult, lead, customFields, zipArea }: StepProps) {
     return (
         <div className="space-y-3 text-sm">
             <h4 className="font-semibold">Customer</h4>
@@ -101,7 +103,7 @@ export function ConvertStep4({ name, phone, email, addressFields, serviceName, s
                 {lead.Metadata && Object.keys(lead.Metadata).length > 0 && <>{Object.entries(lead.Metadata).map(([key, value]) => { if (!value) return null; const fieldDef = customFields.find(f => f.api_name === key); return <p key={key}><span className="text-muted-foreground">{fieldDef?.display_name || key}:</span> {value}</p>; })}</>}
                 {!lead.JobSource && !lead.Comments && (!lead.Metadata || Object.keys(lead.Metadata).length === 0) && <p className="text-muted-foreground">No additional details</p>}
             </div>
-            <div className="flex items-center gap-2 pt-1"><Badge variant="default" className="bg-green-600">✓ {territoryResult?.service_territory?.name}</Badge></div>
+            <div className="flex items-center gap-2 pt-1"><Badge variant="default" className="bg-green-600">✓ {zipArea || territoryResult?.service_territory?.name}</Badge></div>
         </div>
     );
 }

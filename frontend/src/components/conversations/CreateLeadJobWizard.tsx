@@ -7,7 +7,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../../services/apiClient';
 import * as zenbookerApi from '../../services/zenbookerApi';
 import * as leadsApi from '../../services/leadsApi';
-import type { ServiceAreaResult, Timeslot, TimeslotDay } from '../../services/zenbookerApi';
+import type { Timeslot, TimeslotDay } from '../../services/zenbookerApi';
+import { useZipCheck } from '../../hooks/useZipCheck';
 import { ChevronRight, ChevronLeft, User, Phone } from 'lucide-react';
 import type { Step } from './wizardTypes';
 import { STEP_LABELS, DEFAULT_JOB_TYPES } from './wizardTypes';
@@ -32,14 +33,8 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
     const [confirmCall, setConfirmCall] = useState(false);
 
     const [postalCode, setPostalCode] = useState('');
-    const [territoryResult, setTerritoryResult] = useState<ServiceAreaResult | null>(null);
-    const [territoryLoading, setTerritoryLoading] = useState(false);
-    const [territoryError, setTerritoryError] = useState('');
-    const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
-
-    const [zipExists, setZipExists] = useState<boolean | null>(null);
-    const [zipArea, setZipArea] = useState('');
-    const [zipSource, setZipSource] = useState('');
+    const zipCheck = useZipCheck(postalCode);
+    const { territoryResult, territoryLoading, territoryError, zipExists, zipArea, zipSource, coords, setCoords } = zipCheck;
 
     const [phoneNumber, setPhoneNumber] = useState(formatUSPhone(phone));
     const [firstName, setFirstName] = useState('');
@@ -72,58 +67,6 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
 
     useEffect(() => { setSelectedDate(new Date().toISOString().split('T')[0]); }, []);
     useEffect(() => { if (step === 4 && postalCode && !streetAddress) setStreetAddress(postalCode + ' '); }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    const checkTerritory = useCallback(async (zip: string) => {
-        if (!zip || zip.length < 3) { setTerritoryResult(null); setTerritoryError(''); setZipExists(null); setZipArea(''); setZipSource(''); return; }
-        setTerritoryLoading(true); setTerritoryError(''); setZipExists(null); setZipArea(''); setZipSource('');
-
-        console.log('[ZipCheck] Starting checks for zip:', zip);
-
-        // 1) Fast API — updates UI immediately, does NOT wait for Zenbooker
-        try {
-            const fast = await zenbookerApi.checkZipCode(zip);
-            console.log('[ZipCheck] ✓ Fast API responded:', fast);
-            setZipExists(fast.exists);
-            setZipArea(fast.area || '');
-            setZipSource('fast');
-            setTerritoryLoading(false);
-            if (!fast.exists) setTerritoryError('Zip code is not in any service area');
-        } catch (fastErr: any) {
-            console.warn('[ZipCheck] ✗ Fast API failed:', fastErr?.message || fastErr);
-            // Fast API failed — wait for Zenbooker as fallback (handled below in the .catch path)
-            try {
-                const zbFallback = await zenbookerApi.checkServiceArea(zip);
-                setZipExists(zbFallback.in_service_area);
-                setZipArea(zbFallback.service_territory?.name || '');
-                setZipSource('zenbooker');
-                setTerritoryResult(zbFallback);
-                if (zbFallback.customer_location?.coordinates) setCoords(zbFallback.customer_location.coordinates);
-                if (!zbFallback.in_service_area) setTerritoryError('Zip code is not in any service area');
-            } catch (zbErr: any) {
-                console.error('[ZipCheck] ✗ Both APIs failed!');
-                setZipExists(false);
-                setZipSource('none');
-                setTerritoryError('Service area check failed');
-            }
-            setTerritoryLoading(false);
-            return; // Zenbooker already called in fallback, no need for background call
-        }
-
-        // 2) Zenbooker — fire-and-forget in background (needed for territory ID & coords for timeslots)
-        zenbookerApi.checkServiceArea(zip).then(zbResult => {
-            console.log('[ZipCheck] Zenbooker background result:', zbResult);
-            setTerritoryResult(zbResult);
-            if (zbResult.customer_location?.coordinates) setCoords(zbResult.customer_location.coordinates);
-        }).catch(zbErr => {
-            console.warn('[ZipCheck] Zenbooker background call failed:', zbErr?.message || zbErr);
-            setTerritoryResult(null);
-        });
-    }, []);
-
-    useEffect(() => {
-        const timer = setTimeout(() => { if (postalCode.trim().length >= 4) checkTerritory(postalCode.trim()); }, 600);
-        return () => clearTimeout(timer);
-    }, [postalCode, checkTerritory]);
 
     const fetchTimeslots = useCallback(async () => {
         const territoryId = territoryResult?.service_territory?.id;

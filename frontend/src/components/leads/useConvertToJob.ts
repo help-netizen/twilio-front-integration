@@ -4,9 +4,10 @@ import { toast } from 'sonner';
 import type { Lead } from '../../types/lead';
 import * as leadsApi from '../../services/leadsApi';
 import { authedFetch } from '../../services/apiClient';
-import type { ServiceAreaResult, Timeslot, TimeslotDay } from '../../services/zenbookerApi';
+import type { Timeslot, TimeslotDay } from '../../services/zenbookerApi';
 import * as zenbookerApi from '../../services/zenbookerApi';
 import { type AddressFields, EMPTY_ADDRESS } from '../AddressAutocomplete';
+import { useZipCheck } from '../../hooks/useZipCheck';
 
 export type Step = 1 | 2 | 3 | 4;
 
@@ -22,9 +23,11 @@ export function useConvertToJob(lead: Lead, open: boolean, onSuccess: (lead: Lea
     const [phone, setPhone] = useState('');
     const [email, setEmail] = useState('');
     const [addressFields, setAddressFields] = useState<AddressFields>(EMPTY_ADDRESS);
-    const [territoryResult, setTerritoryResult] = useState<ServiceAreaResult | null>(null);
-    const [territoryLoading, setTerritoryLoading] = useState(false);
-    const [territoryError, setTerritoryError] = useState('');
+
+    // Shared zip check hook — fast API for UI, Zenbooker in background for timeslots
+    const zipCheck = useZipCheck(addressFields.zip);
+    const { territoryResult, territoryLoading, territoryError, zipExists, zipArea, zipSource, coords, setCoords } = zipCheck;
+
     const [serviceName, setServiceName] = useState('');
     const [serviceDescription, setServiceDescription] = useState('');
     const [servicePrice, setServicePrice] = useState('0');
@@ -34,7 +37,6 @@ export function useConvertToJob(lead: Lead, open: boolean, onSuccess: (lead: Lea
     const [selectedTimeslot, setSelectedTimeslot] = useState<Timeslot | null>(null);
     const [timeslotsLoading, setTimeslotsLoading] = useState(false);
     const [timeslotsError, setTimeslotsError] = useState('');
-    const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
     const [jobTypes, setJobTypes] = useState<string[]>([]);
     const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
 
@@ -45,16 +47,12 @@ export function useConvertToJob(lead: Lead, open: boolean, onSuccess: (lead: Lea
             setStep(1); setName([lead.FirstName, lead.LastName].filter(Boolean).join(' ') || ''); setPhone(lead.Phone || ''); setEmail(lead.Email || '');
             setAddressFields({ street: lead.Address || '', apt: lead.Unit || '', city: lead.City || '', state: lead.State || '', zip: lead.PostalCode || '', lat: lead.Latitude != null ? Number(lead.Latitude) : null, lng: lead.Longitude != null ? Number(lead.Longitude) : null });
             setServiceName(lead.JobType || 'General Service'); setServiceDescription(lead.Description || lead.Comments || ''); setServicePrice('0'); setServiceDuration('120');
-            setTerritoryResult(null); setTerritoryError(''); setTimeslotDays([]); setSelectedTimeslot(null); setTimeslotsError('');
+            setTimeslotDays([]); setSelectedTimeslot(null); setTimeslotsError('');
             const leadLat = lead.Latitude != null ? Number(lead.Latitude) : null; const leadLng = lead.Longitude != null ? Number(lead.Longitude) : null;
-            setCoords(leadLat && leadLng ? { lat: leadLat, lng: leadLng } : null);
+            if (leadLat && leadLng) setCoords({ lat: leadLat, lng: leadLng });
             setSelectedDate(new Date().toISOString().split('T')[0]);
         }
-    }, [open, lead]);
-
-    const checkTerritory = useCallback(async (zip: string) => { if (!zip || zip.length < 3) { setTerritoryResult(null); setTerritoryError(''); return; } setTerritoryLoading(true); setTerritoryError(''); try { const result = await zenbookerApi.checkServiceArea(zip); setTerritoryResult(result); if (result.customer_location?.coordinates) setCoords(result.customer_location.coordinates); if (!result.in_service_area) setTerritoryError('Postal code is not in any service area'); } catch (err) { setTerritoryError(err instanceof Error ? err.message : 'Service area check failed'); setTerritoryResult(null); } finally { setTerritoryLoading(false); } }, []);
-
-    useEffect(() => { const timer = setTimeout(() => { if (addressFields.zip.trim().length >= 4) checkTerritory(addressFields.zip.trim()); }, 600); return () => clearTimeout(timer); }, [addressFields.zip, checkTerritory]);
+    }, [open, lead, setCoords]);
 
     const fetchTimeslots = useCallback(async () => { const territoryId = territoryResult?.service_territory?.id; if (!territoryId || !selectedDate) return; setTimeslotsLoading(true); setTimeslotsError(''); setSelectedTimeslot(null); try { const result = await zenbookerApi.getTimeslots({ territory: territoryId, date: selectedDate, duration: Number(serviceDuration) || 120, days: 7, lat: coords?.lat, lng: coords?.lng }); setTimeslotDays(result.days || []); if (!result.days?.length || result.days.every(d => !d.timeslots?.length)) setTimeslotsError('No available timeslots for this date range'); } catch (err) { setTimeslotsError(err instanceof Error ? err.message : 'Failed to load timeslots'); setTimeslotDays([]); } finally { setTimeslotsLoading(false); } }, [territoryResult, selectedDate, serviceDuration, coords]);
 
@@ -73,16 +71,18 @@ export function useConvertToJob(lead: Lead, open: boolean, onSuccess: (lead: Lea
         finally { setSubmitting(false); }
     };
 
-    const canProceedStep1 = !!(addressFields.zip.trim() && territoryResult?.in_service_area && name.trim());
+    const canProceedStep1 = !!(addressFields.zip.trim() && zipExists && name.trim());
     const canProceedStep2 = !!(serviceName.trim() && Number(serviceDuration) > 0);
     const canProceedStep3 = !!selectedTimeslot;
 
     return {
         step, setStep, submitting, name, setName, phone, setPhone, email, setEmail,
         addressFields, setAddressFields, territoryResult, territoryLoading, territoryError,
+        zipExists, zipArea, zipSource,
         serviceName, setServiceName, serviceDescription, setServiceDescription, servicePrice, setServicePrice,
         serviceDuration, setServiceDuration, selectedDate, setSelectedDate, timeslotDays, selectedTimeslot, setSelectedTimeslot,
         timeslotsLoading, timeslotsError, coords, setCoords, jobTypes, customFields,
         fetchTimeslots, handleSubmit, canProceedStep1, canProceedStep2, canProceedStep3,
     };
 }
+
