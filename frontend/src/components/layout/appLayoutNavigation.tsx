@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '../ui/dropdown-menu';
-import { Phone, MessageSquare, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase } from 'lucide-react';
+import { Phone, PhoneIncoming, MessageSquare, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase } from 'lucide-react';
 
 interface AppNavProps { activeTab: string; pulseUnreadCount: number; hasRole: (r: string) => boolean; logout: () => void; }
 
@@ -38,6 +38,7 @@ export const SettingsMenu: React.FC<{ activeTab: string; hasRole: (r: string) =>
                 <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/api-docs')}><BookOpen className="size-4" />API Docs</DropdownMenuItem>
                 <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/users')}><Users className="size-4" />Users</DropdownMenuItem>
                 <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/providers')}><Wrench className="size-4" />Providers</DropdownMenuItem>
+                <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/telephony')}><PhoneIncoming className="size-4" />Telephony</DropdownMenuItem>
                 <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/phone-calls')}><Phone className="size-4" />Phone Calls</DropdownMenuItem>
                 <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/action-required')}><Activity className="size-4" />Action Required</DropdownMenuItem>
                 {hasRole('super_admin') && <><DropdownMenuSeparator /><DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/admin')}><Shield className="size-4" />Super Admin</DropdownMenuItem></>}
