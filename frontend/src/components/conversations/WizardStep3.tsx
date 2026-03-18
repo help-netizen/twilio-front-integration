@@ -1,13 +1,22 @@
+import { useState } from 'react';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Button } from '../ui/button';
-import { Calendar, SkipForward, AlertTriangle } from 'lucide-react';
+import { Calendar, Clock, SkipForward, AlertTriangle } from 'lucide-react';
 import type { WizardState, Step } from './wizardTypes';
+import { CustomTimeModal } from './CustomTimeModal';
 
 export function WizardStep3(s: WizardState) {
+    const [showCustomTime, setShowCustomTime] = useState(false);
+
     return (
         <div className="wizard__body">
-            <div className="wizard__section-title"><Calendar className="w-4" /> Find Available Timeslots</div>
+            <div className="wizard__section-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Calendar className="w-4" /> Available Timeslots</span>
+                <Button size="sm" variant="outline" onClick={() => setShowCustomTime(true)} className="flex items-center gap-1">
+                    <Clock className="w-3.5" /> Custom Time
+                </Button>
+            </div>
             <p className="wizard__hint">Select a date and timeslot, or skip to create a lead only.</p>
             <div className="wizard__row wizard__row--align-end">
                 <div className="wizard__field">
@@ -48,6 +57,17 @@ export function WizardStep3(s: WizardState) {
                     </div>
                 </div>
             )}
+
+            <CustomTimeModal
+                open={showCustomTime}
+                onClose={() => setShowCustomTime(false)}
+                onConfirm={(customSlot) => {
+                    s.setSelectedTimeslot(customSlot);
+                    s.setTimeslotSkipped(false);
+                    setShowCustomTime(false);
+                    s.setStep(4 as Step);
+                }}
+            />
         </div>
     );
 }
