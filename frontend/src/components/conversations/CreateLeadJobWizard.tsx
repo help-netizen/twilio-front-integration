@@ -34,7 +34,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
 
     const [postalCode, setPostalCode] = useState('');
     const zipCheck = useZipCheck(postalCode);
-    const { territoryResult, territoryLoading, territoryError, zipExists, zipArea, zipSource, coords, setCoords } = zipCheck;
+    const { territoryResult, territoryLoading, territoryError, zipExists, zipArea, zipSource, zbLoading, coords, setCoords } = zipCheck;
 
     const [phoneNumber, setPhoneNumber] = useState(formatUSPhone(phone));
     const [firstName, setFirstName] = useState('');
@@ -106,14 +106,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
 
             if (withJob && createdUUID) {
                 const territoryId = territoryResult?.service_territory?.id;
-                if (!territoryId) {
-                    // Territory not loaded yet (Zenbooker still loading in background) — create lead only
-                    toast.warning('Lead created, but job creation requires territory data', { description: 'Zenbooker territory is still loading. Try converting the lead to a job later.' });
-                    queryClient.invalidateQueries({ queryKey: ['lead-by-phone', phone] });
-                    onLeadCreated?.();
-                    setSubmitting(false);
-                    return;
-                }
+                if (!territoryId) throw new Error('No territory for job creation — Zenbooker data not loaded yet');
                 const zbJobPayload: Record<string, unknown> = {
                     territory_id: territoryId,
                     customer: { name: [firstName, lastName].filter(Boolean).join(' ') || 'Unknown', ...(phoneNumber && { phone: toE164(phoneNumber) }), ...(email && { email }) },
@@ -154,7 +147,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
     const canProceedStep3 = !!selectedTimeslot || timeslotSkipped;
 
     const ws = {
-        postalCode, setPostalCode, territoryResult, territoryLoading, territoryError, zipExists, zipArea, zipSource,
+        postalCode, setPostalCode, territoryResult, territoryLoading, territoryError, zipExists, zipArea, zipSource, zbLoading,
         firstName, setFirstName, lastName, setLastName, phoneNumber, setPhoneNumber, email, setEmail,
         jobTypes, jobType, setJobType, description, setDescription, duration, setDuration, price, setPrice,
         selectedDate, setSelectedDate, timeslotDays, selectedTimeslot, setSelectedTimeslot,

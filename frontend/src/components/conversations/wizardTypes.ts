@@ -14,6 +14,7 @@ export interface WizardState {
     postalCode: string; setPostalCode: (v: string) => void;
     territoryResult: any; territoryLoading: boolean; territoryError: string;
     zipExists: boolean | null; zipArea: string; zipSource: string;
+    zbLoading: boolean;
     firstName: string; setFirstName: (v: string) => void;
     lastName: string; setLastName: (v: string) => void;
     phoneNumber: string; setPhoneNumber: (v: string) => void;

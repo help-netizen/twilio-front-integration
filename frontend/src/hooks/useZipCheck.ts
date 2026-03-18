@@ -9,6 +9,7 @@ export interface ZipCheckState {
     zipExists: boolean | null;
     zipArea: string;
     zipSource: string;
+    zbLoading: boolean;  // true while Zenbooker background call is in progress
     coords: { lat: number; lng: number } | null;
     setCoords: (v: { lat: number; lng: number } | null) => void;
 }
@@ -27,16 +28,19 @@ export function useZipCheck(zip: string): ZipCheckState {
     const [zipExists, setZipExists] = useState<boolean | null>(null);
     const [zipArea, setZipArea] = useState('');
     const [zipSource, setZipSource] = useState('');
+    const [zbLoading, setZbLoading] = useState(false);
     const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
 
     const checkTerritory = useCallback(async (zipVal: string) => {
         if (!zipVal || zipVal.length < 3) {
             setTerritoryResult(null); setTerritoryError('');
             setZipExists(null); setZipArea(''); setZipSource('');
+            setZbLoading(false);
             return;
         }
         setTerritoryLoading(true); setTerritoryError('');
         setZipExists(null); setZipArea(''); setZipSource('');
+        setZbLoading(true); setTerritoryResult(null);
 
         console.log('[ZipCheck] Starting checks for zip:', zipVal);
 
@@ -51,19 +55,21 @@ export function useZipCheck(zip: string): ZipCheckState {
             if (!fast.exists) setTerritoryError('Zip code is not in any service area');
         } catch (fastErr: any) {
             console.warn('[ZipCheck] ✗ Fast API failed:', fastErr?.message || fastErr);
-            // Fast API failed — fall back to Zenbooker
+            // Fast API failed — fall back to Zenbooker (awaited, not background)
             try {
                 const zbFallback = await zenbookerApi.checkServiceArea(zipVal);
                 setZipExists(zbFallback.in_service_area);
                 setZipArea(zbFallback.service_territory?.name || '');
                 setZipSource('zenbooker');
                 setTerritoryResult(zbFallback);
+                setZbLoading(false);
                 if (zbFallback.customer_location?.coordinates) setCoords(zbFallback.customer_location.coordinates);
                 if (!zbFallback.in_service_area) setTerritoryError('Zip code is not in any service area');
             } catch {
                 console.error('[ZipCheck] ✗ Both APIs failed!');
                 setZipExists(false);
                 setZipSource('none');
+                setZbLoading(false);
                 setTerritoryError('Service area check failed');
             }
             setTerritoryLoading(false);
@@ -74,10 +80,12 @@ export function useZipCheck(zip: string): ZipCheckState {
         zenbookerApi.checkServiceArea(zipVal).then((zbResult: ServiceAreaResult) => {
             console.log('[ZipCheck] Zenbooker background result:', zbResult);
             setTerritoryResult(zbResult);
+            setZbLoading(false);
             if (zbResult.customer_location?.coordinates) setCoords(zbResult.customer_location.coordinates);
         }).catch((zbErr: any) => {
             console.warn('[ZipCheck] Zenbooker background call failed:', zbErr?.message || zbErr);
             setTerritoryResult(null);
+            setZbLoading(false);
         });
     }, []);
 
@@ -89,10 +97,11 @@ export function useZipCheck(zip: string): ZipCheckState {
             else if (trimmed.length < 3) {
                 setTerritoryResult(null); setTerritoryError('');
                 setZipExists(null); setZipArea(''); setZipSource('');
+                setZbLoading(false);
             }
         }, 600);
         return () => clearTimeout(timer);
     }, [zip, checkTerritory]);
 
-    return { territoryResult, territoryLoading, territoryError, zipExists, zipArea, zipSource, coords, setCoords };
+    return { territoryResult, territoryLoading, territoryError, zipExists, zipArea, zipSource, zbLoading, coords, setCoords };
 }

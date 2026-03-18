@@ -31,7 +31,7 @@ export function WizardStep4(s: WizardState) {
             {/* Address */}
             <div className="wizard__review-section">
                 <AddressAutocomplete
-                    header={<h4 className="wizard__review-title" style={{ margin: 0 }}><MapPin className="w-3.5" /> Address{s.territoryResult?.in_service_area && <Badge variant="default" className="bg-green-600 ml-2 text-[10px]">✓ {s.territoryResult.service_territory?.name}</Badge>}</h4>}
+                    header={<h4 className="wizard__review-title" style={{ margin: 0 }}><MapPin className="w-3.5" /> Address{s.zipExists && <Badge variant="default" className="bg-green-600 ml-2 text-[10px]">✓ {s.zipArea || s.territoryResult?.service_territory?.name}</Badge>}{s.zbLoading && <span className="ml-2 text-xs text-muted-foreground animate-pulse">⏳ loading territory…</span>}</h4>}
                     idPrefix="wz4"
                     value={{ street: s.streetAddress, apt: s.unit, city: s.city, state: s.state, zip: s.postalCode }}
                     onChange={(addr) => {
@@ -70,9 +70,9 @@ export function WizardStep4(s: WizardState) {
                 <Button variant="outline" onClick={() => s.handleCreate(false)} disabled={s.submitting} className="wizard__action-btn">
                     <FileText className="w-4 mr-1.5" />{s.submitting ? 'Creating…' : 'Create Lead Only'}
                 </Button>
-                <Button onClick={() => s.handleCreate(true)} disabled={s.submitting || !s.selectedTimeslot || !s.streetAddress.trim() || !s.city.trim()} className="wizard__action-btn wizard__action-btn--primary"
-                    title={!s.streetAddress.trim() || !s.city.trim() ? 'Street address and city are required to create a job' : !s.selectedTimeslot ? 'Select a timeslot on Step 3 to create a job' : ''}>
-                    <CheckCircle2 className="w-4 mr-1.5" />{s.submitting ? 'Creating…' : 'Create Lead and Job'}
+                <Button onClick={() => s.handleCreate(true)} disabled={s.submitting || s.zbLoading || !s.selectedTimeslot || !s.streetAddress.trim() || !s.city.trim()} className="wizard__action-btn wizard__action-btn--primary"
+                    title={s.zbLoading ? 'Waiting for Zenbooker territory data…' : !s.streetAddress.trim() || !s.city.trim() ? 'Street address and city are required to create a job' : !s.selectedTimeslot ? 'Select a timeslot on Step 3 to create a job' : ''}>
+                    <CheckCircle2 className="w-4 mr-1.5" />{s.submitting ? 'Creating…' : s.zbLoading ? 'Waiting for territory…' : 'Create Lead and Job'}
                 </Button>
             </div>
         </div>
