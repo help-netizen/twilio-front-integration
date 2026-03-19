@@ -61,6 +61,9 @@ export function WizardStep3(s: WizardState) {
             <CustomTimeModal
                 open={showCustomTime}
                 onClose={() => setShowCustomTime(false)}
+                newJobCoords={s.coords}
+                newJobAddress={[s.streetAddress, s.city, s.state, s.postalCode].filter(Boolean).join(', ')}
+                territoryId={s.territoryResult?.service_territory?.id}
                 onConfirm={(customSlot) => {
                     s.setSelectedTimeslot(customSlot);
                     s.setTimeslotSkipped(false);

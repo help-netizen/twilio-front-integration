@@ -86,6 +86,10 @@ function rowToJob(row) {
         company_id: row.company_id,
         created_at: row.created_at ? row.created_at.toISOString() : null,
         updated_at: row.updated_at ? row.updated_at.toISOString() : null,
+
+        // Coordinates stored in Blanc DB
+        lat: row.lat || null,
+        lng: row.lng || null,
     };
 }
 
@@ -108,19 +112,11 @@ function zbJobToColumns(zbJob) {
         service_name: zbJob.service_name || zbJob.services?.[0]?.service_name || null,
         start_date: zbJob.start_date || null,
         // ZB end_date = start + job duration, but UI shows arrival window (time_slot).
-        // Use time_slot to compute the correct end time matching ZB display.
+        // Use time_slot.arrival_window_minutes to compute the correct end time.
         end_date: (() => {
-            if (zbJob.time_slot?.end_time && zbJob.start_date) {
-                // time_slot has local times (e.g. "12:00"), start_date has the date in UTC
-                // Compute offset from start_time to end_time and apply to start_date
-                const startMinutes = zbJob.time_slot.start_time
-                    ? parseInt(zbJob.time_slot.start_time.split(':')[0]) * 60 + parseInt(zbJob.time_slot.start_time.split(':')[1])
-                    : null;
-                const endMinutes = parseInt(zbJob.time_slot.end_time.split(':')[0]) * 60 + parseInt(zbJob.time_slot.end_time.split(':')[1]);
-                if (startMinutes !== null) {
-                    const diffMs = (endMinutes - startMinutes) * 60 * 1000;
-                    return new Date(new Date(zbJob.start_date).getTime() + diffMs).toISOString();
-                }
+            if (zbJob.time_slot?.arrival_window_minutes && zbJob.start_date) {
+                const arrivalMs = zbJob.time_slot.arrival_window_minutes * 60 * 1000;
+                return new Date(new Date(zbJob.start_date).getTime() + arrivalMs).toISOString();
             }
             return zbJob.end_date || null;
         })(),
@@ -139,6 +135,8 @@ function zbJobToColumns(zbJob) {
         zb_canceled: !!zbJob.canceled,
         zb_rescheduled: !!zbJob.rescheduled,
         zb_raw: JSON.stringify(zbJob),
+        lat: zbJob.service_address?.lat || null,
+        lng: zbJob.service_address?.lng || null,
     };
 }
 
@@ -173,8 +171,8 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
             job_number, service_name, start_date, end_date,
             customer_name, customer_phone, customer_email, address,
             territory, invoice_total, invoice_status, assigned_techs, notes,
-            zb_raw, company_id)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+            zb_raw, company_id, lat, lng)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
         ON CONFLICT (zenbooker_job_id) DO UPDATE SET
             lead_id = COALESCE(EXCLUDED.lead_id, jobs.lead_id),
             contact_id = COALESCE(EXCLUDED.contact_id, jobs.contact_id),
@@ -196,6 +194,8 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
             assigned_techs = EXCLUDED.assigned_techs,
             notes = EXCLUDED.notes,
             zb_raw = EXCLUDED.zb_raw,
+            lat = EXCLUDED.lat,
+            lng = EXCLUDED.lng,
             updated_at = NOW()
         RETURNING *
     `, [
@@ -205,7 +205,7 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
         cols.customer_name || null, cols.customer_phone || null, cols.customer_email || null, cols.address || null,
         cols.territory || null, cols.invoice_total || null, cols.invoice_status || null,
         cols.assigned_techs || '[]', cols.notes || '[]',
-        cols.zb_raw || '{}', companyId || null,
+        cols.zb_raw || '{}', companyId || null, cols.lat || null, cols.lng || null,
     ]);
 
     return rowToJob(rows[0]);
@@ -517,6 +517,8 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
                 notes = $17::jsonb,
                 zb_raw = $18::jsonb,
                 contact_id = COALESCE($20, contact_id),
+                lat = COALESCE($21, lat),
+                lng = COALESCE($22, lng),
                 updated_at = NOW()
             WHERE zenbooker_job_id = $19
         `, [
@@ -526,7 +528,7 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
             cols.customer_name, cols.customer_phone, cols.customer_email, cols.address,
             cols.territory, cols.invoice_total, cols.invoice_status,
             cols.assigned_techs, cols.notes, cols.zb_raw,
-            zbJobId, contactId,
+            zbJobId, contactId, cols.lat, cols.lng,
         ]);
 
         console.log(`[JobsService] Synced job ${zbJobId}: blanc_status ${existing.blanc_status} → ${newBlancStatus}`);
@@ -727,6 +729,12 @@ async function updateJobTags(jobId, tagIds) {
 // =============================================================================
 // Exports
 // =============================================================================
+
+/** Update lat/lng for a job (e.g. after geocoding on the frontend) */
+async function updateCoords(jobId, lat, lng) {
+    await db.query('UPDATE jobs SET lat = $1, lng = $2, updated_at = NOW() WHERE id = $3', [lat, lng, jobId]);
+}
+
 module.exports = {
     createJob,
     getJobById,
@@ -745,4 +753,5 @@ module.exports = {
     computeBlancStatusFromZb,
     updateJobTags,
     getTagsForJob,
+    updateCoords,
 };

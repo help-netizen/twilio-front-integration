@@ -7,6 +7,47 @@
 const express = require('express');
 const router = express.Router();
 const jobsService = require('../services/jobsService');
+const zenbookerClient = require('../services/zenbookerClient');
+
+// ─── Sync Jobs from Zenbooker ────────────────────────────────────────────────
+
+router.post('/sync', async (req, res) => {
+    try {
+        console.log('[Jobs Sync] Starting full sync from Zenbooker...');
+        let totalSynced = 0;
+        let totalCreated = 0;
+        let cursor = 0;
+        const limit = 100;
+
+        while (true) {
+            const zbData = await zenbookerClient.getJobs({ limit, cursor, sort_by: 'start_date', sort_order: 'desc' });
+            const zbJobs = zbData.results || [];
+            if (zbJobs.length === 0) break;
+
+            for (const zbJob of zbJobs) {
+                try {
+                    const result = await jobsService.syncFromZenbooker(
+                        zbJob.id, zbJob, req.companyId || null, 'sync_bulk'
+                    );
+                    totalSynced++;
+                    if (result.created) totalCreated++;
+                } catch (err) {
+                    console.warn(`[Jobs Sync] Failed to sync job ${zbJob.id}:`, err.message);
+                }
+            }
+
+            console.log(`[Jobs Sync] Batch: ${zbJobs.length} jobs processed (cursor=${cursor})`);
+            if (!zbData.has_more) break;
+            cursor = zbData.cursor || (cursor + zbJobs.length);
+        }
+
+        console.log(`[Jobs Sync] Done: ${totalSynced} synced, ${totalCreated} new`);
+        res.json({ ok: true, data: { synced: totalSynced, created: totalCreated } });
+    } catch (err) {
+        console.error('[Jobs Sync] error:', err.message);
+        res.status(500).json({ ok: false, error: err.message });
+    }
+});
 
 // ─── List Jobs ───────────────────────────────────────────────────────────────
 
@@ -47,6 +88,20 @@ router.get('/:id', async (req, res) => {
         res.json({ ok: true, data: job });
     } catch (err) {
         console.error('[Jobs API] Get error:', err.message);
+        res.status(500).json({ ok: false, error: err.message });
+    }
+});
+
+// ─── Update Job Coordinates ──────────────────────────────────────────────────
+
+router.patch('/:id/coords', async (req, res) => {
+    try {
+        const { lat, lng } = req.body;
+        if (lat == null || lng == null) return res.status(400).json({ ok: false, error: 'lat and lng required' });
+        await jobsService.updateCoords(req.params.id, lat, lng);
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[Jobs API] Coords update error:', err.message);
         res.status(500).json({ ok: false, error: err.message });
     }
 });

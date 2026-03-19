@@ -54,6 +54,10 @@ export interface LocalJob {
     company_id?: string;
     created_at?: string;
     updated_at?: string;
+
+    /** Coordinates from Zenbooker service_address */
+    lat?: number | null;
+    lng?: number | null;
 }
 
 export interface JobsListResult {
@@ -122,6 +126,14 @@ export async function updateBlancStatus(id: number, blancStatus: string): Promis
 
 export async function cancelJob(id: number): Promise<void> {
     await jobsRequest(`${JOBS_BASE}/${id}/cancel`, { method: 'POST' });
+}
+
+/** Persist geocoded coordinates for a job */
+export async function updateJobCoords(id: number | string, lat: number, lng: number): Promise<void> {
+    await jobsRequest(`${JOBS_BASE}/${id}/coords`, {
+        method: 'PATCH',
+        body: JSON.stringify({ lat, lng }),
+    });
 }
 
 export async function addJobNote(id: number, text: string): Promise<void> {

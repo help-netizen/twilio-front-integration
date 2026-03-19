@@ -9,6 +9,11 @@ const DEFAULT_PROXY_NUMBERS = [
     { label: '(877) 419-4983', value: '+18774194983' },
     { label: '(617) 500-6181', value: '+16175006181' },
     { label: '(617) 992-7291', value: '+16179927291' },
+    { label: '(617) 644-4408', value: '+16176444408' },
+    { label: '(508) 444-0808', value: '+15084440808' },
+    { label: '(508) 290-4442', value: '+15082904442' },
+    { label: '(508) 682-5820', value: '+15086825820' },
+    { label: '(617) 404-4425', value: '+16174044425' },
 ];
 
 export function NewConversationDialog({ onSubmit, onClose }: NewConversationDialogProps) {

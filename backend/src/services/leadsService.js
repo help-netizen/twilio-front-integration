@@ -641,7 +641,10 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
                 localJobId,
                 jobDetail?.job_number || null,
                 jobDetail?.start_date || null,
-                jobDetail?.end_date || null,
+                // Use arrival window (2hrs) instead of service duration (1hr)
+                (jobDetail?.time_slot?.arrival_window_minutes && jobDetail?.start_date)
+                    ? new Date(new Date(jobDetail.start_date).getTime() + jobDetail.time_slot.arrival_window_minutes * 60000).toISOString()
+                    : (jobDetail?.end_date || null),
                 jobDetail?.territory?.name || null,
                 JSON.stringify(jobDetail?.assigned_providers || []),
                 JSON.stringify(jobDetail?.notes || []),

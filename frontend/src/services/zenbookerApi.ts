@@ -41,6 +41,8 @@ export interface Timeslot {
     end: string;
     type: string;
     formatted: string;
+    /** Provider ID selected from the timeline modal */
+    techId?: string;
 }
 
 export interface TimeslotDay {
@@ -133,4 +135,18 @@ export async function createJob(payload: Record<string, unknown>): Promise<Creat
         method: 'POST',
         body: JSON.stringify(payload),
     });
+}
+
+// ─── Team Members (Providers) ─────────────────────────────────────────────────
+
+export interface TeamMember {
+    id: string;
+    name: string;
+    assigned_territories: { id: string; name: string }[];
+    calendar_color?: string;
+    is_service_provider?: boolean;
+}
+
+export async function getTeamMembers(): Promise<TeamMember[]> {
+    return zbRequest<TeamMember[]>(`${ZB_BASE}/team-members`);
 }

@@ -1,99 +1,611 @@
-import { useState, useMemo } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { Dialog, DialogContent, DialogFooter } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
-import { Label } from '../ui/label';
-import { Clock } from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { listJobs, updateJobCoords } from '../../services/jobsApi';
+import type { LocalJob } from '../../services/jobsApi';
+import { getTeamMembers } from '../../services/zenbookerApi';
+import type { TeamMember } from '../../services/zenbookerApi';
+import './CustomTimeModal.css';
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const TECH_COLORS = [
+    { bg: '#3b82f6', light: '#dbeafe', name: 'blue' },   // blue
+    { bg: '#f97316', light: '#ffedd5', name: 'orange' },  // orange
+    { bg: '#8b5cf6', light: '#ede9fe', name: 'purple' },  // purple
+    { bg: '#14b8a6', light: '#ccfbf1', name: 'teal' },    // teal
+    { bg: '#ef4444', light: '#fee2e2', name: 'red' },     // red
+    { bg: '#ec4899', light: '#fce7f3', name: 'pink' },    // pink
+];
+const HOUR_START = 7;
+const HOUR_END = 19; // 7 PM
+const HOUR_HEIGHT = 48;
+const TOTAL_HOURS = HOUR_END - HOUR_START;
+const SNAP_MINUTES = 30;
+const DEFAULT_DURATION_MIN = 120;
+const NEW_JOB_COLOR = '#16a34a';
+const EXCLUDED_STATUSES = ['Canceled', 'Visit completed'];
 
 interface CustomTimeModalProps {
     open: boolean;
     onClose: () => void;
-    onConfirm: (customSlot: { type: 'arrival_window'; start: string; end: string; formatted: string }) => void;
+    onConfirm: (customSlot: { type: 'arrival_window'; start: string; end: string; formatted: string; techId?: string }) => void;
+    newJobCoords?: { lat: number; lng: number } | null;
+    newJobAddress?: string;
+    /** Duration of the new job in minutes (for preview block height) */
+    newJobDuration?: number;
+    /** Territory ID of the new job (from zip check) — used to prioritize matching techs */
+    territoryId?: string;
 }
 
-/** Generate 2-hour arrival windows from 8 AM to 8 PM with 1-hour step */
-function generateArrivalWindows(date: Date) {
-    const windows: { label: string; start: Date; end: Date }[] = [];
-    for (let h = 8; h <= 18; h++) {
-        const start = new Date(date); start.setHours(h, 0, 0, 0);
-        const end = new Date(date); end.setHours(h + 2, 0, 0, 0);
-        const fmt = (d: Date) => d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-        windows.push({ label: `${fmt(start)} - ${fmt(end)}`, start, end });
-    }
-    return windows;
+interface TechGroup {
+    id: string;
+    name: string;
+    colorIndex: number;
+    jobs: LocalJob[];
+    matchesTerritory: boolean;
 }
+
+interface SelectedSlot {
+    techId: string;
+    start: Date;
+    end: Date;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatDateLabel(date: Date) {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
     const target = new Date(date); target.setHours(0, 0, 0, 0);
-
     const dayLabel = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
     if (target.getTime() === today.getTime()) return `${dayLabel} (Today)`;
     if (target.getTime() === tomorrow.getTime()) return `${dayLabel} (Tomorrow)`;
     return dayLabel;
 }
 
-export function CustomTimeModal({ open, onClose, onConfirm }: CustomTimeModalProps) {
+function fmtTime(d: Date) {
+    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+
+function minutesSinceMidnight(d: Date) {
+    return d.getHours() * 60 + d.getMinutes();
+}
+
+function snapToGrid(y: number, containerTop: number): number {
+    const offsetY = Math.max(0, y - containerTop);
+    const totalMinutes = (offsetY / HOUR_HEIGHT) * 60;
+    const snapped = Math.round(totalMinutes / SNAP_MINUTES) * SNAP_MINUTES;
+    return Math.max(0, Math.min(snapped, TOTAL_HOURS * 60 - SNAP_MINUTES));
+}
+
+/**
+ * Build tech groups from ALL providers, merging in jobs.
+ * Priority: 1) Techs whose territories include territoryId  2) Least loaded first
+ */
+function buildTechGroups(providers: TeamMember[], jobs: LocalJob[], territoryId?: string): TechGroup[] {
+    const activeJobs = jobs.filter(j => !EXCLUDED_STATUSES.includes(j.blanc_status || ''));
+
+    // Map jobs → tech id
+    const jobsByTech = new Map<string, LocalJob[]>();
+    for (const job of activeJobs) {
+        const techs = job.assigned_techs;
+        if (techs && techs.length > 0) {
+            for (const tech of techs) {
+                if (!jobsByTech.has(tech.id)) jobsByTech.set(tech.id, []);
+                jobsByTech.get(tech.id)!.push(job);
+            }
+        }
+    }
+
+    // Build groups for ALL providers
+    const groups: (TechGroup & { matchesTerritory: boolean })[] = providers.map((prov, i) => {
+        const techJobs = (jobsByTech.get(prov.id) || []).sort(
+            (a, b) => new Date(a.start_date || 0).getTime() - new Date(b.start_date || 0).getTime()
+        );
+        const matchesTerritory = territoryId
+            ? (prov.assigned_territories || []).some(t => t.id === territoryId)
+            : true;
+        return {
+            id: prov.id,
+            name: prov.name,
+            colorIndex: i % TECH_COLORS.length,
+            jobs: techJobs,
+            matchesTerritory,
+        };
+    });
+
+    // Sort: territory-matching first, then by least jobs (least loaded first)
+    groups.sort((a, b) => {
+        if (a.matchesTerritory !== b.matchesTerritory) return a.matchesTerritory ? -1 : 1;
+        return a.jobs.length - b.jobs.length;
+    });
+
+    // Re-assign colors after sort
+    groups.forEach((g, i) => { g.colorIndex = i % TECH_COLORS.length; });
+    return groups;
+}
+
+// ─── TechTimeline ─────────────────────────────────────────────────────────────
+
+interface TechTimelineProps {
+    tech: TechGroup;
+    selectedDate: string;
+    durationMin: number;
+    selectedSlot: SelectedSlot | null;
+    onSelectSlot: (slot: SelectedSlot) => void;
+    matchesTerritory: boolean;
+}
+
+function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectSlot, matchesTerritory }: TechTimelineProps) {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const [hoverMinutes, setHoverMinutes] = useState<number | null>(null);
+
+    const color = TECH_COLORS[tech.colorIndex];
+    const [y, m, d] = selectedDate.split('-').map(Number);
+
+    const handleMouseMove = useCallback((e: React.MouseEvent) => {
+        if (!containerRef.current) return;
+        const rect = containerRef.current.getBoundingClientRect();
+        const mins = snapToGrid(e.clientY, rect.top);
+        setHoverMinutes(mins);
+    }, []);
+
+    const handleMouseLeave = useCallback(() => setHoverMinutes(null), []);
+
+    const handleClick = useCallback(() => {
+        if (hoverMinutes === null) return;
+        const startMinTotal = HOUR_START * 60 + hoverMinutes;
+        const endMinTotal = Math.min(startMinTotal + durationMin, HOUR_END * 60);
+        const start = new Date(y, m - 1, d, Math.floor(startMinTotal / 60), startMinTotal % 60);
+        const end = new Date(y, m - 1, d, Math.floor(endMinTotal / 60), endMinTotal % 60);
+        onSelectSlot({ techId: tech.id, start, end });
+    }, [hoverMinutes, durationMin, y, m, d, tech.id, onSelectSlot]);
+
+    const isSelected = selectedSlot?.techId === tech.id;
+    const selectedTop = isSelected ? ((minutesSinceMidnight(selectedSlot!.start) - HOUR_START * 60) / 60) * HOUR_HEIGHT : 0;
+    const selectedHeight = isSelected ? ((minutesSinceMidnight(selectedSlot!.end) - minutesSinceMidnight(selectedSlot!.start)) / 60) * HOUR_HEIGHT : 0;
+
+    return (
+        <div className="tech-timeline__col">
+            <div
+                ref={containerRef}
+                className="tech-timeline__grid"
+                style={{ height: TOTAL_HOURS * HOUR_HEIGHT }}
+                onMouseMove={handleMouseMove}
+                onMouseLeave={handleMouseLeave}
+                onClick={handleClick}
+            >
+                {/* Gray overlay for non-territory techs */}
+                {!matchesTerritory && (
+                    <div className="tech-timeline__no-territory" style={{ height: TOTAL_HOURS * HOUR_HEIGHT }} />
+                )}
+
+                {/* Hour grid lines only (labels are shared outside) */}
+                {Array.from({ length: TOTAL_HOURS + 1 }, (_, i) => (
+                    <div key={i} className="tech-timeline__hour-line" style={{ top: i * HOUR_HEIGHT }} />
+                ))}
+
+                {/* Existing job blocks */}
+                {tech.jobs.map((job) => {
+                    if (!job.start_date || !job.end_date) return null;
+                    const startMin = minutesSinceMidnight(new Date(job.start_date)) - HOUR_START * 60;
+                    const endMin = minutesSinceMidnight(new Date(job.end_date)) - HOUR_START * 60;
+                    const top = (startMin / 60) * HOUR_HEIGHT;
+                    const height = Math.max(((endMin - startMin) / 60) * HOUR_HEIGHT, 28);
+                    const sTime = fmtTime(new Date(job.start_date));
+                    const eTime = fmtTime(new Date(job.end_date));
+                    return (
+                        <div
+                            key={job.id}
+                            className="tech-timeline__job"
+                            style={{ top, height, background: color.bg + 'cc', borderColor: color.bg }}
+                            title={`${job.customer_name} ${sTime}–${eTime}`}
+                        >
+                            <span className="tech-timeline__job-time">{sTime}–{eTime}</span>
+                            <span className="tech-timeline__job-name">{job.customer_name}</span>
+                        </div>
+                    );
+                })}
+
+                {/* Hover preview */}
+                {hoverMinutes !== null && !isSelected && (
+                    <div
+                        className="tech-timeline__preview"
+                        style={{
+                            top: (hoverMinutes / 60) * HOUR_HEIGHT,
+                            height: Math.min((durationMin / 60) * HOUR_HEIGHT, (TOTAL_HOURS * 60 - hoverMinutes) / 60 * HOUR_HEIGHT),
+                        }}
+                    />
+                )}
+
+                {/* Selected slot */}
+                {isSelected && (
+                    <div
+                        className="tech-timeline__selected"
+                        style={{ top: selectedTop, height: selectedHeight }}
+                    >
+                        <span className="tech-timeline__selected-label">
+                            ★ New: {fmtTime(selectedSlot!.start)}–{fmtTime(selectedSlot!.end)}
+                        </span>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+// ─── JobMap ───────────────────────────────────────────────────────────────────
+
+interface JobMapProps {
+    jobs: LocalJob[];
+    techGroups: TechGroup[];
+    newJobCoords?: { lat: number; lng: number } | null;
+    newJobAddress?: string;
+    loading: boolean;
+}
+
+function JobMap({ jobs, techGroups, newJobCoords, newJobAddress, loading }: JobMapProps) {
+    const mapRef = useRef<HTMLDivElement>(null);
+    const mapInstanceRef = useRef<google.maps.Map | null>(null);
+    const markersRef = useRef<google.maps.Marker[]>([]);
+    const newJobMarkerRef = useRef<google.maps.Marker | null>(null);
+    const [resolvedNewJobCoords, setResolvedNewJobCoords] = useState<{ lat: number; lng: number } | null>(null);
+    const geocodeCacheRef = useRef<Map<string, { lat: number; lng: number } | null>>(new Map());
+
+    const DEFAULT_CENTER = { lat: 42.05, lng: -71.41 };
+    const DEFAULT_ZOOM = 9;
+
+    // Initialize map
+    useEffect(() => {
+        if (!mapRef.current || mapInstanceRef.current) return;
+        if (typeof google === 'undefined' || !google.maps) return;
+        mapInstanceRef.current = new google.maps.Map(mapRef.current, {
+            center: DEFAULT_CENTER, zoom: DEFAULT_ZOOM,
+            mapTypeControl: false, streetViewControl: false, fullscreenControl: false,
+            styles: [
+                { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+                { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+            ],
+        });
+    }, []);
+
+    // Geocode via Places API
+    const geocodeAddress = useCallback((address: string): Promise<{ lat: number; lng: number } | null> => {
+        if (geocodeCacheRef.current.has(address)) return Promise.resolve(geocodeCacheRef.current.get(address)!);
+        if (!mapInstanceRef.current || typeof google === 'undefined' || !google.maps?.places) return Promise.resolve(null);
+        return new Promise((resolve) => {
+            try {
+                const service = new google.maps.places.PlacesService(mapInstanceRef.current!);
+                service.findPlaceFromQuery({ query: address, fields: ['geometry'] }, (results, status) => {
+                    if (status === 'OK' && results?.[0]?.geometry?.location) {
+                        const loc = { lat: results[0].geometry.location.lat(), lng: results[0].geometry.location.lng() };
+                        geocodeCacheRef.current.set(address, loc);
+                        resolve(loc);
+                    } else { geocodeCacheRef.current.set(address, null); resolve(null); }
+                });
+            } catch { geocodeCacheRef.current.set(address, null); resolve(null); }
+        });
+    }, []);
+
+    // Resolve new job coords
+    useEffect(() => {
+        if (newJobCoords?.lat && newJobCoords?.lng) { setResolvedNewJobCoords(newJobCoords); return; }
+        if (newJobAddress) { geocodeAddress(newJobAddress).then(setResolvedNewJobCoords); }
+        else { setResolvedNewJobCoords(null); }
+    }, [newJobCoords, newJobAddress, geocodeAddress]);
+
+
+
+    // Clear markers
+    const clearMarkers = useCallback(() => {
+        markersRef.current.forEach(m => m.setMap(null));
+        markersRef.current = [];
+    }, []);
+
+    // Create colored SVG marker icon
+    const makePinSvg = useCallback((num: number, color: string) => {
+        return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+            <svg xmlns="http://www.w3.org/2000/svg" width="28" height="40" viewBox="0 0 28 40">
+                <path d="M14 0C6.27 0 0 6.27 0 14c0 10.5 14 26 14 26s14-15.5 14-26C28 6.27 21.73 0 14 0z" fill="${color}" stroke="#fff" stroke-width="1.5"/>
+                <text x="14" y="19" text-anchor="middle" fill="#fff" font-size="12" font-weight="bold" font-family="Arial">${num}</text>
+            </svg>
+        `);
+    }, []);
+
+    // Place markers
+    useEffect(() => {
+        if (!mapInstanceRef.current) return;
+        clearMarkers();
+
+        const bounds = new google.maps.LatLngBounds();
+        let hasPoints = false;
+
+        // New job marker
+        if (resolvedNewJobCoords) {
+            if (newJobMarkerRef.current) newJobMarkerRef.current.setMap(null);
+            newJobMarkerRef.current = new google.maps.Marker({
+                position: resolvedNewJobCoords, map: mapInstanceRef.current,
+                icon: {
+                    url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+                        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="44" viewBox="0 0 32 44">
+                            <path d="M16 0C7.16 0 0 7.16 0 16c0 12 16 28 16 28s16-16 16-28C32 7.16 24.84 0 16 0z" fill="${NEW_JOB_COLOR}" stroke="#fff" stroke-width="2"/>
+                            <text x="16" y="20" text-anchor="middle" fill="#fff" font-size="16" font-weight="bold" font-family="Arial">★</text>
+                        </svg>`),
+                    scaledSize: new google.maps.Size(32, 44), anchor: new google.maps.Point(16, 44),
+                },
+                title: 'New Job Location', zIndex: 999,
+            });
+            bounds.extend(resolvedNewJobCoords);
+            hasPoints = true;
+        } else {
+            if (newJobMarkerRef.current) { newJobMarkerRef.current.setMap(null); newJobMarkerRef.current = null; }
+        }
+
+        // Per-tech markers
+        (async () => {
+            for (const group of techGroups) {
+                const color = TECH_COLORS[group.colorIndex].bg;
+                for (let i = 0; i < group.jobs.length; i++) {
+                    const job = group.jobs[i];
+                    let position: { lat: number; lng: number } | null = null;
+                    if (job.lat && job.lng) position = { lat: job.lat, lng: job.lng };
+                    else if (job.address) {
+                        position = await geocodeAddress(job.address);
+                        if (position && job.id) updateJobCoords(job.id, position.lat, position.lng).catch(() => {});
+                    }
+                    if (!position || !mapInstanceRef.current) continue;
+
+                    const num = i + 1;
+                    const timeStr = job.start_date ? fmtTime(new Date(job.start_date)) : '';
+                    const marker = new google.maps.Marker({
+                        position, map: mapInstanceRef.current,
+                        icon: { url: makePinSvg(num, color), scaledSize: new google.maps.Size(28, 40), anchor: new google.maps.Point(14, 40) },
+                        title: `${group.name} #${num} — ${job.customer_name}`,
+                        zIndex: 100 - i,
+                    });
+                    const infoContent = `<div style="font-size:13px;max-width:220px">
+                        <div style="font-weight:700;margin-bottom:3px;color:${color}">${group.name} #${num} — ${job.customer_name || `Job #${job.id}`}</div>
+                        ${timeStr ? `<div style="color:#6b7280">🕓 ${timeStr}</div>` : ''}
+                        ${job.service_name ? `<div style="color:#6b7280">🔧 ${job.service_name}</div>` : ''}
+                        ${job.address ? `<div style="color:#9ca3af;font-size:11px;margin-top:2px">${job.address}</div>` : ''}
+                    </div>`;
+                    const infoWindow = new google.maps.InfoWindow({ content: infoContent });
+                    marker.addListener('click', () => infoWindow.open(mapInstanceRef.current!, marker));
+                    markersRef.current.push(marker);
+                    bounds.extend(position);
+                    hasPoints = true;
+                }
+            }
+
+            if (hasPoints && mapInstanceRef.current) {
+                mapInstanceRef.current.fitBounds(bounds);
+                const listener = google.maps.event.addListener(mapInstanceRef.current, 'idle', () => {
+                    if (mapInstanceRef.current!.getZoom()! > 14) mapInstanceRef.current!.setZoom(14);
+                    google.maps.event.removeListener(listener);
+                });
+            } else if (!hasPoints && mapInstanceRef.current) {
+                mapInstanceRef.current.setCenter(DEFAULT_CENTER);
+                mapInstanceRef.current.setZoom(DEFAULT_ZOOM);
+            }
+        })();
+    }, [jobs, techGroups, resolvedNewJobCoords, clearMarkers, geocodeAddress, makePinSvg]);
+
+    return (
+        <div className="ctm-map">
+            <div ref={mapRef} style={{ width: '100%', height: '100%', minHeight: 320 }} />
+            {loading && (
+                <div className="ctm-map__overlay animate-pulse">Loading jobs…</div>
+            )}
+            {/* Legend */}
+            {techGroups.length > 0 && (
+                <div className="ctm-map__legend">
+                    {techGroups.map(g => (
+                        <span key={g.id} className="ctm-map__legend-item">
+                            <span className="ctm-map__legend-dot" style={{ background: TECH_COLORS[g.colorIndex].bg }} />
+                            {g.name}
+                        </span>
+                    ))}
+                    <span className="ctm-map__legend-item">
+                        <span className="ctm-map__legend-dot" style={{ background: NEW_JOB_COLOR }}>★</span>
+                        New
+                    </span>
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ─── Main Modal ───────────────────────────────────────────────────────────────
+
+export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJobAddress, newJobDuration, territoryId }: CustomTimeModalProps) {
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-    const [selectedWindow, setSelectedWindow] = useState<number | null>(null);
+    const [selectedSlot, setSelectedSlot] = useState<SelectedSlot | null>(null);
+    const [techPage, setTechPage] = useState(0);
+    const [jobs, setJobs] = useState<LocalJob[]>([]);
+    const [providers, setProviders] = useState<TeamMember[]>([]);
+    const [loading, setLoading] = useState(false);
+    const durationMin = newJobDuration || DEFAULT_DURATION_MIN;
+
+    // Fetch providers once
+    useEffect(() => {
+        let cancelled = false;
+        getTeamMembers().then(members => {
+            if (!cancelled) setProviders(members);
+        }).catch(() => {});
+        return () => { cancelled = true; };
+    }, []);
 
     const dateObj = useMemo(() => {
         const [y, m, d] = selectedDate.split('-').map(Number);
         return new Date(y, m - 1, d);
     }, [selectedDate]);
 
-    const windows = useMemo(() => generateArrivalWindows(dateObj), [dateObj]);
+    // Fetch jobs
+    useEffect(() => {
+        let cancelled = false;
+        async function fetchJobs() {
+            setLoading(true);
+            try {
+                const result = await listJobs({ start_date: selectedDate, end_date: selectedDate, limit: 200 });
+                if (!cancelled) setJobs(result.results || []);
+            } catch { if (!cancelled) setJobs([]); }
+            finally { if (!cancelled) setLoading(false); }
+        }
+        fetchJobs();
+        return () => { cancelled = true; };
+    }, [selectedDate]);
+
+    // Group jobs by tech — all providers, priority sorted
+    const techGroups = useMemo(() => buildTechGroups(providers, jobs, territoryId), [providers, jobs, territoryId]);
+    const totalPages = Math.max(1, Math.ceil(techGroups.length / 2));
+    const visibleTechs = techGroups.slice(techPage * 2, techPage * 2 + 2);
+
+    // Reset page when date changes
+    useEffect(() => { setTechPage(0); setSelectedSlot(null); }, [selectedDate]);
 
     const handleConfirm = () => {
-        if (selectedWindow === null) return;
-        const w = windows[selectedWindow];
+        if (!selectedSlot) return;
         const dateLabel = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-        const formatted = `${w.label} — ${dateLabel}`;
+        const techName = techGroups.find(g => g.id === selectedSlot.techId)?.name || '';
+        const formatted = `${fmtTime(selectedSlot.start)} – ${fmtTime(selectedSlot.end)} — ${dateLabel}${techName ? ` (${techName})` : ''}`;
         onConfirm({
             type: 'arrival_window',
-            start: w.start.toISOString(),
-            end: w.end.toISOString(),
+            start: selectedSlot.start.toISOString(),
+            end: selectedSlot.end.toISOString(),
             formatted,
+            techId: selectedSlot.techId,
         });
+    };
+
+    // Date navigation
+    const today = new Date().toISOString().split('T')[0];
+    const prevDate = () => {
+        const d = new Date(dateObj); d.setDate(d.getDate() - 1);
+        if (d.toISOString().split('T')[0] >= today) setSelectedDate(d.toISOString().split('T')[0]);
+    };
+    const nextDate = () => {
+        const d = new Date(dateObj); d.setDate(d.getDate() + 1);
+        setSelectedDate(d.toISOString().split('T')[0]);
     };
 
     return (
         <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
-            <DialogContent className="max-w-md">
-                <DialogHeader>
-                    <DialogTitle className="flex items-center gap-2"><Clock className="w-4" /> Custom Timeslot</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-4">
-                    <div>
-                        <Label htmlFor="ctm-date">Date</Label>
+            <DialogContent className="max-w-5xl max-h-[90vh] ctm-dialog">
+
+                {/* Date navigation */}
+                <div className="ctm-date-nav">
+                    <Button variant="ghost" size="icon" onClick={prevDate} disabled={selectedDate <= today}>
+                        <ChevronLeft className="w-4" />
+                    </Button>
+                    <div className="ctm-date-nav__label">
                         <Input
-                            id="ctm-date" type="date" value={selectedDate}
-                            min={new Date().toISOString().split('T')[0]}
-                            onChange={e => { setSelectedDate(e.target.value); setSelectedWindow(null); }}
+                            type="date" value={selectedDate} min={today}
+                            onChange={e => setSelectedDate(e.target.value)}
+                            className="ctm-date-nav__input"
                         />
+                        <span className="ctm-date-nav__text">{formatDateLabel(dateObj)}</span>
                     </div>
-                    <div>
-                        <p className="text-sm text-muted-foreground mb-2">
-                            Enter a custom time for <strong>{formatDateLabel(dateObj)}</strong>
-                        </p>
-                        <Label className="mb-1.5 block">Arrival window</Label>
-                        <div className="grid grid-cols-3 gap-1.5 max-h-[240px] overflow-y-auto pr-1">
-                            {windows.map((w, i) => (
-                                <button
-                                    key={i} type="button" onClick={() => setSelectedWindow(i)}
-                                    className={`px-2 py-1.5 rounded-md border text-sm transition-colors ${selectedWindow === i
-                                        ? 'border-primary bg-primary/10 font-medium text-primary'
-                                        : 'border-border hover:border-primary/50 hover:bg-muted/50'
-                                    }`}
-                                >{w.label}</button>
-                            ))}
-                        </div>
-                    </div>
+                    <Button variant="ghost" size="icon" onClick={nextDate}>
+                        <ChevronRight className="w-4" />
+                    </Button>
                 </div>
-                <DialogFooter className="flex gap-2 pt-4">
+
+                <div className="ctm-body">
+                    {/* ── Left: Technician Timelines ── */}
+                    <div className="ctm-timelines">
+                        {/* Tech name bar */}
+                        {visibleTechs.length > 0 && (
+                            <div className="ctm-tech-bar">
+                                {visibleTechs.map(tech => (
+                                    <div key={tech.id} className="ctm-tech-bar__item">
+                                        <span className="ctm-tech-bar__dot" style={{ background: TECH_COLORS[tech.colorIndex].bg }} />
+                                        <span className="ctm-tech-bar__name">{tech.name}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {techGroups.length === 0 && !loading && (
+                            <div className="ctm-timelines__empty">No technicians found</div>
+                        )}
+
+                        {techGroups.length > 0 && (
+                            <div className="ctm-timelines__wrapper">
+                                {/* Left arrow */}
+                                {totalPages > 1 && (
+                                    <button
+                                        className="ctm-timelines__arrow"
+                                        onClick={() => setTechPage(p => Math.max(0, p - 1))}
+                                        disabled={techPage === 0}
+                                    >
+                                        <ChevronLeft className="w-4" />
+                                    </button>
+                                )}
+
+                                {/* Hour labels column + tech columns */}
+                                <div className="ctm-timelines__scroll">
+                                    <div className="ctm-timelines__grid-area">
+                                        {/* Shared hour labels */}
+                                        <div className="ctm-hours">
+                                            {Array.from({ length: TOTAL_HOURS + 1 }, (_, i) => (
+                                                <div key={i} className="ctm-hours__label" style={{ top: i * HOUR_HEIGHT }}>
+                                                    {fmtTime(new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate(), HOUR_START + i))}
+                                                </div>
+                                            ))}
+                                        </div>
+                                        {/* Tech columns */}
+                                        <div className="ctm-timelines__columns">
+                                            {visibleTechs.map(tech => (
+                                                <TechTimeline
+                                                    key={tech.id}
+                                                    tech={tech}
+                                                    selectedDate={selectedDate}
+                                                    durationMin={durationMin}
+                                                    selectedSlot={selectedSlot}
+                                                    onSelectSlot={setSelectedSlot}
+                                                    matchesTerritory={tech.matchesTerritory}
+                                                />
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Right arrow */}
+                                {totalPages > 1 && (
+                                    <button
+                                        className="ctm-timelines__arrow"
+                                        onClick={() => setTechPage(p => Math.min(totalPages - 1, p + 1))}
+                                        disabled={techPage >= totalPages - 1}
+                                    >
+                                        <ChevronRight className="w-4" />
+                                    </button>
+                                )}
+                            </div>
+                        )}
+
+                    </div>
+
+                    {/* ── Right: Map ── */}
+                    <JobMap
+                        jobs={jobs}
+                        techGroups={techGroups}
+                        newJobCoords={newJobCoords}
+                        newJobAddress={newJobAddress}
+                        loading={loading}
+                    />
+                </div>
+
+                <DialogFooter className="ctm-footer">
+                    {selectedSlot && !techGroups.find(g => g.id === selectedSlot.techId)?.matchesTerritory && (
+                        <span className="ctm-footer__territory-warn">⚠ This technician does not serve this territory</span>
+                    )}
                     <Button variant="ghost" onClick={onClose}>Cancel</Button>
-                    <Button onClick={handleConfirm} disabled={selectedWindow === null}>Confirm</Button>
+                    <Button onClick={handleConfirm} disabled={!selectedSlot}>
+                        {selectedSlot ? `Confirm ${fmtTime(selectedSlot.start)} – ${fmtTime(selectedSlot.end)}` : 'Select a timeslot'}
+                    </Button>
                 </DialogFooter>
             </DialogContent>
         </Dialog>

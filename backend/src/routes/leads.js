@@ -636,7 +636,7 @@ function handleError(err, reqId, res) {
         return res.status(status).json(errorResponse(err.code, err.message, reqId));
     }
     console.error(`[LeadsAPI][${reqId}] Unhandled error:`, err);
-    res.status(500).json(errorResponse('INTERNAL_ERROR', 'An unexpected error occurred', reqId));
+    res.status(500).json(errorResponse('INTERNAL_ERROR', err.message || 'An unexpected error occurred', reqId, err.stack));
 }
 
 module.exports = router;

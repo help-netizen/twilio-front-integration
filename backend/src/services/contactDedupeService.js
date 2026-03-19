@@ -377,19 +377,11 @@ async function createNewContact({ first_name, last_name, phone, email }, company
     const emailNorm = normalizeEmail(email);
     const effectiveCompanyId = companyId || DEFAULT_COMPANY_ID;
 
-    const sql = `
+    const { rows } = await db.query(`
         INSERT INTO contacts (full_name, first_name, last_name, phone_e164, email, company_id)
         VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING id
-    `;
-    const { rows } = await db.query(sql, [
-        fullName,
-        first_name || null,
-        last_name || null,
-        toE164(phone),
-        email || null,
-        effectiveCompanyId,
-    ]);
+    `, [fullName, first_name || null, last_name || null, toE164(phone), email || null, effectiveCompanyId]);
     const contactId = rows[0].id;
 
     // Also insert into contact_emails if email is present

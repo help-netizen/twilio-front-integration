@@ -92,11 +92,38 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
     const handleCreate = async (withJob: boolean) => {
         setSubmitting(true);
         try {
+            // Geocode full address if coords are still null (use Places API — Geocoder is not enabled)
+            let finalCoords = coords;
+            if (!finalCoords?.lat || !finalCoords?.lng) {
+                const fullAddress = [streetAddress, city, state, postalCode].filter(Boolean).join(', ');
+                if (fullAddress && typeof google !== 'undefined' && google.maps?.places) {
+                    try {
+                        const tempDiv = document.createElement('div');
+                        const placesService = new google.maps.places.PlacesService(tempDiv);
+                        const loc = await new Promise<{ lat: number; lng: number } | null>((resolve) => {
+                            placesService.findPlaceFromQuery(
+                                { query: fullAddress, fields: ['geometry'] },
+                                (results, status) => {
+                                    if (status === 'OK' && results?.[0]?.geometry?.location) {
+                                        resolve({ lat: results[0].geometry.location.lat(), lng: results[0].geometry.location.lng() });
+                                    } else { resolve(null); }
+                                }
+                            );
+                        });
+                        if (loc) {
+                            finalCoords = loc;
+                            setCoords(finalCoords);
+                            console.log('[Wizard] Geocoded address via Places →', finalCoords);
+                        }
+                    } catch (err) { console.warn('[Wizard] Places geocode failed:', err); }
+                }
+            }
+
             const leadInput: Record<string, unknown> = {
                 FirstName: firstName || 'Unknown', LastName: lastName || '', Phone: toE164(phoneNumber),
                 Email: email || undefined, Address: streetAddress || undefined, Unit: unit || undefined,
                 City: city || undefined, State: state || undefined, PostalCode: postalCode || undefined,
-                Latitude: coords?.lat || undefined, Longitude: coords?.lng || undefined,
+                Latitude: finalCoords?.lat || undefined, Longitude: finalCoords?.lng || undefined,
                 JobType: jobType || undefined, Description: description || undefined,
                 Status: withJob ? 'Converted' : 'Submitted', JobSource: 'Phone Call',
             };
@@ -120,6 +147,10 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
                 } else if (selectedTimeslot?.type === 'arrival_window') {
                     // Custom timeslot — use arrival window object
                     zbJobPayload.timeslot = { type: 'arrival_window', start: selectedTimeslot.start, end: selectedTimeslot.end };
+                    // If a technician was selected from the timeline, pre-assign them
+                    if (selectedTimeslot.techId) {
+                        zbJobPayload.assigned_providers = [selectedTimeslot.techId];
+                    }
                 } else {
                     // No timeslot — default arrival window
                     const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(8, 0, 0, 0);
@@ -132,6 +163,16 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
                     address: { line1: streetAddress, line2: unit, city, state, postal_code: postalCode },
                 });
                 const jobId = result.data?.job_id;
+
+                // Persist geocoded coords to the created job
+                if (jobId && finalCoords?.lat && finalCoords?.lng) {
+                    try {
+                        const { updateJobCoords } = await import('../../services/jobsApi');
+                        await updateJobCoords(jobId, finalCoords.lat, finalCoords.lng);
+                        console.log('[Wizard] Saved coords to job', jobId, finalCoords);
+                    } catch { /* non-critical */ }
+                }
+
                 toast.success('Lead & Job created', { description: jobId ? `Job #${jobId}` : 'Job created', duration: 10000, action: jobId ? { label: 'Open Job', onClick: () => navigate(`/jobs/${jobId}`) } : undefined });
             } else {
                 toast.success('Lead created', { description: 'Status: Submitted' });
