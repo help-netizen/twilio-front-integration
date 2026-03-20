@@ -77,10 +77,23 @@ async function processWebhookPayload(reqId, payload, headers, companyId = null) 
         try {
             const jobsService = require('../services/jobsService');
             const jobSyncService = require('../services/jobSyncService');
+            const zenbookerClient = require('../services/zenbookerClient');
 
             const zbJobId = payload.data?.id || payload.data?.job_id;
             if (zbJobId) {
-                const localResult = await jobsService.syncFromZenbooker(zbJobId, payload.data, companyId, event);
+                // Fetch full job from ZB API — webhook payload.data is partial
+                // and often missing assigned_providers, invoice, etc.
+                let fullJobData = payload.data;
+                try {
+                    const zbJob = await zenbookerClient.getJob(zbJobId);
+                    if (zbJob) {
+                        fullJobData = zbJob;
+                        console.log(`[ZbWebhook][${reqId}] Fetched full ZB job ${zbJobId} (providers: ${(zbJob.assigned_providers || []).length})`);
+                    }
+                } catch (fetchErr) {
+                    console.warn(`[ZbWebhook][${reqId}] Could not fetch full ZB job ${zbJobId}, using webhook data: ${fetchErr.message}`);
+                }
+                const localResult = await jobsService.syncFromZenbooker(zbJobId, fullJobData, companyId, event);
                 console.log(`[ZbWebhook][${reqId}] Local job sync:`, JSON.stringify(localResult));
             }
 
