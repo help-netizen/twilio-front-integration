@@ -253,6 +253,20 @@ router.post('/:id/reschedule', async (req, res) => {
                     }
                     await zenbookerClient.assignProviders(zbJobId, payload);
                     console.log(`[Jobs API] Reassigned ZB job ${zbJobId}: unassign=[${oldTechIds}] assign=[${tech_id}]`);
+
+                    // Immediately fetch updated job from ZB to get new assigned_providers
+                    try {
+                        const freshJob = await zenbookerClient.getJob(zbJobId);
+                        if (freshJob?.assigned_providers?.length > 0) {
+                            await db.query(
+                                `UPDATE jobs SET assigned_techs = $1::jsonb, updated_at = NOW() WHERE id = $2`,
+                                [JSON.stringify(freshJob.assigned_providers), jobId]
+                            );
+                            console.log(`[Jobs API] Immediately updated assigned_techs for job ${jobId}`);
+                        }
+                    } catch (fetchErr) {
+                        console.warn(`[Jobs API] Could not immediately sync techs:`, fetchErr.message);
+                    }
                 } catch (assignErr) {
                     console.warn(`[Jobs API] ZB assign error (non-fatal):`, assignErr.response?.data || assignErr.message);
                 }
@@ -275,7 +289,7 @@ router.post('/:id/reschedule', async (req, res) => {
         if (zbJobId) {
             setImmediate(async () => {
                 try {
-                    await new Promise(r => setTimeout(r, 800));
+                    await new Promise(r => setTimeout(r, 3000));
                     const zbJob = await zenbookerClient.getJob(zbJobId);
                     if (zbJob) {
                         await jobsService.syncFromZenbooker(zbJobId, zbJob, null, 'reschedule');
