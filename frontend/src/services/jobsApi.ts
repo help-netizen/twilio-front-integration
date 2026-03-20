@@ -58,6 +58,9 @@ export interface LocalJob {
     /** Coordinates from Zenbooker service_address */
     lat?: number | null;
     lng?: number | null;
+
+    /** Full Zenbooker job data for territory / timeslot access */
+    zb_raw?: Record<string, any> | null;
 }
 
 export interface JobsListResult {
@@ -126,6 +129,13 @@ export async function updateBlancStatus(id: number, blancStatus: string): Promis
 
 export async function cancelJob(id: number): Promise<void> {
     await jobsRequest(`${JOBS_BASE}/${id}/cancel`, { method: 'POST' });
+}
+
+export async function rescheduleJob(id: number, data: { start_date: string; arrival_window_minutes?: number; tech_id?: string }): Promise<LocalJob> {
+    return jobsRequest<LocalJob>(`${JOBS_BASE}/${id}/reschedule`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+    });
 }
 
 /** Persist geocoded coordinates for a job */

@@ -36,7 +36,7 @@ export interface ServiceAreaResult {
 }
 
 export interface Timeslot {
-    id: string;
+    id?: string;
     start: string;
     end: string;
     type: string;

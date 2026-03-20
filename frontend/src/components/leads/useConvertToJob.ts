@@ -13,7 +13,7 @@ export type Step = 1 | 2 | 3 | 4;
 
 export interface CustomFieldDef { id: string; display_name: string; api_name: string; field_type: string; is_system: boolean; sort_order: number; }
 
-export const STEP_TITLES: Record<Step, string> = { 1: 'Customer & Address', 2: 'Service', 3: 'Timeslot', 4: 'Review & Confirm' };
+export const STEP_TITLES: Record<Step, string> = { 1: 'Customer & Address', 2: 'Service', 3: 'Available Timeslots', 4: 'Review & Confirm' };
 
 export function useConvertToJob(lead: Lead, open: boolean, onSuccess: (lead: Lead) => void, onOpenChange: (open: boolean) => void) {
     const navigate = useNavigate();
@@ -31,7 +31,7 @@ export function useConvertToJob(lead: Lead, open: boolean, onSuccess: (lead: Lea
     const [serviceName, setServiceName] = useState('');
     const [serviceDescription, setServiceDescription] = useState('');
     const [servicePrice, setServicePrice] = useState('0');
-    const [serviceDuration, setServiceDuration] = useState('120');
+    const [serviceDuration, setServiceDuration] = useState('60');
     const [selectedDate, setSelectedDate] = useState('');
     const [timeslotDays, setTimeslotDays] = useState<TimeslotDay[]>([]);
     const [selectedTimeslot, setSelectedTimeslot] = useState<Timeslot | null>(null);
@@ -62,7 +62,31 @@ export function useConvertToJob(lead: Lead, open: boolean, onSuccess: (lead: Lea
         const territoryId = territoryResult?.service_territory?.id; if (!territoryId || !selectedTimeslot) return;
         setSubmitting(true);
         try {
-            const zbJobPayload = { territory_id: territoryId, timeslot_id: selectedTimeslot.id, customer: { name: name || 'Unknown', ...(phone && { phone }), ...(email && { email }) }, address: { ...(addressFields.street && { line1: addressFields.street }), ...(addressFields.apt && { line2: addressFields.apt }), ...(addressFields.city && { city: addressFields.city }), ...(addressFields.state && { state: addressFields.state }), ...(addressFields.zip && { postal_code: addressFields.zip }), country: 'US' }, services: [{ custom_service: { name: serviceName || 'General Service', description: serviceDescription || '', price: Number(servicePrice) || 0, duration: Number(serviceDuration) || 120, taxable: false } }], assignment_method: 'auto', sms_notifications: true, email_notifications: true };
+            const isCustom = selectedTimeslot.type === 'arrival_window';
+            const zbJobPayload: Record<string, any> = {
+                territory_id: territoryId,
+                customer: { name: name || 'Unknown', ...(phone && { phone }), ...(email && { email }) },
+                address: { ...(addressFields.street && { line1: addressFields.street }), ...(addressFields.apt && { line2: addressFields.apt }), ...(addressFields.city && { city: addressFields.city }), ...(addressFields.state && { state: addressFields.state }), ...(addressFields.zip && { postal_code: addressFields.zip }), country: 'US' },
+                services: [{ custom_service: { name: serviceName || 'General Service', description: serviceDescription || '', price: Number(servicePrice) || 0, duration: Number(serviceDuration) || 120, taxable: false } }],
+                sms_notifications: true, email_notifications: true,
+            };
+            if (selectedTimeslot.id) {
+                // Zenbooker timeslot — use timeslot_id
+                zbJobPayload.timeslot_id = selectedTimeslot.id;
+                zbJobPayload.assignment_method = 'auto';
+            } else if (isCustom) {
+                // Custom timeslot — use timeslot object (same as Wizard)
+                zbJobPayload.timeslot = { type: 'arrival_window', start: selectedTimeslot.start, end: selectedTimeslot.end };
+                if (selectedTimeslot.techId) {
+                    zbJobPayload.assigned_providers = [selectedTimeslot.techId];
+                }
+            } else {
+                // Fallback — default arrival window
+                const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(8, 0, 0, 0);
+                const end = new Date(tomorrow.getTime() + 4 * 60 * 60 * 1000);
+                zbJobPayload.timeslot = { type: 'arrival_window', start: tomorrow.toISOString(), end: end.toISOString() };
+                zbJobPayload.assignment_method = 'auto';
+            }
             const result = await leadsApi.convertLead(lead.UUID, { zb_job_payload: zbJobPayload, service: { name: serviceName, description: serviceDescription }, customer: { name, phone, email }, address: { line1: addressFields.street, line2: addressFields.apt, city: addressFields.city, state: addressFields.state, postal_code: addressFields.zip } });
             const jobId = result.data?.job_id; const zbJobId = result.data?.zenbooker_job_id;
             toast.success('Job created', { description: zbJobId ? `Zenbooker Job: ${zbJobId}` : `Local Job #${jobId}`, duration: 10000, action: jobId ? { label: 'Open Job', onClick: () => navigate(`/jobs/${jobId}`) } : undefined });

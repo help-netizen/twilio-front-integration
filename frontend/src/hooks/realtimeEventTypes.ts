@@ -16,6 +16,7 @@ export interface SSEMessageAddedEvent { message: any; conversationId: string; }
 export interface SSEMessageDeliveryEvent { messageSid: string; status: string; errorCode: number | null; }
 export interface SSEConversationUpdatedEvent { conversation: any; }
 export interface SSEContactReadEvent { contactId: number; }
+export interface SSEJobUpdatedEvent { job: any; }
 
 export interface SSETranscriptDeltaEvent {
     callSid: string; track: string; speaker: 'customer' | 'agent';
@@ -34,6 +35,7 @@ export interface UseRealtimeEventsOptions {
     onContactRead?: (event: SSEContactReadEvent) => void;
     onTranscriptDelta?: (event: SSETranscriptDeltaEvent) => void;
     onTranscriptFinalized?: (event: SSETranscriptFinalizedEvent) => void;
+    onJobUpdated?: (event: SSEJobUpdatedEvent) => void;
     onGenericEvent?: (eventType: string, data: any) => void;
     onConnected?: (event: SSEConnectionEvent) => void;
     onError?: (error: Error) => void;

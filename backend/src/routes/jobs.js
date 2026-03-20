@@ -196,5 +196,97 @@ router.post('/:id/complete', async (req, res) => {
         res.status(err.statusCode || 500).json({ ok: false, error: err.message });
     }
 });
+// ─── Reschedule ──────────────────────────────────────────────────────────────
+
+router.post('/:id/reschedule', async (req, res) => {
+    const jobId = parseInt(req.params.id, 10);
+    const { start_date, arrival_window_minutes = 120, tech_id } = req.body;
+
+    if (!start_date) {
+        return res.status(400).json({ ok: false, error: 'start_date is required (ISO 8601)' });
+    }
+
+    try {
+        const db = require('../db/connection');
+        const realtimeService = require('../services/realtimeService');
+
+        // 1. Fetch local job to get ZB ID + current techs
+        const { rows } = await db.query('SELECT zenbooker_job_id, assigned_techs FROM jobs WHERE id = $1', [jobId]);
+        if (!rows.length) return res.status(404).json({ ok: false, error: 'Job not found' });
+        const zbJobId = rows[0].zenbooker_job_id;
+        const currentTechs = rows[0].assigned_techs || [];
+
+        // 2. Reschedule in Zenbooker (if ZB job exists)
+        if (zbJobId) {
+            try {
+                await zenbookerClient.rescheduleJob(zbJobId, {
+                    start_date,
+                    arrival_window_minutes: Number(arrival_window_minutes),
+                });
+                console.log(`[Jobs API] Rescheduled ZB job ${zbJobId} → ${start_date}`);
+            } catch (zbErr) {
+                console.error(`[Jobs API] ZB reschedule error:`, zbErr.response?.data || zbErr.message);
+                return res.status(zbErr.response?.status || 500).json({
+                    ok: false,
+                    error: zbErr.response?.data?.error?.message || zbErr.message,
+                });
+            }
+
+            // 3. Reassign technician: unassign old + assign new
+            if (tech_id) {
+                try {
+                    // Unassign all current providers first
+                    const oldTechIds = currentTechs
+                        .map(t => t.id)
+                        .filter(id => id && id !== tech_id);
+                    const payload = { assign: [tech_id], notify: false };
+                    if (oldTechIds.length > 0) {
+                        payload.unassign = oldTechIds;
+                    }
+                    await zenbookerClient.assignProviders(zbJobId, payload);
+                    console.log(`[Jobs API] Reassigned ZB job ${zbJobId}: unassign=[${oldTechIds}] assign=[${tech_id}]`);
+                } catch (assignErr) {
+                    console.warn(`[Jobs API] ZB assign error (non-fatal):`, assignErr.response?.data || assignErr.message);
+                }
+            }
+        }
+
+        // 4. Update local DB immediately with known data
+        const endDate = new Date(new Date(start_date).getTime() + Number(arrival_window_minutes) * 60000).toISOString();
+        await db.query(
+            `UPDATE jobs SET start_date = $1, end_date = $2, zb_rescheduled = true, updated_at = NOW() WHERE id = $3`,
+            [start_date, endDate, jobId]
+        );
+
+        // 5. Return updated job immediately (frontend gets instant response)
+        const updated = await jobsService.getJobById(jobId);
+        res.json({ ok: true, data: updated });
+
+        // 6. Background: re-fetch from ZB to sync all fields (techs, status etc.)
+        //    Then emit SSE so frontend updates in-place
+        if (zbJobId) {
+            setImmediate(async () => {
+                try {
+                    await new Promise(r => setTimeout(r, 800));
+                    const zbJob = await zenbookerClient.getJob(zbJobId);
+                    if (zbJob) {
+                        await jobsService.syncFromZenbooker(zbJobId, zbJob, null, 'reschedule');
+                        const synced = await jobsService.getJobById(jobId);
+                        realtimeService.publishJobUpdate(synced);
+                        console.log(`[Jobs API] Background ZB sync + SSE for job ${jobId}`);
+                    }
+                } catch (err) {
+                    console.warn('[Jobs API] Background ZB sync error:', err.message);
+                }
+            });
+        } else {
+            // No ZB — still emit SSE for immediate UI update
+            realtimeService.publishJobUpdate(updated);
+        }
+    } catch (err) {
+        console.error('[Jobs API] Reschedule error:', err.message);
+        res.status(err.statusCode || 500).json({ ok: false, error: err.message });
+    }
+});
 
 module.exports = router;

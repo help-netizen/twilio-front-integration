@@ -90,6 +90,9 @@ function rowToJob(row) {
         // Coordinates stored in Blanc DB
         lat: row.lat || null,
         lng: row.lng || null,
+
+        // Raw Zenbooker data
+        zb_raw: row.zb_raw || null,
     };
 }
 

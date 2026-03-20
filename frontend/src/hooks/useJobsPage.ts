@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import * as jobsApi from '../services/jobsApi';
 import * as contactsApi from '../services/contactsApi';
@@ -6,6 +6,7 @@ import type { LocalJob } from '../services/jobsApi';
 import { useJobsData, LIMIT } from './useJobsData';
 import { useJobsActions } from './useJobsActions';
 import { useJobsExport } from './useJobsExport';
+import { useRealtimeEvents, type SSEJobUpdatedEvent } from './useRealtimeEvents';
 
 // ─── Hook ────────────────────────────────────────────────────────────────────
 
@@ -98,6 +99,18 @@ export function useJobsPage() {
             }
         }
     }, [urlJobId, data.jobs, data.loading]);
+
+    // ─── SSE: update job in-place when backend syncs from ZB ─────────
+    useRealtimeEvents({
+        onJobUpdated: useCallback((event: SSEJobUpdatedEvent) => {
+            const updatedJob = event.job as LocalJob;
+            if (!updatedJob?.id) return;
+            // Update selectedJob if it matches
+            setSelectedJob(prev => prev?.id === updatedJob.id ? updatedJob : prev);
+            // Update job in the list
+            data.setJobs(prev => prev.map(j => j.id === updatedJob.id ? updatedJob : j));
+        }, [data.setJobs]),
+    });
 
     // ─── Return ──────────────────────────────────────────────────────
 

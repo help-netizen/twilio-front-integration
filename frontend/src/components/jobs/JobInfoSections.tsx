@@ -1,8 +1,12 @@
-import { Calendar, MapPin, User2, Mail, Phone } from 'lucide-react';
+import { useState } from 'react';
+import { Calendar, MapPin, User2, Mail, Phone, CalendarClock, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 import type { LocalJob } from '../../services/jobsApi';
+import { rescheduleJob } from '../../services/jobsApi';
 import { formatPhone } from '../../lib/formatPhone';
 import { ClickToCallButton } from '../softphone/ClickToCallButton';
 import { OpenTimelineButton } from '../softphone/OpenTimelineButton';
+import { CustomTimeModal } from '../conversations/CustomTimeModal';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -14,11 +18,55 @@ interface JobInfoSectionsProps {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function JobInfoSections({ job, contactInfo }: JobInfoSectionsProps) {
+    const [showReschedule, setShowReschedule] = useState(false);
+    const [rescheduling, setRescheduling] = useState(false);
+
+    // Extract territory ID from zb_raw for CustomTimeModal
+    const territoryId = job.zb_raw?.territory?.id || job.zb_raw?.service_territory?.id || undefined;
+
+    const handleRescheduleConfirm = async (slot: { type: 'arrival_window'; start: string; end: string; formatted: string; techId?: string }) => {
+        setShowReschedule(false);
+        setRescheduling(true);
+        try {
+            const arrivalMinutes = Math.round((new Date(slot.end).getTime() - new Date(slot.start).getTime()) / 60000);
+            await rescheduleJob(job.id, {
+                start_date: slot.start,
+                arrival_window_minutes: arrivalMinutes,
+                tech_id: slot.techId,
+            });
+            toast.success('Job rescheduled', {
+                description: slot.formatted,
+            });
+            setRescheduling(false);
+        } catch (err) {
+            toast.error('Failed to reschedule', {
+                description: err instanceof Error ? err.message : 'Unknown error',
+            });
+            setRescheduling(false);
+        }
+    };
+
     return (
         <>
             {/* ── Schedule ── */}
             <div>
-                <h3 className="text-sm font-semibold text-muted-foreground mb-3">Schedule</h3>
+                <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold text-muted-foreground">Schedule</h3>
+                    {!job.zb_canceled && job.zb_status !== 'complete' && (
+                        <button
+                            onClick={() => setShowReschedule(true)}
+                            disabled={rescheduling}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+                        >
+                            {rescheduling ? (
+                                <Loader2 className="size-3.5 animate-spin" />
+                            ) : (
+                                <CalendarClock className="size-3.5" />
+                            )}
+                            Reschedule
+                        </button>
+                    )}
+                </div>
                 <div className="space-y-3">
                     <div className="flex items-center gap-3">
                         <div className="size-10 rounded-lg bg-muted flex items-center justify-center">
@@ -144,6 +192,23 @@ export function JobInfoSections({ job, contactInfo }: JobInfoSectionsProps) {
                     </div>
                 </div>
             )}
+
+            {/* ── Reschedule Modal ── */}
+            <CustomTimeModal
+                open={showReschedule}
+                onClose={() => setShowReschedule(false)}
+                onConfirm={handleRescheduleConfirm}
+                newJobCoords={job.lat && job.lng ? { lat: job.lat, lng: job.lng } : null}
+                newJobAddress={job.address}
+                newJobDuration={120}
+                territoryId={territoryId}
+                excludeJobId={job.id}
+                initialSlot={job.start_date && job.end_date && job.assigned_techs?.[0]?.id ? {
+                    techId: job.assigned_techs[0].id,
+                    start: job.start_date,
+                    end: job.end_date,
+                } : undefined}
+            />
         </>
     );
 }

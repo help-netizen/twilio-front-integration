@@ -38,6 +38,10 @@ interface CustomTimeModalProps {
     newJobDuration?: number;
     /** Territory ID of the new job (from zip check) — used to prioritize matching techs */
     territoryId?: string;
+    /** Job ID to exclude from timeline (for reschedule — hides the current job) */
+    excludeJobId?: number;
+    /** Pre-populate the green badge with an existing timeslot (for reschedule) */
+    initialSlot?: { techId: string; start: string; end: string };
 }
 
 interface TechGroup {
@@ -420,9 +424,22 @@ function JobMap({ jobs, techGroups, newJobCoords, newJobAddress, loading }: JobM
 
 // ─── Main Modal ───────────────────────────────────────────────────────────────
 
-export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJobAddress, newJobDuration, territoryId }: CustomTimeModalProps) {
+export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJobAddress, newJobDuration, territoryId, excludeJobId, initialSlot }: CustomTimeModalProps) {
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const [selectedSlot, setSelectedSlot] = useState<SelectedSlot | null>(null);
+
+    // Pre-populate selectedSlot + date when modal opens with initialSlot (reschedule mode)
+    useEffect(() => {
+        if (open && initialSlot) {
+            const slotDate = new Date(initialSlot.start);
+            setSelectedDate(slotDate.toISOString().split('T')[0]);
+            setSelectedSlot({
+                techId: initialSlot.techId,
+                start: new Date(initialSlot.start),
+                end: new Date(initialSlot.end),
+            });
+        }
+    }, [open]);
     const [techPage, setTechPage] = useState(0);
     const [jobs, setJobs] = useState<LocalJob[]>([]);
     const [providers, setProviders] = useState<TeamMember[]>([]);
@@ -450,7 +467,8 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
             setLoading(true);
             try {
                 const result = await listJobs({ start_date: selectedDate, end_date: selectedDate, limit: 200 });
-                if (!cancelled) setJobs(result.results || []);
+                const allJobs = result.results || [];
+                if (!cancelled) setJobs(excludeJobId ? allJobs.filter(j => j.id !== excludeJobId) : allJobs);
             } catch { if (!cancelled) setJobs([]); }
             finally { if (!cancelled) setLoading(false); }
         }

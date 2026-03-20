@@ -1,20 +1,24 @@
+import { useState } from 'react';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Textarea } from '../ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
+import { Calendar, Clock, RefreshCw, X } from 'lucide-react';
 import { AddressAutocomplete, type AddressFields } from '../AddressAutocomplete';
 import type { Lead } from '../../types/lead';
 import type { ServiceAreaResult, Timeslot, TimeslotDay } from '../../services/zenbookerApi';
 import type { CustomFieldDef, Step } from './useConvertToJob';
 import { STEP_TITLES } from './useConvertToJob';
+import { CustomTimeModal } from '../conversations/CustomTimeModal';
 
 interface StepProps {
     name: string; setName: (v: string) => void;
     phone: string; setPhone: (v: string) => void;
     email: string; setEmail: (v: string) => void;
     addressFields: AddressFields; setAddressFields: (v: AddressFields) => void;
+    coords: { lat: number; lng: number } | null;
     setCoords: (v: { lat: number; lng: number } | null) => void;
     territoryLoading: boolean; territoryResult: ServiceAreaResult | null; territoryError: string;
     zipExists: boolean | null; zipArea: string; zipSource: string;
@@ -27,7 +31,7 @@ interface StepProps {
     timeslotDays: TimeslotDay[]; selectedTimeslot: Timeslot | null; setSelectedTimeslot: (v: Timeslot | null) => void;
     timeslotsLoading: boolean; timeslotsError: string; fetchTimeslots: () => void;
     lead: Lead; customFields: CustomFieldDef[];
-    step: Step;
+    step: Step; setStep: (s: Step) => void;
 }
 
 export function StepIndicator({ step }: { step: Step }) {
@@ -72,15 +76,63 @@ export function ConvertStep2({ serviceName, setServiceName, serviceDescription, 
     );
 }
 
-export function ConvertStep3({ selectedDate, setSelectedDate, timeslotsLoading, timeslotsError, timeslotDays, selectedTimeslot, setSelectedTimeslot, fetchTimeslots }: StepProps) {
+export function ConvertStep3({ selectedDate, setSelectedDate, timeslotsLoading, timeslotsError, timeslotDays, selectedTimeslot, setSelectedTimeslot, fetchTimeslots, coords, addressFields, territoryResult, setStep }: StepProps) {
+    const [showCustomTime, setShowCustomTime] = useState(false);
+    const isCustomSlot = selectedTimeslot?.type === 'arrival_window';
+
     return (
         <div className="space-y-4">
-            <div><Label htmlFor="cj-date">Starting Date</Label><Input id="cj-date" type="date" value={selectedDate} onChange={e => { setSelectedDate(e.target.value); setSelectedTimeslot(null); }} min={new Date().toISOString().split('T')[0]} /></div>
-            <div className="flex items-center gap-2"><Button size="sm" variant="outline" onClick={fetchTimeslots} disabled={timeslotsLoading}>{timeslotsLoading ? 'Loading…' : 'Refresh Timeslots'}</Button>{timeslotsLoading && <span className="text-sm text-muted-foreground animate-pulse">Fetching available times…</span>}</div>
+            {/* Header row */}
+            <div className="flex items-center justify-between">
+                <span className="flex items-center gap-1.5 text-sm font-semibold">
+                    <Calendar className="w-4" /> Available Timeslots
+                </span>
+                <Button size="sm" variant="outline" onClick={() => setShowCustomTime(true)} className="flex items-center gap-1">
+                    <Clock className="w-3.5" /> Custom Time
+                </Button>
+            </div>
+
+            <p className="text-xs text-muted-foreground">Select a date and timeslot for this job.</p>
+
+            {/* Custom slot display */}
+            {isCustomSlot && (
+                <div className="flex items-center gap-2 p-2.5 rounded-md border border-primary bg-primary/10">
+                    <span className="text-sm font-medium flex-1">★ Custom: {selectedTimeslot!.formatted}</span>
+                    <button type="button" onClick={() => setSelectedTimeslot(null)} className="text-muted-foreground hover:text-foreground"><X className="w-4" /></button>
+                </div>
+            )}
+
+            {/* Date row with icon refresh */}
+            <div className="flex items-end gap-2">
+                <div className="flex-1">
+                    <Label htmlFor="cj-date">Starting Date</Label>
+                    <Input id="cj-date" type="date" value={selectedDate} onChange={e => { setSelectedDate(e.target.value); setSelectedTimeslot(null); }} min={new Date().toISOString().split('T')[0]} />
+                </div>
+                <Button size="icon" variant="ghost" onClick={fetchTimeslots} disabled={timeslotsLoading} title="Refresh timeslots" className="shrink-0 mb-0.5">
+                    <RefreshCw className={`w-4 ${timeslotsLoading ? 'animate-spin' : ''}`} />
+                </Button>
+            </div>
+
+            {timeslotsLoading && <p className="text-sm text-muted-foreground animate-pulse">Fetching available times…</p>}
             {timeslotsError && !timeslotsLoading && <p className="text-sm text-destructive">{timeslotsError}</p>}
+
+            {/* Timeslot grid */}
             <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
                 {timeslotDays.map(day => { if (!day.timeslots?.length) return null; return (<div key={day.date}><p className="text-xs font-semibold text-muted-foreground mb-1.5">{new Date(day.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</p><div className="grid grid-cols-2 gap-1.5">{day.timeslots.map(slot => (<button key={slot.id} type="button" onClick={() => setSelectedTimeslot(slot)} className={`p-2 rounded-md border text-sm text-left transition-colors ${selectedTimeslot?.id === slot.id ? 'border-primary bg-primary/10 font-medium' : 'border-border hover:border-primary/50 hover:bg-muted/50'}`}>{slot.formatted}</button>))}</div></div>); })}
             </div>
+
+            <CustomTimeModal
+                open={showCustomTime}
+                onClose={() => setShowCustomTime(false)}
+                newJobCoords={coords}
+                newJobAddress={[addressFields.street, addressFields.city, addressFields.state, addressFields.zip].filter(Boolean).join(', ')}
+                territoryId={territoryResult?.service_territory?.id}
+                onConfirm={(customSlot) => {
+                    setSelectedTimeslot(customSlot);
+                    setShowCustomTime(false);
+                    setStep(4 as Step);
+                }}
+            />
         </div>
     );
 }

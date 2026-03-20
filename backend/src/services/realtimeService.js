@@ -204,6 +204,15 @@ class RealtimeService extends EventEmitter {
         this.broadcast('conversation.updated', { conversation });
     }
 
+    // ─── Jobs SSE events ───
+
+    /**
+     * Broadcast job update to all connected clients
+     */
+    publishJobUpdate(job) {
+        this.broadcast('job.updated', { job });
+    }
+
     /**
      * Send keepalive ping to all clients
      */
