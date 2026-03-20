@@ -425,14 +425,22 @@ function JobMap({ jobs, techGroups, newJobCoords, newJobAddress, loading }: JobM
 // ─── Main Modal ───────────────────────────────────────────────────────────────
 
 export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJobAddress, newJobDuration, territoryId, excludeJobId, initialSlot }: CustomTimeModalProps) {
-    const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-    const [selectedSlot, setSelectedSlot] = useState<SelectedSlot | null>(null);
+    const getInitialDate = () => {
+        if (initialSlot?.start) return new Date(initialSlot.start).toISOString().split('T')[0];
+        return new Date().toISOString().split('T')[0];
+    };
+    const getInitialSlot = (): SelectedSlot | null => {
+        if (initialSlot) return { techId: initialSlot.techId, start: new Date(initialSlot.start), end: new Date(initialSlot.end) };
+        return null;
+    };
+    const [selectedDate, setSelectedDate] = useState(getInitialDate);
+    const [selectedSlot, setSelectedSlot] = useState<SelectedSlot | null>(getInitialSlot);
 
-    // Pre-populate selectedSlot + date when modal opens with initialSlot (reschedule mode)
+    // Re-populate when modal re-opens with initialSlot (reschedule mode)
     useEffect(() => {
         if (open && initialSlot) {
-            const slotDate = new Date(initialSlot.start);
-            setSelectedDate(slotDate.toISOString().split('T')[0]);
+            const slotDate = new Date(initialSlot.start).toISOString().split('T')[0];
+            setSelectedDate(slotDate);
             setSelectedSlot({
                 techId: initialSlot.techId,
                 start: new Date(initialSlot.start),
@@ -481,8 +489,15 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
     const totalPages = Math.max(1, Math.ceil(techGroups.length / 2));
     const visibleTechs = techGroups.slice(techPage * 2, techPage * 2 + 2);
 
-    // Reset page when date changes
-    useEffect(() => { setTechPage(0); setSelectedSlot(null); }, [selectedDate]);
+    // Reset page when date changes; only clear slot if it doesn't match the new date
+    useEffect(() => {
+        setTechPage(0);
+        setSelectedSlot(prev => {
+            if (!prev) return null;
+            const slotDate = prev.start.toISOString().split('T')[0];
+            return slotDate === selectedDate ? prev : null;
+        });
+    }, [selectedDate]);
 
     const handleConfirm = () => {
         if (!selectedSlot) return;
