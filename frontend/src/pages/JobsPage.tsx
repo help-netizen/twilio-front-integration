@@ -89,6 +89,7 @@ export function JobsPage() {
                     navigate={page.navigate}
                     allTags={page.allTags}
                     onTagsChange={page.handleTagsChange}
+                    onJobUpdated={page.handleJobUpdated}
                 />
             )}
         </div>

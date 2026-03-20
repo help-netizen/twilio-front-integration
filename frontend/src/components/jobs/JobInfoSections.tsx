@@ -13,11 +13,12 @@ import { CustomTimeModal } from '../conversations/CustomTimeModal';
 interface JobInfoSectionsProps {
     job: LocalJob;
     contactInfo: { id: number; name: string; phone?: string; email?: string } | null;
+    onJobUpdated?: (updatedJob: LocalJob) => void;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export function JobInfoSections({ job, contactInfo }: JobInfoSectionsProps) {
+export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSectionsProps) {
     const [showReschedule, setShowReschedule] = useState(false);
     const [rescheduling, setRescheduling] = useState(false);
 
@@ -29,7 +30,7 @@ export function JobInfoSections({ job, contactInfo }: JobInfoSectionsProps) {
         setRescheduling(true);
         try {
             const arrivalMinutes = Math.round((new Date(slot.end).getTime() - new Date(slot.start).getTime()) / 60000);
-            await rescheduleJob(job.id, {
+            const updated = await rescheduleJob(job.id, {
                 start_date: slot.start,
                 arrival_window_minutes: arrivalMinutes,
                 tech_id: slot.techId,
@@ -37,6 +38,7 @@ export function JobInfoSections({ job, contactInfo }: JobInfoSectionsProps) {
             toast.success('Job rescheduled', {
                 description: slot.formatted,
             });
+            onJobUpdated?.(updated);
             setRescheduling(false);
         } catch (err) {
             toast.error('Failed to reschedule', {

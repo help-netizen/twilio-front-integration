@@ -32,6 +32,7 @@ export interface JobDetailPanelProps {
     navigate: (path: string) => void;
     allTags: JobTag[];
     onTagsChange: (jobId: number, tagIds: number[]) => void;
+    onJobUpdated?: (updatedJob: LocalJob) => void;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -41,7 +42,7 @@ export function JobDetailPanel({
     noteJobId, noteText, setNoteText, setNoteJobId,
     onClose, onBlancStatusChange, onAddNote,
     onMarkEnroute, onMarkInProgress, onMarkComplete, onCancel,
-    navigate, allTags, onTagsChange,
+    navigate, allTags, onTagsChange, onJobUpdated,
 }: JobDetailPanelProps) {
     const [showMobileNotes, setShowMobileNotes] = useState(false);
 
@@ -79,7 +80,7 @@ export function JobDetailPanel({
                     </div>
                 ) : (
                     <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                        <JobInfoSections job={job} contactInfo={contactInfo} />
+                        <JobInfoSections job={job} contactInfo={contactInfo} onJobUpdated={onJobUpdated} />
 
                         {/* ── Mobile-only: Description, Comments, Metadata, Notes ── */}
                         <div className="md:hidden space-y-6">

@@ -101,15 +101,17 @@ export function useJobsPage() {
     }, [urlJobId, data.jobs, data.loading]);
 
     // ─── SSE: update job in-place when backend syncs from ZB ─────────
+    const handleJobUpdated = useCallback((updatedJob: LocalJob) => {
+        if (!updatedJob?.id) return;
+        setSelectedJob(prev => prev?.id === updatedJob.id ? updatedJob : prev);
+        data.setJobs(prev => prev.map(j => j.id === updatedJob.id ? updatedJob : j));
+    }, [data.setJobs]);
+
     useRealtimeEvents({
         onJobUpdated: useCallback((event: SSEJobUpdatedEvent) => {
-            const updatedJob = event.job as LocalJob;
-            if (!updatedJob?.id) return;
-            // Update selectedJob if it matches
-            setSelectedJob(prev => prev?.id === updatedJob.id ? updatedJob : prev);
-            // Update job in the list
-            data.setJobs(prev => prev.map(j => j.id === updatedJob.id ? updatedJob : j));
-        }, [data.setJobs]),
+            const job = event.job as LocalJob;
+            handleJobUpdated(job);
+        }, [handleJobUpdated]),
     });
 
     // ─── Return ──────────────────────────────────────────────────────
@@ -131,6 +133,9 @@ export function useJobsPage() {
 
         // Export (from useJobsExport)
         ...exportHook,
+
+        // Job update handler
+        handleJobUpdated,
 
         // Navigation
         navigate,
