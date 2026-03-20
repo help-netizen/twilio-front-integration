@@ -26,8 +26,16 @@ router.post('/sync', async (req, res) => {
 
             for (const zbJob of zbJobs) {
                 try {
+                    // List endpoint (GET /jobs) omits assigned_providers —
+                    // fetch full job via GET /jobs/{id} to get complete data
+                    let fullJob = zbJob;
+                    try {
+                        fullJob = await zenbookerClient.getJob(zbJob.id);
+                    } catch (fetchErr) {
+                        console.warn(`[Jobs Sync] Could not fetch full job ${zbJob.id}, using list data: ${fetchErr.message}`);
+                    }
                     const result = await jobsService.syncFromZenbooker(
-                        zbJob.id, zbJob, req.companyId || null, 'sync_bulk'
+                        zbJob.id, fullJob, req.companyId || null, 'sync_bulk'
                     );
                     totalSynced++;
                     if (result.created) totalCreated++;
