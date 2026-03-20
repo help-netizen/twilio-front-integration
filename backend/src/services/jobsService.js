@@ -516,7 +516,7 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
                 territory = COALESCE($13, territory),
                 invoice_total = COALESCE($14, invoice_total),
                 invoice_status = COALESCE($15, invoice_status),
-                assigned_techs = $16::jsonb,
+                assigned_techs = CASE WHEN $16::jsonb = '[]'::jsonb THEN COALESCE(assigned_techs, '[]'::jsonb) ELSE $16::jsonb END,
                 notes = $17::jsonb,
                 zb_raw = $18::jsonb,
                 contact_id = COALESCE($20, contact_id),
@@ -540,6 +540,26 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
         // Create new job linked to contact
         const job = await createJob({ zenbookerJobId: zbJobId, zbData, companyId, contactId });
         console.log(`[JobsService] Created local job for zb_id=${zbJobId}, id=${job.id}, contact=${contactId}`);
+
+        // ZB auto-assigns providers asynchronously — re-fetch after delay to catch it
+        if ((!zbData.assigned_providers || zbData.assigned_providers.length === 0) && !zbData.unable_to_auto_assign) {
+            setImmediate(async () => {
+                try {
+                    await new Promise(r => setTimeout(r, 5000));
+                    const zbRefresh = await zenbookerClient.getJob(zbJobId);
+                    if (zbRefresh?.assigned_providers?.length > 0) {
+                        await db.query(
+                            `UPDATE jobs SET assigned_techs = $1::jsonb, zb_raw = $2::jsonb, updated_at = NOW() WHERE zenbooker_job_id = $3`,
+                            [JSON.stringify(zbRefresh.assigned_providers), JSON.stringify(zbRefresh), zbJobId]
+                        );
+                        console.log(`[JobsService] Delayed re-fetch: auto-assigned ${zbRefresh.assigned_providers.length} provider(s) for job ${job.id}`);
+                    }
+                } catch (err) {
+                    console.warn(`[JobsService] Delayed re-fetch error for ${zbJobId}:`, err.message);
+                }
+            });
+        }
+
         return { updated: true, job_id: job.id, blanc_status: job.blanc_status, created: true };
     }
 }
