@@ -87,6 +87,20 @@ export default function NotificationsSection() {
         setPermState(getPermissionState());
         const sub = await hasActiveSubscription();
         setHasSub(sub);
+
+        // Auto-resync: if browser has subscription but backend doesn't, re-register
+        if (sub && getPermissionState() === 'granted') {
+            try {
+                const statusRes = await authedFetch('/api/push-subscriptions/status');
+                const statusData = await statusRes.json();
+                if (statusData.ok && !statusData.hasActiveSubscription) {
+                    console.log('[NotificationsSection] Browser has sub but backend does not — re-registering');
+                    const ok = await subscribeToPush();
+                    if (ok) toast.success('Push subscription re-synced with server');
+                }
+            } catch { /* ignore */ }
+        }
+
         setRefreshing(false);
     };
 
