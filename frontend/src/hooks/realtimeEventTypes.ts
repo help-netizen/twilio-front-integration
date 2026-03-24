@@ -12,7 +12,7 @@ export interface SSECallEvent {
 }
 
 export interface SSEConnectionEvent { connectionId: number; timestamp: string; }
-export interface SSEMessageAddedEvent { message: any; conversationId: string; }
+export interface SSEMessageAddedEvent { message: any; conversationId: string; timelineId?: number | null; }
 export interface SSEMessageDeliveryEvent { messageSid: string; status: string; errorCode: number | null; }
 export interface SSEConversationUpdatedEvent { conversation: any; }
 export interface SSEContactReadEvent { contactId: number; }

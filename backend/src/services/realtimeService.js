@@ -179,10 +179,11 @@ class RealtimeService extends EventEmitter {
     /**
      * Broadcast new message to all connected clients
      */
-    publishMessageAdded(message, conversation) {
+    publishMessageAdded(message, conversation, timelineId) {
         this.broadcast('message.added', {
             message,
             conversationId: conversation.id,
+            timelineId: timelineId || null,
         });
     }
 

@@ -77,8 +77,10 @@ export default function SSEPushBridge() {
 
             if (isDuplicate(tag)) return;
 
+            const url = event.timelineId ? `/pulse/timeline/${event.timelineId}` : '/pulse';
+
             // OS notification
-            showOSNotification('New text message', `${from}: ${bodyPreview}`, '/pulse', tag);
+            showOSNotification('New text message', `${from}: ${bodyPreview}`, url, tag);
 
             // In-app toast
             toast('💬 New text message', {
@@ -86,7 +88,7 @@ export default function SSEPushBridge() {
                 duration: 6000,
                 action: {
                     label: 'View',
-                    onClick: () => navigate('/pulse'),
+                    onClick: () => navigate(url),
                 },
             });
         },
