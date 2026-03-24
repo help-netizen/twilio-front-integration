@@ -34,6 +34,7 @@ import UserGroupsPage from './pages/telephony/UserGroupsPage';
 import TelephonyLayout from './components/telephony/TelephonyLayout';
 import { EventNotification } from './components/EventNotification';
 import NotificationReminderBanner from './components/NotificationReminderBanner';
+import SSEPushBridge from './components/SSEPushBridge';
 import { Toaster } from './components/ui/sonner';
 import './App.css';
 
@@ -148,6 +149,7 @@ function App() {
           </AppLayout>
           <EventNotification />
           <NotificationReminderBanner />
+          <SSEPushBridge />
           <Toaster />
         </BrowserRouter>
       </QueryClientProvider>
