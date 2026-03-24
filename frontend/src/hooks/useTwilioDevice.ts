@@ -113,7 +113,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
                     const from = call.parameters.From || 'Unknown';
 
                     if (busyRef.current) {
-                        // Dispatcher is busy → queue silently (no ringtone)
+                        // Dispatcher is busy (on a call OR already ringing) → queue silently
                         console.log('[SoftPhone] Busy — queuing incoming from', from);
                         pendingCallsRef.current.push({ call, from });
                         syncPendingCount();
@@ -133,14 +133,33 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
                     }
 
                     // Dispatcher is free → standard incoming flow
+                    // Mark as busy IMMEDIATELY so the next incoming gets queued
+                    busyRef.current = true;
                     setIncomingCall(call);
                     setCallState('incoming');
                     setCallerInfo({ number: from });
                     startRingtone();
 
-                    call.on('cancel', () => { stopRingtone(); setIncomingCall(null); setCallState('idle'); setCallerInfo(null); });
-                    call.on('disconnect', () => { setCallState('ended'); stopDurationTimer(); setActiveCall(null); setIncomingCall(null); setIsMuted(false); resetToIdle(2000); });
-                    call.on('reject', () => { stopRingtone(); setIncomingCall(null); setCallState('idle'); setCallerInfo(null); });
+                    call.on('cancel', () => {
+                        stopRingtone(); setIncomingCall(null); setCallerInfo(null);
+                        busyRef.current = false;
+                        // Promote next pending if any
+                        if (pendingCallsRef.current.length > 0) {
+                            promoteNextPending();
+                        } else {
+                            setCallState('idle');
+                        }
+                    });
+                    call.on('disconnect', () => { setCallState('ended'); stopDurationTimer(); setActiveCall(null); setIncomingCall(null); setIsMuted(false); busyRef.current = false; resetToIdle(2000); });
+                    call.on('reject', () => {
+                        stopRingtone(); setIncomingCall(null); setCallerInfo(null);
+                        busyRef.current = false;
+                        if (pendingCallsRef.current.length > 0) {
+                            promoteNextPending();
+                        } else {
+                            setCallState('idle');
+                        }
+                    });
                 });
 
                 await dev.register();
