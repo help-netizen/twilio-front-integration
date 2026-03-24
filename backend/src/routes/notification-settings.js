@@ -55,7 +55,7 @@ router.get('/', async (req, res) => {
 router.put('/', async (req, res) => {
     try {
         // Admin-only check
-        const roles = req.userRoles || [];
+        const roles = req.user?.roles || [];
         const isAdmin = roles.includes('company_admin') || roles.includes('super_admin');
         if (!isAdmin) {
             return res.status(403).json({ ok: false, error: 'Admin access required' });
@@ -71,7 +71,7 @@ router.put('/', async (req, res) => {
             return res.status(400).json({ ok: false, error: 'No company context' });
         }
 
-        const userId = req.userId || null;
+        const userId = req.user?.crmUser?.id || null;
         const toSave = {
             browser_push_new_text_message_enabled: !!config.browser_push_new_text_message_enabled,
             browser_push_new_lead_enabled: !!config.browser_push_new_lead_enabled,

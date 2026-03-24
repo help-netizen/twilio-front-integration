@@ -25,7 +25,7 @@ async function resolveCompanyId(req) {
 router.get('/status', async (req, res) => {
     try {
         const companyId = await resolveCompanyId(req);
-        const userId = req.userId;
+        const userId = req.user?.crmUser?.id;
         if (!companyId || !userId) {
             return res.json({ ok: true, hasActiveSubscription: false, count: 0 });
         }
@@ -62,7 +62,7 @@ router.get('/vapid-public-key', (req, res) => {
 router.post('/', async (req, res) => {
     try {
         const companyId = await resolveCompanyId(req);
-        const userId = req.userId;
+        const userId = req.user?.crmUser?.id;
         if (!companyId || !userId) {
             return res.status(400).json({ ok: false, error: 'Missing user/company context' });
         }
@@ -108,7 +108,7 @@ router.delete('/', async (req, res) => {
 
         await db.query(
             `UPDATE push_subscriptions SET is_active = false WHERE endpoint = $1 AND user_id = $2`,
-            [endpoint, req.userId]
+            [endpoint, req.user?.crmUser?.id]
         );
 
         res.json({ ok: true });
@@ -123,7 +123,7 @@ router.delete('/', async (req, res) => {
 router.post('/test', async (req, res) => {
     try {
         const companyId = await resolveCompanyId(req);
-        const userId = req.userId;
+        const userId = req.user?.crmUser?.id;
         if (!companyId || !userId) {
             return res.status(400).json({ ok: false, error: 'Missing user/company context' });
         }
