@@ -1,8 +1,9 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { Dialog, DialogContent, DialogFooter } from '../ui/dialog';
+import { Dialog, DialogContent, DialogFooter, DialogTitle } from '../ui/dialog';
 import { Button } from '../ui/button';
-import { Input } from '../ui/input';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CalendarIcon } from 'lucide-react';
+import { Calendar } from '../ui/calendar';
+import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { listJobs, updateJobCoords } from '../../services/jobsApi';
 import type { LocalJob } from '../../services/jobsApi';
 import { getTeamMembers } from '../../services/zenbookerApi';
@@ -61,13 +62,16 @@ interface SelectedSlot {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatDateLabel(date: Date) {
+    return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function getRelativeDayHint(date: Date): string | null {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
     const target = new Date(date); target.setHours(0, 0, 0, 0);
-    const dayLabel = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-    if (target.getTime() === today.getTime()) return `${dayLabel} (Today)`;
-    if (target.getTime() === tomorrow.getTime()) return `${dayLabel} (Tomorrow)`;
-    return dayLabel;
+    if (target.getTime() === today.getTime()) return 'Today';
+    if (target.getTime() === tomorrow.getTime()) return 'Tomorrow';
+    return null;
 }
 
 function fmtTime(d: Date) {
@@ -276,22 +280,37 @@ function JobMap({ jobs, techGroups, newJobCoords, newJobAddress, loading }: JobM
         });
     }, []);
 
-    // Geocode via Places API
-    const geocodeAddress = useCallback((address: string): Promise<{ lat: number; lng: number } | null> => {
-        if (geocodeCacheRef.current.has(address)) return Promise.resolve(geocodeCacheRef.current.get(address)!);
-        if (!mapInstanceRef.current || typeof google === 'undefined' || !google.maps?.places) return Promise.resolve(null);
-        return new Promise((resolve) => {
-            try {
-                const service = new google.maps.places.PlacesService(mapInstanceRef.current!);
-                service.findPlaceFromQuery({ query: address, fields: ['geometry'] }, (results, status) => {
-                    if (status === 'OK' && results?.[0]?.geometry?.location) {
-                        const loc = { lat: results[0].geometry.location.lat(), lng: results[0].geometry.location.lng() };
-                        geocodeCacheRef.current.set(address, loc);
-                        resolve(loc);
-                    } else { geocodeCacheRef.current.set(address, null); resolve(null); }
+    // Geocode via new Place API (replaces deprecated PlacesService)
+    const geocodeAddress = useCallback(async (address: string): Promise<{ lat: number; lng: number } | null> => {
+        if (geocodeCacheRef.current.has(address)) return geocodeCacheRef.current.get(address)!;
+        if (typeof google === 'undefined' || !google.maps?.places) return null;
+        try {
+            // Use new google.maps.places.Place.searchByText API
+            const PlaceClass = google.maps.places.Place;
+            if (PlaceClass && typeof PlaceClass.searchByText === 'function') {
+                const { places } = await PlaceClass.searchByText({ textQuery: address, fields: ['location'], maxResultCount: 1 });
+                if (places?.[0]?.location) {
+                    const loc = { lat: places[0].location.lat(), lng: places[0].location.lng() };
+                    geocodeCacheRef.current.set(address, loc);
+                    return loc;
+                }
+            } else {
+                // Fallback to legacy PlacesService if new API not available
+                if (!mapInstanceRef.current) return null;
+                return new Promise((resolve) => {
+                    const service = new google.maps.places.PlacesService(mapInstanceRef.current!);
+                    service.findPlaceFromQuery({ query: address, fields: ['geometry'] }, (results: any, status: any) => {
+                        if (status === 'OK' && results?.[0]?.geometry?.location) {
+                            const loc = { lat: results[0].geometry.location.lat(), lng: results[0].geometry.location.lng() };
+                            geocodeCacheRef.current.set(address, loc);
+                            resolve(loc);
+                        } else { geocodeCacheRef.current.set(address, null); resolve(null); }
+                    });
                 });
-            } catch { geocodeCacheRef.current.set(address, null); resolve(null); }
-        });
+            }
+            geocodeCacheRef.current.set(address, null);
+            return null;
+        } catch { geocodeCacheRef.current.set(address, null); return null; }
     }, []);
 
     // Resolve new job coords
@@ -435,6 +454,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
     };
     const [selectedDate, setSelectedDate] = useState(getInitialDate);
     const [selectedSlot, setSelectedSlot] = useState<SelectedSlot | null>(getInitialSlot);
+    const [calendarOpen, setCalendarOpen] = useState(false);
 
     // Re-populate when modal re-opens with initialSlot (reschedule mode)
     useEffect(() => {
@@ -526,24 +546,37 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
 
     return (
         <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
-            <DialogContent className="max-w-5xl max-h-[90vh] ctm-dialog">
+            <DialogContent className="max-w-5xl max-h-[90vh] ctm-dialog" aria-describedby={undefined}>
+                <DialogTitle className="sr-only">Schedule Time Slot</DialogTitle>
 
                 {/* Date navigation */}
                 <div className="ctm-date-nav">
-                    <Button variant="ghost" size="icon" onClick={prevDate} disabled={selectedDate <= today}>
+                    <Button variant="ghost" size="icon" className="ctm-date-nav__arrow" onClick={prevDate} disabled={selectedDate <= today}>
                         <ChevronLeft className="w-4" />
                     </Button>
-                    <div className="ctm-date-nav__label">
-                        <Input
-                            type="date" value={selectedDate} min={today}
-                            onChange={e => setSelectedDate(e.target.value)}
-                            className="ctm-date-nav__input"
-                        />
-                        <span className="ctm-date-nav__text">{formatDateLabel(dateObj)}</span>
-                    </div>
-                    <Button variant="ghost" size="icon" onClick={nextDate}>
+                    <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
+                        <PopoverTrigger asChild>
+                            <button type="button" className="ctm-date-nav__trigger">
+                                <CalendarIcon className="w-4 h-4 opacity-60" />
+                                <span className="ctm-date-nav__text">{formatDateLabel(dateObj)}</span>
+                            </button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="center">
+                            <Calendar
+                                mode="single"
+                                selected={dateObj}
+                                onSelect={(day) => { if (day) { setSelectedDate(day.toISOString().split('T')[0]); setCalendarOpen(false); } }}
+                                disabled={{ before: new Date(today + 'T00:00:00') }}
+                                defaultMonth={dateObj}
+                            />
+                        </PopoverContent>
+                    </Popover>
+                    <Button variant="ghost" size="icon" className="ctm-date-nav__arrow" onClick={nextDate}>
                         <ChevronRight className="w-4" />
                     </Button>
+                    {getRelativeDayHint(dateObj) && (
+                        <span className="ctm-date-nav__hint">{getRelativeDayHint(dateObj)}</span>
+                    )}
                 </div>
 
                 <div className="ctm-body">
