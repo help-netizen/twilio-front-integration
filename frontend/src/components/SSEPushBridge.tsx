@@ -1,13 +1,14 @@
 /**
  * SSEPushBridge
  *
- * Listens for SSE events (message.added, call.created) and shows
- * browser Notification API alerts. This complements the backend
- * Web Push mechanism — it fires when the app tab IS open, while
- * Web Push fires when the tab is closed or in the background.
+ * Listens for SSE events (message.added, call.created) and shows:
+ * 1. Native OS browser notifications (via service worker showNotification)
+ * 2. In-app toast notifications (via sonner)
  */
 
 import { useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import { useRealtimeEvents, type SSEMessageAddedEvent, type SSECallEvent } from '../hooks/useRealtimeEvents';
 import { authedFetch } from '../services/apiClient';
 import { getPermissionState } from '../services/pushNotificationService';
@@ -24,7 +25,6 @@ function isDuplicate(tag: string): boolean {
     const prev = recentTags.get(tag);
     if (prev && now - prev < 2000) return true;
     recentTags.set(tag, now);
-    // Cleanup old entries
     if (recentTags.size > 50) {
         for (const [k, v] of recentTags) { if (now - v > 5000) recentTags.delete(k); }
     }
@@ -44,21 +44,12 @@ async function fetchNotificationSettings(): Promise<{ text: boolean; lead: boole
     }
 }
 
-function showNotification(title: string, body: string, url: string, tag: string) {
+function showOSNotification(title: string, body: string, url: string, tag: string) {
     if (getPermissionState() !== 'granted') return;
-    if (isDuplicate(tag)) return;
-
-    // Use service worker registration to show notification (works even when focused)
     navigator.serviceWorker?.getRegistration('/')?.then(reg => {
         if (reg) {
-            reg.showNotification(title, {
-                body,
-                icon: '/vite.svg',
-                tag,
-                data: { url },
-            });
+            reg.showNotification(title, { body, icon: '/vite.svg', tag, data: { url } });
         } else {
-            // Fallback: direct Notification API
             const n = new Notification(title, { body, icon: '/vite.svg', tag });
             n.onclick = () => { window.focus(); window.location.href = url; n.close(); };
         }
@@ -66,39 +57,59 @@ function showNotification(title: string, body: string, url: string, tag: string)
 }
 
 export default function SSEPushBridge() {
+    const navigate = useNavigate();
     const settingsRef = useRef<{ text: boolean; lead: boolean }>({ text: false, lead: false });
 
-    // Load notification settings once on mount
     useEffect(() => {
         fetchNotificationSettings().then(s => { settingsRef.current = s; });
     }, []);
 
     useRealtimeEvents({
-        // ── New inbound SMS ────────────────────────────────────────────
         onMessageAdded: (event: SSEMessageAddedEvent) => {
             if (!settingsRef.current.text) return;
             const msg = event.message;
-            // Only notify for inbound messages
             if (msg?.direction !== 'inbound') return;
-            // Skip if user is already viewing this conversation
             if (activeConversationId && event.conversationId === activeConversationId) return;
 
             const from = msg.author || msg.customer_e164 || 'Customer';
             const bodyPreview = (msg.body || '').substring(0, 80) || 'New message';
             const tag = `sse-sms-${event.conversationId}-${Date.now()}`;
 
-            showNotification('New text message', `${from}: ${bodyPreview}`, '/pulse', tag);
+            if (isDuplicate(tag)) return;
+
+            // OS notification
+            showOSNotification('New text message', `${from}: ${bodyPreview}`, '/pulse', tag);
+
+            // In-app toast
+            toast('💬 New text message', {
+                description: `${from}: ${bodyPreview}`,
+                duration: 6000,
+                action: {
+                    label: 'View',
+                    onClick: () => navigate('/pulse'),
+                },
+            });
         },
 
-        // ── Inbound call ───────────────────────────────────────────────
         onCallCreated: (event: SSECallEvent) => {
             if (!event.direction || event.direction !== 'inbound') return;
             const from = event.from_number || 'Unknown';
             const tag = `sse-call-${event.call_sid}`;
 
-            showNotification('Incoming call', `Call from ${from}`, '/pulse', tag);
+            if (isDuplicate(tag)) return;
+
+            showOSNotification('Incoming call', `Call from ${from}`, '/pulse', tag);
+
+            toast('📞 Incoming call', {
+                description: `Call from ${from}`,
+                duration: 8000,
+                action: {
+                    label: 'View',
+                    onClick: () => navigate('/pulse'),
+                },
+            });
         },
     });
 
-    return null; // Renderless component
+    return null;
 }
