@@ -33,6 +33,7 @@ import UserGroupsPage from './pages/telephony/UserGroupsPage';
 
 import TelephonyLayout from './components/telephony/TelephonyLayout';
 import { EventNotification } from './components/EventNotification';
+import NotificationReminderBanner from './components/NotificationReminderBanner';
 import { Toaster } from './components/ui/sonner';
 import './App.css';
 
@@ -107,8 +108,9 @@ function App() {
                   <PhoneCallsSettingsPage />
                 </ProtectedRoute>
               } />
-              <Route path="/settings/action-required" element={
-                <ProtectedRoute roles={['company_admin']}>
+              <Route path="/settings/action-required" element={<Navigate to="/settings/actions-notifications" replace />} />
+              <Route path="/settings/actions-notifications" element={
+                <ProtectedRoute roles={['company_admin', 'company_member']}>
                   <ActionRequiredSettingsPage />
                 </ProtectedRoute>
               } />
@@ -145,6 +147,7 @@ function App() {
             </Routes>
           </AppLayout>
           <EventNotification />
+          <NotificationReminderBanner />
           <Toaster />
         </BrowserRouter>
       </QueryClientProvider>

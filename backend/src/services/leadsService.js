@@ -541,6 +541,31 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
     const lead = rowToLead(leadRows[0]);
     const leadRow = leadRows[0];
 
+    // 1a. Ensure contact exists — create one if lead has no contact_id
+    let contactId = leadRow.contact_id || null;
+    if (!contactId) {
+        const contactDedupeService = require('./contactDedupeService');
+        const phone = overrides.customer?.phone || leadRow.phone;
+        if (phone) {
+            try {
+                const resolved = await contactDedupeService.resolveContact({
+                    first_name: leadRow.first_name || null,
+                    last_name: leadRow.last_name || null,
+                    phone,
+                    email: overrides.customer?.email || leadRow.email || null,
+                }, leadRow.company_id);
+                if (resolved.contact_id) {
+                    contactId = resolved.contact_id;
+                    // Link contact back to the lead
+                    await db.query('UPDATE leads SET contact_id = $1 WHERE id = $2', [contactId, leadRow.id]);
+                    console.log(`[ConvertLead] ${resolved.status === 'created' ? 'Created' : 'Found'} contact ${contactId} for lead ${leadRow.id}`);
+                }
+            } catch (err) {
+                console.error('[ConvertLead] Contact resolve error (non-blocking):', err.message);
+            }
+        }
+    }
+
     // 2. Create local job row in Blanc
     const serviceName = overrides.service?.name || lead.JobType || 'General Service';
     const address = overrides.address
@@ -559,7 +584,7 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
         RETURNING id
     `, [
         leadRow.id,
-        leadRow.contact_id || null,
+        contactId,
         serviceName,
         address,
         customerName,
@@ -574,6 +599,25 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
     ]);
     const localJobId = jobRow.id;
     console.log(`[ConvertLead] Local job created: ${localJobId}`);
+
+    // 2a. Link contact to timeline (adopt orphan timeline)
+    if (overrides.timeline_id && contactId) {
+        try {
+            await db.query(
+                `UPDATE timelines SET contact_id = $1, phone_e164 = NULL, updated_at = now()
+                 WHERE id = $2 AND contact_id IS NULL`,
+                [contactId, overrides.timeline_id]
+            );
+            // Also link all calls on this timeline to the contact
+            await db.query(
+                `UPDATE calls SET contact_id = $1 WHERE timeline_id = $2 AND contact_id IS NULL`,
+                [contactId, overrides.timeline_id]
+            );
+            console.log(`[ConvertLead] Linked timeline ${overrides.timeline_id} to contact ${contactId}`);
+        } catch (err) {
+            console.error('[ConvertLead] Timeline linking error (non-blocking):', err.message);
+        }
+    }
 
     // 3. Create Zenbooker job (if booking data provided or auto-create)
     let zenbookerJobId = overrides.zenbooker_job_id || null;
@@ -657,7 +701,7 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
             ]);
 
             // Link ZB customer to Blanc contact
-            if (leadRow.contact_id) {
+            if (contactId) {
                 const zbCustomerId = jobDetail?.customer?.id;
                 if (zbCustomerId) {
                     await db.query(
@@ -667,9 +711,9 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
                              zenbooker_sync_status = 'linked',
                              zenbooker_synced_at = NOW()
                          WHERE id = $2`,
-                        [zbCustomerId, leadRow.contact_id]
+                        [zbCustomerId, contactId]
                     );
-                    console.log(`[ConvertLead] Linked contact ${leadRow.contact_id} to ZB customer ${zbCustomerId}`);
+                    console.log(`[ConvertLead] Linked contact ${contactId} to ZB customer ${zbCustomerId}`);
                 }
             }
         } catch (syncErr) {
@@ -781,7 +825,20 @@ async function getLeadByPhone(phone, companyId = null) {
     `;
 
     const { rows } = await db.query(sql, params);
-    return rows.length > 0 ? rowToLead(rows[0]) : null;
+    if (rows.length === 0) return null;
+
+    // If the lead's contact already has a job, skip the lead so PulsePage
+    // shows the contact panel instead of the stale lead card.
+    const lead = rows[0];
+    if (lead.contact_id) {
+        const { rows: jobRows } = await db.query(
+            `SELECT 1 FROM jobs WHERE contact_id = $1 LIMIT 1`,
+            [lead.contact_id]
+        );
+        if (jobRows.length > 0) return null;
+    }
+
+    return rowToLead(lead);
 }
 
 // =============================================================================

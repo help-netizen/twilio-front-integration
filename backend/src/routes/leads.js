@@ -380,6 +380,25 @@ router.post('/', async (req, res) => {
             }
         }
 
+        // Browser push notification for new lead
+        try {
+            const { sendPushToCompany } = require('../services/pushService');
+            const leadName = [body.FirstName, body.LastName].filter(Boolean).join(' ');
+            const leadType = body.JobType || body.Description || '';
+            const leadCity = body.City || '';
+            const bodyText = leadType && leadCity
+                ? `New lead: ${leadType} in ${leadCity}`
+                : `New lead from ${leadName}`;
+            sendPushToCompany(companyId, 'new_lead', {
+                title: 'New lead',
+                body: bodyText,
+                url: `/leads/${result.ClientId}`,
+                tag: `lead-${result.ClientId}-${Date.now()}`,
+            }).catch(e => console.error(`[LeadsAPI][${reqId}] Push notification error:`, e.message));
+        } catch (pushErr) {
+            console.error(`[LeadsAPI][${reqId}] Push setup error:`, pushErr.message);
+        }
+
         res.status(201).json(successResponse({
             ...result,
             contact_resolution: {

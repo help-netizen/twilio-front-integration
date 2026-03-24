@@ -404,6 +404,32 @@ async function createNewContact({ first_name, last_name, phone, email }, company
         }
     } catch (e) { /* zenbookerSyncService not available */ }
 
+    // Auto-adopt orphan timelines matching this contact's phone
+    const phoneE164 = toE164(phone);
+    if (phoneE164) {
+        try {
+            const phoneDigits = phoneE164.replace(/\D/g, '');
+            const adopted = await db.query(
+                `UPDATE timelines SET contact_id = $1, phone_e164 = NULL, updated_at = now()
+                 WHERE contact_id IS NULL
+                   AND regexp_replace(phone_e164, '\\D', '', 'g') = $2`,
+                [contactId, phoneDigits]
+            );
+            if (adopted.rowCount > 0) {
+                // Also link calls on adopted timelines
+                await db.query(
+                    `UPDATE calls SET contact_id = $1
+                     WHERE timeline_id IN (SELECT id FROM timelines WHERE contact_id = $1)
+                       AND contact_id IS NULL`,
+                    [contactId]
+                );
+                console.log(`[ContactDedupe] Adopted ${adopted.rowCount} orphan timeline(s) for new contact ${contactId} (${phoneE164})`);
+            }
+        } catch (err) {
+            console.error(`[ContactDedupe] Orphan timeline adoption error (non-blocking):`, err.message);
+        }
+    }
+
     return contactId;
 }
 

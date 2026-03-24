@@ -692,6 +692,30 @@ async function findOrCreateTimeline(phoneE164, companyId = null) {
         );
         if (tl.rows[0]) return { ...tl.rows[0], contact_id: contact.id };
 
+        // 2a. No timeline for this contact yet — try to adopt an orphan matching the phone
+        const orphan = await db.query(
+            `SELECT id FROM timelines
+             WHERE contact_id IS NULL
+               AND regexp_replace(phone_e164, '\\D', '', 'g') = $1
+             ORDER BY updated_at DESC NULLS LAST
+             LIMIT 1`,
+            [digits]
+        );
+        if (orphan.rows[0]) {
+            await db.query(
+                `UPDATE timelines SET contact_id = $1, phone_e164 = NULL, updated_at = now() WHERE id = $2`,
+                [contact.id, orphan.rows[0].id]
+            );
+            // Also link calls on the adopted timeline
+            await db.query(
+                `UPDATE calls SET contact_id = $1 WHERE timeline_id = $2 AND contact_id IS NULL`,
+                [contact.id, orphan.rows[0].id]
+            );
+            console.log(`[Timeline] Adopted orphan timeline ${orphan.rows[0].id} for contact ${contact.id}`);
+            tl = await db.query(`SELECT * FROM timelines WHERE id = $1`, [orphan.rows[0].id]);
+            return { ...tl.rows[0], contact_id: contact.id };
+        }
+
         // Create contact timeline (phone_e164 = NULL)
         tl = await db.query(
             `INSERT INTO timelines (contact_id, company_id)

@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '../ui/dropdown-menu';
-import { Phone, PhoneIncoming, MessageSquare, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase } from 'lucide-react';
+import { Phone, PhoneIncoming, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase, Bell } from 'lucide-react';
 
 interface AppNavProps { activeTab: string; pulseUnreadCount: number; hasRole: (r: string) => boolean; logout: () => void; }
 
@@ -14,8 +14,6 @@ export const AppNavTabs: React.FC<AppNavProps> = ({ activeTab, pulseUnreadCount 
             <Tabs value={activeTab} className="w-auto">
                 <TabsList>
                     <TabsTrigger value="pulse" className="flex items-center gap-2" onClick={() => navigate('/pulse')} style={{ position: 'relative' }}><Activity className="size-4" />Pulse{pulseUnreadCount > 0 && <span className="pulse-unread-badge" title={`${pulseUnreadCount} unread`}>{pulseUnreadCount > 9 ? '9+' : pulseUnreadCount}</span>}</TabsTrigger>
-                    <TabsTrigger value="calls" className="flex items-center gap-2" onClick={() => navigate('/calls')}><Phone className="size-4" />Calls</TabsTrigger>
-                    <TabsTrigger value="messages" className="flex items-center gap-2" onClick={() => navigate('/messages')}><MessageSquare className="size-4" />Messages</TabsTrigger>
                     <TabsTrigger value="leads" className="flex items-center gap-2" onClick={() => navigate('/leads')}><Users className="size-4" />Leads</TabsTrigger>
                     <TabsTrigger value="jobs" className="flex items-center gap-2" onClick={() => navigate('/jobs')}><Briefcase className="size-4" />Jobs</TabsTrigger>
                     <TabsTrigger value="contacts" className="flex items-center gap-2" onClick={() => navigate('/contacts')}><Contact2 className="size-4" />Contacts</TabsTrigger>
@@ -40,7 +38,7 @@ export const SettingsMenu: React.FC<{ activeTab: string; hasRole: (r: string) =>
                 <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/providers')}><Wrench className="size-4" />Providers</DropdownMenuItem>
                 <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/telephony')}><PhoneIncoming className="size-4" />Telephony</DropdownMenuItem>
                 <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/phone-calls')}><Phone className="size-4" />Phone Calls</DropdownMenuItem>
-                <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/action-required')}><Activity className="size-4" />Action Required</DropdownMenuItem>
+                <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/actions-notifications')}><Bell className="size-4" />Actions &amp; Notifications</DropdownMenuItem>
                 {hasRole('super_admin') && <><DropdownMenuSeparator /><DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/admin')}><Shield className="size-4" />Super Admin</DropdownMenuItem></>}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem className="flex items-center gap-2 cursor-pointer text-red-600" onClick={logout}><LogOut className="size-4" />Log Out</DropdownMenuItem>

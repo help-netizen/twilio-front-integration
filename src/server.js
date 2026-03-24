@@ -157,6 +157,14 @@ app.use('/api/settings/jobs-list-fields', authenticate, requireCompanyAccess, jo
 const actionRequiredSettingsRouter = require('../backend/src/routes/action-required-settings');
 app.use('/api/settings/action-required', authenticate, requireRole('company_admin'), requireCompanyAccess, actionRequiredSettingsRouter);
 
+// Notification settings (GET = any user; PUT = admin-only, checked inside route)
+const notificationSettingsRouter = require('../backend/src/routes/notification-settings');
+app.use('/api/settings/notifications', authenticate, requireCompanyAccess, notificationSettingsRouter);
+
+// Push subscriptions (any authenticated user manages their own)
+const pushSubscriptionsRouter = require('../backend/src/routes/push-subscriptions');
+app.use('/api/push-subscriptions', authenticate, requireCompanyAccess, pushSubscriptionsRouter);
+
 // User management API (§5, §6)
 app.use('/api/users', authenticate, requireRole('company_admin'), requireCompanyAccess, usersRouter);
 

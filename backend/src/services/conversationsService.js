@@ -386,6 +386,26 @@ async function handleMessageAdded(payload) {
         }
     }
 
+    // Browser push notification for inbound SMS
+    if (isInbound && conv.company_id) {
+        try {
+            const { sendPushToCompany } = require('./pushService');
+            const senderName = await (async () => {
+                const c = await queries.findContactByPhoneOrSecondary(conv.customer_e164);
+                return c?.full_name || conv.customer_e164 || 'Unknown';
+            })();
+            const timeline = await queries.findOrCreateTimeline(conv.customer_e164, conv.company_id);
+            sendPushToCompany(conv.company_id, 'new_text_message', {
+                title: 'New text message',
+                body: `New SMS from ${senderName}`,
+                url: timeline?.id ? `/pulse/timeline/${timeline.id}` : '/pulse',
+                tag: `sms-${conv.id}-${Date.now()}`,
+            }).catch(e => console.error('[ConvService] Push notification error:', e.message));
+        } catch (e) {
+            console.error('[ConvService] Push notification setup error:', e.message);
+        }
+    }
+
     // SSE push
     realtimeService.publishMessageAdded(msg, conv);
     const updatedConv = await convQueries.getConversationById(conv.id);

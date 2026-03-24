@@ -11,7 +11,8 @@ import {
 } from '../components/ui/table';
 import { Badge } from '../components/ui/badge';
 import { Separator } from '../components/ui/separator';
-import { Phone, Headphones, Monitor } from 'lucide-react';
+import { Phone, Headphones, Monitor, MessageSquare, ExternalLink } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 // Types
 interface PhoneNumberSetting {
@@ -88,6 +89,18 @@ export default function PhoneCallsSettingsPage() {
                 <p className="text-muted-foreground text-sm mt-1">
                     Configure call routing for each registered phone number
                 </p>
+                <div className="flex gap-3 mt-3">
+                    <Link to="/calls" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-200">
+                        <Phone className="h-4 w-4" />
+                        View Calls
+                        <ExternalLink className="h-3 w-3 ml-0.5 opacity-50" />
+                    </Link>
+                    <Link to="/messages" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors border border-slate-200">
+                        <MessageSquare className="h-4 w-4" />
+                        View Messages
+                        <ExternalLink className="h-3 w-3 ml-0.5 opacity-50" />
+                    </Link>
+                </div>
             </div>
 
             <Separator className="mb-6" />

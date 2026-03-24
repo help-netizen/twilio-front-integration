@@ -116,7 +116,7 @@ export const PulsePage: React.FC = () => {
                             <PulseContactPanel contact={p.contactDetail.contact} leads={p.contactDetail.leads} loading={false} onAddressesChanged={p.refreshContactDetail} onContactChanged={p.refreshContactDetail} />
                         </div>
                     ) : !p.leadLoading && !p.contact?.id ? (
-                        <div className="flex-1 overflow-y-auto"><CreateLeadJobWizard phone={p.phone} hasActiveCall={p.hasActiveCall} /></div>
+                        <div className="flex-1 overflow-y-auto"><CreateLeadJobWizard phone={p.phone} hasActiveCall={p.hasActiveCall} timelineId={p.timelineId || undefined} onLeadCreated={() => { p.refetchTimeline(); p.refetchContacts(); }} /></div>
                     ) : null
                 ) : null}
             </div>

@@ -21,10 +21,11 @@ import './CreateLeadJobWizard.css';
 interface CreateLeadJobWizardProps {
     phone: string;
     hasActiveCall?: boolean;
+    timelineId?: number;
     onLeadCreated?: () => void;
 }
 
-export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: CreateLeadJobWizardProps) {
+export function CreateLeadJobWizard({ phone, hasActiveCall, timelineId, onLeadCreated }: CreateLeadJobWizardProps) {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const [step, setStep] = useState<Step>(1);
@@ -161,6 +162,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, onLeadCreated }: Cre
                     zb_job_payload: zbJobPayload, service: { name: jobType || 'General Service' },
                     customer: { name: [firstName, lastName].filter(Boolean).join(' ') || 'Unknown', phone: toE164(phoneNumber), email: email || undefined },
                     address: { line1: streetAddress, line2: unit, city, state, postal_code: postalCode },
+                    ...(timelineId ? { timeline_id: timelineId } : {}),
                 });
                 const jobId = result.data?.job_id;
 

@@ -2,7 +2,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { authedFetch } from '../services/apiClient';
 import { Separator } from '../components/ui/separator';
-import { AlertTriangle, MessageSquare, PhoneOff, Voicemail } from 'lucide-react';
+import { MessageSquare, PhoneOff, Voicemail, Bell } from 'lucide-react';
+import NotificationsSection from './NotificationsSection';
 
 // Types
 interface TriggerConfig {
@@ -172,10 +173,15 @@ export default function ActionRequiredSettingsPage() {
     return (
         <div className="max-w-2xl mx-auto p-6">
             <div className="flex items-center gap-3 mb-1">
-                <AlertTriangle className="size-6 text-orange-500" />
-                <h1 className="text-2xl font-semibold">Action Required</h1>
+                <Bell className="size-6 text-orange-500" />
+                <h1 className="text-2xl font-semibold">Actions and Notifications</h1>
             </div>
             <p className="text-sm text-gray-500 mb-6">
+                Manage action triggers and browser push notification settings.
+            </p>
+
+            <h2 className="text-lg font-semibold text-gray-800 mb-1">Actions</h2>
+            <p className="text-xs text-gray-500 mb-3">
                 Configure when threads are automatically flagged as "Action Required" and tasks are created.
             </p>
 
@@ -213,6 +219,14 @@ export default function ActionRequiredSettingsPage() {
             {saveMutation.isPending && (
                 <p className="text-xs text-gray-400 mt-4">Saving…</p>
             )}
+
+            <Separator className="my-8" />
+
+            <h2 className="text-lg font-semibold text-gray-800 mb-1">Notifications</h2>
+            <p className="text-xs text-gray-500 mb-4">
+                Browser push notifications for real-time alerts.
+            </p>
+            <NotificationsSection />
         </div>
     );
 }
