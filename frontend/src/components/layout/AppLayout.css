@@ -203,3 +203,32 @@
   background: rgba(239, 68, 68, 0.3);
   color: #fca5a5;
 }
+
+/* ── Queue badge (pending calls while busy) ── */
+.softphone-queue-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 4px;
+}
+
+.softphone-queue-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f59e0b;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.3);
+  animation: queue-dot-pulse 1.8s ease-in-out infinite;
+}
+
+.softphone-queue-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: #fbbf24;
+  line-height: 1;
+}
+
+@keyframes queue-dot-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.3); }
+  50%      { opacity: 0.6; box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.15); }
+}

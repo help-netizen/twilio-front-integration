@@ -18,15 +18,35 @@ interface Props {
     incomingCallerName?: string | null;
 }
 
+/**
+ * Pending-calls queue badge (pulsing dot + count).
+ * Shown when there are calls waiting in the tenant queue while the
+ * dispatcher is busy on another call.
+ */
+function QueueBadge({ count }: { count: number }) {
+    if (count <= 0) return null;
+    return (
+        <span className="softphone-queue-badge" title={`${count} call${count > 1 ? 's' : ''} waiting`}>
+            <span className="softphone-queue-dot" />
+            {count > 1 && <span className="softphone-queue-count">{count}</span>}
+        </span>
+    );
+}
+
 export function SoftPhoneHeaderButton({ voice, softPhoneOpen, softPhoneMinimized, onOpenOrRestore, onAcceptIncoming, incomingCallerName }: Props) {
     const { activeCallContact } = useSoftPhone();
-    const { callState, callDuration, isMuted, toggleMute } = voice;
+    const { callState, callDuration, isMuted, toggleMute, pendingCount } = voice;
 
     const isInCall = ['connecting', 'ringing', 'connected', 'incoming'].includes(callState);
     const showCallState = isInCall || callState === 'ended' || callState === 'failed';
 
     if (softPhoneOpen && !softPhoneMinimized) {
-        return <button onClick={onOpenOrRestore} className="softphone-header-btn" title="SoftPhone is open"><Phone size={15} /><span>SoftPhone</span></button>;
+        return (
+            <button onClick={onOpenOrRestore} className="softphone-header-btn" title="SoftPhone is open">
+                <Phone size={15} /><span>SoftPhone</span>
+                <QueueBadge count={pendingCount} />
+            </button>
+        );
     }
 
     if (showCallState) {
@@ -44,9 +64,15 @@ export function SoftPhoneHeaderButton({ voice, softPhoneOpen, softPhoneMinimized
                 {activeCallContact && <span className="softphone-header-contact">{activeCallContact}</span>}
                 <span className="softphone-header-status">{statusLabel}</span>
                 {isInCall && <span className={`softphone-header-mute ${isMuted ? 'muted' : ''}`} onClick={(e) => { e.stopPropagation(); toggleMute(); }} title={isMuted ? 'Unmute' : 'Mute'}>{isMuted ? <MicOff size={13} /> : <Mic size={13} />}</span>}
+                <QueueBadge count={pendingCount} />
             </button>
         );
     }
 
-    return <button onClick={onOpenOrRestore} className="softphone-header-btn" title="Open SoftPhone"><Phone size={15} /><span>SoftPhone</span></button>;
+    return (
+        <button onClick={onOpenOrRestore} className="softphone-header-btn" title="Open SoftPhone">
+            <Phone size={15} /><span>SoftPhone</span>
+            <QueueBadge count={pendingCount} />
+        </button>
+    );
 }

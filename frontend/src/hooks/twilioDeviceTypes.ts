@@ -19,4 +19,6 @@ export interface UseTwilioDeviceReturn {
     deviceReady: boolean;
     error: string | null;
     phoneAllowed: boolean;
+    /** Number of incoming calls queued while dispatcher is busy */
+    pendingCount: number;
 }
