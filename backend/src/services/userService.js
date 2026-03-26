@@ -123,10 +123,17 @@ async function listUsers(companyId, opts = {}) {
     // Data
     const { rows } = await db.query(
         `SELECT u.id, u.email, u.full_name, u.last_login_at, u.created_at,
-                m.role as membership_role, m.status as membership_status,
+                COALESCE(m.role_key, m.role) as membership_role, m.role_key, m.role as legacy_role, m.status as membership_status,
                 m.company_id,
-                COALESCE(m.phone_calls_allowed, false) as phone_calls_allowed
-         FROM crm_users u ${join} ${where}
+                COALESCE(p.phone_calls_allowed, false) as phone_calls_allowed,
+                COALESCE(p.is_provider, false) as is_provider,
+                p.schedule_color,
+                COALESCE(p.call_masking_enabled, false) as call_masking_enabled,
+                COALESCE(p.location_tracking_enabled, false) as location_tracking_enabled
+         FROM crm_users u 
+         ${join}
+         LEFT JOIN company_user_profiles p ON p.membership_id = m.id
+         ${where}
          ORDER BY u.created_at DESC
          LIMIT $${i++} OFFSET $${i++}`,
         [...params, limit, offset]
@@ -158,29 +165,69 @@ async function enableUser(userId, companyId) {
 
 /**
  * Create a user with company membership.
- * @param {{ email: string, fullName: string, keycloakSub: string, companyId: string, role: string }} data
+ * @param {{ email: string, fullName: string, keycloakSub: string, companyId: string, role: string, role_key?: string, profile?: any }} data
  */
 async function createUserWithMembership(data) {
     const client = await db.pool.connect();
     try {
         await client.query('BEGIN');
 
-        const { rows: userRows } = await client.query(
-            `INSERT INTO crm_users (keycloak_sub, email, full_name, role, company_id, status)
-             VALUES ($1, $2, $3, $4, $5, 'active')
-             RETURNING *`,
-            [data.keycloakSub, data.email, data.fullName, data.role, data.companyId]
+        let userId;
+        const { rows: existingRows } = await client.query(
+            `SELECT id FROM crm_users WHERE keycloak_sub = $1 OR email = $2`,
+            [data.keycloakSub, data.email]
         );
-        const user = userRows[0];
+        
+        if (existingRows.length > 0) {
+            userId = existingRows[0].id;
+        } else {
+            const { rows: userRows } = await client.query(
+                `INSERT INTO crm_users (keycloak_sub, email, full_name, role, company_id, status)
+                 VALUES ($1, $2, $3, $4, $5, 'active')
+                 RETURNING id`,
+                [data.keycloakSub, data.email, data.fullName, data.role, data.companyId]
+            );
+            userId = userRows[0].id;
+        }
 
+        const roleKey = data.role_key || (data.role === 'company_admin' ? 'tenant_admin' : 'dispatcher');
+
+        const { rows: memRows } = await client.query(
+            `INSERT INTO company_memberships (user_id, company_id, role, role_key, is_primary)
+             VALUES ($1, $2, $3, $4, true)
+             ON CONFLICT (user_id, company_id) DO UPDATE SET 
+                role = EXCLUDED.role,
+                role_key = EXCLUDED.role_key,
+                status = 'active'
+             RETURNING id`,
+            [userId, data.companyId, data.role, roleKey]
+        );
+        const membershipId = memRows[0].id;
+
+        const p = data.profile || {};
         await client.query(
-            `INSERT INTO company_memberships (user_id, company_id, role)
-             VALUES ($1, $2, $3)`,
-            [user.id, data.companyId, data.role]
+            `INSERT INTO company_user_profiles (
+                membership_id, phone_calls_allowed, is_provider, schedule_color, call_masking_enabled, location_tracking_enabled
+             ) VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (membership_id) DO UPDATE SET
+                phone_calls_allowed = EXCLUDED.phone_calls_allowed,
+                is_provider = EXCLUDED.is_provider,
+                schedule_color = EXCLUDED.schedule_color,
+                call_masking_enabled = EXCLUDED.call_masking_enabled,
+                location_tracking_enabled = EXCLUDED.location_tracking_enabled,
+                updated_at = NOW()`,
+             [
+                 membershipId, 
+                 p.phone_calls_allowed || false, 
+                 p.is_provider || false, 
+                 p.schedule_color || '#3B82F6', 
+                 p.call_masking_enabled || false, 
+                 p.location_tracking_enabled || false
+             ]
         );
 
         await client.query('COMMIT');
-        return user;
+        return { id: userId, email: data.email, full_name: data.fullName, role: data.role, role_key: roleKey };
     } catch (err) {
         await client.query('ROLLBACK');
         throw err;
@@ -190,44 +237,96 @@ async function createUserWithMembership(data) {
 }
 
 /**
- * Change a user's role within a company.
- * Enforces last-admin invariant (delegated to DB trigger).
+ * Update member's role and/or profile. replaces traditional changeUserRole
  */
-async function changeUserRole(userId, companyId, newRole) {
-    const { rows } = await db.query(
-        `UPDATE company_memberships 
-         SET role = $1, updated_at = NOW()
-         WHERE user_id = $2 AND company_id = $3
-         RETURNING *`,
-        [newRole, userId, companyId]
-    );
-    if (rows.length === 0) throw new Error('Membership not found');
+async function updateMembershipAndProfile(userId, companyId, updates) {
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
 
-    // Sync to crm_users.role for convenience
-    await db.query(
-        'UPDATE crm_users SET role = $1, updated_at = NOW() WHERE id = $2',
-        [newRole, userId]
-    );
+        // Update role if changed
+        if (updates.role_key) {
+            const legacyRole = updates.role_key === 'tenant_admin' ? 'company_admin' : 'company_member';
+            
+            const { rows } = await client.query(
+                `UPDATE company_memberships 
+                 SET role = $1, role_key = $2, updated_at = NOW()
+                 WHERE user_id = $3 AND company_id = $4
+                 RETURNING id`,
+                [legacyRole, updates.role_key, userId, companyId]
+            );
+            if (rows.length === 0) throw new Error('Membership not found');
 
-    return rows[0];
+            await client.query(
+                'UPDATE crm_users SET role = $1, updated_at = NOW() WHERE id = $2',
+                [legacyRole, userId]
+            );
+        }
+
+        const { rows: memRows } = await client.query(
+            `SELECT id FROM company_memberships WHERE user_id = $1 AND company_id = $2`,
+            [userId, companyId]
+        );
+        if (memRows.length === 0) throw new Error('Membership not found');
+        const membershipId = memRows[0].id;
+
+        // Update profile
+        if (updates.profile) {
+            const p = updates.profile;
+            const fields = [];
+            const values = [membershipId];
+            let i = 2;
+
+            if (typeof p.phone_calls_allowed === 'boolean') { fields.push(`phone_calls_allowed = $${i++}`); values.push(p.phone_calls_allowed); }
+            if (typeof p.is_provider === 'boolean') { fields.push(`is_provider = $${i++}`); values.push(p.is_provider); }
+            if (p.schedule_color) { fields.push(`schedule_color = $${i++}`); values.push(p.schedule_color); }
+            if (typeof p.call_masking_enabled === 'boolean') { fields.push(`call_masking_enabled = $${i++}`); values.push(p.call_masking_enabled); }
+            if (typeof p.location_tracking_enabled === 'boolean') { fields.push(`location_tracking_enabled = $${i++}`); values.push(p.location_tracking_enabled); }
+
+            if (fields.length > 0) {
+                // Upsert logic for profile
+                await client.query(
+                    `INSERT INTO company_user_profiles (membership_id) VALUES ($1) ON CONFLICT (membership_id) DO NOTHING`,
+                    [membershipId]
+                );
+                await client.query(
+                    `UPDATE company_user_profiles SET ${fields.join(', ')}, updated_at = NOW() WHERE membership_id = $1`,
+                    values
+                );
+            }
+        }
+
+        await client.query('COMMIT');
+        return true;
+    } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+    } finally {
+        client.release();
+    }
 }
 
 /**
- * Disable a user in a company.
+ * Update membership status (active/inactive) with reason.
  */
-async function disableUser(userId, companyId) {
+async function updateMembershipStatus(userId, companyId, status, reason = null) {
     const { rows } = await db.query(
         `UPDATE company_memberships
-         SET status = 'inactive', updated_at = NOW()
-         WHERE user_id = $1 AND company_id = $2
+         SET status = $1, 
+             disabled_at = CASE WHEN $1 = 'inactive' THEN NOW() ELSE NULL END,
+             activated_at = CASE WHEN $1 = 'active' THEN NOW() ELSE activated_at END,
+             disabled_reason = $3,
+             updated_at = NOW()
+         WHERE user_id = $2 AND company_id = $4
          RETURNING *`,
-        [userId, companyId]
+        [status, userId, reason, companyId]
     );
     if (rows.length === 0) throw new Error('Membership not found');
 
+    // Also sync the fallback crm_users status
     await db.query(
-        `UPDATE crm_users SET status = 'inactive', updated_at = NOW() WHERE id = $1`,
-        [userId]
+        `UPDATE crm_users SET status = $1, updated_at = NOW() WHERE id = $2`,
+        [status, userId]
     );
 
     return rows[0];
@@ -250,9 +349,8 @@ module.exports = {
     getUserBySub,
     listUsers,
     createUserWithMembership,
-    changeUserRole,
-    disableUser,
-    enableUser,
+    updateMembershipAndProfile,
+    updateMembershipStatus,
     countCompanyAdmins,
     ROLE_HIERARCHY,
 };

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { authedFetch } from '../services/apiClient';
+import { useLeadFormSettings } from './useLeadFormSettings';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -25,17 +26,17 @@ export function useQuickMessages() {
     const [variableFields, setVariableFields] = useState<{ label: string; group: string }[]>([]);
     const [activeVariablePicker, setActiveVariablePicker] = useState<'add' | 'edit' | null>(null);
 
+    const { customFields: settingsCustomFields } = useLeadFormSettings();
+
     const fetchMessages = useCallback(async () => { try { setLoading(true); const res = await authedFetch(`${API_BASE}/api/quick-messages`); const data = await res.json(); setMessages(data.messages || []); } catch (err) { console.error('Failed to load quick messages:', err); } finally { setLoading(false); } }, []);
     useEffect(() => { fetchMessages(); }, [fetchMessages]);
 
     useEffect(() => {
         const coreFields = [{ label: 'First Name', group: 'Main' }, { label: 'Last Name', group: 'Main' }, { label: 'Phone', group: 'Main' }, { label: 'Email', group: 'Main' }, { label: 'Company', group: 'Main' }, { label: 'Address', group: 'Main' }, { label: 'City', group: 'Main' }, { label: 'State', group: 'Main' }, { label: 'Postal Code', group: 'Main' }, { label: 'Job Type', group: 'Main' }, { label: 'Description', group: 'Main' }];
         const metaFields = [{ label: 'Job Source', group: 'Metadata' }, { label: 'Created Date', group: 'Metadata' }];
-        authedFetch(`${API_BASE}/api/settings/lead-form`).then(r => r.json()).then(data => {
-            if (data.success && Array.isArray(data.customFields)) { const custom = data.customFields.filter((f: any) => !f.is_system).map((f: any) => ({ label: f.display_name, group: 'Metadata' })); setVariableFields([...coreFields, ...metaFields, ...custom]); }
-            else setVariableFields([...coreFields, ...metaFields]);
-        }).catch(() => setVariableFields([...coreFields, ...metaFields]));
-    }, []);
+        const custom = settingsCustomFields.filter(f => !f.is_system).map(f => ({ label: f.display_name, group: 'Metadata' }));
+        setVariableFields([...coreFields, ...metaFields, ...custom]);
+    }, [settingsCustomFields]);
 
     const handleAdd = async () => { if (!newTitle.trim() || !newContent.trim()) return; try { setSaving(true); await authedFetch(`${API_BASE}/api/quick-messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: newTitle.trim(), content: newContent.trim() }) }); setNewTitle(''); setNewContent(''); setShowAddForm(false); await fetchMessages(); } catch (err) { console.error('Failed to add quick message:', err); } finally { setSaving(false); } };
     const startEdit = (msg: QuickMessage) => { setEditingId(msg.id); setEditTitle(msg.title); setEditContent(msg.content); };

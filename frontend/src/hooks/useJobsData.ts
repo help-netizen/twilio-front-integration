@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
-import { authedFetch } from '../services/apiClient';
+import { useLeadFormSettings } from '../hooks/useLeadFormSettings';
 import * as jobsApi from '../services/jobsApi';
 import type { LocalJob, JobsListParams, JobTag } from '../services/jobsApi';
 import {
@@ -42,8 +42,8 @@ export function useJobsData() {
     // Column config
     const [visibleFields, setVisibleFields] = useState<string[]>(DEFAULT_VISIBLE_FIELDS);
 
-    // Custom fields for dynamic metadata columns
-    const [customFields, setCustomFields] = useState<Array<{ api_name: string; display_name: string; is_system: boolean }>>([]);
+    // Custom fields from shared settings hook
+    const { customFields } = useLeadFormSettings();
 
     // ─── Derived data ────────────────────────────────────────────────
 
@@ -102,15 +102,9 @@ export function useJobsData() {
         }
     }, [searchQuery, sortBy, sortOrder, onlyOpen, startDate, endDate, statusFilter, jobTypeFilter, providerFilter, tagFilter]);
 
-    // Load tag catalog + custom fields on mount
+    // Load tag catalog on mount
     useEffect(() => {
         jobsApi.listJobTags().then(setAllTags).catch(() => { });
-        authedFetch('/api/settings/lead-form')
-            .then(r => r.json())
-            .then(data => {
-                if (data.success) setCustomFields(data.customFields || []);
-            })
-            .catch(() => { });
     }, []);
 
     // Load column config on mount

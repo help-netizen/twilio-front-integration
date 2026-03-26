@@ -2,7 +2,7 @@ import React from 'react';
 import { TableCell } from '../ui/table';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
-import { formatPhone } from '../../lib/formatPhone';
+import { formatPhoneDisplay as formatPhone } from '../../utils/phoneUtils';
 import { Copy } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';

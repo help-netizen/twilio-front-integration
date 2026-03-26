@@ -3,7 +3,7 @@ import { Calendar, MapPin, User2, Mail, Phone, CalendarClock, Loader2 } from 'lu
 import { toast } from 'sonner';
 import type { LocalJob } from '../../services/jobsApi';
 import { rescheduleJob } from '../../services/jobsApi';
-import { formatPhone } from '../../lib/formatPhone';
+import { formatPhoneDisplay as formatPhone } from '../../utils/phoneUtils';
 import { ClickToCallButton } from '../softphone/ClickToCallButton';
 import { OpenTimelineButton } from '../softphone/OpenTimelineButton';
 import { CustomTimeModal } from '../conversations/CustomTimeModal';

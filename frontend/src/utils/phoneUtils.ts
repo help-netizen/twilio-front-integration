@@ -23,7 +23,7 @@ export function normalizeToE164(input: string): string | null {
 /**
  * Format an E.164 number for display: +16175006181 → (617) 500-6181
  */
-export function formatPhoneDisplay(e164: string): string {
+export function formatPhoneDisplay(e164: string | null | undefined): string {
     if (!e164) return '';
     const digits = e164.replace(/\D/g, '');
     // US number: 1XXXXXXXXXX or XXXXXXXXXX

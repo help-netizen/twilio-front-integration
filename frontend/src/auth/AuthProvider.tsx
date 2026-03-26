@@ -15,6 +15,14 @@ interface AuthContextType {
     user: AuthUser | null;
     token: string | null;
     loading: boolean;
+    
+    // PF007 Extended Profile
+    platformRole?: string;
+    company?: { id: string; name: string; slug: string; status: string; timezone: string } | null;
+    membership?: { id: string; role_key: string; role_name: string; is_primary: boolean; status: string } | null;
+    permissions?: string[];
+    scopes?: Record<string, any>;
+
     hasRole: (...roles: string[]) => boolean;
     logout: () => void;
     accessDeniedMessage: string | null;
@@ -62,13 +70,9 @@ function extractRoles(kc: Keycloak): string[] {
     const parsed = kc.tokenParsed as Record<string, unknown> | undefined;
     if (!parsed) return [];
 
-    // realm_access.roles (standard Keycloak)
-    const realmAccess = parsed.realm_access as { roles?: string[] } | undefined;
-    if (realmAccess?.roles) {
-        realmAccess.roles.forEach(r => roles.add(r));
+    if ((parsed.realm_access as any)?.roles) {
+        (parsed.realm_access as any).roles.forEach((r: string) => roles.add(r));
     }
-
-    // realm_roles (custom mapper)
     if (Array.isArray(parsed.realm_roles)) {
         (parsed.realm_roles as string[]).forEach(r => roles.add(r));
     }
@@ -87,6 +91,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [loading, setLoading] = useState(FEATURE_AUTH);
     const [accessDeniedMessage, setAccessDeniedMessage] = useState<string | null>(null);
 
+    // PF007 Extended Profile state
+    const [platformRole, setPlatformRole] = useState<string>('none');
+    const [company, setCompany] = useState<any>(null);
+    const [membership, setMembership] = useState<any>(null);
+    const [permissions, setPermissions] = useState<string[]>([]);
+    const [scopes, setScopes] = useState<Record<string, any>>({});
+
     // Listen for 401/403 events dispatched by API interceptors
     useEffect(() => {
         let loginPending = false;
@@ -99,7 +110,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const handleAccessDenied = (e: Event) => {
             const detail = (e as CustomEvent).detail;
             setAccessDeniedMessage(detail?.message || 'Access denied');
-            // Auto-clear after 5 seconds
             setTimeout(() => setAccessDeniedMessage(null), 5000);
         };
 
@@ -111,9 +121,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         };
     }, []);
 
+    // Fetch authz context from backend
+    const fetchAuthzContext = async (jwtToken: string) => {
+        try {
+            const res = await fetch('/api/auth/me', {
+                headers: { 'Authorization': `Bearer ${jwtToken}` }
+            });
+            if (res.ok) {
+                const data = await res.json();
+                setPlatformRole(data.user?.platform_role || 'none');
+                setCompany(data.company);
+                setMembership(data.membership);
+                setPermissions(data.permissions || []);
+                setScopes(data.scopes || {});
+            } else {
+                console.warn('[Auth] Failed to load auth context', res.status);
+            }
+        } catch (err) {
+            console.error('[Auth] Error fetching auth context', err);
+        }
+    };
+
     useEffect(() => {
-        if (!FEATURE_AUTH) return;
-        // Guard against double-init (React Strict Mode)
+        if (!FEATURE_AUTH) {
+            // Dev mode mock context
+            setPlatformRole('none');
+            setCompany({ id: '00000000-0000-0000-0000-000000000001', name: 'Boston Masters', slug: 'boston-masters', status: 'active', timezone: 'America/New_York' });
+            setMembership({ id: 'dev-membership', role_key: 'tenant_admin', role_name: 'Tenant Admin', is_primary: true, status: 'active' });
+            setPermissions(['tenant.company.view', 'tenant.users.view', 'jobs.view', 'jobs.create']);
+            setScopes({ job_visibility: 'all', financial_scope: 'full' });
+            return;
+        }
+
         if (kcInitialized) return;
         kcInitialized = true;
 
@@ -124,7 +163,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             checkLoginIframe: false,
             pkceMethod: 'S256',
         })
-            .then((auth) => {
+            .then(async (auth) => {
                 if (auth) {
                     const roles = extractRoles(kc);
                     setUser({
@@ -135,8 +174,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     });
                     setToken(kc.token || null);
                     setAuthenticated(true);
+                    
+                    // PF007: Load full authorization context
+                    if (kc.token) {
+                        await fetchAuthzContext(kc.token);
+                    }
 
-                    // Auto-refresh token before expiry
                     setInterval(() => {
                         kc.updateToken(60).catch(() => {
                             console.warn('[Auth] Token refresh failed, redirecting to login');
@@ -144,10 +187,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                         });
                     }, 30000);
 
-                    // Update token in state when refreshed
                     kc.onTokenExpired = () => {
                         kc.updateToken(60).then(() => {
                             setToken(kc.token || null);
+                            if (kc.token) fetchAuthzContext(kc.token);
                         }).catch(() => kc.login());
                     };
 
@@ -176,16 +219,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const clearAccessDenied = useCallback(() => setAccessDeniedMessage(null), []);
 
-    // Loading screen
     if (loading) {
         return (
             <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                height: '100vh',
-                background: '#0a0a0a',
-                color: '#888',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                height: '100vh', background: '#0a0a0a', color: '#888',
                 fontFamily: 'Inter, system-ui, sans-serif',
             }}>
                 <div style={{ textAlign: 'center' }}>
@@ -197,19 +235,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     return (
-        <AuthContext.Provider value={{ authenticated, user, token, loading, hasRole, logout, accessDeniedMessage, clearAccessDenied }}>
+        <AuthContext.Provider value={{ 
+            authenticated, user, token, loading, 
+            platformRole, company, membership, permissions, scopes,
+            hasRole, logout, accessDeniedMessage, clearAccessDenied 
+        }}>
             {children}
         </AuthContext.Provider>
     );
 }
 
-// ─── Hook ─────────────────────────────────────────────────────────────────────
-
 export function useAuth(): AuthContextType {
     return useContext(AuthContext);
 }
-
-// ─── Fetch helper that injects auth token ────────────────────────────────────
 
 export function getAuthHeaders(): Record<string, string> {
     const kc = FEATURE_AUTH ? getKeycloak() : null;
@@ -219,9 +257,6 @@ export function getAuthHeaders(): Record<string, string> {
     return {};
 }
 
-/**
- * Get raw JWT token string (for EventSource URL query params, etc.)
- */
 export function getAuthToken(): string | null {
     const kc = FEATURE_AUTH ? getKeycloak() : null;
     return kc?.token || null;

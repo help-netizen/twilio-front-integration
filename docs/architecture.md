@@ -2,128 +2,175 @@
 
 ## Обзор
 
-Blanc Contact Center — интеграционный сервер и CRM-интерфейс для управления клиентскими коммуникациями (звонки, SMS), лидами и заказами.
+Blanc Contact Center уже не является одним integration server. Фактически это hybrid-система из:
 
+- `src/` — runtime shell и legacy adapter layer
+- `backend/src/` — основной backend приложения
+- `frontend/src/` — основной React frontend
+- `voice-agent/` — отдельный конфигурационный и runtime контур AI/voice flows
+
+```text
+[Twilio / Front / Zenbooker / Google / Gemini / Vapi]
+                     ↕
+          [src/server.js runtime shell]
+             ↕ auth / routing / SSE / static
+      [backend/src application modules] ↔ [PostgreSQL]
+             ↕
+       [backend/src/services/realtimeService]
+             ↕
+        [frontend/src React application]
 ```
-[Twilio API] ←→ [Backend (Express)] ←→ [Frontend (React)]
-[Front API]  ←→      ↕                       ↕
-[Zenbooker]  ←→ [PostgreSQL]           [Twilio Device SDK]
-                      ↕
-                 [SSE Events]
-```
+
+## Фактическая структура проекта
+
+### Runtime и composition root
+
+- `src/server.js` — фактический composition root.
+- В одном месте совмещает route wiring, auth/tenant middleware, media proxy, static serving, SSE endpoint и запуск worker.
+- `src/routes/*` и `src/services/*` — legacy Twilio/Front integration слой. Он больше не отражает полную CRM-архитектуру и не должен быть местом для новой бизнес-логики.
+
+### Backend
+
+#### HTTP boundary
+
+- `backend/src/routes/calls.js`, `pulse.js`, `messaging.js`, `voice.js`, `webhooks.js` — communications surface.
+- `backend/src/routes/contacts.js`, `leads.js`, `jobs.js` — CRM surface.
+- `backend/src/routes/users.js`, `sessions.js`, `lead-form-settings.js`, `job-tags-settings.js`, `notification-settings.js`, `push-subscriptions.js` — settings/admin surface.
+- `backend/src/routes/userGroups.js`, `callFlows.js`, `phoneNumbers.js`, `telephonyOverview.js`, `vapi.js` — telephony admin surface.
+
+#### Application services
+
+- `backend/src/services/leadsService.js`, `jobsService.js`, `contactsService.js` — основной CRM service layer.
+- `backend/src/services/conversationsService.js`, `contactDedupeService.js`, `timelineMergeService.js`, `stateMachine.js` — communications/domain services.
+- `backend/src/services/voiceService.js`, `zenbookerClient.js`, `zenbookerSyncService.js`, `textPolishService.js` — integration adapters.
+- `backend/src/services/realtimeService.js`, `inboxWorker.js`, `reconcileService.js` — realtime/background processing.
+
+#### Data access
+
+- `backend/src/db/connection.js` — PostgreSQL pool.
+- `backend/src/db/queries.js` — общий query-модуль, который сейчас играет роль god-module и требует декомпозиции по feature slices.
+- `backend/db/` — schema и migrations. Это protected зона, менять только отдельными задачами.
+
+### Frontend
+
+- `frontend/src/App.tsx` — route map приложения.
+- `frontend/src/pages/` — page composition.
+- `frontend/src/components/` — feature/UI components.
+- `frontend/src/hooks/` — feature state и realtime hooks.
+- `frontend/src/services/` — frontend API layer.
+- `frontend/src/auth/` — auth/session boundary.
+- `frontend/src/components/ui/` — shared UI primitives.
+
+### Supporting runtimes
+
+- `voice-agent/` — конфигурации Twilio/Vapi routing и отдельные runtime handlers для voice-agent сценариев.
+
+## Canonical boundaries
+
+### Нужно расширять, а не дублировать
+
+- `frontend/src/services/apiClient.ts` — canonical auth wrapper.
+- `frontend/src/hooks/useRealtimeEvents.ts` — canonical realtime hook.
+- `backend/src/services/realtimeService.js` — single source of truth для SSE broadcast.
+- `backend/src/utils/phoneUtils.js` — canonical backend E.164 normalisation.
+- `backend/src/services/voiceService.js`, `zenbookerClient.js`, `zenbookerSyncService.js`, `textPolishService.js` — integration adapters.
+
+### Legacy boundary
+
+- `src/services/frontAPI.js`, `src/services/jwtService.js`, `src/services/callFormatter.js` и `src/routes/*` — legacy adapter layer.
+- Этот слой надо удерживать как адаптер к старым Twilio/Front сценариям, а не расширять CRM-логикой.
+
+## Архитектурные seams и риски
+
+### 1. Runtime tight coupling
+
+- HTTP runtime, SSE и background worker запускаются из одного `src/server.js`.
+- Это упрощает локальный запуск, но усиливает связанность и мешает scale-out worker/runtime path.
+
+### 2. Boundary drift: route -> service -> db
+
+- В части backend routes orchestration и SQL находятся прямо в route-слое.
+- Одновременно часть логики уже живет в services.
+- Результат: нет единообразной схемы вызова и трудно выделять безопасные refactor slices.
+
+### 3. Feature overlap в communications domain
+
+- Pulse, calls, conversations, messaging и action-required логика распределены между несколькими routes и services.
+- Это самый рискованный домен для регрессий.
 
 ---
 
-## Backend
+## PF102 Sprint 3: Tenant Team Management Architecture
 
-### Основной сервер (`src/server.js`)
-- Express 5, CommonJS
-- SSE infrastructure для real-time событий
-- Middleware: CORS, JSON parsing, rate limiting, auth
-- **PROTECTED — менять core middleware только с отдельной задачей**
+В рамках перехода на полноценный Multi-Tenant RBAC (PF012), сервис управления пользователями компании (`backend/src/services/userService.js` и роутер `users.js`) перестраивается для поддержки:
+1. Разделения `crm_users` (глобальный identity) и `company_memberships` (локальный доступ).
+2. Замены legacy enum `role` на `role_key`, ссылающийся на `company_role_configs`.
+3. Введения `company_user_profiles` для хранения локальных настроек сотрудника (дозвон, геолокация, цвет в расписании), которые ранее не имели места в схеме БД.
 
-### Routes (`src/routes/`)
-| Route | Файл | Ответственность |
-|---|---|---|
-| `/api/pulse/*` | `pulse.js` | Timeline, contacts list, SMS |
-| `/api/voice/*` | `voice.js` | Twilio Voice, call management |
-| `/api/contacts/*` | `contacts.js` | CRUD контактов |
-| `/api/leads/*` | `leads.js` | CRUD лидов |
-| `/api/jobs/*` | `jobs.js` | CRUD заказов |
-| `/api/settings/*` | `settings.js` | Настройки компании |
-| `/webhooks/*` | `webhooks.js` | Twilio/Front webhooks |
-| `/api/zenbooker/*` | `zenbooker.js` | Zenbooker интеграция |
+**Изменяемые файлы:**
+- `backend/src/routes/users.js` (замена валидации ролей, обработка профилей)
+- `backend/src/services/userService.js` (расширение SQL-запросов для поддержки profiles, invitations)
+- `frontend/src/pages/CompanyUsersPage.tsx` (новый UI для `role_key` и настроек профиля)
+- `frontend/src/pages/CompanyUserDialogs.tsx` (добавление полей Service Areas, Call Masking)
 
-### Services (`src/services/`)
-| Сервис | Ответственность |
-|---|---|
-| `frontAPI.js` | Front Channel API клиент |
-| `jwtService.js` | JWT генерация для Front |
-| `callFormatter.js` | Форматирование Twilio → Front |
+### 4. Frontend transport drift
 
-### Backend extended (`backend/`)
-| Директория | Ответственность |
-|---|---|
-| `backend/src/` | Расширенные сервисы (AI, cron, sync) |
-| `backend/db/` | PostgreSQL модели и миграции |
-| `backend/cron/` | Cron задачи |
-| `backend/scripts/` | Утилитные скрипты |
+- Параллельно используются `authedFetch`, несколько `axios.create()` и raw `fetch`.
+- Error handling, auth policy и shared caching из-за этого не единообразны.
 
-### Database (`backend/db/`)
-- PostgreSQL через `pg`
-- SQLite (`backend/database.sqlite3`) — legacy/dev
-- **PROTECTED — менять schema только с отдельной задачей**
+### 5. Shared config duplication
 
----
+- Один и тот же endpoint `GET /api/settings/lead-form` вызывается из множества компонентов и хуков напрямую.
+- Это признак отсутствия общего query/cache layer для shared settings.
 
-## Frontend
+### 6. UI duplication
 
-### Стек
-- Vite + React + TypeScript
-- Shadcn/ui (Button, Input, Badge, Dialog, DropdownMenu, Skeleton, etc.)
-- Lucide React (иконки)
-- React Router v6
-- React Query (data fetching для Pulse)
-- sonner (toast notifications)
+- Логика аудиоплеера, summary/transcription и части call-item поведения реализованы в нескольких вариантах.
+- Phone formatting и phone normalization размазаны по backend и frontend helper-слоям.
 
-### Pages (`frontend/src/pages/`)
-| Page | URL | Описание |
-|---|---|---|
-| `Pulse/` | `/pulse`, `/pulse/timeline/:id` | Рабочий экран оператора |
-| `Contacts/` | `/contacts`, `/contacts/:id` | Список контактов |
-| `Leads/` | `/leads`, `/leads/:id` | Управление лидами |
-| `Jobs/` | `/jobs` | Управление заказами |
+### 7. Test surface gap
 
-### Ключевые компоненты (`frontend/src/components/`)
-| Компонент | Ответственность |
-|---|---|
-| `SoftPhone/` | VoIP телефон (Twilio Device SDK) |
-| `Pulse/` | Timeline, SMS, Call items |
-| `Contacts/` | Contact list, detail panel |
-| `Leads/` | Lead table, detail panel, create dialog |
-| `Jobs/` | Jobs table, detail panel |
-| `ui/` | Shadcn/ui компоненты |
+- Root Jest покрывает только backend/legacy paths.
+- Во `frontend/src` нет automated tests.
+- Для безопасного рефакторинга этого недостаточно.
 
-### Hooks (`frontend/src/hooks/`)
-| Hook | Ответственность |
-|---|---|
-| `useRealtimeEvents.ts` | SSE подписки (**PROTECTED**) |
-| `usePulseContacts.ts` | React Query для Pulse |
-| `useJobsActions.ts` | Действия с заказами |
+## Направления рефакторинга
 
-### Lib (`frontend/src/lib/`)
-| Модуль | Ответственность |
-|---|---|
-| `authedFetch.ts` | Auth wrapper для fetch (**PROTECTED**) |
-| `utils.ts` | Общие утилиты |
+### Приоритет 1. Зафиксировать фактическую архитектурную карту
 
----
+- Сначала синхронизировать `requirements.md`, `architecture.md`, `project-spec.md`, `README.md` с реальным кодом.
+- Все следующие задачи должны опираться на эту карту, а не на legacy-описания.
 
-## Интеграции
+### Приоритет 2. Разрезать communications domain по feature boundaries
 
-### Twilio
-- **Voice SDK:** исходящие/входящие звонки, запись, транскрипция
-- **SMS/Conversations API:** отправка/получение SMS, MMS
-- **Webhooks:** status callbacks, incoming calls
+- Выделить явные slices: `Pulse / timeline`, `calls / media / transcripts`, `messaging`, `action required / tasks`
 
-### Front
-- **Channel API:** синхронизация звонков и SMS как сообщений
-- **JWT Auth:** генерация JWT для API вызовов
+### Приоритет 3. Нормализовать backend flow
 
-### Zenbooker
-- **Booking API:** создание, обновление, отмена заказов
-- **Contacts API:** синхронизация контактов
-- **Webhooks:** обновления статусов заказов
+- Целевая схема: `route -> application service -> repository/query module -> integration adapter`
 
-### Google Places
-- Geocoding и автодополнение адресов
+### Приоритет 4. Нормализовать frontend flow
 
----
+- Целевая схема: `page/component -> hook -> domain API service -> apiClient`
 
-## Деплой
+### Приоритет 5. Убрать shared duplication
 
-- **Platform:** Fly.io
-- **Container:** Docker (`Dockerfile`)
-- **Config:** `fly.toml`
-- **Environments:** `.env.development`, `.env.production`
-- **Scripts:** `scripts/dev-start.sh`, `scripts/prod-deploy.sh`
+- Один transport layer.
+- Один shared settings source.
+- Один набор phone-formatting и phone-normalization contracts.
+- Один shared audio/transcription component family.
+
+## Protected areas
+
+- `src/server.js` core middleware и runtime wiring.
+- `frontend/src/services/apiClient.ts`.
+- `frontend/src/hooks/useRealtimeEvents.ts`.
+- `backend/db/` schema и migrations.
+- Любые файлы, помеченные как `PROTECTED`.
+
+## Refactor policy
+
+- Никакого big-bang rewrite.
+- Каждый refactor slice должен быть поведенчески нейтральным.
+- Любое изменение protected zones — только отдельной задачей.
+- Новые helper-функции для auth, phones, realtime и timeline state запрещены, если уже есть canonical реализация.

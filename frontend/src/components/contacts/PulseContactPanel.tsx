@@ -12,7 +12,7 @@ import { Switch } from '../ui/switch';
 import { Label } from '../ui/label';
 import { Separator } from '../ui/separator';
 import { Skeleton } from '../ui/skeleton';
-import { formatPhone } from '../../lib/formatPhone';
+import { formatPhoneDisplay as formatPhone } from '../../utils/phoneUtils';
 import * as contactsApi from '../../services/contactsApi';
 import { EditContactDialog } from './EditContactDialog';
 import { ClickToCallButton } from '../softphone/ClickToCallButton';

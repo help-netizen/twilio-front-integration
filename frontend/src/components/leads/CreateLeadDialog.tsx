@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { authedFetch } from '../../services/apiClient';
+import { useLeadFormSettings } from '../../hooks/useLeadFormSettings';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -19,16 +19,15 @@ interface CreateLeadDialogProps {
     onSuccess: (lead: Lead) => void;
 }
 
-interface CustomFieldDef { id: string; display_name: string; api_name: string; field_type: string; is_system: boolean; sort_order: number; }
 
-const DEFAULT_JOB_TYPES = ['COD Service', 'COD Repair', 'Warranty', 'INS Service', 'INS Repair'];
 const JOB_SOURCES = ['eLocals', 'ServiceDirect', 'Inquirly', 'Rely', 'LHG', 'NSA', 'Other'];
 
 export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDialogProps) {
     const [loading, setLoading] = useState(false);
     const [showSecondary, setShowSecondary] = useState(false);
-    const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
-    const [jobTypes, setJobTypes] = useState<string[]>(DEFAULT_JOB_TYPES);
+    const { customFields: allFields, jobTypes: dynamicJobTypes } = useLeadFormSettings(open);
+    const customFields = allFields.filter(f => !f.is_system);
+    const jobTypes = dynamicJobTypes.length > 0 ? dynamicJobTypes : ['COD Service', 'COD Repair', 'Warranty', 'INS Service', 'INS Repair'];
     const [formData, setFormData] = useState<CreateLeadInput>({
         FirstName: '', LastName: '', Phone: '', Email: '', Company: '',
         Address: '', City: '', State: 'MA', PostalCode: '',
@@ -45,15 +44,7 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
         setShowSecondary, setContactSnapshot,
     });
 
-    useEffect(() => {
-        if (!open) return;
-        authedFetch('/api/settings/lead-form').then(r => r.json()).then(data => {
-            if (data.success) {
-                setCustomFields(data.customFields.filter((f: CustomFieldDef) => !f.is_system));
-                if (data.jobTypes?.length > 0) setJobTypes(data.jobTypes.map((jt: { name: string }) => jt.name));
-            }
-        }).catch(() => { });
-    }, [open]);
+
 
     useEffect(() => {
         if (!open) {

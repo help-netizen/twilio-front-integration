@@ -23,7 +23,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
     const location = useLocation();
     const navigate = useNavigate();
     const activeTab = getActiveTab(location.pathname);
-    const { accessDeniedMessage, clearAccessDenied, logout, hasRole } = useAuth();
+    const { accessDeniedMessage, clearAccessDenied, logout, hasRole, company } = useAuth();
 
     const voice = useTwilioDevice();
     const [softPhoneOpen, setSoftPhoneOpen] = useState(false);
@@ -44,11 +44,19 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
     useEffect(() => { if (!voice.incomingCall) { setIncomingCallerName(null); return; } const p = voice.callerInfo?.number; if (!p) return; authedFetch(`/api/pulse/timeline-by-phone?phone=${encodeURIComponent(p)}`).then(r => r.json()).then(d => { if (d.contactName) setIncomingCallerName(d.contactName); }).catch(() => { }); }, [voice.incomingCall, voice.callerInfo?.number]);
 
     const [pulseUnreadCount, setPulseUnreadCount] = useState(0);
-    const fetchUnreadCount = useCallback(async () => { try { const res = await authedFetch('/api/pulse/unread-count'); const data = await res.json(); setPulseUnreadCount(data.count || 0); } catch { } }, []);
+    const fetchUnreadCount = useCallback(async () => { 
+        if (!company) return;
+        try { 
+            const res = await authedFetch('/api/pulse/unread-count'); 
+            const data = await res.json(); 
+            setPulseUnreadCount(data.count || 0); 
+        } catch { } 
+    }, [company]);
     useEffect(() => { fetchUnreadCount(); }, [fetchUnreadCount, location.pathname]);
     useRealtimeEvents({ onCallCreated: () => fetchUnreadCount(), onCallUpdate: () => fetchUnreadCount(), onMessageAdded: () => fetchUnreadCount(), onContactRead: () => fetchUnreadCount() });
 
     const handleRefresh = async () => {
+        if (!company) return;
         setIsRefreshing(true);
         try { const r = await authedFetch('/api/sync/today', { method: 'POST', headers: { 'Content-Type': 'application/json' } }); const d = await r.json(); if (d.success) { await queryClient.invalidateQueries({ queryKey: ['calls-by-contact'] }); await queryClient.invalidateQueries({ queryKey: ['contact-calls'] }); alert(`✅ Synced ${d.synced} new calls from last 3 days (${d.total} total found)`); } else alert(`❌ Sync failed: ${d.error}`); }
         catch (error) { console.error('Refresh failed:', error); alert('❌ Failed to refresh calls.'); } finally { setIsRefreshing(false); }

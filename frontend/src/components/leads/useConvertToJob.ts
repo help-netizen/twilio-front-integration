@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import type { Lead } from '../../types/lead';
 import * as leadsApi from '../../services/leadsApi';
-import { authedFetch } from '../../services/apiClient';
+import { useLeadFormSettings } from '../../hooks/useLeadFormSettings';
 import type { Timeslot, TimeslotDay } from '../../services/zenbookerApi';
 import * as zenbookerApi from '../../services/zenbookerApi';
 import { type AddressFields, EMPTY_ADDRESS } from '../AddressAutocomplete';
@@ -11,7 +11,7 @@ import { useZipCheck } from '../../hooks/useZipCheck';
 
 export type Step = 1 | 2 | 3 | 4;
 
-export interface CustomFieldDef { id: string; display_name: string; api_name: string; field_type: string; is_system: boolean; sort_order: number; }
+export type { CustomFieldDef } from '../../hooks/useLeadFormSettings';
 
 export const STEP_TITLES: Record<Step, string> = { 1: 'Customer & Address', 2: 'Service', 3: 'Available Timeslots', 4: 'Review & Confirm' };
 
@@ -37,10 +37,7 @@ export function useConvertToJob(lead: Lead, open: boolean, onSuccess: (lead: Lea
     const [selectedTimeslot, setSelectedTimeslot] = useState<Timeslot | null>(null);
     const [timeslotsLoading, setTimeslotsLoading] = useState(false);
     const [timeslotsError, setTimeslotsError] = useState('');
-    const [jobTypes, setJobTypes] = useState<string[]>([]);
-    const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
-
-    useEffect(() => { if (!open) return; authedFetch('/api/settings/lead-form').then(r => r.json()).then(data => { if (data.success) { if (data.jobTypes?.length) setJobTypes(data.jobTypes.map((jt: { name: string }) => jt.name)); if (data.customFields) setCustomFields(data.customFields.filter((f: CustomFieldDef) => !f.is_system)); } }).catch(() => { }); }, [open]);
+    const { jobTypes, customFields } = useLeadFormSettings(open);
 
     useEffect(() => {
         if (open && lead) {

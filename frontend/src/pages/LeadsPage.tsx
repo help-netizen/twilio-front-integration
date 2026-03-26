@@ -11,7 +11,7 @@ import { ConvertToJobDialog } from '../components/leads/ConvertToJobDialog';
 import { Button } from '../components/ui/button';
 import { Plus, Settings } from 'lucide-react';
 import * as leadsApi from '../services/leadsApi';
-import { authedFetch } from '../services/apiClient';
+import { useLeadFormSettings } from '../hooks/useLeadFormSettings';
 import type { Lead, LeadsListParams, TableColumn } from '../types/lead';
 import { DEFAULT_COLUMNS } from '../types/lead';
 import { createLeadActions } from '../hooks/useLeadsActions';
@@ -34,9 +34,8 @@ export function LeadsPage() {
     const [sourceFilter, setSourceFilter] = useState<string[]>([]);
     const [jobTypeFilter, setJobTypeFilter] = useState<string[]>([]);
     const [hasMore, setHasMore] = useState(false);
-    const [searchableFields, setSearchableFields] = useState<{ api_name: string }[]>([]);
-
-    useEffect(() => { authedFetch('/api/settings/lead-form').then(r => r.json()).then(d => { if (d.success && d.customFields) setSearchableFields(d.customFields.filter((f: any) => f.is_searchable && !f.is_system).map((f: any) => ({ api_name: f.api_name }))); }).catch(() => { }); }, []);
+    const { customFields: allSettingsFields } = useLeadFormSettings();
+    const searchableFields = useMemo(() => allSettingsFields.filter(f => f.is_searchable && !f.is_system).map(f => ({ api_name: f.api_name })), [allSettingsFields]);
 
     const loadLeads = async (newFilters?: LeadsListParams) => {
         setLoading(true);

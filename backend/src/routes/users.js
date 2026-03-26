@@ -25,7 +25,7 @@ const auditService = require('../services/auditService');
  */
 router.post('/', async (req, res) => {
     try {
-        const { email, full_name, role = 'company_member' } = req.body;
+        const { email, full_name, role = 'company_member', role_key, profile } = req.body;
         const companyId = req.user.company_id;
 
         if (!email || !full_name) {
@@ -51,13 +51,15 @@ router.post('/', async (req, res) => {
         // Create in Keycloak (server-side admin token)
         const keycloakSub = await createKeycloakUser(email, full_name, tempPassword, role);
 
-        // Create in CRM DB with membership
+        // Create in CRM DB with membership and profile
         const user = await userService.createUserWithMembership({
             keycloakSub,
             email,
             fullName: full_name,
             companyId,
             role,
+            role_key,
+            profile
         });
 
         // Audit
@@ -123,42 +125,39 @@ router.get('/', async (req, res) => {
 });
 
 /**
- * PUT /:id/role — Change user role
- * 
- * Body: { role }
- * Enforces last-admin invariant (§7) — DB trigger returns LAST_ADMIN_REQUIRED.
+ * PATCH /:id — Update user role and profile
  */
-router.put('/:id/role', async (req, res) => {
+router.patch('/:id', async (req, res) => {
     try {
-        const { role } = req.body;
+        const { role_key, profile } = req.body;
         const userId = req.params.id;
         const companyId = req.user.company_id;
 
-        if (!['company_admin', 'company_member'].includes(role)) {
+        if (role_key && !['tenant_admin', 'manager', 'dispatcher', 'provider'].includes(role_key)) {
             return res.status(422).json({
                 code: 'VALIDATION_ERROR',
-                message: 'role must be company_admin or company_member',
+                message: 'Invalid role_key',
                 trace_id: req.traceId,
             });
         }
 
-        const membership = await userService.changeUserRole(userId, companyId, role);
+        await userService.updateMembershipAndProfile(userId, companyId, { role_key, profile });
 
         await auditService.log({
             actor_id: req.user.crmUser?.id,
             actor_email: req.user.email,
             actor_ip: req.ip,
-            action: 'role_changed',
+            action: 'user_updated',
             target_type: 'user',
             target_id: userId,
             company_id: companyId,
-            details: { new_role: role },
+            details: { role_key, profile_updated: !!profile },
             trace_id: req.traceId,
         });
 
-        res.json({ ok: true, membership });
+        res.json({ ok: true, message: 'User updated successfully' });
     } catch (err) {
-        console.error('[Users] Role change failed:', err.message);
+        console.error('[Users] Update failed:', err.message);
         if (err.message.includes('LAST_ADMIN_REQUIRED')) {
             return res.status(409).json({
                 code: 'LAST_ADMIN_REQUIRED',
@@ -168,149 +167,64 @@ router.put('/:id/role', async (req, res) => {
         }
         res.status(500).json({
             code: 'INTERNAL_ERROR',
-            message: 'Failed to change role',
+            message: 'Failed to update user',
             trace_id: req.traceId,
         });
     }
 });
 
 /**
- * PUT /:id/disable — Disable a user
- * Enforces last-admin invariant (§7).
+ * PATCH /:id/status — Enable or disable user
  */
-router.put('/:id/disable', async (req, res) => {
+router.patch('/:id/status', async (req, res) => {
     try {
         const userId = req.params.id;
         const companyId = req.user.company_id;
+        const { status, reason } = req.body;
 
-        // Check last-admin invariant: if user is company_admin and they're the only one
-        const adminCount = await userService.countCompanyAdmins(companyId);
-        if (adminCount <= 1) {
-            // Check if the target user is actually one of the admins
-            const targetUsers = await userService.listUsers(companyId, { role: 'company_admin', status: 'active' });
-            const isTargetAdmin = targetUsers.users.some(u => u.id === userId);
-            if (isTargetAdmin) {
-                return res.status(409).json({
-                    code: 'LAST_ADMIN_REQUIRED',
-                    message: 'Cannot disable the last company admin',
-                    trace_id: req.traceId,
-                });
+        if (!['active', 'inactive'].includes(status)) {
+            return res.status(422).json({
+                code: 'VALIDATION_ERROR',
+                message: 'status must be active or inactive',
+                trace_id: req.traceId,
+            });
+        }
+
+        if (status === 'inactive') {
+            const adminCount = await userService.countCompanyAdmins(companyId);
+            if (adminCount <= 1) {
+                const targetUsers = await userService.listUsers(companyId, { role: 'company_admin', status: 'active' });
+                const isTargetAdmin = targetUsers.users.some(u => u.id === userId);
+                if (isTargetAdmin) {
+                    return res.status(409).json({
+                        code: 'LAST_ADMIN_REQUIRED',
+                        message: 'Cannot disable the last company admin',
+                        trace_id: req.traceId,
+                    });
+                }
             }
         }
 
-        const membership = await userService.disableUser(userId, companyId);
+        await userService.updateMembershipStatus(userId, companyId, status, reason);
 
         await auditService.log({
             actor_id: req.user.crmUser?.id,
             actor_email: req.user.email,
             actor_ip: req.ip,
-            action: 'user_disabled',
+            action: status === 'active' ? 'user_enabled' : 'user_disabled',
             target_type: 'user',
             target_id: userId,
             company_id: companyId,
+            details: { reason },
             trace_id: req.traceId,
         });
 
-        res.json({ ok: true, message: 'User disabled' });
+        res.json({ ok: true, message: `User ${status}` });
     } catch (err) {
-        console.error('[Users] Disable failed:', err.message);
-        if (err.message.includes('LAST_ADMIN_REQUIRED')) {
-            return res.status(409).json({
-                code: 'LAST_ADMIN_REQUIRED',
-                message: 'Cannot disable the last company admin',
-                trace_id: req.traceId,
-            });
-        }
+        console.error('[Users] Status change failed:', err.message);
         res.status(500).json({
             code: 'INTERNAL_ERROR',
-            message: 'Failed to disable user',
-            trace_id: req.traceId,
-        });
-    }
-});
-
-/**
- * PUT /:id/enable — Enable (re-activate) a user
- */
-router.put('/:id/enable', async (req, res) => {
-    try {
-        const userId = req.params.id;
-        const companyId = req.user.company_id;
-
-        await userService.enableUser(userId, companyId);
-
-        await auditService.log({
-            actor_id: req.user.crmUser?.id,
-            actor_email: req.user.email,
-            actor_ip: req.ip,
-            action: 'user_enabled',
-            target_type: 'user',
-            target_id: userId,
-            company_id: companyId,
-            trace_id: req.traceId,
-        });
-
-        res.json({ ok: true, message: 'User enabled' });
-    } catch (err) {
-        console.error('[Users] Enable failed:', err.message);
-        res.status(500).json({
-            code: 'INTERNAL_ERROR',
-            message: 'Failed to enable user',
-            trace_id: req.traceId,
-        });
-    }
-});
-
-/**
- * PUT /:id/phone-calls — Toggle phone calls access for a user
- * Body: { allowed: boolean }
- */
-router.put('/:id/phone-calls', async (req, res) => {
-    try {
-        const userId = req.params.id;
-        const companyId = req.user.company_id;
-        const { allowed } = req.body;
-
-        if (typeof allowed !== 'boolean') {
-            return res.status(422).json({
-                code: 'VALIDATION_ERROR',
-                message: 'allowed must be a boolean',
-                trace_id: req.traceId,
-            });
-        }
-
-        // Auto-add column if not exists
-        const db = require('../db/connection');
-        await db.query(`
-            DO $$ BEGIN
-                ALTER TABLE company_memberships ADD COLUMN phone_calls_allowed BOOLEAN NOT NULL DEFAULT false;
-            EXCEPTION WHEN duplicate_column THEN NULL;
-            END $$;
-        `);
-
-        await db.query(
-            `UPDATE company_memberships SET phone_calls_allowed = $1 WHERE user_id = $2 AND company_id = $3`,
-            [allowed, userId, companyId]
-        );
-
-        await auditService.log({
-            actor_id: req.user.crmUser?.id,
-            actor_email: req.user.email,
-            actor_ip: req.ip,
-            action: 'phone_calls_toggled',
-            target_type: 'user',
-            target_id: userId,
-            company_id: companyId,
-            details: { phone_calls_allowed: allowed },
-            trace_id: req.traceId,
-        });
-
-        res.json({ ok: true, phone_calls_allowed: allowed });
-    } catch (err) {
-        console.error('[Users] Phone calls toggle failed:', err.message);
-        res.status(500).json({
-            code: 'INTERNAL_ERROR',
-            message: 'Failed to update phone calls access',
+            message: 'Failed to change user status',
             trace_id: req.traceId,
         });
     }

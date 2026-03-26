@@ -55,7 +55,7 @@ describe('keycloakAuth — dev mode (FEATURE_AUTH_ENABLED=false)', () => {
     });
 
     test('authenticate sets dev-mode stub user and calls next()', () => {
-        const req = { headers: {} };
+        const req = { headers: {}, query: {} };
         const res = {};
         const next = jest.fn();
 
@@ -117,7 +117,7 @@ describe('keycloakAuth — auth enabled (FEATURE_AUTH_ENABLED=true)', () => {
     });
 
     test('returns 401 AUTH_REQUIRED when no Authorization header', () => {
-        const req = { headers: {} };
+        const req = { headers: {}, query: {} };
         const next = jest.fn();
 
         authenticate(req, mockRes, next);
@@ -133,7 +133,7 @@ describe('keycloakAuth — auth enabled (FEATURE_AUTH_ENABLED=true)', () => {
     });
 
     test('returns 401 AUTH_REQUIRED when Authorization header is not Bearer', () => {
-        const req = { headers: { authorization: 'Basic dXNlcjpwYXNz' } };
+        const req = { headers: { authorization: 'Basic dXNlcjpwYXNz' }, query: {} };
         const next = jest.fn();
 
         authenticate(req, mockRes, next);
@@ -143,7 +143,7 @@ describe('keycloakAuth — auth enabled (FEATURE_AUTH_ENABLED=true)', () => {
     });
 
     test('returns 401 AUTH_REQUIRED when Authorization header is empty Bearer', () => {
-        const req = { headers: { authorization: 'NotBearer xyz' } };
+        const req = { headers: { authorization: 'NotBearer xyz' }, query: {} };
         const next = jest.fn();
 
         authenticate(req, mockRes, next);
@@ -270,13 +270,14 @@ describe('requireRole', () => {
         expect(next).toHaveBeenCalledTimes(1);
     });
 
-    test('allows access for super_admin regardless of required roles', () => {
+    test('denies access for super_admin on tenant routes (PF007 platform-only)', () => {
         const req = { user: { email: 'super@crm.local', roles: ['super_admin'], is_super_admin: true } };
         const next = jest.fn();
 
         requireRole('company_admin')(req, mockRes, next);
 
-        expect(next).toHaveBeenCalledTimes(1);
+        expect(next).not.toHaveBeenCalled();
+        expect(mockRes.status).toHaveBeenCalledWith(403);
     });
 
     test('denies access when user lacks required role (403)', () => {

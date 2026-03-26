@@ -4,7 +4,7 @@ import { Button } from '../ui/button';
 import { formatUSPhone, toE164 } from '../ui/PhoneInput';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
-import { authedFetch } from '../../services/apiClient';
+import { useLeadFormSettings } from '../../hooks/useLeadFormSettings';
 import * as zenbookerApi from '../../services/zenbookerApi';
 import * as leadsApi from '../../services/leadsApi';
 import type { Timeslot, TimeslotDay } from '../../services/zenbookerApi';
@@ -47,7 +47,8 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, timelineId, onLeadCr
     const [city, setCity] = useState('');
     const [state, setState] = useState('MA');
 
-    const [jobTypes, setJobTypes] = useState<string[]>(DEFAULT_JOB_TYPES);
+    const { jobTypes: dynamicJobTypes } = useLeadFormSettings();
+    const jobTypes = dynamicJobTypes.length > 0 ? dynamicJobTypes : DEFAULT_JOB_TYPES;
     const [jobType, setJobType] = useState('');
     const [description, setDescription] = useState('');
     const [duration, setDuration] = useState('60');
@@ -59,12 +60,6 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, timelineId, onLeadCr
     const [timeslotsLoading, setTimeslotsLoading] = useState(false);
     const [timeslotsError, setTimeslotsError] = useState('');
     const [timeslotSkipped, setTimeslotSkipped] = useState(false);
-
-    useEffect(() => {
-        authedFetch('/api/settings/lead-form').then(r => r.json()).then(data => {
-            if (data.success && data.jobTypes?.length > 0) setJobTypes(data.jobTypes.map((jt: { name: string }) => jt.name));
-        }).catch(() => { });
-    }, []);
 
     useEffect(() => { setSelectedDate(new Date().toISOString().split('T')[0]); }, []);
     useEffect(() => { if (step === 4 && postalCode && !streetAddress) setStreetAddress(postalCode + ' '); }, [step]); // eslint-disable-line react-hooks/exhaustive-deps

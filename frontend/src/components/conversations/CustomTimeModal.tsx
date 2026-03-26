@@ -584,13 +584,37 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                     <div className="ctm-timelines">
                         {/* Tech name bar */}
                         {visibleTechs.length > 0 && (
-                            <div className="ctm-tech-bar">
-                                {visibleTechs.map(tech => (
-                                    <div key={tech.id} className="ctm-tech-bar__item">
-                                        <span className="ctm-tech-bar__dot" style={{ background: TECH_COLORS[tech.colorIndex].bg }} />
-                                        <span className="ctm-tech-bar__name">{tech.name}</span>
+                            <div className="ctm-tech-bar-container">
+                                <div className="ctm-tech-bar-spacer">
+                                    {totalPages > 1 && (
+                                        <button
+                                            className="ctm-tech-bar__arrow"
+                                            onClick={() => setTechPage(p => Math.max(0, p - 1))}
+                                            disabled={techPage === 0}
+                                        >
+                                            <ChevronLeft className="w-4" />
+                                        </button>
+                                    )}
+                                </div>
+                                <div className="ctm-tech-bar">
+                                    {visibleTechs.map(tech => (
+                                        <div key={tech.id} className="ctm-tech-bar__item">
+                                            <span className="ctm-tech-bar__dot" style={{ background: TECH_COLORS[tech.colorIndex].bg }} />
+                                            <span className="ctm-tech-bar__name">{tech.name}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                                {totalPages > 1 && (
+                                    <div className="ctm-tech-bar-spacer ctm-tech-bar-spacer--right">
+                                        <button
+                                            className="ctm-tech-bar__arrow"
+                                            onClick={() => setTechPage(p => Math.min(totalPages - 1, p + 1))}
+                                            disabled={techPage >= totalPages - 1}
+                                        >
+                                            <ChevronRight className="w-4" />
+                                        </button>
                                     </div>
-                                ))}
+                                )}
                             </div>
                         )}
 
@@ -600,17 +624,6 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
 
                         {techGroups.length > 0 && (
                             <div className="ctm-timelines__wrapper">
-                                {/* Left arrow */}
-                                {totalPages > 1 && (
-                                    <button
-                                        className="ctm-timelines__arrow"
-                                        onClick={() => setTechPage(p => Math.max(0, p - 1))}
-                                        disabled={techPage === 0}
-                                    >
-                                        <ChevronLeft className="w-4" />
-                                    </button>
-                                )}
-
                                 {/* Hour labels column + tech columns */}
                                 <div className="ctm-timelines__scroll">
                                     <div className="ctm-timelines__grid-area">
@@ -638,17 +651,6 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                                         </div>
                                     </div>
                                 </div>
-
-                                {/* Right arrow */}
-                                {totalPages > 1 && (
-                                    <button
-                                        className="ctm-timelines__arrow"
-                                        onClick={() => setTechPage(p => Math.min(totalPages - 1, p + 1))}
-                                        disabled={techPage >= totalPages - 1}
-                                    >
-                                        <ChevronRight className="w-4" />
-                                    </button>
-                                )}
                             </div>
                         )}
 

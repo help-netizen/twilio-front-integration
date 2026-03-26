@@ -1,17 +1,13 @@
-import { useState, useEffect } from 'react';
-import { authedFetch } from '../../services/apiClient';
 import { Calendar, Tag, FileText, Edit, PhoneOff, CheckCircle2, Briefcase, Trash2, MoreVertical } from 'lucide-react';
 import { format } from 'date-fns';
 import type { Lead } from '../../types/lead';
 import { Label } from '../ui/label';
 import { Button } from '../ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
-
-interface CustomFieldDef { id: string; display_name: string; api_name: string; field_type: string; is_system: boolean; sort_order: number; }
+import { useLeadFormSettings } from '../../hooks/useLeadFormSettings';
 
 export function MetadataSection({ lead }: { lead: Lead }) {
-    const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
-    useEffect(() => { authedFetch('/api/settings/lead-form').then(r => r.json()).then(data => { if (data.success) setCustomFields(data.customFields.filter((f: CustomFieldDef) => !f.is_system)); }).catch(() => { }); }, []);
+    const { customFields } = useLeadFormSettings();
 
     return (
         <div>

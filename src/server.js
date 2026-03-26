@@ -23,8 +23,10 @@ const messagingRouter = require('../backend/src/routes/messaging');
 const pulseRouter = require('../backend/src/routes/pulse');
 const quickMessagesRouter = require('../backend/src/routes/quick-messages');
 const textPolishRouter = require('../backend/src/routes/text-polish');
+const authRouter = require('../backend/src/routes/auth');
 const requestId = require('../backend/src/middleware/requestId');
 const { authenticate, requireRole, requireCompanyAccess } = require('../backend/src/middleware/keycloakAuth');
+const { requirePermission } = require('../backend/src/middleware/authorization');
 const db = require('../backend/src/db/connection');
 
 const app = express();
@@ -150,12 +152,13 @@ app.use('/api/v1/integrations', integrationsLeadsRouter);
 // Zenbooker integrations (webhook = unauthenticated w/ secret; create-customer/sync = Keycloak auth inside route)
 const integrationsZenbookerRouter = require('../backend/src/routes/integrations-zenbooker');
 app.use('/api/integrations/zenbooker', integrationsZenbookerRouter);
-app.use('/api/admin/integrations', authenticate, requireRole('company_admin'), requireCompanyAccess, integrationsAdminRouter);
-app.use('/api/settings/lead-form', authenticate, requireRole('company_admin'), requireCompanyAccess, leadFormSettingsRouter);
-app.use('/api/settings/job-tags', authenticate, requireRole('company_admin'), requireCompanyAccess, jobTagsSettingsRouter);
-app.use('/api/settings/jobs-list-fields', authenticate, requireCompanyAccess, jobsListFieldsRouter);
+// Integration settings API (§15)
+app.use('/api/admin/integrations', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess, integrationsAdminRouter);
+app.use('/api/settings/lead-form', authenticate, requirePermission('tenant.company.manage'), requireCompanyAccess, leadFormSettingsRouter);
+app.use('/api/settings/job-tags', authenticate, requirePermission('tenant.company.manage'), requireCompanyAccess, jobTagsSettingsRouter);
+app.use('/api/settings/jobs-list-fields', authenticate, requirePermission('tenant.company.manage'), requireCompanyAccess, jobsListFieldsRouter);
 const actionRequiredSettingsRouter = require('../backend/src/routes/action-required-settings');
-app.use('/api/settings/action-required', authenticate, requireRole('company_admin'), requireCompanyAccess, actionRequiredSettingsRouter);
+app.use('/api/settings/action-required', authenticate, requirePermission('tenant.company.manage'), requireCompanyAccess, actionRequiredSettingsRouter);
 
 // Notification settings (GET = any user; PUT = admin-only, checked inside route)
 const notificationSettingsRouter = require('../backend/src/routes/notification-settings');
@@ -165,12 +168,17 @@ app.use('/api/settings/notifications', authenticate, requireCompanyAccess, notif
 const pushSubscriptionsRouter = require('../backend/src/routes/push-subscriptions');
 app.use('/api/push-subscriptions', authenticate, requireCompanyAccess, pushSubscriptionsRouter);
 
-// User management API (§5, §6)
-app.use('/api/users', authenticate, requireRole('company_admin'), requireCompanyAccess, usersRouter);
+// Auth contextual endpoint
+app.use('/api/auth', authenticate, authRouter);
 
-// Session & auth-policy management (§9, super_admin only)
+// User management API (§5, §6)
+app.use('/api/users', authenticate, requirePermission('tenant.users.manage'), requireCompanyAccess, usersRouter);
+
+// Platform Admin routes (super_admin only)
 const sessionsRouter = require('../backend/src/routes/sessions');
+const adminCompaniesRouter = require('../backend/src/routes/admin-companies');
 app.use('/api/admin/sessions', authenticate, requireRole('super_admin'), sessionsRouter);
+app.use('/api/admin/companies', authenticate, requireRole('super_admin'), adminCompaniesRouter);
 console.log('🔐 BLANC Integrations API enabled at /api/v1/integrations/leads');
 
 

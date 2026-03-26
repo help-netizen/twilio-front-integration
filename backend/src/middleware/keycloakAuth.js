@@ -1,17 +1,5 @@
 /**
- * Keycloak OIDC Auth Middleware
- * 
- * Verifies Bearer JWT tokens issued by Keycloak using JWKS (RS256).
- * Provides:
- *   - authenticate: verify token, attach req.user with company context
- *   - requireRole(...roles): check user has at least one specified role
- *   - requireCompanyAccess: ensure req scoped to user's company
- * 
- * Roles: super_admin, company_admin, company_member
- * 
- * ENV:
- *   KEYCLOAK_REALM_URL  — e.g. http://localhost:8080/realms/crm-prod
- *   FEATURE_AUTH_ENABLED — set to "true" to enable (default: disabled)
+ * Keycloak OIDC Auth Middleware — PF007 Evolution
  */
 
 const jwt = require('jsonwebtoken');
@@ -19,11 +7,10 @@ const jwksClient = require('jwks-rsa');
 const crypto = require('crypto');
 const userService = require('../services/userService');
 const auditService = require('../services/auditService');
+const authorizationService = require('../services/authorizationService');
 
 const KEYCLOAK_REALM_URL = process.env.KEYCLOAK_REALM_URL;
 const FEATURE_AUTH = process.env.FEATURE_AUTH_ENABLED === 'true';
-
-// ── JWKS Client ─────────────────────────────────────────────────────────────
 
 let jwksRsa = null;
 function getJwksClient() {
@@ -48,11 +35,6 @@ function getKey(header, callback) {
     });
 }
 
-// ── Role helpers ────────────────────────────────────────────────────────────
-
-/**
- * Extract realm roles from Keycloak JWT.
- */
 function extractRoles(decoded) {
     const roles = new Set();
     if (decoded.realm_access?.roles) {
@@ -64,19 +46,9 @@ function extractRoles(decoded) {
     return Array.from(roles);
 }
 
-// ── Middleware: authenticate ────────────────────────────────────────────────
-
-/**
- * Verify Bearer JWT, attach req.user with:
- *   { sub, email, name, roles, company_id, is_super_admin, crmUser, traceId }
- * 
- * Dev mode: sets a stub user with company_id pointing to default company.
- */
 function authenticate(req, res, next) {
-    // Generate trace_id for every request (§10)
     req.traceId = crypto.randomUUID().split('-')[0];
 
-    // Dev mode bypass
     if (!FEATURE_AUTH) {
         req.user = {
             sub: 'dev-user',
@@ -87,140 +59,79 @@ function authenticate(req, res, next) {
             is_super_admin: false,
             _devMode: true,
         };
+        req.authz = authorizationService.buildDevAuthzContext();
+        req.companyFilter = { company_id: req.user.company_id };
         return next();
     }
 
     const authHeader = req.headers.authorization;
-    // Fallback: accept ?token= query param for browser-native requests
-    // (e.g. <audio src="...?token=xxx"> can't send Authorization headers)
     const token = (authHeader && authHeader.startsWith('Bearer '))
         ? authHeader.slice(7)
         : req.query.token;
 
     if (!token) {
-        return res.status(401).json({
-            code: 'AUTH_REQUIRED',
-            message: 'Bearer token required',
-            trace_id: req.traceId,
-        });
+        return res.status(401).json({ code: 'AUTH_REQUIRED', message: 'Bearer token required', trace_id: req.traceId });
     }
 
-    jwt.verify(token, getKey, {
-        algorithms: ['RS256'],
-        issuer: KEYCLOAK_REALM_URL,
-    }, async (err, decoded) => {
-        if (err) {
-            console.warn('[Auth] JWT verification failed:', err.message);
-            return res.status(401).json({
-                code: 'AUTH_INVALID',
-                message: 'Invalid or expired token',
-                trace_id: req.traceId,
-            });
-        }
+    jwt.verify(token, getKey, { algorithms: ['RS256'], issuer: KEYCLOAK_REALM_URL }, async (err, decoded) => {
+        if (err) return res.status(401).json({ code: 'AUTH_INVALID', message: 'Invalid or expired token', trace_id: req.traceId });
 
         const roles = extractRoles(decoded);
         const is_super_admin = roles.includes('super_admin');
 
-        req.user = {
-            sub: decoded.sub,
-            email: decoded.email || decoded.preferred_username,
-            name: decoded.name || decoded.preferred_username || 'Unknown',
-            roles,
-            is_super_admin,
-            company_id: null,
-        };
+        req.user = { sub: decoded.sub, email: decoded.email || decoded.preferred_username, name: decoded.name || decoded.preferred_username || 'Unknown', roles, is_super_admin, company_id: null };
 
-        // Resolve company_id from CRM DB (single source of truth)
         try {
-            const crmUser = await userService.findOrCreateUser({
-                sub: decoded.sub,
-                email: decoded.email,
-                name: decoded.name,
-                preferred_username: decoded.preferred_username,
-                realm_roles: roles,
-            });
+            const crmUser = await userService.findOrCreateUser({ sub: decoded.sub, email: decoded.email, name: decoded.name, preferred_username: decoded.preferred_username, realm_roles: roles });
             req.user.crmUser = crmUser;
             req.user.company_id = crmUser?.company_id || null;
+
+            try {
+                req.authz = await authorizationService.resolveAuthzContext(crmUser);
+            } catch (authzErr) {
+                console.error('[Auth] Failed to resolve authz context:', authzErr.message);
+                req.authz = { scope: null, platform_role: is_super_admin ? 'super_admin' : 'none', company: null, membership: null, permissions: [], scopes: {} };
+            }
         } catch (profileErr) {
             console.error('[Auth] Failed to sync user profile:', profileErr.message);
+            req.authz = { scope: null, platform_role: is_super_admin ? 'super_admin' : 'none', company: null, membership: null, permissions: [], scopes: {} };
         }
 
         next();
     });
 }
 
-// ── Middleware: requireRole ─────────────────────────────────────────────────
-
-/**
- * Check req.user has at least one of the specified roles.
- * super_admin always passes.
- * 
- * Usage: router.get('/admin', authenticate, requireRole('company_admin'), handler)
- */
 function requireRole(...allowedRoles) {
     return (req, res, next) => {
         if (req.user?._devMode) return next();
-        if (req.user?.is_super_admin) return next();
 
         const userRoles = req.user?.roles || [];
-        const hasRole = allowedRoles.some(r => userRoles.includes(r));
+        let hasRole = allowedRoles.some(r => userRoles.includes(r));
+
+        if (!hasRole && req.authz?.membership?.role_key) {
+            const roleKey = req.authz.membership.role_key;
+            const legacyMapping = { 'tenant_admin': 'company_admin', 'manager': 'company_admin', 'dispatcher': 'company_member', 'provider': 'company_member' };
+            const mappedLegacy = legacyMapping[roleKey];
+            if (mappedLegacy && allowedRoles.includes(mappedLegacy)) hasRole = true;
+        }
 
         if (!hasRole) {
             console.warn(`[RBAC] Access denied for ${req.user?.email} — required: [${allowedRoles}], has: [${userRoles}]`);
-
-            // Audit: access_denied_403
-            auditService.log({
-                actor_id: req.user?.crmUser?.id,
-                actor_email: req.user?.email,
-                actor_ip: req.ip,
-                action: 'access_denied_403',
-                target_type: 'route',
-                target_id: `${req.method} ${req.originalUrl}`,
-                company_id: req.user?.company_id,
-                details: { required_roles: allowedRoles, user_roles: userRoles },
-                trace_id: req.traceId,
-            }).catch(() => { });
-
-            return res.status(403).json({
-                code: 'ACCESS_DENIED',
-                message: 'Access denied',
-                trace_id: req.traceId,
-            });
+            auditService.log({ actor_id: req.user?.crmUser?.id, actor_email: req.user?.email, actor_ip: req.ip, action: 'access_denied_403', target_type: 'route', target_id: `${req.method} ${req.originalUrl}`, company_id: req.user?.company_id, details: { required_roles: allowedRoles, user_roles: userRoles }, trace_id: req.traceId }).catch(() => { });
+            return res.status(403).json({ code: 'ACCESS_DENIED', message: 'Access denied', trace_id: req.traceId });
         }
         next();
     };
 }
 
-// ── Middleware: requireCompanyAccess ─────────────────────────────────────────
-
-/**
- * Ensure the authenticated user has a company_id resolved.
- * super_admin bypasses (global context — §5).
- * 
- * Attaches req.companyFilter for use in DB queries:
- *   - For super_admin: {} (no filter)
- *   - For others: { company_id: '<uuid>' }
- */
 function requireCompanyAccess(req, res, next) {
     if (req.user?._devMode) {
         req.companyFilter = { company_id: req.user.company_id };
         return next();
     }
 
-    // super_admin can access all companies
-    if (req.user?.is_super_admin) {
-        req.companyFilter = {};
-        return next();
-    }
-
-    if (!req.user?.company_id) {
-        console.warn(`[RBAC] No company_id for user ${req.user?.email}`);
-        return res.status(403).json({
-            code: 'ACCESS_DENIED',
-            message: 'No company association found',
-            trace_id: req.traceId,
-        });
-    }
+    if (req.authz?.scope === 'platform' || req.user?.is_super_admin) return res.status(403).json({ code: 'PLATFORM_SCOPE_ONLY', message: 'Platform admins cannot access tenant resources.', trace_id: req.traceId });
+    if (!req.user?.company_id) return res.status(403).json({ code: 'TENANT_CONTEXT_REQUIRED', message: 'No company association found', trace_id: req.traceId });
 
     req.companyFilter = { company_id: req.user.company_id };
     next();

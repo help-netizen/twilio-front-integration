@@ -55,95 +55,55 @@ function App() {
           <AppLayout>
             <Routes>
               <Route path="/" element={<Navigate to="/pulse" replace />} />
-              <Route path="/pulse" element={<PulsePage />} />
-              <Route path="/pulse/contact/:id" element={<PulsePage />} />
-              <Route path="/pulse/timeline/:id" element={<PulsePage />} />
+              <Route path="/pulse" element={<ProtectedRoute permissions={['pulse.view']}><PulsePage /></ProtectedRoute>} />
+              <Route path="/pulse/contact/:id" element={<ProtectedRoute permissions={['pulse.view']}><PulsePage /></ProtectedRoute>} />
+              <Route path="/pulse/timeline/:id" element={<ProtectedRoute permissions={['pulse.view']}><PulsePage /></ProtectedRoute>} />
               <Route path="/calls" element={<HomePage />} />
-              <Route path="/contact/:id" element={<ConversationPage />} />
-              <Route path="/calls/:callSid" element={<ConversationPage />} />
-              <Route path="/messages" element={<MessagesPage />} />
-              <Route path="/leads" element={<LeadsPage />} />
-              <Route path="/leads/:leadId" element={<LeadsPage />} />
-              <Route path="/jobs" element={<JobsPage />} />
-              <Route path="/jobs/:jobId" element={<JobsPage />} />
-              <Route path="/contacts" element={<ContactsPage />} />
-              <Route path="/contacts/:contactId" element={<ContactsPage />} />
+              <Route path="/contact/:id" element={<ProtectedRoute permissions={['messages.view_internal']}><ConversationPage /></ProtectedRoute>} />
+              <Route path="/calls/:callSid" element={<ProtectedRoute permissions={['messages.view_internal']}><ConversationPage /></ProtectedRoute>} />
+              <Route path="/messages" element={<ProtectedRoute permissions={['messages.view_internal']}><MessagesPage /></ProtectedRoute>} />
+              <Route path="/leads" element={<ProtectedRoute permissions={['leads.view']}><LeadsPage /></ProtectedRoute>} />
+              <Route path="/leads/:leadId" element={<ProtectedRoute permissions={['leads.view']}><LeadsPage /></ProtectedRoute>} />
+              <Route path="/jobs" element={<ProtectedRoute permissions={['jobs.view']}><JobsPage /></ProtectedRoute>} />
+              <Route path="/jobs/:jobId" element={<ProtectedRoute permissions={['jobs.view']}><JobsPage /></ProtectedRoute>} />
+              <Route path="/contacts" element={<ProtectedRoute permissions={['contacts.view']}><ContactsPage /></ProtectedRoute>} />
+              <Route path="/contacts/:contactId" element={<ProtectedRoute permissions={['contacts.view']}><ContactsPage /></ProtectedRoute>} />
+              
               <Route path="/settings" element={<Navigate to="/settings/integrations" replace />} />
-              <Route path="/settings/integrations" element={
-                <ProtectedRoute roles={['company_admin']}>
-                  <IntegrationsPage />
-                </ProtectedRoute>
-              } />
-              <Route path="/settings/api-docs" element={
-                <ProtectedRoute roles={['company_admin']}>
-                  <ApiDocsPage />
-                </ProtectedRoute>
-              } />
-              <Route path="/settings/lead-form" element={
-                <ProtectedRoute roles={['company_admin', 'company_member']}>
-                  <LeadFormSettingsPage />
-                </ProtectedRoute>
-              } />
-              <Route path="/settings/quick-messages" element={
-                <ProtectedRoute roles={['company_admin', 'company_member']}>
-                  <QuickMessagesPage />
-                </ProtectedRoute>
-              } />
-              <Route path="/payments" element={
-                <ProtectedRoute roles={['company_admin']}>
-                  <PaymentsPage />
-                </ProtectedRoute>
-              } />
-              <Route path="/payments/:paymentId" element={
-                <ProtectedRoute roles={['company_admin']}>
-                  <PaymentsPage />
-                </ProtectedRoute>
-              } />
-              <Route path="/settings/providers" element={
-                <ProtectedRoute roles={['company_admin', 'company_member']}>
-                  <ProvidersPage />
-                </ProtectedRoute>
-              } />
-              <Route path="/settings/phone-calls" element={
-                <ProtectedRoute roles={['company_admin']}>
-                  <PhoneCallsSettingsPage />
-                </ProtectedRoute>
-              } />
+              <Route path="/settings/integrations" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><IntegrationsPage /></ProtectedRoute>} />
+              <Route path="/settings/api-docs" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><ApiDocsPage /></ProtectedRoute>} />
+              
+              <Route path="/settings/lead-form" element={<ProtectedRoute permissions={['tenant.company.manage']}><LeadFormSettingsPage /></ProtectedRoute>} />
+              <Route path="/settings/quick-messages" element={<ProtectedRoute permissions={['tenant.company.manage']}><QuickMessagesPage /></ProtectedRoute>} />
+              
+              <Route path="/payments" element={<ProtectedRoute permissions={['payments.view']}><PaymentsPage /></ProtectedRoute>} />
+              <Route path="/payments/:paymentId" element={<ProtectedRoute permissions={['payments.view']}><PaymentsPage /></ProtectedRoute>} />
+              
+              <Route path="/settings/providers" element={<ProtectedRoute permissions={['tenant.company.manage']}><ProvidersPage /></ProtectedRoute>} />
+              <Route path="/settings/phone-calls" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><PhoneCallsSettingsPage /></ProtectedRoute>} />
+              
               <Route path="/settings/action-required" element={<Navigate to="/settings/actions-notifications" replace />} />
-              <Route path="/settings/actions-notifications" element={
-                <ProtectedRoute roles={['company_admin', 'company_member']}>
-                  <ActionRequiredSettingsPage />
-                </ProtectedRoute>
-              } />
-              <Route path="/settings/users" element={
-                <ProtectedRoute roles={['company_admin']}>
-                  <CompanyUsersPage />
-                </ProtectedRoute>
-              } />
-              <Route path="/settings/admin" element={
-                <ProtectedRoute roles={['super_admin']}>
-                  <SuperAdminPage />
-                </ProtectedRoute>
-              } />
+              <Route path="/settings/actions-notifications" element={<ProtectedRoute permissions={['tenant.company.manage']}><ActionRequiredSettingsPage /></ProtectedRoute>} />
+              
+              <Route path="/settings/users" element={<ProtectedRoute permissions={['tenant.users.manage']}><CompanyUsersPage /></ProtectedRoute>} />
+              <Route path="/settings/admin" element={<ProtectedRoute roles={['super_admin']}><SuperAdminPage /></ProtectedRoute>} />
 
               {/* Telephony — Configuration (with sidebar) */}
-              <Route path="/settings/telephony" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><RouteManagerOverviewPage /></TelephonyLayout></ProtectedRoute>} />
-              <Route path="/settings/telephony/user-groups" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><UserGroupsPage /></TelephonyLayout></ProtectedRoute>} />
-
-              <Route path="/settings/telephony/phone-numbers" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><PhoneNumbersPage /></TelephonyLayout></ProtectedRoute>} />
-              <Route path="/settings/telephony/audio-library" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><AudioLibraryPage /></TelephonyLayout></ProtectedRoute>} />
-              <Route path="/settings/telephony/provider-settings" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><ProviderSettingsPage /></TelephonyLayout></ProtectedRoute>} />
-              <Route path="/settings/telephony/routing-logs" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><RoutingLogsPage /></TelephonyLayout></ProtectedRoute>} />
+              <Route path="/settings/telephony" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><RouteManagerOverviewPage /></TelephonyLayout></ProtectedRoute>} />
+              <Route path="/settings/telephony/user-groups" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><UserGroupsPage /></TelephonyLayout></ProtectedRoute>} />
+              <Route path="/settings/telephony/phone-numbers" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><PhoneNumbersPage /></TelephonyLayout></ProtectedRoute>} />
+              <Route path="/settings/telephony/audio-library" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><AudioLibraryPage /></TelephonyLayout></ProtectedRoute>} />
+              <Route path="/settings/telephony/provider-settings" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><ProviderSettingsPage /></TelephonyLayout></ProtectedRoute>} />
+              <Route path="/settings/telephony/routing-logs" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><RoutingLogsPage /></TelephonyLayout></ProtectedRoute>} />
 
               {/* Call Flow Builder — full-screen, accessed from User Group detail */}
-              <Route path="/settings/telephony/user-groups/:groupId/flow" element={<ProtectedRoute roles={['company_admin']}><CallFlowBuilderPage /></ProtectedRoute>} />
+              <Route path="/settings/telephony/user-groups/:groupId/flow" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><CallFlowBuilderPage /></ProtectedRoute>} />
 
               {/* Operations — Dashboard & Queue (with sidebar) */}
-              <Route path="/calls/dashboard" element={<ProtectedRoute roles={['company_admin']}><TelephonyLayout><OperationsDashboardPage /></TelephonyLayout></ProtectedRoute>} />
-
+              <Route path="/calls/dashboard" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><OperationsDashboardPage /></TelephonyLayout></ProtectedRoute>} />
 
               {/* Active Call Workspace — full-screen */}
-              <Route path="/calls/live/:callId" element={<ProtectedRoute roles={['company_admin']}><ActiveCallWorkspacePage /></ProtectedRoute>} />
+              <Route path="/calls/live/:callId" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><ActiveCallWorkspacePage /></ProtectedRoute>} />
 
             </Routes>
           </AppLayout>

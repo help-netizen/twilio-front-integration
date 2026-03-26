@@ -623,9 +623,18 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
     let zenbookerJobId = overrides.zenbooker_job_id || null;
 
     if (!zenbookerJobId && overrides.zb_job_payload) {
+        const zbPayload = { ...overrides.zb_job_payload };
+        
+        // Zenbooker API rejects the request if assigned_providers is provided 
+        // alongside assignment_method: 'auto'. 
+        // We must remove assignment_method to pre-assign successfully.
+        if (zbPayload.assigned_providers && zbPayload.assigned_providers.length > 0) {
+            delete zbPayload.assignment_method;
+        }
+
         // Frontend sent full booking payload — create ZB job directly
         try {
-            const zbResult = await zenbookerClient.createJob(overrides.zb_job_payload);
+            const zbResult = await zenbookerClient.createJob(zbPayload);
             zenbookerJobId = zbResult.job_id;
             console.log(`[ConvertLead] Zenbooker job created from booking: ${zenbookerJobId}`);
         } catch (err) {

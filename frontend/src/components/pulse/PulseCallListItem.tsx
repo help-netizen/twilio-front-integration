@@ -6,7 +6,7 @@ import { PhoneIncoming, PhoneOutgoing, Settings2, Clock, DollarSign, Hash, Navig
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { formatPhoneNumber } from '@/utils/formatters';
+import { formatPhoneDisplay as formatPhoneNumber } from '@/utils/phoneUtils';
 import type { CallData } from '../call-list-item';
 import { PulseCallAudioPlayer } from './PulseCallAudioPlayer';
 

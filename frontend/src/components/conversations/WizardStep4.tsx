@@ -59,7 +59,7 @@ export function WizardStep4(s: WizardState) {
             <div className="wizard__review-section">
                 <h4 className="wizard__review-title"><Calendar className="w-3.5" /> Schedule</h4>
                 {s.selectedTimeslot ? (
-                    <p className="text-sm">{s.selectedTimeslot.formatted} — {new Date(s.selectedTimeslot.start).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</p>
+                    <p className="text-sm">{s.selectedTimeslot.formatted}</p>
                 ) : (
                     <p className="text-sm text-amber-600">No timeslot selected (lead only)</p>
                 )}

@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { authedFetch } from '../../services/apiClient';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -14,20 +13,21 @@ import type { SavedAddress } from '../../services/contactsApi';
 import type { UpdateLeadInput } from '../../types/lead';
 import { AddressAutocomplete } from '../AddressAutocomplete';
 import { makeFormData, DEFAULT_JOB_TYPES, JOB_SOURCES } from './editLeadHelpers';
-import type { EditLeadDialogProps, CustomFieldDef } from './editLeadHelpers';
+import type { EditLeadDialogProps } from './editLeadHelpers';
+import { useLeadFormSettings } from '../../hooks/useLeadFormSettings';
 
 export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLeadDialogProps) {
     const [loading, setLoading] = useState(false);
     const [showSecondary, setShowSecondary] = useState(!!(lead.SecondPhone || lead.SecondPhoneName));
-    const [customFields, setCustomFields] = useState<CustomFieldDef[]>([]);
-    const [jobTypes, setJobTypes] = useState<string[]>(DEFAULT_JOB_TYPES);
+    const { customFields: allFields, jobTypes: dynamicJobTypes } = useLeadFormSettings(open);
+    const customFields = allFields.filter(f => !f.is_system);
+    const jobTypes = dynamicJobTypes.length > 0 ? dynamicJobTypes : DEFAULT_JOB_TYPES;
     const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
     const [_selectedContactAddressId, setSelectedContactAddressId] = useState<number | null>(null);
     const [formData, setFormData] = useState<UpdateLeadInput>(() => makeFormData(lead));
 
     useEffect(() => {
         if (!open) return;
-        authedFetch('/api/settings/lead-form').then(r => r.json()).then(data => { if (data.success) { setCustomFields(data.customFields.filter((f: CustomFieldDef) => !f.is_system)); if (data.jobTypes?.length > 0) setJobTypes(data.jobTypes.map((jt: { name: string }) => jt.name)); } }).catch(() => { });
         if (lead.ContactId) contactsApi.getContactAddresses(lead.ContactId).then(res => setSavedAddresses(res.data.addresses)).catch(() => { });
     }, [open, lead.ContactId]);
 

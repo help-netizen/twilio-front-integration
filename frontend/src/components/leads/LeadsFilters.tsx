@@ -6,7 +6,7 @@ import { Search, X, Check } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import type { LeadsListParams } from '../../types/lead';
 import { LEAD_STATUSES, JOB_SOURCES } from '../../types/lead';
-import { authedFetch } from '../../services/apiClient';
+import { useLeadFormSettings } from '../../hooks/useLeadFormSettings';
 import { DateRangePickerPopover } from '../ui/DateRangePickerPopover';
 
 interface LeadsFiltersProps {
@@ -32,19 +32,7 @@ export function LeadsFilters({
 }: LeadsFiltersProps) {
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
-    const [dynamicJobTypes, setDynamicJobTypes] = useState<string[]>([]);
-
-    // Fetch job types from API
-    useEffect(() => {
-        authedFetch('/api/settings/lead-form')
-            .then(r => r.json())
-            .then(data => {
-                if (data.success && data.jobTypes?.length > 0) {
-                    setDynamicJobTypes(data.jobTypes.map((jt: { name: string }) => jt.name));
-                }
-            })
-            .catch(() => { });
-    }, []);
+    const { jobTypes: dynamicJobTypes } = useLeadFormSettings();
 
     // Close dropdown on outside click
     useEffect(() => {

@@ -4,7 +4,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { callsApi } from '../../services/api';
-import { formatPhoneNumber } from '../../utils/formatters';
+import { formatPhoneDisplay as formatPhoneNumber } from '../../utils/phoneUtils';
 import { useLeadByPhone } from '../../hooks/useLeadByPhone';
 import {
     PhoneIncoming, PhoneOutgoing, ArrowLeftRight,

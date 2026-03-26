@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import type { Call } from '../../types/models';
 import { PhoneIncoming, PhoneOutgoing, ArrowLeftRight } from 'lucide-react';
-import { formatPhoneNumber } from '../../utils/formatters';
+import { formatPhoneDisplay as formatPhoneNumber } from '../../utils/phoneUtils';
 import { useLeadByPhone } from '../../hooks/useLeadByPhone';
 
 interface ConversationListItemProps {

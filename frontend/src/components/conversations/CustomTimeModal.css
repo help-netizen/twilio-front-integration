@@ -86,11 +86,27 @@
 }
 
 /* Tech name bar above timelines */
+.ctm-tech-bar-container {
+    display: flex;
+    align-items: center;
+    padding: 6px 0;
+    flex-shrink: 0;
+}
+.ctm-tech-bar-spacer {
+    width: 44px; /* matches hour labels width */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-shrink: 0;
+}
+.ctm-tech-bar-spacer--right {
+    width: 24px; 
+}
 .ctm-tech-bar {
     display: flex;
     gap: 24px;
-    padding: 6px 0 6px 44px; /* 44px = hour labels width */
-    flex-shrink: 0;
+    flex: 1;
+    padding: 0;
 }
 .ctm-tech-bar__item {
     display: flex;
@@ -110,6 +126,27 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+.ctm-tech-bar__arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    cursor: pointer;
+    color: var(--foreground, #e2e8f0);
+    transition: background 0.15s;
+}
+.ctm-tech-bar__arrow:hover:not(:disabled) {
+    background: var(--muted, #1e293b);
+}
+.ctm-tech-bar__arrow:disabled {
+    opacity: 0.25;
+    cursor: default;
 }
 
 /* Empty state */
@@ -171,27 +208,7 @@
     gap: 0;
 }
 
-/* Pagination arrows */
-.ctm-timelines__arrow {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    flex-shrink: 0;
-    border: none;
-    border-radius: 6px;
-    background: transparent;
-    cursor: pointer;
-    color: var(--foreground, #e2e8f0);
-    transition: background 0.15s;
-}
-.ctm-timelines__arrow:hover:not(:disabled) {
-    background: var(--muted, #1e293b);
-}
-.ctm-timelines__arrow:disabled {
-    opacity: 0.25;
-    cursor: default;
-}
+
 
 /* Footer: dots + legend */
 .ctm-timelines__footer {

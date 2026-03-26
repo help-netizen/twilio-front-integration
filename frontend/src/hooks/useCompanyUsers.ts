@@ -4,8 +4,17 @@ import { toast } from 'sonner';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
-export interface CompanyUser { id: string; email: string; full_name: string; membership_role: string; membership_status: string; phone_calls_allowed: boolean; last_login_at: string | null; created_at: string; }
+export interface CompanyUser { id: string; email: string; full_name: string; membership_role: string; role_key: string; legacy_role: string; membership_status: string; phone_calls_allowed: boolean; is_provider: boolean; schedule_color: string; call_masking_enabled: boolean; location_tracking_enabled: boolean; last_login_at: string | null; created_at: string; }
 interface PaginatedResponse { ok: boolean; users: CompanyUser[]; total: number; page: number; limit: number; }
+
+export type EditUserForm = {
+    role_key: string;
+    phone_calls_allowed: boolean;
+    is_provider: boolean;
+    schedule_color: string;
+    call_masking_enabled: boolean;
+    location_tracking_enabled: boolean;
+};
 
 export function useCompanyUsers() {
     const [data, setData] = useState<PaginatedResponse | null>(null);
@@ -15,11 +24,19 @@ export function useCompanyUsers() {
     const [statusFilter, setStatusFilter] = useState('all');
     const [page, setPage] = useState(1);
     const limit = 25;
+    
+    // Create Mode
     const [createOpen, setCreateOpen] = useState(false);
-    const [createForm, setCreateForm] = useState({ full_name: '', email: '', role: 'company_member' });
+    const [createForm, setCreateForm] = useState({ full_name: '', email: '', role_key: 'dispatcher' });
     const [creating, setCreating] = useState(false);
     const [tempPassword, setTempPassword] = useState<string | null>(null);
-    const [roleDialog, setRoleDialog] = useState<{ open: boolean; user: CompanyUser | null; newRole: string }>({ open: false, user: null, newRole: '' });
+    
+    // Edit Mode
+    const [editOpen, setEditOpen] = useState(false);
+    const [editUser, setEditUser] = useState<CompanyUser | null>(null);
+    const [editForm, setEditForm] = useState<EditUserForm>({ role_key: 'dispatcher', phone_calls_allowed: false, is_provider: false, schedule_color: '#3B82F6', call_masking_enabled: false, location_tracking_enabled: false });
+
+    // Status / Misc
     const [confirmDialog, setConfirmDialog] = useState<{ open: boolean; title: string; description: string; onConfirm: () => void }>({ open: false, title: '', description: '', onConfirm: () => { } });
     const [actionLoading, setActionLoading] = useState<string | null>(null);
     const [searchInput, setSearchInput] = useState('');
@@ -28,23 +45,93 @@ export function useCompanyUsers() {
     useEffect(() => { fetchUsers(); }, [fetchUsers]);
     useEffect(() => { const t = setTimeout(() => { setSearch(searchInput); setPage(1); }, 300); return () => clearTimeout(t); }, [searchInput]);
 
-    const handleCreate = async () => { if (!createForm.full_name || !createForm.email) { toast.error('Please fill in the required fields'); return; } setCreating(true); try { const res = await authedFetch(`${API_BASE}/users`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(createForm) }); const json = await res.json(); if (!res.ok) { if (json.code === 'USER_EXISTS') toast.error('A user with this email already exists'); else if (json.code === 'VALIDATION_ERROR') toast.error(json.message); else toast.error('Failed to create user'); return; } setTempPassword(json.temporary_password); toast.success('User created'); fetchUsers(); } catch { toast.error('Connection error'); } finally { setCreating(false); } };
+    const handleCreate = async () => { 
+        if (!createForm.full_name || !createForm.email) { toast.error('Please fill in the required fields'); return; } 
+        setCreating(true); 
+        try { 
+            const res = await authedFetch(`${API_BASE}/users`, { 
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/json' }, 
+                body: JSON.stringify({ ...createForm }) 
+            }); 
+            const json = await res.json(); 
+            if (!res.ok) { 
+                if (json.code === 'USER_EXISTS') toast.error('A user with this email already exists'); 
+                else if (json.code === 'VALIDATION_ERROR') toast.error(json.message); 
+                else toast.error('Failed to create user'); 
+                return; 
+            } 
+            setTempPassword(json.temporary_password); 
+            toast.success('User created'); 
+            fetchUsers(); 
+        } catch { toast.error('Connection error'); } finally { setCreating(false); } 
+    };
 
-    const handleRoleChange = async () => { if (!roleDialog.user) return; setActionLoading(roleDialog.user.id); try { const res = await authedFetch(`${API_BASE}/users/${roleDialog.user.id}/role`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: roleDialog.newRole }) }); const json = await res.json(); if (res.status === 409 && json.code === 'LAST_ADMIN_REQUIRED') toast.error('Cannot remove the last company admin'); else if (!res.ok) toast.error(json.message || 'Failed to change role'); else { toast.success('Role updated'); fetchUsers(); } } catch { toast.error('Connection error'); } finally { setActionLoading(null); setRoleDialog({ open: false, user: null, newRole: '' }); } };
+    const handleUpdateUser = async () => {
+        if (!editUser) return;
+        setActionLoading(editUser.id);
+        try {
+            const res = await authedFetch(`${API_BASE}/users/${editUser.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    role_key: editForm.role_key,
+                    profile: {
+                        phone_calls_allowed: editForm.phone_calls_allowed,
+                        is_provider: editForm.is_provider,
+                        schedule_color: editForm.schedule_color,
+                        call_masking_enabled: editForm.call_masking_enabled,
+                        location_tracking_enabled: editForm.location_tracking_enabled
+                    }
+                })
+            });
+            const json = await res.json();
+            if (res.status === 409 && json.code === 'LAST_ADMIN_REQUIRED') toast.error('Cannot remove the last company admin');
+            else if (!res.ok) toast.error(json.message || 'Failed to update user');
+            else { toast.success('User updated'); fetchUsers(); }
+        } catch { toast.error('Connection error'); } finally { setActionLoading(null); setEditOpen(false); }
+    };
 
-    const toggleStatus = async (user: CompanyUser) => { const isActive = user.membership_status === 'active'; const endpoint = isActive ? 'disable' : 'enable'; setActionLoading(user.id); try { const res = await authedFetch(`${API_BASE}/users/${user.id}/${endpoint}`, { method: 'PUT' }); const json = await res.json(); if (res.status === 409 && json.code === 'LAST_ADMIN_REQUIRED') toast.error('Cannot disable the last company admin'); else if (!res.ok) toast.error(json.message || 'Failed to change status'); else { toast.success(isActive ? 'User disabled' : 'User enabled'); fetchUsers(); } } catch { toast.error('Connection error'); } finally { setActionLoading(null); } };
-
-    const togglePhoneCalls = async (user: CompanyUser) => { const newVal = !user.phone_calls_allowed; setActionLoading(user.id); try { const res = await authedFetch(`${API_BASE}/users/${user.id}/phone-calls`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ allowed: newVal }) }); if (!res.ok) toast.error('Failed to update phone calls access'); else { toast.success(newVal ? 'Phone calls enabled' : 'Phone calls disabled'); fetchUsers(); } } catch { toast.error('Connection error'); } finally { setActionLoading(null); } };
+    const toggleStatus = async (user: CompanyUser) => { 
+        const isActive = user.membership_status === 'active'; 
+        const status = isActive ? 'inactive' : 'active'; 
+        const reason = isActive ? 'Disabled by Admin' : null;
+        setActionLoading(user.id); 
+        try { 
+            const res = await authedFetch(`${API_BASE}/users/${user.id}/status`, { 
+                method: 'PATCH', 
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status, reason }) 
+            }); 
+            const json = await res.json(); 
+            if (res.status === 409 && json.code === 'LAST_ADMIN_REQUIRED') toast.error('Cannot disable the last company admin'); 
+            else if (!res.ok) toast.error(json.message || 'Failed to change status'); 
+            else { toast.success(isActive ? 'User disabled' : 'User enabled'); fetchUsers(); } 
+        } catch { toast.error('Connection error'); } finally { setActionLoading(null); } 
+    };
 
     const fmtDate = (d: string | null) => { if (!d) return '—'; return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); };
     const totalPages = data ? Math.ceil(data.total / limit) : 0;
     const users = data?.users || [];
 
+    const openEditDialog = (u: CompanyUser) => {
+        setEditUser(u);
+        setEditForm({
+            role_key: u.role_key || 'dispatcher',
+            phone_calls_allowed: !!u.phone_calls_allowed,
+            is_provider: !!u.is_provider,
+            schedule_color: u.schedule_color || '#3B82F6',
+            call_masking_enabled: !!u.call_masking_enabled,
+            location_tracking_enabled: !!u.location_tracking_enabled
+        });
+        setEditOpen(true);
+    };
+
     return {
         users, loading, search, roleFilter, statusFilter, page, setPage, setRoleFilter, setStatusFilter,
         searchInput, setSearchInput, fetchUsers, totalPages, data, limit, fmtDate,
         createOpen, setCreateOpen, createForm, setCreateForm, creating, tempPassword, setTempPassword, handleCreate,
-        roleDialog, setRoleDialog, handleRoleChange, confirmDialog, setConfirmDialog,
-        actionLoading, toggleStatus, togglePhoneCalls,
+        editOpen, setEditOpen, editUser, editForm, setEditForm, handleUpdateUser, openEditDialog,
+        confirmDialog, setConfirmDialog, actionLoading, toggleStatus
     };
 }
