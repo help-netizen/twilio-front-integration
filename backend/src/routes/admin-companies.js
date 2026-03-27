@@ -64,18 +64,19 @@ router.get('/:id', async (req, res) => {
 });
 
 /**
- * POST /api/admin/companies — Create a new company
+ * POST /api/admin/companies — Create a new company + bootstrap first admin
  */
 router.post('/', async (req, res) => {
     try {
-        const { name, slug, timezone, locale, contact_email, contact_phone } = req.body;
+        const { name, slug, timezone, locale, admin_email } = req.body;
         
-        if (!name || !slug) {
-            return res.status(400).json({ error: 'Name and slug are required' });
+        if (!name || !slug || !admin_email) {
+            return res.status(400).json({ error: 'Name, slug and admin_email are required' });
         }
         
+        // 1. Create company record
         const company = await companyQueries.createCompany({ 
-            name, slug, timezone, locale, contact_email, contact_phone 
+            name, slug, timezone, locale, contact_email: admin_email 
         });
         
         await auditService.log({
@@ -87,7 +88,94 @@ router.post('/', async (req, res) => {
             trace_id: req.traceId
         });
         
-        res.status(201).json(company);
+        // 2. Bootstrap first admin user (Keycloak + DB)
+        let adminBootstrapped = false;
+        try {
+            const keycloakService = require('../services/keycloakService');
+            const db = require('../db/connection');
+            
+            // Create/find user in Keycloak
+            const kcUser = await keycloakService.ensureUserExistsAndExecuteAction({
+                email: admin_email,
+                firstName: '',
+                lastName: '',
+                companyId: company.id,
+            });
+            
+            if (!kcUser || !kcUser.id) {
+                throw new Error('Failed to create or lookup user in Keycloak');
+            }
+            
+            // Assign company_admin realm role
+            await keycloakService.assignGlobalRole(kcUser.id, 'company_admin');
+            
+            // Create crm_user + membership in transaction
+            const client = await db.pool.connect();
+            try {
+                await client.query('BEGIN');
+                
+                let crmUserId;
+                const { rows: existingUser } = await client.query(
+                    'SELECT id FROM crm_users WHERE keycloak_sub = $1', [kcUser.id]
+                );
+                
+                if (existingUser.length > 0) {
+                    crmUserId = existingUser[0].id;
+                    await client.query('UPDATE crm_users SET role = $1 WHERE id = $2', ['company_admin', crmUserId]);
+                } else {
+                    const { rows: newUser } = await client.query(
+                        `INSERT INTO crm_users (keycloak_sub, email, full_name, role, status) VALUES ($1, $2, $3, $4, 'active') RETURNING id`,
+                        [kcUser.id, admin_email, admin_email, 'company_admin']
+                    );
+                    crmUserId = newUser[0].id;
+                }
+                
+                // Upsert membership (role_key = tenant_admin)
+                const { rows: existingMem } = await client.query(
+                    'SELECT id FROM company_memberships WHERE user_id = $1 AND company_id = $2', [crmUserId, company.id]
+                );
+                if (existingMem.length === 0) {
+                    await client.query(
+                        `INSERT INTO company_memberships (user_id, company_id, role, role_key, status, is_primary)
+                         VALUES ($1, $2, $3, $4, 'active', true)`,
+                        [crmUserId, company.id, 'company_admin', 'tenant_admin']
+                    );
+                } else {
+                    await client.query(
+                        `UPDATE company_memberships SET role = $1, role_key = $2, status = 'active' WHERE id = $3`,
+                        ['company_admin', 'tenant_admin', existingMem[0].id]
+                    );
+                }
+                
+                await client.query('COMMIT');
+                adminBootstrapped = true;
+            } catch (e) {
+                await client.query('ROLLBACK');
+                throw e;
+            } finally {
+                client.release();
+            }
+            
+            await auditService.log({
+                actor_id: req.user.crmUser?.id,
+                actor_email: req.user.email,
+                action: 'company_admin_bootstrapped',
+                target_type: 'company',
+                target_id: company.id,
+                details: { admin_email },
+                trace_id: req.traceId
+            });
+        } catch (bootstrapErr) {
+            console.error('[Admin Companies] Admin bootstrap failed (company created):', bootstrapErr.message);
+            // Company is created but admin failed — return partial success
+            return res.status(201).json({
+                ...company,
+                admin_bootstrapped: false,
+                bootstrap_error: bootstrapErr.message
+            });
+        }
+        
+        res.status(201).json({ ...company, admin_bootstrapped: adminBootstrapped, admin_email });
     } catch (err) {
         console.error('[Admin Companies] POST / failed:', err.message);
         if (err.message.includes('already exists')) {

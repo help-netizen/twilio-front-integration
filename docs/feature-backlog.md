@@ -29,6 +29,8 @@
 
 Из-за этого главный gap сейчас не в "ещё одном CRM-экране", а в отсутствии полноценных слоёв:
 
+- tenant-safe RBAC foundation
+- Pulse as canonical event timeline foundation
 - dispatch/schedule
 - finance docs (estimates/invoices)
 - self-service client flows
@@ -61,6 +63,17 @@
 - сейчас `super_admin` архитектурно может обходить tenant-boundaries, что противоречит целевой SaaS-модели
 - это foundation, без которого дальнейшее догоняние Workiz будет дорогим и нестабильным
 
+### P0. Pulse client timeline core + realtime governance
+- `Pulse` становится canonical client timeline, а не только `calls + sms` page
+- все high-value client events обязаны попадать в текущий Pulse timeline
+- `Action Required / Snooze / Tasks` остаются control layer вне timeline, но их lifecycle зеркалируется в историю
+- shared `SSE` taxonomy и event delivery semantics документируются как часть Pulse package
+- любые новые продуктовые фичи обязаны описывать `Pulse / Realtime integration`
+
+Почему это тоже foundation:
+- без общего Pulse/event слоя `Schedule / Estimates / Invoices / Portal / Automations` быстро создадут дублирующиеся activity surfaces
+- realtime поведение уже является cross-cutting частью продукта и должно развиваться централизованно
+
 ## 1. Dispatch & Schedule
 
 ### P0. Единый Schedule / Dispatcher workspace
@@ -90,12 +103,15 @@
 
 ### P0. Полноценный модуль Estimates
 - Отдельный список estimates со статусами и фильтрами
-- Standalone estimate и estimate-from-job
+- Только lead/job-connected estimates
 - Line items / totals / taxes / discounts / attachments
-- Отправка клиенту по SMS/email
+- Постоянный preview при просмотре estimate в системе
+- PDF snapshot estimate
+- Email = portal link + PDF attachment
+- SMS = только ссылка на estimate
 - Approval + signature
-- Deposit request
-- Convert to job / copy to invoice
+- Deposit request + recorded deposit payment
+- Link/sync to job + copy to invoice
 
 Почему высокий приоритет:
 - сейчас у вас есть payments как downstream-отчётность, но нет документов, из которых в Workiz рождаются продажи, approvals и значительная часть автоматизаций
@@ -104,17 +120,27 @@
 - Invoice list/dashboard
 - Standalone invoice и invoice-from-job
 - Due / overdue / paid статусы
-- Частичные оплаты
+- PDF snapshot invoice
+- Постоянный preview при просмотре invoice в системе
+- `Add Payment` в invoice detail
+- Частичные оплаты через linked payment records
 - Bulk send
 - Receipts
 - Связь с jobs / clients / payments
 
 ### P0. Payment collection, а не только payment reporting
-- Online payment links
-- Оплата estimate/invoice из клиентского интерфейса
-- Partial payment / deposit / progressive billing light
-- Сохранённые payment methods
-- История попыток оплаты и receipts
+- Текущий `/payments` остаётся canonical ledger
+- Recorded payments, связанные с estimate/invoice
+- `Add Payment` из `Invoice` и запись deposit payment по `Estimate`
+- Partial/full payment через linked payment records
+- Стартовый payment type: `check`
+- Receipts
+
+Текущий scope intentionally ограничен:
+- без card processing
+- без saved cards
+- без portal self-serve payments
+- без provider webhooks
 
 ### P1. Price Book / items catalog
 - Каталог items/services
@@ -128,6 +154,12 @@
 - Preview client-facing версии перед отправкой
 - Bulk actions
 
+### P1. Online/self-serve payment expansion
+- Online payment links
+- Portal self-serve invoice/deposit payments
+- Saved payment methods
+- Failed/succeeded payment attempts
+
 ### P2. POS-расширения
 - Tap to pay / card reader support
 - Financing integrations
@@ -139,14 +171,19 @@
 
 ### P0. Client Portal
 - Просмотр estimate/invoice
-- Approve / sign / pay
+- Approve / sign
 - История документов и платежей
+- Outstanding balances / payment history
 - Просмотр upcoming/past jobs
-- Обновление contact/payment details
+- Обновление contact details
 
 Почему высокий приоритет:
 - это один из самых больших gap'ов между текущим Blanc и зрелым field-service продуктом
 - portal резко повышает value estimates, invoices, payments и automations одновременно
+
+Текущий P0 scope intentionally ограничен:
+- без self-serve оплаты из portal
+- без cards on file management
 
 ### P1. Online Booking portal
 - Публичная booking page
@@ -301,16 +338,18 @@
 
 ### Волна 0
 - `P0` Multi-tenant company model + platform super admin + RBAC
+- `P0` Pulse client timeline core + realtime governance
 
 ### Волна 1
 - `P0` Schedule
 - `P0` Estimates
 - `P0` Invoices
-- `P0` Payment collection
+- `P0` Payment collection (recorded payments only)
 - `P0` Client Portal (lite)
 - `P0` Automation engine
 
 ### Волна 2
+- `P1` Online/self-serve payments
 - `P1` Online booking
 - `P1` Price Book
 - `P1` Dashboard & reports
@@ -329,6 +368,7 @@
 Если цель — как можно быстрее догнать Workiz по воспринимаемой полноте продукта, то главный порядок такой:
 
 1. сначала исправить foundation: `multi-tenant company model + platform super admin + RBAC`;
-2. потом закрыть `dispatch + finance docs + client portal + automations`;
-3. затем добрать `online booking + reporting + price book + integrations`;
-4. только после этого идти в `service plans`, `call tracking`, `advanced AI`, `native mobile parity`.
+2. параллельно закрепить `Pulse` как canonical event timeline foundation;
+3. потом закрыть `dispatch + finance docs + recorded payments + client portal + automations`;
+4. затем добрать `online booking + self-serve payments + reporting + price book + integrations`;
+5. только после этого идти в `service plans`, `call tracking`, `advanced AI`, `native mobile parity`.

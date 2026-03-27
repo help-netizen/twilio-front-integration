@@ -19,8 +19,7 @@ export function CreateCompanyDialog({ open, onOpenChange, onSuccess }: CreateCom
         slug: '',
         timezone: 'America/New_York',
         locale: 'en-US',
-        contact_email: '',
-        contact_phone: '',
+        admin_email: '',
     });
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -45,8 +44,15 @@ export function CreateCompanyDialog({ open, onOpenChange, onSuccess }: CreateCom
             });
 
             if (res.ok) {
-                toast.success('Company created successfully');
-                setFormData({ name: '', slug: '', timezone: 'America/New_York', locale: 'en-US', contact_email: '', contact_phone: '' });
+                const data = await res.json();
+                if (data.admin_bootstrapped === false) {
+                    toast.warning('Company created, but admin bootstrap failed', {
+                        description: data.bootstrap_error || 'You can retry via company menu.'
+                    });
+                } else {
+                    toast.success('Company created with admin user');
+                }
+                setFormData({ name: '', slug: '', timezone: 'America/New_York', locale: 'en-US', admin_email: '' });
                 onSuccess();
                 onOpenChange(false);
             } else {
@@ -67,7 +73,7 @@ export function CreateCompanyDialog({ open, onOpenChange, onSuccess }: CreateCom
                     <DialogHeader>
                         <DialogTitle>Create Company</DialogTitle>
                         <DialogDescription>
-                            Create a new tenant company workspace.
+                            Create a new tenant company and bootstrap its first administrator.
                         </DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
@@ -90,8 +96,9 @@ export function CreateCompanyDialog({ open, onOpenChange, onSuccess }: CreateCom
                             </div>
                         </div>
                         <div className="grid gap-2">
-                            <Label htmlFor="contact_email">Contact Email (Optional)</Label>
-                            <Input id="contact_email" name="contact_email" type="email" value={formData.contact_email} onChange={handleChange} />
+                            <Label htmlFor="admin_email">Admin Email</Label>
+                            <Input id="admin_email" name="admin_email" type="email" value={formData.admin_email} onChange={handleChange} required placeholder="admin@company.com" />
+                            <p className="text-xs text-muted-foreground">First admin user will be created with this email.</p>
                         </div>
                     </div>
                     <DialogFooter>
@@ -107,3 +114,4 @@ export function CreateCompanyDialog({ open, onOpenChange, onSuccess }: CreateCom
         </Dialog>
     );
 }
+
