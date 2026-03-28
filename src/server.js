@@ -177,8 +177,10 @@ app.use('/api/users', authenticate, requirePermission('tenant.users.manage'), re
 // Platform Admin routes (super_admin only)
 const sessionsRouter = require('../backend/src/routes/sessions');
 const adminCompaniesRouter = require('../backend/src/routes/admin-companies');
+const adminCompanyUsersRouter = require('../backend/src/routes/admin-company-users');
 app.use('/api/admin/sessions', authenticate, requireRole('super_admin'), sessionsRouter);
 app.use('/api/admin/companies', authenticate, requireRole('super_admin'), adminCompaniesRouter);
+app.use('/api/admin/companies/:companyId/users', authenticate, requireRole('super_admin'), adminCompanyUsersRouter);
 console.log('🔐 BLANC Integrations API enabled at /api/v1/integrations/leads');
 
 
