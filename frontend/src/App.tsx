@@ -13,6 +13,7 @@ import { IntegrationsPage } from './pages/IntegrationsPage';
 import ApiDocsPage from './pages/ApiDocsPage';
 import LeadFormSettingsPage from './pages/LeadFormSettingsPage';
 import SuperAdminPage from './pages/SuperAdminPage';
+import AdminCompanyDetailPage from './pages/AdminCompanyDetailPage';
 import CompanyUsersPage from './pages/CompanyUsersPage';
 import QuickMessagesPage from './pages/QuickMessagesPage';
 import PaymentsPage from './pages/PaymentsPage';
@@ -87,6 +88,7 @@ function App() {
               
               <Route path="/settings/users" element={<ProtectedRoute permissions={['tenant.users.manage']}><CompanyUsersPage /></ProtectedRoute>} />
               <Route path="/settings/admin" element={<ProtectedRoute roles={['super_admin']}><SuperAdminPage /></ProtectedRoute>} />
+              <Route path="/settings/admin/companies/:companyId" element={<ProtectedRoute roles={['super_admin']}><AdminCompanyDetailPage /></ProtectedRoute>} />
 
               {/* Telephony — Configuration (with sidebar) */}
               <Route path="/settings/telephony" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><RouteManagerOverviewPage /></TelephonyLayout></ProtectedRoute>} />
