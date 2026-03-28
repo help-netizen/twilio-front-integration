@@ -27,13 +27,17 @@
 - Трёхколоночный layout: список контактов → карточка → хронология
 - Server-side поиск по номеру, infinite scroll
 - Объединённая хронология звонков + SMS
+- Если по thread нет готового `Lead` или `Contact`, в middle-column открывается `CreateLeadJobWizard` для создания лида/работы прямо из текущего conversation context
 - Аудиоплеер с записями, транскрипция, AI-summary
+- Voicemail уже отображается в текущем `Pulse` timeline как call-item (`voicemail_recording` / `voicemail_left`) и использует тот же recording/transcript pipeline
 - SMS форма с Quick Messages, AI Polish, вложения
 - Real-time через SSE: onCallUpdate, onMessageAdded, etc.
 - `Pulse` является canonical client timeline и основным operator workspace по клиенту: все high-value client events должны быть доступны в его timeline, а не в отдельных activity feeds других модулей
+- `Messaging`, `Phone Ops`, `Voicemail`, future `Email`, `Call Tracking` и `AI communication` должны рассматриваться как развитие `Pulse`, его timeline items, queue-state и middle-card controls, а не как отдельные конкурирующие рабочие пространства
 - `Action Required / Snooze / Tasks` остаются отдельными operator controls и queue-signals вне timeline; при просмотре клиента они должны быть доступны в left queue и middle-card/navigation area, а их lifecycle может дополнительно отражаться в timeline как события
 - SSE/event-delivery machine документируется вместе с Pulse, даже если часть событий обновляет не только сам Pulse, но и bubbles, leads, jobs, payments и другие экраны
 - Любая новая клиентская фича, которая добавляет significant event или новый realtime update на фронт, обязана описывать Pulse/SSE integration и обновлять пакет `PF008`
+- Следующий communication gap для `Pulse` — email внутри текущего timeline/thread model, а не новый отдельный message center
 - Стратегическое развитие `Pulse` как communication/event core описано в `docs/specs/PF008-pulse-client-timeline-core.md`, `docs/specs/PF104-pulse-sprint-plan.md`, `docs/specs/PF105-pulse-db-api-contracts.md`, `docs/specs/PF008-technical-design.md`
 
 ### F002: Softphone
@@ -42,6 +46,7 @@
 - Caller ID picker, поиск контактов, pre-flight busy check
 - Minimize в header, DTMF keypad, Mute/Unmute
 - ClickToCallButton интеграция
+- `Softphone` и будущие phone-ops улучшения должны оставаться связанными с `Pulse` thread/timeline model, а не становиться отдельным операторским history surface
 
 ### F003: Contacts
 - Master list с поиском и pagination

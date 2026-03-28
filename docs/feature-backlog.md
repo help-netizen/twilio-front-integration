@@ -84,8 +84,9 @@
 - Фильтры по статусам, provider/tech, tags, source, job type
 
 Почему высокий приоритет:
-- у вас уже есть leads/jobs и telephony, но нет главного dispatch-экрана, который у Workiz является центральным рабочим местом для операционного контура
-- это сразу связывает CRM, телефонию, задачи и будущие автоматизации
+- у вас уже есть leads/jobs и telephony, но нет сильного planning/dispatch surface для назначения, переноса и балансировки работы
+- в отличие от Workiz, этот экран не должен становиться главным operator workspace: центральным event-centric пространством остаётся `Pulse`
+- это связывает CRM, телефонию, задачи и будущие автоматизации, не создавая конкурирующий activity center
 
 ### P1. Диспетчерские действия из schedule
 - Создание job/lead из пустого time slot
@@ -93,11 +94,6 @@
 - Быстрый перенос на другой слот
 - Business hours / capacity / slot duration
 - ETA / route-aware hints как минимум на базовом уровне
-
-### P1. Recurring jobs
-- Повторяющиеся job series
-- Редактирование одного экземпляра или всей серии
-- Массовое обновление будущих визитов
 
 ## 2. Finance: Estimates, Invoices, Collection
 
@@ -185,7 +181,7 @@
 - без self-serve оплаты из portal
 - без cards on file management
 
-### P1. Online Booking portal
+### P3. Online Booking portal
 - Публичная booking page
 - Настройка внешнего вида
 - Правила availability
@@ -194,55 +190,73 @@
 - Deposits / full prepayment
 - Notifications о новых бронированиях
 
-### P1. Lead intake automation
-- Intake из website forms / booking / inbound email
-- Email-to-lead parsing
-- Source attribution
-- Автосоздание lead/job по заданным правилам
+Почему низкий приоритет:
+- текущая продуктовая стратегия сейчас упирается не в публичный self-serve booking, а в foundation, dispatch, finance documents, payments и internal operations
+- базовый `Client Portal` уже закрывает более срочный client-facing слой для документов и коммуникаций
+- booking сильно зависит от зрелых `Schedule`, availability rules, role model, automations и payment expansion, поэтому его лучше двигать последней волной
 
-## 4. Messaging, Phone, Communication Ops
+## 4. Pulse: Messaging, Phone, Communication Ops
 
-### P1. Message Center 2.0
-- Omnichannel inbox: SMS + email
-- Job/lead creation прямо из thread
-- Быстрое редактирование job из thread
-- Right-pane messaging из других страниц
-- Group/team messages
-- Voicemail inbox с transcript + action buttons
+Принцип раздела:
+- все communication- и phone-related улучшения должны встраиваться в `Pulse`
+- операторский UX для этих направлений должен жить в client timelines, left queue и middle-card controls внутри `Pulse`
+- нельзя проектировать отдельный parallel message center, phone ops center или communication feed, если тот же client context уже существует в `Pulse`
 
-Почему не P0:
+### P1. Email in Pulse / omnichannel expansion
+- Email должен быть встроен в текущий `Pulse`, а не в отдельный parallel inbox
+- Общий client timeline: calls + SMS + email в одном thread/timeline
+- Queue/state semantics для email: unread, `Action Required`, snooze, owner, realtime updates
+- Базовые email actions и thread association по клиенту
+- Детальный scope вынести в отдельную спецификацию после продуктового описания
+
+Почему это P1:
+- SMS и thread-centric workflow уже реализованы в `Pulse`, поэтому главный реальный gap здесь не новый message center, а добавление email в существующий Pulse-контур
+- `Pulse` уже умеет создавать `lead/job` из thread context и уже даёт быстрый переход в связанные сущности, поэтому greenfield messaging shell не нужен
+
+### P2. Voicemail workflow completion
+- Voicemail остаётся частью текущего `Pulse` timeline, а не отдельным inbox
+- Доработка queue/filter/workflow поверх уже существующих voicemail items, transcript и action context
+- Улучшение operator actions для voicemail follow-up без создания отдельного communication center
+
+### P3. Group/team messages
+- Group/team threads как отдельная низкоприоритетная инициатива
+- Не смешивать с базовым client-thread model в `Pulse`
+
+Почему messaging mostly не P0:
 - коммуникационное ядро у вас уже есть; главные дыры сейчас не в самом факте messaging, а в отсутствии schedule/finance/self-service
+- исключение: `AI communication layer`, если нужен как один из базовых product multipliers поверх уже существующего `Pulse`
 
-### P1. Phone ops for field workflows
+### P2. Phone ops for field workflows
 - Call masking между tech и client
-- История masked calls в job/client context
+- История masked calls в `Pulse` timeline и связанном job/client context
 - Fallback forwarding / backup numbers
-- Более зрелый queue/agent workflow для live operations
+- Более зрелый queue/agent workflow для live operations внутри `Pulse`/realtime модели, а не в отдельном phone dashboard
 
 ### P2. Call tracking & attribution
 - Выделенные номера под ad sources
 - Tracking jobs booked / conversion / revenue by source
 - Связка с reporting
+- client-level call history и source context должны быть доступны из `Pulse`
 
-### P2. AI communication layer
-- Smart suggested replies
-- Context-aware compose/rewrite
+### P0. AI communication layer
+- Smart suggested replies внутри `Pulse`
+- Context-aware compose/rewrite внутри `Pulse`
 - Structured extraction из calls/messages в lead/job fields
-- AI answering / message taking / reschedule intents
+- AI answering / message taking / reschedule intents с публикацией в `Pulse` timeline и queue state
 
 ## 5. Automations & Tasks
 
-### P0. Общий automation engine
+### P2. Общий automation engine
 - Триггеры по jobs / leads / estimates / invoices / payments / schedule events
 - Условия по статусу, source, tags, service area, timing
 - Действия: send SMS/email, create task, notify team, update status, webhooks
 - Очередь исполнения + журнал срабатываний
 
-Почему высокий приоритет:
-- без automation engine много ценности schedule, finance и client portal остаётся ручной
-- у вас уже есть Action Required, quick messages и worker groundwork, поэтому архитектурно это достижимый следующий шаг
+Почему пока не приоритет:
+- текущий rollout должен сначала закрыть foundation, dispatch, finance-documents, payments и client-facing core flows
+- у вас уже есть `Action Required`, thread-level tasks, quick messages и worker groundwork, поэтому базовый operational контур может жить без общего automation engine на первом этапе
 
-### P1. Готовые automation templates
+### P2. Готовые automation templates
 - Appointment reminders
 - Estimate follow-up
 - Overdue invoice reminders
@@ -250,7 +264,7 @@
 - Re-engagement/coupon campaigns
 - Missed call follow-up
 
-### P1. Task center
+### P2. Task center
 - Отдельный список задач вне Pulse thread-level task
 - Assignee / due date / related entity
 - Отображение задач в schedule
@@ -332,6 +346,7 @@
 - Сложные financing сценарии до запуска базовых estimates/invoices/payments
 - Marketplace ради marketplace
 - Multi-location / franchise toolkit, если это не текущий ICP
+- `Lead intake automation`, если intake уже обрабатывается внешним сервисом через API и не требует переноса внутрь FSM прямо сейчас
 - Ограничения и странности шаблонов Workiz как есть
 
 ## Рекомендуемый порядок реализации
@@ -346,22 +361,28 @@
 - `P0` Invoices
 - `P0` Payment collection (recorded payments only)
 - `P0` Client Portal (lite)
-- `P0` Automation engine
+- `P0` AI communication layer
 
 ### Волна 2
 - `P1` Online/self-serve payments
-- `P1` Online booking
 - `P1` Price Book
 - `P1` Dashboard & reports
-- `P1` Message Center 2.0
+- `P1` Email in Pulse / omnichannel expansion
 - `P1` QuickBooks
 
 ### Волна 3
-- `P1`/`P2` recurring jobs
 - `P2` Service Plans
+- `P2` Automation engine
+- `P2` Automation templates
+- `P2` Task center
+- `P2` Phone ops for field workflows
 - `P2` call tracking
-- `P2` advanced AI answering/scheduling
+- `P2` Voicemail workflow completion
 - `P2` mobile field expansion
+
+### Волна 4
+- `P3` Group/team messages
+- `P3` Online Booking portal
 
 ## Короткий вывод
 
@@ -369,6 +390,7 @@
 
 1. сначала исправить foundation: `multi-tenant company model + platform super admin + RBAC`;
 2. параллельно закрепить `Pulse` как canonical event timeline foundation;
-3. потом закрыть `dispatch + finance docs + recorded payments + client portal + automations`;
-4. затем добрать `online booking + self-serve payments + reporting + price book + integrations`;
-5. только после этого идти в `service plans`, `call tracking`, `advanced AI`, `native mobile parity`.
+3. потом закрыть `dispatch + finance docs + recorded payments + client portal + AI communication`;
+4. затем добрать `self-serve payments + reporting + price book + email in Pulse + integrations`;
+5. после этого идти в `service plans`, `automations + task center`, `phone ops`, `call tracking`, `voicemail hardening`, `mobile expansion`;
+6. `group/team messages` и `online booking portal` оставить последней волной после стабилизации всех зависимых контуров.

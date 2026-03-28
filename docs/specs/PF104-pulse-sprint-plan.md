@@ -67,6 +67,7 @@
   - `task/workflow`
 - compatibility payloads for existing consumers
 - middle-card controls и left queue не деградируют после generalization timeline renderer
+- renderer generalization должна оставлять явный extension path для будущего `email` item family внутри `Pulse`
 
 ### Exit criteria
 

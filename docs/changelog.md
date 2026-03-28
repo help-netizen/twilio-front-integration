@@ -4,6 +4,106 @@
 
 ---
 
+## 2026-03-27
+
+### Backlog reprioritization: automations and tasks moved to P2
+- По продуктовой правке раздел `Automations & Tasks` переведён из раннего приоритета в `P2`.
+- Обновлены артефакты:
+  - `docs/feature-backlog.md`
+  - `docs/specs/PF000-p0-core-business-suite.md`
+  - `docs/specs/PF100-p0-sprint-plan.md`
+  - `docs/specs/PF006-automation-engine.md`
+  - `docs/specs/PF006-technical-design.md`
+  - `docs/specs/PF101-p0-db-api-contracts.md`
+- Что зафиксировано:
+  - `Automation engine`, `automation templates` и `task center` больше не входят в первую волну roadmap;
+  - текущий P0 rollout исключает `PF006` и фокусируется на foundation, schedule, finance docs, payment collection, client portal и AI communication;
+  - `PF006` сохранён как deferred package со статусом `P2`, а не удалён из документации.
+- Код не менялся; итерация только про требования и handoff-артефакты.
+
+### Pulse ownership clarified for messaging and phone ops
+- По продуктовой правке `Messaging / Phone / Communication Ops` явно зафиксированы как часть `Pulse` и client timelines внутри `Pulse`.
+- Обновлены артефакты:
+  - `docs/feature-backlog.md`
+  - `docs/requirements.md`
+  - `docs/specs/PF008-pulse-client-timeline-core.md`
+  - `docs/specs/PF000-p0-core-business-suite.md`
+- Что именно закреплено:
+  - communication backlog теперь описан как `Pulse: Messaging, Phone, Communication Ops`;
+  - email, voicemail workflow, phone ops, call tracking и AI communication должны развиваться внутри `Pulse`, а не отдельными рабочими пространствами;
+  - любые новые communication/phone flows обязаны описывать, как они живут в `Pulse` timeline, queue-state и realtime semantics.
+- Код не менялся; итерация только про требования и handoff-артефакты.
+
+### Backlog reprioritization: AI up to P0, phone ops down to P2
+- По продуктовой правке `AI communication layer` переведён в `P0`, а `Phone ops for field workflows` перенесён в `P2`.
+- Обновлён `docs/feature-backlog.md`:
+  - `AI communication layer` теперь входит в раннюю P0-реализацию;
+  - `Phone ops for field workflows` вынесен из `P1` в более позднюю волну;
+  - синхронизированы wave ordering и итоговый summary roadmap;
+  - уточнена формулировка, что messaging mostly не `P0`, кроме AI-слоя как отдельного product multiplier.
+- Код не менялся; итерация только про требования и handoff-артефакты.
+
+### Messaging backlog cleanup: Pulse-first communication scope
+- По продуктовой правке messaging/backlog синхронизирован с текущей реализацией `Pulse`.
+- Обновлён `docs/feature-backlog.md`:
+  - распилен размытый `Message Center 2.0` на отдельные инициативы;
+  - удалены уже существующие или ненужные backlog-пункты: `job/lead creation from thread`, `quick job editing from thread`, `right-pane messaging from other pages`;
+  - главным communication gap зафиксирован `email in Pulse / omnichannel expansion`;
+  - `group/team messages` вынесены в отдельную low-priority задачу;
+  - `voicemail` переведён в формат partial-gap: не greenfield inbox, а workflow completion поверх уже существующего timeline support.
+- Обновлены supporting docs:
+  - `docs/requirements.md`
+  - `docs/current_functionality.md`
+  - `docs/specs/PF008-pulse-client-timeline-core.md`
+  - `docs/specs/PF104-pulse-sprint-plan.md`
+- В project docs дополнительно зафиксировано, что:
+  - `Pulse` уже содержит `CreateLeadJobWizard` для создания лида/работы из thread context;
+  - voicemail уже отображается в текущем timeline и использует recording/transcript pipeline;
+  - следующий communication gap — email внутри текущего `Pulse` thread model, а не новый parallel message center.
+- Код не менялся; итерация только про требования и handoff-артефакты.
+
+### Backlog cleanup: lead intake automation excluded from current roadmap
+- По продуктовой правке `Lead intake automation` убран из актуального backlog.
+- Основание: intake уже обрабатывается внешним сервисом, который создаёт `Lead / Job` через API, поэтому перенос этого контура внутрь FSM сейчас не нужен.
+- Обновлён `docs/feature-backlog.md`: удалена отдельная backlog-секция и добавлена пометка в список направлений, которые сознательно не нужно догонять прямо сейчас.
+- Код не менялся; итерация только про требования и handoff-артефакты.
+
+### Backlog reprioritization: online booking moved to lowest priority
+- По продуктовой правке `Online Booking portal` переведён в самый низкий приоритет roadmap.
+- Обновлён `docs/feature-backlog.md`:
+  - секция `Online Booking portal` переведена из `P1` в `P3`;
+  - добавлено обоснование низкого приоритета;
+  - `Online Booking` убран из `Wave 2` и перенесён в отдельную последнюю волну;
+  - итоговый summary переписан так, чтобы booking шёл после foundation, finance, payments, reporting и service-plan/AI/mobile направлений.
+- Код не менялся; итерация только про требования и handoff-артефакты.
+
+### Backlog cleanup: recurring jobs removed
+- По продуктовой правке `Recurring jobs` удалены из актуального backlog как ненужная инициатива.
+- Обновлены артефакты:
+  - `docs/feature-backlog.md`
+  - `docs/specs/PF001-unified-schedule-dispatcher.md`
+  - `docs/specs/PF000-p0-core-business-suite.md`
+- В `PF001` recurring jobs больше не описываются как отдельный следующий пакет; зафиксировано только, что они вне scope текущего schedule package.
+- Код не менялся; итерация только про требования и handoff-артефакты.
+
+### Backlog / PF001 / PF100 / PF000: Pulse-first operator model alignment
+- Актуализирован `docs/feature-backlog.md` с учётом продуктовой позиции:
+  - `Pulse` зафиксирован как центральный event-centric operator workspace;
+  - `Schedule / Dispatcher` уточнён как сильный dispatch/planning surface, но не как новый главный activity center;
+  - backlog синхронизирован с текущей `Pulse-first` моделью продукта.
+- Обновлены спецификации:
+  - `docs/specs/PF001-unified-schedule-dispatcher.md`
+  - `docs/specs/PF001-technical-design.md`
+  - `docs/specs/PF000-p0-core-business-suite.md`
+  - `docs/specs/PF100-p0-sprint-plan.md`
+- В `PF001` и `PF001-technical-design` добавлены требования, что client-significant dispatch events публикуются в `Pulse` timeline по правилам `PF008`.
+- В `PF000` зафиксировано, что `Pulse` остаётся главным operator workspace, а `Schedule` не должен становиться конкурирующим activity center.
+- В `PF100` синхронизированы sprint assumptions:
+  - `Schedule` описан как planning/dispatch layer поверх `Pulse-first` foundation;
+  - удалены устаревшие допущения про `standalone invoice`, `portal pay`, `online checkout links` и webhook-based collection из текущего P0;
+  - `Client Portal` и `Payment Collection` приведены к текущему P0 scope.
+- Код не менялся; итерация только про требования и handoff-артефакты.
+
 ## 2026-03-24
 
 ### PF008: Pulse client timeline core package

@@ -2,7 +2,7 @@
 
 **Дата:** 2026-03-24
 **Статус:** Proposed
-**Приоритет:** P0
+**Приоритет:** P2
 **Зависит от:** текущие `Action Required`, `tasks`, `Quick Messages`, `workers`, `realtime`; shared event contracts from `PF001-PF005`
 
 ---
@@ -19,6 +19,8 @@
 - task creation
 - action-required escalation
 - document/payment/portal workflows
+
+По текущему roadmap это deferred package, а не часть первой продуктовой волны: до него допускается использовать существующие `Action Required`, thread-level tasks и отдельные special-case rules как временный operational baseline.
 
 ---
 
@@ -83,7 +85,7 @@
 
 ### 2. Supported trigger families
 
-В P0 engine обязан поддержать:
+В целевом initial engine должен поддержать:
 
 - `job`
 - `lead`
@@ -132,7 +134,7 @@ Rule conditions должны уметь фильтровать по:
 
 ### 5. Actions
 
-В P0 обязательны actions:
+В initial engine обязательны actions:
 
 - send SMS
 - send email
@@ -238,10 +240,10 @@ Automation engine должен соответствовать planned worker spl
 
 ## Ограничения
 
-- visual flow-builder automation UI не входит в P0;
-- AI-generated rules не входят в P0;
-- многошаговые branching workflows не входят в P0;
-- marketplace/add-on gating не входит в P0.
+- visual flow-builder automation UI не входит в initial scope;
+- AI-generated rules не входят в initial scope;
+- многошаговые branching workflows не входят в initial scope;
+- marketplace/add-on gating не входит в initial scope.
 
 ---
 

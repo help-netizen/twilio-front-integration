@@ -8,7 +8,7 @@
 
 ## 1. Design intent
 
-Automation engine is the cross-cutting backbone for P0.
+Automation engine is a deferred cross-cutting package for the later rollout wave, not part of the current P0 delivery slice.
 
 It should not be implemented as scattered `if trigger then send SMS` logic in individual services. Instead:
 
@@ -66,7 +66,7 @@ Publisher is called by:
 
 ### Why this matters
 
-Without this, every PF will ship its own special-case reminder/notification logic and automation debt will explode immediately.
+Without this, automation debt will continue to accumulate, but current `Action Required` and thread-task flows are acceptable as a temporary baseline until the dedicated automation wave starts.
 
 ---
 
