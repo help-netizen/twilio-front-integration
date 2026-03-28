@@ -1,8 +1,8 @@
-# Спецификация: PF101 — P0 DB Tables & API Contracts
+# Спецификация: PF101 — Core DB Tables & API Contracts
 
 **Дата:** 2026-03-24
 **Статус:** Proposed
-**Основа:** `PF001..PF006`
+**Основа:** `PF001..PF005` + deferred `PF006`
 
 ---
 
@@ -15,6 +15,11 @@
 - совместимости с текущими routes и data flows.
 
 Этот документ не заменяет детальные PF-specific specs, а собирает их в одну инженерную карту.
+
+Примечание:
+
+- файл исторически создавался как `p0` blueprint;
+- после reprioritization `PF006` его секции сохранены здесь как deferred reference и не считаются частью текущего P0 rollout.
 
 ---
 

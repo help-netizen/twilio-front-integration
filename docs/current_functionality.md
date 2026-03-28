@@ -45,6 +45,7 @@
 
 #### Звонки (`PulseCallListItem`)
 - Направление (inbound/outbound/internal), статус с цветом
+- **Voicemail**: статусы `voicemail_recording` и `voicemail_left` отображаются тем же call-item в общем timeline, а не отдельным inbox
 - Длительность, время звонка
 - **Аудиоплеер**: play/pause, перемотка, полоса прогресса — для записей разговоров
 - **Транскрипция**: развернуть/свернуть текст транскрипции; статус (`processing`, `completed`)

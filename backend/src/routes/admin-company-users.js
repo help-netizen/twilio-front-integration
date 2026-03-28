@@ -262,12 +262,32 @@ router.put('/:userId/reset-password', async (req, res) => {
         }
 
         const user = userRows[0];
-        if (!user.keycloak_sub) {
-            return res.status(422).json({ code: 'NO_KEYCLOAK_LINK', message: 'User has no Keycloak account linked' });
-        }
-
         const tempPassword = keycloakService.generateTempPassword();
-        await keycloakService.resetUserPassword(user.keycloak_sub, tempPassword, true);
+
+        let keycloakSub = user.keycloak_sub;
+
+        // Try resetting password; if user doesn't exist in Keycloak, create them first
+        try {
+            if (!keycloakSub) throw new Error('No keycloak_sub');
+            await keycloakService.resetUserPassword(keycloakSub, tempPassword, true);
+        } catch (resetErr) {
+            // User not found in Keycloak — provision them
+            console.log(`[AdminCompanyUsers] KC user not found for ${user.email}, creating...`);
+            const membership = await db.query(
+                'SELECT role FROM company_memberships WHERE user_id = $1 AND company_id = $2',
+                [userId, companyId]
+            );
+            const role = membership.rows[0]?.role || 'company_member';
+            const newKcSub = await createKeycloakUser(user.email, user.full_name, tempPassword, role);
+
+            // Update crm_users with the new keycloak_sub
+            await db.query(
+                'UPDATE crm_users SET keycloak_sub = $1, updated_at = NOW() WHERE id = $2',
+                [newKcSub, userId]
+            );
+            keycloakSub = newKcSub;
+            console.log(`[AdminCompanyUsers] KC user created for ${user.email}: ${newKcSub}`);
+        }
 
         await auditService.log({
             actor_id: req.user.crmUser?.id,

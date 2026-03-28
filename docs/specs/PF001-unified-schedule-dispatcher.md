@@ -11,7 +11,7 @@
 
 Создать единое dispatch-workspace, где операторы и диспетчеры видят и управляют всеми запланированными `jobs`, `leads` и `tasks` в одном календарном интерфейсе.
 
-Это должен быть новый основной operational screen рядом с `Pulse`, а не отдельный админский инструмент.
+`Schedule` должен стать сильным dispatch/planning surface рядом с `Pulse`, но не заменять `Pulse` как главный operator workspace по клиенту и событиям.
 
 ---
 
@@ -36,6 +36,8 @@
 ### Навигация
 
 - `Schedule` должен появиться в главной navigation рядом с `Pulse`, `Leads`, `Jobs`, `Contacts`, `Payments`.
+- `Pulse` остаётся canonical event-centric workspace, где оператор читает клиентскую историю и работает с сигналами.
+- `Schedule` отвечает за планирование, назначение и перенос работы, а не за полную клиентскую историю.
 - Из `Jobs`, `Leads`, `Pulse` и `Contacts` должны быть deeplink-переходы в конкретный schedule slot/item.
 
 ### Связь с существующими экранами
@@ -47,6 +49,13 @@
   - открыть `Pulse` thread
   - позвонить через `Softphone`
   - открыть SMS / timeline
+- из `Pulse` должно быть возможно перейти в релевантный schedule context для событий типа `schedule`, `reschedule`, `assignment`, `follow-up`.
+
+### Связь с Pulse
+
+- `Schedule` не создаёт отдельный activity log по клиенту.
+- client-significant dispatch события (`job scheduled`, `job rescheduled`, `provider reassigned`, `task scheduled`) должны отражаться в `Pulse` timeline по правилам `PF008`.
+- `Action Required / Snooze / Tasks` остаются operator controls и queue-signals в `Pulse`; schedule использует их как operational inputs, но не перехватывает их primary UX.
 
 ---
 
@@ -57,6 +66,7 @@
 3. Оператор открывает item в sidebar, звонит клиенту, пишет SMS и обновляет статус без ухода со schedule.
 4. Пользователь создаёт новый job или lead прямо из пустого временного слота.
 5. Пользователь видит unassigned work и быстро распределяет его по providers.
+6. Оператор видит в `Pulse`, что клиент просит перенести визит, и из карточки клиента быстро открывает нужный schedule context для reschedule.
 
 ---
 
@@ -209,7 +219,7 @@ Schedule должен обновляться без manual refresh при:
 - route optimization, maps и GPS не входят в P0;
 - payroll, time tracking и clock-in/out не входят в P0;
 - telephony queue dashboard не заменяется schedule-экраном;
-- recurring jobs не входят в эту фазу и описываются отдельно.
+- recurring jobs не входят в scope этого пакета.
 
 ---
 
@@ -218,6 +228,7 @@ Schedule должен обновляться без manual refresh при:
 - Пользователь видит `jobs`, `leads`, `tasks` в едином `/schedule`.
 - Есть `Day / Week / Month / Timeline / Timeline Week`.
 - Drag-and-drop реально меняет дату/время/assignee underlying record.
+- `Schedule` не становится второй клиентской историей: все client-significant dispatch events продолжают отражаться в `Pulse`.
 - Из любого item доступны `Call`, `Message`, `Open in Pulse`, `Open full page`.
 - Create-from-slot создаёт валидный `job`, `lead` или `task`.
 - Schedule обновляется через realtime без ручного reload.
