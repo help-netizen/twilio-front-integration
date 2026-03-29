@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { authedFetch } from '../../services/apiClient';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -23,6 +24,7 @@ interface Company {
 }
 
 export function CompaniesManager() {
+    const navigate = useNavigate();
     const [companies, setCompanies] = useState<Company[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
@@ -117,12 +119,13 @@ export function CompaniesManager() {
                             </TableRow>
                         ) : (
                             companies.map((c) => (
-                                <TableRow key={c.id}>
+                                <TableRow key={c.id} className="cursor-pointer hover:bg-muted/50" onClick={() => navigate(`/settings/admin/companies/${c.id}`)}>
                                     <TableCell>
                                         <div className="font-medium">{c.name}</div>
                                         <div className="text-sm text-muted-foreground flex items-center gap-2">
                                             {c.slug}
-                                            <Button variant="ghost" size="icon" className="h-4 w-4" onClick={() => {
+                                            <Button variant="ghost" size="icon" className="h-4 w-4" onClick={(e) => {
+                                                e.stopPropagation();
                                                 navigator.clipboard.writeText(c.id);
                                                 toast.success('Copied ID');
                                             }} title="Copy ID">
@@ -144,7 +147,7 @@ export function CompaniesManager() {
                                     <TableCell className="text-sm">
                                         {new Date(c.created_at).toLocaleDateString()}
                                     </TableCell>
-                                    <TableCell className="text-right">
+                                    <TableCell className="text-right" onClick={e => e.stopPropagation()}>
                                         <DropdownMenu>
                                             <DropdownMenuTrigger asChild>
                                                 <Button variant="ghost" className="h-8 w-8 p-0">

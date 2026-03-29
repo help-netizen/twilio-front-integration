@@ -8,13 +8,14 @@
 
 ## 1. Design intent
 
-`Schedule` должен быть новым основным operational workspace, но при этом не должен создавать новую business-entity модель.
+`Schedule` должен быть dedicated dispatch/planning workspace, но при этом не должен создавать новую business-entity модель и не должен заменять `Pulse` как canonical operator workspace по клиентской истории.
 
 Ключевая техническая идея:
 
 - aggregated read/write layer;
 - reuse existing `jobs`, `leads`, `tasks`, `providers`;
 - UI-операции всегда меняют underlying entity.
+- client-significant dispatch events публикуются в `Pulse`/realtime layer по правилам `PF008`.
 
 ---
 
@@ -180,6 +181,12 @@ Schedule service only orchestrates and validates common inputs.
 - optimistic drag/drop for local feel
 - server confirmation
 - fallback refetch when granular patching is ambiguous
+
+### Pulse integration rule
+
+- schedule mutation не ограничивается локальным calendar refresh;
+- если mutation меняет client-significant факт (`scheduled`, `rescheduled`, `provider reassigned`, `task scheduled`), backend обязан публиковать событие для `Pulse` timeline и shared SSE taxonomy;
+- `Schedule` и `Pulse` читают один и тот же underlying business change, а не обмениваются UI-only state.
 
 ---
 

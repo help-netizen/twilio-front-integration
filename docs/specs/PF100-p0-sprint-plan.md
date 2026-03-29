@@ -2,7 +2,7 @@
 
 **Дата:** 2026-03-24
 **Статус:** Proposed
-**Основа:** `PF000` + `PF001..PF006`
+**Основа:** `PF000` + `PF001..PF005`
 
 ---
 
@@ -19,10 +19,10 @@
 
 ## Принципы планирования
 
-1. `Automation / event foundation` идёт раньше пользовательских фич, которые на ней завязаны.
-2. `Schedule` запускается раньше finance-doc stack, потому что он повышает операционную связность существующих `Jobs / Leads / Tasks`.
-3. `Estimates -> Invoices -> Payment Collection -> Client Portal` идут именно в таком порядке.
-4. `/payments` не заменяется новой страницей: он постепенно мигрирует в canonical ledger.
+1. `Pulse` остаётся главным event-centric workspace, поэтому `Schedule` запускается как dispatch/planning surface поверх этого foundation, а не как новый центр продукта.
+2. `Estimates -> Invoices -> Payment Collection -> Client Portal` идут именно в таком порядке.
+3. `/payments` не заменяется новой страницей: он постепенно мигрирует в canonical ledger.
+4. Automation package (`PF006`) считается deferred и не должен блокировать текущий P0 rollout.
 5. В каждом спринте должен быть чёткий vertical slice, который можно проверить отдельно.
 
 ---
@@ -31,22 +31,16 @@
 
 ### Цель
 
-Подготовить foundation для событий, документов и платежей без вывода полной клиентской функциональности.
+Подготовить foundation для документов, portal access и payment linkage без вывода полной клиентской функциональности.
 
 ### Scope
 
-- `PF006` foundation only:
-  - canonical `domain_events`
-  - automation rule model
-  - execution queue model
-  - migration path для текущих `Action Required` triggers
 - shared contracts для:
   - estimate/invoice item model
   - document delivery model
   - payment transaction model
   - portal access token model
 - route/service/query skeletons для:
-  - `/api/automations`
   - `/api/estimates`
   - `/api/invoices`
   - `/api/payments`
@@ -57,7 +51,6 @@
 
 - утверждены schema contracts;
 - утверждены API contracts;
-- понятен worker split для automations;
 - можно безопасно начинать feature-specific implementation.
 
 ### Не входит
@@ -72,7 +65,7 @@
 
 ### Цель
 
-Запустить operational `/schedule`, используя уже существующие `Jobs / Leads / Tasks / Providers`.
+Запустить operational `/schedule` как planning/dispatch surface, используя уже существующие `Jobs / Leads / Tasks / Providers` и не вытесняя `Pulse` как основной client/event workspace.
 
 ### Scope
 
@@ -83,6 +76,7 @@
   - filters
   - quick-view sidebar
   - deeplinks в `Job`, `Lead`, `Pulse`
+  - client-significant dispatch events публикуются в `Pulse`
 - create-from-slot для:
   - `Task`
   - `Lead`
@@ -92,6 +86,7 @@
 ### Зависимости
 
 - shared event contracts из Sprint 1
+- `PF008` Pulse timeline/realtime rules
 - расширение task schedule fields, если требуется
 
 ### Exit criteria
@@ -99,6 +94,7 @@
 - диспетчер видит всё планируемое в одном месте;
 - drag-and-drop reschedule/reassign архитектурно определён и готов к включению;
 - нет второй параллельной schedule entity.
+- `Pulse` остаётся canonical client history, а schedule mutations публикуют события в его timeline.
 
 ---
 
@@ -146,7 +142,7 @@
 
 - `PF003`:
   - `/invoices`
-  - create from `Job`, approved `Estimate`, standalone
+  - create from `Job` и approved `Estimate`
   - due dates / payment terms
   - invoice status model
   - send + preview
@@ -175,11 +171,9 @@
 ### Scope
 
 - `PF004`:
-  - online checkout links
-  - estimate deposits
-  - invoice full/partial payment
+  - recorded estimate deposits
+  - invoice full/partial recorded payment
   - manual offline payments
-  - payment attempts
   - receipts
   - unified payment read model
 - migration `/payments` UI на canonical payment API
@@ -188,13 +182,12 @@
 ### Зависимости
 
 - Sprint 3 and 4 documents
-- provider webhook handling and idempotency
 
 ### Exit criteria
 
-- estimate/invoice реально принимают оплату;
-- `/payments` видит и legacy synced payments, и новые collected payments;
-- failure paths и receipts стандартизованы.
+- estimate/invoice получают linked recorded payments через canonical `/payments` ledger;
+- `/payments` видит и legacy synced payments, и новые recorded payments;
+- partial/full payment и receipts стандартизованы без card-processing scope.
 
 ---
 
@@ -202,7 +195,7 @@
 
 ### Цель
 
-Открыть единый self-service слой для клиентов.
+Открыть единый controlled client portal layer для документов и клиентских действий.
 
 ### Scope
 
@@ -213,7 +206,7 @@
   - `Profile`
   - magic-link/token access
   - portal document actions
-  - cards on file / payment history
+  - payment history / outstanding balances
 - internal preview mode для estimates/invoices
 
 ### Зависимости
@@ -225,55 +218,18 @@
 ### Exit criteria
 
 - client send flows ведут в единый portal;
-- клиент может approve/sign/pay;
+- клиент может approve/sign и просматривать документы/балансы;
 - team получает нормализованные portal events.
 
 ---
-
-## Sprint 7 — Automation Productization & Cross-Feature Hardening
-
-### Цель
-
-Довести foundation automations до user-usable product surface и закрыть cross-feature integration.
-
-### Scope
-
-- `PF006` full:
-  - `/settings/automations`
-  - rules CRUD
-  - execution log
-  - templates
-  - retries / dead-letter visibility
-- migration current `Actions & Notifications` на rule engine
-- cross-feature templates:
-  - appointment reminder
-  - estimate follow-up
-  - invoice overdue reminder
-  - payment receipt notification
-  - create task/action-required on key events
-
-### Зависимости
-
-- all previous sprints
-- worker execution path from Sprint 1 foundation
-
-### Exit criteria
-
-- automations не special-case logic, а общий движок;
-- reminders и follow-ups конфигурируются без code changes;
-- все P0 domains publish canonical events.
-
----
-
 ## Итоговый порядок реализации
 
-1. Sprint 1 — foundation contracts + automation/event base
+1. Sprint 1 — foundation contracts
 2. Sprint 2 — `PF001 Schedule / Dispatcher`
 3. Sprint 3 — `PF002 Estimates`
 4. Sprint 4 — `PF003 Invoices`
 5. Sprint 5 — `PF004 Payment Collection`
 6. Sprint 6 — `PF005 Client Portal`
-7. Sprint 7 — `PF006 Automation Engine` productization
 
 ---
 
@@ -284,15 +240,22 @@
 - придётся делать client surface без реальных estimates/invoices/payments;
 - получится декоративный портал без business value.
 
+### Если пытаться сделать Schedule главным workspace вместо Pulse
+
+- появится второй конкурирующий центр клиентской истории;
+- finance, portal и automations начнут строить параллельные activity surfaces;
+- операторская модель станет менее предсказуемой, чем текущий `Pulse-first` контур.
+
 ### Если начать с Payments раньше Invoices
 
 - collection layer будет не к чему привязывать, кроме абстрактных links;
 - возрастёт шанс двойной финансовой модели.
 
-### Если отложить Automation Foundation
+### Если слишком рано тащить Automation Engine в текущий P0
 
-- события придётся зашивать ad-hoc logic в каждом PF;
-- позже миграция будет значительно дороже.
+- вырастет scope первой волны без прямого short-term product payoff;
+- команда размажет внимание между foundation, finance-docs и rule engine;
+- текущие `Action Required`/thread-task mechanisms уже дают достаточный временный operational baseline.
 
 ---
 

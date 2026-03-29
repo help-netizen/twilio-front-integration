@@ -13,6 +13,7 @@ const express = require('express');
 const router = express.Router();
 const userService = require('../services/userService');
 const auditService = require('../services/auditService');
+const { generateTempPassword: sharedGenerateTempPassword } = require('../services/keycloakService');
 
 /**
  * POST / — Create a new user
@@ -232,16 +233,9 @@ router.patch('/:id/status', async (req, res) => {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/**
- * Generate a random temporary password.
- */
+// Delegate to shared keycloakService helper
 function generateTempPassword() {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
-    let password = '';
-    for (let i = 0; i < 12; i++) {
-        password += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return password;
+    return sharedGenerateTempPassword();
 }
 
 /**

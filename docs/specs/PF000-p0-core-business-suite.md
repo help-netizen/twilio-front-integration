@@ -15,7 +15,6 @@
 - `Invoices`
 - operational `Payment Collection`
 - `Client Portal`
-- общий `Automation Engine`
 
 Этот пакет должен встраиваться в уже существующий продуктовый фундамент, а не создавать параллельные сущности и дублирующие интерфейсы.
 
@@ -53,7 +52,6 @@
 - [PF003 — Invoices](/Users/rgareev91/contact_center/twilio-front-integration/docs/specs/PF003-invoices.md)
 - [PF004 — Payment Collection](/Users/rgareev91/contact_center/twilio-front-integration/docs/specs/PF004-payment-collection.md)
 - [PF005 — Client Portal](/Users/rgareev91/contact_center/twilio-front-integration/docs/specs/PF005-client-portal.md)
-- [PF006 — Automation Engine](/Users/rgareev91/contact_center/twilio-front-integration/docs/specs/PF006-automation-engine.md)
 
 ---
 
@@ -63,6 +61,13 @@
 
 - `Contacts`, `Leads`, `Jobs`, `Tasks`, `Payments` остаются canonical business records.
 - `Schedule`, `Portal`, `Automations`, `Estimates`, `Invoices` работают поверх этих сущностей и создают новые только там, где их реально ещё нет.
+
+### 1a. `Pulse` остаётся главным operator workspace
+
+- `Pulse` является canonical client timeline и основным event-centric workspace для операционного контура.
+- `Schedule` является важным dispatch/planning surface, но не должен становиться главным activity center продукта.
+- новые P0-фичи должны встраиваться в `Pulse`, а не вытеснять его альтернативными event feeds.
+- communication- и phone-related направления тоже должны рассматриваться как часть `Pulse`, его timelines и queue-state, а не как отдельные operator workspaces.
 
 ### 2. Связь с Pulse обязательна
 
@@ -96,8 +101,8 @@
 
 ### 5. Finance сначала job-centric
 
-- там, где возможны два режима, `job-connected` путь считается основным;
-- standalone documents допустимы, но должны быть явно помечены и ограничены там, где это ухудшает reporting/automation.
+- финансовые документы должны быть привязаны к `lead` и/или `job`, а не жить как standalone records;
+- `Estimate` и `Invoice` развиваются как связанные document flows поверх существующих `Lead / Job`, сохраняя reporting/automation consistency.
 
 ### 6. Не копировать слабые ограничения Workiz без причины
 
@@ -113,7 +118,7 @@
 
 ### Wave A — Foundation
 
-1. `PF006 Automation Engine` foundation
+1. `PF008 Pulse client timeline core` foundation
 2. `PF001 Unified Schedule / Dispatcher`
 3. shared finance/domain contracts for estimates/invoices/payments
 
@@ -126,8 +131,7 @@
 ### Wave C — Client-facing layer
 
 1. `PF005 Client Portal`
-2. portal-dependent automation templates
-3. final Pulse + notification integrations
+2. final Pulse + notification integrations
 
 ---
 
@@ -138,7 +142,8 @@
 - `Dashboard & Reports`
 - `QuickBooks`
 - `Granular Roles & Permissions`
-- `Recurring Jobs`
 - `Phone Ops for field scenarios`
+- `Automation Engine`
+- `Task center / automation templates`
 
 Эти фичи идут следующим приоритетом после стабилизации P0-core.

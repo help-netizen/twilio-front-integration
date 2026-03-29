@@ -112,6 +112,13 @@ PF008 нужен, чтобы `Pulse` был не просто communication page
 - `Jobs`, `Leads`, `Payments`, `Portal`, `Estimates`, `Invoices`, `Automations` могут иметь свои detail views;
 - но не должны становиться primary history surfaces для client activity.
 
+### 4a. Messaging / Phone / Communication Ops принадлежат `Pulse`
+
+- `Messaging`, `Phone Ops`, `Voicemail`, future `Email`, `Call Tracking` и `AI communication` должны проектироваться как часть `Pulse`.
+- их operator-facing UX должен жить в `Pulse` timeline, left queue, middle-card controls и shared realtime semantics.
+- отдельные communication dashboards допустимы только как вспомогательные admin/reporting surfaces, но не как primary client-history surface.
+- новый communication/phone workflow не должен запускаться без ответа на вопрос: "Как это будет жить внутри Pulse timeline и queue model?"
+
 ### 5. `Action Required / Snooze / Tasks` — dual-surface workflow model
 
 - `Action Required`, `Snooze`, `Assign owner`, `open task` являются прежде всего active workflow controls и action-needed signals;
@@ -178,10 +185,12 @@ Pulse должен поддерживать как минимум следующ
 - voicemail
 - sms
 - mms/media
+- inbound/outbound email
 
 Примечание:
 
 - transcript, recording и AI summary остаются enrichment существующего call item, а не отдельным параллельным item family по умолчанию.
+- email должен встраиваться в текущий thread/timeline model `Pulse`, а не создавать отдельный competing client-history inbox.
 
 ### Workflow / operator actions
 
@@ -216,6 +225,15 @@ Pulse должен поддерживать как минимум следующ
 - portal opened
 - contact updated by client
 - automation-created reminder/task/escalation
+
+### Communication ops / phone overlays
+
+- masked-call event
+- callback/follow-up created
+- AI message suggestion used
+- AI message intent extracted
+- AI call/message summary published
+- call attribution/source identified
 
 ## 3. Rendering rules
 
@@ -255,9 +273,10 @@ Pulse должен поддерживать как минимум следующ
 ## 6. Cross-module publishing into Pulse
 
 1. `Leads`, `Jobs`, `Contacts`, `Payments`, `Estimates`, `Invoices`, `Client Portal`, `Automation Engine` должны публиковать Pulse-visible items для high-value client events.
-2. Из `Lead`, `Job`, `Contact`, `Estimate`, `Invoice`, `Payment`, `Schedule` должны быть deeplink-переходы в Pulse timeline.
-3. Новые high-value client actions не должны запускаться без ответа на вопрос: "Как это появится в Pulse?"
-4. Любой новый продуктовый spec, который добавляет client-significant event или новый frontend realtime update, обязан иметь раздел `Pulse / Realtime integration`.
+2. `Messaging`, `Phone Ops`, `Voicemail`, `Email`, `Call Tracking`, `AI communication` должны рассматриваться как Pulse-owned flows и публиковать Pulse-visible items / queue updates по тем же правилам.
+3. Из `Lead`, `Job`, `Contact`, `Estimate`, `Invoice`, `Payment`, `Schedule` должны быть deeplink-переходы в Pulse timeline.
+4. Новые high-value client actions не должны запускаться без ответа на вопрос: "Как это появится в Pulse?"
+5. Любой новый продуктовый spec, который добавляет client-significant event или новый frontend realtime update, обязан иметь раздел `Pulse / Realtime integration`.
 
 ## 7. Realtime behavior
 
@@ -278,6 +297,7 @@ Pulse должен поддерживать как минимум следующ
    - меняет ли он Pulse timeline;
    - меняет ли он Pulse queue/current state;
    - нужен ли он другим экранам или notification surfaces.
+8. Это правило в равной степени относится к communication/phone flows: email, voicemail workflow, phone ops, call tracking и AI-assisted communication.
 
 ## 8. Permissions and visibility
 

@@ -73,11 +73,12 @@ Invoice links to:
 
 - `contact_id` mandatory
 - `lead_id` optional
-- `job_id` preferred but not mandatory
+- `job_id` optional
 - `estimate_id` optional
 
 Rules:
 
+- at least one of `job_id` or `estimate_id` must be present;
 - `estimate_id` and `job_id` may coexist;
 - `lead_id` may remain for sales traceability if estimate/invoice started before job creation;
 - linking invoice to a later-created job must not destroy estimate lineage.
@@ -244,10 +245,10 @@ Consumers:
 
 - status drift if invoice aggregates are not driven by linked payment records
 - source document sync ambiguity
-- too much standalone usage reducing reporting quality
+- weak source-link enforcement reducing reporting quality
 
 ### Mitigation
 
 - canonical `invoice <-> payment_transactions` link with invoice payments section and shared `/payments` ledger read model
 - explicit snapshot rules
-- job-connected and estimate-derived paths as explicit first-class UX
+- job-connected and estimate-derived paths as explicit first-class UX, with validation that invoice cannot be saved without source link

@@ -156,7 +156,48 @@ async function assignGlobalRole(userId, roleName) {
     console.log(`[Keycloak] Role ${roleName} assigned to user ${userId}`);
 }
 
+/**
+ * Reset a user's password in Keycloak.
+ * @param {string} keycloakUserId - The Keycloak user ID (keycloak_sub from crm_users)
+ * @param {string} newPassword - The new password to set
+ * @param {boolean} temporary - If true, user must change on next login
+ */
+async function resetUserPassword(keycloakUserId, newPassword, temporary = true) {
+    const token = await getAdminToken();
+    const res = await fetch(`${KC_BASE}/admin/realms/${REALM}/users/${keycloakUserId}/reset-password`, {
+        method: 'PUT',
+        headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            type: 'password',
+            value: newPassword,
+            temporary
+        })
+    });
+    if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`Failed to reset password: ${res.status} ${body}`);
+    }
+}
+
+/**
+ * Generate a random temporary password (12 chars, no ambiguous characters).
+ */
+function generateTempPassword() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+    let password = '';
+    for (let i = 0; i < 12; i++) {
+        password += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return password;
+}
+
 module.exports = {
     ensureUserExistsAndExecuteAction,
-    assignGlobalRole
+    assignGlobalRole,
+    resetUserPassword,
+    generateTempPassword,
+    getAdminToken
 };
