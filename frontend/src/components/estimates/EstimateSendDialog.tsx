@@ -18,7 +18,7 @@ interface Props {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export function EstimateSendDialog({ open, onOpenChange, estimateId, contactEmail, onSend }: Props) {
+export function EstimateSendDialog({ open, onOpenChange, estimateId: _estimateId, contactEmail, onSend }: Props) {
     const [channel, setChannel] = useState<'email' | 'sms'>('email');
     const [recipient, setRecipient] = useState(contactEmail || '');
     const [message, setMessage] = useState('');

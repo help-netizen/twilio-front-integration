@@ -3,7 +3,7 @@ import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Separator } from '../ui/separator';
 import { ScrollArea } from '../ui/scroll-area';
-import { X, Undo2, Ban, Send, Receipt, Loader2 } from 'lucide-react';
+import { X, Undo2, Ban, Send, Receipt } from 'lucide-react';
 import type { PaymentTransaction, PaymentReceipt, SendReceiptData, RefundData } from '../../services/paymentsCanonicalApi';
 import { RefundDialog } from './RefundDialog';
 

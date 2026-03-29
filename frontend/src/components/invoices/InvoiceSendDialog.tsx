@@ -18,7 +18,7 @@ interface Props {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export function InvoiceSendDialog({ open, onOpenChange, invoiceId, contactEmail, onSend }: Props) {
+export function InvoiceSendDialog({ open, onOpenChange, invoiceId: _invoiceId, contactEmail, onSend }: Props) {
     const [channel, setChannel] = useState<'email' | 'sms'>('email');
     const [recipient, setRecipient] = useState(contactEmail || '');
     const [message, setMessage] = useState('');

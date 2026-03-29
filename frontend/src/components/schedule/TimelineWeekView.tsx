@@ -21,7 +21,7 @@ interface ProviderGroup {
     items: ScheduleItem[];
 }
 
-export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({ currentDate, items, settings, onSelectItem }) => {
+export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({ currentDate, items, settings: _settings, onSelectItem }) => {
     const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
     const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
 
