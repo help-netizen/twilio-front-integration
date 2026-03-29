@@ -138,7 +138,7 @@ async function getScheduleItems(opts) {
                 NULL::jsonb AS assigned_techs,
                 l.job_type,
                 l.job_source,
-                NULL::jsonb AS tags,
+                NULL::text[] AS tags,
                 l.company_id,
                 l.created_at
             FROM leads l
@@ -189,7 +189,7 @@ async function getScheduleItems(opts) {
                 NULL::jsonb AS assigned_techs,
                 NULL AS job_type,
                 NULL AS job_source,
-                NULL::jsonb AS tags,
+                NULL::text[] AS tags,
                 t.company_id,
                 t.created_at
             FROM tasks t
