@@ -72,14 +72,7 @@ lsof -ti:$FRONTEND_PORT | xargs kill 2>/dev/null || true
 sleep 1
 
 # =============================================================================
-# Step 3: Restart Keycloak + Redis (docker)
-# =============================================================================
-log "Restarting Keycloak..."
-docker-compose -f "$PROJECT_DIR/docker-compose.auth.yml" up -d
-log "Keycloak starting on :8080"
-
-# =============================================================================
-# Step 4: Start backend
+# Step 3: Start backend
 # =============================================================================
 log "Starting backend on :$BACKEND_PORT..."
 node src/server.js &
@@ -87,7 +80,7 @@ PIDS+=($!)
 sleep 2
 
 # =============================================================================
-# Step 5: Start frontend
+# Step 4: Start frontend
 # =============================================================================
 log "Starting frontend on :$FRONTEND_PORT..."
 cd "$PROJECT_DIR/frontend"
@@ -103,7 +96,6 @@ echo -e "${GREEN} Local environment restarted${NC}"
 echo -e "${GREEN}═══════════════════════════════════════════${NC}"
 echo -e " Backend:  ${BLUE}http://localhost:$BACKEND_PORT${NC}"
 echo -e " Frontend: ${BLUE}http://localhost:$FRONTEND_PORT${NC}"
-echo -e " Keycloak: ${BLUE}http://localhost:8080${NC}"
 echo -e "${GREEN}═══════════════════════════════════════════${NC}"
 echo ""
 
