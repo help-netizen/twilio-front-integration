@@ -8,6 +8,8 @@ import type { Timeslot, TimeslotDay } from '../../services/zenbookerApi';
 import * as zenbookerApi from '../../services/zenbookerApi';
 import { type AddressFields, EMPTY_ADDRESS } from '../AddressAutocomplete';
 import { useZipCheck } from '../../hooks/useZipCheck';
+import { useAuth } from '../../auth/AuthProvider';
+import { todayInTZ, tomorrowAtInTZ } from '../../utils/companyTime';
 
 export type Step = 1 | 2 | 3 | 4;
 
@@ -17,6 +19,8 @@ export const STEP_TITLES: Record<Step, string> = { 1: 'Customer & Address', 2: '
 
 export function useConvertToJob(lead: Lead, open: boolean, onSuccess: (lead: Lead) => void, onOpenChange: (open: boolean) => void) {
     const navigate = useNavigate();
+    const { company } = useAuth();
+    const companyTz = company?.timezone || 'America/New_York';
     const [step, setStep] = useState<Step>(1);
     const [submitting, setSubmitting] = useState(false);
     const [name, setName] = useState('');
@@ -47,7 +51,7 @@ export function useConvertToJob(lead: Lead, open: boolean, onSuccess: (lead: Lea
             setTimeslotDays([]); setSelectedTimeslot(null); setTimeslotsError('');
             const leadLat = lead.Latitude != null ? Number(lead.Latitude) : null; const leadLng = lead.Longitude != null ? Number(lead.Longitude) : null;
             if (leadLat && leadLng) setCoords({ lat: leadLat, lng: leadLng });
-            setSelectedDate(new Date().toISOString().split('T')[0]);
+            setSelectedDate(todayInTZ(companyTz));
         }
     }, [open, lead, setCoords]);
 
@@ -78,10 +82,10 @@ export function useConvertToJob(lead: Lead, open: boolean, onSuccess: (lead: Lea
                     zbJobPayload.assigned_providers = [selectedTimeslot.techId];
                 }
             } else {
-                // Fallback — default arrival window
-                const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(8, 0, 0, 0);
-                const end = new Date(tomorrow.getTime() + 4 * 60 * 60 * 1000);
-                zbJobPayload.timeslot = { type: 'arrival_window', start: tomorrow.toISOString(), end: end.toISOString() };
+                // Fallback — default arrival window (tomorrow 8am–12pm in company timezone)
+                const tomorrowStart = tomorrowAtInTZ(8, 0, companyTz);
+                const tomorrowEnd = new Date(tomorrowStart.getTime() + 4 * 60 * 60 * 1000);
+                zbJobPayload.timeslot = { type: 'arrival_window', start: tomorrowStart.toISOString(), end: tomorrowEnd.toISOString() };
                 zbJobPayload.assignment_method = 'auto';
             }
             const result = await leadsApi.convertLead(lead.UUID, { zb_job_payload: zbJobPayload, service: { name: serviceName, description: serviceDescription }, customer: { name, phone, email }, address: { line1: addressFields.street, line2: addressFields.apt, city: addressFields.city, state: addressFields.state, postal_code: addressFields.zip } });

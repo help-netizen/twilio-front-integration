@@ -76,12 +76,12 @@ export type SortDir = 'asc' | 'desc';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-export function formatPaymentDate(iso: string): string {
+export function formatPaymentDate(iso: string, tz: string = 'America/New_York'): string {
     if (!iso) return '—';
     try {
         const d = new Date(iso);
         return d.toLocaleString('en-US', {
-            timeZone: 'America/New_York',
+            timeZone: tz,
             month: 'short',
             day: 'numeric',
             year: 'numeric',

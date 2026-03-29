@@ -8,6 +8,8 @@ import { listJobs, updateJobCoords } from '../../services/jobsApi';
 import type { LocalJob } from '../../services/jobsApi';
 import { getTeamMembers } from '../../services/zenbookerApi';
 import type { TeamMember } from '../../services/zenbookerApi';
+import { useAuth } from '../../auth/AuthProvider';
+import { dateInTZ, todayInTZ } from '../../utils/companyTime';
 import './CustomTimeModal.css';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -65,21 +67,30 @@ function formatDateLabel(date: Date) {
     return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
-function getRelativeDayHint(date: Date): string | null {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
-    const target = new Date(date); target.setHours(0, 0, 0, 0);
-    if (target.getTime() === today.getTime()) return 'Today';
-    if (target.getTime() === tomorrow.getTime()) return 'Tomorrow';
+function getRelativeDayHint(dateStr: string, tz: string): string | null {
+    const todayStr = todayInTZ(tz);
+    if (dateStr === todayStr) return 'Today';
+    // Tomorrow: add 1 day to today
+    const [y, m, d] = todayStr.split('-').map(Number);
+    const next = new Date(Date.UTC(y, m - 1, d + 1));
+    const tomorrowStr = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}-${String(next.getUTCDate()).padStart(2, '0')}`;
+    if (dateStr === tomorrowStr) return 'Tomorrow';
     return null;
 }
 
-function fmtTime(d: Date) {
-    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+function fmtTime(d: Date, tz?: string) {
+    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, ...(tz && { timeZone: tz }) });
 }
 
-function minutesSinceMidnight(d: Date) {
-    return d.getHours() * 60 + d.getMinutes();
+function minutesSinceMidnight(d: Date, tz?: string) {
+    if (!tz) return d.getHours() * 60 + d.getMinutes();
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(d);
+    const h = parseInt(parts.find(p => p.type === 'hour')?.value || '0');
+    const m = parseInt(parts.find(p => p.type === 'minute')?.value || '0');
+    // Intl hour12:false may return 24 for midnight
+    return (h === 24 ? 0 : h) * 60 + m;
 }
 
 function snapToGrid(y: number, containerTop: number): number {
@@ -145,9 +156,10 @@ interface TechTimelineProps {
     selectedSlot: SelectedSlot | null;
     onSelectSlot: (slot: SelectedSlot) => void;
     matchesTerritory: boolean;
+    companyTz: string;
 }
 
-function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectSlot, matchesTerritory }: TechTimelineProps) {
+function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectSlot, matchesTerritory, companyTz }: TechTimelineProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const [hoverMinutes, setHoverMinutes] = useState<number | null>(null);
 
@@ -167,14 +179,14 @@ function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectS
         if (hoverMinutes === null) return;
         const startMinTotal = HOUR_START * 60 + hoverMinutes;
         const endMinTotal = Math.min(startMinTotal + durationMin, HOUR_END * 60);
-        const start = new Date(y, m - 1, d, Math.floor(startMinTotal / 60), startMinTotal % 60);
-        const end = new Date(y, m - 1, d, Math.floor(endMinTotal / 60), endMinTotal % 60);
+        const start = dateInTZ(y, m, d, Math.floor(startMinTotal / 60), startMinTotal % 60, companyTz);
+        const end = dateInTZ(y, m, d, Math.floor(endMinTotal / 60), endMinTotal % 60, companyTz);
         onSelectSlot({ techId: tech.id, start, end });
-    }, [hoverMinutes, durationMin, y, m, d, tech.id, onSelectSlot]);
+    }, [hoverMinutes, durationMin, y, m, d, tech.id, onSelectSlot, companyTz]);
 
     const isSelected = selectedSlot?.techId === tech.id;
-    const selectedTop = isSelected ? ((minutesSinceMidnight(selectedSlot!.start) - HOUR_START * 60) / 60) * HOUR_HEIGHT : 0;
-    const selectedHeight = isSelected ? ((minutesSinceMidnight(selectedSlot!.end) - minutesSinceMidnight(selectedSlot!.start)) / 60) * HOUR_HEIGHT : 0;
+    const selectedTop = isSelected ? ((minutesSinceMidnight(selectedSlot!.start, companyTz) - HOUR_START * 60) / 60) * HOUR_HEIGHT : 0;
+    const selectedHeight = isSelected ? ((minutesSinceMidnight(selectedSlot!.end, companyTz) - minutesSinceMidnight(selectedSlot!.start, companyTz)) / 60) * HOUR_HEIGHT : 0;
 
     return (
         <div className="tech-timeline__col">
@@ -199,12 +211,12 @@ function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectS
                 {/* Existing job blocks */}
                 {tech.jobs.map((job) => {
                     if (!job.start_date || !job.end_date) return null;
-                    const startMin = minutesSinceMidnight(new Date(job.start_date)) - HOUR_START * 60;
-                    const endMin = minutesSinceMidnight(new Date(job.end_date)) - HOUR_START * 60;
+                    const startMin = minutesSinceMidnight(new Date(job.start_date), companyTz) - HOUR_START * 60;
+                    const endMin = minutesSinceMidnight(new Date(job.end_date), companyTz) - HOUR_START * 60;
                     const top = (startMin / 60) * HOUR_HEIGHT;
                     const height = Math.max(((endMin - startMin) / 60) * HOUR_HEIGHT, 28);
-                    const sTime = fmtTime(new Date(job.start_date));
-                    const eTime = fmtTime(new Date(job.end_date));
+                    const sTime = fmtTime(new Date(job.start_date), companyTz);
+                    const eTime = fmtTime(new Date(job.end_date), companyTz);
                     return (
                         <div
                             key={job.id}
@@ -236,7 +248,7 @@ function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectS
                         style={{ top: selectedTop, height: selectedHeight }}
                     >
                         <span className="tech-timeline__selected-label">
-                            ★ New: {fmtTime(selectedSlot!.start)}–{fmtTime(selectedSlot!.end)}
+                            ★ New: {fmtTime(selectedSlot!.start, companyTz)}–{fmtTime(selectedSlot!.end, companyTz)}
                         </span>
                     </div>
                 )}
@@ -253,9 +265,10 @@ interface JobMapProps {
     newJobCoords?: { lat: number; lng: number } | null;
     newJobAddress?: string;
     loading: boolean;
+    companyTz: string;
 }
 
-function JobMap({ jobs, techGroups, newJobCoords, newJobAddress, loading }: JobMapProps) {
+function JobMap({ jobs, techGroups, newJobCoords, newJobAddress, loading, companyTz }: JobMapProps) {
     const mapRef = useRef<HTMLDivElement>(null);
     const mapInstanceRef = useRef<google.maps.Map | null>(null);
     const markersRef = useRef<google.maps.Marker[]>([]);
@@ -382,7 +395,7 @@ function JobMap({ jobs, techGroups, newJobCoords, newJobAddress, loading }: JobM
                     if (!position || !mapInstanceRef.current) continue;
 
                     const num = i + 1;
-                    const timeStr = job.start_date ? fmtTime(new Date(job.start_date)) : '';
+                    const timeStr = job.start_date ? fmtTime(new Date(job.start_date), companyTz) : '';
                     const marker = new google.maps.Marker({
                         position, map: mapInstanceRef.current,
                         icon: { url: makePinSvg(num, color), scaledSize: new google.maps.Size(28, 40), anchor: new google.maps.Point(14, 40) },
@@ -444,9 +457,12 @@ function JobMap({ jobs, techGroups, newJobCoords, newJobAddress, loading }: JobM
 // ─── Main Modal ───────────────────────────────────────────────────────────────
 
 export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJobAddress, newJobDuration, territoryId, excludeJobId, initialSlot }: CustomTimeModalProps) {
+    const { company } = useAuth();
+    const companyTz = company?.timezone || 'America/New_York';
+
     const getInitialDate = () => {
-        if (initialSlot?.start) return new Date(initialSlot.start).toISOString().split('T')[0];
-        return new Date().toISOString().split('T')[0];
+        if (initialSlot?.start) return new Intl.DateTimeFormat('en-CA', { timeZone: companyTz }).format(new Date(initialSlot.start));
+        return todayInTZ(companyTz);
     };
     const getInitialSlot = (): SelectedSlot | null => {
         if (initialSlot) return { techId: initialSlot.techId, start: new Date(initialSlot.start), end: new Date(initialSlot.end) };
@@ -459,7 +475,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
     // Re-populate when modal re-opens with initialSlot (reschedule mode)
     useEffect(() => {
         if (open && initialSlot) {
-            const slotDate = new Date(initialSlot.start).toISOString().split('T')[0];
+            const slotDate = new Intl.DateTimeFormat('en-CA', { timeZone: companyTz }).format(new Date(initialSlot.start));
             setSelectedDate(slotDate);
             setSelectedSlot({
                 techId: initialSlot.techId,
@@ -483,6 +499,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
         return () => { cancelled = true; };
     }, []);
 
+    // dateObj for Calendar UI — browser-local Date so Calendar component highlights correct day
     const dateObj = useMemo(() => {
         const [y, m, d] = selectedDate.split('-').map(Number);
         return new Date(y, m - 1, d);
@@ -514,7 +531,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
         setTechPage(0);
         setSelectedSlot(prev => {
             if (!prev) return null;
-            const slotDate = prev.start.toISOString().split('T')[0];
+            const slotDate = new Intl.DateTimeFormat('en-CA', { timeZone: companyTz }).format(prev.start);
             return slotDate === selectedDate ? prev : null;
         });
     }, [selectedDate]);
@@ -523,7 +540,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
         if (!selectedSlot) return;
         const dateLabel = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
         const techName = techGroups.find(g => g.id === selectedSlot.techId)?.name || '';
-        const formatted = `${fmtTime(selectedSlot.start)} – ${fmtTime(selectedSlot.end)} — ${dateLabel}${techName ? ` (${techName})` : ''}`;
+        const formatted = `${fmtTime(selectedSlot.start, companyTz)} – ${fmtTime(selectedSlot.end, companyTz)} — ${dateLabel}${techName ? ` (${techName})` : ''}`;
         onConfirm({
             type: 'arrival_window',
             start: selectedSlot.start.toISOString(),
@@ -533,15 +550,19 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
         });
     };
 
-    // Date navigation
-    const today = new Date().toISOString().split('T')[0];
+    // Date navigation — use company timezone for "today"
+    const today = todayInTZ(companyTz);
     const prevDate = () => {
-        const d = new Date(dateObj); d.setDate(d.getDate() - 1);
-        if (d.toISOString().split('T')[0] >= today) setSelectedDate(d.toISOString().split('T')[0]);
+        const [y, m, d] = selectedDate.split('-').map(Number);
+        const prev = new Date(Date.UTC(y, m - 1, d - 1));
+        const prevStr = `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, '0')}-${String(prev.getUTCDate()).padStart(2, '0')}`;
+        if (prevStr >= today) setSelectedDate(prevStr);
     };
     const nextDate = () => {
-        const d = new Date(dateObj); d.setDate(d.getDate() + 1);
-        setSelectedDate(d.toISOString().split('T')[0]);
+        const [y, m, d] = selectedDate.split('-').map(Number);
+        const next = new Date(Date.UTC(y, m - 1, d + 1));
+        const nextStr = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}-${String(next.getUTCDate()).padStart(2, '0')}`;
+        setSelectedDate(nextStr);
     };
 
     return (
@@ -565,7 +586,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                             <Calendar
                                 mode="single"
                                 selected={dateObj}
-                                onSelect={(day) => { if (day) { setSelectedDate(day.toISOString().split('T')[0]); setCalendarOpen(false); } }}
+                                onSelect={(day) => { if (day) { const ds = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`; setSelectedDate(ds); setCalendarOpen(false); } }}
                                 disabled={{ before: new Date(today + 'T00:00:00') }}
                                 defaultMonth={dateObj}
                             />
@@ -574,8 +595,8 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                     <Button variant="ghost" size="icon" className="ctm-date-nav__arrow" onClick={nextDate}>
                         <ChevronRight className="w-4" />
                     </Button>
-                    {getRelativeDayHint(dateObj) && (
-                        <span className="ctm-date-nav__hint">{getRelativeDayHint(dateObj)}</span>
+                    {getRelativeDayHint(selectedDate, companyTz) && (
+                        <span className="ctm-date-nav__hint">{getRelativeDayHint(selectedDate, companyTz)}</span>
                     )}
                 </div>
 
@@ -631,7 +652,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                                         <div className="ctm-hours">
                                             {Array.from({ length: TOTAL_HOURS + 1 }, (_, i) => (
                                                 <div key={i} className="ctm-hours__label" style={{ top: i * HOUR_HEIGHT }}>
-                                                    {fmtTime(new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate(), HOUR_START + i))}
+                                                    {fmtTime(dateInTZ(dateObj.getFullYear(), dateObj.getMonth() + 1, dateObj.getDate(), HOUR_START + i, 0, companyTz), companyTz)}
                                                 </div>
                                             ))}
                                         </div>
@@ -646,6 +667,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                                                     selectedSlot={selectedSlot}
                                                     onSelectSlot={setSelectedSlot}
                                                     matchesTerritory={tech.matchesTerritory}
+                                                    companyTz={companyTz}
                                                 />
                                             ))}
                                         </div>
@@ -663,6 +685,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                         newJobCoords={newJobCoords}
                         newJobAddress={newJobAddress}
                         loading={loading}
+                        companyTz={companyTz}
                     />
                 </div>
 
@@ -672,7 +695,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                     )}
                     <Button variant="ghost" onClick={onClose}>Cancel</Button>
                     <Button onClick={handleConfirm} disabled={!selectedSlot}>
-                        {selectedSlot ? `Confirm ${fmtTime(selectedSlot.start)} – ${fmtTime(selectedSlot.end)}` : 'Select a timeslot'}
+                        {selectedSlot ? `Confirm ${fmtTime(selectedSlot.start, companyTz)} – ${fmtTime(selectedSlot.end, companyTz)}` : 'Select a timeslot'}
                     </Button>
                 </DialogFooter>
             </DialogContent>

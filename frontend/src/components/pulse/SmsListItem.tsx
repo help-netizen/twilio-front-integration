@@ -7,15 +7,16 @@
 import { MessageSquare, Check, CheckCheck, X, Download, FileText, FileIcon } from 'lucide-react';
 import { Card } from '../ui/card';
 import type { SmsMessage, SmsMediaItem } from '../../types/pulse';
+import { useAuth } from '../../auth/AuthProvider';
 
 // ── Formatters ───────────────────────────────────────────────────────────────
 
-const formatTime = (dateStr: string): string => {
+const formatTime = (dateStr: string, tz: string): string => {
     const d = new Date(dateStr);
     return d.toLocaleString('en-US', {
         month: 'short', day: 'numeric', year: 'numeric',
         hour: 'numeric', minute: '2-digit', hour12: true,
-        timeZone: 'America/New_York',
+        timeZone: tz,
     });
 };
 
@@ -46,6 +47,8 @@ interface SmsListItemProps {
 }
 
 export function SmsListItem({ sms }: SmsListItemProps) {
+    const { company } = useAuth();
+    const companyTz = company?.timezone || 'America/New_York';
     const isOutgoing = sms.direction === 'outbound';
     const hasMedia = sms.media && sms.media.length > 0;
     const hasMessage = sms.body && sms.body.trim().length > 0;
@@ -163,7 +166,7 @@ export function SmsListItem({ sms }: SmsListItemProps) {
                     {/* Timestamp */}
                     {hasMessage && (
                         <div className={`text-xs ${isOutgoing ? 'text-blue-200' : 'text-gray-500'} text-right`}>
-                            {formatTime(sms.date_created_remote || sms.created_at)}
+                            {formatTime(sms.date_created_remote || sms.created_at, companyTz)}
                         </div>
                     )}
                 </div>

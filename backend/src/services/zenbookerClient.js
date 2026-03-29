@@ -4,6 +4,8 @@ const axios = require('axios');
 // Zenbooker API Client — creates jobs via POST /v1/jobs
 // =============================================================================
 
+const { tomorrowAtInTZ } = require('../utils/companyTime');
+
 const ZENBOOKER_API_KEY = process.env.ZENBOOKER_API_KEY;
 const ZENBOOKER_API_BASE_URL = process.env.ZENBOOKER_API_BASE_URL || 'https://api.zenbooker.com/v1';
 
@@ -73,7 +75,7 @@ async function findTerritoryByPostalCode(postalCode) {
  * @param {Object} lead - Lead object from DB (camelCase)
  * @returns {Object} - Zenbooker job response { job_id, status, ... }
  */
-async function createJobFromLead(lead) {
+async function createJobFromLead(lead, companyTimezone = 'America/New_York') {
     const territoryId = await findTerritoryByPostalCode(lead.PostalCode);
 
     // Build timeslot — use lead's scheduled time if set, otherwise next day 8am–12pm
@@ -89,10 +91,8 @@ async function createJobFromLead(lead) {
             end: end.toISOString(),
         };
     } else {
-        // Default: tomorrow 8am-12pm ET
-        const tomorrow = new Date();
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        tomorrow.setHours(8, 0, 0, 0);
+        // Default: tomorrow 8am-12pm in company timezone
+        const tomorrow = tomorrowAtInTZ(8, 0, companyTimezone);
         const end = new Date(tomorrow.getTime() + 4 * 60 * 60 * 1000);
         timeslot = {
             type: 'arrival_window',

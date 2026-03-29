@@ -6,12 +6,14 @@ import { useNavigate } from 'react-router-dom';
 import { callsApi } from '../../services/api';
 import { formatPhoneDisplay as formatPhoneNumber } from '../../utils/phoneUtils';
 import { useLeadByPhone } from '../../hooks/useLeadByPhone';
+import { useAuth } from '../../auth/AuthProvider';
 import {
     PhoneIncoming, PhoneOutgoing, ArrowLeftRight,
     MessageSquare, MessageSquareReply, MoreVertical,
     EyeOff, Clock, CheckCircle2, AlertTriangle,
 } from 'lucide-react';
 import type { Call } from '../../types/models';
+import { tomorrowAtInTZ } from '../../utils/companyTime';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -28,11 +30,9 @@ export const SNOOZE_OPTIONS = [
     { label: 'Tomorrow 9 AM', ms: null as number | null },
 ];
 
-export function getSnoozeUntil(option: typeof SNOOZE_OPTIONS[number]): string {
+export function getSnoozeUntil(option: typeof SNOOZE_OPTIONS[number], companyTz: string = 'America/New_York'): string {
     if (option.ms) return new Date(Date.now() + option.ms).toISOString();
-    const d = new Date();
-    d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0);
-    return d.toISOString();
+    return tomorrowAtInTZ(9, 0, companyTz).toISOString();
 }
 
 export const REASON_LABELS: Record<string, string> = {
@@ -68,6 +68,8 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
     onRead?: () => void;
 }) {
     const navigate = useNavigate();
+    const { company: authCompany } = useAuth();
+    const companyTz = authCompany?.timezone || 'America/New_York';
     const tlId = (call as any).timeline_id;
     const contactId = call.contact?.id || call.id;
     const targetPath = tlId ? `/pulse/timeline/${tlId}` : (contactId ? `/pulse/contact/${contactId}` : null);
@@ -205,7 +207,7 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                                             <div className="absolute right-full top-0 mr-1 z-[100] bg-white rounded-md shadow-lg border border-gray-200 py-1 min-w-[140px]">
                                                 {SNOOZE_OPTIONS.map(opt => (
                                                     <div key={opt.label} role="button" tabIndex={0}
-                                                        onClick={(e) => { e.stopPropagation(); setMenuOpen(false); setSnoozeMenuOpen(false); if (tlId && onSnooze) onSnooze(tlId, getSnoozeUntil(opt)); }}
+                                                        onClick={(e) => { e.stopPropagation(); setMenuOpen(false); setSnoozeMenuOpen(false); if (tlId && onSnooze) onSnooze(tlId, getSnoozeUntil(opt, companyTz)); }}
                                                         className="px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">
                                                         {opt.label}
                                                     </div>

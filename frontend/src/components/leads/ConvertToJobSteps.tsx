@@ -12,6 +12,8 @@ import type { ServiceAreaResult, Timeslot, TimeslotDay } from '../../services/ze
 import type { CustomFieldDef, Step } from './useConvertToJob';
 import { STEP_TITLES } from './useConvertToJob';
 import { CustomTimeModal } from '../conversations/CustomTimeModal';
+import { useAuth } from '../../auth/AuthProvider';
+import { todayInTZ } from '../../utils/companyTime';
 
 interface StepProps {
     name: string; setName: (v: string) => void;
@@ -77,6 +79,8 @@ export function ConvertStep2({ serviceName, setServiceName, serviceDescription, 
 }
 
 export function ConvertStep3({ selectedDate, setSelectedDate, timeslotsLoading, timeslotsError, timeslotDays, selectedTimeslot, setSelectedTimeslot, fetchTimeslots, coords, addressFields, territoryResult, setStep }: StepProps) {
+    const { company } = useAuth();
+    const companyTz = company?.timezone || 'America/New_York';
     const [showCustomTime, setShowCustomTime] = useState(false);
     const isCustomSlot = selectedTimeslot?.type === 'arrival_window';
 
@@ -106,7 +110,7 @@ export function ConvertStep3({ selectedDate, setSelectedDate, timeslotsLoading, 
             <div className="flex items-end gap-2">
                 <div className="flex-1">
                     <Label htmlFor="cj-date">Starting Date</Label>
-                    <Input id="cj-date" type="date" value={selectedDate} onChange={e => { setSelectedDate(e.target.value); setSelectedTimeslot(null); }} min={new Date().toISOString().split('T')[0]} />
+                    <Input id="cj-date" type="date" value={selectedDate} onChange={e => { setSelectedDate(e.target.value); setSelectedTimeslot(null); }} min={todayInTZ(companyTz)} />
                 </div>
                 <Button size="icon" variant="ghost" onClick={fetchTimeslots} disabled={timeslotsLoading} title="Refresh timeslots" className="shrink-0 mb-0.5">
                     <RefreshCw className={`w-4 ${timeslotsLoading ? 'animate-spin' : ''}`} />

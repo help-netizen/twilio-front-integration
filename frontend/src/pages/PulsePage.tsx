@@ -18,10 +18,13 @@ import { Skeleton } from '../components/ui/skeleton';
 import { Search, PhoneOff, Activity, Clock, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { callsApi } from '../services/api';
 import { pulseApi } from '../services/pulseApi';
+import { useAuth } from '../auth/AuthProvider';
 import './PulsePage.css';
 
 export const PulsePage: React.FC = () => {
     const p = usePulsePage();
+    const { company } = useAuth();
+    const companyTz = company?.timezone || 'America/New_York';
 
     return (
         <div className="pulse-page">
@@ -92,7 +95,7 @@ export const PulsePage: React.FC = () => {
                                     <div className="relative group">
                                         <button className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded transition-colors"><Clock className="size-3" /> Snooze</button>
                                         <div className="absolute left-0 top-full mt-1 z-50 bg-white rounded-md shadow-lg border border-gray-200 py-1 min-w-[170px] hidden group-hover:block">
-                                            {SNOOZE_OPTIONS.map(opt => (<div key={opt.label} role="button" tabIndex={0} onClick={() => { if (tlId) pulseApi.snoozeThread(tlId, getSnoozeUntil(opt)).then(() => { p.refetchContacts(); toast.success('Snoozed'); }).catch(() => toast.error('Failed')); }} className="px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">{opt.label}</div>))}
+                                            {SNOOZE_OPTIONS.map(opt => (<div key={opt.label} role="button" tabIndex={0} onClick={() => { if (tlId) pulseApi.snoozeThread(tlId, getSnoozeUntil(opt, companyTz)).then(() => { p.refetchContacts(); toast.success('Snoozed'); }).catch(() => toast.error('Failed')); }} className="px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">{opt.label}</div>))}
                                             <div className="border-t mt-1 pt-1 px-3 py-1">
                                                 <label className="text-[10px] text-gray-400 block mb-1">Specific date</label>
                                                 <input type="date" className="text-xs border rounded px-2 py-1 w-full" min={new Date().toISOString().split('T')[0]}

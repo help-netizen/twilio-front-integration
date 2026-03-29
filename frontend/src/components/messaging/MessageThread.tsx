@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, FileText, Download, Paperclip, X } from 'lucide-react';
 import type { Message, MessageMedia } from '../../types/messaging';
+import { useAuth } from '../../auth/AuthProvider';
 
 interface MessageThreadProps {
     messages: Message[];
@@ -13,28 +14,26 @@ function formatMessageTime(dateStr: string | null): string {
     return new Date(dateStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-const TZ = 'America/New_York';
-
-function toESTDateKey(d: Date): string {
-    return d.toLocaleDateString('en-CA', { timeZone: TZ }); // YYYY-MM-DD
+function toTZDateKey(d: Date, tz: string): string {
+    return d.toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD
 }
 
-function formatDateSeparator(dateStr: string): string {
+function formatDateSeparator(dateStr: string, tz: string): string {
     const date = new Date(dateStr);
-    const nowKey = toESTDateKey(new Date());
-    const dateKey = toESTDateKey(date);
+    const nowKey = toTZDateKey(new Date(), tz);
+    const dateKey = toTZDateKey(date, tz);
     if (dateKey === nowKey) return 'Today';
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
-    if (dateKey === toESTDateKey(yesterday)) return 'Yesterday';
-    return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: TZ });
+    if (dateKey === toTZDateKey(yesterday, tz)) return 'Yesterday';
+    return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: tz });
 }
 
-function shouldShowDateSeparator(messages: Message[], index: number): boolean {
+function shouldShowDateSeparator(messages: Message[], index: number, tz: string): boolean {
     if (index === 0) return true;
     const curr = messages[index].date_created_remote || messages[index].created_at;
     const prev = messages[index - 1].date_created_remote || messages[index - 1].created_at;
-    return toESTDateKey(new Date(curr)) !== toESTDateKey(new Date(prev));
+    return toTZDateKey(new Date(curr), tz) !== toTZDateKey(new Date(prev), tz);
 }
 
 function getDeliveryIcon(status: string | null): string {
@@ -83,6 +82,8 @@ function MediaPreviewInline({ media }: { media: MessageMedia }) {
 }
 
 export function MessageThread({ messages, loading, onSend }: MessageThreadProps) {
+    const { company } = useAuth();
+    const companyTz = company?.timezone || 'America/New_York';
     const [inputValue, setInputValue] = useState('');
     const [sending, setSending] = useState(false);
     const [attachedFile, setAttachedFile] = useState<File | null>(null);
@@ -160,8 +161,8 @@ export function MessageThread({ messages, loading, onSend }: MessageThreadProps)
                 ) : (
                     messages.map((msg, idx) => (
                         <div key={msg.id}>
-                            {shouldShowDateSeparator(messages, idx) && (
-                                <div className="msg-date-sep"><span className="msg-date-sep__label">{formatDateSeparator(msg.date_created_remote || msg.created_at)}</span></div>
+                            {shouldShowDateSeparator(messages, idx, companyTz) && (
+                                <div className="msg-date-sep"><span className="msg-date-sep__label">{formatDateSeparator(msg.date_created_remote || msg.created_at, companyTz)}</span></div>
                             )}
                             <div className={`msg-bubble msg-bubble--${msg.direction}`}>
                                 <div className="msg-bubble__content">

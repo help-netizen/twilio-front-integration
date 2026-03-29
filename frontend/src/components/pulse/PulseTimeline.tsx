@@ -4,6 +4,7 @@ import { PulseCallListItem } from './PulseCallListItem';
 import type { SmsMessage, TimelineItem } from '../../types/pulse';
 import { DateSeparator } from './DateSeparator';
 import { SmsListItem } from './SmsListItem';
+import { useAuth } from '../../auth/AuthProvider';
 
 interface PulseTimelineProps {
     calls: CallData[];
@@ -12,24 +13,23 @@ interface PulseTimelineProps {
     timelineKey?: string | number;
 }
 
-const TZ = 'America/New_York';
-
-function toESTDateKey(date: Date): string {
-    return date.toLocaleDateString('en-CA', { timeZone: TZ }); // YYYY-MM-DD
+function toTZDateKey(date: Date, tz: string): string {
+    return date.toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD
 }
 
-function formatDateSeparator(date: Date): string {
-    const nowKey = toESTDateKey(new Date());
-    const dateKey = toESTDateKey(date);
+function formatDateSep(date: Date, tz: string): string {
+    const nowKey = toTZDateKey(new Date(), tz);
+    const dateKey = toTZDateKey(date, tz);
     if (dateKey === nowKey) return 'Today';
-    // Check yesterday
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
-    if (dateKey === toESTDateKey(yesterday)) return 'Yesterday';
-    return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: TZ });
+    if (dateKey === toTZDateKey(yesterday, tz)) return 'Yesterday';
+    return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: tz });
 }
 
 export function PulseTimeline({ calls, messages, loading, timelineKey }: PulseTimelineProps) {
+    const { company } = useAuth();
+    const companyTz = company?.timezone || 'America/New_York';
     const endRef = useRef<HTMLDivElement>(null);
 
     // Build a sorted timeline from calls + messages
@@ -101,12 +101,12 @@ export function PulseTimeline({ calls, messages, loading, timelineKey }: PulseTi
 
     for (let i = 0; i < timeline.length; i++) {
         const item = timeline[i];
-        const dateStr = toESTDateKey(item.timestamp);
+        const dateStr = toTZDateKey(item.timestamp, companyTz);
 
         // Insert date separator on date change
         if (dateStr !== lastDateStr) {
             rendered.push(
-                <DateSeparator key={`date-${dateStr}`} date={formatDateSeparator(item.timestamp)} />
+                <DateSeparator key={`date-${dateStr}`} date={formatDateSep(item.timestamp, companyTz)} />
             );
             lastDateStr = dateStr;
         }

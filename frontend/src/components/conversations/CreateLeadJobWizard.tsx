@@ -16,6 +16,8 @@ import { WizardStep1 } from './WizardStep1';
 import { WizardStep2 } from './WizardStep2';
 import { WizardStep3 } from './WizardStep3';
 import { WizardStep4 } from './WizardStep4';
+import { useAuth } from '../../auth/AuthProvider';
+import { todayInTZ, tomorrowAtInTZ } from '../../utils/companyTime';
 import './CreateLeadJobWizard.css';
 
 interface CreateLeadJobWizardProps {
@@ -28,6 +30,8 @@ interface CreateLeadJobWizardProps {
 export function CreateLeadJobWizard({ phone, hasActiveCall, timelineId, onLeadCreated }: CreateLeadJobWizardProps) {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
+    const { company } = useAuth();
+    const companyTz = company?.timezone || 'America/New_York';
     const [step, setStep] = useState<Step>(1);
     const [submitting, setSubmitting] = useState(false);
     const [showSkipConfirm, setShowSkipConfirm] = useState(false);
@@ -61,7 +65,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, timelineId, onLeadCr
     const [timeslotsError, setTimeslotsError] = useState('');
     const [timeslotSkipped, setTimeslotSkipped] = useState(false);
 
-    useEffect(() => { setSelectedDate(new Date().toISOString().split('T')[0]); }, []);
+    useEffect(() => { setSelectedDate(todayInTZ(companyTz)); }, []);
     useEffect(() => { if (step === 4 && postalCode && !streetAddress) setStreetAddress(postalCode + ' '); }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const fetchTimeslots = useCallback(async () => {
@@ -148,10 +152,10 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, timelineId, onLeadCr
                         zbJobPayload.assigned_providers = [selectedTimeslot.techId];
                     }
                 } else {
-                    // No timeslot — default arrival window
-                    const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(8, 0, 0, 0);
-                    const end = new Date(tomorrow.getTime() + 4 * 60 * 60 * 1000);
-                    zbJobPayload.timeslot = { type: 'arrival_window', start: tomorrow.toISOString(), end: end.toISOString() };
+                    // No timeslot — default arrival window (tomorrow 8am–12pm in company timezone)
+                    const tomorrowStart = tomorrowAtInTZ(8, 0, companyTz);
+                    const tomorrowEnd = new Date(tomorrowStart.getTime() + 4 * 60 * 60 * 1000);
+                    zbJobPayload.timeslot = { type: 'arrival_window', start: tomorrowStart.toISOString(), end: tomorrowEnd.toISOString() };
                 }
                 const result = await leadsApi.convertLead(createdUUID, {
                     zb_job_payload: zbJobPayload, service: { name: jobType || 'General Service' },
