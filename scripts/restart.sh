@@ -53,13 +53,13 @@ cd "$PROJECT_DIR"
 # Step 1: Git commit
 # =============================================================================
 if [ "$SKIP_COMMIT" = false ]; then
-    if [ -n "$(git status --porcelain)" ]; then
-        TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
-        git add -A
+    TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S")
+    git add -A
+    if git diff --cached --quiet; then
+        warn "No changes to commit"
+    else
         git commit -m "wip: auto-commit $TIMESTAMP"
         log "Committed changes at $TIMESTAMP"
-    else
-        warn "No changes to commit"
     fi
 fi
 
