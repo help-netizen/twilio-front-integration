@@ -54,10 +54,10 @@ async function getScheduleItems(opts) {
         const jobConds = [`j.company_id = $1`, `j.blanc_status NOT IN ('cancelled')`];
 
         if (startDate) {
-            idx++; jobConds.push(`j.start_date >= $${idx}`); params.push(startDate);
+            idx++; jobConds.push(`j.start_date >= $${idx}::date`); params.push(startDate);
         }
         if (endDate) {
-            idx++; jobConds.push(`j.start_date <= $${idx}`); params.push(endDate);
+            idx++; jobConds.push(`j.start_date < ($${idx}::date + INTERVAL '1 day')`); params.push(endDate);
         }
         if (statuses && statuses.length) {
             const ph = statuses.map(() => { idx++; return `$${idx}`; });
@@ -103,10 +103,10 @@ async function getScheduleItems(opts) {
         const leadConds = [`l.company_id = $1`, `l.status NOT IN ('converted','lost','spam')`];
 
         if (startDate) {
-            idx++; leadConds.push(`l.lead_date_time >= $${idx}`); params.push(startDate);
+            idx++; leadConds.push(`l.lead_date_time >= $${idx}::date`); params.push(startDate);
         }
         if (endDate) {
-            idx++; leadConds.push(`l.lead_date_time <= $${idx}`); params.push(endDate);
+            idx++; leadConds.push(`l.lead_date_time < ($${idx}::date + INTERVAL '1 day')`); params.push(endDate);
         }
         if (statuses && statuses.length) {
             const ph = statuses.map(() => { idx++; return `$${idx}`; });
@@ -151,10 +151,10 @@ async function getScheduleItems(opts) {
         const taskConds = [`t.company_id = $1`, `t.show_on_schedule = true`, `t.status = 'open'`];
 
         if (startDate) {
-            idx++; taskConds.push(`t.start_at >= $${idx}`); params.push(startDate);
+            idx++; taskConds.push(`t.start_at >= $${idx}::date`); params.push(startDate);
         }
         if (endDate) {
-            idx++; taskConds.push(`t.start_at <= $${idx}`); params.push(endDate);
+            idx++; taskConds.push(`t.start_at < ($${idx}::date + INTERVAL '1 day')`); params.push(endDate);
         }
         if (statuses && statuses.length) {
             const ph = statuses.map(() => { idx++; return `$${idx}`; });
