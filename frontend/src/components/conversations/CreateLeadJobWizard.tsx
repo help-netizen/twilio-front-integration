@@ -139,17 +139,20 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, timelineId, onLeadCr
                     customer: { name: [firstName, lastName].filter(Boolean).join(' ') || 'Unknown', ...(phoneNumber && { phone: toE164(phoneNumber) }), ...(email && { email }) },
                     address: { line1: streetAddress || 'N/A', city: city || 'N/A', ...(state && { state }), ...(postalCode && { postal_code: postalCode }), country: 'US' },
                     services: [{ custom_service: { name: jobType || 'General Service', description: description || '', price: Number(price) || 95, duration: Number(duration) || 120, taxable: false } }],
-                    assignment_method: 'auto', sms_notifications: true, email_notifications: true,
+                    sms_notifications: true, email_notifications: true,
                 };
                 if (selectedTimeslot?.id) {
                     // Zenbooker timeslot — use timeslot_id
                     zbJobPayload.timeslot_id = selectedTimeslot.id;
+                    zbJobPayload.assignment_method = 'auto';
                 } else if (selectedTimeslot?.type === 'arrival_window') {
                     // Custom timeslot — use arrival window object
                     zbJobPayload.timeslot = { type: 'arrival_window', start: selectedTimeslot.start, end: selectedTimeslot.end };
-                    // If a technician was selected from the timeline, pre-assign them
                     if (selectedTimeslot.techId) {
+                        // Pre-assign specific tech — must NOT have assignment_method:'auto'
                         zbJobPayload.assigned_providers = [selectedTimeslot.techId];
+                    } else {
+                        zbJobPayload.assignment_method = 'auto';
                     }
                 } else {
                     // No timeslot — default arrival window (tomorrow 8am–12pm in company timezone)
@@ -174,7 +177,12 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, timelineId, onLeadCr
                     } catch { /* non-critical */ }
                 }
 
-                toast.success('Lead & Job created', { description: jobId ? `Job #${jobId}` : 'Job created', duration: 10000, action: jobId ? { label: 'Open Job', onClick: () => navigate(`/jobs/${jobId}`) } : undefined });
+                const zbWarning = result.data?.zb_warning;
+                if (zbWarning) {
+                    toast.warning('Lead created but Zenbooker job failed', { description: zbWarning, duration: 15000, action: jobId ? { label: 'Open Job', onClick: () => navigate(`/jobs/${jobId}`) } : undefined });
+                } else {
+                    toast.success('Lead & Job created', { description: jobId ? `Job #${jobId}` : 'Job created', duration: 10000, action: jobId ? { label: 'Open Job', onClick: () => navigate(`/jobs/${jobId}`) } : undefined });
+                }
             } else {
                 toast.success('Lead created', { description: 'Status: Submitted' });
             }

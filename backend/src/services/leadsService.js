@@ -575,12 +575,26 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
     const customerPhone = overrides.customer?.phone || leadRow.phone || null;
     const customerEmail = overrides.customer?.email || leadRow.email || null;
 
+    // Extract scheduling data from zb_job_payload so local job always has it
+    let initialStartDate = null;
+    let initialEndDate = null;
+    let initialAssignedTechs = null;
+    if (overrides.zb_job_payload) {
+        const zbp = overrides.zb_job_payload;
+        if (zbp.timeslot?.start) initialStartDate = zbp.timeslot.start;
+        if (zbp.timeslot?.end) initialEndDate = zbp.timeslot.end;
+        if (zbp.assigned_providers?.length) {
+            initialAssignedTechs = JSON.stringify(zbp.assigned_providers.map(id => ({ id })));
+        }
+    }
+
     const { rows: [jobRow] } = await db.query(`
         INSERT INTO jobs (
             lead_id, contact_id, blanc_status, service_name, address,
             customer_name, customer_phone, customer_email, company_id,
-            job_type, job_source, description, metadata, comments
-        ) VALUES ($1, $2, 'Submitted', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            job_type, job_source, description, metadata, comments,
+            start_date, end_date, assigned_techs
+        ) VALUES ($1, $2, 'Submitted', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb)
         RETURNING id
     `, [
         leadRow.id,
@@ -596,6 +610,9 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
         overrides.service?.description || leadRow.lead_notes || leadRow.comments || null,
         leadRow.metadata || '{}',
         leadRow.comments || null,
+        initialStartDate,
+        initialEndDate,
+        initialAssignedTechs,
     ]);
     const localJobId = jobRow.id;
     console.log(`[ConvertLead] Local job created: ${localJobId}`);
@@ -621,12 +638,13 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
 
     // 3. Create Zenbooker job (if booking data provided or auto-create)
     let zenbookerJobId = overrides.zenbooker_job_id || null;
+    let zbWarning = null;
 
     if (!zenbookerJobId && overrides.zb_job_payload) {
         const zbPayload = { ...overrides.zb_job_payload };
-        
-        // Zenbooker API rejects the request if assigned_providers is provided 
-        // alongside assignment_method: 'auto'. 
+
+        // Zenbooker API rejects the request if assigned_providers is provided
+        // alongside assignment_method: 'auto'.
         // We must remove assignment_method to pre-assign successfully.
         if (zbPayload.assigned_providers && zbPayload.assigned_providers.length > 0) {
             delete zbPayload.assignment_method;
@@ -638,7 +656,10 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
             zenbookerJobId = zbResult.job_id;
             console.log(`[ConvertLead] Zenbooker job created from booking: ${zenbookerJobId}`);
         } catch (err) {
-            console.error('[ConvertLead] Zenbooker booking error:', err.response?.data || err.message);
+            const errData = err.response?.data;
+            const errMsg = errData?.message || err.message;
+            console.error('[ConvertLead] Zenbooker booking error:', errData || err.message);
+            zbWarning = `Zenbooker job not created: ${errMsg}`;
             // Don't fail — local job is already created
         }
     } else if (!zenbookerJobId) {
@@ -651,7 +672,10 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
             if (err.message === 'ZENBOOKER_API_KEY is not configured') {
                 console.warn('[ConvertLead] Zenbooker not configured, skipping');
             } else {
-                console.error('[ConvertLead] Zenbooker error:', err.response?.data || err.message);
+                const errData = err.response?.data;
+                const errMsg = errData?.message || err.message;
+                console.error('[ConvertLead] Zenbooker error:', errData || err.message);
+                zbWarning = `Zenbooker job not created: ${errMsg}`;
                 // Don't fail — local job is already created
             }
         }
@@ -796,6 +820,7 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
         ClientId: String(leadRow.id),
         job_id: localJobId,
         zenbooker_job_id: zenbookerJobId,
+        zb_warning: zbWarning,
         link: `/jobs/${localJobId}`,
     };
 }

@@ -538,6 +538,11 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
 
     const handleConfirm = () => {
         if (!selectedSlot) return;
+        // Prevent confirming a timeslot in the past
+        if (selectedSlot.start.getTime() < Date.now()) {
+            alert('Selected time is in the past. Please choose a future time.');
+            return;
+        }
         const dateLabel = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
         const techName = techGroups.find(g => g.id === selectedSlot.techId)?.name || '';
         const formatted = `${fmtTime(selectedSlot.start, companyTz)} – ${fmtTime(selectedSlot.end, companyTz)} — ${dateLabel}${techName ? ` (${techName})` : ''}`;

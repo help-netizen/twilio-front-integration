@@ -79,7 +79,10 @@ export function useConvertToJob(lead: Lead, open: boolean, onSuccess: (lead: Lea
                 // Custom timeslot — use timeslot object (same as Wizard)
                 zbJobPayload.timeslot = { type: 'arrival_window', start: selectedTimeslot.start, end: selectedTimeslot.end };
                 if (selectedTimeslot.techId) {
+                    // Pre-assign specific tech — must NOT have assignment_method:'auto'
                     zbJobPayload.assigned_providers = [selectedTimeslot.techId];
+                } else {
+                    zbJobPayload.assignment_method = 'auto';
                 }
             } else {
                 // Fallback — default arrival window (tomorrow 8am–12pm in company timezone)
@@ -89,8 +92,12 @@ export function useConvertToJob(lead: Lead, open: boolean, onSuccess: (lead: Lea
                 zbJobPayload.assignment_method = 'auto';
             }
             const result = await leadsApi.convertLead(lead.UUID, { zb_job_payload: zbJobPayload, service: { name: serviceName, description: serviceDescription }, customer: { name, phone, email }, address: { line1: addressFields.street, line2: addressFields.apt, city: addressFields.city, state: addressFields.state, postal_code: addressFields.zip } });
-            const jobId = result.data?.job_id; const zbJobId = result.data?.zenbooker_job_id;
-            toast.success('Job created', { description: zbJobId ? `Zenbooker Job: ${zbJobId}` : `Local Job #${jobId}`, duration: 10000, action: jobId ? { label: 'Open Job', onClick: () => navigate(`/jobs/${jobId}`) } : undefined });
+            const jobId = result.data?.job_id; const zbJobId = result.data?.zenbooker_job_id; const zbWarning = result.data?.zb_warning;
+            if (zbWarning) {
+                toast.warning('Job created but Zenbooker failed', { description: zbWarning, duration: 15000, action: jobId ? { label: 'Open Job', onClick: () => navigate(`/jobs/${jobId}`) } : undefined });
+            } else {
+                toast.success('Job created', { description: zbJobId ? `Zenbooker Job: ${zbJobId}` : `Local Job #${jobId}`, duration: 10000, action: jobId ? { label: 'Open Job', onClick: () => navigate(`/jobs/${jobId}`) } : undefined });
+            }
             onSuccess({ ...lead, Status: 'Converted' }); onOpenChange(false);
         } catch (err) { toast.error('Failed to create job', { description: err instanceof Error ? err.message : 'Unknown error' }); }
         finally { setSubmitting(false); }
