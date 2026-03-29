@@ -124,7 +124,13 @@ export async function fetchTransactions(filters: TransactionsListParams = {}): P
     if (filters.page != null) params.set('page', String(filters.page));
     if (filters.limit != null) params.set('limit', String(filters.limit));
     const qs = params.toString();
-    return paymentsRequest<TransactionsListResult>(`${PAYMENTS_BASE}${qs ? `?${qs}` : ''}`);
+    const raw = await paymentsRequest<any>(`${PAYMENTS_BASE}${qs ? `?${qs}` : ''}`);
+    return {
+        transactions: raw.rows ?? raw.transactions ?? [],
+        total: raw.total ?? 0,
+        page: filters.page ?? 1,
+        limit: filters.limit ?? 25,
+    };
 }
 
 export async function fetchTransaction(id: number): Promise<PaymentTransaction> {

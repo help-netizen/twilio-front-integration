@@ -158,7 +158,13 @@ export async function fetchEstimates(filters: EstimatesListParams = {}): Promise
     if (filters.page != null) params.set('page', String(filters.page));
     if (filters.limit != null) params.set('limit', String(filters.limit));
     const qs = params.toString();
-    return estimatesRequest<EstimatesListResult>(`${ESTIMATES_BASE}${qs ? `?${qs}` : ''}`);
+    const raw = await estimatesRequest<any>(`${ESTIMATES_BASE}${qs ? `?${qs}` : ''}`);
+    return {
+        estimates: raw.rows ?? raw.estimates ?? [],
+        total: raw.total ?? 0,
+        page: filters.page ?? 1,
+        limit: filters.limit ?? 50,
+    };
 }
 
 export async function fetchEstimate(id: number): Promise<Estimate> {

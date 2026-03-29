@@ -162,7 +162,13 @@ export async function fetchInvoices(filters: InvoicesListParams = {}): Promise<I
     if (filters.page != null) params.set('page', String(filters.page));
     if (filters.limit != null) params.set('limit', String(filters.limit));
     const qs = params.toString();
-    return invoicesRequest<InvoicesListResult>(`${INVOICES_BASE}${qs ? `?${qs}` : ''}`);
+    const raw = await invoicesRequest<any>(`${INVOICES_BASE}${qs ? `?${qs}` : ''}`);
+    return {
+        invoices: raw.rows ?? raw.invoices ?? [],
+        total: raw.total ?? 0,
+        page: filters.page ?? 1,
+        limit: filters.limit ?? 50,
+    };
 }
 
 export async function fetchInvoice(id: number): Promise<Invoice> {
