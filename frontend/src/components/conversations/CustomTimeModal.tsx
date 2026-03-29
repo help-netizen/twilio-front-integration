@@ -166,6 +166,11 @@ function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectS
     const color = TECH_COLORS[tech.colorIndex];
     const [y, m, d] = selectedDate.split('-').map(Number);
 
+    // Compute past-time overlay height (only for today)
+    const isToday = selectedDate === todayInTZ(companyTz);
+    const nowMinFromGrid = isToday ? minutesSinceMidnight(new Date(), companyTz) - HOUR_START * 60 : 0;
+    const pastHeight = isToday ? Math.max(0, Math.min(nowMinFromGrid, TOTAL_HOURS * 60)) / 60 * HOUR_HEIGHT : 0;
+
     const handleMouseMove = useCallback((e: React.MouseEvent) => {
         if (!containerRef.current) return;
         const rect = containerRef.current.getBoundingClientRect();
@@ -201,6 +206,14 @@ function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectS
                 {/* Gray overlay for non-territory techs */}
                 {!matchesTerritory && (
                     <div className="tech-timeline__no-territory" style={{ height: TOTAL_HOURS * HOUR_HEIGHT }} />
+                )}
+
+                {/* Gray overlay for past time (today only) */}
+                {isToday && pastHeight > 0 && (
+                    <>
+                        <div className="tech-timeline__past" style={{ height: pastHeight }} />
+                        <div className="tech-timeline__now-line" style={{ top: pastHeight }} />
+                    </>
                 )}
 
                 {/* Hour grid lines only (labels are shared outside) */}
@@ -660,6 +673,11 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                                                     {fmtTime(dateInTZ(dateObj.getFullYear(), dateObj.getMonth() + 1, dateObj.getDate(), HOUR_START + i, 0, companyTz), companyTz)}
                                                 </div>
                                             ))}
+                                            {selectedDate === today && (() => {
+                                                const nowMin = minutesSinceMidnight(new Date(), companyTz) - HOUR_START * 60;
+                                                const clampedPx = Math.max(0, Math.min(nowMin, TOTAL_HOURS * 60)) / 60 * HOUR_HEIGHT;
+                                                return clampedPx > 0 ? <div className="tech-timeline__now-line" style={{ top: clampedPx }} /> : null;
+                                            })()}
                                         </div>
                                         {/* Tech columns */}
                                         <div className="ctm-timelines__columns">

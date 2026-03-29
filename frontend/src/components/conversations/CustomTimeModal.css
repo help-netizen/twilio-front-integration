@@ -416,6 +416,29 @@
     border-radius: 4px;
 }
 
+/* Past-time overlay – gray fill for elapsed hours (today only) */
+.tech-timeline__past {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    background: rgba(128, 128, 128, 0.18);
+    z-index: 1;
+    pointer-events: none;
+    border-radius: 2px 2px 0 0;
+}
+
+/* "Now" line — thin red line at current time */
+.tech-timeline__now-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 0;
+    border-top: 2px solid #ef4444;
+    z-index: 6;
+    pointer-events: none;
+}
+
 .ctm-footer {
     flex-shrink: 0;
     display: flex;
