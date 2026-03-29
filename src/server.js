@@ -147,6 +147,19 @@ app.use('/api/zenbooker/jobs', authenticate, requireCompanyAccess, zenbookerJobs
 app.use('/api/jobs', authenticate, requireCompanyAccess, localJobsRouter);
 app.use('/api/zenbooker', authenticate, requireCompanyAccess, zenbookerRouter);
 
+// ─── PF100 Foundation Contract routes (Sprint 1 — skeleton 501 stubs) ─────
+const scheduleRouter = require('../backend/src/routes/schedule');
+const estimatesRouter = require('../backend/src/routes/estimates');
+const invoicesRouter = require('../backend/src/routes/invoices');
+const paymentsCanonicalRouter = require('../backend/src/routes/payments');
+const portalRouter = require('../backend/src/routes/portal');
+
+app.use('/api/schedule', authenticate, requireCompanyAccess, scheduleRouter);
+app.use('/api/estimates', authenticate, requireCompanyAccess, estimatesRouter);
+app.use('/api/invoices', authenticate, requireCompanyAccess, invoicesRouter);
+app.use('/api/payments', authenticate, requireCompanyAccess, paymentsCanonicalRouter);
+app.use('/api/portal', portalRouter); // public auth + portal-session auth inside router
+
 // BLANC Integrations API (secured header-based auth)
 app.use('/api/v1/integrations', integrationsLeadsRouter);
 // Zenbooker integrations (webhook = unauthenticated w/ secret; create-customer/sync = Keycloak auth inside route)

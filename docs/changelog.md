@@ -4,6 +4,49 @@
 
 ---
 
+## 2026-03-29
+
+### PF100 Sprint 2 — Schedule/Dispatcher MVP (COMPLETED)
+- **Backend (3 files):**
+  - `scheduleQueries.js` — unified UNION ALL query across jobs/leads/tasks with dynamic filters (date range, entity types, statuses, assignee, search, pagination)
+  - `scheduleService.js` — service layer: getScheduleItems, rescheduleItem, reassignItem, createFromSlot (task), dispatch settings CRUD
+  - `schedule.js` — replaced 501 stubs with real route handlers
+- **Frontend (10 files):**
+  - `SchedulePage.tsx` — main page with toolbar + calendar + sidebar layout
+  - `useScheduleData.ts` — central state hook (items, settings, viewMode, filters, selectedItem)
+  - `scheduleApi.ts` — API client for schedule endpoints
+  - `ScheduleToolbar.tsx` — Day/Week/Month tabs, date navigation, search, entity type filter
+  - `WeekView.tsx` — 7-column time grid with positioned item cards
+  - `DayView.tsx` — single column time grid
+  - `MonthView.tsx` — calendar grid with day counts and item previews
+  - `ScheduleItemCard.tsx` — color-coded card (blue=job, amber=lead, green=task)
+  - `ScheduleSidebar.tsx` — quick-view panel with contact info and actions
+  - `UnscheduledPanel.tsx` — collapsible panel for items without dates
+- **Nav integration:** Schedule link added between Jobs and Contacts (`CalendarDays` icon)
+- **Route:** `/schedule` added to App.tsx with `jobs.view` permission
+- **Architecture:** No separate schedule_items table — unified read model over existing jobs/leads/tasks
+
+### PF100 Sprint 1 — Foundation Contracts (COMPLETED)
+- **19 DB migrations** (051–069) создали foundation для всех P0 доменов:
+  - `dispatch_settings` — company-level schedule configuration (PF001)
+  - `tasks` ALTER — добавлены `start_at`, `end_at`, `assigned_provider_id`, `show_on_schedule` (PF001)
+  - `estimates`, `estimate_items`, `estimate_revisions`, `estimate_events` (PF002)
+  - `invoices`, `invoice_items`, `invoice_revisions`, `invoice_events` (PF003)
+  - `document_deliveries`, `document_attachments`, `document_delivery_attachments` (PF002+PF003 shared)
+  - `payment_transactions`, `payment_receipts` (PF004)
+  - `portal_access_tokens`, `portal_sessions`, `portal_events` (PF005)
+  - `domain_events` — canonical event sourcing infrastructure
+- **5 API route skeletons** (все возвращают 501 Not Implemented):
+  - `/api/schedule` — 8 endpoints (PF001)
+  - `/api/estimates` — 21 endpoints (PF002)
+  - `/api/invoices` — 19 endpoints (PF003)
+  - `/api/payments` — 8 endpoints (PF004, canonical ledger — отдельно от legacy `/api/zenbooker/payments`)
+  - `/api/portal` — 14 endpoints (PF005, public auth + portal-session)
+- **Файлы:** 24 новых + 1 модифицированный (`src/server.js`)
+- **Без UI, без бизнес-логики** — только schema contracts и API contracts
+
+---
+
 ## 2026-03-27
 
 ### Backlog reprioritization: automations and tasks moved to P2

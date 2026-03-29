@@ -1,7 +1,7 @@
 # Спецификация: PF100 — P0 Sprint Plan
 
-**Дата:** 2026-03-24
-**Статус:** Proposed
+**Дата:** 2026-03-24 (updated 2026-03-29)
+**Статус:** In Progress — Sprint 1 ✅ Complete, Sprint 2 ✅ Complete
 **Основа:** `PF000` + `PF001..PF005`
 
 ---

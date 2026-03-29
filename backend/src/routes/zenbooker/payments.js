@@ -8,7 +8,7 @@
 
 const express = require('express');
 const router = express.Router();
-const paymentsService = require('../../services/paymentsService');
+const paymentsService = require('../../services/zenbookerPaymentsSyncService');
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // POST /api/zenbooker/payments/sync  — Sync from Zenbooker into local DB

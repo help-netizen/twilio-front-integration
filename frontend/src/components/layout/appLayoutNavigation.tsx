@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '../ui/dropdown-menu';
-import { Phone, PhoneIncoming, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase, Bell } from 'lucide-react';
+import { Phone, PhoneIncoming, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase, Bell, CalendarDays, ClipboardList, Receipt } from 'lucide-react';
 
 interface AppNavProps { activeTab: string; pulseUnreadCount: number; hasRole: (r: string) => boolean; logout: () => void; }
 
@@ -16,6 +16,9 @@ export const AppNavTabs: React.FC<AppNavProps> = ({ activeTab, pulseUnreadCount 
                     <TabsTrigger value="pulse" className="flex items-center gap-2" onClick={() => navigate('/pulse')} style={{ position: 'relative' }}><Activity className="size-4" />Pulse{pulseUnreadCount > 0 && <span className="pulse-unread-badge" title={`${pulseUnreadCount} unread`}>{pulseUnreadCount > 9 ? '9+' : pulseUnreadCount}</span>}</TabsTrigger>
                     <TabsTrigger value="leads" className="flex items-center gap-2" onClick={() => navigate('/leads')}><Users className="size-4" />Leads</TabsTrigger>
                     <TabsTrigger value="jobs" className="flex items-center gap-2" onClick={() => navigate('/jobs')}><Briefcase className="size-4" />Jobs</TabsTrigger>
+                    <TabsTrigger value="schedule" className="flex items-center gap-2" onClick={() => navigate('/schedule')}><CalendarDays className="size-4" />Schedule</TabsTrigger>
+                    <TabsTrigger value="estimates" className="flex items-center gap-2" onClick={() => navigate('/estimates')}><ClipboardList className="size-4" />Estimates</TabsTrigger>
+                    <TabsTrigger value="invoices" className="flex items-center gap-2" onClick={() => navigate('/invoices')}><Receipt className="size-4" />Invoices</TabsTrigger>
                     <TabsTrigger value="contacts" className="flex items-center gap-2" onClick={() => navigate('/contacts')}><Contact2 className="size-4" />Contacts</TabsTrigger>
                     <TabsTrigger value="payments" className="flex items-center gap-2" onClick={() => navigate('/payments')}><DollarSign className="size-4" />Payments</TabsTrigger>
                 </TabsList>
@@ -52,6 +55,9 @@ export function getActiveTab(pathname: string): string {
     if (pathname.startsWith('/messages')) return 'messages';
     if (pathname.startsWith('/leads')) return 'leads';
     if (pathname.startsWith('/jobs')) return 'jobs';
+    if (pathname.startsWith('/schedule')) return 'schedule';
+    if (pathname.startsWith('/estimates')) return 'estimates';
+    if (pathname.startsWith('/invoices')) return 'invoices';
     if (pathname.startsWith('/contacts')) return 'contacts';
     if (pathname.startsWith('/payments')) return 'payments';
     if (pathname.startsWith('/settings')) return 'settings';

@@ -21,6 +21,10 @@ import ProvidersPage from './pages/ProvidersPage';
 import PhoneCallsSettingsPage from './pages/PhoneCallsSettingsPage';
 import ActionRequiredSettingsPage from './pages/ActionRequiredSettingsPage';
 import JobsPage from './pages/JobsPage';
+import { SchedulePage } from './pages/SchedulePage';
+import EstimatesPage from './pages/EstimatesPage';
+import InvoicesPage from './pages/InvoicesPage';
+import TransactionsPage from './pages/TransactionsPage';
 import RouteManagerOverviewPage from './pages/telephony/RouteManagerOverviewPage';
 import CallFlowBuilderPage from './pages/telephony/CallFlowBuilderPage';
 import PhoneNumbersPage from './pages/telephony/PhoneNumbersPage';
@@ -67,6 +71,9 @@ function App() {
               <Route path="/leads/:leadId" element={<ProtectedRoute permissions={['leads.view']}><LeadsPage /></ProtectedRoute>} />
               <Route path="/jobs" element={<ProtectedRoute permissions={['jobs.view']}><JobsPage /></ProtectedRoute>} />
               <Route path="/jobs/:jobId" element={<ProtectedRoute permissions={['jobs.view']}><JobsPage /></ProtectedRoute>} />
+              <Route path="/schedule" element={<ProtectedRoute permissions={['jobs.view']}><SchedulePage /></ProtectedRoute>} />
+              <Route path="/estimates" element={<ProtectedRoute permissions={['estimates.view']}><EstimatesPage /></ProtectedRoute>} />
+              <Route path="/invoices" element={<ProtectedRoute permissions={['invoices.view']}><InvoicesPage /></ProtectedRoute>} />
               <Route path="/contacts" element={<ProtectedRoute permissions={['contacts.view']}><ContactsPage /></ProtectedRoute>} />
               <Route path="/contacts/:contactId" element={<ProtectedRoute permissions={['contacts.view']}><ContactsPage /></ProtectedRoute>} />
               
@@ -79,6 +86,7 @@ function App() {
               
               <Route path="/payments" element={<ProtectedRoute permissions={['payments.view']}><PaymentsPage /></ProtectedRoute>} />
               <Route path="/payments/:paymentId" element={<ProtectedRoute permissions={['payments.view']}><PaymentsPage /></ProtectedRoute>} />
+              <Route path="/transactions" element={<ProtectedRoute permissions={['payments.view']}><TransactionsPage /></ProtectedRoute>} />
               
               <Route path="/settings/providers" element={<ProtectedRoute permissions={['tenant.company.manage']}><ProvidersPage /></ProtectedRoute>} />
               <Route path="/settings/phone-calls" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><PhoneCallsSettingsPage /></ProtectedRoute>} />
