@@ -1,7 +1,12 @@
 const fetch = require('node-fetch') || global.fetch;
 
-const KC_BASE = process.env.KEYCLOAK_URL || 'http://localhost:8080';
-const REALM = process.env.KEYCLOAK_REALM || 'crm-prod';
+// Derive KC base from KEYCLOAK_REALM_URL (e.g. "https://host/realms/crm-prod" → "https://host")
+const KC_BASE = process.env.KEYCLOAK_REALM_URL?.replace(/\/realms\/.*$/, '')
+    || process.env.KEYCLOAK_URL
+    || 'http://localhost:8080';
+const REALM = process.env.KEYCLOAK_REALM
+    || process.env.KEYCLOAK_REALM_URL?.match(/\/realms\/([^/]+)/)?.[1]
+    || 'crm-prod';
 
 // Fetch admin token using admin/admin from master realm
 async function getAdminToken() {

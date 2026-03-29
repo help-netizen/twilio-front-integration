@@ -16,8 +16,14 @@ const router = express.Router();
 const auditService = require('../services/auditService');
 
 // ─── Keycloak Admin config ─────────────────────────────────────────────────
-const KC_BASE = process.env.KEYCLOAK_URL || 'http://localhost:8080';
-const KC_REALM = process.env.KEYCLOAK_REALM || 'crm-prod';
+// Derive KC base from KEYCLOAK_REALM_URL (e.g. "https://host/realms/crm-prod" → "https://host")
+// Falls back to KEYCLOAK_URL or localhost for dev.
+const KC_BASE = process.env.KEYCLOAK_REALM_URL?.replace(/\/realms\/.*$/, '')
+    || process.env.KEYCLOAK_URL
+    || 'http://localhost:8080';
+const KC_REALM = process.env.KEYCLOAK_REALM
+    || process.env.KEYCLOAK_REALM_URL?.match(/\/realms\/([^/]+)/)?.[1]
+    || 'crm-prod';
 const KC_ADMIN_USER = process.env.KEYCLOAK_ADMIN_USER || 'admin';
 const KC_ADMIN_PASS = process.env.KEYCLOAK_ADMIN_PASSWORD || 'admin';
 
