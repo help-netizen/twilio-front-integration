@@ -185,6 +185,16 @@ export function useScheduleData() {
     const scheduledItems = useMemo(() => items.filter(i => i.start_at != null), [items]);
     const unscheduledItems = useMemo(() => items.filter(i => i.start_at == null), [items]);
 
+    const itemCounts = useMemo(() => {
+        const counts = { total: scheduledItems.length, jobs: 0, leads: 0, tasks: 0 };
+        for (const item of scheduledItems) {
+            if (item.entity_type === 'job') counts.jobs++;
+            else if (item.entity_type === 'lead') counts.leads++;
+            else if (item.entity_type === 'task') counts.tasks++;
+        }
+        return counts;
+    }, [scheduledItems]);
+
     // ── Effective settings ───────────────────────────────────────────────────
 
     const effectiveSettings = settings ?? DEFAULT_SETTINGS;
@@ -193,6 +203,7 @@ export function useScheduleData() {
         items,
         scheduledItems,
         unscheduledItems,
+        itemCounts,
         settings: effectiveSettings,
         providers,
         loading,

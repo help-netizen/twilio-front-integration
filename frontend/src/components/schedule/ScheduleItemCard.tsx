@@ -66,54 +66,67 @@ export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({ item, compac
             className={`
                 w-full h-full text-left rounded-md border-l-[3px] px-2 py-1 transition-colors overflow-hidden
                 hover:ring-1 hover:ring-offset-1 cursor-pointer
+                focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 outline-none
                 ${style.bg} ${style.border} ${style.text}
                 ${isUnassigned ? 'border-dashed border-gray-400 bg-gray-50 text-gray-600' : ''}
                 ${isCanceled ? 'opacity-60 line-through decoration-1' : ''}
                 ${compact ? 'text-xs' : 'text-sm'}
             `}
         >
-            {/* Row 1: icon + title + status badge */}
-            <div className="flex items-center gap-1 min-w-0">
-                <Icon className={compact ? 'size-3 flex-shrink-0' : 'size-3.5 flex-shrink-0'} />
-                <span className="truncate font-medium flex-1">{item.title}</span>
-                {statusStyle && (
-                    <span className={`${statusStyle.bg} ${statusStyle.text} px-1 py-0 rounded text-[9px] leading-tight font-medium flex-shrink-0 no-underline`} style={{ textDecoration: 'none' }}>
-                        {statusStyle.label}
-                    </span>
-                )}
-            </div>
-            {/* Row 2: time + customer + assignment (non-compact) */}
-            {!compact && (
-                <div className="flex items-center gap-1 mt-0.5 text-xs opacity-75">
-                    <span>{timeLabel}</span>
-                    {item.customer_name && (
-                        <>
-                            <span>&middot;</span>
-                            <span className="truncate">{item.customer_name}</span>
-                        </>
-                    )}
-                    {isUnassigned && (
-                        <span className="ml-auto text-[10px] text-gray-400 italic flex-shrink-0">Unassigned</span>
-                    )}
-                    {techCount > 1 && (
-                        <span className="ml-auto flex items-center gap-0.5 text-[10px] text-gray-500 flex-shrink-0">
-                            <Users className="size-3" />+{techCount - 1}
-                        </span>
-                    )}
-                </div>
-            )}
-            {/* Compact: show status + unassigned inline */}
-            {compact && (statusStyle || isUnassigned) && (
-                <div className="flex items-center gap-1 mt-0.5">
-                    {statusStyle && (
-                        <span className={`${statusStyle.bg} ${statusStyle.text} px-1 rounded text-[8px] leading-tight font-medium no-underline`} style={{ textDecoration: 'none' }}>
-                            {statusStyle.label}
-                        </span>
-                    )}
-                    {isUnassigned && (
-                        <span className="text-[8px] text-gray-400 italic">Unassigned</span>
-                    )}
-                </div>
+            {compact ? (
+                <>
+                    {/* Compact Row 1: icon + title (full width — no badge competing) */}
+                    <div className="flex items-center gap-1 min-w-0">
+                        <Icon className="size-3 flex-shrink-0" />
+                        <span className="truncate font-medium flex-1">{item.title}</span>
+                    </div>
+                    {/* Compact Row 2: customer name + status badge */}
+                    <div className="flex items-center gap-1 mt-0.5 min-w-0">
+                        {item.customer_name ? (
+                            <span className="truncate text-[10px] opacity-75 flex-1">{item.customer_name}</span>
+                        ) : isUnassigned ? (
+                            <span className="text-[10px] text-gray-400 italic flex-1">Unassigned</span>
+                        ) : (
+                            <span className="flex-1" />
+                        )}
+                        {statusStyle && (
+                            <span className={`${statusStyle.bg} ${statusStyle.text} px-1 py-0 rounded text-[10px] leading-tight font-medium flex-shrink-0 no-underline`} style={{ textDecoration: 'none' }}>
+                                {statusStyle.label}
+                            </span>
+                        )}
+                    </div>
+                </>
+            ) : (
+                <>
+                    {/* Row 1: icon + title + status badge */}
+                    <div className="flex items-center gap-1 min-w-0">
+                        <Icon className="size-3.5 flex-shrink-0" />
+                        <span className="truncate font-medium flex-1">{item.title}</span>
+                        {statusStyle && (
+                            <span className={`${statusStyle.bg} ${statusStyle.text} px-1 py-0 rounded text-[11px] leading-tight font-medium flex-shrink-0 no-underline`} style={{ textDecoration: 'none' }}>
+                                {statusStyle.label}
+                            </span>
+                        )}
+                    </div>
+                    {/* Row 2: time + customer + assignment */}
+                    <div className="flex items-center gap-1 mt-0.5 text-xs opacity-75">
+                        <span>{timeLabel}</span>
+                        {item.customer_name && (
+                            <>
+                                <span>&middot;</span>
+                                <span className="truncate">{item.customer_name}</span>
+                            </>
+                        )}
+                        {isUnassigned && (
+                            <span className="ml-auto text-[11px] text-gray-400 italic flex-shrink-0">Unassigned</span>
+                        )}
+                        {techCount > 1 && (
+                            <span className="ml-auto flex items-center gap-0.5 text-[11px] text-gray-500 flex-shrink-0">
+                                <Users className="size-3" />+{techCount - 1}
+                            </span>
+                        )}
+                    </div>
+                </>
             )}
         </button>
     );

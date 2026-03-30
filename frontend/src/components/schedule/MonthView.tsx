@@ -89,6 +89,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ currentDate, items, settin
                                     className={`
                                         min-h-24 p-1.5 border-r last:border-r-0 text-left
                                         hover:bg-gray-50 transition-colors cursor-pointer
+                                        focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 outline-none
                                         ${!inMonth ? 'bg-gray-50/50' : ''}
                                     `}
                                 >

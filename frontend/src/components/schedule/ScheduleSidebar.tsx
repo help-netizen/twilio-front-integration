@@ -14,7 +14,7 @@ import { Separator } from '../ui/separator';
 import { ScrollArea } from '../ui/scroll-area';
 import { ClickToCallButton } from '../softphone/ClickToCallButton';
 import type { ScheduleItem } from '../../services/scheduleApi';
-import { ENTITY_STYLES } from './ScheduleItemCard';
+// ENTITY_BADGE_CLASSES defined locally to avoid dynamic Tailwind class interpolation
 import { formatDateTimeInTZ, formatTimeInTZ } from '../../utils/companyTime';
 
 interface ScheduleSidebarProps {
@@ -30,6 +30,12 @@ const ENTITY_LABELS: Record<string, { label: string; icon: React.ElementType }> 
     task: { label: 'Task', icon: CheckSquare },
 };
 
+const ENTITY_BADGE_CLASSES: Record<string, string> = {
+    job:  'bg-blue-50 text-blue-700 border-blue-400',
+    lead: 'bg-amber-50 text-amber-700 border-amber-400',
+    task: 'bg-green-50 text-green-700 border-green-400',
+};
+
 function getDetailLink(item: ScheduleItem): string {
     switch (item.entity_type) {
         case 'job':  return `/jobs/${item.entity_id}`;
@@ -41,7 +47,7 @@ function getDetailLink(item: ScheduleItem): string {
 export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose, timezone }) => {
     const navigate = useNavigate();
     const entityInfo = ENTITY_LABELS[item.entity_type] ?? ENTITY_LABELS.task;
-    const style = ENTITY_STYLES[item.entity_type] ?? ENTITY_STYLES.task;
+    const badgeClasses = ENTITY_BADGE_CLASSES[item.entity_type] ?? ENTITY_BADGE_CLASSES.task;
     const Icon = entityInfo.icon;
 
     return (
@@ -49,7 +55,7 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
             {/* Header */}
             <div className="flex items-center justify-between p-3 border-b">
                 <div className="flex items-center gap-2 min-w-0">
-                    <Badge variant="outline" className={`${style.bg} ${style.text} border-${style.border.replace('border-', '')} text-xs`}>
+                    <Badge variant="outline" className={`${badgeClasses} text-xs`}>
                         <Icon className="size-3 mr-1" />
                         {entityInfo.label}
                     </Badge>

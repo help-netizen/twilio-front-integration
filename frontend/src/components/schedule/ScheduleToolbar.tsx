@@ -18,6 +18,8 @@ interface ScheduleToolbarProps {
     viewMode: ViewMode;
     currentDate: Date;
     filters: Partial<ScheduleFilters>;
+    itemCounts?: { total: number; jobs: number; leads: number; tasks: number };
+    loading?: boolean;
     onViewModeChange: (mode: ViewMode) => void;
     onNavigateDate: (dir: 'prev' | 'next' | 'today') => void;
     onFiltersChange: (filters: Partial<ScheduleFilters>) => void;
@@ -43,10 +45,19 @@ export const ScheduleToolbar: React.FC<ScheduleToolbarProps> = ({
     viewMode,
     currentDate,
     filters,
+    itemCounts,
+    loading,
     onViewModeChange,
     onNavigateDate,
     onFiltersChange,
 }) => {
+    const countTooltip = itemCounts
+        ? [
+            itemCounts.jobs > 0 ? `${itemCounts.jobs} job${itemCounts.jobs > 1 ? 's' : ''}` : '',
+            itemCounts.leads > 0 ? `${itemCounts.leads} lead${itemCounts.leads > 1 ? 's' : ''}` : '',
+            itemCounts.tasks > 0 ? `${itemCounts.tasks} task${itemCounts.tasks > 1 ? 's' : ''}` : '',
+        ].filter(Boolean).join(' \u00b7 ')
+        : '';
     return (
         <div className="flex flex-col gap-3 p-4 border-b bg-white">
             {/* Row 1: View tabs + Date nav */}
@@ -58,7 +69,7 @@ export const ScheduleToolbar: React.FC<ScheduleToolbarProps> = ({
                             <TabsTrigger value="week">Week</TabsTrigger>
                             <TabsTrigger value="month">Month</TabsTrigger>
                             <TabsTrigger value="timeline">Timeline</TabsTrigger>
-                            <TabsTrigger value="timeline-week">TL Week</TabsTrigger>
+                            <TabsTrigger value="timeline-week">Team Week</TabsTrigger>
                         </TabsList>
                     </Tabs>
 
@@ -77,6 +88,14 @@ export const ScheduleToolbar: React.FC<ScheduleToolbarProps> = ({
                     <h2 className="text-lg font-semibold text-gray-900 whitespace-nowrap">
                         {getDateLabel(currentDate, viewMode)}
                     </h2>
+                    {!loading && itemCounts && itemCounts.total > 0 && (
+                        <span
+                            className="bg-gray-100 text-gray-600 text-xs px-2 py-0.5 rounded-full"
+                            title={countTooltip}
+                        >
+                            {itemCounts.total} item{itemCounts.total > 1 ? 's' : ''}
+                        </span>
+                    )}
                 </div>
             </div>
 

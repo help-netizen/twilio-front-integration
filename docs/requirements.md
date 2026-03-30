@@ -16,7 +16,7 @@
 | F010 | AI функции (Summary, Polish, Transcript) | ✅ Реализована | `backend/src/`, Gemini API |
 | F011 | Refactor-readiness audit | ⏳ Запланирована | `docs/`, `src/server.js`, `backend/src/`, `frontend/src/`, `tests/` |
 | F012 | Multi-tenant company model, Super Admin & RBAC | ⏳ Запланирована | `docs/specs/PF007-multitenant-company-model-rbac.md`, `docs/specs/PF007-technical-design.md`, `docs/specs/PF102-tenancy-rbac-sprint-plan.md`, `docs/specs/PF103-tenancy-rbac-db-api-contracts.md` |
-| F013 | Schedule / Dispatcher MVP + UX hardening | 🔧 В разработке (Sprint 2 ✅, Sprint 3 ✅, Sprint 4 partial ✅) | `frontend/src/pages/SchedulePage.tsx`, `frontend/src/components/schedule/`, `frontend/src/hooks/useScheduleData.ts`, `frontend/src/services/scheduleApi.ts`, `backend/src/routes/schedule.js`, `backend/src/services/scheduleService.js`, `backend/src/db/scheduleQueries.js`, `docs/specs/PF001-unified-schedule-dispatcher.md` |
+| F013 | Schedule / Dispatcher MVP + UX hardening | 🔧 В разработке (Sprint 2 ✅, Sprint 3 ✅, Sprint 4 ✅, Sprint 5 ✅) | `frontend/src/pages/SchedulePage.tsx`, `frontend/src/components/schedule/`, `frontend/src/hooks/useScheduleData.ts`, `frontend/src/services/scheduleApi.ts`, `backend/src/routes/schedule.js`, `backend/src/services/scheduleService.js`, `backend/src/db/scheduleQueries.js`, `docs/specs/PF001-unified-schedule-dispatcher.md` |
 
 ---
 
@@ -263,6 +263,36 @@
     - Click на пустой слот в любом view → контекстное меню: "Create Task" / "Create Lead" / "Create Job"
     - Task: создаётся сразу с start_at/end_at из слота + assigned_provider (если timeline view)
     - Lead/Job: открывает существующий CreateLeadJobWizard с предзаполненным временем
+
+#### Sprint 5: UX Polish + Card Readability + Accessibility (✅ DONE)
+
+**Источник:** Визуальный аудит 2026-03-30, анализ Week View на реальных данных.
+**Спецификация:** `docs/specs/F013-schedule-sprint5-ux-polish.md`
+
+**Подтверждённые проблемы:**
+
+| # | Проблема | Severity |
+|---|----------|----------|
+| UX-7 | Дублирование статуса на compact-карточках (badge в Row 1 + badge в Row 2) | 🟡 Moderate |
+| UX-8 | Title обрезается до 1-2 символов при collision lanes — карточки неидентифицируемы | 🔴 Critical |
+| UX-9 | Customer name отсутствует на compact-карточках — диспетчер не видит для КОГО работа | 🟡 Moderate |
+| UX-10 | Font sizes 8-9px ниже порога читаемости | 🟡 Moderate |
+| UX-11 | 3+ collision lanes делают карточки нечитаемыми (lane width < 55px) | 🟡 Moderate |
+| UX-12 | Нет keyboard focus-visible стилей (a11y) | 🟢 Minor |
+| UX-13 | Time gutter (64px) обрезает "12:00 PM" | 🟢 Minor |
+| UX-14 | "TL Week" — непонятная аббревиатура | 🟢 Minor |
+| UX-15 | Нет summary-count items для текущего view | 🟡 Moderate |
+| UX-16 | Sidebar Badge dynamic class interpolation может сломаться с Tailwind JIT | 🟢 Minor |
+
+**Ключевые доработки:**
+1. **Compact card redesign** — title priority over status badge, customer_name в Row 2, удаление дублирующего status block
+2. **Font size floor** — минимум 10px для всех UI-элементов
+3. **Collision lane cap** — максимум 2 видимых lanes + "+N more" overflow badge с popover
+4. **Accessibility** — focus-visible ring, min touch targets 32px height
+5. **Toolbar polish** — "TL Week" → "Team Week", item count badge рядом с date range
+6. **Tech debt** — fix Sidebar badge class interpolation, WeekView gutter width
+
+**Scope:** Frontend-only, без изменения backend/API. Desktop-first.
 
 **Ограничения и нефункциональные требования:**
 - Schedule НЕ дублирует Pulse timeline — это planning surface, не event history

@@ -148,8 +148,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setPlatformRole('none');
             setCompany({ id: '00000000-0000-0000-0000-000000000001', name: 'Boston Masters', slug: 'boston-masters', status: 'active', timezone: 'America/New_York' });
             setMembership({ id: 'dev-membership', role_key: 'tenant_admin', role_name: 'Tenant Admin', is_primary: true, status: 'active' });
-            setPermissions(['tenant.company.view', 'tenant.users.view', 'jobs.view', 'jobs.create']);
-            setScopes({ job_visibility: 'all', financial_scope: 'full' });
+            setPermissions([
+                'tenant.company.view', 'tenant.company.manage',
+                'tenant.users.view', 'tenant.users.manage',
+                'tenant.roles.view', 'tenant.roles.manage',
+                'tenant.integrations.manage', 'tenant.telephony.manage',
+                'dashboard.view', 'pulse.view',
+                'messages.view_internal', 'messages.view_client', 'messages.send',
+                'contacts.view', 'contacts.edit',
+                'leads.view', 'leads.create', 'leads.edit', 'leads.convert',
+                'jobs.view', 'jobs.create', 'jobs.edit', 'jobs.assign',
+                'jobs.close', 'jobs.done_pending_approval',
+                'schedule.view', 'schedule.dispatch',
+                'financial_data.view',
+                'estimates.view', 'estimates.create', 'estimates.send',
+                'invoices.view', 'invoices.create', 'invoices.send',
+                'payments.view', 'payments.collect_online', 'payments.collect_offline', 'payments.refund',
+                'reports.dashboard.view', 'reports.jobs.view', 'reports.leads.view',
+                'reports.calls.view', 'reports.payments.view', 'reports.financial.view',
+                'client_job_history.view',
+                'provider.enabled', 'phone_calls.use', 'call_masking.use',
+                'gps_tracking.view', 'gps_tracking.collect',
+            ]);
+            setScopes({ job_visibility: 'all', financial_scope: 'full', dashboard_scope: 'all_widgets', report_scope: 'all', job_close_scope: 'close_allowed' });
             return;
         }
 

@@ -30,6 +30,8 @@ export function SchedulePage() {
                     viewMode={schedule.viewMode}
                     currentDate={schedule.currentDate}
                     filters={schedule.filters}
+                    itemCounts={schedule.itemCounts}
+                    loading={schedule.loading}
                     onViewModeChange={schedule.setViewMode}
                     onNavigateDate={schedule.navigateDate}
                     onFiltersChange={schedule.setFilters}

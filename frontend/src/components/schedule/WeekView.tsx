@@ -3,9 +3,10 @@
  * Timezone-aware: all positioning and labels use company TZ from settings.
  */
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { startOfWeek, addDays, format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
+import { OverflowPopover } from './OverflowPopover';
 import type { ScheduleItem, DispatchSettings } from '../../services/scheduleApi';
 import {
     todayInTZ, dateInTZ, minutesSinceMidnight,
@@ -36,8 +37,11 @@ function buildHourSlots(startTime: string, endTime: string): number[] {
 
 const HOUR_HEIGHT = 64; // px per hour (h-16 = 64px)
 
+const MAX_VISIBLE_LANES = 2;
+
 export const WeekView: React.FC<WeekViewProps> = ({ currentDate, items, settings, onSelectItem }) => {
     const tz = settings.timezone || 'America/New_York';
+    const [overflowAnchor, setOverflowAnchor] = useState<{ items: ScheduleItem[]; rect: DOMRect } | null>(null);
     const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
     const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
     const dayKeys = useMemo(() => days.map(d => format(d, 'yyyy-MM-dd')), [days]);
@@ -79,7 +83,7 @@ export const WeekView: React.FC<WeekViewProps> = ({ currentDate, items, settings
         <div className="flex flex-col flex-1 overflow-auto">
             {/* Day headers */}
             <div className="flex border-b sticky top-0 bg-white z-10">
-                <div className="w-16 flex-shrink-0 border-r" /> {/* gutter */}
+                <div className="w-20 flex-shrink-0 border-r" /> {/* gutter */}
                 {days.map((day, i) => (
                     <div
                         key={dayKeys[i]}
@@ -94,7 +98,7 @@ export const WeekView: React.FC<WeekViewProps> = ({ currentDate, items, settings
             {/* Time grid */}
             <div className="flex flex-1 relative">
                 {/* Time labels */}
-                <div className="w-16 flex-shrink-0 border-r">
+                <div className="w-20 flex-shrink-0 border-r">
                     {hourSlots.map(h => (
                         <div key={h} className="h-16 border-b text-xs text-gray-400 pr-2 text-right pt-0.5">
                             {formatTimeInTZ(dateInTZ(refY, refM, refD, h, 0, tz), tz)}
@@ -134,7 +138,7 @@ export const WeekView: React.FC<WeekViewProps> = ({ currentDate, items, settings
                                 </>
                             )}
 
-                            {/* Positioned items with collision lanes */}
+                            {/* Positioned items with collision lanes (capped at MAX_VISIBLE_LANES) */}
                             {(() => {
                                 // Build layout items for lane assignment
                                 const layoutItems: (LayoutItem & { item: ScheduleItem; itemMin: number; durationMin: number })[] = [];
@@ -158,35 +162,103 @@ export const WeekView: React.FC<WeekViewProps> = ({ currentDate, items, settings
                                 }
                                 const lanes = assignLanes(layoutItems);
 
-                                return layoutItems.map(({ key, item, itemMin, durationMin }) => {
-                                    const topPx = ((itemMin - startHour * 60) / 60) * HOUR_HEIGHT;
-                                    const heightPx = (durationMin / 60) * HOUR_HEIGHT;
-                                    const layout = lanes.get(key);
+                                // Separate visible items (lane < MAX) from overflow (lane >= MAX)
+                                const visible: typeof layoutItems = [];
+                                const overflowByCluster = new Map<string, { items: ScheduleItem[]; topPx: number; heightPx: number }>();
+
+                                for (const li of layoutItems) {
+                                    const layout = lanes.get(li.key);
                                     const lane = layout?.lane ?? 0;
                                     const totalLanes = layout?.totalLanes ?? 1;
-                                    const widthPct = 100 / totalLanes;
-                                    const leftPct = lane * widthPct;
 
-                                    return (
-                                        <div
-                                            key={key}
-                                            className="absolute z-10"
-                                            style={{
-                                                top: topPx,
-                                                height: Math.max(heightPx, 24),
-                                                left: `calc(${leftPct}% + 2px)`,
-                                                width: `calc(${widthPct}% - 4px)`,
-                                            }}
-                                        >
-                                            <ScheduleItemCard item={item} compact onClick={onSelectItem} timezone={tz} />
-                                        </div>
-                                    );
-                                });
+                                    if (totalLanes <= MAX_VISIBLE_LANES || lane < MAX_VISIBLE_LANES) {
+                                        visible.push(li);
+                                    } else {
+                                        // Group overflow by approximate time cluster
+                                        const clusterKey = `${Math.floor(li.itemMin / 60)}`;
+                                        const existing = overflowByCluster.get(clusterKey);
+                                        const topPx = ((li.itemMin - startHour * 60) / 60) * HOUR_HEIGHT;
+                                        const heightPx = (li.durationMin / 60) * HOUR_HEIGHT;
+                                        if (existing) {
+                                            existing.items.push(li.item);
+                                            existing.topPx = Math.min(existing.topPx, topPx);
+                                            existing.heightPx = Math.max(existing.heightPx, topPx + heightPx) - existing.topPx;
+                                        } else {
+                                            overflowByCluster.set(clusterKey, { items: [li.item], topPx, heightPx: Math.max(heightPx, 32) });
+                                        }
+                                    }
+                                }
+
+                                const visibleLanes = Math.min(
+                                    Math.max(...layoutItems.map(li => (lanes.get(li.key)?.totalLanes ?? 1)), 1),
+                                    MAX_VISIBLE_LANES,
+                                );
+
+                                return (
+                                    <>
+                                        {visible.map(({ key, item, itemMin, durationMin }) => {
+                                            const topPx = ((itemMin - startHour * 60) / 60) * HOUR_HEIGHT;
+                                            const heightPx = (durationMin / 60) * HOUR_HEIGHT;
+                                            const layout = lanes.get(key);
+                                            const lane = layout?.lane ?? 0;
+                                            const totalLanes = Math.min(layout?.totalLanes ?? 1, MAX_VISIBLE_LANES);
+                                            const widthPct = 100 / totalLanes;
+                                            const leftPct = lane * widthPct;
+
+                                            return (
+                                                <div
+                                                    key={key}
+                                                    className="absolute z-10"
+                                                    style={{
+                                                        top: topPx,
+                                                        height: Math.max(heightPx, 32),
+                                                        left: `calc(${leftPct}% + 2px)`,
+                                                        width: `calc(${widthPct}% - 4px)`,
+                                                    }}
+                                                >
+                                                    <ScheduleItemCard item={item} compact onClick={onSelectItem} timezone={tz} />
+                                                </div>
+                                            );
+                                        })}
+                                        {/* Overflow "+N" badges */}
+                                        {Array.from(overflowByCluster.entries()).map(([clusterKey, cluster]) => {
+                                            const leftPct = ((MAX_VISIBLE_LANES - 1) / visibleLanes) * 100;
+                                            return (
+                                                <button
+                                                    key={`overflow-${clusterKey}`}
+                                                    type="button"
+                                                    className="absolute z-20 bg-gray-600 text-white text-[10px] rounded-full px-1.5 py-0.5 hover:bg-gray-700 cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-500 outline-none"
+                                                    style={{
+                                                        top: cluster.topPx + 2,
+                                                        right: 4,
+                                                    }}
+                                                    onClick={(e) => {
+                                                        const rect = (e.target as HTMLElement).getBoundingClientRect();
+                                                        setOverflowAnchor({ items: cluster.items, rect });
+                                                    }}
+                                                >
+                                                    +{cluster.items.length}
+                                                </button>
+                                            );
+                                        })}
+                                    </>
+                                );
                             })()}
                         </div>
                     );
                 })}
             </div>
+
+            {/* Overflow popover */}
+            {overflowAnchor && (
+                <OverflowPopover
+                    items={overflowAnchor.items}
+                    anchorRect={overflowAnchor.rect}
+                    onSelectItem={(item) => { setOverflowAnchor(null); onSelectItem(item); }}
+                    onClose={() => setOverflowAnchor(null)}
+                    timezone={tz}
+                />
+            )}
         </div>
     );
 };

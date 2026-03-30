@@ -3,9 +3,10 @@
  * Timezone-aware: all positioning and labels use company TZ from settings.
  */
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
+import { OverflowPopover } from './OverflowPopover';
 import type { ScheduleItem, DispatchSettings } from '../../services/scheduleApi';
 import {
     todayInTZ, dateInTZ, minutesSinceMidnight,
@@ -13,6 +14,8 @@ import {
 } from '../../utils/companyTime';
 import { assignLanes } from '../../utils/scheduleLayout';
 import type { LayoutItem } from '../../utils/scheduleLayout';
+
+const MAX_VISIBLE_LANES = 2;
 
 interface DayViewProps {
     currentDate: Date;
@@ -38,6 +41,7 @@ const HOUR_HEIGHT = 80; // px per hour (h-20 = 80px)
 
 export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, onSelectItem }) => {
     const tz = settings.timezone || 'America/New_York';
+    const [overflowAnchor, setOverflowAnchor] = useState<{ items: ScheduleItem[]; rect: DOMRect } | null>(null);
     const startHour = parseTime(settings.work_start_time);
     const endHour = parseTime(settings.work_end_time);
     const totalHours = endHour - startHour;
@@ -127,7 +131,7 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                         </>
                     )}
 
-                    {/* Positioned items with collision lanes */}
+                    {/* Positioned items with collision lanes (capped at MAX_VISIBLE_LANES) */}
                     {(() => {
                         const layoutItems: (LayoutItem & { item: ScheduleItem; itemMin: number; durationMin: number })[] = [];
                         for (const item of dayItems) {
@@ -150,33 +154,85 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                         }
                         const lanes = assignLanes(layoutItems);
 
-                        return layoutItems.map(({ key, item, itemMin, durationMin }) => {
-                            const topPx = ((itemMin - startHour * 60) / 60) * HOUR_HEIGHT;
-                            const heightPx = (durationMin / 60) * HOUR_HEIGHT;
-                            const layout = lanes.get(key);
+                        // Separate visible from overflow
+                        const visible: typeof layoutItems = [];
+                        const overflowByCluster = new Map<string, { items: ScheduleItem[]; topPx: number }>();
+
+                        for (const li of layoutItems) {
+                            const layout = lanes.get(li.key);
                             const lane = layout?.lane ?? 0;
                             const totalLanes = layout?.totalLanes ?? 1;
-                            const widthPct = 100 / totalLanes;
-                            const leftPct = lane * widthPct;
+                            if (totalLanes <= MAX_VISIBLE_LANES || lane < MAX_VISIBLE_LANES) {
+                                visible.push(li);
+                            } else {
+                                const clusterKey = `${Math.floor(li.itemMin / 60)}`;
+                                const topPx = ((li.itemMin - startHour * 60) / 60) * HOUR_HEIGHT;
+                                const existing = overflowByCluster.get(clusterKey);
+                                if (existing) {
+                                    existing.items.push(li.item);
+                                    existing.topPx = Math.min(existing.topPx, topPx);
+                                } else {
+                                    overflowByCluster.set(clusterKey, { items: [li.item], topPx });
+                                }
+                            }
+                        }
 
-                            return (
-                                <div
-                                    key={key}
-                                    className="absolute z-10"
-                                    style={{
-                                        top: topPx,
-                                        height: Math.max(heightPx, 32),
-                                        left: `calc(${leftPct}% + 4px)`,
-                                        width: `calc(${widthPct}% - 8px)`,
-                                    }}
-                                >
-                                    <ScheduleItemCard item={item} onClick={onSelectItem} timezone={tz} />
-                                </div>
-                            );
-                        });
+                        return (
+                            <>
+                                {visible.map(({ key, item, itemMin, durationMin }) => {
+                                    const topPx = ((itemMin - startHour * 60) / 60) * HOUR_HEIGHT;
+                                    const heightPx = (durationMin / 60) * HOUR_HEIGHT;
+                                    const layout = lanes.get(key);
+                                    const lane = layout?.lane ?? 0;
+                                    const totalLanes = Math.min(layout?.totalLanes ?? 1, MAX_VISIBLE_LANES);
+                                    const widthPct = 100 / totalLanes;
+                                    const leftPct = lane * widthPct;
+
+                                    return (
+                                        <div
+                                            key={key}
+                                            className="absolute z-10"
+                                            style={{
+                                                top: topPx,
+                                                height: Math.max(heightPx, 32),
+                                                left: `calc(${leftPct}% + 4px)`,
+                                                width: `calc(${widthPct}% - 8px)`,
+                                            }}
+                                        >
+                                            <ScheduleItemCard item={item} onClick={onSelectItem} timezone={tz} />
+                                        </div>
+                                    );
+                                })}
+                                {Array.from(overflowByCluster.entries()).map(([clusterKey, cluster]) => (
+                                    <button
+                                        key={`overflow-${clusterKey}`}
+                                        type="button"
+                                        className="absolute z-20 bg-gray-600 text-white text-[10px] rounded-full px-1.5 py-0.5 hover:bg-gray-700 cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-500 outline-none"
+                                        style={{ top: cluster.topPx + 2, right: 8 }}
+                                        onClick={(e) => {
+                                            const rect = (e.target as HTMLElement).getBoundingClientRect();
+                                            setOverflowAnchor({ items: cluster.items, rect });
+                                        }}
+                                    >
+                                        +{cluster.items.length}
+                                    </button>
+                                ))}
+                            </>
+                        );
                     })()}
                 </div>
             </div>
+
+            {/* Overflow popover */}
+            {overflowAnchor && (
+                <OverflowPopover
+                    items={overflowAnchor.items}
+                    anchorRect={overflowAnchor.rect}
+                    onSelectItem={(item) => { setOverflowAnchor(null); onSelectItem(item); }}
+                    onClose={() => setOverflowAnchor(null)}
+                    timezone={tz}
+                />
+            )}
         </div>
     );
 };
