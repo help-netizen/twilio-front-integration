@@ -125,15 +125,43 @@
 - **Зависимости:** `req.authz` middleware из Sprint 1, контракты таблиц из `PF103`.
 
 ### F013: Schedule / Dispatcher MVP + UX hardening
-<<<<<<< Updated upstream
 
-**Краткое описание:** Единое диспетчерское расписание поверх существующих jobs/leads/tasks — без отдельной schedule entity table. Объединяет read-модель через UNION ALL, 5 видов календаря, sidebar quick-view, dispatch settings. UX hardening: timezone-awareness, past-time overlay, interactive reschedule/reassign, realtime refresh, расширенные фильтры.
+**Краткое описание:** Единое диспетчерское расписание поверх существующих jobs/leads/tasks — без отдельной schedule entity table. Объединяет read-модель через UNION ALL, 5 видов календаря, sidebar quick-view, dispatch settings. UX hardening: timezone-awareness, past-time overlay, duration-based cards, collision lanes, interactive reschedule/reassign, realtime refresh, расширенные фильтры.
 
 **Принципы:**
 - Schedule — это **planning/dispatch surface**, НЕ замена Pulse как canonical operator workspace
 - Нет отдельной таблицы `schedule_items` — агрегационный слой поверх `jobs`, `leads`, `tasks`
 - Client-significant dispatch events (reschedule, reassign) должны публиковаться в Pulse timeline по правилам PF008
 - Timezone: все отображения времени и расчёты дат используют `company.timezone` из `dispatch_settings`, а не timezone браузера
+- UX hardening — расширение существующего schedule surface, без нового параллельного dispatcher UI
+- Desktop-first operator workflow, без деградации читаемости на узких экранах
+
+#### Подтверждённые UX-проблемы из аудита 2026-03-29
+
+Источник: `https://abc-metrics.fly.dev/schedule`, неделя 2026-03-29 — 2026-04-04.
+
+| # | Проблема | Статус |
+|---|----------|--------|
+| UX-1 | **Карточки не растягиваются по длительности.** 120-минутные работы в Week/Day выглядят как однострочные бейджи вместо блоков пропорциональных реальной длительности. | ⏳ Sprint 4 |
+| UX-2 | **Коллизии не раскладываются по lanes.** Три работы 9:00–11:00 ET + одна 10:00–12:00 ET на 2026-03-30 рендерятся поверх друг друга в одной колонке без горизонтального разделения. | ⏳ Sprint 4 |
+| UX-3 | **SoftPhone Ready модалка и notification banner перекрывают /schedule.** Первый вход блокируется нецелевыми overlay — для dispatch-экрана это лишний блокер. | ⏳ Sprint 4 |
+| UX-4 | **Заголовок недели показывает только "Mar 2026".** Нет явного диапазона (Mar 29 – Apr 4), при листании ухудшается ориентирование. | ⏳ Sprint 4 |
+| UX-5 | **Operational states плохо читаются на карточках.** Canceled, Submitted, Rescheduled, assigned/unassigned и multi-assignee не различаются достаточно явно до открытия sidebar. | ⏳ Sprint 4 |
+| UX-6 | **Timezone drift.** UI-state и time calculations не зафиксированы на `America/New_York` — зависят от locale/timezone браузера. | ✅ Sprint 3 |
+
+**Как должно быть:**
+- Календарные карточки должны визуально соответствовать реальной длительности интервала и занимать весь доступный vertical/horizontal slot в зависимости от view.
+- Пересекающиеся items должны автоматически раскладываться по параллельным подколонкам без взаимного перекрытия, с сохранением кликабельности и читаемости.
+- Первичный вход в `/schedule` не должен блокироваться softphone/notification onboarding; такие prompts должны быть неблокирующими и контекстно-подходящими.
+- Week/day views должны давать диспетчеру мгновенное понимание диапазона дат, статуса работы, назначения и конфликтов без обязательного открытия sidebar.
+- Все time calculations, filters и visual anchors должны быть согласованы с company dispatch timezone `America/New_York`.
+
+**Пользовательские сценарии (из аудита):**
+- Диспетчер открывает неделю и сразу понимает фактическую загрузку команды по длительности слотов, а не по списку однострочных бейджей.
+- Диспетчер видит одновременные работы без наложения и понимает, у кого конфликт по времени.
+- Оператор заходит в `/schedule` из Jobs/Pulse и может сразу работать с календарём без принудительного закрытия нерелевантных модалок.
+- Пользователь различает `Canceled / Submitted / Rescheduled / Unassigned` прямо в grid, не открывая каждую карточку отдельно.
+- Пользователь в любом view видит корректную временную привязку недели и дня в `America/New_York`.
 
 #### Реализовано (Sprint 1 + Sprint 2):
 
@@ -159,36 +187,62 @@
 - `req.companyId` → `req.companyFilter?.company_id` (7 мест в schedule.js) — расписание было пустое из-за undefined company filter
 - `start_date <= endDate` → `start_date < (endDate::date + INTERVAL '1 day')` — TIMESTAMPTZ vs date truncation терял весь день
 
-#### Sprint 3: UX hardening + interactive dispatch (PENDING)
+#### Sprint 3: Timezone awareness + Past overlay + SSE refresh (✅ DONE)
+
+**Реализовано:**
+- Timezone-aware отображение во всех 5 views (company.timezone из dispatch_settings, дефолт America/New_York)
+- Shared timezone utilities в `companyTime.ts`: minutesSinceMidnight, formatTimeInTZ, formatDateTimeInTZ, dateKeyInTZ, todayInTZ
+- Past-time overlay + red now-line в DayView, WeekView, TimelineView
+- SSE realtime refresh (debounced 500ms) через useRealtimeEvents
+- Item positioning и grouping по company TZ вместо browser TZ
+- 29 unit/integration tests (timezone, overlay, route data isolation)
+
+**Закрывает UX-проблему:** UX-6 (timezone drift)
+
+#### Sprint 4: Duration cards + Collision lanes + Status visibility + UI polish (PENDING)
 
 **Пользовательские сценарии:**
 
-1. **Timezone-aware отображение**
-   - Все времена в календаре отображаются в `company.timezone` из `dispatch_settings`, а не в timezone браузера
-   - Метки часов, sidebar time display, date picker, "Today" highlight — всё в company timezone
-   - Если dispatch_settings.timezone не настроен — дефолт `America/New_York`
-   - При смене timezone в настройках — весь UI переключается мгновенно
+1. **Duration-proportional карточки** (UX-1)
+   - Карточки в Day/Week views растягиваются пропорционально длительности (start_at → end_at)
+   - Высота = (duration_minutes / 60) * HOUR_HEIGHT
+   - Минимальная высота для коротких items (< 30 мин) — 32px
+   - Контент карточки адаптируется: title всегда, time range при height > 48px, assignee при height > 64px
 
-2. **Past-time visual indicator**
-   - В DayView и WeekView: серый overlay поверх прошедших часов текущего дня (аналогично CustomTimeModal)
-   - Красная горизонтальная линия "сейчас" (now-line) на текущем времени
-   - В TimelineView и TimelineWeekView: аналогичный past overlay на today-колонке
-   - Прошлые items не блокируются для выбора, только визуально отмечены
+2. **Collision lanes** (UX-2)
+   - Пересекающиеся items раскладываются по параллельным подколонкам (lanes)
+   - Алгоритм: greedy interval scheduling — сортировка по start_at, назначение в первую свободную lane
+   - Ширина каждой lane = 1/N от колонки (N = макс. количество одновременных items)
+   - Сохранение кликабельности и читаемости при 2-3 lanes
 
-3. **Drag-and-drop reschedule**
+3. **Enhanced status visibility** (UX-5)
+   - Status badge с цветовой кодировкой на каждой карточке: Canceled (red), Submitted (blue), Rescheduled (purple), En Route (teal), In Progress (orange), Completed (green)
+   - Unassigned items: dashed border + "Unassigned" label
+   - Multi-assignee: "+2 more" count badge
+   - Visual distinction без необходимости открывать sidebar
+
+4. **Week header с диапазоном дат** (UX-4)
+   - ScheduleToolbar: при viewMode='week' показывает "Mar 29 – Apr 4, 2026" вместо "Mar 2026"
+   - При листании — диапазон обновляется мгновенно
+
+5. **Non-blocking SoftPhone/notification prompts** (UX-3)
+   - SoftPhone Ready модалка не показывается на /schedule (или показывается как toast)
+   - Notification banner — dismissible и не перекрывает calendar grid
+
+6. **Drag-and-drop reschedule**
    - Пользователь перетаскивает карточку job/task на другой временной слот → API `PATCH /reschedule`
    - Snap-to-grid: привязка к slot_duration (по умолчанию 60 мин)
    - Visual preview во время перетаскивания (ghost card)
    - Toast confirmation: "Job #123 rescheduled to Mar 30, 2:00 PM"
    - Leads НЕ поддерживают reschedule (lead_date_time — read-only из формы)
 
-4. **Drag-and-drop reassign (Timeline views)**
+7. **Drag-and-drop reassign (Timeline views)**
    - В TimelineView/TimelineWeekView: перетаскивание карточки между строками провайдеров → API `PATCH /reassign`
    - Toast: "Job #123 reassigned to John Smith"
    - Leads НЕ поддерживают reassign (нет assigned_provider_id в схеме)
    - Tasks поддерживают reassign через `assigned_provider_id`
 
-5. **Расширенные фильтры**
+8. **Расширенные фильтры**
    - Multi-select по статусам (job statuses: new, scheduled, en_route, in_progress, completed; lead statuses: new, contacted, qualified)
    - Фильтр по job_type (тип работы)
    - Фильтр по source (источник)
@@ -196,12 +250,7 @@
    - Фильтр по action_required (только items с непросмотренными действиями)
    - Сохранение фильтров в localStorage
 
-6. **Realtime updates**
-   - SSE подписка на события: `onJobUpdate`, `onLeadUpdate`, `onTaskUpdate`
-   - При изменении job/lead/task — auto-refresh списка items
-   - При reschedule/reassign другим оператором — обновление позиции карточки без перезагрузки
-
-7. **Settings UI**
+9. **Settings UI**
    - Модальное окно или sidebar для редактирования dispatch_settings:
      - Timezone (dropdown из списка IANA timezones)
      - Business hours: work_start_time, work_end_time (time pickers)
@@ -210,33 +259,37 @@
      - Buffer between jobs: 0 / 15 / 30 / 60 min
    - Только для пользователей с ролью admin/dispatcher
 
-8. **Create-from-slot (расширение)**
-   - Click на пустой слот в любом view → контекстное меню: "Create Task" / "Create Lead" / "Create Job"
-   - Task: создаётся сразу с start_at/end_at из слота + assigned_provider (если timeline view)
-   - Lead/Job: открывает существующий CreateLeadJobWizard с предзаполненным временем
+10. **Create-from-slot (расширение)**
+    - Click на пустой слот в любом view → контекстное меню: "Create Task" / "Create Lead" / "Create Job"
+    - Task: создаётся сразу с start_at/end_at из слота + assigned_provider (если timeline view)
+    - Lead/Job: открывает существующий CreateLeadJobWizard с предзаполненным временем
 
 **Ограничения и нефункциональные требования:**
 - Schedule НЕ дублирует Pulse timeline — это planning surface, не event history
+- Не создавать отдельную `schedule_items` business table — read model поверх jobs/leads/tasks
+- Не ломать `Pulse-first` модель: dispatch-события остаются частью общего event/realtime контура
+- Не расширять protected runtime/auth/realtime paths без отдельной задачи
 - Максимум 500 items на один запрос (pagination)
 - Drag-and-drop работает только в Day/Week/Timeline/Timeline Week (не Month — month слишком компактный)
 - Reschedule/reassign логируются в domain_events для audit trail
-- Нет отдельного `schedule_items` — read model поверх jobs/leads/tasks
 - При конфликте (два job на одного провайдера в одно время) — визуальное предупреждение (overlap indicator), но НЕ блокировка
+- Desktop-first operator workflow, без деградации читаемости на узких экранах
 
 **Потенциально вовлечённые модули/части системы:**
-- `backend/src/routes/schedule.js` — route handlers
-- `backend/src/services/scheduleService.js` — business logic
-- `backend/src/db/scheduleQueries.js` — SQL queries
-- `backend/src/services/realtimeService.js` — SSE broadcast для schedule events
 - `frontend/src/pages/SchedulePage.tsx` — page composition
 - `frontend/src/hooks/useScheduleData.ts` — state management
 - `frontend/src/services/scheduleApi.ts` — API client
 - `frontend/src/components/schedule/*` — все view-компоненты
 - `frontend/src/utils/companyTime.ts` — timezone utilities (shared с CustomTimeModal)
+- `backend/src/routes/schedule.js` — route handlers
+- `backend/src/services/scheduleService.js` — business logic
+- `backend/src/db/scheduleQueries.js` — SQL queries
+- `backend/src/services/realtimeService.js` — SSE broadcast для schedule events
 
 **Затронутые интеграции:**
+- Twilio / SoftPhone — non-blocking onboarding внутри schedule workflow
 - Zenbooker — reschedule job может потребовать sync с ZB (если job синхронизирован)
-- SSE/Realtime — новые event types для schedule mutations
+- Pulse / SSE — для сохранения общей event model при reschedule/reassign UX
 
 **Защищённые части кода (НЕЛЬЗЯ ломать):**
 - `src/server.js` core middleware и SSE infrastructure
@@ -249,52 +302,5 @@
 **Зависимости:**
 - `dispatch_settings` table (миграция 051, уже в production)
 - `company.timezone` — доступен через `useAuth().company.timezone` на фронтенде
-- `frontend/src/utils/companyTime.ts` — утилиты dateInTZ, todayInTZ (уже реализованы)
+- `frontend/src/utils/companyTime.ts` — утилиты dateInTZ, todayInTZ, minutesSinceMidnight, formatTimeInTZ, dateKeyInTZ (уже реализованы)
 - `req.companyFilter?.company_id` middleware — уже настроен для `/api/schedule`
-=======
-- **Текущее состояние:** `/schedule` уже запущен как MVP dispatch/planning surface с представлениями `Day / Week / Month / Timeline / TL Week`, quick-view sidebar, unified read model и фильтрами по типу сущности/назначению/поиску.
-- **Подтверждённые UX-проблемы из аудита 2026-03-29 (`https://abc-metrics.fly.dev/schedule`):**
-  - В `Week` и `Day` item container учитывает `end_at`, но сама визуальная карточка события не растягивается на всю длительность; 120-минутные работы выглядят как однострочные бейджи.
-  - Коллизии не раскладываются по lanes: три работы `2026-03-30 9:00–11:00 ET` и пересекающаяся работа `10:00–12:00 ET` рендерятся поверх друг друга в одной колонке.
-  - При первом заходе рабочий экран перекрывается нецелевыми overlay: модалкой `SoftPhone Ready` и нижним баннером про заблокированные notifications.
-  - В weekly navigation заголовок показывает только `Mar 2026`, без явного диапазона текущей недели; при перелистывании это ухудшает ориентацию во времени.
-  - На карточках в grid почти не читаются operational states: `Canceled`, `Submitted`, `Rescheduled`, assigned/unassigned и multi-assignee не различаются достаточно явно до открытия sidebar.
-  - Dispatch timezone пока не зафиксирован на уровне UI-state и рендера как `America/New_York`; schedule logic не должна зависеть от locale/timezone браузера пользователя.
-- **Как должно быть:**
-  - Календарные карточки должны визуально соответствовать реальной длительности интервала и занимать весь доступный vertical/horizontal slot в зависимости от view.
-  - Пересекающиеся items должны автоматически раскладываться по параллельным подколонкам без взаимного перекрытия, с сохранением кликабельности и читаемости.
-  - Первичный вход в `/schedule` не должен блокироваться softphone/notification onboarding; такие prompts должны быть неблокирующими и контекстно-подходящими.
-  - Week/day views должны давать диспетчеру мгновенное понимание диапазона дат, статуса работы, назначения и конфликтов без обязательного открытия sidebar.
-  - Все time calculations, filters и visual anchors должны быть согласованы с company dispatch timezone `America/New_York`.
-- **Пользовательские сценарии:**
-  - Диспетчер открывает неделю и сразу понимает фактическую загрузку команды по длительности слотов, а не по списку однострочных бейджей.
-  - Диспетчер видит одновременные работы без наложения и понимает, у кого конфликт по времени.
-  - Оператор заходит в `/schedule` из Jobs/Pulse и может сразу работать с календарём без принудительного закрытия нерелевантных модалок.
-  - Пользователь различает `Canceled / Submitted / Rescheduled / Unassigned` прямо в grid, не открывая каждую карточку отдельно.
-  - Пользователь в любом view видит корректную временную привязку недели и дня в `America/New_York`.
-- **Ограничения и нефункциональные требования:**
-  - Не создавать отдельную `schedule_items` business table и не дублировать domain model поверх `jobs / leads / tasks`.
-  - Не ломать `Pulse-first` модель: dispatch-события остаются частью общего event/realtime контура.
-  - Не расширять protected runtime/auth/realtime paths без отдельной задачи: `src/server.js`, `frontend/src/services/apiClient.ts`, `frontend/src/hooks/useRealtimeEvents.ts`, `backend/db/`.
-  - UX hardening должен быть реализован как расширение существующего schedule surface, без нового параллельного dispatcher UI.
-  - Решение должно оставаться пригодным для desktop-first operator workflow и не деградировать читаемость на узких экранах.
-- **Потенциально вовлечённые модули/части системы:**
-  - `frontend/src/pages/SchedulePage.tsx`
-  - `frontend/src/components/schedule/WeekView.tsx`
-  - `frontend/src/components/schedule/DayView.tsx`
-  - `frontend/src/components/schedule/MonthView.tsx`
-  - `frontend/src/components/schedule/TimelineView.tsx`
-  - `frontend/src/components/schedule/TimelineWeekView.tsx`
-  - `frontend/src/components/schedule/ScheduleItemCard.tsx`
-  - `frontend/src/components/schedule/ScheduleToolbar.tsx`
-  - `frontend/src/components/schedule/ScheduleSidebar.tsx`
-  - `frontend/src/hooks/useScheduleData.ts`
-  - `frontend/src/services/scheduleApi.ts`
-  - `backend/src/routes/schedule.js`
-  - `backend/src/services/scheduleService.js`
-  - `backend/src/db/scheduleQueries.js`
-- **Затронутые интеграции:**
-  - `Twilio / SoftPhone` — только в части non-blocking onboarding внутри schedule workflow.
-  - `Zenbooker` — косвенно, так как provider/job scheduling data уже агрегируется в schedule read model.
-  - `Pulse / SSE` — для сохранения общей event model при reschedule/reassign UX.
->>>>>>> Stashed changes
