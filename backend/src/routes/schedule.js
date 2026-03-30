@@ -13,7 +13,7 @@ const scheduleService = require('../services/scheduleService');
 // GET /api/schedule — List schedule items with filters
 router.get('/', async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = req.companyFilter?.company_id;
         const {
             start_date,
             end_date,
@@ -49,7 +49,7 @@ router.get('/', async (req, res) => {
 // GET /api/schedule/items/:entityType/:entityId — Single schedule item detail
 router.get('/items/:entityType/:entityId', async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = req.companyFilter?.company_id;
         const { entityType, entityId } = req.params;
 
         const result = await scheduleService.getScheduleItemDetail(companyId, entityType, entityId);
@@ -64,7 +64,7 @@ router.get('/items/:entityType/:entityId', async (req, res) => {
 // PATCH /api/schedule/items/:entityType/:entityId/reschedule — Reschedule item
 router.patch('/items/:entityType/:entityId/reschedule', async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = req.companyFilter?.company_id;
         const { entityType, entityId } = req.params;
         const { start_at, end_at } = req.body;
 
@@ -84,7 +84,7 @@ router.patch('/items/:entityType/:entityId/reschedule', async (req, res) => {
 // PATCH /api/schedule/items/:entityType/:entityId/reassign — Reassign item
 router.patch('/items/:entityType/:entityId/reassign', async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = req.companyFilter?.company_id;
         const { entityType, entityId } = req.params;
         const { assignee_id } = req.body;
 
@@ -104,7 +104,7 @@ router.patch('/items/:entityType/:entityId/reassign', async (req, res) => {
 // POST /api/schedule/items/from-slot — Create entity from schedule slot
 router.post('/items/from-slot', async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = req.companyFilter?.company_id;
         const { entity_type, ...slotData } = req.body;
 
         if (!entity_type) {
@@ -127,7 +127,7 @@ router.post('/items/from-slot', async (req, res) => {
 // GET /api/schedule/settings — Get dispatch settings
 router.get('/settings', async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = req.companyFilter?.company_id;
         const settings = await scheduleService.getDispatchSettings(companyId);
         res.json({ ok: true, data: settings });
     } catch (err) {
@@ -140,7 +140,7 @@ router.get('/settings', async (req, res) => {
 // PATCH /api/schedule/settings — Update dispatch settings
 router.patch('/settings', async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = req.companyFilter?.company_id;
         const updates = req.body;
 
         if (!updates || Object.keys(updates).length === 0) {
