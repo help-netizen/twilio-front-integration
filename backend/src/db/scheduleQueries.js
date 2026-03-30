@@ -51,7 +51,7 @@ async function getScheduleItems(opts) {
 
     // ── Jobs ────────────────────────────────────────────────────────────────
     if (wantJob) {
-        const jobConds = [`j.company_id = $1`, `j.blanc_status NOT IN ('cancelled')`];
+        const jobConds = [`j.company_id = $1`, `LOWER(j.blanc_status) NOT IN ('cancelled', 'canceled')`];
 
         if (startDate) {
             idx++; jobConds.push(`j.start_date >= $${idx}::date`); params.push(startDate);
