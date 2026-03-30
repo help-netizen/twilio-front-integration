@@ -16,7 +16,7 @@
 | F010 | AI функции (Summary, Polish, Transcript) | ✅ Реализована | `backend/src/`, Gemini API |
 | F011 | Refactor-readiness audit | ⏳ Запланирована | `docs/`, `src/server.js`, `backend/src/`, `frontend/src/`, `tests/` |
 | F012 | Multi-tenant company model, Super Admin & RBAC | ⏳ Запланирована | `docs/specs/PF007-multitenant-company-model-rbac.md`, `docs/specs/PF007-technical-design.md`, `docs/specs/PF102-tenancy-rbac-sprint-plan.md`, `docs/specs/PF103-tenancy-rbac-db-api-contracts.md` |
-| F013 | Schedule / Dispatcher MVP + UX hardening | 🔧 В разработке (Sprint 2 ✅, Sprint 3 ✅) | `frontend/src/pages/SchedulePage.tsx`, `frontend/src/components/schedule/`, `frontend/src/hooks/useScheduleData.ts`, `frontend/src/services/scheduleApi.ts`, `backend/src/routes/schedule.js`, `backend/src/services/scheduleService.js`, `backend/src/db/scheduleQueries.js`, `docs/specs/PF001-unified-schedule-dispatcher.md` |
+| F013 | Schedule / Dispatcher MVP + UX hardening | 🔧 В разработке (Sprint 2 ✅, Sprint 3 ✅, Sprint 4 partial ✅) | `frontend/src/pages/SchedulePage.tsx`, `frontend/src/components/schedule/`, `frontend/src/hooks/useScheduleData.ts`, `frontend/src/services/scheduleApi.ts`, `backend/src/routes/schedule.js`, `backend/src/services/scheduleService.js`, `backend/src/db/scheduleQueries.js`, `docs/specs/PF001-unified-schedule-dispatcher.md` |
 
 ---
 
@@ -142,11 +142,11 @@
 
 | # | Проблема | Статус |
 |---|----------|--------|
-| UX-1 | **Карточки не растягиваются по длительности.** 120-минутные работы в Week/Day выглядят как однострочные бейджи вместо блоков пропорциональных реальной длительности. | ⏳ Sprint 4 |
-| UX-2 | **Коллизии не раскладываются по lanes.** Три работы 9:00–11:00 ET + одна 10:00–12:00 ET на 2026-03-30 рендерятся поверх друг друга в одной колонке без горизонтального разделения. | ⏳ Sprint 4 |
-| UX-3 | **SoftPhone Ready модалка и notification banner перекрывают /schedule.** Первый вход блокируется нецелевыми overlay — для dispatch-экрана это лишний блокер. | ⏳ Sprint 4 |
-| UX-4 | **Заголовок недели показывает только "Mar 2026".** Нет явного диапазона (Mar 29 – Apr 4), при листании ухудшается ориентирование. | ⏳ Sprint 4 |
-| UX-5 | **Operational states плохо читаются на карточках.** Canceled, Submitted, Rescheduled, assigned/unassigned и multi-assignee не различаются достаточно явно до открытия sidebar. | ⏳ Sprint 4 |
+| UX-1 | **Карточки не растягиваются по длительности.** 120-минутные работы в Week/Day выглядят как однострочные бейджи вместо блоков пропорциональных реальной длительности. | ✅ Sprint 4 |
+| UX-2 | **Коллизии не раскладываются по lanes.** Три работы 9:00–11:00 ET + одна 10:00–12:00 ET на 2026-03-30 рендерятся поверх друг друга в одной колонке без горизонтального разделения. | ✅ Sprint 4 |
+| UX-3 | **SoftPhone Ready модалка и notification banner перекрывают /schedule.** Первый вход блокируется нецелевыми overlay — для dispatch-экрана это лишний блокер. | ✅ Sprint 4 |
+| UX-4 | **Заголовок недели показывает только "Mar 2026".** Нет явного диапазона (Mar 29 – Apr 4), при листании ухудшается ориентирование. | ✅ Sprint 4 |
+| UX-5 | **Operational states плохо читаются на карточках.** Canceled, Submitted, Rescheduled, assigned/unassigned и multi-assignee не различаются достаточно явно до открытия sidebar. | ✅ Sprint 4 |
 | UX-6 | **Timezone drift.** UI-state и time calculations не зафиксированы на `America/New_York` — зависят от locale/timezone браузера. | ✅ Sprint 3 |
 
 **Как должно быть:**
