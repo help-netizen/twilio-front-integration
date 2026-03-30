@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Bell, X } from 'lucide-react';
 import { isSupported, getPermissionState, subscribeToPush } from '../services/pushNotificationService';
 import { toast } from 'sonner';
@@ -8,6 +9,7 @@ import { toast } from 'sonner';
 const DISMISSED_STATE_KEY = 'push-reminder-dismissed-state';
 
 export default function NotificationReminderBanner() {
+    const location = useLocation();
     const [visible, setVisible] = useState(false);
     const [permState, setPermState] = useState(getPermissionState());
 
@@ -63,7 +65,7 @@ export default function NotificationReminderBanner() {
         }
     };
 
-    if (!visible || permState === 'granted' || permState === 'unsupported') return null;
+    if (!visible || permState === 'granted' || permState === 'unsupported' || location.pathname.startsWith('/schedule')) return null;
 
     return (
         <div className="bg-orange-50 border-b border-orange-100 px-4 py-2.5 flex items-center justify-between gap-4">

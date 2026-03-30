@@ -4,7 +4,7 @@
 
 import React from 'react';
 import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
-import { format } from 'date-fns';
+import { format, startOfWeek, endOfWeek } from 'date-fns';
 import { Button } from '../ui/button';
 import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
 import { Input } from '../ui/input';
@@ -29,8 +29,11 @@ function getDateLabel(date: Date, viewMode: ViewMode): string {
         case 'timeline':
             return format(date, 'EEEE, MMM d, yyyy');
         case 'week':
-        case 'timeline-week':
-            return format(date, 'MMM yyyy');
+        case 'timeline-week': {
+            const start = startOfWeek(date);
+            const end = endOfWeek(date);
+            return format(start, 'MMM d') + ' – ' + format(end, 'MMM d, yyyy');
+        }
         case 'month':
             return format(date, 'MMMM yyyy');
     }

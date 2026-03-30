@@ -11,6 +11,8 @@ import {
     todayInTZ, dateInTZ, minutesSinceMidnight,
     formatTimeInTZ, dateKeyInTZ,
 } from '../../utils/companyTime';
+import { assignLanes } from '../../utils/scheduleLayout';
+import type { LayoutItem } from '../../utils/scheduleLayout';
 
 interface DayViewProps {
     currentDate: Date;
@@ -125,35 +127,54 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                         </>
                     )}
 
-                    {/* Positioned items */}
-                    {dayItems.map(item => {
-                        if (!item.start_at) return null;
-                        const itemMin = minutesSinceMidnight(new Date(item.start_at), tz);
-                        const topPx = ((itemMin - startHour * 60) / 60) * HOUR_HEIGHT;
-                        const topPct = (topPx / totalHeight) * 100;
-
-                        let durationMin = 60; // default 1 hour
-                        if (item.end_at) {
-                            const endMin = minutesSinceMidnight(new Date(item.end_at), tz);
-                            durationMin = endMin - itemMin;
-                            if (durationMin <= 0) durationMin = 60;
+                    {/* Positioned items with collision lanes */}
+                    {(() => {
+                        const layoutItems: (LayoutItem & { item: ScheduleItem; itemMin: number; durationMin: number })[] = [];
+                        for (const item of dayItems) {
+                            if (!item.start_at) continue;
+                            const itemMin = minutesSinceMidnight(new Date(item.start_at), tz);
+                            let durationMin = 60;
+                            if (item.end_at) {
+                                const endMin = minutesSinceMidnight(new Date(item.end_at), tz);
+                                durationMin = endMin - itemMin;
+                                if (durationMin <= 0) durationMin = 60;
+                            }
+                            layoutItems.push({
+                                key: `${item.entity_type}-${item.entity_id}`,
+                                startMin: itemMin,
+                                endMin: itemMin + durationMin,
+                                item,
+                                itemMin,
+                                durationMin,
+                            });
                         }
-                        const heightPct = ((durationMin / 60) / totalHours) * 100;
+                        const lanes = assignLanes(layoutItems);
 
-                        return (
-                            <div
-                                key={`${item.entity_type}-${item.entity_id}`}
-                                className="absolute left-1 right-1 z-10"
-                                style={{
-                                    top: `${topPct}%`,
-                                    height: `${Math.max(heightPct, 2)}%`,
-                                    minHeight: '36px',
-                                }}
-                            >
-                                <ScheduleItemCard item={item} onClick={onSelectItem} timezone={tz} />
-                            </div>
-                        );
-                    })}
+                        return layoutItems.map(({ key, item, itemMin, durationMin }) => {
+                            const topPx = ((itemMin - startHour * 60) / 60) * HOUR_HEIGHT;
+                            const heightPx = (durationMin / 60) * HOUR_HEIGHT;
+                            const layout = lanes.get(key);
+                            const lane = layout?.lane ?? 0;
+                            const totalLanes = layout?.totalLanes ?? 1;
+                            const widthPct = 100 / totalLanes;
+                            const leftPct = lane * widthPct;
+
+                            return (
+                                <div
+                                    key={key}
+                                    className="absolute z-10"
+                                    style={{
+                                        top: topPx,
+                                        height: Math.max(heightPx, 32),
+                                        left: `calc(${leftPct}% + 4px)`,
+                                        width: `calc(${widthPct}% - 8px)`,
+                                    }}
+                                >
+                                    <ScheduleItemCard item={item} onClick={onSelectItem} timezone={tz} />
+                                </div>
+                            );
+                        });
+                    })()}
                 </div>
             </div>
         </div>
