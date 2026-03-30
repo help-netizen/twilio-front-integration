@@ -5,21 +5,24 @@
 import React, { useMemo } from 'react';
 import {
     startOfMonth, endOfMonth, startOfWeek, endOfWeek,
-    addDays, format, parseISO, isSameMonth, isSameDay,
+    addDays, format, isSameMonth,
 } from 'date-fns';
 import { Badge } from '../ui/badge';
-import type { ScheduleItem } from '../../services/scheduleApi';
+import type { ScheduleItem, DispatchSettings } from '../../services/scheduleApi';
+import { todayInTZ, dateKeyInTZ } from '../../utils/companyTime';
 
 interface MonthViewProps {
     currentDate: Date;
     items: ScheduleItem[];
+    settings: DispatchSettings;
     onSelectDay: (date: Date) => void;
     onSelectItem: (item: ScheduleItem) => void;
 }
 
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-export const MonthView: React.FC<MonthViewProps> = ({ currentDate, items, onSelectDay, onSelectItem }) => {
+export const MonthView: React.FC<MonthViewProps> = ({ currentDate, items, settings, onSelectDay, onSelectItem }) => {
+    const tz = settings.timezone || 'America/New_York';
     // Build grid of weeks
     const weeks = useMemo(() => {
         const monthStart = startOfMonth(currentDate);
@@ -40,19 +43,19 @@ export const MonthView: React.FC<MonthViewProps> = ({ currentDate, items, onSele
         return result;
     }, [currentDate]);
 
-    // Group items by day
+    // Group items by day (company TZ)
     const itemsByDay = useMemo(() => {
         const map = new Map<string, ScheduleItem[]>();
         for (const item of items) {
             if (!item.start_at) continue;
-            const key = format(parseISO(item.start_at), 'yyyy-MM-dd');
+            const key = dateKeyInTZ(item.start_at, tz);
             if (!map.has(key)) map.set(key, []);
             map.get(key)!.push(item);
         }
         return map;
-    }, [items]);
+    }, [items, tz]);
 
-    const today = new Date();
+    const todayStr = todayInTZ(tz);
 
     return (
         <div className="flex flex-col flex-1 overflow-auto">
@@ -73,7 +76,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ currentDate, items, onSele
                             const key = format(day, 'yyyy-MM-dd');
                             const dayItems = itemsByDay.get(key) || [];
                             const inMonth = isSameMonth(day, currentDate);
-                            const isToday = isSameDay(day, today);
+                            const isToday = key === todayStr;
                             const jobCount = dayItems.filter(i => i.entity_type === 'job').length;
                             const leadCount = dayItems.filter(i => i.entity_type === 'lead').length;
                             const taskCount = dayItems.filter(i => i.entity_type === 'task').length;

@@ -1,8 +1,9 @@
 /**
  * useScheduleData — Schedule page state & data-fetching hook.
+ * Timezone-aware navigation, SSE realtime refresh.
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
     startOfWeek, endOfWeek, startOfMonth, endOfMonth,
     addDays, addWeeks, addMonths, subDays, subWeeks, subMonths,
@@ -12,6 +13,7 @@ import {
     fetchScheduleItems, fetchDispatchSettings,
     type ScheduleItem, type DispatchSettings, type ScheduleFilters,
 } from '../services/scheduleApi';
+import { useRealtimeEvents } from './useRealtimeEvents';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -29,7 +31,7 @@ export interface ScheduleState {
 }
 
 const DEFAULT_SETTINGS: DispatchSettings = {
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    timezone: 'America/New_York',
     work_start_time: '08:00',
     work_end_time: '18:00',
     work_days: [1, 2, 3, 4, 5],
@@ -105,6 +107,35 @@ export function useScheduleData() {
         fetchDispatchSettings()
             .then(setSettings)
             .catch(() => setSettings(DEFAULT_SETTINGS));
+    }, []);
+
+    // ── SSE Realtime refresh (debounced) ─────────────────────────────────────
+
+    const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const debouncedRefresh = useCallback(() => {
+        if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = setTimeout(() => {
+            loadItems();
+        }, 500);
+    }, [loadItems]);
+
+    useRealtimeEvents({
+        onJobUpdated: debouncedRefresh,
+        onGenericEvent: (event: any) => {
+            // Refresh on lead/task updates
+            const type = event?.type || '';
+            if (type.includes('lead') || type.includes('task')) {
+                debouncedRefresh();
+            }
+        },
+    });
+
+    // Cleanup timer on unmount
+    useEffect(() => {
+        return () => {
+            if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+        };
     }, []);
 
     // ── Navigation ───────────────────────────────────────────────────────────

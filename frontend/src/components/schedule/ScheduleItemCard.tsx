@@ -1,11 +1,12 @@
 /**
  * ScheduleItemCard — Small card rendered inside calendar time slots.
+ * Timezone-aware: time labels use company TZ when provided.
  */
 
 import React from 'react';
 import { Briefcase, UserPlus, CheckSquare } from 'lucide-react';
-import { format, parseISO } from 'date-fns';
 import type { ScheduleItem } from '../../services/scheduleApi';
+import { formatTimeInTZ } from '../../utils/companyTime';
 
 // ── Color config per entity type ─────────────────────────────────────────────
 
@@ -19,15 +20,17 @@ interface ScheduleItemCardProps {
     item: ScheduleItem;
     compact?: boolean;
     onClick?: (item: ScheduleItem) => void;
+    /** Company timezone for time label formatting */
+    timezone?: string;
 }
 
-export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({ item, compact = false, onClick }) => {
+export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({ item, compact = false, onClick, timezone }) => {
     const style = ENTITY_STYLES[item.entity_type] ?? ENTITY_STYLES.task;
     const Icon = style.icon;
     const isUnassigned = !item.assigned_techs?.length;
 
     const timeLabel = item.start_at
-        ? format(parseISO(item.start_at), 'h:mm a')
+        ? formatTimeInTZ(new Date(item.start_at), timezone)
         : 'Unscheduled';
 
     return (

@@ -9,7 +9,7 @@ import type { LocalJob } from '../../services/jobsApi';
 import { getTeamMembers } from '../../services/zenbookerApi';
 import type { TeamMember } from '../../services/zenbookerApi';
 import { useAuth } from '../../auth/AuthProvider';
-import { dateInTZ, todayInTZ } from '../../utils/companyTime';
+import { dateInTZ, todayInTZ, minutesSinceMidnight, formatTimeInTZ } from '../../utils/companyTime';
 import './CustomTimeModal.css';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -78,20 +78,8 @@ function getRelativeDayHint(dateStr: string, tz: string): string | null {
     return null;
 }
 
-function fmtTime(d: Date, tz?: string) {
-    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, ...(tz && { timeZone: tz }) });
-}
-
-function minutesSinceMidnight(d: Date, tz?: string) {
-    if (!tz) return d.getHours() * 60 + d.getMinutes();
-    const parts = new Intl.DateTimeFormat('en-US', {
-        timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false,
-    }).formatToParts(d);
-    const h = parseInt(parts.find(p => p.type === 'hour')?.value || '0');
-    const m = parseInt(parts.find(p => p.type === 'minute')?.value || '0');
-    // Intl hour12:false may return 24 for midnight
-    return (h === 24 ? 0 : h) * 60 + m;
-}
+// fmtTime and minutesSinceMidnight are now imported from companyTime.ts
+const fmtTime = formatTimeInTZ;
 
 function snapToGrid(y: number, containerTop: number): number {
     const offsetY = Math.max(0, y - containerTop);

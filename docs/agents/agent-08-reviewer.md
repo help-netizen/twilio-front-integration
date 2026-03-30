@@ -53,11 +53,22 @@
    - Изменения соответствуют `Docs/requirements.md`
    - Не ломаются требования других фич
 
-4. **Проверить безопасность**
+4. **Проверить безопасность и изоляцию данных**
    - Нет хардкода credentials/API keys
    - SQL-запросы параметризованы (нет SQL injection)
    - Webhook signatures проверяются
    - authedFetch используется для защищённых endpoints
+
+   **Middleware и доступы (обязательно для новых API routes):**
+   - Новые routes подключены с middleware: `app.use('/api/path', authenticate, requireCompanyAccess, router)`
+   - company_id получается ТОЛЬКО через `req.companyFilter?.company_id` (НЕ `req.companyId` — его не существует!)
+   - Нет использования `req.companyId` — это частая ошибка, ведущая к `undefined` и сломанным фильтрам
+
+   **Изоляция данных между компаниями (обязательно):**
+   - ВСЕ SQL-запросы включают `WHERE ... company_id = $N`
+   - GET/PATCH/DELETE по entity_id проверяют `AND company_id = $N` (чужие данные → 404, не 200)
+   - List endpoints фильтруют по company_id — данные компании B не видны компании A
+   - Ошибки не раскрывают данные других компаний (404 вместо 403 при чужих ID)
 
 5. **Вынести вердикт**
    - «APPROVED» — если всё хорошо
@@ -96,11 +107,15 @@
 
 **Требования других фич:** не затронуты ✅ / затронуты ❌ [описание]
 
-### Проверка безопасности
+### Проверка безопасности и изоляции данных
 
 - Хардкод credentials: нет ✅ / ❌ [где]
 - SQL injection: защищён ✅ / ❌ [где]
 - Webhook verification: корректно ✅ / не применимо
+- Middleware на новых routes: ✅ / ❌ [где не хватает]
+- company_id через `req.companyFilter?.company_id`: ✅ / ❌ [где используется `req.companyId`]
+- SQL фильтрация по company_id: ✅ / ❌ [где отсутствует]
+- Изоляция данных (чужие ID → 404): ✅ / ❌ [где утечка]
 
 ### Вердикт
 
@@ -125,6 +140,9 @@
 - Проверить на дублирование во всём проекте (backend + frontend)
 - Проверить соответствие паттернам проекта
 - Проверить безопасность (credentials, SQL injection, auth)
+- Проверить middleware на новых routes (authenticate, requireCompanyAccess)
+- Проверить, что company_id получается через `req.companyFilter?.company_id` (НЕ `req.companyId`)
+- Проверить изоляцию данных — все SQL-запросы фильтруют по company_id
 - Проверить, что не ломаются другие фичи
 - Вынести чёткий вердикт
 
@@ -139,5 +157,9 @@
 - [ ] Проверено соответствие паттернам (CommonJS, TypeScript, Shadcn/ui, etc.)
 - [ ] Проверено соответствие требованиям
 - [ ] Проверена безопасность
+- [ ] Новые routes подключены с правильным middleware (authenticate, requireCompanyAccess)
+- [ ] company_id получается через `req.companyFilter?.company_id` (НЕ `req.companyId`)
+- [ ] Все SQL-запросы фильтруют по company_id (нет утечки данных между компаниями)
+- [ ] Доступ по чужому entity_id возвращает 404 (не 200 с данными другой компании)
 - [ ] Проверено, что не ломаются другие фичи
 - [ ] Вынесен чёткий вердикт (APPROVED / НУЖНЫ ИСПРАВЛЕНИЯ)

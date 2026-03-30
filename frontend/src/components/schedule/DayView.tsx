@@ -1,11 +1,16 @@
 /**
  * DayView — Single column with hourly time slots.
+ * Timezone-aware: all positioning and labels use company TZ from settings.
  */
 
 import React, { useMemo } from 'react';
-import { format, parseISO, isSameDay, getHours, getMinutes } from 'date-fns';
+import { format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
 import type { ScheduleItem, DispatchSettings } from '../../services/scheduleApi';
+import {
+    todayInTZ, dateInTZ, minutesSinceMidnight,
+    formatTimeInTZ, dateKeyInTZ,
+} from '../../utils/companyTime';
 
 interface DayViewProps {
     currentDate: Date;
@@ -19,34 +24,51 @@ function parseTime(t: string): number {
     return h + (m || 0) / 60;
 }
 
-function buildTimeSlots(startTime: string, endTime: string, slotMinutes: number): string[] {
-    const start = parseTime(startTime);
-    const end = parseTime(endTime);
-    const slots: string[] = [];
-    for (let h = start; h < end; h += slotMinutes / 60) {
-        const hh = Math.floor(h);
-        const mm = Math.round((h - hh) * 60);
-        slots.push(`${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`);
-    }
-    return slots;
+function buildHourSlots(startTime: string, endTime: string): number[] {
+    const start = Math.floor(parseTime(startTime));
+    const end = Math.ceil(parseTime(endTime));
+    const hours: number[] = [];
+    for (let h = start; h < end; h++) hours.push(h);
+    return hours;
 }
 
-export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, onSelectItem }) => {
-    const timeSlots = useMemo(
-        () => buildTimeSlots(settings.work_start_time, settings.work_end_time, settings.slot_duration),
-        [settings],
-    );
+const HOUR_HEIGHT = 80; // px per hour (h-20 = 80px)
 
+export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, onSelectItem }) => {
+    const tz = settings.timezone || 'America/New_York';
     const startHour = parseTime(settings.work_start_time);
     const endHour = parseTime(settings.work_end_time);
     const totalHours = endHour - startHour;
+    const totalHeight = totalHours * HOUR_HEIGHT;
 
-    const dayItems = useMemo(
-        () => items.filter(i => i.start_at && isSameDay(parseISO(i.start_at), currentDate)),
-        [items, currentDate],
+    const hourSlots = useMemo(
+        () => buildHourSlots(settings.work_start_time, settings.work_end_time),
+        [settings.work_start_time, settings.work_end_time],
     );
 
-    const isToday = isSameDay(currentDate, new Date());
+    // Current date key in company TZ
+    const dateKey = format(currentDate, 'yyyy-MM-dd');
+
+    // Filter items for this day (using company TZ)
+    const dayItems = useMemo(
+        () => items.filter(i => i.start_at && dateKeyInTZ(i.start_at, tz) === dateKey),
+        [items, dateKey, tz],
+    );
+
+    // Today detection in company TZ
+    const todayStr = todayInTZ(tz);
+    const isToday = dateKey === todayStr;
+
+    // Past-time overlay + now-line
+    const nowMinFromGrid = isToday
+        ? minutesSinceMidnight(new Date(), tz) - startHour * 60
+        : 0;
+    const pastHeight = isToday
+        ? Math.max(0, Math.min(nowMinFromGrid, totalHours * 60)) / 60 * HOUR_HEIGHT
+        : 0;
+
+    // Hour labels in company TZ (using an arbitrary date to format)
+    const [dy, dm, dd] = dateKey.split('-').map(Number);
 
     return (
         <div className="flex flex-col flex-1 overflow-auto">
@@ -62,34 +84,61 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
             {/* Time grid */}
             <div className="flex flex-1 relative">
                 {/* Time labels */}
-                <div className="w-16 flex-shrink-0 border-r">
-                    {timeSlots.map(slot => (
-                        <div key={slot} className="h-20 border-b text-xs text-gray-400 pr-2 text-right pt-0.5">
-                            {format(parseISO(`2000-01-01T${slot}`), 'h a')}
+                <div className="w-16 flex-shrink-0 border-r relative">
+                    {hourSlots.map(h => (
+                        <div key={h} className="h-20 border-b text-xs text-gray-400 pr-2 text-right pt-0.5">
+                            {formatTimeInTZ(dateInTZ(dy, dm, dd, h, 0, tz), tz)}
                         </div>
                     ))}
+                    {/* Now line on label column */}
+                    {isToday && pastHeight > 0 && pastHeight < totalHeight && (
+                        <div
+                            className="absolute left-0 right-0 border-t-2 border-red-500 z-20 pointer-events-none"
+                            style={{ top: pastHeight }}
+                        />
+                    )}
                 </div>
 
                 {/* Day column */}
                 <div className={`flex-1 relative ${isToday ? 'bg-blue-50/30' : ''}`}>
                     {/* Slot lines */}
-                    {timeSlots.map(slot => (
-                        <div key={slot} className="h-20 border-b border-gray-100" />
+                    {hourSlots.map(h => (
+                        <div key={h} className="h-20 border-b border-gray-100" />
                     ))}
+
+                    {/* Past-time overlay + now-line */}
+                    {isToday && pastHeight > 0 && (
+                        <>
+                            <div
+                                className="absolute top-0 left-0 right-0 pointer-events-none z-[1]"
+                                style={{
+                                    height: Math.min(pastHeight, totalHeight),
+                                    background: 'rgba(128, 128, 128, 0.18)',
+                                }}
+                            />
+                            {pastHeight < totalHeight && (
+                                <div
+                                    className="absolute left-0 right-0 border-t-2 border-red-500 z-[6] pointer-events-none"
+                                    style={{ top: pastHeight }}
+                                />
+                            )}
+                        </>
+                    )}
 
                     {/* Positioned items */}
                     {dayItems.map(item => {
                         if (!item.start_at) return null;
-                        const parsed = parseISO(item.start_at);
-                        const itemHour = getHours(parsed) + getMinutes(parsed) / 60;
-                        const topPct = ((itemHour - startHour) / totalHours) * 100;
+                        const itemMin = minutesSinceMidnight(new Date(item.start_at), tz);
+                        const topPx = ((itemMin - startHour * 60) / 60) * HOUR_HEIGHT;
+                        const topPct = (topPx / totalHeight) * 100;
 
-                        let durationHours = 1;
+                        let durationMin = 60; // default 1 hour
                         if (item.end_at) {
-                            const endParsed = parseISO(item.end_at);
-                            durationHours = (getHours(endParsed) + getMinutes(endParsed) / 60) - itemHour;
+                            const endMin = minutesSinceMidnight(new Date(item.end_at), tz);
+                            durationMin = endMin - itemMin;
+                            if (durationMin <= 0) durationMin = 60;
                         }
-                        const heightPct = (durationHours / totalHours) * 100;
+                        const heightPct = ((durationMin / 60) / totalHours) * 100;
 
                         return (
                             <div
@@ -101,7 +150,7 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                                     minHeight: '36px',
                                 }}
                             >
-                                <ScheduleItemCard item={item} onClick={onSelectItem} />
+                                <ScheduleItemCard item={item} onClick={onSelectItem} timezone={tz} />
                             </div>
                         );
                     })}

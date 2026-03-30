@@ -28,7 +28,14 @@
 - **TypeScript строгая типизация** — на фронтенде
 - **React Query** для data fetching (Pulse), authedFetch для остальных
 - **SSE** для real-time обновлений
-- **Timezone:** все даты нормализуются к `America/New_York`
+- **Timezone:** все даты нормализуются к `company.timezone` (дефолт `America/New_York`)
+
+### 🔒 Безопасность и изоляция данных (КРИТИЧНО):
+- **Middleware:** Все API routes подключаются с `authenticate, requireCompanyAccess`
+- **company_id:** Получается ТОЛЬКО через `req.companyFilter?.company_id` (❌ НЕ `req.companyId` — его не существует!)
+- **SQL изоляция:** ВСЕ SQL-запросы ОБЯЗАНЫ фильтровать по `company_id` — утечка данных между компаниями недопустима
+- **Доступ по ID:** GET/PATCH/DELETE по entity_id проверяют `AND company_id = $N` (чужие данные → 404)
+- **Тесты:** Каждая фича с API обязана иметь тесты на middleware (401/403) и изоляцию данных
 
 ### Защищённые части кода:
 - `src/server.js` — core Express middleware и SSE infrastructure

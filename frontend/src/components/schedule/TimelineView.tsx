@@ -1,12 +1,17 @@
 /**
  * TimelineView — Horizontal timeline with provider rows.
  * Each row = one provider (or "Unassigned"). Columns = hours of the day.
+ * Timezone-aware: positioning and labels use company TZ from settings.
  */
 
 import React, { useMemo } from 'react';
-import { format, parseISO, getHours, getMinutes } from 'date-fns';
+import { format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
 import type { ScheduleItem, DispatchSettings } from '../../services/scheduleApi';
+import {
+    todayInTZ, dateInTZ, minutesSinceMidnight,
+    formatTimeInTZ, dateKeyInTZ,
+} from '../../utils/companyTime';
 
 interface TimelineViewProps {
     currentDate: Date;
@@ -27,6 +32,7 @@ interface ProviderGroup {
 }
 
 export const TimelineView: React.FC<TimelineViewProps> = ({ currentDate, items, settings, onSelectItem }) => {
+    const tz = settings.timezone || 'America/New_York';
     const startHour = parseTime(settings.work_start_time);
     const endHour = parseTime(settings.work_end_time);
     const totalHours = endHour - startHour;
@@ -38,11 +44,11 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ currentDate, items, 
         return result;
     }, [startHour, endHour]);
 
-    // Filter items for selected day
-    const dayKey = format(currentDate, 'yyyy-MM-dd');
+    // Filter items for selected day (using company TZ)
+    const dateKey = format(currentDate, 'yyyy-MM-dd');
     const dayItems = useMemo(
-        () => items.filter(i => i.start_at && format(parseISO(i.start_at), 'yyyy-MM-dd') === dayKey),
-        [items, dayKey],
+        () => items.filter(i => i.start_at && dateKeyInTZ(i.start_at, tz) === dateKey),
+        [items, dateKey, tz],
     );
 
     // Group by provider
@@ -61,7 +67,6 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ currentDate, items, 
                 map.get('__unassigned')!.items.push(item);
             }
         }
-        // Ensure "Unassigned" row always at end
         const groups = Array.from(map.values());
         groups.sort((a, b) => {
             if (a.id === '__unassigned') return 1;
@@ -72,6 +77,19 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ currentDate, items, 
         return groups;
     }, [dayItems]);
 
+    // Today detection + past overlay (horizontal)
+    const todayStr = todayInTZ(tz);
+    const isToday = dateKey === todayStr;
+    const nowMinFromGrid = isToday
+        ? minutesSinceMidnight(new Date(), tz) - startHour * 60
+        : 0;
+    const pastPct = isToday
+        ? Math.max(0, Math.min(nowMinFromGrid / 60 / totalHours, 1)) * 100
+        : 0;
+
+    // For hour labels
+    const [refY, refM, refD] = dateKey.split('-').map(Number);
+
     return (
         <div className="flex flex-col flex-1 overflow-auto">
             {/* Header: date + hour columns */}
@@ -81,7 +99,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ currentDate, items, 
                 </div>
                 {hours.map(h => (
                     <div key={h} className="flex-1 text-center py-2 border-r text-xs text-gray-500 min-w-[80px]">
-                        {format(new Date(2000, 0, 1, h), 'h a')}
+                        {formatTimeInTZ(dateInTZ(refY, refM, refD, h, 0, tz), tz)}
                     </div>
                 ))}
             </div>
@@ -103,19 +121,39 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ currentDate, items, 
                                 <div key={h} className="flex-1 border-r border-gray-100" />
                             ))}
                         </div>
+
+                        {/* Past-time overlay (horizontal) */}
+                        {isToday && pastPct > 0 && (
+                            <>
+                                <div
+                                    className="absolute top-0 bottom-0 left-0 pointer-events-none z-[1]"
+                                    style={{
+                                        width: `${Math.min(pastPct, 100)}%`,
+                                        background: 'rgba(128, 128, 128, 0.18)',
+                                    }}
+                                />
+                                {pastPct < 100 && (
+                                    <div
+                                        className="absolute top-0 bottom-0 border-l-2 border-red-500 z-[6] pointer-events-none"
+                                        style={{ left: `${pastPct}%` }}
+                                    />
+                                )}
+                            </>
+                        )}
+
                         {/* Items */}
                         {group.items.map(item => {
                             if (!item.start_at) return null;
-                            const parsed = parseISO(item.start_at);
-                            const itemHour = getHours(parsed) + getMinutes(parsed) / 60;
-                            const leftPct = ((itemHour - startHour) / totalHours) * 100;
+                            const itemMin = minutesSinceMidnight(new Date(item.start_at), tz);
+                            const leftPct = ((itemMin - startHour * 60) / 60 / totalHours) * 100;
 
-                            let durationHours = 1;
+                            let durationMin = 60;
                             if (item.end_at) {
-                                const endP = parseISO(item.end_at);
-                                durationHours = (getHours(endP) + getMinutes(endP) / 60) - itemHour;
+                                const endMin = minutesSinceMidnight(new Date(item.end_at), tz);
+                                durationMin = endMin - itemMin;
+                                if (durationMin <= 0) durationMin = 60;
                             }
-                            const widthPct = (durationHours / totalHours) * 100;
+                            const widthPct = ((durationMin / 60) / totalHours) * 100;
 
                             return (
                                 <div
@@ -127,7 +165,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ currentDate, items, 
                                         minWidth: '60px',
                                     }}
                                 >
-                                    <ScheduleItemCard item={item} compact onClick={onSelectItem} />
+                                    <ScheduleItemCard item={item} compact onClick={onSelectItem} timezone={tz} />
                                 </div>
                             );
                         })}

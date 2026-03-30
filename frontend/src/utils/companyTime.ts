@@ -56,6 +56,50 @@ export function tomorrowAtInTZ(hour: number, minute: number, tz: string = DEFAUL
     return dateInTZ(y, m, d, hour, minute, tz);
 }
 
+/**
+ * Minutes elapsed since midnight for `date` in the given timezone.
+ * If tz is omitted, uses browser local time.
+ */
+export function minutesSinceMidnight(d: Date, tz?: string): number {
+    if (!tz) return d.getHours() * 60 + d.getMinutes();
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(d);
+    const h = parseInt(parts.find(p => p.type === 'hour')?.value || '0');
+    const m = parseInt(parts.find(p => p.type === 'minute')?.value || '0');
+    // Intl hour12:false may return 24 for midnight
+    return (h === 24 ? 0 : h) * 60 + m;
+}
+
+/**
+ * Format a Date as a short time string ("9:00 AM") in the given timezone.
+ */
+export function formatTimeInTZ(d: Date, tz?: string): string {
+    return d.toLocaleTimeString('en-US', {
+        hour: 'numeric', minute: '2-digit', hour12: true,
+        ...(tz && { timeZone: tz }),
+    });
+}
+
+/**
+ * Format a Date as full date + time string ("Mar 30, 2026 1:00 PM") in the given timezone.
+ */
+export function formatDateTimeInTZ(d: Date, tz?: string): string {
+    return d.toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric',
+        hour: 'numeric', minute: '2-digit', hour12: true,
+        ...(tz && { timeZone: tz }),
+    });
+}
+
+/**
+ * Get the date string "YYYY-MM-DD" for a UTC ISO date in the given timezone.
+ * Useful for grouping items by day in company TZ.
+ */
+export function dateKeyInTZ(isoString: string, tz: string = DEFAULT_TZ): string {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date(isoString));
+}
+
 // ─── Internal ────────────────────────────────────────────────────────────────
 
 /**

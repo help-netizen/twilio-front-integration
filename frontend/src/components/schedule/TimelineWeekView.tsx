@@ -1,12 +1,14 @@
 /**
  * TimelineWeekView — Provider rows × 7-day columns.
  * Primary dispatch view: see all providers across a full week.
+ * Timezone-aware: today highlight and item grouping use company TZ.
  */
 
 import React, { useMemo } from 'react';
-import { startOfWeek, addDays, format, parseISO, isSameDay } from 'date-fns';
+import { startOfWeek, addDays, format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
 import type { ScheduleItem, DispatchSettings } from '../../services/scheduleApi';
+import { todayInTZ, dateKeyInTZ } from '../../utils/companyTime';
 
 interface TimelineWeekViewProps {
     currentDate: Date;
@@ -21,9 +23,11 @@ interface ProviderGroup {
     items: ScheduleItem[];
 }
 
-export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({ currentDate, items, settings: _settings, onSelectItem }) => {
+export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({ currentDate, items, settings, onSelectItem }) => {
+    const tz = settings.timezone || 'America/New_York';
     const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
     const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
+    const dayKeys = useMemo(() => days.map(d => format(d, 'yyyy-MM-dd')), [days]);
 
     // Group by provider
     const providerGroups: ProviderGroup[] = useMemo(() => {
@@ -52,7 +56,9 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({ currentDate,
         return groups;
     }, [items]);
 
-    const isToday = (day: Date) => isSameDay(day, new Date());
+    // Today in company TZ
+    const todayStr = todayInTZ(tz);
+    const isTodayCol = (dayKey: string) => dayKey === todayStr;
 
     return (
         <div className="flex flex-col flex-1 overflow-auto">
@@ -61,13 +67,13 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({ currentDate,
                 <div className="w-36 flex-shrink-0 border-r p-2 text-sm font-medium text-gray-500">
                     Provider
                 </div>
-                {days.map(day => (
+                {days.map((day, i) => (
                     <div
-                        key={day.toISOString()}
-                        className={`flex-1 text-center py-2 border-r text-sm font-medium ${isToday(day) ? 'bg-blue-50 text-blue-700' : 'text-gray-600'}`}
+                        key={dayKeys[i]}
+                        className={`flex-1 text-center py-2 border-r text-sm font-medium ${isTodayCol(dayKeys[i]) ? 'bg-blue-50 text-blue-700' : 'text-gray-600'}`}
                     >
                         <div className="text-xs uppercase">{format(day, 'EEE')}</div>
-                        <div className={`${isToday(day) ? 'font-bold' : ''}`}>{format(day, 'MMM d')}</div>
+                        <div className={`${isTodayCol(dayKeys[i]) ? 'font-bold' : ''}`}>{format(day, 'MMM d')}</div>
                     </div>
                 ))}
             </div>
@@ -82,21 +88,23 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({ currentDate,
                         </span>
                     </div>
                     {/* Day cells */}
-                    {days.map(day => {
-                        const dayItems = group.items.filter(
-                            i => i.start_at && isSameDay(parseISO(i.start_at), day),
+                    {days.map((day, i) => {
+                        const key = dayKeys[i];
+                        const cellItems = group.items.filter(
+                            item => item.start_at && dateKeyInTZ(item.start_at, tz) === key,
                         );
                         return (
                             <div
-                                key={day.toISOString()}
-                                className={`flex-1 border-r p-1 space-y-1 ${isToday(day) ? 'bg-blue-50/30' : ''}`}
+                                key={key}
+                                className={`flex-1 border-r p-1 space-y-1 ${isTodayCol(key) ? 'bg-blue-50/30' : ''}`}
                             >
-                                {dayItems.map(item => (
+                                {cellItems.map(item => (
                                     <ScheduleItemCard
                                         key={`${item.entity_type}-${item.entity_id}`}
                                         item={item}
                                         compact
                                         onClick={onSelectItem}
+                                        timezone={tz}
                                     />
                                 ))}
                             </div>
