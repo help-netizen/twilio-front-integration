@@ -134,19 +134,28 @@ router.post('/', async (req, res) => {
                 const { rows: existingMem } = await client.query(
                     'SELECT id FROM company_memberships WHERE user_id = $1 AND company_id = $2', [crmUserId, company.id]
                 );
+                let membershipId;
                 if (existingMem.length === 0) {
-                    await client.query(
+                    const { rows: newMem } = await client.query(
                         `INSERT INTO company_memberships (user_id, company_id, role, role_key, status, is_primary)
-                         VALUES ($1, $2, $3, $4, 'active', true)`,
+                         VALUES ($1, $2, $3, $4, 'active', true) RETURNING id`,
                         [crmUserId, company.id, 'company_admin', 'tenant_admin']
                     );
+                    membershipId = newMem[0].id;
                 } else {
+                    membershipId = existingMem[0].id;
                     await client.query(
                         `UPDATE company_memberships SET role = $1, role_key = $2, status = 'active' WHERE id = $3`,
-                        ['company_admin', 'tenant_admin', existingMem[0].id]
+                        ['company_admin', 'tenant_admin', membershipId]
                     );
                 }
-                
+
+                // Ensure user profile exists
+                await client.query(
+                    `INSERT INTO company_user_profiles (membership_id) VALUES ($1) ON CONFLICT (membership_id) DO NOTHING`,
+                    [membershipId]
+                );
+
                 await client.query('COMMIT');
                 adminBootstrapped = true;
             } catch (e) {
@@ -282,19 +291,28 @@ router.post('/:id/bootstrap-admin', async (req, res) => {
             
             // Upsert membership (role_key = tenant_admin)
             const { rows: existingMem } = await client.query('SELECT id FROM company_memberships WHERE user_id = $1 AND company_id = $2', [crmUserId, companyId]);
+            let membershipId;
             if (existingMem.length === 0) {
-                 await client.query(
+                 const { rows: newMem } = await client.query(
                      `INSERT INTO company_memberships (user_id, company_id, role, role_key, status, is_primary)
-                      VALUES ($1, $2, $3, $4, 'active', true)`,
+                      VALUES ($1, $2, $3, $4, 'active', true) RETURNING id`,
                      [crmUserId, companyId, 'company_admin', 'tenant_admin']
                  );
+                 membershipId = newMem[0].id;
             } else {
+                 membershipId = existingMem[0].id;
                  await client.query(
                      `UPDATE company_memberships SET role = $1, role_key = $2, status = 'active' WHERE id = $3`,
-                     ['company_admin', 'tenant_admin', existingMem[0].id]
+                     ['company_admin', 'tenant_admin', membershipId]
                  );
             }
-            
+
+            // Ensure user profile exists
+            await client.query(
+                `INSERT INTO company_user_profiles (membership_id) VALUES ($1) ON CONFLICT (membership_id) DO NOTHING`,
+                [membershipId]
+            );
+
             await client.query('COMMIT');
         } catch (e) {
             await client.query('ROLLBACK');

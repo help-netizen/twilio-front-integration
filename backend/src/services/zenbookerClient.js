@@ -4,13 +4,15 @@ const axios = require('axios');
 // Zenbooker API Client — creates jobs via POST /v1/jobs
 // =============================================================================
 
-const { tomorrowAtInTZ } = require('../utils/companyTime');
-
 const ZENBOOKER_API_KEY = process.env.ZENBOOKER_API_KEY;
 const ZENBOOKER_API_BASE_URL = process.env.ZENBOOKER_API_BASE_URL || 'https://api.zenbooker.com/v1';
 
 let client = null;
 
+/**
+ * Get Zenbooker API client using global env var (fallback).
+ * Prefer getClientForCompany() when company context is available.
+ */
 function getClient() {
     if (client) return client;
     if (!ZENBOOKER_API_KEY) {
@@ -25,6 +27,45 @@ function getClient() {
         },
     });
     return client;
+}
+
+// Per-tenant client cache: companyId → { client, apiKey }
+const tenantClients = new Map();
+
+/**
+ * Get Zenbooker API client for a specific company.
+ * Looks up per-tenant API key from companies table, falls back to global env var.
+ * @param {string} companyId - Company UUID
+ * @returns {Promise<import('axios').AxiosInstance>}
+ */
+async function getClientForCompany(companyId) {
+    if (!companyId) return getClient();
+
+    const db = require('../db/connection');
+    const { rows } = await db.query(
+        'SELECT zenbooker_api_key FROM companies WHERE id = $1',
+        [companyId]
+    );
+    const tenantKey = rows[0]?.zenbooker_api_key;
+
+    // If no per-tenant key, fall back to global
+    if (!tenantKey) return getClient();
+
+    // Check cache
+    const cached = tenantClients.get(companyId);
+    if (cached && cached.apiKey === tenantKey) return cached.client;
+
+    // Create new client for this tenant
+    const tenantClient = axios.create({
+        baseURL: ZENBOOKER_API_BASE_URL,
+        timeout: 15000,
+        headers: {
+            'Authorization': `Bearer ${tenantKey}`,
+            'Content-Type': 'application/json',
+        },
+    });
+    tenantClients.set(companyId, { client: tenantClient, apiKey: tenantKey });
+    return tenantClient;
 }
 
 // ─── Territories cache ────────────────────────────────────────────────────────
@@ -75,7 +116,7 @@ async function findTerritoryByPostalCode(postalCode) {
  * @param {Object} lead - Lead object from DB (camelCase)
  * @returns {Object} - Zenbooker job response { job_id, status, ... }
  */
-async function createJobFromLead(lead, companyTimezone = 'America/New_York') {
+async function createJobFromLead(lead) {
     const territoryId = await findTerritoryByPostalCode(lead.PostalCode);
 
     // Build timeslot — use lead's scheduled time if set, otherwise next day 8am–12pm
@@ -91,8 +132,10 @@ async function createJobFromLead(lead, companyTimezone = 'America/New_York') {
             end: end.toISOString(),
         };
     } else {
-        // Default: tomorrow 8am-12pm in company timezone
-        const tomorrow = tomorrowAtInTZ(8, 0, companyTimezone);
+        // Default: tomorrow 8am-12pm ET
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        tomorrow.setHours(8, 0, 0, 0);
         const end = new Date(tomorrow.getTime() + 4 * 60 * 60 * 1000);
         timeslot = {
             type: 'arrival_window',
@@ -503,6 +546,7 @@ async function getTeamMembers(params = {}) {
 
 module.exports = {
     getClient,
+    getClientForCompany,
     createJobFromLead,
     createJob,
     getTerritories,

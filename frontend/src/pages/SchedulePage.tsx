@@ -22,9 +22,9 @@ export function SchedulePage() {
     };
 
     return (
-        <div className="flex h-full overflow-hidden bg-white">
+        <div className="flex h-full bg-white">
             {/* Main content area */}
-            <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+            <div className="flex flex-col flex-1 min-w-0 overflow-hidden min-h-0">
                 {/* Toolbar */}
                 <ScheduleToolbar
                     viewMode={schedule.viewMode}
@@ -36,7 +36,7 @@ export function SchedulePage() {
                 />
 
                 {/* Calendar view */}
-                <div className="flex-1 overflow-hidden">
+                <div className="flex-1 overflow-auto min-h-0">
                     {schedule.loading ? (
                         <div className="p-6 space-y-4">
                             <Skeleton className="h-8 w-full" />

@@ -294,8 +294,10 @@ async function handleVoiceInbound(req, res) {
                 let allowedIdentities = [];
                 try {
                     const allowedResult = await dbConn.query(
-                        `SELECT 'user_' || user_id AS identity FROM company_memberships
-                         WHERE phone_calls_allowed = true`
+                        `SELECT 'user_' || m.user_id AS identity
+                         FROM company_memberships m
+                         JOIN company_user_profiles p ON p.membership_id = m.id
+                         WHERE p.phone_calls_allowed = true`
                     );
                     allowedIdentities = allowedResult.rows.map(r => r.identity);
                 } catch (permErr) {

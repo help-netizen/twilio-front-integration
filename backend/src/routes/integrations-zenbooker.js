@@ -277,7 +277,8 @@ router.post('/contacts/:contactId/sync', authenticate, requireCompanyAccess, asy
         await zenbookerSyncService.syncContactToZenbooker(contactId);
 
         const contactsService = require('../services/contactsService');
-        const contact = await contactsService.getContactById(contactId);
+        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
+        const contact = await contactsService.getContactById(contactId, companyId);
         res.json({ ok: true, data: { contact }, meta: { request_id: reqId } });
     } catch (err) {
         if (err.code === 'FEATURE_DISABLED') {
@@ -339,6 +340,64 @@ router.get('/jobs', authenticate, requireCompanyAccess, async (req, res) => {
         res.json({ ok: true, data: jobs });
     } catch (err) {
         console.error(`[ZbIntegration][${reqId}] jobs error:`, err.response?.data || err.message);
+        res.status(500).json({ ok: false, error: { code: 'INTERNAL_ERROR', message: err.message } });
+    }
+});
+
+// =============================================================================
+// GET /api-key — Get Zenbooker API key status for this company
+// =============================================================================
+router.get('/api-key', authenticate, requireCompanyAccess, async (req, res) => {
+    const reqId = requestId();
+    try {
+        const companyId = req.companyFilter?.company_id || req.user?.company_id;
+        const { rows } = await db.query(
+            'SELECT zenbooker_api_key FROM companies WHERE id = $1',
+            [companyId]
+        );
+        const key = rows[0]?.zenbooker_api_key || null;
+        res.json({
+            ok: true,
+            data: {
+                configured: !!key,
+                masked_key: key ? `${key.slice(0, 6)}${'*'.repeat(Math.max(0, key.length - 10))}${key.slice(-4)}` : null,
+            },
+        });
+    } catch (err) {
+        console.error(`[ZbIntegration][${reqId}] api-key GET error:`, err.message);
+        res.status(500).json({ ok: false, error: { code: 'INTERNAL_ERROR', message: err.message } });
+    }
+});
+
+// =============================================================================
+// PUT /api-key — Set Zenbooker API key for this company
+// =============================================================================
+router.put('/api-key', authenticate, requireCompanyAccess, async (req, res) => {
+    const reqId = requestId();
+    try {
+        const companyId = req.companyFilter?.company_id || req.user?.company_id;
+        const { api_key } = req.body;
+
+        if (api_key !== undefined && api_key !== null && typeof api_key !== 'string') {
+            return res.status(400).json({ ok: false, error: { code: 'INVALID_INPUT', message: 'api_key must be a string or null' } });
+        }
+
+        const keyValue = api_key?.trim() || null;
+        await db.query(
+            'UPDATE companies SET zenbooker_api_key = $1, updated_at = NOW() WHERE id = $2',
+            [keyValue, companyId]
+        );
+
+        console.log(`[ZbIntegration][${reqId}] API key ${keyValue ? 'set' : 'cleared'} for company ${companyId}`);
+        res.json({
+            ok: true,
+            data: {
+                configured: !!keyValue,
+                masked_key: keyValue ? `${keyValue.slice(0, 6)}${'*'.repeat(Math.max(0, keyValue.length - 10))}${keyValue.slice(-4)}` : null,
+            },
+        });
+    } catch (err) {
+        console.error(`[ZbIntegration][${reqId}] api-key PUT error:`, err.message);
         res.status(500).json({ ok: false, error: { code: 'INTERNAL_ERROR', message: err.message } });
     }
 });

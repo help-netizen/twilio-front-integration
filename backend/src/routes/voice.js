@@ -30,8 +30,10 @@ tokenRouter.get('/token', async (req, res) => {
         // Check phone_calls_allowed
         const db = require('../db/connection');
         const permResult = await db.query(
-            `SELECT COALESCE(phone_calls_allowed, false) as allowed
-             FROM company_memberships WHERE user_id = $1 AND company_id = $2`,
+            `SELECT COALESCE(p.phone_calls_allowed, false) as allowed
+             FROM company_memberships m
+             LEFT JOIN company_user_profiles p ON p.membership_id = m.id
+             WHERE m.user_id = $1 AND m.company_id = $2`,
             [userId, companyId]
         );
         const allowed = permResult.rows[0]?.allowed === true;
@@ -61,8 +63,10 @@ tokenRouter.get('/phone-access', async (req, res) => {
 
         const db = require('../db/connection');
         const r = await db.query(
-            `SELECT COALESCE(phone_calls_allowed, false) as allowed
-             FROM company_memberships WHERE user_id = $1 AND company_id = $2`,
+            `SELECT COALESCE(p.phone_calls_allowed, false) as allowed
+             FROM company_memberships m
+             LEFT JOIN company_user_profiles p ON p.membership_id = m.id
+             WHERE m.user_id = $1 AND m.company_id = $2`,
             [userId, companyId]
         );
         res.json({ allowed: r.rows[0]?.allowed === true });

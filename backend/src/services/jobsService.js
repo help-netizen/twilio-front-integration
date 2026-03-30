@@ -214,8 +214,14 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
     return rowToJob(rows[0]);
 }
 
-async function getJobById(id) {
-    const { rows } = await db.query('SELECT * FROM jobs WHERE id = $1', [id]);
+async function getJobById(id, companyId = null) {
+    const conditions = ['id = $1'];
+    const params = [id];
+    if (companyId) {
+        conditions.push('company_id = $2');
+        params.push(companyId);
+    }
+    const { rows } = await db.query(`SELECT * FROM jobs WHERE ${conditions.join(' AND ')}`, params);
     if (rows.length === 0) return null;
     const job = rowToJob(rows[0]);
     job.tags = await getTagsForJob(id);

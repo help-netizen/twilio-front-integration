@@ -67,3 +67,23 @@ export async function regenerateWebhookUrl(): Promise<{ url: string; key: string
     });
     return data.data;
 }
+
+// ── Zenbooker API Key Management ────────────────────────────────────────────
+
+export interface ZenbookerApiKeyStatus {
+    configured: boolean;
+    masked_key: string | null;
+}
+
+export async function fetchZenbookerApiKey(): Promise<ZenbookerApiKeyStatus> {
+    const data = await request<{ ok: boolean; data: ZenbookerApiKeyStatus }>(`${ZB_BASE}/api-key`);
+    return data.data;
+}
+
+export async function saveZenbookerApiKey(api_key: string | null): Promise<ZenbookerApiKeyStatus> {
+    const data = await request<{ ok: boolean; data: ZenbookerApiKeyStatus }>(`${ZB_BASE}/api-key`, {
+        method: 'PUT',
+        body: JSON.stringify({ api_key }),
+    });
+    return data.data;
+}

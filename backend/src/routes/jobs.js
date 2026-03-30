@@ -13,29 +13,34 @@ const zenbookerClient = require('../services/zenbookerClient');
 
 router.post('/sync', async (req, res) => {
     try {
-        console.log('[Jobs Sync] Starting full sync from Zenbooker...');
+        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
+        // Use per-tenant Zenbooker API key (falls back to global env var)
+        const zbClient = await zenbookerClient.getClientForCompany(companyId);
+        const makeRequest = (url, params) => zbClient.get(url, { params });
+
+        console.log(`[Jobs Sync] Starting full sync from Zenbooker for company ${companyId}...`);
         let totalSynced = 0;
         let totalCreated = 0;
         let cursor = 0;
         const limit = 100;
 
         while (true) {
-            const zbData = await zenbookerClient.getJobs({ limit, cursor, sort_by: 'start_date', sort_order: 'desc' });
+            const zbRes = await makeRequest('/jobs', { limit, cursor, sort_by: 'start_date', sort_order: 'desc' });
+            const zbData = zbRes.data;
             const zbJobs = zbData.results || [];
             if (zbJobs.length === 0) break;
 
             for (const zbJob of zbJobs) {
                 try {
-                    // List endpoint (GET /jobs) omits assigned_providers —
-                    // fetch full job via GET /jobs/{id} to get complete data
                     let fullJob = zbJob;
                     try {
-                        fullJob = await zenbookerClient.getJob(zbJob.id);
+                        const fullRes = await makeRequest(`/jobs/${zbJob.id}`);
+                        fullJob = fullRes.data;
                     } catch (fetchErr) {
                         console.warn(`[Jobs Sync] Could not fetch full job ${zbJob.id}, using list data: ${fetchErr.message}`);
                     }
                     const result = await jobsService.syncFromZenbooker(
-                        zbJob.id, fullJob, req.companyId || null, 'sync_bulk'
+                        zbJob.id, fullJob, companyId, 'sync_bulk'
                     );
                     totalSynced++;
                     if (result.created) totalCreated++;
@@ -68,7 +73,7 @@ router.get('/', async (req, res) => {
             search: search || undefined,
             offset: parseInt(offset, 10) || 0,
             limit: parseInt(limit, 10) || 50,
-            companyId: req.companyId || undefined,
+            companyId: req.companyFilter?.company_id || req.user?.company_id || undefined,
             contactId: contact_id || undefined,
             sortBy: sort_by || undefined,
             sortOrder: sort_order || undefined,
@@ -91,7 +96,8 @@ router.get('/', async (req, res) => {
 
 router.get('/:id', async (req, res) => {
     try {
-        const job = await jobsService.getJobById(req.params.id);
+        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
+        const job = await jobsService.getJobById(req.params.id, companyId);
         if (!job) return res.status(404).json({ ok: false, error: 'Job not found' });
         res.json({ ok: true, data: job });
     } catch (err) {
@@ -104,6 +110,9 @@ router.get('/:id', async (req, res) => {
 
 router.patch('/:id/coords', async (req, res) => {
     try {
+        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
+        const existing = await jobsService.getJobById(req.params.id, companyId);
+        if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
         const { lat, lng } = req.body;
         if (lat == null || lng == null) return res.status(400).json({ ok: false, error: 'lat and lng required' });
         await jobsService.updateCoords(req.params.id, lat, lng);
@@ -118,6 +127,9 @@ router.patch('/:id/coords', async (req, res) => {
 
 router.patch('/:id/tags', async (req, res) => {
     try {
+        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
+        const existing = await jobsService.getJobById(req.params.id, companyId);
+        if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
         const { tag_ids } = req.body;
         if (!Array.isArray(tag_ids)) return res.status(400).json({ ok: false, error: 'tag_ids array required' });
         const result = await jobsService.updateJobTags(parseInt(req.params.id, 10), tag_ids);
@@ -132,6 +144,9 @@ router.patch('/:id/tags', async (req, res) => {
 
 router.patch('/:id/status', async (req, res) => {
     try {
+        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
+        const existing = await jobsService.getJobById(req.params.id, companyId);
+        if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
         const { blanc_status } = req.body;
         if (!blanc_status) return res.status(400).json({ ok: false, error: 'blanc_status required' });
         const result = await jobsService.updateBlancStatus(parseInt(req.params.id, 10), blanc_status);
@@ -147,6 +162,9 @@ router.patch('/:id/status', async (req, res) => {
 
 router.post('/:id/notes', async (req, res) => {
     try {
+        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
+        const existing = await jobsService.getJobById(req.params.id, companyId);
+        if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
         const { text } = req.body;
         if (!text?.trim()) return res.status(400).json({ ok: false, error: 'text required' });
         const result = await jobsService.addNote(parseInt(req.params.id, 10), text.trim());
@@ -161,6 +179,9 @@ router.post('/:id/notes', async (req, res) => {
 
 router.post('/:id/cancel', async (req, res) => {
     try {
+        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
+        const existing = await jobsService.getJobById(req.params.id, companyId);
+        if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
         const result = await jobsService.cancelJob(parseInt(req.params.id, 10));
         res.json({ ok: true, data: result });
     } catch (err) {
@@ -173,6 +194,9 @@ router.post('/:id/cancel', async (req, res) => {
 
 router.post('/:id/enroute', async (req, res) => {
     try {
+        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
+        const existing = await jobsService.getJobById(req.params.id, companyId);
+        if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
         const result = await jobsService.markEnroute(parseInt(req.params.id, 10));
         res.json({ ok: true, data: result });
     } catch (err) {
@@ -185,6 +209,9 @@ router.post('/:id/enroute', async (req, res) => {
 
 router.post('/:id/start', async (req, res) => {
     try {
+        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
+        const existing = await jobsService.getJobById(req.params.id, companyId);
+        if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
         const result = await jobsService.markInProgress(parseInt(req.params.id, 10));
         res.json({ ok: true, data: result });
     } catch (err) {
@@ -197,6 +224,9 @@ router.post('/:id/start', async (req, res) => {
 
 router.post('/:id/complete', async (req, res) => {
     try {
+        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
+        const existing = await jobsService.getJobById(req.params.id, companyId);
+        if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
         const result = await jobsService.markComplete(parseInt(req.params.id, 10));
         res.json({ ok: true, data: result });
     } catch (err) {
@@ -208,6 +238,9 @@ router.post('/:id/complete', async (req, res) => {
 
 router.post('/:id/reschedule', async (req, res) => {
     const jobId = parseInt(req.params.id, 10);
+    const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
+    const existing = await jobsService.getJobById(jobId, companyId);
+    if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
     const { start_date, arrival_window_minutes = 120, tech_id } = req.body;
 
     if (!start_date) {

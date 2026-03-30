@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { fetchIntegrations, createIntegration, revokeIntegration, fetchWebhookUrl, regenerateWebhookUrl, type Integration } from '../services/integrationsApi';
+import { fetchIntegrations, createIntegration, revokeIntegration, fetchWebhookUrl, regenerateWebhookUrl, fetchZenbookerApiKey, saveZenbookerApiKey, type Integration } from '../services/integrationsApi';
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from '../components/ui/table';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Separator } from '../components/ui/separator';
-import { Plus, Copy, ShieldOff, Key, Webhook, RefreshCw, Check } from 'lucide-react';
+import { Input } from '../components/ui/input';
+import { Plus, Copy, ShieldOff, Key, Webhook, RefreshCw, Check, Settings2, Save, Trash2 } from 'lucide-react';
 import { CreateDialog, SecretDialog, RevokeDialog, RegenerateDialog } from './IntegrationDialogs';
 
 export function IntegrationsPage() {
@@ -18,11 +19,15 @@ export function IntegrationsPage() {
     const [revokeTarget, setRevokeTarget] = useState<Integration | null>(null);
     const [regenerateOpen, setRegenerateOpen] = useState(false);
     const [webhookCopied, setWebhookCopied] = useState(false);
+    const [zbApiKeyInput, setZbApiKeyInput] = useState('');
+    const [zbApiKeyEditing, setZbApiKeyEditing] = useState(false);
 
     const { data: integrations = [], isLoading } = useQuery({ queryKey: ['integrations'], queryFn: fetchIntegrations });
     const { data: webhookData, isLoading: webhookLoading } = useQuery({ queryKey: ['zenbooker-webhook-url'], queryFn: fetchWebhookUrl });
+    const { data: zbApiKeyStatus, isLoading: zbApiKeyLoading } = useQuery({ queryKey: ['zenbooker-api-key'], queryFn: fetchZenbookerApiKey });
 
     const regenerateMutation = useMutation({ mutationFn: regenerateWebhookUrl, onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['zenbooker-webhook-url'] }); setRegenerateOpen(false); toast.success('Webhook URL regenerated'); }, onError: () => toast.error('Failed to regenerate webhook URL') });
+    const zbApiKeySaveMutation = useMutation({ mutationFn: (key: string | null) => saveZenbookerApiKey(key), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['zenbooker-api-key'] }); setZbApiKeyEditing(false); setZbApiKeyInput(''); toast.success('Zenbooker API key updated'); }, onError: () => toast.error('Failed to update Zenbooker API key') });
     const createMutation = useMutation({ mutationFn: createIntegration, onSuccess: (result) => { queryClient.invalidateQueries({ queryKey: ['integrations'] }); setNewIntegration(result); setCreateOpen(false); setSecretModalOpen(true); setClientName(''); toast.success('Integration created'); }, onError: () => toast.error('Failed to create integration') });
     const revokeMutation = useMutation({ mutationFn: revokeIntegration, onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['integrations'] }); setRevokeTarget(null); toast.success('Integration revoked'); }, onError: () => toast.error('Failed to revoke integration') });
 
@@ -43,6 +48,35 @@ export function IntegrationsPage() {
                 {webhookLoading ? <div className="text-sm text-muted-foreground">Loading webhook URL…</div> : webhookData?.url ? (
                     <div className="space-y-3"><div className="flex items-center gap-2"><code className="flex-1 bg-muted px-3 py-2.5 rounded text-sm font-mono break-all select-all">{webhookData.url}</code><Button variant="outline" size="sm" onClick={copyWebhookUrl} className="shrink-0">{webhookCopied ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}</Button><Button variant="outline" size="sm" onClick={() => setRegenerateOpen(true)} className="shrink-0" title="Generate new URL (invalidates old one)"><RefreshCw className="h-4 w-4" /></Button></div><p className="text-xs text-muted-foreground">This URL works for all webhook event types: jobs, customers, invoices, etc.</p></div>
                 ) : <div className="text-sm text-red-500">Failed to load webhook URL</div>}
+            </div>
+
+            <div className="border rounded-lg p-5 mb-8 bg-card">
+                <div className="flex items-center gap-2 mb-1"><Settings2 className="h-5 w-5 text-amber-600" /><h2 className="text-lg font-semibold">Zenbooker API Key</h2></div>
+                <p className="text-sm text-muted-foreground mb-4">Configure your Zenbooker API key to enable jobs sync and customer data import for this company.</p>
+                {zbApiKeyLoading ? <div className="text-sm text-muted-foreground">Loading...</div> : (
+                    <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                            {zbApiKeyEditing ? (
+                                <>
+                                    <Input type="password" placeholder="Enter Zenbooker API key" value={zbApiKeyInput} onChange={e => setZbApiKeyInput(e.target.value)} className="flex-1 font-mono text-sm" />
+                                    <Button size="sm" onClick={() => zbApiKeySaveMutation.mutate(zbApiKeyInput.trim() || null)} disabled={zbApiKeySaveMutation.isPending}><Save className="h-4 w-4 mr-1" />Save</Button>
+                                    <Button variant="outline" size="sm" onClick={() => { setZbApiKeyEditing(false); setZbApiKeyInput(''); }}>Cancel</Button>
+                                </>
+                            ) : (
+                                <>
+                                    {zbApiKeyStatus?.configured ? (
+                                        <code className="flex-1 bg-muted px-3 py-2.5 rounded text-sm font-mono">{zbApiKeyStatus.masked_key}</code>
+                                    ) : (
+                                        <span className="flex-1 text-sm text-muted-foreground italic">No API key configured</span>
+                                    )}
+                                    <Button variant="outline" size="sm" onClick={() => setZbApiKeyEditing(true)}>{zbApiKeyStatus?.configured ? 'Change' : 'Configure'}</Button>
+                                    {zbApiKeyStatus?.configured && <Button variant="outline" size="sm" className="text-red-600 hover:text-red-700 hover:bg-red-50" onClick={() => zbApiKeySaveMutation.mutate(null)} disabled={zbApiKeySaveMutation.isPending}><Trash2 className="h-4 w-4" /></Button>}
+                                </>
+                            )}
+                        </div>
+                        {!zbApiKeyStatus?.configured && <p className="text-xs text-amber-600">Jobs sync and Zenbooker data import are disabled until an API key is configured.</p>}
+                    </div>
+                )}
             </div>
 
             <div className="flex items-center justify-between mb-4"><h2 className="text-lg font-semibold">API Keys</h2><Button onClick={() => setCreateOpen(true)} size="sm"><Plus className="h-4 w-4 mr-2" />Create Integration</Button></div>

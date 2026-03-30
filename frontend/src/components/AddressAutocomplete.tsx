@@ -26,7 +26,10 @@ export function AddressAutocomplete({ value: address, onChange, idPrefix = "addr
     const [showSaved, setShowSaved] = useState(false);
     const hasSaved = savedAddresses.length > 0;
 
-    const { ready, value: searchValue, suggestions: { loading, status, data }, setValue: setSearchValue, clearSuggestions } = usePlacesAutocomplete({ debounce: 200, cache: 60, requestOptions: { componentRestrictions: { country: ["us"] }, locationBias: new google.maps.LatLngBounds({ lat: 42.00, lng: -71.60 }, { lat: 42.50, lng: -70.667 }) } });
+    const locationBias = typeof google !== 'undefined' && google.maps
+        ? new google.maps.LatLngBounds({ lat: 42.00, lng: -71.60 }, { lat: 42.50, lng: -70.667 })
+        : undefined;
+    const { ready, value: searchValue, suggestions: { loading, status, data }, setValue: setSearchValue, clearSuggestions } = usePlacesAutocomplete({ debounce: 200, cache: 60, requestOptions: { componentRestrictions: { country: ["us"] }, ...(locationBias && { locationBias }) } });
 
     useEffect(() => { if (!gateReady && address.street !== searchValue) setSearchValue(address.street, false); }, [address.street]); // eslint-disable-line react-hooks/exhaustive-deps
 
