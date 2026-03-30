@@ -16,6 +16,7 @@
 | F010 | AI функции (Summary, Polish, Transcript) | ✅ Реализована | `backend/src/`, Gemini API |
 | F011 | Refactor-readiness audit | ⏳ Запланирована | `docs/`, `src/server.js`, `backend/src/`, `frontend/src/`, `tests/` |
 | F012 | Multi-tenant company model, Super Admin & RBAC | ⏳ Запланирована | `docs/specs/PF007-multitenant-company-model-rbac.md`, `docs/specs/PF007-technical-design.md`, `docs/specs/PF102-tenancy-rbac-sprint-plan.md`, `docs/specs/PF103-tenancy-rbac-db-api-contracts.md` |
+| F013 | Schedule / Dispatcher MVP + UX hardening | 🔧 В разработке (Sprint 2 ✅, Sprint 3 pending) | `frontend/src/pages/SchedulePage.tsx`, `frontend/src/components/schedule/`, `frontend/src/hooks/useScheduleData.ts`, `frontend/src/services/scheduleApi.ts`, `backend/src/routes/schedule.js`, `backend/src/services/scheduleService.js`, `backend/src/db/scheduleQueries.js` |
 
 ---
 
@@ -122,3 +123,130 @@
   - Admin управляет профилем сотрудника: включает/выключает Service Areas, Skills/Job Types, Phone Call Masking, Location Tracking.
   - Обязательно соблюдается ограничение: `check_last_admin` (нельзя удалить последнего `tenant_admin`).
 - **Зависимости:** `req.authz` middleware из Sprint 1, контракты таблиц из `PF103`.
+
+### F013: Schedule / Dispatcher MVP + UX hardening
+
+**Краткое описание:** Единое диспетчерское расписание поверх существующих jobs/leads/tasks — без отдельной schedule entity table. Объединяет read-модель через UNION ALL, 5 видов календаря, sidebar quick-view, dispatch settings. UX hardening: timezone-awareness, past-time overlay, interactive reschedule/reassign, realtime refresh, расширенные фильтры.
+
+**Принципы:**
+- Schedule — это **planning/dispatch surface**, НЕ замена Pulse как canonical operator workspace
+- Нет отдельной таблицы `schedule_items` — агрегационный слой поверх `jobs`, `leads`, `tasks`
+- Client-significant dispatch events (reschedule, reassign) должны публиковаться в Pulse timeline по правилам PF008
+- Timezone: все отображения времени и расчёты дат используют `company.timezone` из `dispatch_settings`, а не timezone браузера
+
+#### Реализовано (Sprint 1 + Sprint 2):
+
+**Backend:**
+- `dispatch_settings` table — company-level конфигурация: timezone, work_start_time, work_end_time, work_days, slot_duration, buffer_minutes, settings_json
+- `scheduleQueries.js` — unified UNION ALL query по jobs/leads/tasks с динамическими фильтрами (date range, entity types, statuses, assignee, search, pagination)
+- `scheduleService.js` — service layer: getScheduleItems, rescheduleItem, reassignItem, createFromSlot (task), dispatch settings CRUD
+- `schedule.js` — route handlers для всех endpoints (кроме /availability — 501)
+- Data isolation: все запросы фильтруют по `company_id` через `req.companyFilter?.company_id`
+
+**Frontend:**
+- `SchedulePage.tsx` — layout: toolbar + calendar view + unscheduled panel + sidebar
+- `useScheduleData.ts` — central state hook (items, settings, viewMode, filters, selectedItem)
+- `scheduleApi.ts` — API client для всех schedule endpoints
+- 5 видов календаря: DayView, WeekView, MonthView, TimelineView, TimelineWeekView
+- `ScheduleToolbar.tsx` — вкладки видов, навигация по датам, поиск, фильтр по entity type
+- `ScheduleItemCard.tsx` — цветовая кодировка (blue=job, amber=lead, green=task, gray-dashed=unassigned)
+- `ScheduleSidebar.tsx` — quick-view panel: контакт, адрес, статус, techs, deeplinks
+- `UnscheduledPanel.tsx` — collapsible panel для items без start_at
+- Навигация: `/schedule` в main nav между Jobs и Contacts
+
+**Баги зафиксированные (hotfix 2026-03-29):**
+- `req.companyId` → `req.companyFilter?.company_id` (7 мест в schedule.js) — расписание было пустое из-за undefined company filter
+- `start_date <= endDate` → `start_date < (endDate::date + INTERVAL '1 day')` — TIMESTAMPTZ vs date truncation терял весь день
+
+#### Sprint 3: UX hardening + interactive dispatch (PENDING)
+
+**Пользовательские сценарии:**
+
+1. **Timezone-aware отображение**
+   - Все времена в календаре отображаются в `company.timezone` из `dispatch_settings`, а не в timezone браузера
+   - Метки часов, sidebar time display, date picker, "Today" highlight — всё в company timezone
+   - Если dispatch_settings.timezone не настроен — дефолт `America/New_York`
+   - При смене timezone в настройках — весь UI переключается мгновенно
+
+2. **Past-time visual indicator**
+   - В DayView и WeekView: серый overlay поверх прошедших часов текущего дня (аналогично CustomTimeModal)
+   - Красная горизонтальная линия "сейчас" (now-line) на текущем времени
+   - В TimelineView и TimelineWeekView: аналогичный past overlay на today-колонке
+   - Прошлые items не блокируются для выбора, только визуально отмечены
+
+3. **Drag-and-drop reschedule**
+   - Пользователь перетаскивает карточку job/task на другой временной слот → API `PATCH /reschedule`
+   - Snap-to-grid: привязка к slot_duration (по умолчанию 60 мин)
+   - Visual preview во время перетаскивания (ghost card)
+   - Toast confirmation: "Job #123 rescheduled to Mar 30, 2:00 PM"
+   - Leads НЕ поддерживают reschedule (lead_date_time — read-only из формы)
+
+4. **Drag-and-drop reassign (Timeline views)**
+   - В TimelineView/TimelineWeekView: перетаскивание карточки между строками провайдеров → API `PATCH /reassign`
+   - Toast: "Job #123 reassigned to John Smith"
+   - Leads НЕ поддерживают reassign (нет assigned_provider_id в схеме)
+   - Tasks поддерживают reassign через `assigned_provider_id`
+
+5. **Расширенные фильтры**
+   - Multi-select по статусам (job statuses: new, scheduled, en_route, in_progress, completed; lead statuses: new, contacted, qualified)
+   - Фильтр по job_type (тип работы)
+   - Фильтр по source (источник)
+   - Фильтр по tags (теги)
+   - Фильтр по action_required (только items с непросмотренными действиями)
+   - Сохранение фильтров в localStorage
+
+6. **Realtime updates**
+   - SSE подписка на события: `onJobUpdate`, `onLeadUpdate`, `onTaskUpdate`
+   - При изменении job/lead/task — auto-refresh списка items
+   - При reschedule/reassign другим оператором — обновление позиции карточки без перезагрузки
+
+7. **Settings UI**
+   - Модальное окно или sidebar для редактирования dispatch_settings:
+     - Timezone (dropdown из списка IANA timezones)
+     - Business hours: work_start_time, work_end_time (time pickers)
+     - Work days: чекбоксы Mon-Sun
+     - Slot duration: 15 / 30 / 60 / 90 / 120 min
+     - Buffer between jobs: 0 / 15 / 30 / 60 min
+   - Только для пользователей с ролью admin/dispatcher
+
+8. **Create-from-slot (расширение)**
+   - Click на пустой слот в любом view → контекстное меню: "Create Task" / "Create Lead" / "Create Job"
+   - Task: создаётся сразу с start_at/end_at из слота + assigned_provider (если timeline view)
+   - Lead/Job: открывает существующий CreateLeadJobWizard с предзаполненным временем
+
+**Ограничения и нефункциональные требования:**
+- Schedule НЕ дублирует Pulse timeline — это planning surface, не event history
+- Максимум 500 items на один запрос (pagination)
+- Drag-and-drop работает только в Day/Week/Timeline/Timeline Week (не Month — month слишком компактный)
+- Reschedule/reassign логируются в domain_events для audit trail
+- Нет отдельного `schedule_items` — read model поверх jobs/leads/tasks
+- При конфликте (два job на одного провайдера в одно время) — визуальное предупреждение (overlap indicator), но НЕ блокировка
+
+**Потенциально вовлечённые модули/части системы:**
+- `backend/src/routes/schedule.js` — route handlers
+- `backend/src/services/scheduleService.js` — business logic
+- `backend/src/db/scheduleQueries.js` — SQL queries
+- `backend/src/services/realtimeService.js` — SSE broadcast для schedule events
+- `frontend/src/pages/SchedulePage.tsx` — page composition
+- `frontend/src/hooks/useScheduleData.ts` — state management
+- `frontend/src/services/scheduleApi.ts` — API client
+- `frontend/src/components/schedule/*` — все view-компоненты
+- `frontend/src/utils/companyTime.ts` — timezone utilities (shared с CustomTimeModal)
+
+**Затронутые интеграции:**
+- Zenbooker — reschedule job может потребовать sync с ZB (если job синхронизирован)
+- SSE/Realtime — новые event types для schedule mutations
+
+**Защищённые части кода (НЕЛЬЗЯ ломать):**
+- `src/server.js` core middleware и SSE infrastructure
+- `frontend/src/lib/authedFetch.ts`
+- `frontend/src/hooks/useRealtimeEvents.ts`
+- `backend/db/` schema — не менять без отдельной миграции
+- Pulse timeline и его event model — schedule публикует события в Pulse, но не модифицирует его
+- CustomTimeModal.tsx — уже реализованный timezone-aware timeslot picker; его паттерны (dateInTZ, todayInTZ, past-time overlay) переиспользуются, но сам компонент не меняется
+
+**Зависимости:**
+- `dispatch_settings` table (миграция 051, уже в production)
+- `company.timezone` — доступен через `useAuth().company.timezone` на фронтенде
+- `frontend/src/utils/companyTime.ts` — утилиты dateInTZ, todayInTZ (уже реализованы)
+- `req.companyFilter?.company_id` middleware — уже настроен для `/api/schedule`

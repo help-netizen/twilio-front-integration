@@ -105,6 +105,13 @@ Database:
 - Учитывать паттерны проекта: Shadcn/ui для UI, React Query для data fetching, SSE для real-time
 - Запретить создание дублирующих функций
 
+### 🔒 MIDDLEWARE И ДОСТУПЫ (обязательно для новых routes):
+- Для каждого нового API endpoint указать цепочку middleware: `authenticate`, `requireCompanyAccess`, `requireRole(...)` и т.д.
+- Указать откуда берётся `company_id` — через `req.companyFilter?.company_id` (НЕ `req.companyId` — его не существует)
+- Все SQL-запросы ОБЯЗАНЫ фильтровать по `company_id` — данные разных компаний должны быть изолированы
+- В `src/server.js` при подключении нового router явно прописать middleware: `app.use('/api/path', authenticate, requireCompanyAccess, newRouter)`
+- Проверить, что существующие похожие routes уже используют ту же схему доступа
+
 ### 🔍 ЕСЛИ видишь дублирование:
 - Предложить рефакторинг существующего кода
 - Планировать расширение, а не параллельную реализацию
@@ -125,3 +132,6 @@ Database:
 - [ ] Подготовлен фрагмент для `Docs/architecture.md`
 - [ ] Проверено на дублирование
 - [ ] Учтены паттерны проекта (Shadcn/ui, React Query, SSE, authedFetch)
+- [ ] Для новых routes указана цепочка middleware (authenticate, requireCompanyAccess и т.д.)
+- [ ] Указан способ получения company_id (`req.companyFilter?.company_id`)
+- [ ] SQL-запросы фильтруют по company_id (изоляция данных)

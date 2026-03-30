@@ -8,7 +8,6 @@ import {
     X, MapPin, Phone, Mail, User, ExternalLink,
     Briefcase, UserPlus, CheckSquare,
 } from 'lucide-react';
-import { format, parseISO } from 'date-fns';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Separator } from '../ui/separator';
@@ -16,10 +15,13 @@ import { ScrollArea } from '../ui/scroll-area';
 import { ClickToCallButton } from '../softphone/ClickToCallButton';
 import type { ScheduleItem } from '../../services/scheduleApi';
 import { ENTITY_STYLES } from './ScheduleItemCard';
+import { formatDateTimeInTZ, formatTimeInTZ } from '../../utils/companyTime';
 
 interface ScheduleSidebarProps {
     item: ScheduleItem;
     onClose: () => void;
+    /** Company timezone for time formatting */
+    timezone?: string;
 }
 
 const ENTITY_LABELS: Record<string, { label: string; icon: React.ElementType }> = {
@@ -36,7 +38,7 @@ function getDetailLink(item: ScheduleItem): string {
     }
 }
 
-export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose }) => {
+export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose, timezone }) => {
     const navigate = useNavigate();
     const entityInfo = ENTITY_LABELS[item.entity_type] ?? ENTITY_LABELS.task;
     const style = ENTITY_STYLES[item.entity_type] ?? ENTITY_STYLES.task;
@@ -76,9 +78,9 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose 
                         <div>
                             <div className="text-xs font-medium text-gray-500 mb-1">Scheduled</div>
                             <div className="text-sm text-gray-700">
-                                {format(parseISO(item.start_at), 'MMM d, yyyy h:mm a')}
+                                {formatDateTimeInTZ(new Date(item.start_at), timezone)}
                                 {item.end_at && (
-                                    <span> - {format(parseISO(item.end_at), 'h:mm a')}</span>
+                                    <span> - {formatTimeInTZ(new Date(item.end_at), timezone)}</span>
                                 )}
                             </div>
                         </div>

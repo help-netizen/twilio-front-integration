@@ -77,6 +77,7 @@ export function SchedulePage() {
                                 <MonthView
                                     currentDate={schedule.currentDate}
                                     items={schedule.scheduledItems}
+                                    settings={schedule.settings}
                                     onSelectDay={handleMonthDaySelect}
                                     onSelectItem={schedule.selectItem}
                                 />
@@ -115,6 +116,7 @@ export function SchedulePage() {
                 <ScheduleSidebar
                     item={schedule.selectedItem}
                     onClose={schedule.clearSelection}
+                    timezone={schedule.settings.timezone}
                 />
             )}
         </div>

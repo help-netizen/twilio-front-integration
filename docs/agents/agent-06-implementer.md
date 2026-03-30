@@ -118,6 +118,9 @@
 - Использовать `var` (только `const`/`let`)
 - Хардкодить API ключи или credentials
 - Добавлять скрытые побочные эффекты
+- Использовать `req.companyId` — его не существует! Только `req.companyFilter?.company_id`
+- Создавать API endpoints без middleware авторизации
+- Писать SQL-запросы без фильтрации по `company_id` (утечка данных между компаниями)
 
 ### ✅ ОБЯЗАТЕЛЬНО:
 - Проанализировать существующий код перед изменениями
@@ -127,6 +130,14 @@
 - TypeScript для frontend (строгая типизация)
 - Параметризованные SQL-запросы для backend
 - Описать изменения своими словами
+
+### 🔒 MIDDLEWARE И ИЗОЛЯЦИЯ ДАННЫХ (при работе с API routes):
+- Новые routes подключаются в `src/server.js` с middleware: `app.use('/api/path', authenticate, requireCompanyAccess, router)`
+- В route handler'ах company_id получать ТОЛЬКО через: `const companyId = req.companyFilter?.company_id;`
+- ❌ НЕ ИСПОЛЬЗОВАТЬ `req.companyId` — такого свойства middleware не устанавливает!
+- Все SQL-запросы в сервисах/queries ОБЯЗАНЫ включать `WHERE ... company_id = $N`
+- При доступе по ID (GET/PATCH/DELETE по entity_id) — всегда проверять `AND company_id = $N`
+- Перед реализацией: посмотреть как аналогичный route (например payments, estimates) получает company_id
 
 ---
 
@@ -143,3 +154,6 @@
 - [ ] Изменения описаны текстом
 - [ ] Нет хардкода credentials
 - [ ] Нет скрытых побочных эффектов
+- [ ] Новые routes подключены с правильным middleware (authenticate, requireCompanyAccess)
+- [ ] company_id получается через `req.companyFilter?.company_id` (НЕ `req.companyId`)
+- [ ] Все SQL-запросы фильтруют по company_id (изоляция данных между компаниями)
