@@ -16,7 +16,7 @@
 | F010 | AI функции (Summary, Polish, Transcript) | ✅ Реализована | `backend/src/`, Gemini API |
 | F011 | Refactor-readiness audit | ⏳ Запланирована | `docs/`, `src/server.js`, `backend/src/`, `frontend/src/`, `tests/` |
 | F012 | Multi-tenant company model, Super Admin & RBAC | ⏳ Запланирована | `docs/specs/PF007-multitenant-company-model-rbac.md`, `docs/specs/PF007-technical-design.md`, `docs/specs/PF102-tenancy-rbac-sprint-plan.md`, `docs/specs/PF103-tenancy-rbac-db-api-contracts.md` |
-| F013 | Schedule / Dispatcher MVP + UX hardening | 🔧 В разработке (Sprint 2 ✅, Sprint 3 pending) | `frontend/src/pages/SchedulePage.tsx`, `frontend/src/components/schedule/`, `frontend/src/hooks/useScheduleData.ts`, `frontend/src/services/scheduleApi.ts`, `backend/src/routes/schedule.js`, `backend/src/services/scheduleService.js`, `backend/src/db/scheduleQueries.js` |
+| F013 | Schedule / Dispatcher MVP + UX hardening | 🔧 В разработке (Sprint 2 ✅, Sprint 3 ✅) | `frontend/src/pages/SchedulePage.tsx`, `frontend/src/components/schedule/`, `frontend/src/hooks/useScheduleData.ts`, `frontend/src/services/scheduleApi.ts`, `backend/src/routes/schedule.js`, `backend/src/services/scheduleService.js`, `backend/src/db/scheduleQueries.js`, `docs/specs/PF001-unified-schedule-dispatcher.md` |
 
 ---
 
@@ -125,6 +125,7 @@
 - **Зависимости:** `req.authz` middleware из Sprint 1, контракты таблиц из `PF103`.
 
 ### F013: Schedule / Dispatcher MVP + UX hardening
+<<<<<<< Updated upstream
 
 **Краткое описание:** Единое диспетчерское расписание поверх существующих jobs/leads/tasks — без отдельной schedule entity table. Объединяет read-модель через UNION ALL, 5 видов календаря, sidebar quick-view, dispatch settings. UX hardening: timezone-awareness, past-time overlay, interactive reschedule/reassign, realtime refresh, расширенные фильтры.
 
@@ -250,3 +251,50 @@
 - `company.timezone` — доступен через `useAuth().company.timezone` на фронтенде
 - `frontend/src/utils/companyTime.ts` — утилиты dateInTZ, todayInTZ (уже реализованы)
 - `req.companyFilter?.company_id` middleware — уже настроен для `/api/schedule`
+=======
+- **Текущее состояние:** `/schedule` уже запущен как MVP dispatch/planning surface с представлениями `Day / Week / Month / Timeline / TL Week`, quick-view sidebar, unified read model и фильтрами по типу сущности/назначению/поиску.
+- **Подтверждённые UX-проблемы из аудита 2026-03-29 (`https://abc-metrics.fly.dev/schedule`):**
+  - В `Week` и `Day` item container учитывает `end_at`, но сама визуальная карточка события не растягивается на всю длительность; 120-минутные работы выглядят как однострочные бейджи.
+  - Коллизии не раскладываются по lanes: три работы `2026-03-30 9:00–11:00 ET` и пересекающаяся работа `10:00–12:00 ET` рендерятся поверх друг друга в одной колонке.
+  - При первом заходе рабочий экран перекрывается нецелевыми overlay: модалкой `SoftPhone Ready` и нижним баннером про заблокированные notifications.
+  - В weekly navigation заголовок показывает только `Mar 2026`, без явного диапазона текущей недели; при перелистывании это ухудшает ориентацию во времени.
+  - На карточках в grid почти не читаются operational states: `Canceled`, `Submitted`, `Rescheduled`, assigned/unassigned и multi-assignee не различаются достаточно явно до открытия sidebar.
+  - Dispatch timezone пока не зафиксирован на уровне UI-state и рендера как `America/New_York`; schedule logic не должна зависеть от locale/timezone браузера пользователя.
+- **Как должно быть:**
+  - Календарные карточки должны визуально соответствовать реальной длительности интервала и занимать весь доступный vertical/horizontal slot в зависимости от view.
+  - Пересекающиеся items должны автоматически раскладываться по параллельным подколонкам без взаимного перекрытия, с сохранением кликабельности и читаемости.
+  - Первичный вход в `/schedule` не должен блокироваться softphone/notification onboarding; такие prompts должны быть неблокирующими и контекстно-подходящими.
+  - Week/day views должны давать диспетчеру мгновенное понимание диапазона дат, статуса работы, назначения и конфликтов без обязательного открытия sidebar.
+  - Все time calculations, filters и visual anchors должны быть согласованы с company dispatch timezone `America/New_York`.
+- **Пользовательские сценарии:**
+  - Диспетчер открывает неделю и сразу понимает фактическую загрузку команды по длительности слотов, а не по списку однострочных бейджей.
+  - Диспетчер видит одновременные работы без наложения и понимает, у кого конфликт по времени.
+  - Оператор заходит в `/schedule` из Jobs/Pulse и может сразу работать с календарём без принудительного закрытия нерелевантных модалок.
+  - Пользователь различает `Canceled / Submitted / Rescheduled / Unassigned` прямо в grid, не открывая каждую карточку отдельно.
+  - Пользователь в любом view видит корректную временную привязку недели и дня в `America/New_York`.
+- **Ограничения и нефункциональные требования:**
+  - Не создавать отдельную `schedule_items` business table и не дублировать domain model поверх `jobs / leads / tasks`.
+  - Не ломать `Pulse-first` модель: dispatch-события остаются частью общего event/realtime контура.
+  - Не расширять protected runtime/auth/realtime paths без отдельной задачи: `src/server.js`, `frontend/src/services/apiClient.ts`, `frontend/src/hooks/useRealtimeEvents.ts`, `backend/db/`.
+  - UX hardening должен быть реализован как расширение существующего schedule surface, без нового параллельного dispatcher UI.
+  - Решение должно оставаться пригодным для desktop-first operator workflow и не деградировать читаемость на узких экранах.
+- **Потенциально вовлечённые модули/части системы:**
+  - `frontend/src/pages/SchedulePage.tsx`
+  - `frontend/src/components/schedule/WeekView.tsx`
+  - `frontend/src/components/schedule/DayView.tsx`
+  - `frontend/src/components/schedule/MonthView.tsx`
+  - `frontend/src/components/schedule/TimelineView.tsx`
+  - `frontend/src/components/schedule/TimelineWeekView.tsx`
+  - `frontend/src/components/schedule/ScheduleItemCard.tsx`
+  - `frontend/src/components/schedule/ScheduleToolbar.tsx`
+  - `frontend/src/components/schedule/ScheduleSidebar.tsx`
+  - `frontend/src/hooks/useScheduleData.ts`
+  - `frontend/src/services/scheduleApi.ts`
+  - `backend/src/routes/schedule.js`
+  - `backend/src/services/scheduleService.js`
+  - `backend/src/db/scheduleQueries.js`
+- **Затронутые интеграции:**
+  - `Twilio / SoftPhone` — только в части non-blocking onboarding внутри schedule workflow.
+  - `Zenbooker` — косвенно, так как provider/job scheduling data уже агрегируется в schedule read model.
+  - `Pulse / SSE` — для сохранения общей event model при reschedule/reassign UX.
+>>>>>>> Stashed changes
