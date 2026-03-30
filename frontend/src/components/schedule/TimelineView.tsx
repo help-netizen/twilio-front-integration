@@ -8,6 +8,7 @@ import React, { useMemo } from 'react';
 import { format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
 import type { ScheduleItem, DispatchSettings } from '../../services/scheduleApi';
+import type { ProviderInfo } from '../../hooks/useScheduleData';
 import {
     todayInTZ, dateInTZ, minutesSinceMidnight,
     formatTimeInTZ, dateKeyInTZ,
@@ -17,6 +18,8 @@ interface TimelineViewProps {
     currentDate: Date;
     items: ScheduleItem[];
     settings: DispatchSettings;
+    /** All company providers — show rows even if they have no items today */
+    allProviders?: ProviderInfo[];
     onSelectItem: (item: ScheduleItem) => void;
 }
 
@@ -31,7 +34,7 @@ interface ProviderGroup {
     items: ScheduleItem[];
 }
 
-export const TimelineView: React.FC<TimelineViewProps> = ({ currentDate, items, settings, onSelectItem }) => {
+export const TimelineView: React.FC<TimelineViewProps> = ({ currentDate, items, settings, allProviders = [], onSelectItem }) => {
     const tz = settings.timezone || 'America/New_York';
     const startHour = parseTime(settings.work_start_time);
     const endHour = parseTime(settings.work_end_time);
@@ -51,9 +54,16 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ currentDate, items, 
         [items, dateKey, tz],
     );
 
-    // Group by provider
+    // Group by provider — include ALL known providers even if they have no items today
     const providerGroups: ProviderGroup[] = useMemo(() => {
         const map = new Map<string, ProviderGroup>();
+
+        // Seed with all known providers (empty rows)
+        for (const p of allProviders) {
+            map.set(p.id, { id: p.id, label: p.name, items: [] });
+        }
+
+        // Distribute items to provider rows
         for (const item of dayItems) {
             const techs = item.assigned_techs;
             if (techs && techs.length > 0) {
@@ -75,7 +85,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({ currentDate, items, 
         });
         if (groups.length === 0) groups.push({ id: '__unassigned', label: 'Unassigned', items: [] });
         return groups;
-    }, [dayItems]);
+    }, [dayItems, allProviders]);
 
     // Today detection + past overlay (horizontal)
     const todayStr = todayInTZ(tz);

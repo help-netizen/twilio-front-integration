@@ -8,12 +8,15 @@ import React, { useMemo } from 'react';
 import { startOfWeek, addDays, format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
 import type { ScheduleItem, DispatchSettings } from '../../services/scheduleApi';
+import type { ProviderInfo } from '../../hooks/useScheduleData';
 import { todayInTZ, dateKeyInTZ } from '../../utils/companyTime';
 
 interface TimelineWeekViewProps {
     currentDate: Date;
     items: ScheduleItem[];
     settings: DispatchSettings;
+    /** All company providers — show rows even if they have no items this week */
+    allProviders?: ProviderInfo[];
     onSelectItem: (item: ScheduleItem) => void;
 }
 
@@ -23,15 +26,22 @@ interface ProviderGroup {
     items: ScheduleItem[];
 }
 
-export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({ currentDate, items, settings, onSelectItem }) => {
+export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({ currentDate, items, settings, allProviders = [], onSelectItem }) => {
     const tz = settings.timezone || 'America/New_York';
     const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
     const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
     const dayKeys = useMemo(() => days.map(d => format(d, 'yyyy-MM-dd')), [days]);
 
-    // Group by provider
+    // Group by provider — include ALL known providers even if they have no items this week
     const providerGroups: ProviderGroup[] = useMemo(() => {
         const map = new Map<string, ProviderGroup>();
+
+        // Seed with all known providers (empty rows)
+        for (const p of allProviders) {
+            map.set(p.id, { id: p.id, label: p.name, items: [] });
+        }
+
+        // Distribute items to provider rows
         for (const item of items) {
             if (!item.start_at) continue;
             const techs = item.assigned_techs;
@@ -54,7 +64,7 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({ currentDate,
         });
         if (groups.length === 0) groups.push({ id: '__unassigned', label: 'Unassigned', items: [] });
         return groups;
-    }, [items]);
+    }, [items, allProviders]);
 
     // Today in company TZ
     const todayStr = todayInTZ(tz);

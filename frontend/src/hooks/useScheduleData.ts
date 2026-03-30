@@ -13,7 +13,13 @@ import {
     fetchScheduleItems, fetchDispatchSettings,
     type ScheduleItem, type DispatchSettings, type ScheduleFilters,
 } from '../services/scheduleApi';
+import { authedFetch } from '../services/apiClient';
 import { useRealtimeEvents } from './useRealtimeEvents';
+
+export interface ProviderInfo {
+    id: string;
+    name: string;
+}
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -109,6 +115,20 @@ export function useScheduleData() {
             .catch(() => setSettings(DEFAULT_SETTINGS));
     }, []);
 
+    // ── Fetch providers (once) ────────────────────────────────────────────────
+
+    const [providers, setProviders] = useState<ProviderInfo[]>([]);
+
+    useEffect(() => {
+        authedFetch('/api/zenbooker/team-members')
+            .then(r => r.json())
+            .then(j => {
+                const list = j.data || [];
+                setProviders(list.map((p: any) => ({ id: String(p.id), name: p.name || '' })));
+            })
+            .catch(() => setProviders([]));
+    }, []);
+
     // ── SSE Realtime refresh (debounced) ─────────────────────────────────────
 
     const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -174,6 +194,7 @@ export function useScheduleData() {
         scheduledItems,
         unscheduledItems,
         settings: effectiveSettings,
+        providers,
         loading,
         error,
         currentDate,

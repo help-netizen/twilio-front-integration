@@ -87,6 +87,7 @@ export function SchedulePage() {
                                     currentDate={schedule.currentDate}
                                     items={schedule.scheduledItems}
                                     settings={schedule.settings}
+                                    allProviders={schedule.providers}
                                     onSelectItem={schedule.selectItem}
                                 />
                             )}
@@ -95,6 +96,7 @@ export function SchedulePage() {
                                     currentDate={schedule.currentDate}
                                     items={schedule.scheduledItems}
                                     settings={schedule.settings}
+                                    allProviders={schedule.providers}
                                     onSelectItem={schedule.selectItem}
                                 />
                             )}
