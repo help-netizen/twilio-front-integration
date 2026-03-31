@@ -89,9 +89,9 @@ export function PulseTimeline({ calls, messages, loading, timelineKey, financial
 
     if (loading) {
         return (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '200px', color: '#9ca3af' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '200px', color: 'var(--blanc-ink-3)' }}>
                 <div style={{ textAlign: 'center' }}>
-                    <div style={{ width: '32px', height: '32px', border: '3px solid #e5e7eb', borderTopColor: '#2563eb', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 12px' }} />
+                    <div style={{ width: '32px', height: '32px', border: '3px solid var(--blanc-line)', borderTopColor: 'var(--blanc-info)', borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto 12px' }} />
                     Loading timeline...
                 </div>
             </div>
@@ -100,7 +100,7 @@ export function PulseTimeline({ calls, messages, loading, timelineKey, financial
 
     if (timeline.length === 0) {
         return (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '200px', color: '#9ca3af' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '200px', color: 'var(--blanc-ink-3)' }}>
                 No activity found for this contact
             </div>
         );

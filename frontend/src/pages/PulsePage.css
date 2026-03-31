@@ -29,7 +29,7 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    background: var(--blanc-surface-muted);
+    background: var(--blanc-surface-strong);
     overflow: hidden;
 }
 

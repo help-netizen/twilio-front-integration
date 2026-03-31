@@ -82,15 +82,34 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
                 <div className="flex items-center gap-3">
                     <div className="flex items-center gap-3 shrink-0">
                         {(() => { const sd = getSentiment(sentimentScore); if (!sd) return null; return <span title={`${sd.label} (${sentimentScore})`} className="text-base leading-none cursor-default" style={{ filter: `drop-shadow(0 0 2px ${sd.color})` }}>{sd.emoji}</span>; })()}
-                        <button onClick={() => setActiveSection(activeSection === 'summary' ? null : 'summary')} className={`text-xs transition-colors ${activeSection === 'summary' ? 'text-gray-700 border-b-2 border-gray-700' : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700'}`}>Summary</button>
-                        <button onClick={() => setActiveSection(activeSection === 'transcription' ? null : 'transcription')} className={`text-xs transition-colors ${activeSection === 'transcription' ? 'text-gray-700 border-b-2 border-gray-700' : 'text-gray-500 border-b border-dashed border-gray-400 hover:text-gray-700'}`}>Transcription{isLiveStreaming && <span className="ml-1 inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />}</button>
+                        <button
+                            onClick={() => setActiveSection(activeSection === 'summary' ? null : 'summary')}
+                            className="text-[11px] font-medium px-2 py-0.5 rounded-md transition-colors"
+                            style={activeSection === 'summary'
+                                ? { background: 'var(--blanc-surface-muted)', color: 'var(--blanc-ink-1)', border: '1px solid var(--blanc-line)' }
+                                : { color: 'var(--blanc-ink-3)', border: '1px solid transparent' }
+                            }
+                        >
+                            Summary
+                        </button>
+                        <button
+                            onClick={() => setActiveSection(activeSection === 'transcription' ? null : 'transcription')}
+                            className="text-[11px] font-medium px-2 py-0.5 rounded-md transition-colors flex items-center gap-1"
+                            style={activeSection === 'transcription'
+                                ? { background: 'var(--blanc-surface-muted)', color: 'var(--blanc-ink-1)', border: '1px solid var(--blanc-line)' }
+                                : { color: 'var(--blanc-ink-3)', border: '1px solid transparent' }
+                            }
+                        >
+                            Transcript
+                            {isLiveStreaming && <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />}
+                        </button>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
-                        <button onClick={() => handleSkip(-10)} title="Rewind 10s" className="h-7 w-7 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors relative"><RotateCcw className="w-3.5 h-3.5" /><span className="absolute text-[9px] font-semibold">10</span></button>
-                        <button onClick={handlePlayPause} className="h-7 w-7 flex items-center justify-center text-gray-500 hover:text-gray-700 transition-colors">{isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}</button>
-                        <button onClick={() => handleSkip(10)} title="Forward 10s" className="h-7 w-7 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors relative"><RotateCw className="w-3.5 h-3.5" /><span className="absolute text-[9px] font-semibold">10</span></button>
+                        <button onClick={() => handleSkip(-10)} title="Rewind 10s" className="h-7 w-7 flex items-center justify-center transition-colors relative" style={{ color: 'var(--blanc-ink-3)' }}><RotateCcw className="w-3.5 h-3.5" /><span className="absolute text-[9px] font-semibold">10</span></button>
+                        <button onClick={handlePlayPause} className="h-7 w-7 flex items-center justify-center transition-colors" style={{ color: 'var(--blanc-ink-2)' }}>{isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}</button>
+                        <button onClick={() => handleSkip(10)} title="Forward 10s" className="h-7 w-7 flex items-center justify-center transition-colors relative" style={{ color: 'var(--blanc-ink-3)' }}><RotateCw className="w-3.5 h-3.5" /><span className="absolute text-[9px] font-semibold">10</span></button>
                     </div>
-                    <div className="flex items-center"><span className="text-xs text-gray-500 font-mono">{fmtAudio(currentTime)} / {fmtAudio(duration)}</span></div>
+                    <div className="flex items-center"><span className="text-xs font-mono" style={{ color: 'var(--blanc-ink-3)' }}>{fmtAudio(currentTime)} / {fmtAudio(duration)}</span></div>
                 </div>
 
                 {activeSection === 'summary' && (
@@ -144,13 +163,13 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
                                 ) : (transcriptionText || call.transcription) ? (
                                     <div>
                                         <div className="space-y-0.5">{(transcriptionText || call.transcription || '').split('\n').filter((l: string) => l.trim()).map((line: string, idx: number) => { const m = line.match(/^\[(\d+)ms\]\s*/); const ms = m ? parseInt(m[1], 10) : null; const clean = m ? line.slice(m[0].length) : line; const sec = ms != null ? ms / 1000 : null; return (<button key={idx} onClick={() => { if (audioRef.current && sec != null) { audioRef.current.currentTime = sec; setCurrentTime(sec); if (!isPlaying) { audioRef.current.play(); setIsPlaying(true); } } }} className={`w-full flex items-baseline gap-2 px-2 py-1.5 rounded text-left text-xs transition-colors ${sec != null ? 'cursor-pointer hover:bg-gray-100' : 'cursor-default'}`}>{sec != null && <span className="shrink-0 text-[10px] text-gray-400 font-mono tabular-nums">{fmtAudio(sec)}</span>}<span className="flex-1 text-sm text-gray-700 leading-relaxed">{clean}</span></button>); })}</div>
-                                        {call.callSid && <button onClick={handleResetTranscription} className="mt-2 text-[11px] px-2 py-1 text-gray-400 border border-gray-300 rounded hover:bg-gray-100 transition-colors cursor-pointer">↻ Reset transcription</button>}
+                                        {call.callSid && <button onClick={handleResetTranscription} className="mt-2 text-[11px] px-2 py-1 rounded-md transition-colors cursor-pointer" style={{ color: 'var(--blanc-ink-3)', border: '1px solid var(--blanc-line)' }}>↻ Reset</button>}
                                     </div>
                                 ) : (
                                     <div>
                                         <p className="text-sm text-gray-400 italic">No transcription available</p>
                                         {transcribeError && <p className="text-sm text-red-500 mt-1">{transcribeError}</p>}
-                                        {call.callSid && <button onClick={handleGenerateTranscription} className="mt-2 text-xs px-3 py-1.5 bg-gray-800 text-white rounded-md hover:bg-gray-700 transition-colors cursor-pointer">Generate</button>}
+                                        {call.callSid && <button onClick={handleGenerateTranscription} className="mt-2 text-xs px-3 py-1.5 rounded-lg transition-colors cursor-pointer font-medium" style={{ background: 'var(--blanc-info)', color: '#fff' }}>Generate</button>}
                                     </div>
                                 )}
                         </ScrollArea>

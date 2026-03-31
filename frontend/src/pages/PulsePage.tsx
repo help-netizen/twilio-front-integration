@@ -31,8 +31,16 @@ export const PulsePage: React.FC = () => {
 
     // Mobile panel state: 'list' shows sidebar, 'content' shows detail+timeline
     const [mobilePanel, setMobilePanel] = useState<'list' | 'content'>('list');
+    // Sidebar filter chips
+    const [activeFilter, setActiveFilter] = useState<'all' | 'unread' | 'action_required'>('all');
 
     const isContactSelected = !!(p.contactId || p.timelineId);
+
+    const displayedCalls = activeFilter === 'all'
+        ? p.filteredCalls
+        : activeFilter === 'unread'
+            ? p.filteredCalls.filter((c: any) => c.tl_has_unread || c.sms_has_unread || c.has_unread)
+            : p.filteredCalls.filter((c: any) => c.is_action_required);
 
     // Auto-switch to content panel on mobile when a contact is selected
     useEffect(() => {
@@ -63,16 +71,31 @@ export const PulsePage: React.FC = () => {
                 </div>
             </div>
 
-            {/* Toolbar: search + optional filters */}
+            {/* Toolbar: search + filter chips */}
             <div className="blanc-page-toolbar pulse-search-toolbar">
-                <div className="relative flex-1 max-w-xs">
+                <div className="relative" style={{ width: '220px', flexShrink: 0 }}>
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" />
                     <Input
-                        placeholder="Search by phone or name..."
+                        placeholder="Search..."
                         value={p.searchQuery}
                         onChange={(e) => p.setSearchQuery(e.target.value)}
                         className="pl-9"
                     />
+                </div>
+                <div className="flex items-center gap-1.5">
+                    {(['all', 'unread', 'action_required'] as const).map(f => (
+                        <button
+                            key={f}
+                            onClick={() => setActiveFilter(f)}
+                            className="px-2.5 py-1 text-xs font-medium rounded-lg transition-colors"
+                            style={activeFilter === f
+                                ? { background: 'var(--blanc-info)', color: '#fff' }
+                                : { background: 'var(--blanc-surface-muted)', color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)' }
+                            }
+                        >
+                            {f === 'all' ? 'All' : f === 'unread' ? 'Unread' : 'Action Required'}
+                        </button>
+                    ))}
                 </div>
             </div>
 
@@ -86,13 +109,13 @@ export const PulsePage: React.FC = () => {
                             <div className="p-3 space-y-2">
                                 {[...Array(8)].map((_, i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}
                             </div>
-                        ) : p.filteredCalls.length === 0 ? (
+                        ) : displayedCalls.length === 0 ? (
                             <div className="flex-1 flex flex-col items-center justify-center py-12">
                                 <PhoneOff className="size-8 mx-auto mb-2 opacity-20" />
                                 <p className="text-sm text-muted-foreground">No contacts found</p>
                             </div>
                         ) : (
-                            p.filteredCalls.map((call, idx) => {
+                            displayedCalls.map((call, idx) => {
                                 const tlId = (call as any).timeline_id;
                                 const cId = call.contact?.id || call.id;
                                 const isActive = tlId

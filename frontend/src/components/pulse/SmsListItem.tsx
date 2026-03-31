@@ -1,11 +1,11 @@
 /**
- * SmsListItem — exact match to TIMELINE_TECHNICAL_SPECIFICATION.md
- * Adapted field names: sms.body (not sms.message), sms.from_number/to_number,
- * sms.delivery_status, sms.created_at, media items from our schema.
+ * SmsListItem — chat bubble style.
+ * Outgoing: right-aligned indigo bubble, no phone header (direction is obvious from side).
+ * Incoming: left-aligned warm surface bubble.
+ * Delivery status: ✓✓ on outgoing only (bottom-right of text).
  */
 
-import { MessageSquare, Check, CheckCheck, X, Download, FileText, FileIcon } from 'lucide-react';
-import { Card } from '../ui/card';
+import { Check, CheckCheck, X, Download, FileText, FileIcon } from 'lucide-react';
 import type { SmsMessage, SmsMediaItem } from '../../types/pulse';
 import { useAuth } from '../../auth/AuthProvider';
 
@@ -14,7 +14,7 @@ import { useAuth } from '../../auth/AuthProvider';
 const formatTime = (dateStr: string, tz: string): string => {
     const d = new Date(dateStr);
     return d.toLocaleString('en-US', {
-        month: 'short', day: 'numeric', year: 'numeric',
+        month: 'short', day: 'numeric',
         hour: 'numeric', minute: '2-digit', hour12: true,
         timeZone: tz,
     });
@@ -40,7 +40,16 @@ const handleDownload = (media: SmsMediaItem) => {
     document.body.removeChild(link);
 };
 
-// ── Component ────────────────────────────────────────────────────────────────
+// ── Delivery icon ─────────────────────────────────────────────────────────────
+
+function DeliveryIcon({ status }: { status: string | null | undefined }) {
+    if (status === 'delivered') return <CheckCheck className="w-3 h-3 opacity-70" />;
+    if (status === 'sent') return <Check className="w-3 h-3 opacity-60" />;
+    if (status === 'failed' || status === 'undelivered') return <X className="w-3 h-3 text-red-300" />;
+    return null;
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
 
 interface SmsListItemProps {
     sms: SmsMessage;
@@ -52,125 +61,101 @@ export function SmsListItem({ sms }: SmsListItemProps) {
     const isOutgoing = sms.direction === 'outbound';
     const hasMedia = sms.media && sms.media.length > 0;
     const hasMessage = sms.body && sms.body.trim().length > 0;
+    const timestamp = sms.date_created_remote || sms.created_at;
 
     return (
         <div className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
-            <Card
-                className={`max-w-[80%] overflow-hidden border ${isOutgoing
-                    ? 'bg-blue-600 text-white border-blue-700'
-                    : 'border-border/60'
-                    }`}
-                style={isOutgoing ? {} : { background: 'var(--blanc-surface-strong)', color: 'var(--blanc-ink-1)' }}
+            <div
+                className={`relative max-w-[75%] rounded-2xl overflow-hidden ${
+                    isOutgoing
+                        ? 'rounded-br-sm'
+                        : 'rounded-bl-sm'
+                }`}
+                style={isOutgoing
+                    ? { background: 'var(--blanc-info)', color: '#fff' }
+                    : { background: '#ece7de', color: 'var(--blanc-ink-1)', border: '1px solid rgba(117, 106, 89, 0.14)' }
+                }
             >
-                <div className={hasMedia && !hasMessage ? 'p-2' : 'p-4'}>
-                    {/* Header - show if there's text or it's outgoing with media (for status) */}
-                    {(hasMessage || (hasMedia && isOutgoing)) && (
-                        <div className="flex items-center gap-2 mb-2">
-                            <MessageSquare className={`w-4 h-4 ${isOutgoing ? 'text-blue-200' : 'text-gray-400'}`} />
-                            <span className={`text-xs font-mono ${isOutgoing ? 'text-blue-100' : 'text-gray-500'}`}>
-                                {isOutgoing ? sms.to_number : sms.from_number}
-                            </span>
-                            {isOutgoing && (
-                                <span className={`ml-auto ${sms.delivery_status === 'delivered' ? 'text-blue-200' :
-                                    sms.delivery_status === 'sent' ? 'text-blue-300' :
-                                        'text-red-300'
-                                    }`}>
-                                    {sms.delivery_status === 'delivered' ? (
-                                        <CheckCheck className="w-3.5 h-3.5" />
-                                    ) : sms.delivery_status === 'sent' ? (
-                                        <Check className="w-3.5 h-3.5" />
-                                    ) : (
-                                        <X className="w-3.5 h-3.5" />
-                                    )}
-                                </span>
-                            )}
-                        </div>
-                    )}
-
-                    {/* Media Attachments */}
-                    {hasMedia && (
-                        <div className={hasMessage ? 'mb-3 space-y-2' : 'space-y-2'}>
-                            {sms.media!.map((media) => (
-                                <div key={media.id}>
-                                    {isImage(media.content_type || '') ? (
-                                        /* Image preview with download button */
-                                        <div className="relative group">
-                                            <img
-                                                src={mediaUrl(media)}
-                                                alt={media.filename || 'Image'}
-                                                className="w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
-                                                onClick={() => handleDownload(media)}
-                                            />
-                                            <button
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    handleDownload(media);
-                                                }}
-                                                className={`absolute top-2 right-2 p-2 rounded-full shadow-lg transition-opacity opacity-0 group-hover:opacity-100 ${isOutgoing ? 'bg-blue-700 hover:bg-blue-800' : 'bg-gray-800 hover:bg-gray-900'
-                                                    }`}
-                                                title="Download"
-                                            >
-                                                <Download className="w-4 h-4 text-white" />
-                                            </button>
+                {/* Media Attachments */}
+                {hasMedia && (
+                    <div className={`${hasMessage ? 'pb-0' : ''} p-1.5 space-y-1.5`}>
+                        {sms.media!.map((media) => (
+                            <div key={media.id}>
+                                {isImage(media.content_type || '') ? (
+                                    <div className="relative group">
+                                        <img
+                                            src={mediaUrl(media)}
+                                            alt={media.filename || 'Image'}
+                                            className="w-full rounded-xl cursor-pointer hover:opacity-90 transition-opacity"
+                                            onClick={() => handleDownload(media)}
+                                        />
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); handleDownload(media); }}
+                                            className={`absolute top-2 right-2 p-1.5 rounded-full shadow-lg transition-opacity opacity-0 group-hover:opacity-100 ${isOutgoing ? 'bg-blue-700/80' : 'bg-black/40'}`}
+                                            title="Download"
+                                        >
+                                            <Download className="w-3.5 h-3.5 text-white" />
+                                        </button>
+                                        {media.size_bytes && (
+                                            <div className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded text-[10px] bg-black/40 text-white">
+                                                {formatFileSize(media.size_bytes)}
+                                            </div>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <button
+                                        onClick={() => handleDownload(media)}
+                                        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl border transition-colors ${
+                                            isOutgoing
+                                                ? 'bg-blue-700/40 border-white/10 hover:bg-blue-700/60'
+                                                : 'border-border/50 hover:bg-muted/40'
+                                        }`}
+                                        style={isOutgoing ? {} : { background: 'var(--blanc-surface-muted)' }}
+                                    >
+                                        <div className={`p-1.5 rounded-lg ${isOutgoing ? 'bg-white/15' : 'bg-muted/60'}`}>
+                                            {(media.content_type || '').includes('pdf') ? (
+                                                <FileText className={`w-4 h-4 ${isOutgoing ? 'text-white' : 'text-red-500'}`} />
+                                            ) : (
+                                                <FileIcon className={`w-4 h-4 ${isOutgoing ? 'text-white/80' : ''}`} style={isOutgoing ? {} : { color: 'var(--blanc-ink-2)' }} />
+                                            )}
+                                        </div>
+                                        <div className="flex-1 text-left min-w-0">
+                                            <div className={`text-sm font-medium truncate ${isOutgoing ? 'text-white' : ''}`} style={isOutgoing ? {} : { color: 'var(--blanc-ink-1)' }}>
+                                                {media.filename || 'File'}
+                                            </div>
                                             {media.size_bytes && (
-                                                <div className={`absolute bottom-2 left-2 px-2 py-1 rounded text-xs ${isOutgoing ? 'bg-blue-700/90' : 'bg-gray-800/90'
-                                                    } text-white`}>
+                                                <div className={`text-xs ${isOutgoing ? 'text-white/60' : ''}`} style={isOutgoing ? {} : { color: 'var(--blanc-ink-3)' }}>
                                                     {formatFileSize(media.size_bytes)}
                                                 </div>
                                             )}
                                         </div>
-                                    ) : (
-                                        /* Non-image file with download */
-                                        <button
-                                            onClick={() => handleDownload(media)}
-                                            className={`w-full flex items-center gap-3 p-3 rounded-lg border transition-colors ${isOutgoing
-                                                ? 'bg-blue-700 border-blue-800 hover:bg-blue-800'
-                                                : 'border-border/50 hover:bg-muted/30'
-                                                }`}
-                                        style={isOutgoing ? {} : { background: 'var(--blanc-surface-muted)' }}
-                                        >
-                                            <div className={`p-2 rounded ${isOutgoing ? 'bg-blue-800' : 'bg-gray-200'
-                                                }`}>
-                                                {(media.content_type || '').includes('pdf') ? (
-                                                    <FileText className={`w-5 h-5 ${isOutgoing ? 'text-blue-200' : 'text-red-600'}`} />
-                                                ) : (
-                                                    <FileIcon className={`w-5 h-5 ${isOutgoing ? 'text-blue-200' : 'text-gray-600'}`} />
-                                                )}
-                                            </div>
-                                            <div className="flex-1 text-left">
-                                                <div className={`text-sm font-medium truncate ${isOutgoing ? 'text-white' : ''}`} style={isOutgoing ? {} : { color: 'var(--blanc-ink-1)' }}>
-                                                    {media.filename || 'File'}
-                                                </div>
-                                                {media.size_bytes && (
-                                                    <div className={`text-xs ${isOutgoing ? 'text-blue-200' : ''}`} style={isOutgoing ? {} : { color: 'var(--blanc-ink-3)' }}>
-                                                        {formatFileSize(media.size_bytes)}
-                                                    </div>
-                                                )}
-                                            </div>
-                                            <Download className={`w-4 h-4 flex-shrink-0 ${isOutgoing ? 'text-blue-200' : 'text-gray-400'
-                                                }`} />
-                                        </button>
-                                    )}
-                                </div>
-                            ))}
-                        </div>
-                    )}
+                                        <Download className={`w-4 h-4 shrink-0 ${isOutgoing ? 'text-white/60' : ''}`} style={isOutgoing ? {} : { color: 'var(--blanc-ink-3)' }} />
+                                    </button>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                )}
 
-                    {/* Message */}
-                    {hasMessage && (
-                        <p className={`text-sm leading-relaxed mb-2 ${isOutgoing ? 'text-white' : ''}`} style={isOutgoing ? {} : { color: 'var(--blanc-ink-1)' }}>
-                            {sms.body}
-                        </p>
-                    )}
+                {/* Message text */}
+                {hasMessage && (
+                    <p className={`text-sm leading-relaxed px-3 ${hasMedia ? 'pt-1 pb-2' : 'pt-2.5 pb-1.5'}`}>
+                        {sms.body}
+                    </p>
+                )}
 
-                    {/* Timestamp */}
-                    {hasMessage && (
-                        <div className={`text-xs text-right ${isOutgoing ? 'text-blue-200' : ''}`} style={isOutgoing ? {} : { color: 'var(--blanc-ink-3)' }}>
-                            {formatTime(sms.date_created_remote || sms.created_at, companyTz)}
-                        </div>
+                {/* Timestamp + delivery */}
+                <div className={`flex items-center gap-1 px-3 pb-2 ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
+                    <span className={`text-[10px] ${isOutgoing ? 'text-white/55' : ''}`} style={isOutgoing ? {} : { color: 'var(--blanc-ink-3)' }}>
+                        {timestamp ? formatTime(timestamp, companyTz) : ''}
+                    </span>
+                    {isOutgoing && (
+                        <span className="text-white/70">
+                            <DeliveryIcon status={sms.delivery_status} />
+                        </span>
                     )}
                 </div>
-            </Card>
+            </div>
         </div>
     );
 }

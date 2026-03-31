@@ -372,7 +372,7 @@ table tbody tr:hover {
 }
 
 .pulse-timeline-column {
-    background: var(--blanc-surface-muted) !important;
+    background: var(--blanc-surface-strong) !important;
 }
 
 .pulse-contact-item-active {

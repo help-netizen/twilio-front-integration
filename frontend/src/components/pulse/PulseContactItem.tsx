@@ -1,5 +1,6 @@
 /**
  * PulseContactItem — a single contact row in the Pulse sidebar.
+ * Layout: avatar/initials + interaction badge | name + time | phone | status badges
  */
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -19,7 +20,7 @@ import { tomorrowAtInTZ } from '../../utils/companyTime';
 
 const STATUS_ICON_COLORS: Record<string, string> = {
     'completed': '#16a34a', 'no-answer': '#dc2626', 'busy': '#ea580c',
-    'failed': '#dc2626', 'canceled': '#dc2626', 'ringing': '#2563eb',
+    'failed': '#dc2626', 'canceled': '#6b7280', 'ringing': '#2563eb',
     'in-progress': '#7c3aed', 'queued': '#2563eb', 'initiated': '#2563eb',
     'voicemail_recording': '#ea580c', 'voicemail_left': '#dc2626',
 };
@@ -44,17 +45,41 @@ export const REASON_LABELS: Record<string, string> = {
 
 function getTimeAgo(date: Date): string {
     const diff = Date.now() - date.getTime();
-    const hours = Math.floor(diff / (1000 * 60 * 60));
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    if (hours < 1) return 'now';
+    const mins = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+    if (mins < 2) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
     if (hours < 24) return `${hours}h ago`;
     if (days < 7) return `${days}d ago`;
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-function getFullDateTime(date: Date): string {
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ', ' +
-        date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+/** Get initials from a name or phone */
+function getInitials(name: string): string {
+    if (!name) return '?';
+    // If it's a phone number (all digits, parens, dashes, spaces)
+    if (/^[\d\s\-().+]+$/.test(name.trim())) {
+        return '#';
+    }
+    const parts = name.trim().split(/\s+/);
+    if (parts.length === 1) return parts[0][0]?.toUpperCase() || '?';
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+/** Deterministic pastel avatar color from string */
+function avatarColor(str: string): string {
+    const PALETTE = [
+        { bg: 'rgba(47,99,216,0.12)', text: '#2f63d8' },
+        { bg: 'rgba(27,139,99,0.12)', text: '#1b8b63' },
+        { bg: 'rgba(178,106,29,0.14)', text: '#b26a1d' },
+        { bg: 'rgba(124,53,160,0.12)', text: '#7c35a0' },
+        { bg: 'rgba(212,77,60,0.12)', text: '#d44d3c' },
+        { bg: 'rgba(20,140,180,0.12)', text: '#148cb4' },
+    ];
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) hash = (hash * 31 + str.charCodeAt(i)) & 0xffffffff;
+    return JSON.stringify(PALETTE[Math.abs(hash) % PALETTE.length]);
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -95,22 +120,25 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
     const isSnoozed = snoozedUntil && new Date(snoozedUntil) > new Date();
     const openTask = (call as any).open_task || null;
     const [snoozeMenuOpen, setSnoozeMenuOpen] = useState(false);
+    const [menuOpen, setMenuOpen] = useState(false);
+    const menuRef = useRef<HTMLDivElement>(null);
 
     const callDirection = call.direction === 'inbound' ? 'inbound'
         : call.direction?.startsWith('outbound') ? 'outbound'
             : call.direction === 'internal' ? 'internal' : 'outbound';
     const callColor = STATUS_ICON_COLORS[call.status?.toLowerCase() || ''] || '#16a34a';
 
-    const renderIcon = () => {
-        if (interactionType === 'sms_inbound') return <MessageSquareReply className="size-4" style={{ color: '#2563eb' }} />;
-        if (interactionType === 'sms_outbound') return <MessageSquare className="size-4" style={{ color: '#7c3aed' }} />;
-        if (callDirection === 'internal') return <ArrowLeftRight className="size-4" style={{ color: callColor }} />;
-        if (callDirection === 'inbound') return <PhoneIncoming className="size-4" style={{ color: callColor }} />;
-        return <PhoneOutgoing className="size-4" style={{ color: callColor }} />;
-    };
+    // Avatar color derived from primary text
+    const { bg: avatarBg, text: avatarText } = JSON.parse(avatarColor(primaryText));
 
-    const [menuOpen, setMenuOpen] = useState(false);
-    const menuRef = useRef<HTMLDivElement>(null);
+    // Interaction type icon (small badge on avatar)
+    const renderInteractionBadge = () => {
+        if (interactionType === 'sms_inbound') return <MessageSquareReply className="size-2.5" style={{ color: '#2563eb' }} />;
+        if (interactionType === 'sms_outbound') return <MessageSquare className="size-2.5" style={{ color: '#7c3aed' }} />;
+        if (callDirection === 'internal') return <ArrowLeftRight className="size-2.5" style={{ color: callColor }} />;
+        if (callDirection === 'inbound') return <PhoneIncoming className="size-2.5" style={{ color: callColor }} />;
+        return <PhoneOutgoing className="size-2.5" style={{ color: callColor }} />;
+    };
 
     useEffect(() => {
         if (!menuOpen) return;
@@ -128,98 +156,149 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                 navigate(targetPath);
                 if (tlId) {
                     callsApi.markTimelineRead(tlId)
-                        .then(() => { console.log('[Pulse] Marked timeline+SMS read:', tlId); onRead?.(); })
+                        .then(() => { onRead?.(); })
                         .catch((err) => { console.error('[Pulse] Failed to mark timeline read:', tlId, err); });
                 }
             }}
-            className={`w-full text-left px-4 py-3 transition-colors border-b relative ${isActive ? 'pulse-contact-item-active' : 'hover:bg-muted/40'}`}
+            className={`w-full text-left px-3 py-2.5 transition-colors border-b relative group ${isActive ? 'pulse-contact-item-active' : 'hover:bg-muted/40'}`}
             style={{ outline: 'none', borderBottomColor: 'var(--blanc-line)' }}
         >
-            {hasUnread && (<div className="absolute left-0 top-0 bottom-0 w-[3px] rounded-r" style={{ backgroundColor: 'var(--blanc-info)' }} />)}
-            <div className="flex items-start gap-2.5">
-                <div className="shrink-0 pt-0.5">{renderIcon()}</div>
+            {/* Unread indicator */}
+            {hasUnread && (
+                <div className="absolute left-0 top-0 bottom-0 w-[3px] rounded-r" style={{ backgroundColor: 'var(--blanc-info)' }} />
+            )}
+
+            <div className="flex items-center gap-2.5">
+                {/* Avatar with interaction badge */}
+                <div className="relative shrink-0">
+                    <div
+                        className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-semibold shrink-0"
+                        style={{ background: avatarBg, color: avatarText }}
+                    >
+                        {getInitials(primaryText)}
+                    </div>
+                    {/* Small interaction type badge */}
+                    <div
+                        className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full flex items-center justify-center"
+                        style={{ background: 'var(--blanc-surface-strong)', border: '1.5px solid var(--blanc-line)' }}
+                    >
+                        {renderInteractionBadge()}
+                    </div>
+                </div>
+
+                {/* Main content */}
                 <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline justify-between mb-1">
-                        <span className={`text-sm truncate ${hasUnread ? 'font-semibold' : 'font-medium'}`} style={{ color: 'var(--blanc-ink-1)' }}>{primaryText}</span>
+                    {/* Name + time */}
+                    <div className="flex items-baseline justify-between gap-1 mb-0.5">
+                        <span
+                            className={`text-sm truncate leading-tight ${hasUnread ? 'font-semibold' : 'font-medium'}`}
+                            style={{ color: 'var(--blanc-ink-1)' }}
+                        >
+                            {primaryText}
+                        </span>
+                        <span className="text-[11px] shrink-0" style={{ color: 'var(--blanc-ink-3)' }}>
+                            {getTimeAgo(displayDate)}
+                        </span>
                     </div>
-                    {showSecondaryPhone && (<div className="text-xs mb-1 font-mono" style={{ color: 'var(--blanc-ink-2)' }}>{formatPhoneNumber(displayPhone)}</div>)}
-                    <div className="flex items-center gap-1 text-xs" style={{ color: 'var(--blanc-ink-3)' }}>
-                        <span>{getTimeAgo(displayDate)}</span><span style={{ color: 'var(--blanc-line-strong)' }}>•</span><span>{getFullDateTime(displayDate)}</span>
-                    </div>
+
+                    {/* Phone (secondary) */}
+                    {showSecondaryPhone && (
+                        <div className="text-xs font-mono truncate" style={{ color: 'var(--blanc-ink-3)' }}>
+                            {formatPhoneNumber(displayPhone)}
+                        </div>
+                    )}
+
+                    {/* Status badges */}
                     {isActionRequired && !isSnoozed && (
-                        <div className="flex items-center gap-1.5 mt-1">
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-orange-100 text-orange-800">
-                                <AlertTriangle className="size-3" /> Action Required
+                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-orange-100 text-orange-800">
+                                <AlertTriangle className="size-2.5" /> AR
                             </span>
-                            {arReason && <span className="text-[10px]" style={{ color: 'var(--blanc-ink-3)' }}>{REASON_LABELS[arReason] || arReason}</span>}
-                            {openTask?.due_at && (<span className="text-[10px]" style={{ color: 'var(--blanc-danger)' }}>Due {new Date(openTask.due_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</span>)}
+                            {arReason && (
+                                <span className="text-[10px]" style={{ color: 'var(--blanc-ink-3)' }}>
+                                    {REASON_LABELS[arReason] || arReason}
+                                </span>
+                            )}
+                            {openTask?.due_at && (
+                                <span className="text-[10px]" style={{ color: 'var(--blanc-danger)' }}>
+                                    Due {new Date(openTask.due_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                                </span>
+                            )}
                         </div>
                     )}
                     {isSnoozed && (
                         <div className="flex items-center gap-1 mt-1">
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium" style={{ background: 'rgba(118,106,89,0.1)', color: 'var(--blanc-ink-2)' }}>
-                                <Clock className="size-3" /> Snoozed until {new Date(snoozedUntil).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                            <span
+                                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-medium"
+                                style={{ background: 'rgba(118,106,89,0.1)', color: 'var(--blanc-ink-2)' }}
+                            >
+                                <Clock className="size-2.5" />
+                                Snoozed {new Date(snoozedUntil).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
                             </span>
                         </div>
                     )}
                 </div>
-                {isActive && (
-                    <div className="shrink-0 relative" ref={menuRef}>
-                        <div role="button" tabIndex={0}
-                            onClick={(e) => { e.stopPropagation(); setMenuOpen(prev => !prev); }}
-                            onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMenuOpen(prev => !prev); } }}
-                            className="p-1 rounded hover:bg-blue-100 transition-colors cursor-pointer" title="More options">
-                            <MoreVertical className="size-4 text-gray-500" />
-                        </div>
-                        {menuOpen && (
-                            <div className="absolute right-0 top-full mt-1 z-50 bg-card rounded-xl shadow-lg border border-border py-1 min-w-[180px]">
-                                <div role="button" tabIndex={0}
-                                    onClick={(e) => { e.stopPropagation(); setMenuOpen(false); if (tlId && onMarkUnread) onMarkUnread(tlId); }}
-                                    onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMenuOpen(false); if (tlId && onMarkUnread) onMarkUnread(tlId); } }}
-                                    className="flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-muted/60 cursor-pointer w-full">
-                                    <EyeOff className="size-3.5" /> Mark as Unread
-                                </div>
-                                {!isActionRequired && (
-                                    <div role="button" tabIndex={0}
-                                        onClick={(e) => { e.stopPropagation(); setMenuOpen(false); if (tlId && onSetActionRequired) onSetActionRequired(tlId); }}
-                                        onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMenuOpen(false); if (tlId && onSetActionRequired) onSetActionRequired(tlId); } }}
-                                        className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-orange-50 cursor-pointer w-full" style={{ color: 'var(--blanc-warning)' }}>
-                                        <AlertTriangle className="size-3.5" /> Action Required
-                                    </div>
-                                )}
-                                {isActionRequired && (
-                                    <div role="button" tabIndex={0}
-                                        onClick={(e) => { e.stopPropagation(); setMenuOpen(false); if (tlId && onMarkHandled) onMarkHandled(tlId); }}
-                                        onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMenuOpen(false); if (tlId && onMarkHandled) onMarkHandled(tlId); } }}
-                                        className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-green-50 cursor-pointer w-full" style={{ color: 'var(--blanc-success)' }}>
-                                        <CheckCircle2 className="size-3.5" /> Mark Handled
-                                    </div>
-                                )}
-                                {isActionRequired && (
-                                    <div className="relative">
-                                        <div role="button" tabIndex={0}
-                                            onClick={(e) => { e.stopPropagation(); setSnoozeMenuOpen(prev => !prev); }}
-                                            onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setSnoozeMenuOpen(prev => !prev); } }}
-                                            className="flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-muted/60 cursor-pointer w-full">
-                                            <Clock className="size-3.5" /> Snooze…
-                                        </div>
-                                        {snoozeMenuOpen && (
-                                            <div className="absolute right-full top-0 mr-1 z-[100] bg-card rounded-xl shadow-lg border border-border py-1 min-w-[140px]">
-                                                {SNOOZE_OPTIONS.map(opt => (
-                                                    <div key={opt.label} role="button" tabIndex={0}
-                                                        onClick={(e) => { e.stopPropagation(); setMenuOpen(false); setSnoozeMenuOpen(false); if (tlId && onSnooze) onSnooze(tlId, getSnoozeUntil(opt, companyTz)); }}
-                                                        className="px-3 py-2 text-sm text-foreground hover:bg-muted/60 cursor-pointer">
-                                                        {opt.label}
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-                        )}
+
+                {/* ⋮ menu — visible on hover or when active */}
+                <div className="shrink-0 relative" ref={menuRef}>
+                    <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => { e.stopPropagation(); setMenuOpen(prev => !prev); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMenuOpen(prev => !prev); } }}
+                        className={`p-1 rounded-lg transition-colors cursor-pointer ${menuOpen ? 'bg-muted/80' : 'opacity-0 group-hover:opacity-100'} ${isActive ? 'opacity-100' : ''}`}
+                        title="More options"
+                    >
+                        <MoreVertical className="size-3.5" style={{ color: 'var(--blanc-ink-3)' }} />
                     </div>
-                )}
+                    {menuOpen && (
+                        <div className="absolute right-0 top-full mt-1 z-50 bg-card rounded-xl shadow-lg border border-border py-1 min-w-[180px]">
+                            <div role="button" tabIndex={0}
+                                onClick={(e) => { e.stopPropagation(); setMenuOpen(false); if (tlId && onMarkUnread) onMarkUnread(tlId); }}
+                                onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMenuOpen(false); if (tlId && onMarkUnread) onMarkUnread(tlId); } }}
+                                className="flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-muted/60 cursor-pointer w-full">
+                                <EyeOff className="size-3.5" /> Mark as Unread
+                            </div>
+                            {!isActionRequired && (
+                                <div role="button" tabIndex={0}
+                                    onClick={(e) => { e.stopPropagation(); setMenuOpen(false); if (tlId && onSetActionRequired) onSetActionRequired(tlId); }}
+                                    onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMenuOpen(false); if (tlId && onSetActionRequired) onSetActionRequired(tlId); } }}
+                                    className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-orange-50 cursor-pointer w-full" style={{ color: 'var(--blanc-warning)' }}>
+                                    <AlertTriangle className="size-3.5" /> Action Required
+                                </div>
+                            )}
+                            {isActionRequired && (
+                                <div role="button" tabIndex={0}
+                                    onClick={(e) => { e.stopPropagation(); setMenuOpen(false); if (tlId && onMarkHandled) onMarkHandled(tlId); }}
+                                    onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMenuOpen(false); if (tlId && onMarkHandled) onMarkHandled(tlId); } }}
+                                    className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-green-50 cursor-pointer w-full" style={{ color: 'var(--blanc-success)' }}>
+                                    <CheckCircle2 className="size-3.5" /> Mark Handled
+                                </div>
+                            )}
+                            {isActionRequired && (
+                                <div className="relative">
+                                    <div role="button" tabIndex={0}
+                                        onClick={(e) => { e.stopPropagation(); setSnoozeMenuOpen(prev => !prev); }}
+                                        onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setSnoozeMenuOpen(prev => !prev); } }}
+                                        className="flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-muted/60 cursor-pointer w-full">
+                                        <Clock className="size-3.5" /> Snooze…
+                                    </div>
+                                    {snoozeMenuOpen && (
+                                        <div className="absolute right-full top-0 mr-1 z-[100] bg-card rounded-xl shadow-lg border border-border py-1 min-w-[140px]">
+                                            {SNOOZE_OPTIONS.map(opt => (
+                                                <div key={opt.label} role="button" tabIndex={0}
+                                                    onClick={(e) => { e.stopPropagation(); setMenuOpen(false); setSnoozeMenuOpen(false); if (tlId && onSnooze) onSnooze(tlId, getSnoozeUntil(opt, companyTz)); }}
+                                                    className="px-3 py-2 text-sm text-foreground hover:bg-muted/60 cursor-pointer">
+                                                    {opt.label}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
             </div>
         </button>
     );
