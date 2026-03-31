@@ -144,6 +144,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
                     if (busyRef.current) {
                         // Dispatcher is busy (on a call OR already ringing) → queue silently
                         console.log('[SoftPhone] Busy — queuing incoming from', from);
+                        stopRingtone(); // safety: ensure no lingering ringtone
                         pendingCallsRef.current.push({ call, from });
                         syncPendingCount();
                         // Clear holdingCallerInfo since call is now in SDK pending queue

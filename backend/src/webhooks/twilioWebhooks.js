@@ -351,15 +351,22 @@ async function handleVoiceInbound(req, res) {
                     // If ALL are on active calls, hold the caller with a
                     // redirect loop instead of timing out after 25s.
                     let allBusy = false;
+                    let busyIdentities = new Set();
                     try {
                         const busyResult = await dbConn.query(
-                            `SELECT DISTINCT to_number FROM calls
+                            `SELECT DISTINCT
+                                CASE WHEN to_number LIKE 'client:%' THEN to_number
+                                     WHEN from_number LIKE 'client:%' THEN from_number
+                                END AS client_number
+                             FROM calls
                              WHERE status IN ('ringing', 'in-progress')
                                AND is_final = false
-                               AND to_number LIKE 'client:%'`
+                               AND (to_number LIKE 'client:%' OR from_number LIKE 'client:%')`
                         );
-                        const busyIdentities = new Set(
-                            busyResult.rows.map(r => r.to_number.replace('client:', ''))
+                        busyIdentities = new Set(
+                            busyResult.rows
+                                .map(r => (r.client_number || '').replace('client:', ''))
+                                .filter(Boolean)
                         );
                         allBusy = allowedIdentities.length > 0 &&
                             allowedIdentities.every(id => busyIdentities.has(id));
@@ -424,10 +431,11 @@ async function handleVoiceInbound(req, res) {
     <Hangup />
 </Response>`;
                     } else {
-                        // At least one user is free → standard Dial
-                        console.log(`[${traceId}] Inbound: ${From} → Client([${allowedIdentities.join(',')}])`);
+                        // At least one user is free → dial only free users (exclude busy)
+                        const freeIdentities = allowedIdentities.filter(id => !busyIdentities.has(id));
+                        console.log(`[${traceId}] Inbound: ${From} → Client([${freeIdentities.join(',')}]) (busy: [${[...busyIdentities].join(',')}])`);
 
-                        const clientEndpoints = allowedIdentities.map(id =>
+                        const clientEndpoints = freeIdentities.map(id =>
                             `        <Client statusCallback="${statusCallbackUrl}"
                 statusCallbackEvent="initiated ringing answered completed"
                 statusCallbackMethod="POST">${id}</Client>`

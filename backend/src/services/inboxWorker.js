@@ -302,11 +302,11 @@ async function processVoiceEvent(payload, eventType, traceId) {
                 if (extracted && extracted.startsWith('sip:')) {
                     return process.env.OUTBOUND_CALLER_ID || '+16175006181';
                 }
-                // Replace client:user_xxx (WebRTC SoftPhone identity) with
-                // the To number for timeline grouping — the child leg will have the
-                // actual caller ID, and reconcileParentCall will fix from_number later
+                // Keep client:user_xxx identity so the busy-check query can find
+                // outbound calls; reconcileParentCall will overwrite with the
+                // actual caller ID when the child leg completes
                 if (extracted && extracted.startsWith('client:')) {
-                    return null; // Will be set from child leg during reconciliation
+                    return extracted;
                 }
                 return extracted;
             })(),
