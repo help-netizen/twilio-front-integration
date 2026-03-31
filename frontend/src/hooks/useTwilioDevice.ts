@@ -35,6 +35,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
     const durationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const connectedAtRef = useRef<number | null>(null);
     const deviceRef = useRef<Device | null>(null);
+    const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // ── Pending (queued) calls ref ─────────────────────────────────
     // We use a ref instead of state because the Twilio `incoming`
@@ -90,12 +91,16 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
     }, [syncPendingCount]);
 
     const resetToIdle = useCallback((delay: number) => {
-        setTimeout(() => {
+        if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+        resetTimerRef.current = setTimeout(() => {
+            resetTimerRef.current = null;
             // Don't reset to idle if a pending call was promoted
             if (pendingCallsRef.current.some(pc => pc.call.status() === 'pending')) {
                 promoteNextPending();
                 return;
             }
+            // A new incoming/outgoing call arrived while timer was pending — don't overwrite
+            if (busyRef.current) return;
             setCallState('idle');
             setCallDuration(0);
             setCallerInfo(null);
@@ -129,6 +134,12 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
                 // ── Incoming call handler (queue-aware) ────────────────────
                 dev.on('incoming', (call: Call) => {
                     const from = call.parameters.From || 'Unknown';
+
+                    // Cancel any pending resetToIdle from a previous call's disconnect
+                    if (resetTimerRef.current) {
+                        clearTimeout(resetTimerRef.current);
+                        resetTimerRef.current = null;
+                    }
 
                     if (busyRef.current) {
                         // Dispatcher is busy (on a call OR already ringing) → queue silently
@@ -189,7 +200,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
             } catch (err: any) { if (!cancelled) { setError(err.message || 'Failed to initialize SoftPhone'); } }
         }
         initDevice();
-        return () => { cancelled = true; stopDurationTimer(); if (deviceRef.current) { deviceRef.current.destroy(); deviceRef.current = null; } };
+        return () => { cancelled = true; stopDurationTimer(); if (resetTimerRef.current) clearTimeout(resetTimerRef.current); if (deviceRef.current) { deviceRef.current.destroy(); deviceRef.current = null; } };
     }, [attachCallHandlers, stopDurationTimer, resetToIdle, syncPendingCount]);
 
     // ── SSE listener: backend hold queue notifications ──────────────────
@@ -210,7 +221,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
 
     const acceptCall = useCallback(() => {
         if (!incomingCall) return; stopRingtone(); incomingCall.accept(); setActiveCall(incomingCall); setIncomingCall(null); setCallState('connected'); startDurationTimer(); busyRef.current = true;
-        incomingCall.on('disconnect', () => { setCallState('ended'); stopDurationTimer(); setActiveCall(null); setIsMuted(false); busyRef.current = false; resetToIdle(2000); });
+        // disconnect handler is already attached by the incoming listener — only add error
         incomingCall.on('error', (err) => { setError(err.message || 'Call error'); setCallState('failed'); stopDurationTimer(); setActiveCall(null); setIsMuted(false); busyRef.current = false; setTimeout(() => { setCallState('idle'); setCallDuration(0); setCallerInfo(null); setError(null); }, 3000); });
     }, [incomingCall, startDurationTimer, stopDurationTimer, resetToIdle]);
 
