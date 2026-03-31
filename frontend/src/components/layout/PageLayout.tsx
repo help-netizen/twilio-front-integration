@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
 // ─── PageLayout ───────────────────────────────────────────────────────────────
 // Universal page layout component that enforces the blanc design system pattern:

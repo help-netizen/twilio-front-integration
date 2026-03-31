@@ -9,7 +9,7 @@ import { EstimateEditorDialog } from '../estimates/EstimateEditorDialog';
 import { InvoiceEditorDialog } from '../invoices/InvoiceEditorDialog';
 import { EstimateDetailPanel } from '../estimates/EstimateDetailPanel';
 import { InvoiceDetailPanel } from '../invoices/InvoiceDetailPanel';
-import { fetchEstimateEvents, approveEstimate, declineEstimate, sendEstimate, deleteEstimate, linkJobToEstimate, convertEstimateToInvoice } from '../../services/estimatesApi';
+import { fetchEstimateEvents, approveEstimate, declineEstimate, sendEstimate, deleteEstimate, linkJobToEstimate } from '../../services/estimatesApi';
 import { fetchInvoiceEvents, recordPayment, voidInvoice, deleteInvoice } from '../../services/invoicesApi';
 import type { EstimateEvent } from '../../services/estimatesApi';
 import type { InvoiceEvent, RecordPaymentData } from '../../services/invoicesApi';

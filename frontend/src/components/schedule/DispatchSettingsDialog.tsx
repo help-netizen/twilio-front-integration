@@ -40,8 +40,6 @@ const POPULAR_TIMEZONES = [
 ];
 
 const SLOT_DURATIONS = [15, 30, 45, 60, 90, 120];
-const BUFFER_OPTIONS = [0, 15, 30, 60];
-
 const DAY_LABELS: { value: number; label: string; short: string }[] = [
     { value: 0, label: 'Sunday', short: 'Sun' },
     { value: 1, label: 'Monday', short: 'Mon' },

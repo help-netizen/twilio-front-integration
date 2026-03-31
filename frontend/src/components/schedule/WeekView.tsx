@@ -198,7 +198,7 @@ export const WeekView: React.FC<WeekViewProps> = ({ currentDate, items, settings
                 </div>
 
                 {/* Day columns */}
-                {days.map((day, i) => {
+                {days.map((_day, i) => {
                     const key = dayKeys[i];
                     const dayItems = itemsByDay.get(key) || [];
                     const isToday = isTodayCol(key);
@@ -303,11 +303,6 @@ export const WeekView: React.FC<WeekViewProps> = ({ currentDate, items, settings
                                         }
                                     }
                                 }
-
-                                const visibleLanes = Math.min(
-                                    Math.max(...layoutItems.map(li => (lanes.get(li.key)?.totalLanes ?? 1)), 1),
-                                    MAX_VISIBLE_LANES,
-                                );
 
                                 return (
                                     <>

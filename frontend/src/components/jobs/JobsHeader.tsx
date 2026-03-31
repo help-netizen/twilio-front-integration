@@ -143,11 +143,7 @@ export function JobsFieldsButton({
 export function JobsHeader({
     exporting,
     filteredJobsCount,
-    visibleFields,
-    allColumns,
-    allFieldKeys,
     onExportCSV,
-    onSaveFields,
 }: JobsHeaderProps) {
     return (
         <div className="flex items-center justify-between w-full">

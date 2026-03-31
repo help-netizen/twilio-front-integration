@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Schedule Redesign Concept</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./schedule-redesign.css">
+</head>
+<body>
+    <div class="page-glow page-glow-one"></div>
+    <div class="page-glow page-glow-two"></div>
+
+    <main class="workspace-shell">
+        <section class="surface-card toolbar-shell">
+            <div class="toolbar-row">
+                <div class="title-block">
+                    <p class="eyebrow">Dispatch workspace</p>
+                    <div class="title-line">
+                        <h1>Schedule</h1>
+                        <span class="live-pill">Live board</span>
+                    </div>
+                    <p class="supporting-copy">
+                        Operations calendar for jobs, leads, and tasks with a denser,
+                        calmer B2B layout and clearer day-to-day scanning.
+                    </p>
+                </div>
+
+                <div class="meta-strip">
+                    <span class="meta-chip">America/New_York</span>
+                    <span class="meta-chip">Workday 08:00 to 18:00</span>
+                    <span class="meta-chip">60 minute slots</span>
+                </div>
+            </div>
+
+            <div class="toolbar-row controls-row">
+                <div class="segmented tabs">
+                    <button type="button" class="tab">Day</button>
+                    <button type="button" class="tab is-active">Week</button>
+                    <button type="button" class="tab">Month</button>
+                    <button type="button" class="tab">Timeline</button>
+                    <button type="button" class="tab">TL Week</button>
+                </div>
+
+                <div class="nav-cluster">
+                    <button type="button" class="icon-button" aria-label="Previous range">&lt;</button>
+                    <button type="button" class="ghost-button">Today</button>
+                    <button type="button" class="icon-button" aria-label="Next range">&gt;</button>
+                    <div class="range-pill">Mar 29 - Apr 4, 2026</div>
+                </div>
+            </div>
+
+            <div class="toolbar-row filters-row">
+                <label class="search-field">
+                    <span class="field-label">Search</span>
+                    <input type="text" value="Customer, address, phone, tag" aria-label="Search schedule">
+                </label>
+
+                <button type="button" class="filter-control">
+                    <span class="field-label">Entity type</span>
+                    <span class="field-value">All types</span>
+                </button>
+
+                <button type="button" class="filter-control">
+                    <span class="field-label">Assignment</span>
+                    <span class="field-value">Mixed crews</span>
+                </button>
+
+                <button type="button" class="filter-control">
+                    <span class="field-label">Status</span>
+                    <span class="field-value">Open work</span>
+                </button>
+
+                <div class="legend-group">
+                    <span class="legend-chip job">Job</span>
+                    <span class="legend-chip lead">Lead</span>
+                    <span class="legend-chip task">Task</span>
+                </div>
+            </div>
+        </section>
+
+        <div class="page-grid">
+            <div class="left-stack">
+                <section class="surface-card calendar-shell">
+                    <div class="calendar-frame">
+                        <div class="calendar-head">
+                            <div class="corner-cell">
+                                <span class="field-label">View</span>
+                                <strong>Week</strong>
+                                <span class="field-hint">7 day dispatch board</span>
+                            </div>
+
+                            <div class="day-head">
+                                <span class="day-name">Sun</span>
+                                <div class="day-number">29</div>
+                                <span class="day-summary">Light queue</span>
+                            </div>
+
+                            <div class="day-head today">
+                                <span class="day-name">Mon</span>
+                                <div class="day-number">30</div>
+                                <span class="day-summary">Today</span>
+                            </div>
+
+                            <div class="day-head">
+                                <span class="day-name">Tue</span>
+                                <div class="day-number">31</div>
+                                <span class="day-summary">Crew heavy</span>
+                            </div>
+
+                            <div class="day-head">
+                                <span class="day-name">Wed</span>
+                                <div class="day-number">1</div>
+                                <span class="day-summary">Field quotes</span>
+                            </div>
+
+                            <div class="day-head">
+                                <span class="day-name">Thu</span>
+                                <div class="day-number">2</div>
+                                <span class="day-summary">Install block</span>
+                            </div>
+
+                            <div class="day-head">
+                                <span class="day-name">Fri</span>
+                                <div class="day-number">3</div>
+                                <span class="day-summary">Follow ups</span>
+                            </div>
+
+                            <div class="day-head">
+                                <span class="day-name">Sat</span>
+                                <div class="day-number">4</div>
+                                <span class="day-summary">On call</span>
+                            </div>
+                        </div>
+
+                        <div class="calendar-body">
+                            <div class="time-axis">
+                                <div class="time-label">08:00</div>
+                                <div class="time-label">09:00</div>
+                                <div class="time-label">10:00</div>
+                                <div class="time-label">11:00</div>
+                                <div class="time-label">12:00</div>
+                                <div class="time-label">13:00</div>
+                                <div class="time-label">14:00</div>
+                                <div class="time-label">15:00</div>
+                                <div class="time-label">16:00</div>
+                                <div class="time-label">17:00</div>
+                            </div>
+
+                            <div class="day-lane"></div>
+
+                            <div class="day-lane today">
+                                <div class="past-wash"></div>
+                                <div class="now-line"></div>
+                                <div class="now-stamp">Now 11:18</div>
+
+                                <article class="schedule-item job" style="--start: 0.75; --span: 1.50; --left: 8px; --width: calc(100% - 16px);">
+                                    <div class="item-top">
+                                        <span class="entity-badge">Job</span>
+                                        <span class="state-badge submitted">Submitted</span>
+                                    </div>
+                                    <h3 class="item-title">HVAC spring check</h3>
+                                    <p class="item-time">08:45 - 10:15</p>
+                                    <p class="item-subtitle">Burke Residence</p>
+                                    <div class="item-meta">
+                                        <span>JT + 1</span>
+                                        <span>Queens</span>
+                                    </div>
+                                </article>
+
+                                <article class="schedule-item task" style="--start: 2.35; --span: 0.95; --left: 8px; --width: calc(100% - 16px);">
+                                    <div class="item-top">
+                                        <span class="entity-badge">Task</span>
+                                        <span class="state-badge in-progress">In progress</span>
+                                    </div>
+                                    <h3 class="item-title">Parts pickup</h3>
+                                    <p class="item-time">10:20 - 11:15</p>
+                                    <p class="item-subtitle">Condenser relay and filters</p>
+                                    <div class="item-meta">
+                                        <span>Office runner</span>
+                                        <span>West Depot</span>
+                                    </div>
+                                </article>
+
+                                <article class="schedule-item lead" style="--start: 5.05; --span: 1.15; --left: 8px; --width: calc(100% - 16px);">
+                                    <div class="item-top">
+                                        <span class="entity-badge">Lead</span>
+                                        <span class="state-badge qualified">Qualified</span>
+                                    </div>
+                                    <h3 class="item-title">Roof leak estimate</h3>
+                                    <p class="item-time">13:05 - 14:10</p>
+                                    <p class="item-subtitle">Morgan Family</p>
+                                    <div class="item-meta">
+                                        <span>Unassigned</span>
+                                        <span>Bronx</span>
+                                    </div>
+                                </article>
+                            </div>
+
+                            <div class="day-lane">
+                                <article class="schedule-item job" style="--start: 1.00; --span: 3.00; --left: 8px; --width: calc(50% - 12px);">
+                                    <div class="item-top">
+                                        <span class="entity-badge">Job</span>
+                                        <span class="state-badge scheduled">Scheduled</span>
+                                    </div>
+                                    <h3 class="item-title">Water heater replacement</h3>
+                                    <p class="item-time">09:00 - 12:00</p>
+                                    <p class="item-subtitle">Addison Apartments</p>
+                                    <div class="item-meta">
+                                        <span>Malik + 2</span>
+                                        <span>Brooklyn</span>
+                                    </div>
+                                </article>
+
+                                <article class="schedule-item task" style="--start: 1.50; --span: 1.10; --left: calc(50% + 4px); --width: calc(50% - 12px);">
+                                    <div class="item-top">
+                                        <span class="entity-badge">Task</span>
+                                        <span class="state-badge new">New</span>
+                                    </div>
+                                    <h3 class="item-title">Permit docs review</h3>
+                                    <p class="item-time">09:30 - 10:35</p>
+                                    <p class="item-subtitle">City filing packet</p>
+                                    <div class="item-meta">
+                                        <span>Back office</span>
+                                        <span>Remote</span>
+                                    </div>
+                                </article>
+
+                                <article class="schedule-item job" style="--start: 7.00; --span: 1.55; --left: 8px; --width: calc(100% - 16px);">
+                                    <div class="item-top">
+                                        <span class="entity-badge">Job</span>
+                                        <span class="state-badge en-route">En route</span>
+                                    </div>
+                                    <h3 class="item-title">Emergency no-cool</h3>
+                                    <p class="item-time">15:00 - 16:33</p>
+                                    <p class="item-subtitle">Harbor Pharmacy</p>
+                                    <div class="item-meta">
+                                        <span>S. Patel</span>
+                                        <span>Lower East</span>
+                                    </div>
+                                </article>
+                            </div>
+
+                            <div class="day-lane">
+                                <article class="schedule-item lead" style="--start: 0.50; --span: 0.80; --left: 8px; --width: calc(100% - 16px);">
+                                    <div class="item-top">
+                                        <span class="entity-badge">Lead</span>
+                                        <span class="state-badge contacted">Contacted</span>
+                                    </div>
+                                    <h3 class="item-title">Commercial quote callback</h3>
+                                    <p class="item-time">08:30 - 09:18</p>
+                                    <p class="item-subtitle">Fulton Storage</p>
+                                    <div class="item-meta">
+                                        <span>Sales desk</span>
+                                        <span>Phone</span>
+                                    </div>
+                                </article>
+
+                                <article class="schedule-item job" style="--start: 3.10; --span: 2.00; --left: 8px; --width: calc(100% - 16px);">
+                                    <div class="item-top">
+                                        <span class="entity-badge">Job</span>
+                                        <span class="state-badge scheduled">Scheduled</span>
+                                    </div>
+                                    <h3 class="item-title">Duct inspection</h3>
+                                    <p class="item-time">11:06 - 13:05</p>
+                                    <p class="item-subtitle">Wexler Lofts</p>
+                                    <div class="item-meta">
+                                        <span>JT</span>
+                                        <span>Long Island City</span>
+                                    </div>
+                                </article>
+                            </div>
+
+                            <div class="day-lane">
+                                <article class="schedule-item job" style="--start: 2.00; --span: 2.60; --left: 8px; --width: calc(100% - 16px);">
+                                    <div class="item-top">
+                                        <span class="entity-badge">Job</span>
+                                        <span class="state-badge in-progress">In progress</span>
+                                    </div>
+                                    <h3 class="item-title">Panel and thermostat upgrade</h3>
+                                    <p class="item-time">10:00 - 12:36</p>
+                                    <p class="item-subtitle">Hartwell Dental</p>
+                                    <div class="item-meta">
+                                        <span>Malik + 1</span>
+                                        <span>Midtown</span>
+                                    </div>
+                                </article>
+
+                                <article class="schedule-item task" style="--start: 6.45; --span: 0.90; --left: 8px; --width: calc(100% - 16px);">
+                                    <div class="item-top">
+                                        <span class="entity-badge">Task</span>
+                                        <span class="state-badge new">New</span>
+                                    </div>
+                                    <h3 class="item-title">Collect signed invoice</h3>
+                                    <p class="item-time">14:27 - 15:21</p>
+                                    <p class="item-subtitle">Post install follow up</p>
+                                    <div class="item-meta">
+                                        <span>Office queue</span>
+                                        <span>Remote</span>
+                                    </div>
+                                </article>
+                            </div>
+
+                            <div class="day-lane">
+                                <article class="schedule-item lead" style="--start: 1.05; --span: 0.95; --left: 8px; --width: calc(100% - 16px);">
+                                    <div class="item-top">
+                                        <span class="entity-badge">Lead</span>
+                                        <span class="state-badge qualified">Qualified</span>
+                                    </div>
+                                    <h3 class="item-title">Maintenance bundle consult</h3>
+                                    <p class="item-time">09:03 - 10:00</p>
+                                    <p class="item-subtitle">Pier 19 Retail</p>
+                                    <div class="item-meta">
+                                        <span>Sales handoff</span>
+                                        <span>Seaport</span>
+                                    </div>
+                                </article>
+
+                                <article class="schedule-item job" style="--start: 4.05; --span: 2.05; --left: 8px; --width: calc(100% - 16px);">
+                                    <div class="item-top">
+                                        <span class="entity-badge">Job</span>
+                                        <span class="state-badge completed">Completed</span>
+                                    </div>
+                                    <h3 class="item-title">Warehouse humidity issue</h3>
+                                    <p class="item-time">12:03 - 14:06</p>
+                                    <p class="item-subtitle">Red Hook Storage</p>
+                                    <div class="item-meta">
+                                        <span>S. Patel</span>
+                                        <span>Red Hook</span>
+                                    </div>
+                                </article>
+                            </div>
+
+                            <div class="day-lane">
+                                <article class="schedule-item job" style="--start: 2.40; --span: 1.45; --left: 8px; --width: calc(100% - 16px);">
+                                    <div class="item-top">
+                                        <span class="entity-badge">Job</span>
+                                        <span class="state-badge scheduled">Scheduled</span>
+                                    </div>
+                                    <h3 class="item-title">Weekend on-call inspection</h3>
+                                    <p class="item-time">10:24 - 11:51</p>
+                                    <p class="item-subtitle">Bell Harbor Bakery</p>
+                                    <div class="item-meta">
+                                        <span>On-call tech</span>
+                                        <span>Astoria</span>
+                                    </div>
+                                </article>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="surface-card unscheduled-shell">
+                    <div class="panel-head">
+                        <div>
+                            <p class="eyebrow">Backlog</p>
+                            <h2>Unscheduled</h2>
+                        </div>
+                        <div class="panel-summary">
+                            <span class="count-pill">4 items</span>
+                            <span class="field-hint">Expanded for drag-and-drop triage</span>
+                        </div>
+                    </div>
+
+                    <div class="unscheduled-list">
+                        <article class="unscheduled-card lead">
+                            <div class="item-top">
+                                <span class="entity-badge">Lead</span>
+                                <span class="state-badge contacted">Contacted</span>
+                            </div>
+                            <h3 class="item-title">Basement flooding estimate</h3>
+                            <p class="item-subtitle">Avery Household</p>
+                            <div class="item-meta">
+                                <span>Needs slot</span>
+                                <span>Queens</span>
+                            </div>
+                        </article>
+
+                        <article class="unscheduled-card task">
+                            <div class="item-top">
+                                <span class="entity-badge">Task</span>
+                                <span class="state-badge new">New</span>
+                            </div>
+                            <h3 class="item-title">Confirm parts ETA</h3>
+                            <p class="item-subtitle">Vendor callback pending</p>
+                            <div class="item-meta">
+                                <span>Dispatch desk</span>
+                                <span>Remote</span>
+                            </div>
+                        </article>
+
+                        <article class="unscheduled-card job">
+                            <div class="item-top">
+                                <span class="entity-badge">Job</span>
+                                <span class="state-badge rescheduled">Rescheduled</span>
+                            </div>
+                            <h3 class="item-title">Boiler diagnostic return visit</h3>
+                            <p class="item-subtitle">Waiting on tenant access</p>
+                            <div class="item-meta">
+                                <span>Malik</span>
+                                <span>Harlem</span>
+                            </div>
+                        </article>
+
+                        <article class="unscheduled-card job">
+                            <div class="item-top">
+                                <span class="entity-badge">Job</span>
+                                <span class="state-badge submitted">Submitted</span>
+                            </div>
+                            <h3 class="item-title">After-hours mini split repair</h3>
+                            <p class="item-subtitle">Priority customer request</p>
+                            <div class="item-meta">
+                                <span>Unassigned</span>
+                                <span>Lower Manhattan</span>
+                            </div>
+                        </article>
+                    </div>
+                </section>
+            </div>
+
+            <aside class="surface-card sidebar-shell">
+                <div class="sidebar-header">
+                    <div class="sidebar-kicker">
+                        <span class="entity-badge job">Job</span>
+                        <span class="state-badge scheduled">Scheduled</span>
+                    </div>
+                    <h2>Water heater replacement</h2>
+                    <p class="sidebar-subtitle">Addison Apartments - Unit 4B</p>
+                </div>
+
+                <div class="sidebar-scroll">
+                    <section class="detail-section">
+                        <p class="section-label">Scheduled</p>
+                        <div class="section-value">Tuesday, Mar 31</div>
+                        <div class="section-caption">09:00 - 12:00 local time</div>
+                        <div class="schedule-rail">
+                            <span class="rail-segment rail-start"></span>
+                            <span class="rail-segment rail-active"></span>
+                            <span class="rail-segment rail-end"></span>
+                        </div>
+                    </section>
+
+                    <section class="detail-section">
+                        <p class="section-label">Contact</p>
+                        <div class="info-row">
+                            <span class="info-key">Customer</span>
+                            <span class="info-value">Marcus Addison</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-key">Phone</span>
+                            <span class="info-value">(917) 555-0182</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-key">Email</span>
+                            <span class="info-value">marcus@addisonapts.com</span>
+                        </div>
+                    </section>
+
+                    <section class="detail-section">
+                        <p class="section-label">Location</p>
+                        <div class="section-value">241 Union Ave, Brooklyn, NY</div>
+                        <div class="section-caption">Access note: service elevator after 8:30</div>
+                    </section>
+
+                    <section class="detail-section">
+                        <p class="section-label">Assigned crew</p>
+                        <div class="pill-row">
+                            <span class="assignee-pill">Malik R.</span>
+                            <span class="assignee-pill">N. Cruz</span>
+                            <span class="assignee-pill">J. Tao</span>
+                        </div>
+                    </section>
+
+                    <section class="detail-section">
+                        <p class="section-label">Tags</p>
+                        <div class="pill-row">
+                            <span class="tag-pill">Install</span>
+                            <span class="tag-pill">High value</span>
+                            <span class="tag-pill">Tenant occupied</span>
+                        </div>
+                    </section>
+
+                    <section class="detail-section">
+                        <p class="section-label">Actions</p>
+                        <div class="sidebar-actions">
+                            <button type="button" class="button-primary">Open job detail</button>
+                            <button type="button" class="button-secondary">Open in Pulse</button>
+                        </div>
+                    </section>
+                </div>
+            </aside>
+        </div>
+    </main>
+</body>
+</html>

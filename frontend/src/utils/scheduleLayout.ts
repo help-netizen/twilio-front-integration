@@ -18,13 +18,6 @@ export interface LayoutResult {
 }
 
 /**
- * Two items overlap if their time intervals intersect (exclusive endpoints).
- */
-function itemsOverlap(a: LayoutItem, b: LayoutItem): boolean {
-  return a.startMin < b.endMin && b.startMin < a.endMin;
-}
-
-/**
  * Assign lanes to overlapping items using greedy interval scheduling.
  *
  * Algorithm:
