@@ -1,9 +1,10 @@
 import { useRef, useEffect, useMemo } from 'react';
 import type { CallData } from '../call-list-item';
 import { PulseCallListItem } from './PulseCallListItem';
-import type { SmsMessage, TimelineItem } from '../../types/pulse';
+import type { SmsMessage, TimelineItem, FinancialEvent } from '../../types/pulse';
 import { DateSeparator } from './DateSeparator';
 import { SmsListItem } from './SmsListItem';
+import { FinancialEventListItem } from './FinancialEventListItem';
 import { useAuth } from '../../auth/AuthProvider';
 
 interface PulseTimelineProps {
@@ -11,6 +12,7 @@ interface PulseTimelineProps {
     messages: SmsMessage[];
     loading: boolean;
     timelineKey?: string | number;
+    financialEvents?: FinancialEvent[];
 }
 
 function toTZDateKey(date: Date, tz: string): string {
@@ -27,7 +29,7 @@ function formatDateSep(date: Date, tz: string): string {
     return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: tz });
 }
 
-export function PulseTimeline({ calls, messages, loading, timelineKey }: PulseTimelineProps) {
+export function PulseTimeline({ calls, messages, loading, timelineKey, financialEvents = [] }: PulseTimelineProps) {
     const { company } = useAuth();
     const companyTz = company?.timezone || 'America/New_York';
     const endRef = useRef<HTMLDivElement>(null);
@@ -51,6 +53,15 @@ export function PulseTimeline({ calls, messages, loading, timelineKey }: PulseTi
                 type: 'sms',
                 timestamp: new Date(msg.date_created_remote || msg.created_at),
                 data: msg,
+            });
+        }
+
+        // Add financial events
+        for (const evt of financialEvents) {
+            items.push({
+                type: 'financial',
+                timestamp: new Date(evt.occurred_at),
+                data: evt,
             });
         }
 
@@ -115,6 +126,12 @@ export function PulseTimeline({ calls, messages, loading, timelineKey }: PulseTi
             rendered.push(
                 <div key={`call-${(item.data as CallData).id}`} style={{ padding: '4px 16px' }}>
                     <PulseCallListItem call={item.data as CallData} />
+                </div>
+            );
+        } else if (item.type === 'financial') {
+            rendered.push(
+                <div key={`fin-${(item.data as FinancialEvent).id}`} style={{ padding: '4px 16px' }}>
+                    <FinancialEventListItem event={item.data as FinancialEvent} />
                 </div>
             );
         } else {

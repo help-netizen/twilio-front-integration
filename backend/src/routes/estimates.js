@@ -166,9 +166,20 @@ router.post('/:id/decline', async (req, res) => {
     }
 });
 
-// POST /api/estimates/:id/convert — Convert estimate to invoice (stub — Sprint 4)
-router.post('/:id/convert', (req, res) => {
-    res.status(501).json({ ok: false, error: { code: 'NOT_IMPLEMENTED', message: 'Convert to invoice is planned for Sprint 4' } });
+// POST /api/estimates/:id/convert — Convert accepted estimate to invoice
+router.post('/:id/convert', async (req, res) => {
+    try {
+        const companyId = req.companyId;
+        const userId = req.user?.sub || req.userId;
+        const { id } = req.params;
+
+        const result = await estimatesService.convertToInvoice(companyId, userId, id);
+        res.status(201).json({ ok: true, data: result });
+    } catch (err) {
+        console.error('[Estimates] POST /:id/convert error:', err.message);
+        const status = err.httpStatus || 500;
+        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+    }
 });
 
 // POST /api/estimates/:id/link-job — Link estimate to job

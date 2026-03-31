@@ -4,18 +4,15 @@ import { Badge } from '../ui/badge';
 import { Separator } from '../ui/separator';
 import { Dialog, DialogContent } from '../ui/dialog';
 import { Plus, Loader2 } from 'lucide-react';
-import { useJobFinancials } from '../../hooks/useJobFinancials';
+import { useLeadFinancials } from '../../hooks/useLeadFinancials';
 import { EstimateEditorDialog } from '../estimates/EstimateEditorDialog';
 import { InvoiceEditorDialog } from '../invoices/InvoiceEditorDialog';
 import { EstimateDetailPanel } from '../estimates/EstimateDetailPanel';
 import { InvoiceDetailPanel } from '../invoices/InvoiceDetailPanel';
-import { fetchEstimateEvents } from '../../services/estimatesApi';
-import { fetchInvoiceEvents } from '../../services/invoicesApi';
+import { fetchEstimateEvents, approveEstimate, declineEstimate, sendEstimate, deleteEstimate, linkJobToEstimate, convertEstimateToInvoice } from '../../services/estimatesApi';
+import { fetchInvoiceEvents, recordPayment, voidInvoice, deleteInvoice } from '../../services/invoicesApi';
 import type { EstimateEvent } from '../../services/estimatesApi';
 import type { InvoiceEvent, RecordPaymentData } from '../../services/invoicesApi';
-import { recordPayment, voidInvoice } from '../../services/invoicesApi';
-import { approveEstimate, declineEstimate, sendEstimate, deleteEstimate, linkJobToEstimate } from '../../services/estimatesApi';
-import { deleteInvoice } from '../../services/invoicesApi';
 import { toast } from 'sonner';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -36,17 +33,17 @@ function money(v: string | number | null | undefined): string {
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
-interface Props { jobId: number; }
+interface Props { leadId: number; }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function JobFinancialsTab({ jobId }: Props) {
+export function LeadFinancialsTab({ leadId }: Props) {
     const {
         estimates, invoices, loading,
         selectedEstimate, selectedInvoice,
         setSelectedEstimate, setSelectedInvoice,
         refresh, handleCreateEstimate, handleCreateInvoice,
-    } = useJobFinancials(jobId);
+    } = useLeadFinancials(leadId);
 
     const [showEstimateEditor, setShowEstimateEditor] = useState(false);
     const [showInvoiceEditor, setShowInvoiceEditor] = useState(false);
@@ -83,7 +80,7 @@ export function JobFinancialsTab({ jobId }: Props) {
     const totalPaid = invoices.reduce((s, i) => s + Number(i.amount_paid || 0), 0);
 
     return (
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="space-y-4">
             {/* Summary cards */}
             <div className="grid grid-cols-3 gap-2">
                 <div className="bg-muted/50 rounded-md p-2 text-center">
@@ -100,10 +97,8 @@ export function JobFinancialsTab({ jobId }: Props) {
                 </div>
             </div>
 
-            <Separator />
-
             {loading && (
-                <div className="flex items-center justify-center py-4 text-muted-foreground">
+                <div className="flex items-center justify-center py-2 text-muted-foreground">
                     <Loader2 className="size-4 animate-spin mr-2" />Loading...
                 </div>
             )}
@@ -173,7 +168,7 @@ export function JobFinancialsTab({ jobId }: Props) {
                 open={showEstimateEditor}
                 onOpenChange={setShowEstimateEditor}
                 estimate={null}
-                defaultJobId={jobId}
+                defaultLeadId={leadId}
                 onSave={async (data) => {
                     await handleCreateEstimate(data);
                     setShowEstimateEditor(false);
@@ -185,7 +180,7 @@ export function JobFinancialsTab({ jobId }: Props) {
                 open={showInvoiceEditor}
                 onOpenChange={setShowInvoiceEditor}
                 invoice={null}
-                defaultJobId={jobId}
+                defaultLeadId={leadId}
                 onSave={async (data) => {
                     await handleCreateInvoice(data);
                     setShowInvoiceEditor(false);

@@ -1,6 +1,6 @@
 /**
- * useJobFinancials
- * Fetches estimates and invoices linked to a specific job.
+ * useLeadFinancials
+ * Fetches estimates and invoices linked to a specific lead.
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -8,7 +8,7 @@ import { fetchEstimates, createEstimate, type Estimate, type EstimateCreateData 
 import { fetchInvoices, createInvoice, type Invoice, type InvoiceCreateData } from '../services/invoicesApi';
 import { toast } from 'sonner';
 
-interface UseJobFinancialsReturn {
+interface UseLeadFinancialsReturn {
     estimates: Estimate[];
     invoices: Invoice[];
     loading: boolean;
@@ -21,7 +21,7 @@ interface UseJobFinancialsReturn {
     handleCreateInvoice: (data: InvoiceCreateData) => Promise<void>;
 }
 
-export function useJobFinancials(jobId: number): UseJobFinancialsReturn {
+export function useLeadFinancials(leadId: number): UseLeadFinancialsReturn {
     const [estimates, setEstimates] = useState<Estimate[]>([]);
     const [invoices, setInvoices] = useState<Invoice[]>([]);
     const [loading, setLoading] = useState(false);
@@ -32,12 +32,12 @@ export function useJobFinancials(jobId: number): UseJobFinancialsReturn {
     const refresh = useCallback(() => setRev(r => r + 1), []);
 
     useEffect(() => {
-        if (!jobId) return;
+        if (!leadId) return;
         let cancelled = false;
         setLoading(true);
         Promise.all([
-            fetchEstimates({ job_id: jobId, limit: 100 }),
-            fetchInvoices({ job_id: jobId, limit: 100 }),
+            fetchEstimates({ lead_id: leadId, limit: 100 }),
+            fetchInvoices({ lead_id: leadId, limit: 100 }),
         ])
             .then(([eRes, iRes]) => {
                 if (cancelled) return;
@@ -52,17 +52,17 @@ export function useJobFinancials(jobId: number): UseJobFinancialsReturn {
                 if (!cancelled) setLoading(false);
             });
         return () => { cancelled = true; };
-    }, [jobId, rev]);
+    }, [leadId, rev]);
 
     const handleCreateEstimate = useCallback(async (data: EstimateCreateData) => {
-        await createEstimate({ ...data, job_id: jobId });
+        await createEstimate({ ...data, lead_id: leadId });
         refresh();
-    }, [jobId, refresh]);
+    }, [leadId, refresh]);
 
     const handleCreateInvoice = useCallback(async (data: InvoiceCreateData) => {
-        await createInvoice({ ...data, job_id: jobId });
+        await createInvoice({ ...data, lead_id: leadId });
         refresh();
-    }, [jobId, refresh]);
+    }, [leadId, refresh]);
 
     return {
         estimates,

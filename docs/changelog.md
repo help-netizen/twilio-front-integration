@@ -4,6 +4,51 @@
 
 ---
 
+## 2026-03-30
+
+### PF100 Sprints 3–5 — Core Business Suite Integration (COMPLETED)
+
+**Nav cleanup:**
+- `appLayoutNavigation.tsx` — removed Estimates and Invoices from top nav tabs (now accessible only inside Job/Lead detail panels)
+
+**S3-T1 — Lead Detail: Estimates & Invoices tab**
+- `useLeadFinancials.ts` (new) — fetches estimates + invoices by `lead_id`; exposes `selectedEstimate`, `selectedInvoice`, `refresh()`, `handleCreateEstimate()`, `handleCreateInvoice()`
+- `LeadFinancialsTab.tsx` (new) — summary cards (Estimated/Invoiced/Paid), compact rows with status badges, `+New` buttons, opens `EstimateDetailPanel`/`InvoiceDetailPanel` in Dialog wrappers
+- `LeadDetailPanel.tsx` — converted to tabbed layout: "Details" + "Estimates & Invoices"; tab resets on lead change
+
+**S4-T1 — Estimate → Invoice conversion**
+- `estimatesService.js` — `convertToInvoice(companyId, userId, id)`: validates `status === 'accepted'` (400), checks idempotency via `invoice_id` (409), copies all line items, logs events on both documents, returns full invoice via `invoicesService.getInvoice()`
+- `estimates.js` route — `POST /:id/convert` implements the 501-stub with real handler (201 + full invoice)
+- `estimatesApi.ts` — `convertEstimateToInvoice(id)` API function
+- `EstimateDetailPanel.tsx` — "Create Invoice" button visible only when `status === 'accepted'`; disables during conversion; shows toast on success/error
+
+**S4-T2 — Invoice → Transactions link**
+- `InvoiceDetailPanel.tsx` — loads `fetchInvoicePayments(invoice.id)` via `useEffect`, renders "Payments" section with each transaction row (date, amount, method)
+
+**S5-T1 — Replace `window.prompt` with RecordPaymentDialog**
+- `InvoiceDetailPanel.tsx` — removed `window.prompt` for recording payments; integrated existing `RecordPaymentDialog` component with `defaultInvoiceId` pre-fill; added `handleRecordPaymentSave` adapter function
+
+**S3-T3/S4-T3 — Financial events in Pulse Timeline**
+- `pulse.js` `buildTimeline()` — additive: queries `estimates` + `invoices` for contact, maps to typed `FinancialEvent` objects (`estimate_created`, `invoice_created`, `invoice_partial_payment`, `invoice_paid`); company-isolated; non-blocking (errors caught + logged)
+- `pulse.ts` types — added `FinancialEvent` interface, updated `TimelineItemType` union, `TimelineItem.data` union, `PulseTimelineResponse.financial_events`
+- `FinancialEventListItem.tsx` (new) — renders event row: icon by type, label, reference, status badge, amount, date
+- `PulseTimeline.tsx` — added `financialEvents?: FinancialEvent[]` prop, renders `FinancialEventListItem` in chronological timeline
+- `usePulsePage.ts` — extracts `financial_events` from `timelineData`, exposes as `financialEvents`
+- `PulsePage.tsx` — passes `financialEvents={p.financialEvents}` to `<PulseTimeline>`
+
+**Job Financials Tab (from plan):**
+- `useJobFinancials.ts` (new) — mirror of `useLeadFinancials` using `job_id` filter
+- `JobFinancialsTab.tsx` (new) — mirror of `LeadFinancialsTab` using `useJobFinancials(jobId)`
+- `JobDetailPanel.tsx` — right column converted to Tabs: "Details & Notes" + "Estimates & Invoices"
+- `EstimateEditorDialog.tsx` — added `defaultJobId?: number` and `defaultLeadId?: number` props
+- `InvoiceEditorDialog.tsx` — same as above
+
+**Tests (new):**
+- `tests/estimatesConvert.test.js` — 7 unit tests for `convertToInvoice()` (happy path, 404/400/409 errors, company isolation, empty items)
+- `tests/pulseFinancialEvents.test.js` — 9 unit tests for financial event type classification and event shape mapping
+
+---
+
 ## 2026-03-29
 
 ### PF100 Sprint 2 — Schedule/Dispatcher MVP (COMPLETED)

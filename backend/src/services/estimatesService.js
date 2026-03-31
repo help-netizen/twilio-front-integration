@@ -283,10 +283,73 @@ async function linkJob(companyId, id, jobId) {
 }
 
 /**
- * Copy estimate items to a new invoice (Sprint 4 — not yet implemented).
+ * Convert an accepted estimate to a new invoice, copying all line items.
+ */
+async function convertToInvoice(companyId, userId, id) {
+    const estimate = await estimatesQueries.getEstimateById(companyId, id);
+    if (!estimate) {
+        throw new EstimatesServiceError('NOT_FOUND', `Estimate ${id} not found`, 404);
+    }
+
+    if (estimate.status !== 'accepted') {
+        throw new EstimatesServiceError(
+            'INVALID_STATUS',
+            `Estimate must be accepted before converting (current status: '${estimate.status}')`,
+            400
+        );
+    }
+
+    if (estimate.invoice_id) {
+        throw new EstimatesServiceError(
+            'ALREADY_CONVERTED',
+            'Invoice already exists for this estimate',
+            409
+        );
+    }
+
+    const invoicesQueries = require('../db/invoicesQueries');
+
+    const invoice = await invoicesQueries.createInvoice(companyId, {
+        contact_id: estimate.contact_id,
+        lead_id: estimate.lead_id,
+        job_id: estimate.job_id,
+        estimate_id: estimate.id,
+        title: estimate.title,
+        notes: estimate.notes,
+        internal_note: estimate.internal_note,
+        tax_rate: estimate.tax_rate,
+        discount_amount: estimate.discount_amount,
+        currency: estimate.currency,
+        created_by: userId,
+    });
+
+    const items = await estimatesQueries.getEstimateItems(id);
+    for (const item of items) {
+        await invoicesQueries.addInvoiceItem(invoice.id, {
+            name: item.name,
+            description: item.description,
+            quantity: item.quantity,
+            unit: item.unit,
+            unit_price: item.unit_price,
+            amount: item.amount,
+            taxable: item.taxable,
+            sort_order: item.sort_order,
+        });
+    }
+    await invoicesQueries.recalculateInvoiceTotals(invoice.id);
+    await invoicesQueries.createEvent(invoice.id, 'created_from_estimate', 'user', userId, { estimate_id: estimate.id });
+
+    await estimatesQueries.createEvent(id, 'converted_to_invoice', 'user', userId, { invoice_id: invoice.id });
+
+    const invoicesService = require('./invoicesService');
+    return invoicesService.getInvoice(companyId, invoice.id);
+}
+
+/**
+ * Copy estimate items to a new invoice (Sprint 4 — alias kept for compat).
  */
 async function copyToInvoice(companyId, userId, id) {
-    throw new EstimatesServiceError('NOT_IMPLEMENTED', 'Copy to invoice is planned for Sprint 4', 501);
+    return convertToInvoice(companyId, userId, id);
 }
 
 // =============================================================================
@@ -332,6 +395,7 @@ module.exports = {
     approveEstimate,
     declineEstimate,
     linkJob,
+    convertToInvoice,
     copyToInvoice,
     getRevisions,
     getEvents,

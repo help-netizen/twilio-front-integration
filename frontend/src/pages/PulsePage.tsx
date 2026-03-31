@@ -130,7 +130,7 @@ export const PulsePage: React.FC = () => {
                     <div className="pulse-empty-state"><Activity className="size-12 mb-4" style={{ opacity: 0.15 }} /><p className="text-muted-foreground">Select a contact to view their timeline</p></div>
                 ) : (
                     <>
-                        <div className="pulse-timeline-scroll"><PulseTimeline calls={p.callDataItems} messages={p.messages} loading={p.timelineLoading} timelineKey={p.timelineId || p.contactId} /></div>
+                        <div className="pulse-timeline-scroll"><PulseTimeline calls={p.callDataItems} messages={p.messages} loading={p.timelineLoading} timelineKey={p.timelineId || p.contactId} financialEvents={p.financialEvents} /></div>
                         {p.phone && (<SmsForm onSend={p.handleSendMessage} onAiFormat={p.handleAiFormat} disabled={!p.phone} lead={p.lead} mainPhone={p.phone} secondaryPhone={p.secondaryPhone} secondaryPhoneName={p.secondaryPhoneName} selectedPhone={p.selectedToPhone || p.phone} onPhoneChange={p.setSelectedToPhone} />)}
                     </>
                 )}

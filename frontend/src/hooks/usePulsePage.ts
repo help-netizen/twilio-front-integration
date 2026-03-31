@@ -48,6 +48,7 @@ export function usePulsePage() {
     const callDataItems = useMemo(() => (timelineData?.calls || []).map(callToCallData), [timelineData?.calls]);
     const messages = timelineData?.messages || [];
     const conversations = timelineData?.conversations || [];
+    const financialEvents = (timelineData as any)?.financial_events || [];
     const contactCalls = timelineData?.calls || [];
     const contact = (timelineData as any)?.contact || contactCalls[0]?.contact;
     const selectedConv = filteredCalls.find((c: Call) => { const tlId = (c as any).timeline_id; return tlId ? Number(tlId) === timelineId : c.contact?.id === contactId; });
@@ -113,7 +114,7 @@ export function usePulsePage() {
     return {
         location, contactId, timelineId, searchQuery, setSearchQuery,
         contactsLoading, filteredCalls, loadMoreRef, isFetchingNextPage,
-        timelineLoading, callDataItems, messages, phone, hasActiveCall,
+        timelineLoading, callDataItems, messages, financialEvents, phone, hasActiveCall,
         lead, leadLoading, contact, contactDetail, contactDetailLoading, selectedConv,
         editingLead, setEditingLead, convertingLead, setConvertingLead,
         secondaryPhone, secondaryPhoneName, selectedToPhone, setSelectedToPhone,

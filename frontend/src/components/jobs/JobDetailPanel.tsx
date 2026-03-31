@@ -86,7 +86,7 @@ export function JobDetailPanel({
                     <div className="flex-1 overflow-y-auto p-6 space-y-6">
                         <JobInfoSections job={job} contactInfo={contactInfo} onJobUpdated={onJobUpdated} />
 
-                        {/* ── Mobile-only: Description, Comments, Metadata, Notes ── */}
+                        {/* ── Mobile-only: Description, Comments, Metadata, Notes, Financials ── */}
                         <div className="md:hidden space-y-6">
                             <Separator />
                             <JobDescription job={job} />
@@ -95,7 +95,7 @@ export function JobDetailPanel({
                             <JobNotesList job={job} />
                             <JobMobileAddNote {...noteProps} />
                             <Separator />
-                            <p className="text-sm font-semibold">Estimates & Invoices</p>
+                            <p className="text-sm font-semibold">Estimates &amp; Invoices</p>
                             <JobFinancialsTab jobId={job.id} />
                         </div>
                     </div>
@@ -107,8 +107,8 @@ export function JobDetailPanel({
                 <Tabs value={rightTab} onValueChange={v => setRightTab(v as 'details' | 'financials')} className="flex flex-col h-full">
                     <div className="border-b px-4 pt-2 shrink-0">
                         <TabsList className="h-9">
-                            <TabsTrigger value="details" className="text-xs">Details & Notes</TabsTrigger>
-                            <TabsTrigger value="financials" className="text-xs">Estimates & Invoices</TabsTrigger>
+                            <TabsTrigger value="details" className="text-xs">Details &amp; Notes</TabsTrigger>
+                            <TabsTrigger value="financials" className="text-xs">Estimates &amp; Invoices</TabsTrigger>
                         </TabsList>
                     </div>
 
