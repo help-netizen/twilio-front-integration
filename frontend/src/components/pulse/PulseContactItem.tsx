@@ -56,31 +56,7 @@ function getTimeAgo(date: Date): string {
 }
 
 /** Get initials from a name or phone */
-function getInitials(name: string): string {
-    if (!name) return '?';
-    // If it's a phone number (all digits, parens, dashes, spaces)
-    if (/^[\d\s\-().+]+$/.test(name.trim())) {
-        return '#';
-    }
-    const parts = name.trim().split(/\s+/);
-    if (parts.length === 1) return parts[0][0]?.toUpperCase() || '?';
-    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
 
-/** Deterministic pastel avatar color from string */
-function avatarColor(str: string): string {
-    const PALETTE = [
-        { bg: 'rgba(47,99,216,0.12)', text: '#2f63d8' },
-        { bg: 'rgba(27,139,99,0.12)', text: '#1b8b63' },
-        { bg: 'rgba(178,106,29,0.14)', text: '#b26a1d' },
-        { bg: 'rgba(124,53,160,0.12)', text: '#7c35a0' },
-        { bg: 'rgba(212,77,60,0.12)', text: '#d44d3c' },
-        { bg: 'rgba(20,140,180,0.12)', text: '#148cb4' },
-    ];
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) hash = (hash * 31 + str.charCodeAt(i)) & 0xffffffff;
-    return JSON.stringify(PALETTE[Math.abs(hash) % PALETTE.length]);
-}
 
 // ── Component ────────────────────────────────────────────────────────────────
 
@@ -128,17 +104,8 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
             : call.direction === 'internal' ? 'internal' : 'outbound';
     const callColor = STATUS_ICON_COLORS[call.status?.toLowerCase() || ''] || '#16a34a';
 
-    // Avatar color derived from primary text
-    const { bg: avatarBg, text: avatarText } = JSON.parse(avatarColor(primaryText));
-
-    // Interaction type icon (small badge on avatar)
-    const renderInteractionBadge = () => {
-        if (interactionType === 'sms_inbound') return <MessageSquareReply className="size-2.5" style={{ color: '#2563eb' }} />;
-        if (interactionType === 'sms_outbound') return <MessageSquare className="size-2.5" style={{ color: '#7c3aed' }} />;
-        if (callDirection === 'internal') return <ArrowLeftRight className="size-2.5" style={{ color: callColor }} />;
-        if (callDirection === 'inbound') return <PhoneIncoming className="size-2.5" style={{ color: callColor }} />;
-        return <PhoneOutgoing className="size-2.5" style={{ color: callColor }} />;
-    };
+    // Neutral icon container — same for all contacts, no visual noise
+    const avatarBg = 'rgba(117, 106, 89, 0.08)';
 
     useEffect(() => {
         if (!menuOpen) return;
@@ -169,20 +136,19 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
             )}
 
             <div className="flex items-center gap-2.5">
-                {/* Avatar with interaction badge */}
+                {/* Event type icon */}
                 <div className="relative shrink-0">
                     <div
-                        className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-semibold shrink-0"
-                        style={{ background: avatarBg, color: avatarText }}
+                        className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
+                        style={{ background: avatarBg, border: '1px solid rgba(117,106,89,0.14)' }}
                     >
-                        {getInitials(primaryText)}
-                    </div>
-                    {/* Small interaction type badge */}
-                    <div
-                        className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full flex items-center justify-center"
-                        style={{ background: 'var(--blanc-surface-strong)', border: '1.5px solid var(--blanc-line)' }}
-                    >
-                        {renderInteractionBadge()}
+                        {(() => {
+                            if (interactionType === 'sms_inbound') return <MessageSquareReply className="size-[17px]" style={{ color: 'var(--blanc-info)' }} />;
+                            if (interactionType === 'sms_outbound') return <MessageSquare className="size-[17px]" style={{ color: 'var(--blanc-ink-2)' }} />;
+                            if (callDirection === 'internal') return <ArrowLeftRight className="size-[17px]" style={{ color: 'var(--blanc-ink-2)' }} />;
+                            if (callDirection === 'inbound') return <PhoneIncoming className="size-[17px]" style={{ color: callColor }} />;
+                            return <PhoneOutgoing className="size-[17px]" style={{ color: callColor }} />;
+                        })()}
                     </div>
                 </div>
 

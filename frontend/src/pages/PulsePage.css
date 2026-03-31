@@ -48,12 +48,6 @@
     color: var(--blanc-ink-3);
 }
 
-/* ── Search toolbar ─────────────────────────────────────────────── */
-.pulse-search-toolbar {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
 
 /* ── Mobile back button ─────────────────────────────────────────── */
 .pulse-back-btn {
@@ -101,13 +95,44 @@
 }
 
 @media (max-width: 899px) {
-    /* Narrow tablet: hide middle column, sidebar + timeline only */
-    .pulse-middle-column {
-        display: none;
+    /*
+     * Narrow tablet (768–899px): switch to CSS Grid so all 3 panels are
+     * visible. Sidebar spans both rows; middle sits above the timeline.
+     *
+     *  ┌──────────┬────────────────────┐
+     *  │          │  middle (detail)   │
+     *  │ sidebar  ├────────────────────┤
+     *  │          │  timeline + SMS    │
+     *  └──────────┴────────────────────┘
+     */
+    .pulse-page {
+        display: grid;
+        grid-template-columns: 220px 1fr;
+        grid-template-rows: auto 1fr;
     }
 
     .pulse-sidebar {
-        width: 240px;
+        grid-column: 1;
+        grid-row: 1 / 3;     /* spans middle + timeline rows */
+        width: auto;          /* grid controls width */
+        border-right: 1px solid var(--blanc-line);
+    }
+
+    .pulse-middle-column {
+        display: flex;        /* override any previous display:none */
+        grid-column: 2;
+        grid-row: 1;
+        width: auto;
+        max-height: 240px;    /* compact: enough for AR bar + lead summary */
+        border-right: none;
+        border-bottom: 1px solid var(--blanc-line);
+        overflow-y: auto;
+    }
+
+    .pulse-timeline-column {
+        grid-column: 2;
+        grid-row: 2;
+        min-height: 0;        /* allow shrink inside grid row */
     }
 }
 
@@ -126,7 +151,9 @@
         font-size: 24px;
     }
 
+    /* Reset grid back to flex for single-panel mobile mode */
     .pulse-page {
+        display: flex;
         flex-direction: column;
     }
 
@@ -156,9 +183,10 @@
         display: flex;
         width: 100% !important;
         flex: none;
-        max-height: 45vh;
+        max-height: 38vh;
         border-right: none;
         border-bottom: 1px solid var(--blanc-line);
+        overflow-y: auto;
     }
 
     .pulse-page[data-mobile-panel="content"] .pulse-timeline-column {
@@ -172,14 +200,9 @@
         display: none;
     }
 
-    /* Search toolbar: full width on mobile */
-    .pulse-search-toolbar {
+    /* Search toolbar: wrap on mobile */
+    .blanc-page-toolbar {
         flex-wrap: wrap;
-    }
-
-    .pulse-search-toolbar .relative {
-        max-width: 100% !important;
-        width: 100%;
     }
 }
 

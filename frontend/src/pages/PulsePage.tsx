@@ -72,25 +72,25 @@ export const PulsePage: React.FC = () => {
             </div>
 
             {/* Toolbar: search + filter chips */}
-            <div className="blanc-page-toolbar pulse-search-toolbar">
-                <div className="relative" style={{ width: '220px', flexShrink: 0 }}>
+            <div className="blanc-page-toolbar">
+                <div className="relative flex-1 min-w-0">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" />
                     <Input
-                        placeholder="Search..."
+                        placeholder="Search by phone or name..."
                         value={p.searchQuery}
                         onChange={(e) => p.setSearchQuery(e.target.value)}
                         className="pl-9"
                     />
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-2 shrink-0">
                     {(['all', 'unread', 'action_required'] as const).map(f => (
                         <button
                             key={f}
                             onClick={() => setActiveFilter(f)}
-                            className="px-2.5 py-1 text-xs font-medium rounded-lg transition-colors"
+                            className="h-10 px-4 text-sm font-medium rounded-2xl transition-colors whitespace-nowrap"
                             style={activeFilter === f
-                                ? { background: 'var(--blanc-info)', color: '#fff' }
-                                : { background: 'var(--blanc-surface-muted)', color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)' }
+                                ? { background: 'var(--blanc-ink-1)', color: '#fff' }
+                                : { background: 'rgba(255,255,255,0.55)', color: 'var(--blanc-ink-2)', border: '1px solid rgba(104,95,80,0.16)' }
                             }
                         >
                             {f === 'all' ? 'All' : f === 'unread' ? 'Unread' : 'Action Required'}
