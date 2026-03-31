@@ -6,10 +6,13 @@
 Blanc Contact Center — CRM-платформа для управления клиентскими коммуникациями, лидами, заказами, платежами и telephony admin flows. Система объединяет Twilio, Front, Zenbooker, Google services и AI-процессы в единый операторский интерфейс.
 
 ### 1.2 Ключевые возможности
-- **Pulse** — timeline звонков и SMS, action required, live transcript, AI summary
+- **Pulse** — timeline звонков, SMS и финансовых событий (estimates/invoices), action required, live transcript, AI summary
 - **Softphone** — встроенный VoIP на Twilio Device SDK
-- **Contacts / Leads / Jobs** — CRM-слой для оператора
+- **Contacts / Leads / Jobs** — CRM-слой для оператора; Lead и Job detail panels содержат вкладки Estimates & Invoices
+- **Estimates & Invoices** — создание, отправка, конвертация Estimate→Invoice; привязка к Contact/Lead/Job; отображение в Pulse Timeline
+- **Transactions / Payments** — запись платежей через `RecordPaymentDialog`; список транзакций в InvoiceDetailPanel
 - **Messaging** — SMS conversations и related media flows
+- **Schedule / Dispatch** — dispatcher calendar (Day/Week/Month) с фильтрами и reassignment
 - **Payments / Settings / Users** — административный и операционный контур
 - **Telephony Admin** — call flows, user groups, phone numbers, Vapi integration
 

@@ -48,12 +48,14 @@ interface Props {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     invoice: Invoice | null;
+    defaultJobId?: number;
+    defaultLeadId?: number;
     onSave: (data: InvoiceCreateData) => Promise<void>;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export function InvoiceEditorDialog({ open, onOpenChange, invoice, onSave }: Props) {
+export function InvoiceEditorDialog({ open, onOpenChange, invoice, defaultJobId, defaultLeadId, onSave }: Props) {
     const isEdit = !!invoice;
 
     // ── Form state ───────────────────────────────────────────────────────
@@ -104,8 +106,8 @@ export function InvoiceEditorDialog({ open, onOpenChange, invoice, onSave }: Pro
         } else {
             // Reset for create
             setContactId('');
-            setLeadId('');
-            setJobId('');
+            setLeadId(defaultLeadId ? String(defaultLeadId) : '');
+            setJobId(defaultJobId ? String(defaultJobId) : '');
             setEstimateId('');
             setTitle('');
             setNotes('');

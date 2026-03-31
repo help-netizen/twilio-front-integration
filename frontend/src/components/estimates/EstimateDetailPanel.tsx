@@ -2,8 +2,11 @@ import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Separator } from '../ui/separator';
 import { ScrollArea } from '../ui/scroll-area';
-import { X, Send, Check, XCircle, Link2, Pencil, Trash2, Loader2, Clock } from 'lucide-react';
+import { useState } from 'react';
+import { X, Send, Check, XCircle, Link2, Pencil, Trash2, Loader2, Clock, FileText } from 'lucide-react';
 import type { Estimate, EstimateEvent } from '../../services/estimatesApi';
+import { convertEstimateToInvoice } from '../../services/estimatesApi';
+import { toast } from 'sonner';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -45,11 +48,27 @@ interface Props {
     onDecline: () => void;
     onDelete: () => void;
     onLinkJob: (jobId: number) => void;
+    onInvoiceCreated?: () => void;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export function EstimateDetailPanel({ estimate, events, loading, onClose, onEdit, onSend, onApprove, onDecline, onDelete, onLinkJob }: Props) {
+export function EstimateDetailPanel({ estimate, events, loading, onClose, onEdit, onSend, onApprove, onDecline, onDelete, onLinkJob, onInvoiceCreated }: Props) {
+    const [converting, setConverting] = useState(false);
+
+    const handleConvertToInvoice = async () => {
+        setConverting(true);
+        try {
+            await convertEstimateToInvoice(estimate.id);
+            toast.success('Invoice created from estimate');
+            onInvoiceCreated?.();
+        } catch (err: any) {
+            toast.error(err.message || 'Failed to create invoice');
+        } finally {
+            setConverting(false);
+        }
+    };
+
     if (loading) {
         return (
             <div className="w-96 border-l flex items-center justify-center">
@@ -60,6 +79,7 @@ export function EstimateDetailPanel({ estimate, events, loading, onClose, onEdit
 
     const isDraft = estimate.status === 'draft';
     const isSent = estimate.status === 'sent' || estimate.status === 'viewed';
+    const isAccepted = estimate.status === 'accepted';
 
     return (
         <div className="w-96 border-l flex flex-col bg-background">
@@ -248,6 +268,11 @@ export function EstimateDetailPanel({ estimate, events, loading, onClose, onEdit
                                     <XCircle className="size-3.5 mr-1" />Decline
                                 </Button>
                             </>
+                        )}
+                        {isAccepted && (
+                            <Button variant="outline" size="sm" onClick={handleConvertToInvoice} disabled={converting}>
+                                <FileText className="size-3.5 mr-1" />{converting ? 'Creating...' : 'Create Invoice'}
+                            </Button>
                         )}
                         {!estimate.job_id && (
                             <Button variant="outline" size="sm" onClick={() => {

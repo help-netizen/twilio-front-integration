@@ -236,3 +236,7 @@ export async function fetchEstimateEvents(id: number): Promise<EstimateEvent[]> 
 export async function fetchEstimateRevisions(id: number): Promise<EstimateRevision[]> {
     return estimatesRequest<EstimateRevision[]>(`${ESTIMATES_BASE}/${id}/revisions`);
 }
+
+export async function convertEstimateToInvoice(id: number): Promise<import('./invoicesApi').Invoice> {
+    return estimatesRequest<import('./invoicesApi').Invoice>(`${ESTIMATES_BASE}/${id}/convert`, { method: 'POST' });
+}

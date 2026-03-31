@@ -1,9 +1,13 @@
+import { useState, useEffect } from 'react';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Separator } from '../ui/separator';
 import { ScrollArea } from '../ui/scroll-area';
 import { X, Send, Pencil, Trash2, Loader2, Clock, Ban, CreditCard, RefreshCw } from 'lucide-react';
 import type { Invoice, InvoiceEvent, RecordPaymentData } from '../../services/invoicesApi';
+import { fetchInvoicePayments } from '../../services/invoicesApi';
+import { RecordPaymentDialog } from '../transactions/RecordPaymentDialog';
+import type { CreateTransactionData } from '../../services/paymentsCanonicalApi';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -51,6 +55,26 @@ interface Props {
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function InvoiceDetailPanel({ invoice, events, loading, onClose, onEdit, onSend, onVoid, onRecordPayment, onSyncEstimate, onDelete }: Props) {
+    const [showRecordPayment, setShowRecordPayment] = useState(false);
+    const [transactions, setTransactions] = useState<any[]>([]);
+
+    useEffect(() => {
+        if (!invoice?.id) return;
+        fetchInvoicePayments(invoice.id)
+            .then(setTransactions)
+            .catch(() => {});
+    }, [invoice?.id]);
+
+    const handleRecordPaymentSave = async (data: CreateTransactionData) => {
+        const rpData: RecordPaymentData = {
+            amount: String(data.amount),
+            payment_method: data.payment_method || undefined,
+            reference: data.reference_number || undefined,
+        };
+        onRecordPayment(rpData);
+        setShowRecordPayment(false);
+    };
+
     if (loading) {
         return (
             <div className="w-96 border-l flex items-center justify-center">
@@ -269,12 +293,7 @@ export function InvoiceDetailPanel({ invoice, events, loading, onClose, onEdit, 
                             </Button>
                         )}
                         {canRecordPayment && (
-                            <Button variant="outline" size="sm" onClick={() => {
-                                const amount = prompt('Enter payment amount:');
-                                if (amount && !isNaN(Number(amount))) {
-                                    onRecordPayment({ amount });
-                                }
-                            }}>
+                            <Button variant="outline" size="sm" onClick={() => setShowRecordPayment(true)}>
                                 <CreditCard className="size-3.5 mr-1" />Record Payment
                             </Button>
                         )}
@@ -286,6 +305,27 @@ export function InvoiceDetailPanel({ invoice, events, loading, onClose, onEdit, 
                         <Button variant="outline" size="sm" className="text-red-600 hover:text-red-700" onClick={onDelete}>
                             <Trash2 className="size-3.5 mr-1" />Delete
                         </Button>
+                    </div>
+
+                    {/* Payments / Transactions */}
+                    <Separator />
+                    <div>
+                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Payments</p>
+                        {transactions.length === 0 ? (
+                            <p className="text-sm text-muted-foreground">No payments recorded</p>
+                        ) : (
+                            <div className="space-y-1">
+                                {transactions.map((tx: any) => (
+                                    <div key={tx.id} className="flex justify-between text-sm">
+                                        <span className="text-muted-foreground capitalize">
+                                            {fmtDate(tx.transaction_date || tx.created_at)}
+                                            {tx.payment_method && ` · ${tx.payment_method}`}
+                                        </span>
+                                        <span className="font-mono text-green-600">{money(tx.amount)}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
 
                     {/* Events / History */}
@@ -311,6 +351,14 @@ export function InvoiceDetailPanel({ invoice, events, loading, onClose, onEdit, 
                     )}
                 </div>
             </ScrollArea>
+
+            <RecordPaymentDialog
+                open={showRecordPayment}
+                onOpenChange={setShowRecordPayment}
+                defaultInvoiceId={invoice.id}
+                defaultContactId={invoice.contact_id ?? undefined}
+                onSave={handleRecordPaymentSave}
+            />
         </div>
     );
 }

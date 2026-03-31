@@ -176,8 +176,61 @@ async function buildTimeline(req, res, contact, timeline) {
         }
     }
 
+    // Financial events: estimates + invoices for this contact
+    let financialEvents = [];
+    if (contact?.id) {
+        const companyId = req.companyId || req.user?.company_id || null;
+        try {
+            if (companyId) {
+                const [estimateRows, invoiceRows] = await Promise.all([
+                    db.query(
+                        `SELECT id, estimate_number AS reference, status, total, created_at AS occurred_at
+                         FROM estimates
+                         WHERE contact_id = $1 AND company_id = $2
+                         ORDER BY created_at DESC`,
+                        [contact.id, companyId]
+                    ),
+                    db.query(
+                        `SELECT id, invoice_number AS reference, status, total, amount_paid, created_at AS occurred_at
+                         FROM invoices
+                         WHERE contact_id = $1 AND company_id = $2
+                         ORDER BY created_at DESC`,
+                        [contact.id, companyId]
+                    ),
+                ]);
+                financialEvents = [
+                    ...estimateRows.rows.map(r => ({
+                        id: `estimate-${r.id}`,
+                        type: 'estimate_created',
+                        reference: r.reference,
+                        status: r.status,
+                        amount: r.total,
+                        occurred_at: r.occurred_at,
+                        contact_id: contact.id,
+                    })),
+                    ...invoiceRows.rows.map(r => ({
+                        id: `invoice-${r.id}`,
+                        type: r.amount_paid && Number(r.amount_paid) >= Number(r.total)
+                            ? 'invoice_paid'
+                            : r.amount_paid && Number(r.amount_paid) > 0
+                                ? 'invoice_partial_payment'
+                                : 'invoice_created',
+                        reference: r.reference,
+                        status: r.status,
+                        amount: r.total,
+                        occurred_at: r.occurred_at,
+                        contact_id: contact.id,
+                    })),
+                ];
+            }
+        } catch (err) {
+            console.error('[Pulse] financial events query error:', err.message);
+        }
+    }
+
     res.json({
         calls, messages, conversations,
+        financial_events: financialEvents,
         timeline_id: timeline?.id || null,
         contact: contact || null,
     });

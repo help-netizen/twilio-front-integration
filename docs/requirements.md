@@ -17,6 +17,9 @@
 | F011 | Refactor-readiness audit | ⏳ Запланирована | `docs/`, `src/server.js`, `backend/src/`, `frontend/src/`, `tests/` |
 | F012 | Multi-tenant company model, Super Admin & RBAC | ⏳ Запланирована | `docs/specs/PF007-multitenant-company-model-rbac.md`, `docs/specs/PF007-technical-design.md`, `docs/specs/PF102-tenancy-rbac-sprint-plan.md`, `docs/specs/PF103-tenancy-rbac-db-api-contracts.md` |
 | F013 | Schedule / Dispatcher MVP + UX hardening | 🔧 В разработке (Sprint 2 ✅, Sprint 3 ✅, Sprint 4 partial ✅) | `frontend/src/pages/SchedulePage.tsx`, `frontend/src/components/schedule/`, `frontend/src/hooks/useScheduleData.ts`, `frontend/src/services/scheduleApi.ts`, `backend/src/routes/schedule.js`, `backend/src/services/scheduleService.js`, `backend/src/db/scheduleQueries.js`, `docs/specs/PF001-unified-schedule-dispatcher.md` |
+| PF100-S3 | Estimates MVP (completion) | 🔧 В разработке — S3-T1: LeadDetailPanel estimates tab; S3-T2: Create from Contact; S3-T3: Pulse timeline events | `frontend/src/components/leads/LeadDetailPanel.tsx`, `frontend/src/components/contacts/ContactDetailPanel.tsx`, `backend/src/routes/pulse.js` |
+| PF100-S4 | Invoices MVP (completion) | 🔧 В разработке — S4-T1: Estimate→Invoice conversion; S4-T2: Invoice→Transactions link; S4-T3: Pulse events | `frontend/src/components/estimates/EstimateDetailPanel.tsx`, `frontend/src/components/invoices/InvoiceDetailPanel.tsx` |
+| PF100-S5 | Payment Collection MVP | 📋 Запланирована — S5-T1: RecordPaymentDialog replace prompt; S5-T2: Send Receipt; S5-T3: TransactionsPage verify; S5-T4: Deposit collection | `frontend/src/components/transactions/`, `frontend/src/pages/TransactionsPage.tsx`, `frontend/src/components/invoices/InvoiceDetailPanel.tsx` |
 
 ---
 

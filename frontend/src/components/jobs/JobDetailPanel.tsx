@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { Separator } from '../ui/separator';
 import { Loader2 } from 'lucide-react';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';
 import type { LocalJob, JobTag } from '../../services/jobsApi';
 import { JobDetailHeader } from './JobDetailHeader';
 import { JobActionBar } from './JobActionBar';
 import { JobInfoSections } from './JobInfoSections';
 import { JobMetadataSection } from './JobMetadataSection';
 import { JobStatusTags } from './JobStatusTags';
+import { JobFinancialsTab } from './JobFinancialsTab';
 import {
     JobDescription, JobComments, JobNotesList,
     JobAddNote, JobMobileAddNote,
@@ -45,9 +47,11 @@ export function JobDetailPanel({
     navigate, allTags, onTagsChange, onJobUpdated,
 }: JobDetailPanelProps) {
     const [showMobileNotes, setShowMobileNotes] = useState(false);
+    const [rightTab, setRightTab] = useState<'details' | 'financials'>('details');
 
     useEffect(() => {
         setShowMobileNotes(false);
+        setRightTab('details');
     }, [job.id]);
 
     const noteProps = { job, noteJobId, noteText, setNoteText, setNoteJobId, onAddNote };
@@ -82,7 +86,7 @@ export function JobDetailPanel({
                     <div className="flex-1 overflow-y-auto p-6 space-y-6">
                         <JobInfoSections job={job} contactInfo={contactInfo} onJobUpdated={onJobUpdated} />
 
-                        {/* ── Mobile-only: Description, Comments, Metadata, Notes ── */}
+                        {/* ── Mobile-only: Description, Comments, Metadata, Notes, Financials ── */}
                         <div className="md:hidden space-y-6">
                             <Separator />
                             <JobDescription job={job} />
@@ -90,6 +94,9 @@ export function JobDetailPanel({
                             <JobMetadataSection job={job} />
                             <JobNotesList job={job} />
                             <JobMobileAddNote {...noteProps} />
+                            <Separator />
+                            <p className="text-sm font-semibold">Estimates &amp; Invoices</p>
+                            <JobFinancialsTab jobId={job.id} />
                         </div>
                     </div>
                 )}
@@ -97,25 +104,36 @@ export function JobDetailPanel({
 
             {/* ═══ RIGHT COLUMN (desktop only) ═══ */}
             <div className="w-full md:w-1/2 flex-col overflow-hidden border-l hidden md:flex">
-                <div className="border-b p-4 flex items-center justify-between">
-                    <h3 className="text-lg font-semibold">Details and Notes</h3>
-                </div>
+                <Tabs value={rightTab} onValueChange={v => setRightTab(v as 'details' | 'financials')} className="flex flex-col h-full">
+                    <div className="border-b px-4 pt-2 shrink-0">
+                        <TabsList className="h-9">
+                            <TabsTrigger value="details" className="text-xs">Details &amp; Notes</TabsTrigger>
+                            <TabsTrigger value="financials" className="text-xs">Estimates &amp; Invoices</TabsTrigger>
+                        </TabsList>
+                    </div>
 
-                <JobStatusTags
-                    job={job}
-                    allTags={allTags}
-                    onBlancStatusChange={onBlancStatusChange}
-                    onTagsChange={onTagsChange}
-                />
+                    <TabsContent value="details" className="flex-1 flex flex-col overflow-hidden mt-0 data-[state=inactive]:hidden">
+                        <JobStatusTags
+                            job={job}
+                            allTags={allTags}
+                            onBlancStatusChange={onBlancStatusChange}
+                            onTagsChange={onTagsChange}
+                        />
 
-                <div className="flex-1 overflow-y-auto p-4 space-y-6">
-                    <JobDescription job={job} />
-                    <JobComments job={job} />
-                    <JobMetadataSection job={job} />
-                    <JobNotesList job={job} />
-                </div>
+                        <div className="flex-1 overflow-y-auto p-4 space-y-6">
+                            <JobDescription job={job} />
+                            <JobComments job={job} />
+                            <JobMetadataSection job={job} />
+                            <JobNotesList job={job} />
+                        </div>
 
-                <JobAddNote {...noteProps} />
+                        <JobAddNote {...noteProps} />
+                    </TabsContent>
+
+                    <TabsContent value="financials" className="flex-1 flex flex-col overflow-hidden mt-0 data-[state=inactive]:hidden">
+                        <JobFinancialsTab jobId={job.id} />
+                    </TabsContent>
+                </Tabs>
             </div>
         </div>
     );

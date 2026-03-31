@@ -32,18 +32,30 @@ export interface SmsConversation {
     state: string;
 }
 
-export type TimelineItemType = 'call' | 'sms';
+export type TimelineItemType = 'call' | 'sms' | 'financial';
+
+export interface FinancialEvent {
+    id: string;
+    type: 'estimate_created' | 'estimate_sent' | 'estimate_accepted' | 'estimate_declined'
+        | 'invoice_created' | 'invoice_sent' | 'invoice_paid' | 'invoice_partial_payment';
+    reference: string;
+    status: string;
+    amount: string;
+    occurred_at: string;
+    contact_id: number;
+}
 
 export interface TimelineItem {
     type: TimelineItemType;
     timestamp: Date;
-    data: CallData | SmsMessage;
+    data: CallData | SmsMessage | FinancialEvent;
 }
 
 export interface PulseTimelineResponse {
     calls: any[]; // raw API call objects
     messages: SmsMessage[];
     conversations: SmsConversation[];
+    financial_events?: FinancialEvent[];
 }
 
 // Action Required types

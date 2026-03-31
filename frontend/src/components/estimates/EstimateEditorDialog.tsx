@@ -48,12 +48,14 @@ interface Props {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     estimate: Estimate | null;
+    defaultJobId?: number;
+    defaultLeadId?: number;
     onSave: (data: EstimateCreateData) => Promise<void>;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export function EstimateEditorDialog({ open, onOpenChange, estimate, onSave }: Props) {
+export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobId, defaultLeadId, onSave }: Props) {
     const isEdit = !!estimate;
 
     // ── Form state ───────────────────────────────────────────────────────
@@ -106,8 +108,8 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, onSave }: P
         } else {
             // Reset for create
             setContactId('');
-            setLeadId('');
-            setJobId('');
+            setLeadId(defaultLeadId ? String(defaultLeadId) : '');
+            setJobId(defaultJobId ? String(defaultJobId) : '');
             setTitle('');
             setNotes('');
             setInternalNote('');
