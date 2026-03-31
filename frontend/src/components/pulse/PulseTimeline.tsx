@@ -69,7 +69,7 @@ export function PulseTimeline({ calls, messages, loading, timelineKey, financial
         items.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
         return items;
-    }, [calls, messages]);
+    }, [calls, messages, financialEvents]);
 
     // Auto-scroll to bottom when timeline loads or switches
     useEffect(() => {

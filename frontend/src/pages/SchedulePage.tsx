@@ -116,14 +116,14 @@ export function SchedulePage() {
             />
 
             {/* Main workspace */}
-            <div className="schedule-workspace relative z-[1] max-w-[1780px] mx-auto" style={{ padding: '30px' }}>
+            <div className="schedule-workspace relative z-[1] max-w-[1780px] mx-auto" style={{ padding: '24px' }}>
                 {/* Toolbar: title + AI Assistant button */}
                 <ScheduleToolbar
                     onToggleAIAssistant={() => setShowAIAssistant(true)}
                 />
 
                 {/* Main content */}
-                <div className="schedule-page-grid grid gap-4 mt-5">
+                <div className="schedule-page-grid grid gap-3 mt-3">
                     {/* Unscheduled panel — above controls for ASAP scheduling priority */}
                     {!schedule.loading && (
                         <UnscheduledPanel

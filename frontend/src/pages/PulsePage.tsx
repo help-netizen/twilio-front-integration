@@ -27,7 +27,8 @@ export const PulsePage: React.FC = () => {
     const companyTz = company?.timezone || 'America/New_York';
 
     return (
-        <div className="pulse-page">
+        <div className="blanc-page-wrapper" style={{ padding: '16px' }}>
+        <div className="pulse-page blanc-page-card">
             {/* Left sidebar: contact list */}
             <div className="pulse-sidebar">
                 <div className="p-3 border-b">
@@ -139,6 +140,7 @@ export const PulsePage: React.FC = () => {
             {/* Dialogs */}
             {p.editingLead && (<EditLeadDialog lead={p.editingLead} open={!!p.editingLead} onOpenChange={(open) => !open && p.setEditingLead(null)} onSuccess={p.handleUpdateLead} />)}
             {p.convertingLead && (<ConvertToJobDialog lead={p.convertingLead} open={!!p.convertingLead} onOpenChange={(open) => !open && p.setConvertingLead(null)} onSuccess={p.handleConvertSuccess} />)}
+        </div>
         </div>
     );
 };

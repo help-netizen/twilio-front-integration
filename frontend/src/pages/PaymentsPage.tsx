@@ -27,39 +27,37 @@ export default function PaymentsPage() {
     const pm = usePaymentsPage();
 
     return (
-        <div className="payments-split-container">
-            {/* ── Left: List Panel ─────────────────────────────────── */}
-            <div className={`payments-list-panel ${pm.selectedId ? 'has-detail' : ''}`}>
-                {/* Header */}
-                <div className="border-b p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                            <h2 className="text-xl font-semibold">Payments</h2>
-                            <div className="flex gap-1">
-                                <Button variant={pm.quickFilter === 'all' ? 'default' : 'ghost'} size="sm" onClick={() => { pm.setQuickFilter('all'); pm.setPage(0); }}>All</Button>
-                                <Button variant={pm.quickFilter === 'new_checks' ? 'default' : 'ghost'} size="sm" onClick={() => { pm.setQuickFilter('new_checks'); pm.setPage(0); }} className="gap-1.5">
-                                    New checks
-                                    {pm.undepositedCheckCount > 0 && (
-                                        <Badge variant="destructive" className="text-[10px] px-1.5 py-0 min-w-[18px] h-[18px] justify-center">{pm.undepositedCheckCount}</Badge>
-                                    )}
-                                </Button>
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-1">
-                            {pm.syncResult && (<span style={{ fontSize: '12px', color: pm.syncResult.startsWith('Sync error') ? '#ef4444' : '#22c55e' }}>{pm.syncResult}</span>)}
-                            <Button variant="outline" size="sm" onClick={pm.handleSync} disabled={pm.syncing}>
-                                <RefreshCw className={`size-4 mr-1 ${pm.syncing ? 'animate-spin' : ''}`} />
-                                {pm.syncing ? 'Syncing…' : 'Sync'}
-                            </Button>
-                            <Button variant="outline" size="sm" onClick={pm.handleExportCSV} disabled={pm.sortedRows.length === 0 || pm.exporting}>
-                                {pm.exporting ? <Loader2 className="size-4 mr-1 animate-spin" /> : <Download className="size-4 mr-1" />}
-                                {pm.exporting ? 'Exporting…' : 'Export'}
-                            </Button>
-                        </div>
+        <div className="blanc-page-wrapper">
+            {/* ── Page Header ────────────────────────────────────────── */}
+            <div className="blanc-page-header">
+                <div className="flex items-center gap-2">
+                    <h1 className="blanc-heading blanc-heading-lg">Payments</h1>
+                    <div className="flex gap-1">
+                        <Button variant={pm.quickFilter === 'all' ? 'default' : 'outline'} size="sm" onClick={() => { pm.setQuickFilter('all'); pm.setPage(0); }}>All</Button>
+                        <Button variant={pm.quickFilter === 'new_checks' ? 'default' : 'outline'} size="sm" onClick={() => { pm.setQuickFilter('new_checks'); pm.setPage(0); }} className="gap-1.5">
+                            New checks
+                            {pm.undepositedCheckCount > 0 && (
+                                <Badge variant="destructive" className="text-[10px] px-1.5 py-0 min-w-[18px] h-[18px] justify-center">{pm.undepositedCheckCount}</Badge>
+                            )}
+                        </Button>
                     </div>
+                </div>
+                <div className="flex items-center gap-2">
+                    {pm.syncResult && (<span style={{ fontSize: '12px', color: pm.syncResult.startsWith('Sync error') ? '#ef4444' : '#22c55e' }}>{pm.syncResult}</span>)}
+                    <Button variant="outline" size="sm" onClick={pm.handleSync} disabled={pm.syncing}>
+                        <RefreshCw className={`size-4 mr-1 ${pm.syncing ? 'animate-spin' : ''}`} />
+                        {pm.syncing ? 'Syncing…' : 'Sync'}
+                    </Button>
+                    <Button size="sm" onClick={pm.handleExportCSV} disabled={pm.sortedRows.length === 0 || pm.exporting}>
+                        {pm.exporting ? <Loader2 className="size-4 mr-1 animate-spin" /> : <Download className="size-4 mr-1" />}
+                        {pm.exporting ? 'Exporting…' : 'Export'}
+                    </Button>
+                </div>
+            </div>
 
-                    {/* Filters */}
-                    <div className="flex flex-wrap gap-3 items-center">
+            {/* ── Toolbar: Filters ───────────────────────────────────── */}
+            <div className="blanc-page-toolbar">
+                <div className="flex flex-wrap gap-3 items-center">
                         <div className="relative flex-1 min-w-[200px]" ref={pm.filterRef}>
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground z-10" />
                             <Input placeholder="Search customer, job #, provider…" value={pm.searchInput} onChange={e => pm.setSearchInput(e.target.value)} onFocus={() => pm.setFiltersOpen(true)} className="pl-9" />
@@ -147,15 +145,17 @@ export default function PaymentsPage() {
                         </Popover>
                     </div>
 
-                    {/* Summary bar */}
-                    {pm.rows.length > 0 && (
-                        <div className="payments-summary-bar">
-                            <span>{pm.sortedRows.length} transactions</span><span>·</span>
-                            <span className="payments-summary-amount">{formatCurrency(pm.totalAmount.toFixed(2))}</span>
-                        </div>
-                    )}
-                </div>
+                {pm.rows.length > 0 && (
+                    <div className="payments-summary-bar mt-2">
+                        <span>{pm.sortedRows.length} transactions</span><span>·</span>
+                        <span className="payments-summary-amount">{formatCurrency(pm.totalAmount.toFixed(2))}</span>
+                    </div>
+                )}
+            </div>
 
+            {/* ── Content Card ───────────────────────────────────────── */}
+            <div className="blanc-page-card">
+                <div className={`payments-list-panel ${pm.selectedId ? 'has-detail' : ''}`}>
                 {/* Error */}
                 {pm.error && <div className="payments-error">⚠️ {pm.error}</div>}
 
@@ -203,12 +203,13 @@ export default function PaymentsPage() {
                         </div>
                     </div>
                 )}
-            </div>
+                </div>
 
-            {/* ── Right: Detail Panel ──────────────────────────────── */}
-            {pm.selectedId && (
-                <PaymentDetailPanel detail={pm.detail} loading={pm.detailLoading} onClose={pm.handleCloseDetail} onToggleDeposited={pm.handleToggleDeposited} />
-            )}
+                {/* ── Right: Detail Panel ──────────────────────────────── */}
+                {pm.selectedId && (
+                    <PaymentDetailPanel detail={pm.detail} loading={pm.detailLoading} onClose={pm.handleCloseDetail} onToggleDeposited={pm.handleToggleDeposited} />
+                )}
+            </div>
         </div>
     );
 }

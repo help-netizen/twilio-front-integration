@@ -78,42 +78,47 @@ export function EstimatesPage() {
     };
 
     return (
-        <div className="flex h-full overflow-hidden">
+        <div className="blanc-page-wrapper">
+            {/* ── Page Header ──────────────────────────────────────────── */}
+            <div className="blanc-page-header">
+                <h1 className="blanc-heading blanc-heading-lg">Estimates</h1>
+                <Button onClick={handleCreate}>
+                    <Plus className="size-4 mr-1" />New Estimate
+                </Button>
+            </div>
+
+            {/* ── Toolbar: Filters ─────────────────────────────────────── */}
+            <div className="blanc-page-toolbar">
+                <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                        <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
+                        <Input
+                            placeholder="Search estimates..."
+                            className="pl-8"
+                            value={page.filters.search}
+                            onChange={e => page.setSearch(e.target.value)}
+                        />
+                    </div>
+                    <Select
+                        value={page.filters.status || '_all'}
+                        onValueChange={v => page.setStatus(v === '_all' ? '' : v)}
+                    >
+                        <SelectTrigger className="w-[160px]">
+                            <SelectValue placeholder="All Statuses" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {STATUS_OPTIONS.map(opt => (
+                                <SelectItem key={opt.value || '_all'} value={opt.value || '_all'}>{opt.label}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </div>
+            </div>
+
+            {/* ── Content Card ─────────────────────────────────────────── */}
+            <div className="blanc-page-card">
             {/* ── Left: Estimates List ──────────────────────────────────── */}
             <div className={`flex flex-col overflow-hidden ${page.selectedEstimate ? 'hidden md:flex md:w-[400px] md:flex-shrink-0 border-r' : 'flex flex-1'}`}>
-                {/* Toolbar */}
-                <div className="border-b p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                        <h2 className="text-lg font-semibold">Estimates</h2>
-                        <Button size="sm" onClick={handleCreate}>
-                            <Plus className="size-4 mr-1" />New Estimate
-                        </Button>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <div className="relative flex-1">
-                            <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-                            <Input
-                                placeholder="Search estimates..."
-                                className="pl-8"
-                                value={page.filters.search}
-                                onChange={e => page.setSearch(e.target.value)}
-                            />
-                        </div>
-                        <Select
-                            value={page.filters.status || '_all'}
-                            onValueChange={v => page.setStatus(v === '_all' ? '' : v)}
-                        >
-                            <SelectTrigger className="w-[160px]">
-                                <SelectValue placeholder="All Statuses" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {STATUS_OPTIONS.map(opt => (
-                                    <SelectItem key={opt.value || '_all'} value={opt.value || '_all'}>{opt.label}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    </div>
-                </div>
 
                 {/* Table */}
                 <div className="flex-1 overflow-auto">
@@ -236,6 +241,7 @@ export function EstimatesPage() {
                     onSend={data => page.handleSendEstimate(sendEstimateId, data)}
                 />
             )}
+            </div>
         </div>
     );
 }

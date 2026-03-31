@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './styles/tailwind.css'
+import './styles/design-system.css'
 import './styles/schedule-redesign.css'
 import App from './App.tsx'
 import { loadGoogleMaps } from './utils/loadGoogleMaps'

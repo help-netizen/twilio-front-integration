@@ -97,45 +97,50 @@ export function ContactsPage() {
     };
 
     return (
-        <div style={{ display: 'flex', height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
-            {/* Left: Contacts List */}
-            <div style={{ width: '380px', minWidth: '380px', borderRight: '1px solid #e5e7eb', overflow: 'auto' }}>
-                <ContactsList
-                    contacts={contacts}
-                    loading={loading}
-                    search={search}
-                    onSearchChange={handleSearch}
-                    selectedContactId={selectedContact?.id}
-                    onSelectContact={handleSelectContact}
-                    offset={offset}
-                    hasMore={hasMore}
-                    onNextPage={handleNextPage}
-                    onPrevPage={handlePrevPage}
-                />
+        <div className="blanc-page-wrapper">
+            <div className="blanc-page-header">
+                <h1 className="blanc-heading blanc-heading-lg">Contacts</h1>
             </div>
-
-            {/* Right: Detail Panel */}
-            <div style={{ flex: 1, overflow: 'auto' }}>
-                {selectedContact ? (
-                    <ContactDetailPanel
-                        contact={selectedContact}
-                        leads={selectedLeads}
-                        loading={detailLoading}
-                        onAddressesChanged={() => selectedContact && handleSelectContact(selectedContact)}
-                        onContactChanged={() => selectedContact && handleSelectContact(selectedContact)}
+            <div className="blanc-page-card">
+                {/* Left: Contacts List */}
+                <div style={{ width: '380px', minWidth: '380px', borderRight: '1px solid var(--blanc-line)', overflow: 'auto' }}>
+                    <ContactsList
+                        contacts={contacts}
+                        loading={loading}
+                        search={search}
+                        onSearchChange={handleSearch}
+                        selectedContactId={selectedContact?.id}
+                        onSelectContact={handleSelectContact}
+                        offset={offset}
+                        hasMore={hasMore}
+                        onNextPage={handleNextPage}
+                        onPrevPage={handlePrevPage}
                     />
-                ) : (
-                    <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        height: '100%',
-                        color: '#94a3b8',
-                        fontSize: '15px',
-                    }}>
-                        Select a contact to view details
-                    </div>
-                )}
+                </div>
+
+                {/* Right: Detail Panel */}
+                <div style={{ flex: 1, overflow: 'auto' }}>
+                    {selectedContact ? (
+                        <ContactDetailPanel
+                            contact={selectedContact}
+                            leads={selectedLeads}
+                            loading={detailLoading}
+                            onAddressesChanged={() => selectedContact && handleSelectContact(selectedContact)}
+                            onContactChanged={() => selectedContact && handleSelectContact(selectedContact)}
+                        />
+                    ) : (
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            height: '100%',
+                            color: 'var(--blanc-ink-3)',
+                            fontSize: '15px',
+                        }}>
+                            Select a contact to view details
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
     );

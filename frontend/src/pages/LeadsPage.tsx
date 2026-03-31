@@ -69,14 +69,23 @@ export function LeadsPage() {
     const actions = createLeadActions(leads, selectedLead, setLeads, setSelectedLead, setEditingLead, setConvertingLead, setCreateDialogOpen);
 
     return (
-        <div className="flex h-full overflow-hidden">
-            <div className={`flex-1 flex flex-col border-r overflow-x-auto ${selectedLead ? 'hidden md:flex' : 'flex'}`}>
-                <div className="border-b p-4 space-y-4"><div className="flex items-center justify-between"><h2 className="text-xl font-semibold">Leads</h2><div className="flex items-center gap-2"><Button variant="outline" size="icon" onClick={() => setSettingsDialogOpen(true)} title="Column settings"><Settings className="size-4" /></Button><Button onClick={() => setCreateDialogOpen(true)}><Plus className="size-4 mr-2" />Create Lead</Button></div></div>
-                    <LeadsFilters filters={filters} searchQuery={searchQuery} sourceFilter={sourceFilter} jobTypeFilter={jobTypeFilter} onFiltersChange={handleFiltersChange} onSearchChange={setSearchQuery} onSourceFilterChange={setSourceFilter} onJobTypeFilterChange={setJobTypeFilter} />
+        <div className="blanc-page-wrapper">
+            <div className="blanc-page-header">
+                <h1 className="blanc-heading blanc-heading-lg">Leads</h1>
+                <div className="flex items-center gap-2">
+                    <Button variant="outline" size="icon" onClick={() => setSettingsDialogOpen(true)} title="Column settings"><Settings className="size-4" /></Button>
+                    <Button onClick={() => setCreateDialogOpen(true)}><Plus className="size-4 mr-2" />Create Lead</Button>
                 </div>
-                <LeadsTable leads={filteredLeads} loading={loading} selectedLeadId={selectedLead?.UUID} columns={columns} onSelectLead={handleSelectLead} onMarkLost={actions.handleMarkLost} onActivate={actions.handleActivate} onConvert={actions.handleConvert} offset={filters.offset || 0} hasMore={hasMore} onNextPage={handleNextPage} onPrevPage={handlePrevPage} />
             </div>
-            <LeadDetailPanel lead={selectedLead} onClose={() => { setSelectedLead(null); navigate('/leads', { replace: true }); }} onEdit={l => setEditingLead(l)} onMarkLost={actions.handleMarkLost} onActivate={actions.handleActivate} onConvert={actions.handleConvert} onUpdateComments={actions.handleUpdateComments} onUpdateStatus={actions.handleUpdateStatus} onUpdateSource={actions.handleUpdateSource} onDelete={actions.handleDelete} />
+            <div className="blanc-page-toolbar">
+                <LeadsFilters filters={filters} searchQuery={searchQuery} sourceFilter={sourceFilter} jobTypeFilter={jobTypeFilter} onFiltersChange={handleFiltersChange} onSearchChange={setSearchQuery} onSourceFilterChange={setSourceFilter} onJobTypeFilterChange={setJobTypeFilter} />
+            </div>
+            <div className="blanc-page-card">
+                <div className={`flex-1 flex flex-col overflow-x-auto ${selectedLead ? 'hidden md:flex' : 'flex'}`}>
+                    <LeadsTable leads={filteredLeads} loading={loading} selectedLeadId={selectedLead?.UUID} columns={columns} onSelectLead={handleSelectLead} onMarkLost={actions.handleMarkLost} onActivate={actions.handleActivate} onConvert={actions.handleConvert} offset={filters.offset || 0} hasMore={hasMore} onNextPage={handleNextPage} onPrevPage={handlePrevPage} />
+                </div>
+                {selectedLead && <div className="border-l" style={{ borderColor: 'var(--blanc-line)' }}><LeadDetailPanel lead={selectedLead} onClose={() => { setSelectedLead(null); navigate('/leads', { replace: true }); }} onEdit={l => setEditingLead(l)} onMarkLost={actions.handleMarkLost} onActivate={actions.handleActivate} onConvert={actions.handleConvert} onUpdateComments={actions.handleUpdateComments} onUpdateStatus={actions.handleUpdateStatus} onUpdateSource={actions.handleUpdateSource} onDelete={actions.handleDelete} /></div>}
+            </div>
             <CreateLeadDialog open={createDialogOpen} onOpenChange={setCreateDialogOpen} onSuccess={actions.handleCreateLead} />
             {editingLead && <EditLeadDialog lead={editingLead} open={!!editingLead} onOpenChange={open => !open && setEditingLead(null)} onSuccess={actions.handleUpdateLead} />}
             <ColumnSettingsDialog open={settingsDialogOpen} onOpenChange={setSettingsDialogOpen} columns={columns} onSave={handleSaveColumns} />

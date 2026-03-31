@@ -3,9 +3,7 @@
 /* ── Container ─────────────────────────────────────────── */
 
 .payments-split-container {
-    display: flex;
-    height: 100%;
-    overflow: hidden;
+    display: contents;
 }
 
 /* ── List Panel ────────────────────────────────────────── */

@@ -82,65 +82,68 @@ export function TransactionsPage() {
     const [recordOpen, setRecordOpen] = useState(false);
 
     return (
-        <div className="flex h-full overflow-hidden">
-            {/* -- Left: Transactions List ---------------------------------------- */}
-            <div className={`flex flex-col overflow-hidden ${page.selectedTransaction ? 'hidden md:flex md:w-[500px] md:flex-shrink-0 border-r' : 'flex flex-1'}`}>
-                {/* Summary bar */}
+        <div className="blanc-page-wrapper">
+            {/* ── Page Header ──────────────────────────────────────────── */}
+            <div className="blanc-page-header">
+                <h1 className="blanc-heading blanc-heading-lg">Transactions</h1>
+                <Button onClick={() => setRecordOpen(true)}>
+                    <Plus className="size-4 mr-1" />Record Payment
+                </Button>
+            </div>
+
+            {/* ── Toolbar: Summary + Filters ───────────────────────────── */}
+            <div className="blanc-page-toolbar">
                 {page.summary && (
-                    <div className="border-b px-4 py-3 flex items-center gap-3 overflow-x-auto">
+                    <div className="flex items-center gap-3 overflow-x-auto mb-3">
                         <SummaryCard label="Total Collected" value={page.summary.total_collected} icon={DollarSign} />
                         <SummaryCard label="Total Refunded" value={page.summary.total_refunded} icon={TrendingDown} />
                         <SummaryCard label="Total Pending" value={page.summary.total_pending} icon={Clock} />
                         <SummaryCard label="Net" value={page.summary.net_amount} icon={Minus} />
                     </div>
                 )}
-
-                {/* Toolbar */}
-                <div className="border-b p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                        <h2 className="text-lg font-semibold">Transactions</h2>
-                        <Button size="sm" onClick={() => setRecordOpen(true)}>
-                            <Plus className="size-4 mr-1" />Record Payment
-                        </Button>
+                <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                        <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
+                        <Input
+                            placeholder="Search transactions..."
+                            className="pl-8"
+                            value={page.filters.search}
+                            onChange={e => page.setSearch(e.target.value)}
+                        />
                     </div>
-                    <div className="flex items-center gap-2">
-                        <div className="relative flex-1">
-                            <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-                            <Input
-                                placeholder="Search transactions..."
-                                className="pl-8"
-                                value={page.filters.search}
-                                onChange={e => page.setSearch(e.target.value)}
-                            />
-                        </div>
-                        <Select
-                            value={page.filters.status || '_all'}
-                            onValueChange={v => page.setStatus(v === '_all' ? '' : v)}
-                        >
-                            <SelectTrigger className="w-[150px]">
-                                <SelectValue placeholder="All Statuses" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {STATUS_OPTIONS.map(opt => (
-                                    <SelectItem key={opt.value || '_all'} value={opt.value || '_all'}>{opt.label}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                        <Select
-                            value={page.filters.transaction_type || '_all'}
-                            onValueChange={v => page.setType(v === '_all' ? '' : v)}
-                        >
-                            <SelectTrigger className="w-[140px]">
-                                <SelectValue placeholder="All Types" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {TYPE_OPTIONS.map(opt => (
-                                    <SelectItem key={opt.value || '_all'} value={opt.value || '_all'}>{opt.label}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    </div>
+                    <Select
+                        value={page.filters.status || '_all'}
+                        onValueChange={v => page.setStatus(v === '_all' ? '' : v)}
+                    >
+                        <SelectTrigger className="w-[150px]">
+                            <SelectValue placeholder="All Statuses" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {STATUS_OPTIONS.map(opt => (
+                                <SelectItem key={opt.value || '_all'} value={opt.value || '_all'}>{opt.label}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                    <Select
+                        value={page.filters.transaction_type || '_all'}
+                        onValueChange={v => page.setType(v === '_all' ? '' : v)}
+                    >
+                        <SelectTrigger className="w-[140px]">
+                            <SelectValue placeholder="All Types" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {TYPE_OPTIONS.map(opt => (
+                                <SelectItem key={opt.value || '_all'} value={opt.value || '_all'}>{opt.label}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
                 </div>
+            </div>
+
+            {/* ── Content Card ─────────────────────────────────────────── */}
+            <div className="blanc-page-card">
+            {/* -- Left: Transactions List ---------------------------------------- */}
+            <div className={`flex flex-col overflow-hidden ${page.selectedTransaction ? 'hidden md:flex md:w-[500px] md:flex-shrink-0 border-r' : 'flex flex-1'}`}>
 
                 {/* Table */}
                 <div className="flex-1 overflow-auto">
@@ -260,6 +263,7 @@ export function TransactionsPage() {
                 onOpenChange={setRecordOpen}
                 onSave={page.handleRecordManual}
             />
+            </div>
         </div>
     );
 }

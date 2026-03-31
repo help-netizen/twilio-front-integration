@@ -92,18 +92,32 @@ export function usePulsePage() {
     const handleDelete = async (uuid: string) => { await actions.handleMarkLost(uuid); };
     const handleUpdateLead = async (updatedLead: Lead) => { setLeadOverride(updatedLead); setEditingLead(null); toast.success('Lead updated'); };
 
-    const derivedProxy = useMemo(() => { if (conversations.length) return conversations[0].proxy_e164 || ''; const fc = contactCalls[0]; if (!fc) return ''; return (fc.direction || '').includes('inbound') ? (fc.to_number || '') : (fc.from_number || ''); }, [conversations, contactCalls]);
+    const derivedProxy = useMemo(() => {
+        if (conversations.length) return conversations[0].proxy_e164 || '';
+        // Find first call with a real phone number (skip client: URIs from WebRTC calls)
+        const fc = contactCalls.find(c => {
+            const num = (c.direction || '').includes('inbound') ? c.to_number : c.from_number;
+            return num && !num.startsWith('client:');
+        });
+        if (!fc) return '';
+        return (fc.direction || '').includes('inbound') ? (fc.to_number || '') : (fc.from_number || '');
+    }, [conversations, contactCalls]);
     const [fallbackProxy, setFallbackProxy] = useState('');
     useEffect(() => { if (derivedProxy || !phone) return; const API_BASE = import.meta.env.VITE_API_URL || '/api'; authedFetch(`${API_BASE}/pulse/default-proxy`).then(r => r.json()).then(d => { if (d.proxy_e164) setFallbackProxy(d.proxy_e164); }).catch(() => { }); }, [derivedProxy, phone]);
     const proxyPhone = derivedProxy || fallbackProxy;
 
     const handleSendMessage = async (message: string, files?: File[], targetPhone?: string) => {
         const sendTo = targetPhone || phone;
-        const targetConv = conversations.find(c => normalizeDigits(c.customer_e164) === normalizeDigits(sendTo));
-        if (targetConv) { await messagingApi.sendMessage(targetConv.id, { body: message }, files?.[0]); }
-        else if (sendTo && proxyPhone) { const toE164 = (p: string) => { const d = p.replace(/\D/g, ''); if (d.startsWith('1') && d.length === 11) return `+${d}`; if (d.length === 10) return `+1${d}`; return `+${d}`; }; await messagingApi.startConversation({ customerE164: toE164(sendTo), proxyE164: toE164(proxyPhone), initialMessage: message }); }
-        else if (sendTo && !proxyPhone) { toast.error('Cannot send SMS: no proxy phone number available'); return; }
-        refetchTimeline();
+        try {
+            const targetConv = conversations.find(c => normalizeDigits(c.customer_e164) === normalizeDigits(sendTo));
+            if (targetConv) { await messagingApi.sendMessage(targetConv.id, { body: message }, files?.[0]); }
+            else if (sendTo && proxyPhone) { const toE164 = (p: string) => { const d = p.replace(/\D/g, ''); if (d.startsWith('1') && d.length === 11) return `+${d}`; if (d.length === 10) return `+1${d}`; return `+${d}`; }; await messagingApi.startConversation({ customerE164: toE164(sendTo), proxyE164: toE164(proxyPhone), initialMessage: message }); }
+            else if (sendTo && !proxyPhone) { toast.error('Cannot send SMS: no proxy phone number available'); return; }
+            refetchTimeline();
+        } catch (err: any) {
+            console.error('[SMS] Send failed:', err);
+            toast.error(err?.response?.data?.error || 'Failed to send message');
+        }
     };
 
     const handleAiFormat = async (message: string): Promise<string> => {
