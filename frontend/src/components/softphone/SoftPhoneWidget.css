@@ -568,3 +568,19 @@
 .softphone-keypad-btn:active {
     background: rgba(99, 102, 241, 0.3);
 }
+
+/* ─── Pending Call Banner (shown during active call) ─────────────────────── */
+.softphone-pending-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 10px 14px;
+    background: rgba(171, 71, 188, 0.12);
+    border: 1px solid rgba(171, 71, 188, 0.25);
+    border-radius: 10px;
+    color: #ce93d8;
+    font-size: 13px;
+    font-weight: 500;
+    animation: softphone-pulse 1.5s ease-in-out infinite;
+}

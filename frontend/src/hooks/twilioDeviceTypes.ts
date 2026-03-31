@@ -21,4 +21,6 @@ export interface UseTwilioDeviceReturn {
     phoneAllowed: boolean;
     /** Number of incoming calls queued while dispatcher is busy */
     pendingCount: number;
+    /** Caller info of the first pending call (for UI display) */
+    pendingCallerInfo: { number: string } | null;
 }

@@ -40,6 +40,14 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
         if (num) authedFetch(`/api/pulse/timeline-by-phone?phone=${encodeURIComponent(num)}`).then(r => r.json()).then(d => { if (d.timelineId) navigate(`/pulse/timeline/${d.timelineId}`); }).catch(() => { });
     }, [voice, navigate]);
 
+    // Auto-open softphone panel when an incoming/promoted call arrives
+    useEffect(() => {
+        if (voice.callState === 'incoming') {
+            setSoftPhoneOpen(true);
+            setSoftPhoneMinimized(false);
+        }
+    }, [voice.callState]);
+
     const [incomingCallerName, setIncomingCallerName] = useState<string | null>(null);
     useEffect(() => { if (!voice.incomingCall) { setIncomingCallerName(null); return; } const p = voice.callerInfo?.number; if (!p) return; authedFetch(`/api/pulse/timeline-by-phone?phone=${encodeURIComponent(p)}`).then(r => r.json()).then(d => { if (d.contactName) setIncomingCallerName(d.contactName); }).catch(() => { }); }, [voice.incomingCall, voice.callerInfo?.number]);
 

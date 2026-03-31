@@ -16,7 +16,7 @@ interface SoftPhoneWidgetProps { voice: UseTwilioDeviceReturn; open: boolean; mi
 
 export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({ voice, open, minimized, onClose, onMinimize }) => {
     const { inputValue, normalizedNumber, selectedContactName, showKeypad, setShowKeypad, showSearch, callError, blancNumbers, selectedCallerId, setSelectedCallerId, handleInputChange, handleContactSelect, handleCall, handleKeyDown, handleDtmf, setShowSearch } = useSoftPhoneWidget(voice, open);
-    const { callState, callDuration, callerInfo, deviceReady, error, isMuted, acceptCall, declineCall, hangUp, toggleMute } = voice;
+    const { callState, callDuration, callerInfo, deviceReady, error, isMuted, acceptCall, declineCall, hangUp, toggleMute, pendingCount, pendingCallerInfo } = voice;
 
     const formatDuration = (seconds: number) => { const m = Math.floor(seconds / 60); const s = seconds % 60; return `${m}:${s.toString().padStart(2, '0')}`; };
 
@@ -59,6 +59,7 @@ export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({ voice, open, m
                     {callState === 'connected' && <div className="softphone-controls-row"><button className={`softphone-btn softphone-btn-secondary ${isMuted ? 'active' : ''}`} onClick={toggleMute} title={isMuted ? 'Unmute' : 'Mute'}>{isMuted ? <MicOff size={18} /> : <Mic size={18} />}</button><button className={`softphone-btn softphone-btn-secondary ${showKeypad ? 'active' : ''}`} onClick={() => setShowKeypad(!showKeypad)} title="Keypad"><Grid3x3 size={18} /></button></div>}
                     {showKeypad && callState === 'connected' && <div className="softphone-keypad">{DTMF_KEYS.map(key => <button key={key} className="softphone-keypad-btn" onClick={() => handleDtmf(key)}>{key}</button>)}</div>}
                     <div className="softphone-actions"><button className="softphone-btn softphone-btn-end" onClick={hangUp}><PhoneOff size={18} />End Call</button></div>
+                    {pendingCount > 0 && <div className="softphone-pending-banner"><PhoneIncoming size={14} /><span>Call waiting{pendingCallerInfo ? `: ${formatPhoneDisplay(pendingCallerInfo.number)}` : ''}</span></div>}
                 </>)}
                 {['ended', 'failed'].includes(callState) && <div className="softphone-call-info"><div className={`softphone-call-status ${status.className}`}>{status.label}</div></div>}
                 {error && <div className="softphone-error">{error}</div>}

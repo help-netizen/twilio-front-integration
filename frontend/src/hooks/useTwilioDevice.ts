@@ -28,6 +28,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
     const [isMuted, setIsMuted] = useState(false);
     const [phoneAllowed, setPhoneAllowed] = useState(true);
     const [pendingCount, setPendingCount] = useState(0);
+    const [pendingCallerInfo, setPendingCallerInfo] = useState<{ number: string } | null>(null);
 
     const durationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const connectedAtRef = useRef<number | null>(null);
@@ -40,6 +41,8 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
     const pendingCallsRef = useRef<PendingCall[]>([]);
     const syncPendingCount = useCallback(() => {
         setPendingCount(pendingCallsRef.current.length);
+        const first = pendingCallsRef.current[0];
+        setPendingCallerInfo(first ? { number: first.from } : null);
     }, []);
 
     // Busy-check ref: true when dispatcher is on an active call.
@@ -65,10 +68,23 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
         syncPendingCount();
 
         console.log('[SoftPhone] Promoting pending call:', next.from);
+        busyRef.current = true;
         setIncomingCall(next.call);
         setCallState('incoming');
         setCallerInfo({ number: next.from });
         startRingtone();
+
+        // Attach handlers for the promoted call (cancel/reject by remote party)
+        next.call.on('cancel', () => {
+            console.log('[SoftPhone] Promoted call cancelled:', next.from);
+            stopRingtone(); setIncomingCall(null); setCallerInfo(null);
+            busyRef.current = false;
+            if (pendingCallsRef.current.some(pc => pc.call.status() === 'pending')) {
+                promoteNextPending();
+            } else {
+                setCallState('idle'); syncPendingCount();
+            }
+        });
     }, [syncPendingCount]);
 
     const resetToIdle = useCallback((delay: number) => {
@@ -183,10 +199,20 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
         incomingCall.on('error', (err) => { setError(err.message || 'Call error'); setCallState('failed'); stopDurationTimer(); setActiveCall(null); setIsMuted(false); busyRef.current = false; setTimeout(() => { setCallState('idle'); setCallDuration(0); setCallerInfo(null); setError(null); }, 3000); });
     }, [incomingCall, startDurationTimer, stopDurationTimer, resetToIdle]);
 
-    const declineCall = useCallback(() => { if (incomingCall) { stopRingtone(); incomingCall.reject(); setIncomingCall(null); setCallState('idle'); setCallerInfo(null); } }, [incomingCall]);
+    const declineCall = useCallback(() => {
+        if (!incomingCall) return;
+        stopRingtone(); incomingCall.reject(); setIncomingCall(null); setCallerInfo(null);
+        busyRef.current = false;
+        // Promote next pending call if any, otherwise go idle
+        if (pendingCallsRef.current.some(pc => pc.call.status() === 'pending')) {
+            promoteNextPending();
+        } else {
+            setCallState('idle');
+        }
+    }, [incomingCall, promoteNextPending]);
     const hangUp = useCallback(() => { if (activeCall) activeCall.disconnect(); if (incomingCall) { incomingCall.reject(); setIncomingCall(null); } }, [activeCall, incomingCall]);
     const toggleMute = useCallback(() => { if (activeCall) { const newMuted = !activeCall.isMuted(); activeCall.mute(newMuted); setIsMuted(newMuted); } }, [activeCall]);
     const sendDigits = useCallback((digits: string) => { if (activeCall) activeCall.sendDigits(digits); }, [activeCall]);
 
-    return { device, activeCall, incomingCall, callState, callDuration, callerInfo, makeCall, acceptCall, declineCall, hangUp, toggleMute, isMuted, sendDigits, deviceReady, error, phoneAllowed, pendingCount };
+    return { device, activeCall, incomingCall, callState, callDuration, callerInfo, makeCall, acceptCall, declineCall, hangUp, toggleMute, isMuted, sendDigits, deviceReady, error, phoneAllowed, pendingCount, pendingCallerInfo };
 }
