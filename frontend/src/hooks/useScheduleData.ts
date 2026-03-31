@@ -10,11 +10,15 @@ import {
     format,
 } from 'date-fns';
 import {
-    fetchScheduleItems, fetchDispatchSettings,
+    fetchScheduleItems, fetchDispatchSettings, updateDispatchSettings,
+    rescheduleItem, reassignItem, createFromSlot,
+    loadPersistedFilters, persistFilters,
     type ScheduleItem, type DispatchSettings, type ScheduleFilters,
+    type CreateFromSlotPayload,
 } from '../services/scheduleApi';
 import { authedFetch } from '../services/apiClient';
 import { useRealtimeEvents } from './useRealtimeEvents';
+import { toast } from 'sonner';
 
 export interface ProviderInfo {
     id: string;
@@ -25,6 +29,12 @@ export interface ProviderInfo {
 
 export type ViewMode = 'day' | 'week' | 'month' | 'timeline' | 'timeline-week';
 
+export interface SidebarLayer {
+    type: 'schedule-item' | 'customer' | 'provider';
+    data: ScheduleItem | Record<string, any>;
+    title: string;
+}
+
 export interface ScheduleState {
     items: ScheduleItem[];
     settings: DispatchSettings | null;
@@ -33,7 +43,7 @@ export interface ScheduleState {
     currentDate: Date;
     viewMode: ViewMode;
     filters: Partial<ScheduleFilters>;
-    selectedItem: ScheduleItem | null;
+    sidebarStack: SidebarLayer[];
 }
 
 const DEFAULT_SETTINGS: DispatchSettings = {
@@ -53,8 +63,13 @@ export function useScheduleData() {
     const [error, setError] = useState<string | null>(null);
     const [currentDate, setCurrentDate] = useState<Date>(new Date());
     const [viewMode, setViewMode] = useState<ViewMode>('week');
-    const [filters, setFilters] = useState<Partial<ScheduleFilters>>({});
-    const [selectedItem, setSelectedItem] = useState<ScheduleItem | null>(null);
+    const [filters, setFiltersRaw] = useState<Partial<ScheduleFilters>>(() => loadPersistedFilters());
+
+    const setFilters = useCallback((f: Partial<ScheduleFilters>) => {
+        setFiltersRaw(f);
+        persistFilters(f);
+    }, []);
+    const [sidebarStack, setSidebarStack] = useState<SidebarLayer[]>([]);
 
     // ── Date range derived from viewMode + currentDate ───────────────────────
 
@@ -172,18 +187,41 @@ export function useScheduleData() {
         });
     }, [viewMode]);
 
-    // ── Selection ────────────────────────────────────────────────────────────
+    // ── Sidebar stack ──────────────────────────────────────────────────────
 
-    const selectItem = useCallback((item: ScheduleItem | null) => {
-        setSelectedItem(item);
+    const pushLayer = useCallback((layer: SidebarLayer) => {
+        setSidebarStack(prev => [...prev, layer]);
     }, []);
 
-    const clearSelection = useCallback(() => setSelectedItem(null), []);
+    const popLayer = useCallback(() => {
+        setSidebarStack(prev => prev.length > 0 ? prev.slice(0, -1) : prev);
+    }, []);
+
+    const clearStack = useCallback(() => setSidebarStack([]), []);
+
+    // Backward-compat: selectItem from calendar replaces entire stack with one layer
+    const selectItem = useCallback((item: ScheduleItem | null) => {
+        if (!item) { clearStack(); return; }
+        setSidebarStack([{ type: 'schedule-item', data: item, title: item.title }]);
+    }, [clearStack]);
+
+    // Derived: top layer's item for backward compat
+    const selectedItem = sidebarStack.length > 0 ? sidebarStack[sidebarStack.length - 1] : null;
 
     // ── Computed ─────────────────────────────────────────────────────────────
 
-    const scheduledItems = useMemo(() => items.filter(i => i.start_at != null), [items]);
-    const unscheduledItems = useMemo(() => items.filter(i => i.start_at == null), [items]);
+    const providerFilteredItems = useMemo(() => {
+        if (!filters.providerIds?.length) return items;
+        const wantUnassigned = filters.providerIds.includes('__unassigned__');
+        return items.filter(item => {
+            const techs = item.assigned_techs;
+            if (!techs?.length) return wantUnassigned;
+            return techs.some(t => filters.providerIds!.includes(t.id || t.name));
+        });
+    }, [items, filters.providerIds]);
+
+    const scheduledItems = useMemo(() => providerFilteredItems.filter(i => i.start_at != null), [providerFilteredItems]);
+    const unscheduledItems = useMemo(() => providerFilteredItems.filter(i => i.start_at == null), [providerFilteredItems]);
 
     const itemCounts = useMemo(() => {
         const counts = { total: scheduledItems.length, jobs: 0, leads: 0, tasks: 0 };
@@ -194,6 +232,68 @@ export function useScheduleData() {
         }
         return counts;
     }, [scheduledItems]);
+
+    // ── Mutations ──────────────────────────────────────────────────────────
+
+    const handleReschedule = useCallback(async (
+        entityType: string, entityId: number, startAt: string, endAt: string, title?: string,
+    ) => {
+        // Optimistic: store previous items
+        const prev = items;
+        setItems(cur => cur.map(i =>
+            i.entity_type === entityType && i.entity_id === entityId
+                ? { ...i, start_at: startAt, end_at: endAt }
+                : i,
+        ));
+        try {
+            await rescheduleItem(entityType, entityId, startAt, endAt);
+            toast.success(`${title || 'Item'} rescheduled`);
+        } catch (err: any) {
+            setItems(prev);
+            toast.error(err.message || 'Failed to reschedule');
+        }
+    }, [items]);
+
+    const handleReassign = useCallback(async (
+        entityType: string, entityId: number, assigneeId: string | null, assigneeName?: string, title?: string,
+    ) => {
+        const prev = items;
+        setItems(cur => cur.map(i => {
+            if (i.entity_type !== entityType || i.entity_id !== entityId) return i;
+            const newTechs = assigneeId && assigneeName
+                ? [{ id: assigneeId, name: assigneeName }]
+                : null;
+            return { ...i, assigned_techs: newTechs };
+        }));
+        try {
+            await reassignItem(entityType, entityId, assigneeId);
+            const target = assigneeName || 'Unassigned';
+            toast.success(`${title || 'Item'} reassigned to ${target}`);
+        } catch (err: any) {
+            setItems(prev);
+            toast.error(err.message || 'Failed to reassign');
+        }
+    }, [items]);
+
+    const handleCreateFromSlot = useCallback(async (payload: CreateFromSlotPayload) => {
+        try {
+            await createFromSlot(payload);
+            toast.success(`Task "${payload.title}" created`);
+            loadItems();
+        } catch (err: any) {
+            toast.error(err.message || 'Failed to create task');
+        }
+    }, [loadItems]);
+
+    const handleUpdateSettings = useCallback(async (updates: Partial<DispatchSettings>) => {
+        try {
+            const updated = await updateDispatchSettings(updates);
+            setSettings(updated);
+            toast.success('Settings saved');
+        } catch (err: any) {
+            toast.error(err.message || 'Failed to save settings');
+        }
+    }, []);
 
     // ── Effective settings ───────────────────────────────────────────────────
 
@@ -212,14 +312,23 @@ export function useScheduleData() {
         viewMode,
         filters,
         selectedItem,
+        sidebarStack,
 
         setViewMode,
         navigateDate,
         setCurrentDate,
         setFilters,
         selectItem,
-        clearSelection,
+        pushLayer,
+        popLayer,
+        clearStack,
         refresh: loadItems,
         dateRange,
+
+        // Mutations
+        handleReschedule,
+        handleReassign,
+        handleCreateFromSlot,
+        handleUpdateSettings,
     };
 }

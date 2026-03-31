@@ -58,11 +58,27 @@ export const MonthView: React.FC<MonthViewProps> = ({ currentDate, items, settin
     const todayStr = todayInTZ(tz);
 
     return (
-        <div className="flex flex-col flex-1 overflow-auto">
+        <div
+            className="flex flex-col flex-1 overflow-auto"
+            style={{
+                background: 'var(--sched-surface)',
+                border: '1px solid rgba(255, 255, 255, 0.55)',
+                borderRadius: 'var(--sched-radius-xl)',
+                boxShadow: 'var(--sched-shadow-main)',
+                backdropFilter: 'blur(24px)',
+            }}
+        >
             {/* Weekday headers */}
-            <div className="grid grid-cols-7 border-b sticky top-0 bg-white z-10">
+            <div className="grid grid-cols-7 sticky top-0 z-10" style={{
+                borderBottom: '1px solid var(--sched-line)',
+                background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.66), rgba(244, 237, 226, 0.42))',
+            }}>
                 {WEEKDAY_LABELS.map(label => (
-                    <div key={label} className="text-center py-2 text-xs font-medium text-gray-500 uppercase border-r last:border-r-0">
+                    <div key={label} className="text-center py-3 text-[11px] font-semibold uppercase" style={{
+                        borderRight: '1px solid var(--sched-line)',
+                        color: 'var(--sched-ink-3)',
+                        letterSpacing: '0.14em',
+                    }}>
                         {label}
                     </div>
                 ))}
@@ -71,7 +87,7 @@ export const MonthView: React.FC<MonthViewProps> = ({ currentDate, items, settin
             {/* Week rows */}
             <div className="flex-1">
                 {weeks.map((week, wi) => (
-                    <div key={wi} className="grid grid-cols-7 border-b">
+                    <div key={wi} className="grid grid-cols-7" style={{ borderBottom: '1px solid var(--sched-line)' }}>
                         {week.map(day => {
                             const key = format(day, 'yyyy-MM-dd');
                             const dayItems = itemsByDay.get(key) || [];
@@ -86,27 +102,44 @@ export const MonthView: React.FC<MonthViewProps> = ({ currentDate, items, settin
                                     key={key}
                                     type="button"
                                     onClick={() => onSelectDay(day)}
-                                    className={`
-                                        min-h-24 p-1.5 border-r last:border-r-0 text-left
-                                        hover:bg-gray-50 transition-colors cursor-pointer
-                                        focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 outline-none
-                                        ${!inMonth ? 'bg-gray-50/50' : ''}
-                                    `}
+                                    className="min-h-24 p-1.5 text-left flex flex-col items-start transition-colors cursor-pointer focus-visible:ring-2 focus-visible:ring-offset-1 outline-none"
+                                    style={{
+                                        borderRight: '1px solid var(--sched-line)',
+                                        background: isToday
+                                            ? 'var(--sched-today-soft)'
+                                            : !inMonth
+                                                ? 'rgba(239, 233, 223, 0.3)'
+                                                : 'transparent',
+                                    }}
+                                    onMouseEnter={(e) => { if (!isToday) (e.currentTarget as HTMLElement).style.background = 'rgba(252, 249, 244, 0.6)'; }}
+                                    onMouseLeave={(e) => { if (!isToday) (e.currentTarget as HTMLElement).style.background = !inMonth ? 'rgba(239, 233, 223, 0.3)' : 'transparent'; }}
                                 >
-                                    <div className={`
-                                        text-sm mb-1
-                                        ${isToday ? 'bg-blue-600 text-white rounded-full w-7 h-7 flex items-center justify-center font-bold' : ''}
-                                        ${!inMonth ? 'text-gray-300' : 'text-gray-700'}
-                                    `}>
+                                    <div className="text-sm mb-1" style={{
+                                        ...(isToday ? {
+                                            background: 'var(--sched-job)',
+                                            color: '#fff',
+                                            borderRadius: '50%',
+                                            width: '28px',
+                                            height: '28px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            fontWeight: 700,
+                                            fontFamily: 'Manrope, sans-serif',
+                                        } : {
+                                            color: !inMonth ? 'var(--sched-ink-3)' : 'var(--sched-ink-1)',
+                                            opacity: !inMonth ? 0.4 : 1,
+                                        }),
+                                    }}>
                                         {format(day, 'd')}
                                     </div>
 
                                     {/* Count badges */}
                                     {dayItems.length > 0 && (
                                         <div className="flex flex-wrap gap-0.5 mb-1">
-                                            {jobCount > 0 && <Badge variant="outline" className="text-[10px] px-1 py-0 bg-blue-50 text-blue-700 border-blue-200">{jobCount} job{jobCount > 1 ? 's' : ''}</Badge>}
-                                            {leadCount > 0 && <Badge variant="outline" className="text-[10px] px-1 py-0 bg-amber-50 text-amber-700 border-amber-200">{leadCount} lead{leadCount > 1 ? 's' : ''}</Badge>}
-                                            {taskCount > 0 && <Badge variant="outline" className="text-[10px] px-1 py-0 bg-green-50 text-green-700 border-green-200">{taskCount} task{taskCount > 1 ? 's' : ''}</Badge>}
+                                            {jobCount > 0 && <Badge variant="outline" className="text-[10px] px-1 py-0" style={{ background: 'var(--sched-job-soft)', color: 'var(--sched-job)', borderColor: 'rgba(47, 99, 216, 0.2)' }}>{jobCount} job{jobCount > 1 ? 's' : ''}</Badge>}
+                                            {leadCount > 0 && <Badge variant="outline" className="text-[10px] px-1 py-0" style={{ background: 'var(--sched-lead-soft)', color: 'var(--sched-lead)', borderColor: 'rgba(178, 106, 29, 0.2)' }}>{leadCount} lead{leadCount > 1 ? 's' : ''}</Badge>}
+                                            {taskCount > 0 && <Badge variant="outline" className="text-[10px] px-1 py-0" style={{ background: 'var(--sched-task-soft)', color: 'var(--sched-task)', borderColor: 'rgba(27, 139, 99, 0.2)' }}>{taskCount} task{taskCount > 1 ? 's' : ''}</Badge>}
                                         </div>
                                     )}
 
@@ -115,14 +148,15 @@ export const MonthView: React.FC<MonthViewProps> = ({ currentDate, items, settin
                                         {dayItems.slice(0, 2).map(item => (
                                             <div
                                                 key={`${item.entity_type}-${item.entity_id}`}
-                                                className="text-[11px] leading-tight text-gray-600 truncate"
+                                                className="text-[11px] leading-tight truncate"
+                                                style={{ color: 'var(--sched-ink-2)' }}
                                                 onClick={e => { e.stopPropagation(); onSelectItem(item); }}
                                             >
                                                 {item.title}
                                             </div>
                                         ))}
                                         {dayItems.length > 2 && (
-                                            <div className="text-[10px] text-gray-400">
+                                            <div className="text-[10px]" style={{ color: 'var(--sched-ink-3)' }}>
                                                 +{dayItems.length - 2} more
                                             </div>
                                         )}

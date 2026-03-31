@@ -16,7 +16,7 @@
 | F010 | AI функции (Summary, Polish, Transcript) | ✅ Реализована | `backend/src/`, Gemini API |
 | F011 | Refactor-readiness audit | ⏳ Запланирована | `docs/`, `src/server.js`, `backend/src/`, `frontend/src/`, `tests/` |
 | F012 | Multi-tenant company model, Super Admin & RBAC | ⏳ Запланирована | `docs/specs/PF007-multitenant-company-model-rbac.md`, `docs/specs/PF007-technical-design.md`, `docs/specs/PF102-tenancy-rbac-sprint-plan.md`, `docs/specs/PF103-tenancy-rbac-db-api-contracts.md` |
-| F013 | Schedule / Dispatcher MVP + UX hardening | 🔧 В разработке (Sprint 2 ✅, Sprint 3 ✅, Sprint 4 ✅, Sprint 5 ✅) | `frontend/src/pages/SchedulePage.tsx`, `frontend/src/components/schedule/`, `frontend/src/hooks/useScheduleData.ts`, `frontend/src/services/scheduleApi.ts`, `backend/src/routes/schedule.js`, `backend/src/services/scheduleService.js`, `backend/src/db/scheduleQueries.js`, `docs/specs/PF001-unified-schedule-dispatcher.md` |
+| F013 | Schedule / Dispatcher MVP + UX hardening | 🔧 В разработке (Sprint 2 ✅, Sprint 3 ✅, Sprint 4 ✅, Sprint 5 ✅, Sprint 6 ✅) | `frontend/src/pages/SchedulePage.tsx`, `frontend/src/components/schedule/`, `frontend/src/hooks/useScheduleData.ts`, `frontend/src/services/scheduleApi.ts`, `backend/src/routes/schedule.js`, `backend/src/services/scheduleService.js`, `backend/src/db/scheduleQueries.js`, `docs/specs/PF001-unified-schedule-dispatcher.md` |
 
 ---
 
@@ -294,6 +294,31 @@
 
 **Scope:** Frontend-only, без изменения backend/API. Desktop-first.
 
+#### Sprint 6: Interactive Dispatch — DnD, Filters, Settings, Create-from-slot (✅ DONE)
+
+**Цель:** Превратить read-only расписание в полноценный интерактивный диспетчерский инструмент: drag-and-drop reschedule/reassign, расширенные фильтры с persistence, UI настроек dispatch, создание items из пустого слота.
+
+**Спецификация:** `docs/specs/F013-schedule-sprint3-ux-hardening.md` (сценарии 3–5, 7–8)
+
+**Пользовательские сценарии:**
+
+| # | Сценарий | Spec ref | Backend endpoint |
+|---|----------|----------|------------------|
+| S6-1 | **Drag-and-drop reschedule** — диспетчер перетаскивает карточку job/task на другой временной слот (DayView, WeekView, TimelineView). Snap-to-grid, ghost preview, optimistic update, toast confirmation. Leads read-only. | Scenario 3 | `PATCH /api/schedule/items/:entityType/:entityId/reschedule` |
+| S6-2 | **Drag-and-drop reassign** — диспетчер перетаскивает карточку между строками провайдеров (TimelineView, TimelineWeekView). Поддержка unassign (drop to Unassigned row). Combined reschedule+reassign в TimelineView. Leads не поддерживают reassign. | Scenario 4 | `PATCH /api/schedule/items/:entityType/:entityId/reassign` |
+| S6-3 | **Расширенные фильтры** — multi-select по статусам, фильтр по job_type, source, tags. Сохранение фильтров в localStorage, кнопка Reset. Collapsible "More Filters" row в toolbar. | Scenario 5 | Существующий `GET /api/schedule/items` (query params) |
+| S6-4 | **DispatchSettingsDialog** — модальное окно настроек: timezone (searchable IANA dropdown), work hours (time pickers), work days (toggle Mon-Sun), slot duration, buffer. Доступ на редактирование — admin/dispatcher. | Scenario 7 | `GET/PATCH /api/schedule/settings` |
+| S6-5 | **Create-from-slot** — click на пустой слот → context menu "Create Task / Lead / Job". Task создаётся inline, Lead/Job открывают CreateLeadJobWizard с предзаполненным временем и провайдером. | Scenario 8 | `POST /api/schedule/items/from-slot` |
+
+**Ключевые доработки:**
+1. **Drag-and-drop engine** — HTML5 DnD API, snap-to-grid по slot_duration из settings, ghost card preview, optimistic UI update с revert on error
+2. **Filter UI** — multi-select dropdowns (Shadcn Popover + Command), localStorage persistence key `schedule-filters`, restore on mount
+3. **Settings dialog** — DispatchSettingsDialog компонент, inline validation (end > start), immediate view refresh после сохранения
+4. **Create-from-slot** — click position → time calculation в company TZ, context menu, интеграция с CreateLeadJobWizard
+5. **Error handling** — revert on API error, toast notifications для всех мутаций, 404 handling для удалённых items
+
+**Scope:** Frontend + API integration. Backend endpoints уже реализованы (Sprint 1-2). Desktop-first.
+
 **Ограничения и нефункциональные требования:**
 - Schedule НЕ дублирует Pulse timeline — это planning surface, не event history
 - Не создавать отдельную `schedule_items` business table — read model поверх jobs/leads/tasks
@@ -332,5 +357,40 @@
 **Зависимости:**
 - `dispatch_settings` table (миграция 051, уже в production)
 - `company.timezone` — доступен через `useAuth().company.timezone` на фронтенде
+
+#### Sprint 7: Design Refresh — Figma Make UI Overhaul (PLANNED)
+
+**Источник:** Figma Make макет "Dispatch Scheduling UI Design" (`https://www.figma.com/design/Q3uyURs2RLHfdKzwZSHf4W/Dispatch-Scheduling-UI-Design`), экспортирован в React+Vite: `https://github.com/help-netizen/Dispatchschedulinguidesign`.
+
+**Цель:** Полная визуальная перестройка UI расписания по макету Figma Make — тёплая бежево-кремовая палитра, frosted-glass поверхности, типографика Manrope/IBM Plex Sans, новая компонентная структура (CalendarControls, AIAssistantModal, AIScheduleInput), переработанные карточки, sidebar и unscheduled panel. Без изменения backend/API контрактов.
+
+**Спецификация:** `docs/specs/F013-schedule-sprint7-design-refresh.md`
+**Детальная спецификация:** `docs/specs/F013-schedule-sprint7-spec.md`
+**Тест-кейсы:** `docs/test-cases/F013-schedule-sprint7.md`
+
+**Пользовательские сценарии:**
+
+| # | Сценарий | Описание |
+|---|----------|----------|
+| S7-1 | **Тёплая палитра + frosted-glass** | Диспетчер видит schedule в тёплой бежевой палитре (#efe9df фон, rgba surfaces с backdrop-filter: blur) вместо белого UI. Все компоненты используют CSS custom properties. |
+| S7-2 | **Новый ScheduleToolbar** | Toolbar упрощён до заголовка "Schedule" + кнопка AI Assistant. Навигация, view-mode selector и фильтры перемещены в CalendarControls — отдельный компонент под unscheduled panel. |
+| S7-3 | **CalendarControls** | Компонент с view-mode dropdown (Day/Week/Month/Timeline/TL Week), date navigation (prev/today/next), expandable filter bar (search, entity type, assignment, legend chips). |
+| S7-4 | **AI Assistant (modal + inline input)** | Кнопка "AI Assistant" в toolbar → модальное окно (AIAssistantModal): textarea, Cmd+Enter submit, processing state с Sparkles анимацией. Inline AIScheduleInput card с аналогичной функциональностью. Phase 1: UI-only stub (onSubmit → console.log). |
+| S7-5 | **Переработанные карточки (ScheduleItemCard)** | Gradient backgrounds по entity_type (job=blue, lead=amber, task=green), 4px left accent border, entity badge + status badge в header, Manrope font для title, meta footer (tech + address). |
+| S7-6 | **Horizontal UnscheduledPanel** | Панель перемещена НАД CalendarControls. Горизонтальный scroll (flex + overflow-x-auto), карточки 280px fixed width, min-height 148px. Header с count badge. |
+| S7-7 | **Redesigned ScheduleSidebar** | 360px width, frosted-glass surface, Manrope 28px title, schedule rail visualization (3-segment progress bar), detail sections в rounded-[20px] cards, crew assignee pills (blue), tag pills, action buttons (primary gradient + secondary). |
+| S7-8 | **Calendar grid styling** | Week/Day views: HOUR_HEIGHT 86px (вместо 64/80px), gradient day-lane backgrounds, enhanced today column highlight (#fff8eb), time axis с gradient background, 92px gutter. Calendar frame min-width: 1320px (week), 800px (day). |
+| S7-9 | **Typography + Fonts** | Manrope для headings/titles/numbers, IBM Plex Sans для body text. Eyebrow labels: 11px, uppercase, 0.14em letter-spacing. Clamp title: 34-44px. |
+| S7-10 | **Page layout refactor** | CSS Grid layout: `grid-template-columns: minmax(0,1fr) 360px` при открытом sidebar, `1fr` без. Background glow effects (2 fixed blurred circles). max-width: 1780px workspace. |
+| S7-11 | **Responsive breakpoints** | ≤1500px: sidebar collapses to full-width (max 760px). ≤1100px: workspace padding 18px, unscheduled grid 2 columns. ≤760px: filters full-width, unscheduled single column. |
+
+**Scope:** Frontend-only. Без изменения backend/API. Без изменения бизнес-логики DnD/reschedule/reassign/SSE. AI features — UI stub only (Phase 1).
+
+**Принципы реализации:**
+- CSS custom properties в `schedule-redesign.css` для всех дизайн-токенов (цвета, радиусы, тени, hour-height)
+- Сохранение всех существующих props/callbacks компонентов — изменяется только визуальное представление
+- DnD, slot click, SSE refresh, filter persistence — сохраняются без изменений
+- Inline styles из макета конвертируются в CSS classes/variables где возможно
+- Fonts подключаются через CSS @import (Google Fonts: Manrope, IBM Plex Sans)
 - `frontend/src/utils/companyTime.ts` — утилиты dateInTZ, todayInTZ, minutesSinceMidnight, formatTimeInTZ, dateKeyInTZ (уже реализованы)
 - `req.companyFilter?.company_id` middleware — уже настроен для `/api/schedule`

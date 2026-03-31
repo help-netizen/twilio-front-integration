@@ -1,12 +1,14 @@
 /**
  * DayView — Single column with hourly time slots.
  * Timezone-aware: all positioning and labels use company TZ from settings.
+ * Supports DnD reschedule and create-from-slot.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback, useRef } from 'react';
 import { format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
 import { OverflowPopover } from './OverflowPopover';
+import { SlotContextMenu } from './SlotContextMenu';
 import type { ScheduleItem, DispatchSettings } from '../../services/scheduleApi';
 import {
     todayInTZ, dateInTZ, minutesSinceMidnight,
@@ -14,6 +16,7 @@ import {
 } from '../../utils/companyTime';
 import { assignLanes } from '../../utils/scheduleLayout';
 import type { LayoutItem } from '../../utils/scheduleLayout';
+import { setDragData, getDragData, hasDragData } from '../../hooks/useScheduleDnD';
 
 const MAX_VISIBLE_LANES = 2;
 
@@ -22,6 +25,8 @@ interface DayViewProps {
     items: ScheduleItem[];
     settings: DispatchSettings;
     onSelectItem: (item: ScheduleItem) => void;
+    onReschedule?: (entityType: string, entityId: number, startAt: string, endAt: string, title?: string) => void;
+    onCreateFromSlot?: (title: string, startAt: string, endAt: string) => void;
 }
 
 function parseTime(t: string): number {
@@ -37,11 +42,15 @@ function buildHourSlots(startTime: string, endTime: string): number[] {
     return hours;
 }
 
-const HOUR_HEIGHT = 80; // px per hour (h-20 = 80px)
+const HOUR_HEIGHT = 86; // px per hour — Sprint 7 design refresh
 
-export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, onSelectItem }) => {
+export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, onSelectItem, onReschedule, onCreateFromSlot }) => {
     const tz = settings.timezone || 'America/New_York';
+    const slotDuration = settings.slot_duration || 60;
     const [overflowAnchor, setOverflowAnchor] = useState<{ items: ScheduleItem[]; rect: DOMRect } | null>(null);
+    const [dropHighlightMin, setDropHighlightMin] = useState<number | null>(null);
+    const [slotMenu, setSlotMenu] = useState<{ top: number; left: number; startAt: string; endAt: string } | null>(null);
+    const gridRef = useRef<HTMLDivElement>(null);
     const startHour = parseTime(settings.work_start_time);
     const endHour = parseTime(settings.work_end_time);
     const totalHours = endHour - startHour;
@@ -52,20 +61,15 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
         [settings.work_start_time, settings.work_end_time],
     );
 
-    // Current date key in company TZ
     const dateKey = format(currentDate, 'yyyy-MM-dd');
-
-    // Filter items for this day (using company TZ)
     const dayItems = useMemo(
         () => items.filter(i => i.start_at && dateKeyInTZ(i.start_at, tz) === dateKey),
         [items, dateKey, tz],
     );
 
-    // Today detection in company TZ
     const todayStr = todayInTZ(tz);
     const isToday = dateKey === todayStr;
 
-    // Past-time overlay + now-line
     const nowMinFromGrid = isToday
         ? minutesSinceMidnight(new Date(), tz) - startHour * 60
         : 0;
@@ -73,43 +77,139 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
         ? Math.max(0, Math.min(nowMinFromGrid, totalHours * 60)) / 60 * HOUR_HEIGHT
         : 0;
 
-    // Hour labels in company TZ (using an arbitrary date to format)
     const [dy, dm, dd] = dateKey.split('-').map(Number);
 
+    // ── DnD helpers ──────────────────────────────────────────────────────────
+
+    const pxToMinutes = useCallback((offsetY: number): number => {
+        const rawMin = (offsetY / HOUR_HEIGHT) * 60 + startHour * 60;
+        return Math.round(rawMin / slotDuration) * slotDuration;
+    }, [startHour, slotDuration]);
+
+    const handleDragOver = useCallback((e: React.DragEvent) => {
+        if (!hasDragData(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        const rect = gridRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const offsetY = e.clientY - rect.top;
+        setDropHighlightMin(pxToMinutes(offsetY));
+    }, [pxToMinutes]);
+
+    const handleDrop = useCallback((e: React.DragEvent) => {
+        e.preventDefault();
+        setDropHighlightMin(null);
+        const data = getDragData(e);
+        if (!data || !onReschedule) return;
+        const rect = gridRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const offsetY = e.clientY - rect.top;
+        const newStartMin = pxToMinutes(offsetY);
+        const newEndMin = newStartMin + data.durationMin;
+        const newStartHour = Math.floor(newStartMin / 60);
+        const newStartMinute = newStartMin % 60;
+        const newEndHour = Math.floor(newEndMin / 60);
+        const newEndMinute = newEndMin % 60;
+        const startAt = dateInTZ(dy, dm, dd, newStartHour, newStartMinute, tz).toISOString();
+        const endAt = dateInTZ(dy, dm, dd, newEndHour, newEndMinute, tz).toISOString();
+        onReschedule(data.entityType, data.entityId, startAt, endAt, data.title);
+    }, [onReschedule, pxToMinutes, dy, dm, dd, tz]);
+
+    const handleDragLeave = useCallback(() => setDropHighlightMin(null), []);
+
+    // ── Slot click for create-from-slot ────────────────────────────────────
+
+    const handleSlotClick = useCallback((e: React.MouseEvent) => {
+        if (!onCreateFromSlot) return;
+        // Only trigger if clicking directly on the grid background, not on items
+        if ((e.target as HTMLElement).closest('[data-schedule-item]')) return;
+        const rect = gridRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const offsetY = e.clientY - rect.top;
+        const clickMin = pxToMinutes(offsetY);
+        const endMin = clickMin + slotDuration;
+        const startHr = Math.floor(clickMin / 60);
+        const startMn = clickMin % 60;
+        const endHr = Math.floor(endMin / 60);
+        const endMn = endMin % 60;
+        const startAt = dateInTZ(dy, dm, dd, startHr, startMn, tz).toISOString();
+        const endAt = dateInTZ(dy, dm, dd, endHr, endMn, tz).toISOString();
+        setSlotMenu({ top: e.clientY, left: e.clientX, startAt, endAt });
+    }, [onCreateFromSlot, pxToMinutes, slotDuration, dy, dm, dd, tz]);
+
     return (
-        <div className="flex flex-col flex-1 overflow-auto">
+        <div
+            className="flex flex-col flex-1 overflow-auto"
+            style={{
+                background: 'var(--sched-surface)',
+                border: '1px solid rgba(255, 255, 255, 0.55)',
+                borderRadius: 'var(--sched-radius-xl)',
+                boxShadow: 'var(--sched-shadow-main)',
+                backdropFilter: 'blur(24px)',
+                minWidth: '800px',
+            }}
+        >
             {/* Header */}
-            <div className="flex border-b sticky top-0 bg-white z-10">
-                <div className="w-16 flex-shrink-0 border-r" />
-                <div className={`flex-1 text-center py-2 text-sm font-medium ${isToday ? 'bg-blue-50 text-blue-700' : 'text-gray-600'}`}>
-                    <div className="text-xs uppercase">{format(currentDate, 'EEEE')}</div>
-                    <div className={`text-lg ${isToday ? 'font-bold' : ''}`}>{format(currentDate, 'MMM d, yyyy')}</div>
+            <div className="flex sticky top-0 z-10" style={{ borderBottom: '1px solid var(--sched-line)', background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.66), rgba(244, 237, 226, 0.42))' }}>
+                <div className="flex-shrink-0 flex items-end p-3 text-[11px] font-semibold uppercase" style={{ width: '92px', borderRight: '1px solid var(--sched-line)', color: 'var(--sched-ink-3)', fontFamily: 'Manrope, sans-serif', letterSpacing: '0.14em' }}>
+                    Hour
+                </div>
+                <div
+                    className="flex-1 flex flex-col justify-start gap-2 p-3"
+                    style={{
+                        minHeight: '104px',
+                        background: isToday ? 'linear-gradient(180deg, rgba(255, 248, 235, 0.96), rgba(255, 244, 224, 0.76))' : 'transparent',
+                    }}
+                >
+                    <span className="text-[11px] font-semibold uppercase tracking-widest" style={{ color: 'var(--sched-ink-3)', letterSpacing: '0.14em' }}>
+                        {format(currentDate, 'EEEE')}
+                    </span>
+                    <span className="text-[30px] leading-none" style={{ fontFamily: 'Manrope, sans-serif', letterSpacing: '-0.05em', color: 'var(--sched-ink-1)' }}>
+                        {format(currentDate, 'd')}
+                    </span>
                 </div>
             </div>
 
             {/* Time grid */}
             <div className="flex flex-1 relative">
                 {/* Time labels */}
-                <div className="w-16 flex-shrink-0 border-r relative">
+                <div className="flex-shrink-0 relative" style={{
+                    width: '92px',
+                    borderRight: '1px solid var(--sched-line)',
+                    background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.52), rgba(242, 235, 223, 0.62))',
+                    backgroundImage: `linear-gradient(180deg, rgba(255, 255, 255, 0.52), rgba(242, 235, 223, 0.62)), repeating-linear-gradient(to bottom, transparent 0 ${HOUR_HEIGHT - 1}px, rgba(118, 106, 89, 0.14) ${HOUR_HEIGHT - 1}px ${HOUR_HEIGHT}px)`,
+                }}>
                     {hourSlots.map(h => (
-                        <div key={h} className="h-20 border-b text-xs text-gray-400 pr-2 text-right pt-0.5">
+                        <div key={h} className="flex justify-end pr-3 pt-2 text-sm" style={{ height: `${HOUR_HEIGHT}px`, color: 'var(--sched-ink-1)' }}>
                             {formatTimeInTZ(dateInTZ(dy, dm, dd, h, 0, tz), tz)}
                         </div>
                     ))}
-                    {/* Now line on label column */}
                     {isToday && pastHeight > 0 && pastHeight < totalHeight && (
                         <div
-                            className="absolute left-0 right-0 border-t-2 border-red-500 z-20 pointer-events-none"
-                            style={{ top: pastHeight }}
+                            className="absolute left-0 right-0 z-20 pointer-events-none"
+                            style={{ top: pastHeight, borderTop: '2px solid var(--sched-danger)' }}
                         />
                     )}
                 </div>
 
                 {/* Day column */}
-                <div className={`flex-1 relative ${isToday ? 'bg-blue-50/30' : ''}`}>
-                    {/* Slot lines */}
+                <div
+                    ref={gridRef}
+                    className="flex-1 relative"
+                    style={{
+                        borderRight: '1px solid var(--sched-line)',
+                        background: isToday
+                            ? `linear-gradient(180deg, rgba(255, 249, 237, 0.88), rgba(255, 249, 237, 0.58)), repeating-linear-gradient(to bottom, transparent 0 ${HOUR_HEIGHT - 1}px, rgba(118, 106, 89, 0.14) ${HOUR_HEIGHT - 1}px ${HOUR_HEIGHT}px)`
+                            : `linear-gradient(180deg, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0.06)), repeating-linear-gradient(to bottom, transparent 0 ${HOUR_HEIGHT - 1}px, rgba(118, 106, 89, 0.14) ${HOUR_HEIGHT - 1}px ${HOUR_HEIGHT}px)`,
+                    }}
+                    onDragOver={handleDragOver}
+                    onDrop={handleDrop}
+                    onDragLeave={handleDragLeave}
+                    onClick={handleSlotClick}
+                >
+                    {/* Slot lines (spacers for height) */}
                     {hourSlots.map(h => (
-                        <div key={h} className="h-20 border-b border-gray-100" />
+                        <div key={h} style={{ height: `${HOUR_HEIGHT}px` }} />
                     ))}
 
                     {/* Past-time overlay + now-line */}
@@ -119,19 +219,46 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                                 className="absolute top-0 left-0 right-0 pointer-events-none z-[1]"
                                 style={{
                                     height: Math.min(pastHeight, totalHeight),
-                                    background: 'rgba(128, 128, 128, 0.18)',
+                                    background: 'rgba(58, 48, 39, 0.06)',
                                 }}
                             />
                             {pastHeight < totalHeight && (
-                                <div
-                                    className="absolute left-0 right-0 border-t-2 border-red-500 z-[6] pointer-events-none"
-                                    style={{ top: pastHeight }}
-                                />
+                                <>
+                                    <div
+                                        className="absolute left-0 right-0 z-[6] pointer-events-none"
+                                        style={{ top: pastHeight, borderTop: '2px solid var(--sched-danger)' }}
+                                    />
+                                    <div
+                                        className="absolute z-[7] pointer-events-none inline-flex items-center px-2.5 rounded-full text-[12px] font-bold"
+                                        style={{
+                                            top: pastHeight - 14,
+                                            right: '12px',
+                                            minHeight: '28px',
+                                            background: 'var(--sched-danger)',
+                                            color: '#fff',
+                                        }}
+                                    >
+                                        {formatTimeInTZ(new Date(), tz)}
+                                    </div>
+                                </>
                             )}
                         </>
                     )}
 
-                    {/* Positioned items with collision lanes (capped at MAX_VISIBLE_LANES) */}
+                    {/* Drop highlight */}
+                    {dropHighlightMin != null && (
+                        <div
+                            className="absolute left-1 right-1 border-2 border-dashed rounded pointer-events-none z-[5]"
+                            style={{
+                                top: ((dropHighlightMin - startHour * 60) / 60) * HOUR_HEIGHT,
+                                height: (slotDuration / 60) * HOUR_HEIGHT,
+                                background: 'rgba(47, 99, 216, 0.1)',
+                                borderColor: 'var(--sched-job)',
+                            }}
+                        />
+                    )}
+
+                    {/* Positioned items with collision lanes */}
                     {(() => {
                         const layoutItems: (LayoutItem & { item: ScheduleItem; itemMin: number; durationMin: number })[] = [];
                         for (const item of dayItems) {
@@ -154,7 +281,6 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                         }
                         const lanes = assignLanes(layoutItems);
 
-                        // Separate visible from overflow
                         const visible: typeof layoutItems = [];
                         const overflowByCluster = new Map<string, { items: ScheduleItem[]; topPx: number }>();
 
@@ -187,11 +313,22 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                                     const totalLanes = Math.min(layout?.totalLanes ?? 1, MAX_VISIBLE_LANES);
                                     const widthPct = 100 / totalLanes;
                                     const leftPct = lane * widthPct;
+                                    const isDraggable = item.entity_type !== 'lead';
 
                                     return (
                                         <div
                                             key={key}
-                                            className="absolute z-10"
+                                            data-schedule-item
+                                            className={`absolute z-10 ${isDraggable ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                                            draggable={isDraggable}
+                                            onDragStart={isDraggable ? (e) => {
+                                                setDragData(e, item, durationMin);
+                                                (e.target as HTMLElement).style.opacity = '0.5';
+                                            } : undefined}
+                                            onDragEnd={(e) => {
+                                                (e.target as HTMLElement).style.opacity = '1';
+                                                setDropHighlightMin(null);
+                                            }}
                                             style={{
                                                 top: topPx,
                                                 height: Math.max(heightPx, 32),
@@ -231,6 +368,18 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                     onSelectItem={(item) => { setOverflowAnchor(null); onSelectItem(item); }}
                     onClose={() => setOverflowAnchor(null)}
                     timezone={tz}
+                />
+            )}
+
+            {/* Slot context menu */}
+            {slotMenu && onCreateFromSlot && (
+                <SlotContextMenu
+                    anchorRect={{ top: slotMenu.top, left: slotMenu.left }}
+                    startAt={slotMenu.startAt}
+                    endAt={slotMenu.endAt}
+                    timezone={tz}
+                    onCreateTask={(title) => onCreateFromSlot(title, slotMenu.startAt, slotMenu.endAt)}
+                    onClose={() => setSlotMenu(null)}
                 />
             )}
         </div>
