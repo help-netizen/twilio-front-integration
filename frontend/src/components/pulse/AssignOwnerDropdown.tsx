@@ -42,11 +42,11 @@ export function AssignOwnerDropdown({ timelineId, onAssigned }: { timelineId: nu
                 <UserRound className="size-3" /> Assign
             </button>
             {open && (
-                <div className="absolute left-0 top-full mt-1 z-50 bg-white rounded-md shadow-lg border border-gray-200 py-1 min-w-[180px] max-h-[200px] overflow-y-auto">
+                <div className="absolute left-0 top-full mt-1 z-50 bg-card rounded-xl shadow-lg border border-border py-1 min-w-[180px] max-h-[200px] overflow-y-auto">
                     {!loaded ? (
-                        <div className="px-3 py-2 text-xs text-gray-400">Loading…</div>
+                        <div className="px-3 py-2 text-xs text-muted-foreground">Loading…</div>
                     ) : members.length === 0 ? (
-                        <div className="px-3 py-2 text-xs text-gray-400">No team members</div>
+                        <div className="px-3 py-2 text-xs text-muted-foreground">No team members</div>
                     ) : (
                         members.map(m => (
                             <div key={m.id} role="button" tabIndex={0}
@@ -58,7 +58,7 @@ export function AssignOwnerDropdown({ timelineId, onAssigned }: { timelineId: nu
                                     }
                                     setOpen(false);
                                 }}
-                                className="px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer"
+                                className="px-3 py-2 text-sm text-foreground hover:bg-muted/60 cursor-pointer"
                             >
                                 {m.name}
                             </div>

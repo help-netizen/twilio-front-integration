@@ -56,10 +56,10 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
     // Live transcription panel (no audio URL)
     if (!call.audioUrl && isLiveStreaming) {
         return (
-            <div className="px-4 pb-4 bg-white">
+            <div className="px-4 pb-4">
                 <div className="space-y-3">
                     <div className="flex items-center gap-2"><span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" /><span className="text-xs text-red-500 font-medium">Live transcription</span></div>
-                    <ScrollArea className="h-48 bg-gray-50 p-3 rounded-md">
+                    <ScrollArea className="h-48 p-3 rounded-md bg-muted/30">
                         <div className="space-y-1">
                             {liveLines.map((line, idx) => (
                                 <div key={idx} className="flex items-baseline gap-2 px-2 py-1 text-xs">
@@ -76,7 +76,7 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
     if (!call.audioUrl) return null;
 
     return (
-        <div className="px-4 pb-4 bg-white">
+        <div className="px-4 pb-4">
             <audio ref={audioRef} src={token ? `${call.audioUrl}?token=${encodeURIComponent(token)}` : call.audioUrl} preload="metadata" />
             <div className="space-y-3">
                 <div className="flex items-center gap-3">
@@ -100,19 +100,19 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
                                 <h4 className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Call Summary</h4>
                                 {(geminiSummary || call.summary) && <button onClick={() => { navigator.clipboard.writeText(geminiSummary || call.summary || ''); setCopiedSummary(true); setTimeout(() => setCopiedSummary(false), 1500); }} className="p-0.5 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-700 transition-colors" title="Copy summary">{copiedSummary ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}</button>}
                             </div>
-                            {geminiStatus === 'loading' ? <div className="flex items-center gap-2 bg-gray-50 p-3 rounded-md"><div className="w-3 h-3 border-2 border-gray-600 border-t-transparent rounded-full animate-spin" /><span className="text-sm text-gray-400 animate-pulse">Generating summary…</span></div>
+                            {geminiStatus === 'loading' ? <div className="flex items-center gap-2 bg-muted/30 p-3 rounded-md"><div className="w-3 h-3 border-2 border-gray-600 border-t-transparent rounded-full animate-spin" /><span className="text-sm text-gray-400 animate-pulse">Generating summary…</span></div>
                                 : geminiStatus === 'error' ? <p className="text-sm text-red-500 italic bg-red-50 p-3 rounded-md">Summary unavailable</p>
-                                    : geminiSummary ? <p className="text-sm text-gray-700 leading-relaxed bg-gray-50 p-3 rounded-md">{geminiSummary}</p>
+                                    : geminiSummary ? <p className="text-sm text-gray-700 leading-relaxed bg-muted/30 p-3 rounded-md">{geminiSummary}</p>
                                         : call.summary ? <p className="text-sm text-gray-700 leading-relaxed">{call.summary}</p>
-                                            : isTranscribing ? <p className="text-sm text-gray-400 italic bg-gray-50 p-3 rounded-md">Not ready (waiting for transcript)</p>
+                                            : isTranscribing ? <p className="text-sm text-gray-400 italic bg-muted/30 p-3 rounded-md">Not ready (waiting for transcript)</p>
                                                 : <p className="text-sm text-gray-400 italic">No summary available</p>}
                         </div>
                         <div>
                             <div className="flex items-center justify-between mb-1"><h4 className="text-xs font-semibold text-gray-800 uppercase tracking-wide">Key Entities</h4>{geminiEntities.length > 0 && <span className="text-[10px] text-gray-400">{geminiEntities.length} found</span>}</div>
-                            {geminiStatus === 'loading' ? <div className="flex items-center gap-2 bg-gray-50 p-3 rounded-md"><div className="w-3 h-3 border-2 border-gray-600 border-t-transparent rounded-full animate-spin" /><span className="text-sm text-gray-400 animate-pulse">Extracting entities…</span></div>
+                            {geminiStatus === 'loading' ? <div className="flex items-center gap-2 bg-muted/30 p-3 rounded-md"><div className="w-3 h-3 border-2 border-gray-600 border-t-transparent rounded-full animate-spin" /><span className="text-sm text-gray-400 animate-pulse">Extracting entities…</span></div>
                                 : geminiStatus === 'error' ? <p className="text-sm text-red-500 italic bg-red-50 p-3 rounded-md">Entities unavailable</p>
                                     : geminiEntities.length > 0 ? (
-                                        <div className="bg-gray-50 p-3 rounded-md space-y-1">
+                                        <div className="bg-muted/30 p-3 rounded-md space-y-1">
                                             {geminiEntities.map((ge, idx) => {
                                                 const hasTs = ge.start_ms != null; const sec = hasTs ? ge.start_ms! / 1000 : 0; const active = activeGeminiIdx === idx; const inRange = hasTs && currentTime >= sec && currentTime <= sec + 10; return (
                                                     <div key={`ge-${ge.label}-${idx}`} onClick={() => { if (!hasTs) return; if (audioRef.current) { audioRef.current.currentTime = sec; setCurrentTime(sec); setActiveGeminiIdx(idx); if (!isPlaying) { audioRef.current.play(); setIsPlaying(true); } } }} className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded text-left text-xs transition-colors group ${hasTs ? 'cursor-pointer' : 'cursor-default opacity-80'} ${(active || inRange) ? 'bg-blue-50 ring-1 ring-blue-200' : hasTs ? 'hover:bg-gray-100' : ''}`} title={hasTs ? `Jump to ${fmtAudio(sec)}` : 'No timestamp'}>
@@ -127,14 +127,14 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
                                                     </div>);
                                             })}
                                         </div>
-                                    ) : (transcriptionText || call.transcription) && geminiStatus !== 'idle' ? <p className="text-xs text-gray-400 italic bg-gray-50 p-3 rounded-md">No key entities detected.</p> : isTranscribing ? <p className="text-xs text-gray-400 italic bg-gray-50 p-3 rounded-md">Will appear after transcription completes.</p> : null}
+                                    ) : (transcriptionText || call.transcription) && geminiStatus !== 'idle' ? <p className="text-xs text-gray-400 italic bg-muted/30 p-3 rounded-md">No key entities detected.</p> : isTranscribing ? <p className="text-xs text-gray-400 italic bg-muted/30 p-3 rounded-md">Will appear after transcription completes.</p> : null}
                         </div>
                     </div>
                 )}
 
                 {activeSection === 'transcription' && (
                     <div className="pt-2">
-                        <ScrollArea className="h-48 bg-gray-50 p-3 rounded-md">
+                        <ScrollArea className="h-48 p-3 rounded-md bg-muted/30">
                             {isTranscribing ? <div className="flex items-center gap-2"><div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin" /><p className="text-sm text-gray-400 animate-pulse">Generating transcription...</p></div>
                                 : isLiveStreaming ? (
                                     <div>

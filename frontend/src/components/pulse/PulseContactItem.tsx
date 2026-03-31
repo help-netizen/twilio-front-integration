@@ -132,32 +132,32 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                         .catch((err) => { console.error('[Pulse] Failed to mark timeline read:', tlId, err); });
                 }
             }}
-            className={`w-full text-left px-4 py-3 transition-colors border-b border-gray-100 relative ${isActive ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
-            style={{ outline: 'none' }}
+            className={`w-full text-left px-4 py-3 transition-colors border-b relative ${isActive ? 'pulse-contact-item-active' : 'hover:bg-muted/40'}`}
+            style={{ outline: 'none', borderBottomColor: 'var(--blanc-line)' }}
         >
-            {hasUnread && (<div className="absolute left-0 top-0 bottom-0 w-[3px] rounded-r" style={{ backgroundColor: '#2563eb' }} />)}
+            {hasUnread && (<div className="absolute left-0 top-0 bottom-0 w-[3px] rounded-r" style={{ backgroundColor: 'var(--blanc-info)' }} />)}
             <div className="flex items-start gap-2.5">
                 <div className="shrink-0 pt-0.5">{renderIcon()}</div>
                 <div className="min-w-0 flex-1">
                     <div className="flex items-baseline justify-between mb-1">
-                        <span className={`text-sm truncate ${hasUnread ? 'font-semibold text-gray-900' : 'font-medium text-gray-900'}`}>{primaryText}</span>
+                        <span className={`text-sm truncate ${hasUnread ? 'font-semibold' : 'font-medium'}`} style={{ color: 'var(--blanc-ink-1)' }}>{primaryText}</span>
                     </div>
-                    {showSecondaryPhone && (<div className="text-xs text-gray-600 mb-1 font-mono">{formatPhoneNumber(displayPhone)}</div>)}
-                    <div className="flex items-center gap-1 text-xs text-gray-500">
-                        <span>{getTimeAgo(displayDate)}</span><span className="text-gray-400">•</span><span>{getFullDateTime(displayDate)}</span>
+                    {showSecondaryPhone && (<div className="text-xs mb-1 font-mono" style={{ color: 'var(--blanc-ink-2)' }}>{formatPhoneNumber(displayPhone)}</div>)}
+                    <div className="flex items-center gap-1 text-xs" style={{ color: 'var(--blanc-ink-3)' }}>
+                        <span>{getTimeAgo(displayDate)}</span><span style={{ color: 'var(--blanc-line-strong)' }}>•</span><span>{getFullDateTime(displayDate)}</span>
                     </div>
                     {isActionRequired && !isSnoozed && (
                         <div className="flex items-center gap-1.5 mt-1">
                             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-orange-100 text-orange-800">
                                 <AlertTriangle className="size-3" /> Action Required
                             </span>
-                            {arReason && <span className="text-[10px] text-gray-500">{REASON_LABELS[arReason] || arReason}</span>}
-                            {openTask?.due_at && (<span className="text-[10px] text-red-500">Due {new Date(openTask.due_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</span>)}
+                            {arReason && <span className="text-[10px]" style={{ color: 'var(--blanc-ink-3)' }}>{REASON_LABELS[arReason] || arReason}</span>}
+                            {openTask?.due_at && (<span className="text-[10px]" style={{ color: 'var(--blanc-danger)' }}>Due {new Date(openTask.due_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</span>)}
                         </div>
                     )}
                     {isSnoozed && (
                         <div className="flex items-center gap-1 mt-1">
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-600">
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium" style={{ background: 'rgba(118,106,89,0.1)', color: 'var(--blanc-ink-2)' }}>
                                 <Clock className="size-3" /> Snoozed until {new Date(snoozedUntil).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
                             </span>
                         </div>
@@ -172,18 +172,18 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                             <MoreVertical className="size-4 text-gray-500" />
                         </div>
                         {menuOpen && (
-                            <div className="absolute right-0 top-full mt-1 z-50 bg-white rounded-md shadow-lg border border-gray-200 py-1 min-w-[180px]">
+                            <div className="absolute right-0 top-full mt-1 z-50 bg-card rounded-xl shadow-lg border border-border py-1 min-w-[180px]">
                                 <div role="button" tabIndex={0}
                                     onClick={(e) => { e.stopPropagation(); setMenuOpen(false); if (tlId && onMarkUnread) onMarkUnread(tlId); }}
                                     onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMenuOpen(false); if (tlId && onMarkUnread) onMarkUnread(tlId); } }}
-                                    className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer w-full">
+                                    className="flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-muted/60 cursor-pointer w-full">
                                     <EyeOff className="size-3.5" /> Mark as Unread
                                 </div>
                                 {!isActionRequired && (
                                     <div role="button" tabIndex={0}
                                         onClick={(e) => { e.stopPropagation(); setMenuOpen(false); if (tlId && onSetActionRequired) onSetActionRequired(tlId); }}
                                         onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMenuOpen(false); if (tlId && onSetActionRequired) onSetActionRequired(tlId); } }}
-                                        className="flex items-center gap-2 px-3 py-2 text-sm text-orange-700 hover:bg-orange-50 cursor-pointer w-full">
+                                        className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-orange-50 cursor-pointer w-full" style={{ color: 'var(--blanc-warning)' }}>
                                         <AlertTriangle className="size-3.5" /> Action Required
                                     </div>
                                 )}
@@ -191,7 +191,7 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                                     <div role="button" tabIndex={0}
                                         onClick={(e) => { e.stopPropagation(); setMenuOpen(false); if (tlId && onMarkHandled) onMarkHandled(tlId); }}
                                         onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMenuOpen(false); if (tlId && onMarkHandled) onMarkHandled(tlId); } }}
-                                        className="flex items-center gap-2 px-3 py-2 text-sm text-green-700 hover:bg-green-50 cursor-pointer w-full">
+                                        className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-green-50 cursor-pointer w-full" style={{ color: 'var(--blanc-success)' }}>
                                         <CheckCircle2 className="size-3.5" /> Mark Handled
                                     </div>
                                 )}
@@ -200,15 +200,15 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                                         <div role="button" tabIndex={0}
                                             onClick={(e) => { e.stopPropagation(); setSnoozeMenuOpen(prev => !prev); }}
                                             onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setSnoozeMenuOpen(prev => !prev); } }}
-                                            className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer w-full">
+                                            className="flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-muted/60 cursor-pointer w-full">
                                             <Clock className="size-3.5" /> Snooze…
                                         </div>
                                         {snoozeMenuOpen && (
-                                            <div className="absolute right-full top-0 mr-1 z-[100] bg-white rounded-md shadow-lg border border-gray-200 py-1 min-w-[140px]">
+                                            <div className="absolute right-full top-0 mr-1 z-[100] bg-card rounded-xl shadow-lg border border-border py-1 min-w-[140px]">
                                                 {SNOOZE_OPTIONS.map(opt => (
                                                     <div key={opt.label} role="button" tabIndex={0}
                                                         onClick={(e) => { e.stopPropagation(); setMenuOpen(false); setSnoozeMenuOpen(false); if (tlId && onSnooze) onSnooze(tlId, getSnoozeUntil(opt, companyTz)); }}
-                                                        className="px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">
+                                                        className="px-3 py-2 text-sm text-foreground hover:bg-muted/60 cursor-pointer">
                                                         {opt.label}
                                                     </div>
                                                 ))}

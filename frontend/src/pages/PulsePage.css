@@ -1,3 +1,5 @@
+/* ── Pulse Page Layout ─────────────────────────────────────────── */
+
 .pulse-page {
     display: flex;
     height: 100%;
@@ -5,19 +7,29 @@
 }
 
 .pulse-sidebar {
-    width: 360px;
+    width: 320px;
     flex-shrink: 0;
-    border-right: 1px solid #e5e7eb;
+    border-right: 1px solid var(--blanc-line);
     display: flex;
     flex-direction: column;
-    background: #ffffff;
+    background: var(--blanc-surface-strong);
+}
+
+.pulse-middle-column {
+    width: 380px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--blanc-line);
+    background: var(--blanc-surface-strong);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 
 .pulse-timeline-column {
     flex: 1;
     display: flex;
     flex-direction: column;
-    background: #fafafa;
+    background: var(--blanc-surface-muted);
     overflow: hidden;
 }
 
@@ -33,15 +45,152 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
+    color: var(--blanc-ink-3);
 }
 
-/* Spinner animation for loading/sending states */
+/* ── Search toolbar ─────────────────────────────────────────────── */
+.pulse-search-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+/* ── Mobile back button ─────────────────────────────────────────── */
+.pulse-back-btn {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 12px;
+    border: 1px solid var(--blanc-line);
+    background: var(--blanc-surface-strong);
+    color: var(--blanc-ink-1);
+    cursor: pointer;
+    transition: background 0.15s ease;
+    flex-shrink: 0;
+}
+
+.pulse-back-btn:hover {
+    background: var(--blanc-surface-muted);
+}
+
+/* ── Spinner animation ──────────────────────────────────────────── */
 @keyframes spin {
-    from {
-        transform: rotate(0deg);
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   TABLET (768–1099px): two-column layout
+   sidebar + stacked middle/timeline
+   ══════════════════════════════════════════════════════════════════ */
+@media (max-width: 1099px) {
+    .blanc-page-wrapper:has(.pulse-page) {
+        padding: 12px;
+        gap: 10px;
     }
 
-    to {
-        transform: rotate(360deg);
+    .pulse-sidebar {
+        width: 260px;
+    }
+
+    .pulse-middle-column {
+        width: 320px;
+    }
+}
+
+@media (max-width: 899px) {
+    /* Narrow tablet: hide middle column, sidebar + timeline only */
+    .pulse-middle-column {
+        display: none;
+    }
+
+    .pulse-sidebar {
+        width: 240px;
+    }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   MOBILE (< 768px): single-panel mode
+   Toggle between sidebar and content via data-mobile-panel attribute
+   ══════════════════════════════════════════════════════════════════ */
+@media (max-width: 767px) {
+    .blanc-page-wrapper:has(.pulse-page) {
+        padding: 8px;
+        gap: 8px;
+    }
+
+    /* Hide the heading on mobile to save space */
+    .blanc-page-header:has(+ .pulse-search-toolbar) h1 {
+        font-size: 24px;
+    }
+
+    .pulse-page {
+        flex-direction: column;
+    }
+
+    /* Sidebar: full width in list mode, hidden in content mode */
+    .pulse-page[data-mobile-panel="list"] .pulse-sidebar {
+        width: 100%;
+        flex: 1;
+        border-right: none;
+    }
+
+    .pulse-page[data-mobile-panel="content"] .pulse-sidebar {
+        display: none;
+    }
+
+    /* Middle + timeline: hidden in list mode */
+    .pulse-page[data-mobile-panel="list"] .pulse-middle-column,
+    .pulse-page[data-mobile-panel="list"] .pulse-timeline-column {
+        display: none;
+    }
+
+    /* Content mode: stack middle + timeline vertically */
+    .pulse-page[data-mobile-panel="content"] {
+        flex-direction: column;
+    }
+
+    .pulse-page[data-mobile-panel="content"] .pulse-middle-column {
+        display: flex;
+        width: 100% !important;
+        flex: none;
+        max-height: 45vh;
+        border-right: none;
+        border-bottom: 1px solid var(--blanc-line);
+    }
+
+    .pulse-page[data-mobile-panel="content"] .pulse-timeline-column {
+        flex: 1;
+        min-height: 0;
+    }
+
+    /* Show back button in content mode */
+    .pulse-page[data-mobile-panel="content"] ~ * .pulse-back-btn,
+    .pulse-back-btn {
+        display: none;
+    }
+
+    /* Search toolbar: full width on mobile */
+    .pulse-search-toolbar {
+        flex-wrap: wrap;
+    }
+
+    .pulse-search-toolbar .relative {
+        max-width: 100% !important;
+        width: 100%;
+    }
+}
+
+/* Back button: only shown on mobile */
+@media (max-width: 767px) {
+    .pulse-back-btn {
+        display: flex;
+    }
+
+    /* Only show back button when in content panel */
+    .pulse-back-btn-hidden {
+        display: none !important;
     }
 }

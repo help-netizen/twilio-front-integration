@@ -375,6 +375,20 @@ table tbody tr:hover {
     background: var(--blanc-surface-muted) !important;
 }
 
+.pulse-contact-item-active {
+    background: rgba(255, 247, 231, 0.7) !important;
+}
+
+/* Pulse: suppress the big page-header button scaling in the Pulse back button */
+.blanc-page-header .pulse-back-btn {
+    min-height: unset !important;
+    height: 36px !important;
+    width: 36px !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    font-size: inherit !important;
+}
+
 /* ── Payments Page ── */
 .payments-list-panel {
     background: var(--blanc-surface-strong) !important;

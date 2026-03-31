@@ -58,8 +58,9 @@ export function SmsListItem({ sms }: SmsListItemProps) {
             <Card
                 className={`max-w-[80%] overflow-hidden border ${isOutgoing
                     ? 'bg-blue-600 text-white border-blue-700'
-                    : 'bg-white text-gray-900 border-gray-200'
+                    : 'border-border/60'
                     }`}
+                style={isOutgoing ? {} : { background: 'var(--blanc-surface-strong)', color: 'var(--blanc-ink-1)' }}
             >
                 <div className={hasMedia && !hasMessage ? 'p-2' : 'p-4'}>
                     {/* Header - show if there's text or it's outgoing with media (for status) */}
@@ -124,8 +125,9 @@ export function SmsListItem({ sms }: SmsListItemProps) {
                                             onClick={() => handleDownload(media)}
                                             className={`w-full flex items-center gap-3 p-3 rounded-lg border transition-colors ${isOutgoing
                                                 ? 'bg-blue-700 border-blue-800 hover:bg-blue-800'
-                                                : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
+                                                : 'border-border/50 hover:bg-muted/30'
                                                 }`}
+                                        style={isOutgoing ? {} : { background: 'var(--blanc-surface-muted)' }}
                                         >
                                             <div className={`p-2 rounded ${isOutgoing ? 'bg-blue-800' : 'bg-gray-200'
                                                 }`}>
@@ -136,13 +138,11 @@ export function SmsListItem({ sms }: SmsListItemProps) {
                                                 )}
                                             </div>
                                             <div className="flex-1 text-left">
-                                                <div className={`text-sm font-medium truncate ${isOutgoing ? 'text-white' : 'text-gray-900'
-                                                    }`}>
+                                                <div className={`text-sm font-medium truncate ${isOutgoing ? 'text-white' : ''}`} style={isOutgoing ? {} : { color: 'var(--blanc-ink-1)' }}>
                                                     {media.filename || 'File'}
                                                 </div>
                                                 {media.size_bytes && (
-                                                    <div className={`text-xs ${isOutgoing ? 'text-blue-200' : 'text-gray-500'
-                                                        }`}>
+                                                    <div className={`text-xs ${isOutgoing ? 'text-blue-200' : ''}`} style={isOutgoing ? {} : { color: 'var(--blanc-ink-3)' }}>
                                                         {formatFileSize(media.size_bytes)}
                                                     </div>
                                                 )}
@@ -158,14 +158,14 @@ export function SmsListItem({ sms }: SmsListItemProps) {
 
                     {/* Message */}
                     {hasMessage && (
-                        <p className={`text-sm leading-relaxed mb-2 ${isOutgoing ? 'text-white' : 'text-gray-700'}`}>
+                        <p className={`text-sm leading-relaxed mb-2 ${isOutgoing ? 'text-white' : ''}`} style={isOutgoing ? {} : { color: 'var(--blanc-ink-1)' }}>
                             {sms.body}
                         </p>
                     )}
 
                     {/* Timestamp */}
                     {hasMessage && (
-                        <div className={`text-xs ${isOutgoing ? 'text-blue-200' : 'text-gray-500'} text-right`}>
+                        <div className={`text-xs text-right ${isOutgoing ? 'text-blue-200' : ''}`} style={isOutgoing ? {} : { color: 'var(--blanc-ink-3)' }}>
                             {formatTime(sms.date_created_remote || sms.created_at, companyTz)}
                         </div>
                     )}

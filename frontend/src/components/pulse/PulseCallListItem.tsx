@@ -38,7 +38,7 @@ export function PulseCallListItem({ call }: { call: CallData }) {
     const directionLabel = call.direction === 'incoming' ? 'Incoming Call' : 'Outgoing Call';
 
     return (
-        <Card className="overflow-hidden border border-gray-200 hover:shadow-md transition-shadow">
+        <Card className="overflow-hidden hover:shadow-md transition-shadow" style={{ border: '1px solid var(--blanc-line)' }}>
             {/* Header */}
             <div className={`p-4 ${call.audioUrl ? 'pb-0' : ''}`}>
                 <div className="flex items-center gap-3">
@@ -59,13 +59,13 @@ export function PulseCallListItem({ call }: { call: CallData }) {
             </div>
 
             {/* Audio Player, Summary, Transcription, Live Stream */}
-            <div className="bg-gray-50/50">
+            <div className="bg-muted/20">
                 <PulseCallAudioPlayer call={call} />
             </div>
 
             {/* System Info */}
             {showSystemInfo && (
-                <div className="p-4 pt-0 space-y-2 text-sm bg-gray-50">
+                <div className="p-4 pt-0 space-y-2 text-sm bg-muted/30">
                     <div className="flex items-center gap-2"><Clock className="w-4 h-4 text-gray-400" /><span className="text-gray-600">Duration:</span><span className="font-mono text-gray-900">{formatDuration(call.totalDuration || call.duration)}</span></div>
                     {call.talkTime !== undefined && <div className="flex items-center gap-2"><Timer className="w-4 h-4 text-gray-400" /><span className="text-gray-600">Talk:</span><span className="font-mono text-gray-900">{formatDuration(call.talkTime)}</span></div>}
                     {call.waitTime !== undefined && <div className="flex items-center gap-2"><Clock className="w-4 h-4 text-gray-400" /><span className="text-gray-600">Wait:</span><span className="font-mono text-gray-900">{formatDuration(call.waitTime)}</span></div>}
