@@ -347,16 +347,79 @@ async function handleVoiceInbound(req, res) {
                         console.warn(`[${traceId}] Failed to set voicemail_recording:`, vmErr.message);
                     }
                 } else {
-                    console.log(`[${traceId}] Inbound: ${From} → Client([${allowedIdentities.join(',')}])`);
+                    // ── Check if all Client users are busy ──────────────────
+                    // If ALL are on active calls, hold the caller with a
+                    // redirect loop instead of timing out after 25s.
+                    let allBusy = false;
+                    try {
+                        const busyResult = await dbConn.query(
+                            `SELECT DISTINCT to_number FROM calls
+                             WHERE status IN ('ringing', 'in-progress')
+                               AND is_final = false
+                               AND to_number LIKE 'client:%'`
+                        );
+                        const busyIdentities = new Set(
+                            busyResult.rows.map(r => r.to_number.replace('client:', ''))
+                        );
+                        allBusy = allowedIdentities.length > 0 &&
+                            allowedIdentities.every(id => busyIdentities.has(id));
+                    } catch (busyErr) {
+                        console.warn(`[${traceId}] Failed to check busy clients:`, busyErr.message);
+                    }
 
-                    const clientEndpoints = allowedIdentities.map(id =>
-                        `        <Client statusCallback="${statusCallbackUrl}"
+                    // Parse retry counter from query string (redirect loop)
+                    const holdRetry = parseInt(req.query.holdRetry || '0', 10);
+                    const maxHoldRetries = 12; // 12 × 20s = 4 minutes max hold
+
+                    if (allBusy && holdRetry < maxHoldRetries) {
+                        // All operators busy → hold loop
+                        const holdMsg = holdRetry === 0
+                            ? 'All representatives are currently assisting other customers. Please stay on the line.'
+                            : 'Thank you for holding. All representatives are still busy.';
+                        const holdLanguage = process.env.VM_LANGUAGE || 'en-US';
+                        const redirectUrl = `${baseUrl}/webhooks/twilio/voice-inbound?holdRetry=${holdRetry + 1}`;
+
+                        console.log(`[${traceId}] All clients busy — hold loop (retry ${holdRetry}/${maxHoldRetries})`);
+
+                        twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say language="${holdLanguage}">${holdMsg}</Say>
+    <Pause length="20"/>
+    <Redirect method="POST">${redirectUrl}</Redirect>
+</Response>`;
+                    } else if (allBusy && holdRetry >= maxHoldRetries) {
+                        // Max hold time exceeded → voicemail
+                        console.log(`[${traceId}] Max hold time exceeded → voicemail`);
+                        const vmLanguage = process.env.VM_LANGUAGE || 'en-US';
+                        const vmGreeting = process.env.VM_GREETING || 'Hello! Our team is currently assisting other customers. Please leave your name and phone number, and we will call you back as soon as possible.';
+                        const vmMaxLen = Number(process.env.VM_MAXLEN || 180);
+                        const vmSilenceTimeout = Number(process.env.VM_SILENCE_TIMEOUT || 5);
+                        const vmFinishOnKey = process.env.VM_FINISH_ON_KEY || '#';
+
+                        twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say language="${vmLanguage}">${vmGreeting}</Say>
+    <Record maxLength="${vmMaxLen}"
+            timeout="${vmSilenceTimeout}"
+            finishOnKey="${vmFinishOnKey}"
+            playBeep="true"
+            transcribe="false"
+            recordingStatusCallback="${recordingStatusUrl}"
+            recordingStatusCallbackMethod="POST" />
+    <Hangup />
+</Response>`;
+                    } else {
+                        // At least one user is free → standard Dial
+                        console.log(`[${traceId}] Inbound: ${From} → Client([${allowedIdentities.join(',')}])`);
+
+                        const clientEndpoints = allowedIdentities.map(id =>
+                            `        <Client statusCallback="${statusCallbackUrl}"
                 statusCallbackEvent="initiated ringing answered completed"
                 statusCallbackMethod="POST">${id}</Client>`
-                    ).join('\n');
+                        ).join('\n');
 
-                    const inboundTimeout = Number(process.env.DIAL_TIMEOUT || 25);
-                    const inboundStreamXml = realtimeEnabled ? `
+                        const inboundTimeout = Number(process.env.DIAL_TIMEOUT || 25);
+                        const inboundStreamXml = realtimeEnabled ? `
     <Start>
         <Stream name="realtime-transcript" url="${mediaStreamUrl}" track="both_tracks">
             <Parameter name="callSid" value="${CallSid}" />
@@ -364,7 +427,7 @@ async function handleVoiceInbound(req, res) {
         </Stream>
     </Start>` : '';
 
-                    twiml = `<?xml version="1.0" encoding="UTF-8"?>
+                        twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>${inboundStreamXml}
     <Dial timeout="${inboundTimeout}"
           answerOnBridge="true"
@@ -376,6 +439,7 @@ async function handleVoiceInbound(req, res) {
 ${clientEndpoints}
     </Dial>
 </Response>`;
+                    }
                 }
             } else {
                 // ── SIP / Bria routing (original) ─────────────────────────────
