@@ -16,7 +16,7 @@ interface SoftPhoneWidgetProps { voice: UseTwilioDeviceReturn; open: boolean; mi
 
 export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({ voice, open, minimized, onClose, onMinimize }) => {
     const { inputValue, normalizedNumber, selectedContactName, showKeypad, setShowKeypad, showSearch, callError, blancNumbers, selectedCallerId, setSelectedCallerId, handleInputChange, handleContactSelect, handleCall, handleKeyDown, handleDtmf, setShowSearch } = useSoftPhoneWidget(voice, open);
-    const { callState, callDuration, callerInfo, deviceReady, error, isMuted, acceptCall, declineCall, hangUp, toggleMute, pendingCount, pendingCallerInfo } = voice;
+    const { callState, callDuration, callerInfo, deviceReady, error, isMuted, acceptCall, declineCall, hangUp, toggleMute, pendingCount, pendingCallerInfo, holdingCallerInfo } = voice;
 
     const formatDuration = (seconds: number) => { const m = Math.floor(seconds / 60); const s = seconds % 60; return `${m}:${s.toString().padStart(2, '0')}`; };
 
@@ -28,6 +28,10 @@ export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({ voice, open, m
         idle: { label: 'Phone service connected', className: '' }, connecting: { label: 'Connecting...', className: 'connecting' }, ringing: { label: 'Ringing...', className: 'ringing' }, incoming: { label: 'Incoming Call', className: 'incoming' }, connected: { label: `Connected — ${formatDuration(callDuration)}`, className: 'connected' }, ended: { label: 'Call Ended', className: 'ended' }, failed: { label: 'Call Failed', className: 'failed' },
     };
     const status = statusConfig[callState] || statusConfig.idle;
+
+    // Determine waiting call info: SDK pending > SSE holding
+    const waitingNumber = pendingCallerInfo?.number || holdingCallerInfo?.number || null;
+    const hasWaitingCall = pendingCount > 0 || !!holdingCallerInfo;
 
     return (
         <div className="softphone-panel">
@@ -59,7 +63,7 @@ export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({ voice, open, m
                     {callState === 'connected' && <div className="softphone-controls-row"><button className={`softphone-btn softphone-btn-secondary ${isMuted ? 'active' : ''}`} onClick={toggleMute} title={isMuted ? 'Unmute' : 'Mute'}>{isMuted ? <MicOff size={18} /> : <Mic size={18} />}</button><button className={`softphone-btn softphone-btn-secondary ${showKeypad ? 'active' : ''}`} onClick={() => setShowKeypad(!showKeypad)} title="Keypad"><Grid3x3 size={18} /></button></div>}
                     {showKeypad && callState === 'connected' && <div className="softphone-keypad">{DTMF_KEYS.map(key => <button key={key} className="softphone-keypad-btn" onClick={() => handleDtmf(key)}>{key}</button>)}</div>}
                     <div className="softphone-actions"><button className="softphone-btn softphone-btn-end" onClick={hangUp}><PhoneOff size={18} />End Call</button></div>
-                    {pendingCount > 0 && <div className="softphone-pending-banner"><PhoneIncoming size={14} /><span>Call waiting{pendingCallerInfo ? `: ${formatPhoneDisplay(pendingCallerInfo.number)}` : ''}</span></div>}
+                    {hasWaitingCall && <div className="softphone-pending-banner"><PhoneIncoming size={14} /><span>Call waiting{waitingNumber ? `: ${formatPhoneDisplay(waitingNumber)}` : ''}</span></div>}
                 </>)}
                 {['ended', 'failed'].includes(callState) && <div className="softphone-call-info"><div className={`softphone-call-status ${status.className}`}>{status.label}</div></div>}
                 {error && <div className="softphone-error">{error}</div>}

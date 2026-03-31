@@ -3,6 +3,7 @@ import { Device, Call } from '@twilio/voice-sdk';
 import { fetchVoiceToken } from '../services/voiceApi';
 import { startRingtone, stopRingtone } from '../utils/ringtone';
 import type { CallState, UseTwilioDeviceReturn } from './twilioDeviceTypes';
+import { useRealtimeEvents } from './useRealtimeEvents';
 
 export type { CallState, UseTwilioDeviceReturn };
 
@@ -29,6 +30,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
     const [phoneAllowed, setPhoneAllowed] = useState(true);
     const [pendingCount, setPendingCount] = useState(0);
     const [pendingCallerInfo, setPendingCallerInfo] = useState<{ number: string } | null>(null);
+    const [holdingCallerInfo, setHoldingCallerInfo] = useState<{ number: string; callSid: string } | null>(null);
 
     const durationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const connectedAtRef = useRef<number | null>(null);
@@ -133,6 +135,8 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
                         console.log('[SoftPhone] Busy — queuing incoming from', from);
                         pendingCallsRef.current.push({ call, from });
                         syncPendingCount();
+                        // Clear holdingCallerInfo since call is now in SDK pending queue
+                        setHoldingCallerInfo(null);
 
                         // If this queued call gets cancelled while waiting,
                         // remove it from the queue
@@ -155,6 +159,8 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
                     setCallState('incoming');
                     setCallerInfo({ number: from });
                     startRingtone();
+                    // Clear holdingCallerInfo since call is now in SDK incoming state
+                    setHoldingCallerInfo(null);
 
                     call.on('cancel', () => {
                         stopRingtone(); setIncomingCall(null); setCallerInfo(null);
@@ -186,6 +192,15 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
         return () => { cancelled = true; stopDurationTimer(); if (deviceRef.current) { deviceRef.current.destroy(); deviceRef.current = null; } };
     }, [attachCallHandlers, stopDurationTimer, resetToIdle, syncPendingCount]);
 
+    // ── SSE listener: backend hold queue notifications ──────────────────
+    useRealtimeEvents({
+        onGenericEvent: (eventType: string, data: any) => {
+            if (eventType !== 'call.holding') return;
+            console.log('[SoftPhone] SSE call.holding:', data.from_number);
+            setHoldingCallerInfo({ number: data.from_number, callSid: data.call_sid });
+        },
+    });
+
     const makeCall = useCallback(async (to: string, params?: Record<string, string>) => {
         if (!device) { setError('SoftPhone not ready'); return; }
         setError(null); setCallState('connecting'); setCallerInfo({ number: to }); busyRef.current = true;
@@ -214,5 +229,5 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
     const toggleMute = useCallback(() => { if (activeCall) { const newMuted = !activeCall.isMuted(); activeCall.mute(newMuted); setIsMuted(newMuted); } }, [activeCall]);
     const sendDigits = useCallback((digits: string) => { if (activeCall) activeCall.sendDigits(digits); }, [activeCall]);
 
-    return { device, activeCall, incomingCall, callState, callDuration, callerInfo, makeCall, acceptCall, declineCall, hangUp, toggleMute, isMuted, sendDigits, deviceReady, error, phoneAllowed, pendingCount, pendingCallerInfo };
+    return { device, activeCall, incomingCall, callState, callDuration, callerInfo, makeCall, acceptCall, declineCall, hangUp, toggleMute, isMuted, sendDigits, deviceReady, error, phoneAllowed, pendingCount, pendingCallerInfo, holdingCallerInfo };
 }

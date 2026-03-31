@@ -1,131 +1,48 @@
 /**
- * ScheduleToolbar — View tabs, date navigation, and filters.
+ * ScheduleToolbar — Simplified: "Schedule" title + AI Assistant button.
+ * Sprint 7 Design Refresh: view/date/filter controls moved to CalendarControls.
  */
 
 import React from 'react';
-import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
-import { format, startOfWeek, endOfWeek } from 'date-fns';
-import { Button } from '../ui/button';
-import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
-import { Input } from '../ui/input';
-import {
-    Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '../ui/select';
-import type { ViewMode } from '../../hooks/useScheduleData';
-import type { ScheduleFilters } from '../../services/scheduleApi';
+import { Sparkles } from 'lucide-react';
 
 interface ScheduleToolbarProps {
-    viewMode: ViewMode;
-    currentDate: Date;
-    filters: Partial<ScheduleFilters>;
-    onViewModeChange: (mode: ViewMode) => void;
-    onNavigateDate: (dir: 'prev' | 'next' | 'today') => void;
-    onFiltersChange: (filters: Partial<ScheduleFilters>) => void;
+    onToggleAIAssistant?: () => void;
 }
 
-function getDateLabel(date: Date, viewMode: ViewMode): string {
-    switch (viewMode) {
-        case 'day':
-        case 'timeline':
-            return format(date, 'EEEE, MMM d, yyyy');
-        case 'week':
-        case 'timeline-week': {
-            const start = startOfWeek(date);
-            const end = endOfWeek(date);
-            return format(start, 'MMM d') + ' – ' + format(end, 'MMM d, yyyy');
-        }
-        case 'month':
-            return format(date, 'MMMM yyyy');
-    }
-}
-
-export const ScheduleToolbar: React.FC<ScheduleToolbarProps> = ({
-    viewMode,
-    currentDate,
-    filters,
-    onViewModeChange,
-    onNavigateDate,
-    onFiltersChange,
-}) => {
+export const ScheduleToolbar: React.FC<ScheduleToolbarProps> = ({ onToggleAIAssistant }) => {
     return (
-        <div className="flex flex-col gap-3 p-4 border-b bg-white">
-            {/* Row 1: View tabs + Date nav */}
-            <div className="flex items-center justify-between flex-wrap gap-2">
-                <div className="flex items-center gap-3">
-                    <Tabs value={viewMode} onValueChange={v => onViewModeChange(v as ViewMode)}>
-                        <TabsList>
-                            <TabsTrigger value="day">Day</TabsTrigger>
-                            <TabsTrigger value="week">Week</TabsTrigger>
-                            <TabsTrigger value="month">Month</TabsTrigger>
-                            <TabsTrigger value="timeline">Timeline</TabsTrigger>
-                            <TabsTrigger value="timeline-week">TL Week</TabsTrigger>
-                        </TabsList>
-                    </Tabs>
+        <div className="flex items-center justify-between gap-4 px-1">
+            <h1
+                className="leading-none font-bold"
+                style={{
+                    fontFamily: 'Manrope, sans-serif',
+                    fontSize: 'clamp(34px, 4vw, 44px)',
+                    letterSpacing: '-0.05em',
+                    color: 'var(--sched-ink-1)',
+                    margin: 0,
+                }}
+            >
+                Schedule
+            </h1>
 
-                    <div className="flex items-center gap-1">
-                        <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => onNavigateDate('prev')}>
-                            <ChevronLeft className="size-4" />
-                        </Button>
-                        <Button variant="outline" size="sm" className="h-8 px-3 text-sm" onClick={() => onNavigateDate('today')}>
-                            Today
-                        </Button>
-                        <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => onNavigateDate('next')}>
-                            <ChevronRight className="size-4" />
-                        </Button>
-                    </div>
-
-                    <h2 className="text-lg font-semibold text-gray-900 whitespace-nowrap">
-                        {getDateLabel(currentDate, viewMode)}
-                    </h2>
-                </div>
-            </div>
-
-            {/* Row 2: Filters */}
-            <div className="flex items-center gap-2 flex-wrap">
-                <div className="relative w-52">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-                    <Input
-                        placeholder="Search..."
-                        className="pl-8 h-8 text-sm"
-                        value={filters.search ?? ''}
-                        onChange={e => onFiltersChange({ ...filters, search: e.target.value || undefined })}
-                    />
-                </div>
-
-                <Select
-                    value={filters.entityTypes?.join(',') || 'all'}
-                    onValueChange={v => onFiltersChange({
-                        ...filters,
-                        entityTypes: v === 'all' ? undefined : [v],
-                    })}
+            {onToggleAIAssistant && (
+                <button
+                    type="button"
+                    onClick={onToggleAIAssistant}
+                    className="flex items-center gap-2.5 min-h-[48px] px-5 text-[15px] font-semibold transition-all hover:scale-[1.02] active:scale-[0.98]"
+                    style={{
+                        background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.95), rgba(99, 102, 241, 0.95))',
+                        border: '1px solid rgba(255, 255, 255, 0.25)',
+                        borderRadius: 'var(--sched-radius-md)',
+                        color: '#ffffff',
+                        boxShadow: '0 8px 24px rgba(99, 102, 241, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                    }}
                 >
-                    <SelectTrigger className="h-8 w-32 text-sm">
-                        <SelectValue placeholder="All Types" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">All Types</SelectItem>
-                        <SelectItem value="job">Jobs</SelectItem>
-                        <SelectItem value="lead">Leads</SelectItem>
-                        <SelectItem value="task">Tasks</SelectItem>
-                    </SelectContent>
-                </Select>
-
-                <Select
-                    value={filters.unassignedOnly ? 'unassigned' : 'all-assigned'}
-                    onValueChange={v => onFiltersChange({
-                        ...filters,
-                        unassignedOnly: v === 'unassigned' ? true : undefined,
-                    })}
-                >
-                    <SelectTrigger className="h-8 w-36 text-sm">
-                        <SelectValue placeholder="All Assignments" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all-assigned">All</SelectItem>
-                        <SelectItem value="unassigned">Unassigned Only</SelectItem>
-                    </SelectContent>
-                </Select>
-            </div>
+                    <Sparkles className="size-5" />
+                    <span>AI Assistant</span>
+                </button>
+            )}
         </div>
     );
 };

@@ -369,22 +369,37 @@ async function handleVoiceInbound(req, res) {
 
                     // Parse retry counter from query string (redirect loop)
                     const holdRetry = parseInt(req.query.holdRetry || '0', 10);
-                    const maxHoldRetries = 12; // 12 × 20s = 4 minutes max hold
+                    const maxHoldRetries = 48; // 48 × 5s = 4 minutes max hold
 
                     if (allBusy && holdRetry < maxHoldRetries) {
                         // All operators busy → hold loop
                         const holdMsg = holdRetry === 0
                             ? 'All representatives are currently assisting other customers. Please stay on the line.'
-                            : 'Thank you for holding. All representatives are still busy.';
+                            : '';
                         const holdLanguage = process.env.VM_LANGUAGE || 'en-US';
                         const redirectUrl = `${baseUrl}/webhooks/twilio/voice-inbound?holdRetry=${holdRetry + 1}`;
 
                         console.log(`[${traceId}] All clients busy — hold loop (retry ${holdRetry}/${maxHoldRetries})`);
 
+                        // Notify frontend via SSE on first retry so user sees the waiting call immediately
+                        if (holdRetry === 0) {
+                            try {
+                                const realtimeService = require('../services/realtimeService');
+                                realtimeService.broadcast('call.holding', {
+                                    call_sid: CallSid,
+                                    from_number: From,
+                                    to_number: To,
+                                    holdRetry: 0,
+                                });
+                            } catch (sseErr) {
+                                console.warn(`[${traceId}] SSE broadcast failed:`, sseErr.message);
+                            }
+                        }
+
+                        const sayXml = holdMsg ? `\n    <Say language="${holdLanguage}">${holdMsg}</Say>` : '';
                         twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Say language="${holdLanguage}">${holdMsg}</Say>
-    <Pause length="20"/>
+<Response>${sayXml}
+    <Pause length="5"/>
     <Redirect method="POST">${redirectUrl}</Redirect>
 </Response>`;
                     } else if (allBusy && holdRetry >= maxHoldRetries) {

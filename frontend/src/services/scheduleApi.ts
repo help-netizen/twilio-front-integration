@@ -43,6 +43,41 @@ export interface ScheduleFilters {
     assigneeId?: string;
     unassignedOnly?: boolean;
     search?: string;
+    jobType?: string;
+    source?: string;
+    providerIds?: string[];
+}
+
+// ── Filter persistence ──────────────────────────────────────────────────────
+
+const FILTER_STORAGE_KEY = 'schedule-filters';
+
+export type PersistableFilters = Pick<ScheduleFilters, 'entityTypes' | 'statuses' | 'unassignedOnly' | 'search' | 'jobType' | 'source' | 'providerIds'>;
+
+export function loadPersistedFilters(): Partial<PersistableFilters> {
+    try {
+        const raw = localStorage.getItem(FILTER_STORAGE_KEY);
+        if (!raw) return {};
+        return JSON.parse(raw);
+    } catch { return {}; }
+}
+
+export function persistFilters(filters: Partial<PersistableFilters>): void {
+    try {
+        const { entityTypes, statuses, unassignedOnly, search, jobType, source } = filters;
+        const toSave: Partial<PersistableFilters> = {};
+        if (entityTypes?.length) toSave.entityTypes = entityTypes;
+        if (statuses?.length) toSave.statuses = statuses;
+        if (unassignedOnly) toSave.unassignedOnly = true;
+        if (search) toSave.search = search;
+        if (jobType) toSave.jobType = jobType;
+        if (source) toSave.source = source;
+        if (Object.keys(toSave).length) {
+            localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(toSave));
+        } else {
+            localStorage.removeItem(FILTER_STORAGE_KEY);
+        }
+    } catch { /* ignore */ }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -80,6 +115,8 @@ export async function fetchScheduleItems(filters: ScheduleFilters): Promise<Sche
     if (filters.assigneeId) params.set('assignee_id', filters.assigneeId);
     if (filters.unassignedOnly) params.set('unassigned_only', 'true');
     if (filters.search) params.set('search', filters.search);
+    if (filters.jobType) params.set('job_type', filters.jobType);
+    if (filters.source) params.set('source', filters.source);
     const result = await scheduleRequest<ScheduleItemsResponse>(`${SCHEDULE_BASE}?${params.toString()}`);
     return result.items;
 }
@@ -110,10 +147,24 @@ export async function rescheduleItem(
 export async function reassignItem(
     entityType: string,
     entityId: number,
-    assigneeId: string,
+    assigneeId: string | null,
 ): Promise<void> {
     await scheduleRequest<void>(`${SCHEDULE_BASE}/items/${entityType}/${entityId}/reassign`, {
         method: 'PATCH',
         body: JSON.stringify({ assignee_id: assigneeId }),
+    });
+}
+
+export interface CreateFromSlotPayload {
+    title: string;
+    start_at: string;
+    end_at: string;
+    assigned_provider_id?: string | null;
+}
+
+export async function createFromSlot(payload: CreateFromSlotPayload): Promise<ScheduleItem> {
+    return scheduleRequest<ScheduleItem>(`${SCHEDULE_BASE}/items/from-slot`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
     });
 }

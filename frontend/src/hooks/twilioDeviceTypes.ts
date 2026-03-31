@@ -23,4 +23,6 @@ export interface UseTwilioDeviceReturn {
     pendingCount: number;
     /** Caller info of the first pending call (for UI display) */
     pendingCallerInfo: { number: string } | null;
+    /** Caller info from backend hold queue (SSE notification) */
+    holdingCallerInfo: { number: string; callSid: string } | null;
 }

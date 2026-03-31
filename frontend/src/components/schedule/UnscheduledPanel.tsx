@@ -1,12 +1,9 @@
 /**
- * UnscheduledPanel — Collapsible panel listing items without start_at.
+ * UnscheduledPanel — Horizontal scrollable panel for unscheduled items.
+ * Sprint 7 Design Refresh: frosted glass, horizontal scroll, 280px cards.
  */
 
-import React, { useState } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
-import { Button } from '../ui/button';
-import { Badge } from '../ui/badge';
-import { ScrollArea } from '../ui/scroll-area';
+import React from 'react';
 import { ScheduleItemCard } from './ScheduleItemCard';
 import type { ScheduleItem } from '../../services/scheduleApi';
 
@@ -16,39 +13,49 @@ interface UnscheduledPanelProps {
 }
 
 export const UnscheduledPanel: React.FC<UnscheduledPanelProps> = ({ items, onSelectItem }) => {
-    const [expanded, setExpanded] = useState(false);
-
     if (items.length === 0) return null;
 
     return (
-        <div className="border-t bg-gray-50/50">
-            {/* Toggle header */}
-            <Button
-                variant="ghost"
-                className="w-full flex items-center justify-between px-4 py-2 h-auto rounded-none hover:bg-gray-100"
-                onClick={() => setExpanded(v => !v)}
-            >
-                <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
-                    {expanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
-                    Unscheduled
-                    <Badge variant="secondary" className="text-xs">{items.length}</Badge>
+        <div
+            className="overflow-hidden"
+            style={{
+                background: 'var(--sched-surface)',
+                border: '1px solid rgba(255, 255, 255, 0.55)',
+                borderRadius: 'var(--sched-radius-xl)',
+                backdropFilter: 'blur(24px)',
+                boxShadow: 'var(--sched-shadow-main)',
+            }}
+        >
+            <div className="px-5 py-4 pb-5">
+                {/* Header */}
+                <div className="flex items-end justify-between gap-4 flex-wrap mb-4">
+                    <p
+                        className="text-[11px] font-semibold tracking-widest uppercase"
+                        style={{ color: 'var(--sched-ink-3)', letterSpacing: '0.14em', margin: 0 }}
+                    >
+                        Unscheduled
+                    </p>
+                    <p
+                        className="text-[11px] font-semibold tracking-widest uppercase"
+                        style={{ color: 'var(--sched-ink-3)', letterSpacing: '0.14em', margin: 0 }}
+                    >
+                        {items.length} item{items.length !== 1 ? 's' : ''}
+                    </p>
                 </div>
-            </Button>
 
-            {/* Cards */}
-            {expanded && (
-                <ScrollArea className="max-h-48">
-                    <div className="px-4 pb-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-                        {items.map(item => (
-                            <ScheduleItemCard
-                                key={`${item.entity_type}-${item.entity_id}`}
-                                item={item}
-                                onClick={onSelectItem}
-                            />
-                        ))}
-                    </div>
-                </ScrollArea>
-            )}
+                {/* Horizontal scrollable cards */}
+                <div className="flex gap-3 overflow-x-auto pb-1" style={{ scrollbarWidth: 'thin' }}>
+                    {items.map(item => (
+                        <div
+                            key={`${item.entity_type}-${item.entity_id}`}
+                            className="flex-none"
+                            style={{ width: '280px', minHeight: '148px' }}
+                        >
+                            <ScheduleItemCard item={item} onClick={onSelectItem} />
+                        </div>
+                    ))}
+                </div>
+            </div>
         </div>
     );
 };

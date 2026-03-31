@@ -48,7 +48,7 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
             es.addEventListener('transcript.delta', e => { onTranscriptDeltaRef.current?.(JSON.parse(e.data)); });
             es.addEventListener('transcript.finalized', e => { onTranscriptFinalizedRef.current?.(JSON.parse(e.data)); });
             es.addEventListener('job.updated', e => { onJobUpdatedRef.current?.(JSON.parse(e.data)); });
-            const genericEventTypes = ['thread.action_required', 'thread.handled', 'thread.snoozed', 'thread.unsnoozed', 'thread.assigned', 'timeline.read', 'timeline.unread', 'contact.unread'];
+            const genericEventTypes = ['thread.action_required', 'thread.handled', 'thread.snoozed', 'thread.unsnoozed', 'thread.assigned', 'timeline.read', 'timeline.unread', 'contact.unread', 'call.holding'];
             for (const et of genericEventTypes) { es.addEventListener(et, e => { try { onGenericEventRef.current?.(et, JSON.parse(e.data)); } catch { } }); }
             es.onerror = () => { setConnected(false); es.close(); if (autoReconnect && !isManuallyClosedRef.current) { reconnectAttemptsRef.current++; const delay = reconnectDelay * Math.min(reconnectAttemptsRef.current, 5); reconnectTimeoutRef.current = window.setTimeout(() => connect(), delay); } onErrorRef.current?.(new Error('SSE connection error')); };
         } catch (error) { onErrorRef.current?.(error as Error); }
