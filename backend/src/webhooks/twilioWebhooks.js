@@ -672,6 +672,19 @@ async function handleDialAction(req, res) {
 <Response>
     <Hangup />
 </Response>`;
+
+            // Finalize the parent call itself (prevents stale in-progress parent legs)
+            try {
+                const db = require('../db/connection');
+                await db.query(
+                    `UPDATE calls SET status = 'completed', is_final = true, ended_at = COALESCE(ended_at, NOW())
+                     WHERE call_sid = $1 AND is_final = false`,
+                    [CallSid]
+                );
+                console.log(`[${traceId}] Parent ${CallSid} finalized as completed`);
+            } catch (parentErr) {
+                console.warn(`[${traceId}] Failed to finalize parent:`, parentErr.message);
+            }
         }
 
         res.type('text/xml');
