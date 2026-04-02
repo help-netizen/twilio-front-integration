@@ -33,7 +33,7 @@ export function PulseContactPanel({ contact, leads, loading, onAddressesChanged,
     const [editOpen, setEditOpen] = useState(false);
     const [onlyOpenLeads, setOnlyOpenLeads] = useState(true);
     const [notes, setNotes] = useState(contact.notes || '');
-    const [notesFocused, setNotesFocused] = useState(false);
+
     const [jobs, setJobs] = useState<jobsApi.LocalJob[]>([]);
     const [jobsLoaded, setJobsLoaded] = useState(false);
     const [editingEmail, setEditingEmail] = useState(false);
