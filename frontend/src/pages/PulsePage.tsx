@@ -281,7 +281,7 @@ export const PulsePage: React.FC = () => {
                                         />
                                     </div>
                                 ) : !p.leadLoading && !p.contact?.id ? (
-                                    <div className="pulse-card">
+                                    <div className="pulse-card" style={{ borderLeft: '3px solid var(--blanc-warning)' }}>
                                         <CreateLeadJobWizard
                                             phone={p.phone}
                                             hasActiveCall={p.hasActiveCall}

@@ -64,12 +64,15 @@ export function LeadDetailPanel({ lead, onClose, onEdit, onMarkLost, onActivate,
     return (
         <div
             className={embedded ? 'flex flex-col' : 'fixed inset-0 z-50 bg-background md:relative md:inset-auto md:z-auto md:w-[400px] md:min-w-[240px] md:border-l md:h-full flex flex-col md:bg-background shrink-0'}
-            style={{ background: 'var(--blanc-surface-strong)' }}
+            style={{ background: 'var(--blanc-surface-strong)', borderLeft: '3px solid var(--blanc-info)' }}
         >
             {/* ── Header: two-column grid — left: identity, right: comments ── */}
             <div className={embedded ? 'pulse-contact-header-grid px-5 pt-5 pb-4' : 'px-5 pt-5 pb-4'}>
                 {/* Left: Name + status badges + contacts */}
                 <div>
+                    {/* Type label */}
+                    <span className="text-[10px] font-semibold uppercase tracking-widest mb-1 inline-block" style={{ color: 'var(--blanc-info)', letterSpacing: '0.12em' }}>Lead</span>
+
                     {/* Name + Edit + Close */}
                     <div className="flex items-center gap-2 mb-1">
                         <h2
