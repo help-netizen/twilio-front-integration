@@ -173,10 +173,10 @@ export function LeadDetailPanel({ lead, onClose, onEdit, onMarkLost, onActivate,
                     </div>
                 </div>
 
-                {/* Right: Comments — sticky note style */}
+                {/* Right: Notes — sticky note style */}
                 {embedded && (
                     <div style={{ padding: '14px 16px 16px', borderRadius: 16, background: '#fef9e7', borderLeft: '3px solid #f6d860' }}>
-                        <h4 className="blanc-eyebrow mb-2">Comments</h4>
+                        <h4 className="blanc-eyebrow mb-2">Notes</h4>
                         <textarea
                             ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } }}
                             className="w-full text-sm resize-none bg-transparent border-none outline-none leading-6"
@@ -194,7 +194,7 @@ export function LeadDetailPanel({ lead, onClose, onEdit, onMarkLost, onActivate,
                 {/* Non-embedded: comments below header as sticky note */}
                 {!embedded && (
                     <div style={{ padding: '14px 16px 16px', borderRadius: 16, background: '#fef9e7', borderLeft: '3px solid #f6d860', marginTop: 12 }}>
-                        <h4 className="blanc-eyebrow mb-2">Comments</h4>
+                        <h4 className="blanc-eyebrow mb-2">Notes</h4>
                         <textarea
                             ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } }}
                             className="w-full text-sm resize-none bg-transparent border-none outline-none leading-6"
