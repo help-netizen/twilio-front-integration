@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Button } from '../ui/button';
-import { Calendar, Clock, SkipForward, AlertTriangle } from 'lucide-react';
+import { Clock, SkipForward, AlertTriangle } from 'lucide-react';
 import type { WizardState, Step } from './wizardTypes';
 import { CustomTimeModal } from './CustomTimeModal';
 
