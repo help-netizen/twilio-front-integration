@@ -55,7 +55,7 @@ export function PulseContactPanel({ contact, leads, loading, onAddressesChanged,
     const hasActivity = filteredLeads.length > 0 || jobs.length > 0;
 
     const handleSaveNotes = async () => {
-        setNotesFocused(false);
+
         if (notes === (contact.notes || '')) return;
         try {
             await contactsApi.updateContact(contact.id, { notes });
@@ -162,7 +162,6 @@ export function PulseContactPanel({ contact, leads, loading, onAddressesChanged,
                         style={{ minHeight: 36, color: notes ? 'var(--blanc-ink-1)' : undefined }}
                         value={notes}
                         onChange={e => setNotes(e.target.value)}
-                        onFocus={() => setNotesFocused(true)}
                         onBlur={handleSaveNotes}
                         onInput={e => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = `${t.scrollHeight}px`; }}
                         placeholder="Add notes…"
