@@ -92,9 +92,14 @@ tokenRouter.get('/check-busy', async (req, res) => {
         const result = await db.query(
             `SELECT call_sid, status, direction FROM calls
              WHERE parent_call_sid IS NULL
+               AND is_final = false
                AND status IN ('initiated', 'ringing', 'in-progress', 'queued')
                AND (from_number = $1 OR to_number = $1)
-               AND started_at > now() - interval '2 hours'
+               AND (
+                   (status IN ('initiated', 'ringing', 'queued') AND started_at > now() - interval '90 seconds')
+                   OR
+                   (status = 'in-progress' AND started_at > now() - interval '2 hours')
+               )
              LIMIT 1`,
             [normalized]
         );
