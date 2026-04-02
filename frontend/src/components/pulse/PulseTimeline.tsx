@@ -1,4 +1,5 @@
-import { useRef, useEffect, useMemo } from 'react';
+import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
+import { ChevronDown } from 'lucide-react';
 import type { CallData } from '../call-list-item';
 import { PulseCallListItem } from './PulseCallListItem';
 import type { SmsMessage, TimelineItem, FinancialEvent } from '../../types/pulse';
@@ -33,6 +34,7 @@ export function PulseTimeline({ calls, messages, loading, timelineKey, financial
     const { company } = useAuth();
     const companyTz = company?.timezone || 'America/New_York';
     const endRef = useRef<HTMLDivElement>(null);
+    const [showJumpBtn, setShowJumpBtn] = useState(false);
 
     // Build a sorted timeline from calls + messages
     const timeline = useMemo(() => {
@@ -71,21 +73,21 @@ export function PulseTimeline({ calls, messages, loading, timelineKey, financial
         return items;
     }, [calls, messages, financialEvents]);
 
-    // Auto-scroll to bottom when timeline loads or switches
+    // Show "jump to latest" button when timeline has items
     useEffect(() => {
-        if (!loading && timeline.length > 0) {
-            const scrollToEnd = () => {
-                endRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' });
-            };
-            // Immediate scroll after paint
-            requestAnimationFrame(() => {
-                scrollToEnd();
-            });
-            // Safety-net: scroll again after a short delay to catch any late layout
-            const timer = setTimeout(scrollToEnd, 150);
-            return () => clearTimeout(timer);
-        }
+        setShowJumpBtn(!loading && timeline.length > 3);
     }, [timeline.length, loading, timelineKey]);
+
+    const handleJumpToLatest = useCallback(() => {
+        // Scroll the right column to the very bottom so the SMS form is also visible
+        const scrollContainer = endRef.current?.closest('.pulse-right-column') || document.querySelector('.pulse-right-column');
+        if (scrollContainer) {
+            scrollContainer.scrollTo({ top: scrollContainer.scrollHeight, behavior: 'smooth' });
+        } else {
+            window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+        }
+        setShowJumpBtn(false);
+    }, []);
 
     if (loading) {
         return (
@@ -147,6 +149,23 @@ export function PulseTimeline({ calls, messages, loading, timelineKey, financial
         <div style={{ padding: '8px 0' }}>
             {rendered}
             <div ref={endRef} />
+            {/* Floating "Jump to latest" button — fixed at bottom-right of viewport */}
+            {showJumpBtn && (
+                <button
+                    onClick={handleJumpToLatest}
+                    className="fixed inline-flex items-center gap-1.5 px-4 py-2.5 rounded-full text-sm font-medium shadow-lg transition-all hover:shadow-xl hover:scale-105"
+                    style={{
+                        bottom: '90px',
+                        right: '40px',
+                        background: 'var(--blanc-ink-1)',
+                        color: '#fff',
+                        zIndex: 20,
+                    }}
+                >
+                    <ChevronDown className="size-4" />
+                    Jump to latest
+                </button>
+            )}
         </div>
     );
 }

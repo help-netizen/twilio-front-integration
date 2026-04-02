@@ -121,7 +121,7 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
             onClick={() => {
                 if (!targetPath) return;
                 navigate(targetPath);
-                if (tlId) {
+                if (tlId && hasUnread) {
                     callsApi.markTimelineRead(tlId)
                         .then(() => { onRead?.(); })
                         .catch((err) => { console.error('[Pulse] Failed to mark timeline read:', tlId, err); });
@@ -135,21 +135,16 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                 <div className="absolute left-0 top-0 bottom-0 w-[3px] rounded-r" style={{ backgroundColor: 'var(--blanc-info)' }} />
             )}
 
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-start gap-2.5">
                 {/* Event type icon */}
-                <div className="relative shrink-0">
-                    <div
-                        className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
-                        style={{ background: avatarBg, border: '1px solid rgba(117,106,89,0.14)' }}
-                    >
-                        {(() => {
-                            if (interactionType === 'sms_inbound') return <MessageSquareReply className="size-[17px]" style={{ color: 'var(--blanc-info)' }} />;
-                            if (interactionType === 'sms_outbound') return <MessageSquare className="size-[17px]" style={{ color: 'var(--blanc-ink-2)' }} />;
-                            if (callDirection === 'internal') return <ArrowLeftRight className="size-[17px]" style={{ color: 'var(--blanc-ink-2)' }} />;
-                            if (callDirection === 'inbound') return <PhoneIncoming className="size-[17px]" style={{ color: callColor }} />;
-                            return <PhoneOutgoing className="size-[17px]" style={{ color: callColor }} />;
-                        })()}
-                    </div>
+                <div className="relative shrink-0 mt-1">
+                    {(() => {
+                        if (interactionType === 'sms_inbound') return <MessageSquareReply className="size-[18px]" style={{ color: 'var(--blanc-info)' }} />;
+                        if (interactionType === 'sms_outbound') return <MessageSquare className="size-[18px]" style={{ color: 'var(--blanc-ink-2)' }} />;
+                        if (callDirection === 'internal') return <ArrowLeftRight className="size-[18px]" style={{ color: 'var(--blanc-ink-2)' }} />;
+                        if (callDirection === 'inbound') return <PhoneIncoming className="size-[18px]" style={{ color: callColor }} />;
+                        return <PhoneOutgoing className="size-[18px]" style={{ color: callColor }} />;
+                    })()}
                 </div>
 
                 {/* Main content */}

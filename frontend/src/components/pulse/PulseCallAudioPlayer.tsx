@@ -105,9 +105,9 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
                         </button>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
-                        <button onClick={() => handleSkip(-10)} title="Rewind 10s" className="h-7 w-7 flex items-center justify-center transition-colors relative" style={{ color: 'var(--blanc-ink-3)' }}><RotateCcw className="w-3.5 h-3.5" /><span className="absolute text-[9px] font-semibold">10</span></button>
-                        <button onClick={handlePlayPause} className="h-7 w-7 flex items-center justify-center transition-colors" style={{ color: 'var(--blanc-ink-2)' }}>{isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}</button>
-                        <button onClick={() => handleSkip(10)} title="Forward 10s" className="h-7 w-7 flex items-center justify-center transition-colors relative" style={{ color: 'var(--blanc-ink-3)' }}><RotateCw className="w-3.5 h-3.5" /><span className="absolute text-[9px] font-semibold">10</span></button>
+                        <button onClick={() => handleSkip(-10)} title="Rewind 10s" className="h-8 w-8 flex items-center justify-center transition-colors relative" style={{ color: 'var(--blanc-ink-3)' }}><RotateCcw className="w-[18px] h-[18px]" /><span className="absolute text-[8px] font-semibold" style={{ marginTop: '1px' }}>10</span></button>
+                        <button onClick={handlePlayPause} className="h-8 w-8 flex items-center justify-center transition-colors" style={{ color: 'var(--blanc-ink-2)' }}>{isPlaying ? <Pause className="w-[18px] h-[18px]" /> : <Play className="w-[18px] h-[18px]" />}</button>
+                        <button onClick={() => handleSkip(10)} title="Forward 10s" className="h-8 w-8 flex items-center justify-center transition-colors relative" style={{ color: 'var(--blanc-ink-3)' }}><RotateCw className="w-[18px] h-[18px]" /><span className="absolute text-[8px] font-semibold" style={{ marginTop: '1px' }}>10</span></button>
                     </div>
                     <div className="flex items-center"><span className="text-xs font-mono" style={{ color: 'var(--blanc-ink-3)' }}>{fmtAudio(currentTime)} / {fmtAudio(duration)}</span></div>
                 </div>

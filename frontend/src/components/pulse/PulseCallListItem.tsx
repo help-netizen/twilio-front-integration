@@ -1,13 +1,15 @@
 /**
- * PulseCallListItem — compact call event row in the timeline.
- * Icon-forward design: direction icon circle + phone + status + duration + time.
- * Expandable audio player and system details below.
+ * PulseCallListItem — call event card in the timeline.
+ * Card-based design: direction icon + phone + time in header,
+ * audio player inside the card, expandable system details.
  */
 import { useState } from 'react';
 import {
     PhoneIncoming, PhoneOutgoing, ArrowLeftRight,
-    Clock, DollarSign, Hash, Navigation, Timer, ChevronDown,
+    Settings2, Clock, DollarSign, Hash, Navigation, Timer,
 } from 'lucide-react';
+import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatPhoneDisplay as formatPhoneNumber } from '@/utils/phoneUtils';
 import type { CallData } from '../call-list-item';
@@ -15,26 +17,26 @@ import { PulseCallAudioPlayer } from './PulseCallAudioPlayer';
 
 // ── Status helpers ────────────────────────────────────────────────────────────
 
-const STATUS_CONFIG: Record<string, { bg: string; color: string; label: string }> = {
-    completed:            { bg: 'rgba(27,139,99,0.10)',  color: '#1b8b63', label: 'Completed' },
-    'no-answer':          { bg: 'rgba(212,77,60,0.10)',  color: '#d44d3c', label: 'No Answer' },
-    busy:                 { bg: 'rgba(178,106,29,0.12)', color: '#b26a1d', label: 'Busy' },
-    failed:               { bg: 'rgba(212,77,60,0.10)',  color: '#d44d3c', label: 'Failed' },
-    canceled:             { bg: 'rgba(117,106,89,0.10)', color: '#7d8796', label: 'Canceled' },
-    ringing:              { bg: 'rgba(47,99,216,0.10)',  color: '#2f63d8', label: 'Ringing' },
-    'in-progress':        { bg: 'rgba(124,53,160,0.10)', color: '#7c35a0', label: 'In Progress' },
-    voicemail_recording:  { bg: 'rgba(178,106,29,0.12)', color: '#b26a1d', label: 'Voicemail' },
-    voicemail_left:       { bg: 'rgba(212,77,60,0.10)',  color: '#d44d3c', label: 'Voicemail Left' },
+const STATUS_CONFIG: Record<string, { classes: string; label: string }> = {
+    completed:            { classes: 'bg-green-500/10 text-green-700 border-green-200', label: 'Completed' },
+    'no-answer':          { classes: 'bg-yellow-500/10 text-yellow-700 border-yellow-200', label: 'No Answer' },
+    busy:                 { classes: 'bg-orange-500/10 text-orange-700 border-orange-200', label: 'Busy' },
+    failed:               { classes: 'bg-red-500/10 text-red-700 border-red-200', label: 'Failed' },
+    canceled:             { classes: 'bg-gray-500/10 text-gray-700 border-gray-200', label: 'Canceled' },
+    ringing:              { classes: 'bg-blue-500/10 text-blue-700 border-blue-200', label: 'Ringing' },
+    'in-progress':        { classes: 'bg-purple-500/10 text-purple-700 border-purple-200', label: 'In Progress' },
+    voicemail_recording:  { classes: 'bg-orange-500/10 text-orange-700 border-orange-200', label: 'Voicemail' },
+    voicemail_left:       { classes: 'bg-red-500/10 text-red-700 border-red-200', label: 'Voicemail Left' },
 };
 
 function getStatusConfig(status: string) {
-    return STATUS_CONFIG[status] || { bg: 'rgba(117,106,89,0.08)', color: '#7d8796', label: status };
+    return STATUS_CONFIG[status] || { classes: 'bg-gray-500/10 text-gray-700 border-gray-200', label: status };
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 
 const formatDuration = (seconds: number | null | undefined): string => {
-    if (!seconds) return '';
+    if (!seconds) return 'N/A';
     if (seconds < 60) return `${seconds}s`;
     return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 };
@@ -49,7 +51,6 @@ export function PulseCallListItem({ call }: { call: CallData }) {
     const status = (call.status || '').toLowerCase();
     const cfg = getStatusConfig(status);
     const otherPartyNumber = call.direction === 'incoming' ? call.from : call.to;
-    const duration = formatDuration(call.totalDuration || call.duration);
 
     const dir = call.direction as string;
     const DirectionIcon = dir === 'incoming'
@@ -58,129 +59,96 @@ export function PulseCallListItem({ call }: { call: CallData }) {
             ? ArrowLeftRight
             : PhoneOutgoing;
 
-    const directionLabel = dir === 'incoming' ? 'Inbound' : dir === 'internal' ? 'Internal' : 'Outbound';
+    const directionLabel = dir === 'incoming' ? 'Incoming Call' : dir === 'internal' ? 'Internal Call' : 'Outgoing Call';
 
     return (
-        <div className="group/call">
-            {/* Compact event row */}
-            <div className="flex items-center gap-2.5 px-1 py-1.5 rounded-xl hover:bg-muted/40 transition-colors">
-                {/* Direction icon */}
-                <TooltipProvider>
-                    <Tooltip>
-                        <TooltipTrigger asChild>
-                            <div
-                                className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
-                                style={{ background: cfg.bg }}
-                            >
-                                <DirectionIcon className="w-4 h-4" style={{ color: cfg.color }} />
-                            </div>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                            <p>{directionLabel} — {cfg.label}</p>
-                        </TooltipContent>
-                    </Tooltip>
-                </TooltipProvider>
+        <Card className="overflow-hidden border border-gray-200 hover:shadow-md transition-shadow">
+            {/* Header */}
+            <div className={`p-4 ${call.audioUrl ? 'pb-0' : ''}`}>
+                <div className="flex items-center gap-3">
+                    <TooltipProvider>
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <div className={`flex items-center justify-center w-9 h-9 rounded-full border ${cfg.classes}`}>
+                                    <DirectionIcon className="w-4 h-4" />
+                                </div>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                                <p>{directionLabel} — {cfg.label}</p>
+                            </TooltipContent>
+                        </Tooltip>
+                    </TooltipProvider>
 
-                {/* Phone */}
-                <span className="text-sm font-medium font-mono flex-1 truncate" style={{ color: 'var(--blanc-ink-1)' }}>
-                    {formatPhoneNumber(otherPartyNumber)}
-                </span>
+                    <p className="text-xs text-gray-600 font-mono">{formatPhoneNumber(otherPartyNumber)}</p>
+                    <div className="flex-1" />
+                    <div className="text-xs text-gray-500">{formatTime(call.startTime)}</div>
 
-                {/* Status pill */}
-                <span
-                    className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md shrink-0"
-                    style={{ background: cfg.bg, color: cfg.color }}
-                >
-                    {cfg.label}
-                </span>
-
-                {/* Duration */}
-                {duration && (
-                    <span className="text-xs shrink-0" style={{ color: 'var(--blanc-ink-3)' }}>
-                        {duration}
-                    </span>
-                )}
-
-                {/* Time */}
-                <span className="text-xs shrink-0" style={{ color: 'var(--blanc-ink-3)' }}>
-                    {formatTime(call.startTime)}
-                </span>
-
-                {/* Expand toggle */}
-                <button
-                    onClick={() => setShowSystemInfo(!showSystemInfo)}
-                    className="p-1 rounded-lg transition-colors hover:bg-muted/60 shrink-0 opacity-0 group-hover/call:opacity-100"
-                    style={{ color: 'var(--blanc-ink-3)' }}
-                    title="Call details"
-                >
-                    <ChevronDown
-                        className="w-3.5 h-3.5 transition-transform"
-                        style={{ transform: showSystemInfo ? 'rotate(180deg)' : 'none' }}
-                    />
-                </button>
+                    <TooltipProvider>
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => setShowSystemInfo(!showSystemInfo)}
+                                    className="h-6 w-6 hover:bg-gray-100"
+                                >
+                                    <Settings2 className={`w-4 h-4 transition-transform ${showSystemInfo ? 'rotate-90' : ''}`} />
+                                </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                                <p>System Information</p>
+                            </TooltipContent>
+                        </Tooltip>
+                    </TooltipProvider>
+                </div>
             </div>
 
-            {/* Audio player — indented, in its own card */}
-            {call.audioUrl && (
-                <div
-                    className="ml-10 mt-1.5 rounded-xl overflow-hidden"
-                    style={{ border: '1px solid var(--blanc-line)', background: 'var(--blanc-surface-strong)' }}
-                >
-                    <PulseCallAudioPlayer call={call} />
-                </div>
-            )}
+            {/* Audio Player, Summary, Transcription */}
+            <div className="bg-gray-50/50">
+                <PulseCallAudioPlayer call={call} />
+            </div>
 
-            {/* System details — expandable */}
+            {/* System Info */}
             {showSystemInfo && (
-                <div
-                    className="ml-10 mt-1.5 px-3 py-2.5 space-y-1.5 text-xs rounded-xl"
-                    style={{ background: 'var(--blanc-surface-muted)', border: '1px solid var(--blanc-line)' }}
-                >
+                <div className="p-4 pt-0 space-y-2 text-sm bg-gray-50">
                     <div className="flex items-center gap-2">
-                        <Clock className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />
-                        <span style={{ color: 'var(--blanc-ink-3)' }}>Duration</span>
-                        <span className="font-mono ml-auto" style={{ color: 'var(--blanc-ink-1)' }}>
-                            {formatDuration(call.totalDuration || call.duration) || 'N/A'}
-                        </span>
+                        <Clock className="w-4 h-4 text-gray-400" />
+                        <span className="text-gray-600">Duration:</span>
+                        <span className="font-mono text-gray-900">{formatDuration(call.totalDuration || call.duration)}</span>
                     </div>
                     {call.talkTime !== undefined && (
                         <div className="flex items-center gap-2">
-                            <Timer className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />
-                            <span style={{ color: 'var(--blanc-ink-3)' }}>Talk</span>
-                            <span className="font-mono ml-auto" style={{ color: 'var(--blanc-ink-1)' }}>{formatDuration(call.talkTime)}</span>
+                            <Timer className="w-4 h-4 text-gray-400" />
+                            <span className="text-gray-600">Talk:</span>
+                            <span className="font-mono text-gray-900">{formatDuration(call.talkTime)}</span>
                         </div>
                     )}
                     {call.waitTime !== undefined && (
                         <div className="flex items-center gap-2">
-                            <Clock className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />
-                            <span style={{ color: 'var(--blanc-ink-3)' }}>Wait</span>
-                            <span className="font-mono ml-auto" style={{ color: 'var(--blanc-ink-1)' }}>{formatDuration(call.waitTime)}</span>
+                            <Clock className="w-4 h-4 text-gray-400" />
+                            <span className="text-gray-600">Wait:</span>
+                            <span className="font-mono text-gray-900">{formatDuration(call.waitTime)}</span>
                         </div>
                     )}
                     {call.cost !== undefined && (
                         <div className="flex items-center gap-2">
-                            <DollarSign className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />
-                            <span style={{ color: 'var(--blanc-ink-3)' }}>Cost</span>
-                            <span className="font-mono ml-auto" style={{ color: 'var(--blanc-ink-1)' }}>${call.cost.toFixed(4)}</span>
+                            <DollarSign className="w-4 h-4 text-gray-400" />
+                            <span className="text-gray-600">Cost:</span>
+                            <span className="font-mono text-gray-900">${call.cost.toFixed(4)} USD</span>
                         </div>
                     )}
                     <div className="flex items-center gap-2">
-                        <Hash className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />
-                        <span style={{ color: 'var(--blanc-ink-3)' }}>SID</span>
-                        <code
-                            className="font-mono text-[10px] ml-auto px-1.5 py-0.5 rounded-md truncate max-w-[160px]"
-                            style={{ background: 'rgba(118,106,89,0.1)', color: 'var(--blanc-ink-2)' }}
-                        >
-                            {call.callSid}
-                        </code>
+                        <Hash className="w-4 h-4 text-gray-400" />
+                        <span className="text-gray-600">Call SID:</span>
+                        <code className="text-xs bg-gray-200 px-2 py-1 rounded font-mono text-gray-800">{call.callSid}</code>
                     </div>
                     <div className="flex items-center gap-2">
-                        <Navigation className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />
-                        <span style={{ color: 'var(--blanc-ink-3)' }}>Direction</span>
-                        <span className="font-mono ml-auto" style={{ color: 'var(--blanc-ink-1)' }}>{call.twilioDirection}</span>
+                        <Navigation className="w-4 h-4 text-gray-400" />
+                        <span className="text-gray-600">Direction:</span>
+                        <span className="font-mono text-gray-900">{call.twilioDirection}</span>
                     </div>
                 </div>
             )}
-        </div>
+        </Card>
     );
 }

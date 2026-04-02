@@ -1,53 +1,79 @@
-/* ── Pulse Page Layout ─────────────────────────────────────────── */
+/* ── Pulse Page Layout ───────────────────────────────────────────
+   Two-column layout: fixed sidebar + scrollable right column.
+   The page wrapper becomes a fixed-height container.
+   Sidebar and right column scroll independently.
+   ────────────────────────────────────────────────────────────────── */
 
-.pulse-page {
+/* Override page wrapper: fill remaining height, don't scroll itself */
+.blanc-page-wrapper:has(.pulse-layout) {
+    overflow: hidden !important;
+    flex: 1;
+    min-height: 0;
+}
+
+/* Top-level flex row: sidebar + right column fill remaining height.
+   align-items: stretch makes both columns match layout height.
+   overflow: hidden constrains children to this height. */
+.pulse-layout {
     display: flex;
-    height: 100%;
+    gap: 16px;
+    flex: 1;
+    min-height: 0;
+    align-items: stretch;
     overflow: hidden;
 }
 
-.pulse-sidebar {
+/* ── Sidebar card ── */
+.pulse-sidebar-card {
     width: 320px;
     flex-shrink: 0;
-    border-right: 1px solid var(--blanc-line);
+    /* Fill available height — sidebar scrolls internally via .pulse-sidebar-scroll */
     display: flex;
     flex-direction: column;
     background: var(--blanc-surface-strong);
-}
-
-.pulse-middle-column {
-    width: 380px;
-    flex-shrink: 0;
-    border-right: 1px solid var(--blanc-line);
-    background: var(--blanc-surface-strong);
-    display: flex;
-    flex-direction: column;
+    border: 1px solid rgba(255, 255, 255, 0.55);
+    border-radius: var(--blanc-radius-xl);
+    box-shadow: var(--blanc-shadow-main);
     overflow: hidden;
 }
 
-.pulse-timeline-column {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    background: var(--blanc-surface-strong);
-    overflow: hidden;
-}
-
-.pulse-timeline-scroll {
+.pulse-sidebar-scroll {
     flex: 1;
     overflow-y: auto;
-    padding: 0;
 }
 
-.pulse-empty-state {
+/* ── Right column: scrollable stack of floating cards ── */
+.pulse-right-column {
     flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+    /* subtle padding-bottom so content doesn't touch bottom edge */
+    padding-bottom: 16px;
+}
+
+/* Shared floating card style for right-column blocks */
+.pulse-card {
+    background: var(--blanc-surface-strong);
+    border: 1px solid var(--blanc-line, rgba(104, 95, 80, 0.14));
+    border-radius: var(--blanc-radius-xl);
+    box-shadow: var(--blanc-shadow-main);
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+/* Empty state fills the viewport height */
+.pulse-empty-state {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
+    min-height: 400px;
     color: var(--blanc-ink-3);
 }
-
 
 /* ── Mobile back button ─────────────────────────────────────────── */
 .pulse-back-btn {
@@ -76,63 +102,34 @@
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   TABLET (768–1099px): two-column layout
-   sidebar + stacked middle/timeline
+   TABLET (≤ 1099px): narrower sidebar, tighter gaps
    ══════════════════════════════════════════════════════════════════ */
 @media (max-width: 1099px) {
-    .blanc-page-wrapper:has(.pulse-page) {
+    .blanc-page-wrapper:has(.pulse-layout) {
         padding: 12px;
         gap: 10px;
     }
 
-    .pulse-sidebar {
+    .pulse-layout {
+        gap: 12px;
+    }
+
+    .pulse-sidebar-card {
         width: 260px;
     }
 
-    .pulse-middle-column {
-        width: 320px;
+    .pulse-right-column {
+        gap: 12px;
+        padding-bottom: 12px;
     }
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   NARROW TABLET (≤ 899px): sidebar narrower still
+   ══════════════════════════════════════════════════════════════════ */
 @media (max-width: 899px) {
-    /*
-     * Narrow tablet (768–899px): switch to CSS Grid so all 3 panels are
-     * visible. Sidebar spans both rows; middle sits above the timeline.
-     *
-     *  ┌──────────┬────────────────────┐
-     *  │          │  middle (detail)   │
-     *  │ sidebar  ├────────────────────┤
-     *  │          │  timeline + SMS    │
-     *  └──────────┴────────────────────┘
-     */
-    .pulse-page {
-        display: grid;
-        grid-template-columns: 220px 1fr;
-        grid-template-rows: auto 1fr;
-    }
-
-    .pulse-sidebar {
-        grid-column: 1;
-        grid-row: 1 / 3;     /* spans middle + timeline rows */
-        width: auto;          /* grid controls width */
-        border-right: 1px solid var(--blanc-line);
-    }
-
-    .pulse-middle-column {
-        display: flex;        /* override any previous display:none */
-        grid-column: 2;
-        grid-row: 1;
-        width: auto;
-        max-height: 240px;    /* compact: enough for AR bar + lead summary */
-        border-right: none;
-        border-bottom: 1px solid var(--blanc-line);
-        overflow-y: auto;
-    }
-
-    .pulse-timeline-column {
-        grid-column: 2;
-        grid-row: 2;
-        min-height: 0;        /* allow shrink inside grid row */
+    .pulse-sidebar-card {
+        width: 220px;
     }
 }
 
@@ -141,79 +138,46 @@
    Toggle between sidebar and content via data-mobile-panel attribute
    ══════════════════════════════════════════════════════════════════ */
 @media (max-width: 767px) {
-    .blanc-page-wrapper:has(.pulse-page) {
+    .blanc-page-wrapper:has(.pulse-layout) {
         padding: 8px;
         gap: 8px;
     }
 
-    /* Hide the heading on mobile to save space */
-    .blanc-page-header:has(+ .pulse-search-toolbar) h1 {
-        font-size: 24px;
-    }
-
-    /* Reset grid back to flex for single-panel mobile mode */
-    .pulse-page {
-        display: flex;
+    .pulse-layout {
         flex-direction: column;
+        gap: 8px;
     }
 
     /* Sidebar: full width in list mode, hidden in content mode */
-    .pulse-page[data-mobile-panel="list"] .pulse-sidebar {
+    .pulse-layout[data-mobile-panel="list"] .pulse-sidebar-card {
         width: 100%;
         flex: 1;
-        border-right: none;
     }
 
-    .pulse-page[data-mobile-panel="content"] .pulse-sidebar {
+    .pulse-layout[data-mobile-panel="content"] .pulse-sidebar-card {
         display: none;
     }
 
-    /* Middle + timeline: hidden in list mode */
-    .pulse-page[data-mobile-panel="list"] .pulse-middle-column,
-    .pulse-page[data-mobile-panel="list"] .pulse-timeline-column {
+    /* Right column: hidden in list mode */
+    .pulse-layout[data-mobile-panel="list"] .pulse-right-column {
         display: none;
     }
 
-    /* Content mode: stack middle + timeline vertically */
-    .pulse-page[data-mobile-panel="content"] {
-        flex-direction: column;
-    }
-
-    .pulse-page[data-mobile-panel="content"] .pulse-middle-column {
-        display: flex;
-        width: 100% !important;
-        flex: none;
-        max-height: 38vh;
-        border-right: none;
-        border-bottom: 1px solid var(--blanc-line);
-        overflow-y: auto;
-    }
-
-    .pulse-page[data-mobile-panel="content"] .pulse-timeline-column {
+    .pulse-layout[data-mobile-panel="content"] .pulse-right-column {
         flex: 1;
-        min-height: 0;
     }
 
-    /* Show back button in content mode */
-    .pulse-page[data-mobile-panel="content"] ~ * .pulse-back-btn,
+    /* Back button visible on mobile content panel */
     .pulse-back-btn {
-        display: none;
+        display: flex;
+    }
+
+    .pulse-back-btn-hidden {
+        display: none !important;
     }
 
     /* Search toolbar: wrap on mobile */
     .blanc-page-toolbar {
         flex-wrap: wrap;
-    }
-}
-
-/* Back button: only shown on mobile */
-@media (max-width: 767px) {
-    .pulse-back-btn {
-        display: flex;
-    }
-
-    /* Only show back button when in content panel */
-    .pulse-back-btn-hidden {
-        display: none !important;
     }
 }

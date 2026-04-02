@@ -164,9 +164,12 @@ async function buildTimeline(req, res, contact, timeline) {
         );
         conversations = convResult.rows;
 
-        for (const conv of conversations) {
-            const msgs = await convQueries.getMessages(conv.id, { limit: 200 });
-            messages.push(...msgs.map(m => ({
+        const allMsgs = await Promise.all(
+            conversations.map(conv => convQueries.getMessages(conv.id, { limit: 200 }))
+        );
+        for (let i = 0; i < conversations.length; i++) {
+            const conv = conversations[i];
+            messages.push(...allMsgs[i].map(m => ({
                 ...m,
                 conversation_id: conv.id,
                 from_number: m.direction === 'inbound' ? conv.customer_e164 : conv.proxy_e164,
