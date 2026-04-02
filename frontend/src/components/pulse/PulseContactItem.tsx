@@ -105,7 +105,6 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
     const callColor = STATUS_ICON_COLORS[call.status?.toLowerCase() || ''] || '#16a34a';
 
     // Neutral icon container — same for all contacts, no visual noise
-    const avatarBg = 'rgba(117, 106, 89, 0.08)';
 
     useEffect(() => {
         if (!menuOpen) return;
