@@ -126,19 +126,19 @@ export function PulseTimeline({ calls, messages, loading, timelineKey, financial
 
         if (item.type === 'call') {
             rendered.push(
-                <div key={`call-${(item.data as CallData).id}`} style={{ padding: '3px 16px' }}>
+                <div key={`call-${(item.data as CallData).id}`} style={{ padding: '5px 20px' }}>
                     <PulseCallListItem call={item.data as CallData} />
                 </div>
             );
         } else if (item.type === 'financial') {
             rendered.push(
-                <div key={`fin-${(item.data as FinancialEvent).id}`} style={{ padding: '3px 16px' }}>
+                <div key={`fin-${(item.data as FinancialEvent).id}`} style={{ padding: '5px 20px' }}>
                     <FinancialEventListItem event={item.data as FinancialEvent} />
                 </div>
             );
         } else {
             rendered.push(
-                <div key={`sms-${(item.data as SmsMessage).id}`} style={{ padding: '3px 16px' }}>
+                <div key={`sms-${(item.data as SmsMessage).id}`} style={{ padding: '5px 20px' }}>
                     <SmsListItem sms={item.data as SmsMessage} />
                 </div>
             );
@@ -146,7 +146,7 @@ export function PulseTimeline({ calls, messages, loading, timelineKey, financial
     }
 
     return (
-        <div style={{ padding: '8px 0' }}>
+        <div style={{ padding: '12px 0' }}>
             {rendered}
             <div ref={endRef} />
             {/* Floating "Jump to latest" button — fixed at bottom-right of viewport */}

@@ -72,7 +72,7 @@ export function PulseCallListItem({ call }: { call: CallData }) {
             onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--blanc-line)')}
         >
             {/* Header row */}
-            <div className={`px-4 py-3 ${call.audioUrl ? '' : ''}`}>
+            <div className="px-4 py-3.5">
                 <div className="flex items-center gap-2.5">
                     <DirectionIcon className="size-4 shrink-0" style={{ color: st.color }} />
                     <span className="text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>

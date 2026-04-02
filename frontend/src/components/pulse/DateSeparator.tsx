@@ -28,7 +28,7 @@ function compactDate(raw: string): string {
 
 export function DateSeparator({ date }: DateSeparatorProps) {
     return (
-        <div className="px-4 pt-6 pb-2">
+        <div className="px-5 pt-6 pb-2">
             <h3
                 className="text-base font-bold"
                 style={{
