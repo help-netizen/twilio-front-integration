@@ -221,7 +221,7 @@ async function handleVoiceInbound(req, res) {
 
         // Track dial attempts and hold retries across redirects
         const dialAttempt = parseInt(req.query.dialAttempt || '0', 10);
-        const dialActionUrl = `${baseUrl}/webhooks/twilio/voice-dial-action?dialAttempt=${dialAttempt}&holdRetry=${parseInt(req.query.holdRetry || '0', 10)}`;
+        const dialActionUrl = `${baseUrl}/webhooks/twilio/voice-dial-action?dialAttempt=${dialAttempt}&amp;holdRetry=${parseInt(req.query.holdRetry || '0', 10)}`;
 
         // Realtime transcription: build <Start><Stream> block if enabled
         const realtimeEnabled = process.env.FEATURE_REALTIME_TRANSCRIPTION === 'true';
@@ -389,7 +389,7 @@ async function handleVoiceInbound(req, res) {
                             ? 'All representatives are currently assisting other customers. Please stay on the line.'
                             : '';
                         const holdLanguage = process.env.VM_LANGUAGE || 'en-US';
-                        const redirectUrl = `${baseUrl}/webhooks/twilio/voice-inbound?holdRetry=${holdRetry + 1}&dialAttempt=${dialAttempt}`;
+                        const redirectUrl = `${baseUrl}/webhooks/twilio/voice-inbound?holdRetry=${holdRetry + 1}&amp;dialAttempt=${dialAttempt}`;
 
                         console.log(`[${traceId}] All clients busy — hold loop (retry ${holdRetry}/${maxHoldRetries})`);
 
@@ -645,7 +645,7 @@ async function handleDialAction(req, res) {
         if (dialFailed && isInbound && dialAttempt < MAX_DIAL_ATTEMPTS) {
             // Redirect back to handleVoiceInbound to re-route the call
             const nextDialAttempt = dialAttempt + 1;
-            const redirectUrl = `${baseUrl}/webhooks/twilio/voice-inbound?holdRetry=${holdRetry}&dialAttempt=${nextDialAttempt}`;
+            const redirectUrl = `${baseUrl}/webhooks/twilio/voice-inbound?holdRetry=${holdRetry}&amp;dialAttempt=${nextDialAttempt}`;
 
             console.log(`[${traceId}] Dial failed (${dialStatus}) → redirect to re-route (attempt ${nextDialAttempt}/${MAX_DIAL_ATTEMPTS})`);
 
