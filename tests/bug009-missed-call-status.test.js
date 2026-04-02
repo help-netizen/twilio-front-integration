@@ -198,4 +198,37 @@ describe('Bug #9 — Missed call status preservation', () => {
 
         expect(mockUpsertCall).toHaveBeenCalled();
     });
+
+    it('should NOT overwrite no-answer with completed on CHILD call legs', async () => {
+        // Child leg was set to no-answer by handleDialAction, then Twilio sends
+        // voice-status "completed" for the same child SID.
+        // Previously the guard only ran for parent calls (!parentCallSid),
+        // leaving child legs unprotected.
+        mockGetCallByCallSid.mockResolvedValue({
+            call_sid: 'CA_child_missed_001',
+            status: 'no-answer',
+            is_final: true,
+            direction: 'inbound',
+        });
+
+        const event = {
+            id: 2,
+            source: 'voice',
+            event_type: 'call.status_changed',
+            call_sid: 'CA_child_missed_001',
+            payload: {
+                CallSid: 'CA_child_missed_001',
+                CallStatus: 'completed',
+                ParentCallSid: 'CA_parent_missed_001',
+                From: '+15551112222',
+                To: 'sip:agent@sip.twilio.com',
+                Direction: 'inbound',
+                Timestamp: new Date().toISOString(),
+            },
+        };
+        await processEvent(event);
+
+        // upsertCall should NOT have been called — child's no-answer must be preserved
+        expect(mockUpsertCall).not.toHaveBeenCalled();
+    });
 });

@@ -6,6 +6,55 @@
 
 ## 2026-04-02
 
+### BUG012: SSE singleton — eliminate duplicate EventSource connections
+
+**Problem:** 9 independent `useRealtimeEvents()` hook instances each created their own `EventSource` connection. When Fly.io's HTTP/2 proxy dropped the connection (`ERR_HTTP2_PROTOCOL_ERROR`), all 9 reconnected independently, creating hundreds of Fetch/XHR requests.
+
+**Root cause:** No shared SSE connection — each React component hook created a new `EventSource`.
+
+**Fix:**
+1. Created `sseManager.ts` — singleton module maintaining ONE EventSource for the entire app
+2. Rewrote `useRealtimeEvents.ts` — hooks subscribe to the shared manager instead of creating connections
+3. Added page visibility handling — SSE pauses when tab is hidden, reconnects on focus
+4. Exponential backoff with jitter (2s base → 60s cap) instead of linear 3-15s
+
+**Files changed:**
+- `frontend/src/hooks/sseManager.ts` — new singleton SSE manager
+- `frontend/src/hooks/useRealtimeEvents.ts` — rewritten to use shared manager
+
+### BUG009 v2: Fix child-leg and reconciliation paths for missed call status
+
+**Problem:** Bug #9 fix was incomplete — missed calls still turned green. The original fix only guarded parent calls.
+
+**Root cause:** Three unguarded paths:
+1. Child-leg guard only ran for parent calls (`!parentCallSid` condition) — child legs with `no-answer` were overwritten by Twilio's `completed`
+2. `reconcileParentCall` guarded `voicemail_recording`/`voicemail_left` but NOT `no-answer` — when child became `completed`, reconciliation found a "winner" and set parent to `completed`
+3. `reconcileParentCall` ran even when `skipUpsert=true` for the parent-completed case
+
+**Fix:**
+1. Extended guard to cover ALL calls (parent + child) — removed `!parentCallSid` condition
+2. Added `no-answer` to reconcileParentCall guard list
+3. Added `skipUpsert` check before reconcileParentCall in parent-completed path
+
+**Files changed:**
+- `backend/src/services/inboxWorker.js` — 3 guard fixes
+- `tests/bug009-missed-call-status.test.js` — added child-leg test (6 tests total)
+
+### BUG006/BUG007: Centralized callAvailability + parent call finalization
+
+**Additional fixes for stale call records:**
+1. Centralized all busy-check logic into `backend/src/services/callAvailability.js` — single module used by inbound Client routing, inbound SIP routing, and outbound pre-flight check
+2. Added parent call finalization in `handleDialAction` — when `<Dial>` completes, the parent call record is also set to `is_final=true`, preventing stale outbound WebRTC parent legs
+
+**Files changed:**
+- `backend/src/services/callAvailability.js` (new)
+- `backend/src/webhooks/twilioWebhooks.js` — refactored to use callAvailability + parent finalization
+- `backend/src/routes/voice.js` — refactored check-busy to use `isContactBusy()`
+
+**Tests:** `tests/bug006-stale-availability.test.js` — 9 tests (all passing)
+
+---
+
 ### BUG006: Fix stale call records causing false voicemail routing
 
 **Problem:** Incoming calls were incorrectly routed to voicemail ("Our team is currently assisting other customers") even when all operators were free. Stale records in `calls` table with `is_final = false` and `status IN ('ringing', 'in-progress')` made operators appear busy.
