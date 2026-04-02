@@ -82,7 +82,7 @@ export const PulsePage: React.FC = () => {
                 <div className="pulse-search-wrapper">
                     <input
                         type="text"
-                        placeholder="Search..."
+                        placeholder="find anything..."
                         value={p.searchQuery}
                         onChange={(e) => p.setSearchQuery(e.target.value)}
                         className="pulse-search-input"

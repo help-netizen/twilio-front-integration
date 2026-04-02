@@ -20,6 +20,11 @@
     flex-shrink: 0;
 }
 
+/* Space between title and search field */
+.pulse-header-title {
+    margin-right: 18px;
+}
+
 .pulse-header-title {
     font-family: var(--blanc-font-heading);
     font-weight: 700;
@@ -48,7 +53,7 @@
     background: transparent;
     font-family: var(--blanc-font-heading);
     font-size: 28px;
-    font-weight: 300;
+    font-weight: 200;
     letter-spacing: -0.04em;
     line-height: 1;
     color: var(--blanc-ink-1);
