@@ -54,6 +54,28 @@ async function reconcileStaleCalls() {
 async function reconcileOneCall(call, traceId) {
     const { call_sid, parent_call_sid } = call;
 
+    // Stuck voicemail_recording: caller hung up before recording started,
+    // so the recording callback never arrives. Transition to no-answer (final).
+    if (call.status === 'voicemail_recording') {
+        const recCheck = await db.query(
+            `SELECT 1 FROM recordings WHERE call_sid = $1 LIMIT 1`, [call_sid]
+        );
+        if (recCheck.rows.length === 0) {
+            await db.query(
+                `UPDATE calls SET status = 'no-answer', is_final = true,
+                 ended_at = COALESCE(ended_at, NOW()) WHERE call_sid = $1`, [call_sid]
+            );
+            console.log(`[${traceId}] voicemail_recording with no recording → no-answer: ${call_sid}`);
+            // Publish SSE update
+            try {
+                const realtimeService = require('./realtimeService');
+                const updated = await queries.getCallByCallSid(call_sid);
+                if (updated) realtimeService.publishCallUpdate({ eventType: 'call.updated', ...updated });
+            } catch (e) { /* best-effort */ }
+            return true;
+        }
+    }
+
     // Strategy 1: Parent call with children — re-run reconcileParentCall
     if (!parent_call_sid) {
         const childResult = await db.query(
@@ -98,6 +120,31 @@ async function fetchAndUpdateFromTwilio(callSid, traceId) {
         if (!apiStatus) return false;
 
         const isFinal = isFinalStatus(apiStatus);
+
+        // Guard: don't let Twilio's "completed" overwrite meaningful statuses.
+        // Twilio reports "completed" for parent calls when TwiML finishes,
+        // even if no agent answered — preserve no-answer/voicemail statuses.
+        const existing = await queries.getCallByCallSid(callSid);
+        const preserveStatuses = ['no-answer', 'voicemail_recording', 'voicemail_left'];
+        if (existing && preserveStatuses.includes(existing.status) && apiStatus === 'completed') {
+            await db.query(
+                `UPDATE calls SET is_final = true,
+                 ended_at   = COALESCE($2, ended_at),
+                 duration_sec = COALESCE($3, duration_sec),
+                 price      = COALESCE($4, price),
+                 price_unit = COALESCE($5, price_unit)
+                 WHERE call_sid = $1`,
+                [
+                    callSid,
+                    details.endTime ? new Date(details.endTime) : null,
+                    parseInt(details.duration) || null,
+                    details.price ? parseFloat(details.price) : null,
+                    details.priceUnit || null,
+                ]
+            );
+            console.log(`[${traceId}] Preserving ${existing.status} (Twilio says ${apiStatus}): ${callSid}`);
+            return true;
+        }
 
         await db.query(
             `UPDATE calls SET

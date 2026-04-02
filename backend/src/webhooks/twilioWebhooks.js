@@ -609,13 +609,15 @@ async function handleDialAction(req, res) {
         try {
             const db = require('../db/connection');
             const finalizeStatus = dialStatus === 'completed' || dialStatus === 'answered' ? 'completed' : 'no-answer';
+            const dialDuration = parseInt(req.body.DialCallDuration || 0) || null;
             const result = await db.query(
                 `UPDATE calls SET status = CASE WHEN status = 'in-progress' THEN 'completed' ELSE $2 END,
                         is_final = true,
+                        duration_sec = CASE WHEN status = 'in-progress' THEN COALESCE($3, duration_sec) ELSE duration_sec END,
                         ended_at = COALESCE(ended_at, NOW())
                  WHERE parent_call_sid = $1
                    AND is_final = false`,
-                [CallSid, finalizeStatus]
+                [CallSid, finalizeStatus, dialDuration]
             );
             if (result.rowCount > 0) {
                 console.log(`[${traceId}] Finalized ${result.rowCount} child leg(s) for parent ${CallSid}`);

@@ -452,10 +452,12 @@ async function reconcileParentCall(parentCallSid, traceId) {
         // Check if all children are final
         const allFinal = children.every(c => c.is_final);
 
-        // Determine winner: completed child with longest duration
+        // Determine winner: completed child with longest duration.
+        // Fallback: completed child without duration (handleDialAction may finalize
+        // child legs before Twilio's status callback sets duration_sec).
         const winner = children.find(c =>
             c.status === 'completed' && c.duration_sec && c.duration_sec > 0
-        );
+        ) || children.find(c => c.status === 'completed');
 
         // Get contact_id from winner or first child that has one
         // (for outbound SIP calls where parent may not have contact_id)
