@@ -330,10 +330,11 @@
 
 .wizard__action-btn {
     flex: 1;
-    padding: 11px 16px !important;
+    min-height: 44px !important;
+    padding: 10px 16px !important;
     font-size: 14px !important;
     font-weight: 600 !important;
-    border-radius: 10px !important;
+    border-radius: 14px !important;
     height: auto !important;
 }
 
@@ -364,12 +365,13 @@
 }
 
 .wizard__nav [data-slot="button"] {
-    height: 40px !important;
-    padding-left: 18px !important;
-    padding-right: 18px !important;
+    min-height: 42px !important;
+    padding-left: 20px !important;
+    padding-right: 20px !important;
     font-size: 14px !important;
     font-weight: 600 !important;
-    border-radius: 10px !important;
+    border-radius: 14px !important;
+    box-shadow: rgba(48, 39, 28, 0.06) 0px 6px 16px;
 }
 
 /* ── Call confirmation bar ─────────────────────────────────────────────── */

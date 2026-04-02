@@ -5,8 +5,9 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { usePulsePage } from '../hooks/usePulsePage';
-import { PulseContactItem, SNOOZE_OPTIONS, getSnoozeUntil, REASON_LABELS } from '../components/pulse/PulseContactItem';
+import { PulseContactItem, REASON_LABELS } from '../components/pulse/PulseContactItem';
 import { AssignOwnerDropdown } from '../components/pulse/AssignOwnerDropdown';
+import { SnoozeDropdown } from '../components/pulse/SnoozeDropdown';
 import { PulseTimeline } from '../components/pulse/PulseTimeline';
 import { SmsForm } from '../components/pulse/SmsForm';
 import { LeadDetailPanel } from '../components/leads/LeadDetailPanel';
@@ -177,7 +178,7 @@ export const PulsePage: React.FC = () => {
                                 const tlId = conv.timeline_id;
                                 return (
                                     <div
-                                        className="pulse-card"
+                                        className="pulse-card pulse-card-visible-overflow"
                                         style={{ backgroundColor: isSnoozed ? 'var(--blanc-surface-muted)' : '#fff7ed' }}
                                     >
                                         <div className="flex items-center gap-2.5 px-5 py-3">
@@ -206,45 +207,18 @@ export const PulsePage: React.FC = () => {
                                             )}
                                         </div>
                                         {!isSnoozed && (
-                                            <div className="flex items-center gap-2 px-5 pb-3">
+                                            <div className="flex items-center gap-2.5 px-5 pb-3">
                                                 <button
                                                     onClick={() => { if (tlId) pulseApi.markHandled(tlId).then(() => { p.refetchContacts(); toast.success('Marked as handled'); }).catch(() => toast.error('Failed')); }}
-                                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors"
-                                                    style={{ color: 'var(--blanc-success)', backgroundColor: 'rgba(27,139,99,0.1)' }}
+                                                    className="inline-flex items-center gap-1.5 px-4 text-sm font-semibold transition-opacity hover:opacity-80"
+                                                    style={{ color: 'var(--blanc-success)', backgroundColor: 'rgba(27,139,99,0.1)', minHeight: 42, borderRadius: 14 }}
                                                 >
-                                                    <CheckCircle2 className="size-3.5" /> Handled
+                                                    <CheckCircle2 className="size-4" /> Handled
                                                 </button>
-                                                <div className="relative group">
-                                                    <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors hover:bg-muted" style={{ color: 'var(--blanc-ink-2)' }}>
-                                                        <Clock className="size-3.5" /> Snooze
-                                                    </button>
-                                                    <div className="absolute left-0 top-full mt-1 z-50 bg-card rounded-xl shadow-lg border border-border py-1 min-w-[170px] hidden group-hover:block">
-                                                        {SNOOZE_OPTIONS.map(opt => (
-                                                            <div
-                                                                key={opt.label}
-                                                                role="button"
-                                                                tabIndex={0}
-                                                                onClick={() => { if (tlId) pulseApi.snoozeThread(tlId, getSnoozeUntil(opt, companyTz)).then(() => { p.refetchContacts(); toast.success('Snoozed'); }).catch(() => toast.error('Failed')); }}
-                                                                className="px-3 py-2 text-sm text-foreground hover:bg-muted cursor-pointer"
-                                                            >
-                                                                {opt.label}
-                                                            </div>
-                                                        ))}
-                                                        <div className="border-t border-border mt-1 pt-1 px-3 py-1">
-                                                            <label className="text-[10px] text-muted-foreground block mb-1">Specific date</label>
-                                                            <input
-                                                                type="date"
-                                                                className="text-xs border border-border rounded-lg px-2 py-1 w-full bg-card"
-                                                                min={new Date().toISOString().split('T')[0]}
-                                                                onChange={(e) => {
-                                                                    if (!e.target.value || !tlId) return;
-                                                                    const d = new Date(e.target.value + 'T09:00:00');
-                                                                    pulseApi.snoozeThread(tlId, d.toISOString()).then(() => { p.refetchContacts(); toast.success('Snoozed'); }).catch(() => toast.error('Failed'));
-                                                                }}
-                                                            />
-                                                        </div>
-                                                    </div>
-                                                </div>
+                                                <SnoozeDropdown
+                                                    companyTz={companyTz}
+                                                    onSnooze={(until) => { if (tlId) pulseApi.snoozeThread(tlId, until).then(() => { p.refetchContacts(); toast.success('Snoozed'); }).catch(() => toast.error('Failed')); }}
+                                                />
                                                 <AssignOwnerDropdown timelineId={tlId} onAssigned={() => p.refetchContacts()} />
                                             </div>
                                         )}

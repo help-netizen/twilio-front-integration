@@ -87,8 +87,8 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
                         <button
                             ref={quickBtnRef}
                             onClick={() => setIsPresetsOpen(!isPresetsOpen)}
-                            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium hover:bg-muted/60 rounded-lg transition-colors border"
-                            style={{ color: 'var(--blanc-ink-2)', borderColor: 'var(--blanc-line)' }}
+                            className="flex items-center gap-1.5 px-4 text-sm font-semibold transition-opacity hover:opacity-70"
+                            style={{ color: 'var(--blanc-ink-1)', borderColor: 'rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', border: '1px solid rgba(104, 95, 80, 0.14)', borderRadius: 14, minHeight: 42, boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
                             title="Quick Messages"
                         >
                             <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isPresetsOpen ? 'rotate-180' : ''}`} />
@@ -96,16 +96,16 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
                         </button>
                         {isPresetsOpen && (<div ref={quickDropdownRef} className="fixed w-72 rounded-xl shadow-lg z-[101] py-1 flex flex-col" style={{ background: 'var(--blanc-surface-strong)', border: '1px solid var(--blanc-line)', maxHeight: '50vh', left: quickBtnRef.current ? quickBtnRef.current.getBoundingClientRect().left : 0, bottom: quickBtnRef.current ? window.innerHeight - quickBtnRef.current.getBoundingClientRect().top + 4 : 0 }}><div className="overflow-y-auto flex-1">{quickMessages.map(qm => <button key={qm.id} onClick={() => handlePresetSelect(qm.content)} className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors"><div className="text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>{qm.title}</div><div className="text-xs line-clamp-1" style={{ color: 'var(--blanc-ink-3)' }}>{qm.content}</div></button>)}</div><div className="border-t my-1 flex-shrink-0" style={{ borderColor: 'var(--blanc-line)' }} /><button onClick={() => { setIsPresetsOpen(false); navigate('/settings/quick-messages'); }} className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors flex-shrink-0"><div className="text-sm font-medium" style={{ color: 'var(--blanc-info)' }}>+ Add New</div></button></div>)}
                     </div>
-                    <button onClick={() => fileInputRef.current?.click()} className="p-1.5 hover:bg-muted/60 rounded-lg transition-colors" style={{ color: 'var(--blanc-ink-2)' }} title="Attach file"><Paperclip className="w-4 h-4" /></button>
+                    <button onClick={() => fileInputRef.current?.click()} className="flex items-center justify-center transition-opacity hover:opacity-70" style={{ width: 42, height: 42, borderRadius: 14, border: '1px solid rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', color: 'var(--blanc-ink-2)', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }} title="Attach file"><Paperclip className="w-4 h-4" /></button>
                     <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} className="hidden" />
                 </div>
                 <div className="flex items-center gap-2">
-                    <button onClick={handleAiFormat} disabled={!message.trim() || isAiFormatting || !onAiFormat} className="p-1.5 hover:bg-purple-50 hover:text-purple-600 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed" style={{ color: 'var(--blanc-ink-2)' }} title="Format with AI"><Wand2 className={`w-4 h-4 ${isAiFormatting ? 'animate-spin' : ''}`} /></button>
+                    <button onClick={handleAiFormat} disabled={!message.trim() || isAiFormatting || !onAiFormat} className="flex items-center justify-center transition-opacity hover:opacity-70 disabled:opacity-40 disabled:cursor-not-allowed" style={{ width: 42, height: 42, borderRadius: 14, border: '1px solid rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', color: 'var(--blanc-ink-2)', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }} title="Format with AI"><Wand2 className={`w-4 h-4 ${isAiFormatting ? 'animate-spin' : ''}`} /></button>
                     <button
                         onClick={handleSend}
                         disabled={(!message.trim() && attachedFiles.length === 0) || disabled}
-                        className="flex items-center gap-1.5 px-3.5 py-1.5 text-sm rounded-xl font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                        style={{ background: 'var(--blanc-info)', color: '#fff' }}
+                        className="flex items-center gap-1.5 px-5 text-sm font-semibold transition-opacity hover:opacity-85 disabled:opacity-40 disabled:cursor-not-allowed"
+                        style={{ background: 'var(--blanc-info)', color: '#fff', minHeight: 42, borderRadius: 14, border: 'none', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
                     >
                         <Send className="w-3.5 h-3.5" />
                         Send

@@ -8,11 +8,17 @@ export function AssignOwnerDropdown({ timelineId, onAssigned }: { timelineId: nu
     const [open, setOpen] = useState(false);
     const [members, setMembers] = useState<Array<{ id: string; name: string }>>([]);
     const [loaded, setLoaded] = useState(false);
-    const ref = useRef<HTMLDivElement>(null);
+    const btnRef = useRef<HTMLButtonElement>(null);
+    const dropdownRef = useRef<HTMLDivElement>(null);
 
+    // Close on click outside
     useEffect(() => {
         if (!open) return;
-        const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+        const handler = (e: MouseEvent) => {
+            const target = e.target as Node;
+            if (btnRef.current?.contains(target) || dropdownRef.current?.contains(target)) return;
+            setOpen(false);
+        };
         document.addEventListener('mousedown', handler);
         return () => document.removeEventListener('mousedown', handler);
     }, [open]);
@@ -33,20 +39,33 @@ export function AssignOwnerDropdown({ timelineId, onAssigned }: { timelineId: nu
             .catch(() => setLoaded(true));
     }, [open, loaded]);
 
+    const rect = btnRef.current?.getBoundingClientRect();
+
     return (
-        <div className="relative" ref={ref}>
+        <div className="relative">
             <button
+                ref={btnRef}
                 onClick={() => setOpen(!open)}
-                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded transition-colors"
+                className="inline-flex items-center gap-1.5 px-4 text-sm font-semibold transition-opacity hover:opacity-70"
+                style={{ color: 'var(--blanc-info)', background: 'rgba(37, 99, 235, 0.08)', minHeight: 42, borderRadius: 14 }}
             >
-                <UserRound className="size-3" /> Assign
+                <UserRound className="size-4" /> Assign
             </button>
-            {open && (
-                <div className="absolute left-0 top-full mt-1 z-50 bg-card rounded-xl shadow-lg border border-border py-1 min-w-[180px] max-h-[200px] overflow-y-auto">
+            {open && rect && (
+                <div
+                    ref={dropdownRef}
+                    className="fixed z-[101] rounded-xl shadow-lg py-1 min-w-[180px] max-h-[200px] overflow-y-auto"
+                    style={{
+                        background: 'var(--blanc-surface-strong)',
+                        border: '1px solid var(--blanc-line)',
+                        left: rect.left,
+                        top: rect.bottom + 4,
+                    }}
+                >
                     {!loaded ? (
-                        <div className="px-3 py-2 text-xs text-muted-foreground">Loading…</div>
+                        <div className="px-3 py-2 text-xs" style={{ color: 'var(--blanc-ink-3)' }}>Loading…</div>
                     ) : members.length === 0 ? (
-                        <div className="px-3 py-2 text-xs text-muted-foreground">No team members</div>
+                        <div className="px-3 py-2 text-xs" style={{ color: 'var(--blanc-ink-3)' }}>No team members</div>
                     ) : (
                         members.map(m => (
                             <div key={m.id} role="button" tabIndex={0}
@@ -58,7 +77,8 @@ export function AssignOwnerDropdown({ timelineId, onAssigned }: { timelineId: nu
                                     }
                                     setOpen(false);
                                 }}
-                                className="px-3 py-2 text-sm text-foreground hover:bg-muted/60 cursor-pointer"
+                                className="px-3 py-2 text-sm hover:bg-muted/60 cursor-pointer"
+                                style={{ color: 'var(--blanc-ink-1)' }}
                             >
                                 {m.name}
                             </div>
