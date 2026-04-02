@@ -4,6 +4,34 @@
 
 ---
 
+## 2026-04-02
+
+### BUG006: Fix stale call records causing false voicemail routing
+
+**Problem:** Incoming calls were incorrectly routed to voicemail ("Our team is currently assisting other customers") even when all operators were free. Stale records in `calls` table with `is_final = false` and `status IN ('ringing', 'in-progress')` made operators appear busy.
+
+**Root cause:** Asynchronous inbox worker processing voice-status webhooks (1s polling interval) created a window where ended calls still appeared active. Child legs from `<Dial>` with multiple `<Client>` targets could miss Twilio callbacks entirely.
+
+**Fix — 4 defense layers:**
+
+1. **Age-based stale filtering** — SQL availability queries now exclude `ringing` records older than 90 seconds and `in-progress` records older than 4 hours. Applied to both Client and SIP routing paths.
+
+2. **Twilio API fallback** — When all operators appear busy per DB, the system verifies each "busy" call_sid via `twilio.calls(sid).fetch()`. If Twilio reports the call as completed/no-answer/etc, the stale record is fixed and availability is recalculated.
+
+3. **Child leg finalization in dial-action** — `handleDialAction()` now force-finalizes all child legs (`is_final = true`) for the parent call immediately when `<Dial>` completes, preventing stale child legs from accumulating.
+
+4. **Reduced stale threshold** — `STALE_THRESHOLD_MINUTES` reduced from 10 to 3 minutes for faster cleanup of any remaining stale records.
+
+**Files changed:**
+- `backend/src/webhooks/twilioWebhooks.js` — age filters in availability SQL, Twilio API fallback, child leg finalization
+- `backend/src/services/reconcileStale.js` — threshold 10 → 3
+
+**Tests:** `tests/bug006-stale-availability.test.js` — 6 tests (all passing)
+
+**Spec:** `Docs/specs/BUG006-call-routing-stale-availability.md`
+
+---
+
 ## 2026-03-30
 
 ### PF100 Sprints 3–5 — Core Business Suite Integration (COMPLETED)

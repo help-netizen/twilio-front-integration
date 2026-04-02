@@ -9,7 +9,7 @@ const { isFinalStatus } = require('./stateMachine');
  * STALE_THRESHOLD_MINUTES and resolves them via Twilio API or child-leg logic.
  */
 
-const STALE_THRESHOLD_MINUTES = 10;
+const STALE_THRESHOLD_MINUTES = 3;
 
 async function reconcileStaleCalls() {
     const traceId = `reconcile_${Date.now()}`;
