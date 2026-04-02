@@ -5,14 +5,16 @@
     border: none;
     border-radius: 0;
     box-shadow: none;
-    background: #fff;
+    background: var(--blanc-surface-strong, #fff);
+    display: flex;
+    flex-direction: column;
 }
 
 /* ── Header ───────────────────────────────────────────────────────────── */
 
 .wizard__header {
-    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
-    color: #fff;
+    background: var(--blanc-surface-strong, #fff);
+    border-bottom: 1px solid var(--blanc-line, rgba(104, 95, 80, 0.14));
     padding: 16px 20px;
 }
 
@@ -20,43 +22,49 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 12px;
 }
 
 .wizard__header-left {
     display: flex;
     align-items: center;
     gap: 12px;
+    min-width: 0;
 }
 
 .wizard__avatar {
-    width: 48px;
-    height: 48px;
+    width: 44px;
+    height: 44px;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.2);
+    background: rgba(117, 106, 89, 0.08);
+    border: 1px solid rgba(117, 106, 89, 0.14);
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-shrink: 0;
 }
 
 .wizard__avatar-icon {
-    width: 24px;
-    height: 24px;
-    color: #fff;
+    width: 20px;
+    height: 20px;
+    color: var(--blanc-ink-2, #685f50);
 }
 
 .wizard__title {
-    font-size: 18px;
+    font-size: 17px;
     font-weight: 700;
-    line-height: 1.2;
+    line-height: 1.25;
+    color: var(--blanc-ink-1, #2d2517);
 }
 
 .wizard__phone-row {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 5px;
     margin-top: 2px;
     font-size: 13px;
-    color: rgba(255, 255, 255, 0.8);
+    color: var(--blanc-ink-3, #a39885);
+    font-variant-numeric: tabular-nums;
 }
 
 .wizard__header-right {
@@ -72,45 +80,28 @@
     gap: 6px;
     padding: 8px 14px;
     border-radius: 10px;
-    background: #fbbf24;
-    color: #1f2933;
+    background: var(--blanc-success, #1b8b63);
+    color: #fff;
     font-size: 14px;
     font-weight: 600;
     text-decoration: none;
-    transition: background 0.2s;
+    border: none;
+    cursor: pointer;
+    transition: opacity 0.15s;
 }
 
 .wizard__call-btn:hover {
-    background: #f59e0b;
+    opacity: 0.88;
 }
 
 .wizard__call-btn--disabled {
-    background: rgba(251, 191, 36, 0.35);
-    color: rgba(255, 255, 255, 0.7);
+    background: rgba(117, 106, 89, 0.15);
+    color: var(--blanc-ink-3, #a39885);
     cursor: not-allowed;
 }
 
 .wizard__call-btn--disabled:hover {
-    background: rgba(251, 191, 36, 0.35);
-}
-
-.wizard__badge {
-    text-align: center;
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 0 8px 8px 0;
-    padding: 6px 14px;
-}
-
-.wizard__badge-number {
-    font-size: 20px;
-    font-weight: 700;
-}
-
-.wizard__badge-label {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: rgba(255, 255, 255, 0.75);
+    opacity: 1;
 }
 
 /* ── Step indicator ───────────────────────────────────────────────────── */
@@ -119,8 +110,9 @@
     display: flex;
     align-items: center;
     gap: 2px;
-    padding: 12px 20px;
-    border-bottom: 1px solid #f3f4f6;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--blanc-line, rgba(104, 95, 80, 0.14));
+    background: var(--blanc-surface-muted, rgba(246, 243, 237, 0.7));
 }
 
 .wizard__step-item {
@@ -130,45 +122,48 @@
 }
 
 .wizard__step-circle {
-    width: 28px;
-    height: 28px;
+    width: 30px;
+    height: 30px;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 12px;
-    font-weight: 600;
-    background: #f3f4f6;
-    color: #9ca3af;
+    font-weight: 700;
+    background: rgba(117, 106, 89, 0.1);
+    color: var(--blanc-ink-3, #a39885);
+    border: 1.5px solid transparent;
     transition: all 0.2s ease;
 }
 
 .wizard__step-circle--active {
-    background: #4f46e5;
+    background: var(--blanc-info, #2563eb);
     color: #fff;
+    border-color: transparent;
 }
 
 .wizard__step-circle--done {
-    background: rgba(79, 70, 229, 0.15);
-    color: #4f46e5;
+    background: rgba(27, 139, 99, 0.12);
+    color: var(--blanc-success, #1b8b63);
+    border-color: transparent;
 }
 
 .wizard__step-line {
     width: 24px;
     height: 2px;
-    background: #e5e7eb;
+    background: rgba(117, 106, 89, 0.15);
     transition: background 0.2s;
 }
 
 .wizard__step-line--done {
-    background: rgba(79, 70, 229, 0.3);
+    background: rgba(27, 139, 99, 0.3);
 }
 
 .wizard__step-label {
-    margin-left: 8px;
+    margin-left: 10px;
     font-size: 13px;
     font-weight: 600;
-    color: #6b7280;
+    color: var(--blanc-ink-2, #685f50);
 }
 
 /* ── Body ─────────────────────────────────────────────────────────────── */
@@ -183,13 +178,13 @@
     gap: 6px;
     font-size: 14px;
     font-weight: 600;
-    color: #374151;
+    color: var(--blanc-ink-1, #2d2517);
     margin-bottom: 4px;
 }
 
 .wizard__hint {
     font-size: 12px;
-    color: #9ca3af;
+    color: var(--blanc-ink-3, #a39885);
     margin-bottom: 12px;
 }
 
@@ -200,7 +195,7 @@
 .wizard__field label {
     font-size: 12px;
     font-weight: 500;
-    color: #6b7280;
+    color: var(--blanc-ink-2, #685f50);
     margin-bottom: 3px;
     display: block;
 }
@@ -237,7 +232,7 @@
 
 .wizard__divider {
     height: 1px;
-    background: #f3f4f6;
+    background: var(--blanc-line, rgba(104, 95, 80, 0.14));
     margin: 14px 0;
 }
 
@@ -257,10 +252,10 @@
 .wizard__day-label {
     font-size: 11px;
     font-weight: 600;
-    color: #9ca3af;
+    color: var(--blanc-ink-3, #a39885);
     margin-bottom: 4px;
     text-transform: uppercase;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.5px;
 }
 
 .wizard__slots-grid {
@@ -270,26 +265,27 @@
 }
 
 .wizard__slot {
-    padding: 8px 10px;
-    border-radius: 6px;
-    border: 1px solid #e5e7eb;
+    padding: 9px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--blanc-line, rgba(104, 95, 80, 0.14));
     font-size: 13px;
     cursor: pointer;
     text-align: left;
     transition: all 0.15s ease;
-    background: #fff;
+    background: var(--blanc-surface-strong, #fff);
+    color: var(--blanc-ink-1, #2d2517);
 }
 
 .wizard__slot:hover {
-    border-color: rgba(79, 70, 229, 0.5);
-    background: rgba(79, 70, 229, 0.03);
+    border-color: var(--blanc-info, #2563eb);
+    background: rgba(37, 99, 235, 0.04);
 }
 
 .wizard__slot--selected {
-    border-color: #4f46e5;
-    background: rgba(79, 70, 229, 0.08);
+    border-color: var(--blanc-info, #2563eb);
+    background: rgba(37, 99, 235, 0.08);
     font-weight: 600;
-    color: #4f46e5;
+    color: var(--blanc-info, #2563eb);
 }
 
 /* ── Skip confirmation ────────────────────────────────────────────────── */
@@ -297,7 +293,7 @@
 .wizard__skip-btn {
     width: 100%;
     justify-content: center;
-    color: #6b7280;
+    color: var(--blanc-ink-3, #a39885);
 }
 
 .wizard__skip-confirm {
@@ -307,7 +303,7 @@
     padding: 10px 12px;
     background: #fffbeb;
     border: 1px solid #fde68a;
-    border-radius: 6px;
+    border-radius: 10px;
 }
 
 .wizard__skip-confirm-btns {
@@ -319,10 +315,11 @@
 /* ── Review sections (Step 4 — editable) ────────────────────────────── */
 
 .wizard__review-section {
-    background: #f9fafb;
-    border-radius: 8px;
+    background: var(--blanc-surface-muted, rgba(246, 243, 237, 0.7));
+    border-radius: 10px;
     padding: 12px 14px;
     margin-bottom: 10px;
+    border: 1px solid var(--blanc-line, rgba(104, 95, 80, 0.1));
 }
 
 .wizard__review-title {
@@ -331,26 +328,28 @@
     gap: 6px;
     font-size: 12px;
     font-weight: 700;
-    color: #374151;
+    color: var(--blanc-ink-2, #685f50);
     margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
 }
 
 .wizard__select {
     display: block;
     width: 100%;
-    padding: 6px 10px;
-    border: 1px solid #e5e7eb;
-    border-radius: 6px;
+    padding: 7px 10px;
+    border: 1px solid var(--blanc-line, rgba(104, 95, 80, 0.2));
+    border-radius: 8px;
     font-size: 14px;
-    background: #fff;
-    color: #374151;
+    background: var(--blanc-surface-strong, #fff);
+    color: var(--blanc-ink-1, #2d2517);
     outline: none;
     transition: border-color 0.15s;
 }
 
 .wizard__select:focus {
-    border-color: #4f46e5;
-    box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.15);
+    border-color: var(--blanc-info, #2563eb);
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
 }
 
 /* ── Action buttons (Step 4) ──────────────────────────────────────────── */
@@ -363,24 +362,25 @@
 
 .wizard__action-btn {
     flex: 1;
-    padding: 10px 16px !important;
-    font-size: 13px !important;
+    padding: 11px 16px !important;
+    font-size: 14px !important;
     font-weight: 600 !important;
-    border-radius: 8px !important;
+    border-radius: 10px !important;
+    height: auto !important;
 }
 
 .wizard__action-btn--primary {
-    background: linear-gradient(135deg, #4f46e5, #7c3aed) !important;
+    background: var(--blanc-info, #2563eb) !important;
     color: #fff !important;
     border: none !important;
 }
 
 .wizard__action-btn--primary:hover:not(:disabled) {
-    opacity: 0.92;
+    opacity: 0.9;
 }
 
 .wizard__action-btn--primary:disabled {
-    opacity: 0.5;
+    opacity: 0.45;
     cursor: not-allowed;
 }
 
@@ -390,25 +390,37 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 10px 20px;
-    border-top: 1px solid #f3f4f6;
+    padding: 12px 20px;
+    border-top: 1px solid var(--blanc-line, rgba(104, 95, 80, 0.14));
+    background: var(--blanc-surface-strong, #fff);
+    gap: 12px;
+}
+
+.wizard__nav [data-slot="button"] {
+    height: 40px !important;
+    padding-left: 18px !important;
+    padding-right: 18px !important;
+    font-size: 14px !important;
+    font-weight: 600 !important;
+    border-radius: 10px !important;
 }
 
 /* ── Call confirmation bar ─────────────────────────────────────────────── */
+
 .wizard__confirm-call {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
     padding: 12px 20px;
-    background: #fffbeb;
-    border-bottom: 1px solid #fde68a;
+    background: rgba(246, 243, 237, 0.8);
+    border-bottom: 1px solid var(--blanc-line, rgba(104, 95, 80, 0.14));
 }
 
 .wizard__confirm-label {
     font-size: 14px;
     font-weight: 600;
-    color: #92400e;
+    color: var(--blanc-ink-1, #2d2517);
 }
 
 .wizard__confirm-actions {
@@ -422,29 +434,33 @@
     border: none;
     font-size: 13px;
     font-weight: 500;
-    color: #6b7280;
+    color: var(--blanc-ink-3, #a39885);
     cursor: pointer;
     padding: 6px 12px;
+    border-radius: 8px;
+    transition: color 0.15s;
 }
 
 .wizard__confirm-cancel:hover {
-    color: #374151;
+    color: var(--blanc-ink-1, #2d2517);
 }
 
 .wizard__confirm-btn {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 10px 28px;
-    border-radius: 8px;
-    background: #16a34a;
+    padding: 9px 20px;
+    border-radius: 10px;
+    background: var(--blanc-success, #1b8b63);
     color: #fff;
-    font-size: 15px;
-    font-weight: 700;
+    font-size: 14px;
+    font-weight: 600;
     text-decoration: none;
-    transition: background 0.15s;
+    border: none;
+    cursor: pointer;
+    transition: opacity 0.15s;
 }
 
 .wizard__confirm-btn:hover {
-    background: #15803d;
+    opacity: 0.9;
 }

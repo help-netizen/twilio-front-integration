@@ -14,9 +14,8 @@ import { PulseContactPanel } from '../components/contacts/PulseContactPanel';
 import { CreateLeadJobWizard } from '../components/conversations/CreateLeadJobWizard';
 import { EditLeadDialog } from '../components/leads/EditLeadDialog';
 import { ConvertToJobDialog } from '../components/leads/ConvertToJobDialog';
-import { Input } from '../components/ui/input';
 import { Skeleton } from '../components/ui/skeleton';
-import { Search, PhoneOff, Activity, Clock, CheckCircle2, AlertTriangle, ChevronLeft } from 'lucide-react';
+import { PhoneOff, Activity, Clock, CheckCircle2, AlertTriangle, ChevronLeft } from 'lucide-react';
 import { callsApi } from '../services/api';
 import { pulseApi } from '../services/pulseApi';
 import { useAuth } from '../auth/AuthProvider';
@@ -65,42 +64,39 @@ export const PulsePage: React.FC = () => {
 
     return (
         <div className="blanc-page-wrapper">
-            {/* Page header */}
-            <div className="blanc-page-header">
-                <div className="flex items-center gap-3">
-                    {/* Mobile back button — only shown on mobile when in content panel */}
-                    <button
-                        className={`pulse-back-btn${mobilePanel === 'list' ? ' pulse-back-btn-hidden' : ''}`}
-                        onClick={handleMobileBack}
-                        aria-label="Back to contacts"
-                    >
-                        <ChevronLeft className="size-5" />
-                    </button>
-                    <h1 className="blanc-heading blanc-heading-lg">Pulse</h1>
-                </div>
-            </div>
+            {/* Unified header: title + search + filters in one row */}
+            <div className="pulse-unified-header">
+                {/* Mobile back button — only shown on mobile when in content panel */}
+                <button
+                    className={`pulse-back-btn${mobilePanel === 'list' ? ' pulse-back-btn-hidden' : ''}`}
+                    onClick={handleMobileBack}
+                    aria-label="Back to contacts"
+                >
+                    <ChevronLeft className="size-5" />
+                </button>
 
-            {/* Toolbar: search + filter chips */}
-            <div className="blanc-page-toolbar">
-                <div className="relative flex-1 min-w-0">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" />
-                    <Input
-                        placeholder="Search by phone or name..."
+                {/* Title */}
+                <h1 className="pulse-header-title">Pulse</h1>
+
+                {/* Inline search — same size as title, thin weight, feels like a continuation */}
+                <div className="pulse-search-wrapper">
+                    <input
+                        type="text"
+                        placeholder="Search..."
                         value={p.searchQuery}
                         onChange={(e) => p.setSearchQuery(e.target.value)}
-                        className="pl-9"
+                        className="pulse-search-input"
                     />
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+
+                {/* Filter chips — right side */}
+                <div className="pulse-filters-group">
                     {(['all', 'unread', 'action_required'] as const).map(f => (
                         <button
                             key={f}
                             onClick={() => setActiveFilter(f)}
-                            className="h-10 px-4 text-sm font-medium rounded-2xl transition-colors whitespace-nowrap"
-                            style={activeFilter === f
-                                ? { background: 'var(--blanc-ink-1)', color: '#fff' }
-                                : { background: 'rgba(255,255,255,0.55)', color: 'var(--blanc-ink-2)', border: '1px solid rgba(104,95,80,0.16)' }
-                            }
+                            className="pulse-filter-chip"
+                            data-active={activeFilter === f || undefined}
                         >
                             {f === 'all' ? 'All' : f === 'unread' ? 'Unread' : 'Action Required'}
                         </button>

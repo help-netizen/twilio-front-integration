@@ -280,6 +280,10 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
         console.error('❌ Worker error:', error);
     });
 
+    // Start daily Zenbooker jobs sync cron
+    const zbSyncCron = require('../backend/src/services/zbJobsSyncCron');
+    zbSyncCron.start();
+
 
 
     // Realtime transcription (Twilio Media Streams → AssemblyAI)

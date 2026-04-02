@@ -528,6 +528,7 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
                 contact_id = COALESCE($20, contact_id),
                 lat = COALESCE($21, lat),
                 lng = COALESCE($22, lng),
+                company_id = COALESCE($23, company_id),
                 updated_at = NOW()
             WHERE zenbooker_job_id = $19
         `, [
@@ -537,7 +538,7 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
             cols.customer_name, cols.customer_phone, cols.customer_email, cols.address,
             cols.territory, cols.invoice_total, cols.invoice_status,
             cols.assigned_techs, cols.notes, cols.zb_raw,
-            zbJobId, contactId, cols.lat, cols.lng,
+            zbJobId, contactId, cols.lat, cols.lng, companyId,
         ]);
 
         console.log(`[JobsService] Synced job ${zbJobId}: blanc_status ${existing.blanc_status} → ${newBlancStatus}`);

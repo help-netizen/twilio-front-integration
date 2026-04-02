@@ -11,6 +11,89 @@
     min-height: 0;
 }
 
+/* ── Unified header: title + search + filters in one row ─────── */
+.pulse-unified-header {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    padding: 0 4px 12px;
+    flex-shrink: 0;
+}
+
+.pulse-header-title {
+    font-family: var(--blanc-font-heading);
+    font-weight: 700;
+    font-size: 28px;
+    letter-spacing: -0.04em;
+    color: var(--blanc-ink-1);
+    line-height: 1;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+/* Search wrapper: sits right next to title, same baseline */
+.pulse-search-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+}
+
+.pulse-search-input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-family: var(--blanc-font-heading);
+    font-size: 28px;
+    font-weight: 300;
+    letter-spacing: -0.04em;
+    line-height: 1;
+    color: var(--blanc-ink-1);
+}
+
+.pulse-search-input::placeholder {
+    color: var(--blanc-ink-3);
+    opacity: 0.45;
+}
+
+/* Filter chips group — vertically centered since header uses baseline */
+.pulse-filters-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    align-self: center;
+}
+
+/* Filter chips */
+.pulse-filter-chip {
+    height: 32px;
+    padding: 0 14px;
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 16px;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--blanc-ink-3);
+}
+
+.pulse-filter-chip:hover {
+    color: var(--blanc-ink-2);
+    background: rgba(117, 106, 89, 0.05);
+}
+
+.pulse-filter-chip[data-active] {
+    background: var(--blanc-ink-1);
+    color: #fff;
+    border-color: transparent;
+}
+
 /* Top-level flex row: sidebar + right column fill remaining height.
    align-items: stretch makes both columns match layout height.
    overflow: hidden constrains children to this height. */
@@ -95,6 +178,14 @@
     background: var(--blanc-surface-muted);
 }
 
+/* ── Contact header: phone/email + notes side by side ─────────── */
+.pulse-contact-header-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    align-items: start;
+}
+
 /* ── Spinner animation ──────────────────────────────────────────── */
 @keyframes spin {
     from { transform: rotate(0deg); }
@@ -143,6 +234,22 @@
         gap: 8px;
     }
 
+    /* Header wraps on mobile */
+    .pulse-unified-header {
+        flex-wrap: wrap;
+        gap: 8px;
+        padding-bottom: 8px;
+    }
+
+    .pulse-header-title {
+        font-size: 22px;
+    }
+
+    .pulse-search-wrapper {
+        order: 3;
+        flex-basis: 100%;
+    }
+
     .pulse-layout {
         flex-direction: column;
         gap: 8px;
@@ -176,8 +283,8 @@
         display: none !important;
     }
 
-    /* Search toolbar: wrap on mobile */
-    .blanc-page-toolbar {
-        flex-wrap: wrap;
+    /* Contact header: stack on mobile */
+    .pulse-contact-header-grid {
+        grid-template-columns: 1fr;
     }
 }

@@ -395,12 +395,7 @@ table tbody tr:hover {
    ═══════════════════════════════════════════════════════════════════ */
 
 /* ── Pulse Page ── */
-.pulse-sidebar {
-    background: var(--blanc-surface-strong) !important;
-    border-right-color: var(--blanc-line) !important;
-}
-
-.pulse-timeline-column {
+.pulse-sidebar-card {
     background: var(--blanc-surface-strong) !important;
 }
 

@@ -1,4 +1,4 @@
-// DateSeparator — divides timeline by date with flanking horizontal rules
+// DateSeparator — chapter-heading style date label (left-aligned, no lines)
 
 interface DateSeparatorProps {
     date: string;
@@ -6,22 +6,17 @@ interface DateSeparatorProps {
 
 /** Format: "Mon, Feb 16" — compact but readable */
 function compactDate(raw: string): string {
-    // raw is already formatted by PulseTimeline: "Today" | "Yesterday" | "Monday, February 16, ..."
     if (raw === 'Today' || raw === 'Yesterday') return raw;
-    // Parse and reformat to "Mon, Feb 16"
     try {
         const d = new Date(raw);
         if (!isNaN(d.getTime())) {
             return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
         }
     } catch { /* ignore */ }
-    // Fallback: take first two comma-separated parts of the long format
-    // e.g. "Monday, February 16" → "Mon, Feb 16"
     const parts = raw.split(',').map(s => s.trim());
     if (parts.length >= 2) {
         const weekday = parts[0].slice(0, 3);
         const rest = parts[1];
-        // Abbreviate month: "February 16" → "Feb 16"
         const abbreviated = rest.replace(
             /January|February|March|April|May|June|July|August|September|October|November|December/,
             m => m.slice(0, 3)
@@ -33,15 +28,17 @@ function compactDate(raw: string): string {
 
 export function DateSeparator({ date }: DateSeparatorProps) {
     return (
-        <div className="flex items-center gap-3 my-5 px-4">
-            <div className="flex-1 h-px" style={{ background: 'var(--blanc-line)' }} />
-            <span
-                className="shrink-0 text-[11px] font-semibold tracking-wide uppercase"
-                style={{ color: 'var(--blanc-ink-3)', letterSpacing: '0.08em' }}
+        <div className="px-4 pt-6 pb-2">
+            <h3
+                className="text-base font-bold"
+                style={{
+                    color: 'var(--blanc-ink-1)',
+                    fontFamily: 'var(--blanc-font-heading)',
+                    letterSpacing: '-0.01em',
+                }}
             >
                 {compactDate(date)}
-            </span>
-            <div className="flex-1 h-px" style={{ background: 'var(--blanc-line)' }} />
+            </h3>
         </div>
     );
 }
