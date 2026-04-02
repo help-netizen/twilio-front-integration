@@ -6,23 +6,22 @@
 
 ## 2026-04-02
 
-### BUG011: Fix incoming call queue — redirect rejected calls instead of voicemail
+### BUG011: Fix call_events.source crash + faster hold loop
 
-**Problem:** When two clients called simultaneously and the operator rejected the first call, the second call never reached the operator. The rejected call went straight to voicemail, and the second call (if in a hold loop) waited too long due to 5-second pause intervals.
+**Problem 1 (CRITICAL):** `appendCallEvent` was missing the required `source` column in INSERT, causing the worker to crash on every event. The error loop exhausted DB connections, making all inbound calls hit the fallback handler ("technical difficulties").
 
-**Root cause:** `handleDialAction` unconditionally sent all non-answered dials to voicemail. It should redirect the call back to `handleVoiceInbound` so the system can re-route to an available operator.
+**Problem 2:** Hold loop pause was 5 seconds — too slow for operator availability changes after rejection.
 
 **Fix:**
-1. Modified `handleDialAction` to redirect inbound calls back to `handleVoiceInbound` with a `dialAttempt` counter (up to 3 attempts before voicemail fallback). Outbound calls (from SIP/Client) still go to voicemail as before.
-2. Added `dialAttempt` tracking through the entire call flow: `handleVoiceInbound` → `dialActionUrl` → `handleDialAction` → redirect back.
-3. Reduced hold loop pause from 5s to 2s (maxHoldRetries adjusted from 48 to 120 to maintain 4-minute budget).
-4. Skip realtime transcription `<Stream>` on re-dial attempts to avoid duplicate media streams.
-5. Broadcast SSE `call.holding` on first redirect so frontend shows "Call waiting" banner.
+1. Added `source` parameter to `appendCallEvent` in `callsQueries.js` and all 3 callers in `inboxWorker.js`
+2. Reduced hold loop pause from 5s to 2s (maxHoldRetries 48 → 120 to keep 4-min budget)
 
 **Files changed:**
-- `backend/src/webhooks/twilioWebhooks.js` — handleDialAction redirect logic, dialAttempt counter, hold loop timing
+- `backend/src/db/callsQueries.js` — appendCallEvent now includes `source` column
+- `backend/src/services/inboxWorker.js` — passes `source` to appendCallEvent
+- `backend/src/webhooks/twilioWebhooks.js` — hold loop timing
 
-**Tests:** `tests/bug011-call-queue-redirect.test.js` — 9 tests (all passing)
+**Tests:** `tests/bug011-call-queue-redirect.test.js` — 5 tests (all passing)
 
 ### BUG012: SSE singleton — eliminate duplicate EventSource connections
 
