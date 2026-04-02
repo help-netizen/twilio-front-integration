@@ -10,6 +10,7 @@
 const express = require('express');
 const { generateToken } = require('../services/voiceService');
 const { toE164 } = require('../utils/phoneUtils');
+const { isContactBusy } = require('../services/callAvailability');
 
 // ─── Authenticated router (token endpoint) ──────────────────────────────────
 const tokenRouter = express.Router();
@@ -86,25 +87,10 @@ tokenRouter.get('/check-busy', async (req, res) => {
         const phone = req.query.phone;
         if (!phone) return res.json({ busy: false });
 
-        const db = require('../db/connection');
         const normalized = toE164(phone);
+        const busy = await isContactBusy(normalized, 'check-busy');
 
-        const result = await db.query(
-            `SELECT call_sid, status, direction FROM calls
-             WHERE parent_call_sid IS NULL
-               AND is_final = false
-               AND status IN ('initiated', 'ringing', 'in-progress', 'queued')
-               AND (from_number = $1 OR to_number = $1)
-               AND (
-                   (status IN ('initiated', 'ringing', 'queued') AND started_at > now() - interval '90 seconds')
-                   OR
-                   (status = 'in-progress' AND started_at > now() - interval '2 hours')
-               )
-             LIMIT 1`,
-            [normalized]
-        );
-
-        if (result.rows.length > 0) {
+        if (busy) {
             return res.json({
                 busy: true,
                 message: 'A team member is already on the line with this contact. Please try again later.',

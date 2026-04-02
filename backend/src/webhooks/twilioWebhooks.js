@@ -1,5 +1,6 @@
 const twilio = require('twilio');
 const queries = require('../db/queries');
+const { getBusyClientIdentities, getBusySipUsers, verifyAndFixStaleCalls } = require('../services/callAvailability');
 
 /**
  * Validate Twilio webhook signature
@@ -353,72 +354,22 @@ async function handleVoiceInbound(req, res) {
                     let allBusy = false;
                     let busyIdentities = new Set();
                     try {
-                        const busyResult = await dbConn.query(
-                            `SELECT DISTINCT
-                                CASE WHEN to_number LIKE 'client:%' THEN to_number
-                                     WHEN from_number LIKE 'client:%' THEN from_number
-                                END AS client_number,
-                                call_sid
-                             FROM calls
-                             WHERE status IN ('ringing', 'in-progress')
-                               AND is_final = false
-                               AND (to_number LIKE 'client:%' OR from_number LIKE 'client:%')
-                               AND (
-                                   (status = 'ringing' AND started_at > NOW() - INTERVAL '90 seconds')
-                                   OR
-                                   (status = 'in-progress' AND started_at > NOW() - INTERVAL '4 hours')
-                               )`
-                        );
-                        busyIdentities = new Set(
-                            busyResult.rows
-                                .map(r => (r.client_number || '').replace('client:', ''))
-                                .filter(Boolean)
-                        );
+                        const busyCheck = await getBusyClientIdentities(traceId);
+                        busyIdentities = busyCheck.busyIdentities;
                         allBusy = allowedIdentities.length > 0 &&
                             allowedIdentities.every(id => busyIdentities.has(id));
 
                         // Twilio API fallback: if all operators appear busy, verify via Twilio REST API
                         if (allBusy) {
                             console.log(`[${traceId}] All clients busy per DB — verifying via Twilio API`);
-                            try {
-                                const twilio = require('twilio');
-                                const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-                                const busySids = busyResult.rows.map(r => r.call_sid).filter(Boolean);
-                                const resolvedSids = new Set();
-
-                                for (const sid of busySids) {
-                                    try {
-                                        const details = await twilioClient.calls(sid).fetch();
-                                        const apiStatus = (details.status || '').toLowerCase();
-                                        if (['completed', 'busy', 'no-answer', 'canceled', 'failed'].includes(apiStatus)) {
-                                            // Call is actually finished — update DB and remove from busy set
-                                            resolvedSids.add(sid);
-                                            await dbConn.query(
-                                                `UPDATE calls SET status = $2, is_final = true, ended_at = COALESCE($3, ended_at)
-                                                 WHERE call_sid = $1 AND is_final = false`,
-                                                [sid, apiStatus, details.endTime ? new Date(details.endTime) : null]
-                                            );
-                                            console.log(`[${traceId}] Twilio API: ${sid} actually ${apiStatus} — fixed`);
-                                        }
-                                    } catch (fetchErr) {
-                                        console.warn(`[${traceId}] Twilio API fetch failed for ${sid}:`, fetchErr.message);
-                                    }
-                                }
-
-                                if (resolvedSids.size > 0) {
-                                    // Recalculate busy identities excluding resolved calls
-                                    const stillBusyRows = busyResult.rows.filter(r => !resolvedSids.has(r.call_sid));
-                                    busyIdentities = new Set(
-                                        stillBusyRows
-                                            .map(r => (r.client_number || '').replace('client:', ''))
-                                            .filter(Boolean)
-                                    );
-                                    allBusy = allowedIdentities.length > 0 &&
-                                        allowedIdentities.every(id => busyIdentities.has(id));
-                                    console.log(`[${traceId}] After Twilio API check: allBusy=${allBusy}, resolved=${resolvedSids.size}`);
-                                }
-                            } catch (twilioErr) {
-                                console.warn(`[${traceId}] Twilio API fallback failed, using DB data:`, twilioErr.message);
+                            const resolvedSids = await verifyAndFixStaleCalls(busyCheck.callSids, traceId);
+                            if (resolvedSids.size > 0) {
+                                // Recalculate after fixing stale records
+                                const freshCheck = await getBusyClientIdentities(traceId);
+                                busyIdentities = freshCheck.busyIdentities;
+                                allBusy = allowedIdentities.length > 0 &&
+                                    allowedIdentities.every(id => busyIdentities.has(id));
+                                console.log(`[${traceId}] After Twilio API check: allBusy=${allBusy}, resolved=${resolvedSids.size}`);
                             }
                         }
                     } catch (busyErr) {
@@ -526,75 +477,20 @@ ${clientEndpoints}
                 // Query child SIP legs that are currently active (not yet final)
                 let availableUsers = allSipUsers;
                 try {
-                    const db = require('../db/connection');
-                    const busyResult = await db.query(
-                        `SELECT DISTINCT to_number, call_sid FROM calls
-                         WHERE status IN ('ringing', 'in-progress', 'voicemail_recording')
-                           AND is_final = false
-                           AND to_number LIKE 'sip:%'
-                           AND (
-                               (status = 'ringing' AND started_at > NOW() - INTERVAL '90 seconds')
-                               OR
-                               (status IN ('in-progress', 'voicemail_recording') AND started_at > NOW() - INTERVAL '4 hours')
-                           )`
-                    );
-                    const busySipUsers = new Set();
-                    for (const row of busyResult.rows) {
-                        // Extract username from "sip:dana@domain" or "sip:dana@domain:port"
-                        const match = row.to_number.match(/^sip:([^@]+)@/);
-                        if (match) busySipUsers.add(match[1]);
-                    }
-                    if (busySipUsers.size > 0) {
-                        availableUsers = allSipUsers.filter(u => !busySipUsers.has(u));
-                        console.log(`[${traceId}] Busy operators: [${[...busySipUsers].join(',')}], available: [${availableUsers.join(',')}]`);
+                    const busyCheck = await getBusySipUsers(traceId);
+                    if (busyCheck.busySipUsers.size > 0) {
+                        availableUsers = allSipUsers.filter(u => !busyCheck.busySipUsers.has(u));
+                        console.log(`[${traceId}] Busy operators: [${[...busyCheck.busySipUsers].join(',')}], available: [${availableUsers.join(',')}]`);
                     }
 
                     // Twilio API fallback: if all operators appear busy, verify via Twilio REST API
                     if (availableUsers.length === 0) {
                         console.log(`[${traceId}] All SIP operators busy per DB — verifying via Twilio API`);
-                        try {
-                            const twilio = require('twilio');
-                            const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-                            const busySids = busyResult.rows.map(r => r.call_sid).filter(Boolean);
-                            let anyResolved = false;
-
-                            for (const sid of busySids) {
-                                try {
-                                    const details = await twilioClient.calls(sid).fetch();
-                                    const apiStatus = (details.status || '').toLowerCase();
-                                    if (['completed', 'busy', 'no-answer', 'canceled', 'failed'].includes(apiStatus)) {
-                                        anyResolved = true;
-                                        await db.query(
-                                            `UPDATE calls SET status = $2, is_final = true, ended_at = COALESCE($3, ended_at)
-                                             WHERE call_sid = $1 AND is_final = false`,
-                                            [sid, apiStatus, details.endTime ? new Date(details.endTime) : null]
-                                        );
-                                        console.log(`[${traceId}] Twilio API: ${sid} actually ${apiStatus} — fixed`);
-                                    }
-                                } catch (fetchErr) {
-                                    console.warn(`[${traceId}] Twilio API fetch failed for ${sid}:`, fetchErr.message);
-                                }
-                            }
-
-                            if (anyResolved) {
-                                // Re-query available users after fixing stale records
-                                const freshResult = await db.query(
-                                    `SELECT DISTINCT to_number FROM calls
-                                     WHERE status IN ('ringing', 'in-progress', 'voicemail_recording')
-                                       AND is_final = false
-                                       AND to_number LIKE 'sip:%'
-                                       AND started_at > NOW() - INTERVAL '4 hours'`
-                                );
-                                const freshBusy = new Set();
-                                for (const row of freshResult.rows) {
-                                    const match = row.to_number.match(/^sip:([^@]+)@/);
-                                    if (match) freshBusy.add(match[1]);
-                                }
-                                availableUsers = allSipUsers.filter(u => !freshBusy.has(u));
-                                console.log(`[${traceId}] After Twilio API check: available=[${availableUsers.join(',')}]`);
-                            }
-                        } catch (twilioErr) {
-                            console.warn(`[${traceId}] Twilio API fallback failed, using DB data:`, twilioErr.message);
+                        const resolvedSids = await verifyAndFixStaleCalls(busyCheck.callSids, traceId);
+                        if (resolvedSids.size > 0) {
+                            const freshCheck = await getBusySipUsers(traceId);
+                            availableUsers = allSipUsers.filter(u => !freshCheck.busySipUsers.has(u));
+                            console.log(`[${traceId}] After Twilio API check: available=[${availableUsers.join(',')}]`);
                         }
                     }
                 } catch (busyErr) {

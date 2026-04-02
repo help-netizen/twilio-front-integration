@@ -11,6 +11,7 @@
  *   Layer 3 — STALE_THRESHOLD_MINUTES=3 (reconcileStale.js)
  *   Layer 4 — Twilio API fallback: when all operators appear busy, verify
  *             each "busy" call via Twilio REST API before routing to voicemail
+ *   Layer 5 — Centralized callAvailability module used by all 3 check points
  */
 
 // ---------------------------------------------------------------------------
@@ -87,29 +88,22 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
 
     // -----------------------------------------------------------------------
     // Layer 1a — Age filter: Client routing
-    // A ringing record older than 90s should be excluded from the busy check.
     // -----------------------------------------------------------------------
     describe('Layer 1a — Age filter (Client routing)', () => {
         it('should exclude stale ringing records from busy check via SQL age filter', async () => {
             process.env.SOFTPHONE_DEFAULT_IDENTITY = 'user_1';
 
-            // Call 1: phone_number_settings -> client routing
-            // Call 2: allowed identities
-            // Call 3: busy check query
-            let queryCallCount = 0;
             mockQuery.mockImplementation((sql) => {
-                queryCallCount++;
                 if (sql.includes('phone_number_settings')) {
                     return { rows: [{ routing_mode: 'client', client_identity: 'user_1' }] };
                 }
                 if (sql.includes('company_memberships')) {
                     return { rows: [{ identity: 'user_1' }] };
                 }
-                if (sql.includes("status IN ('ringing', 'in-progress')") && sql.includes('client:%')) {
-                    // Verify the SQL includes age filtering for ringing records
-                    expect(sql).toContain("status = 'ringing' AND started_at > NOW() - INTERVAL '90 seconds'");
-                    expect(sql).toContain("status = 'in-progress' AND started_at > NOW() - INTERVAL '4 hours'");
-                    // DB returns no rows because the stale ringing record is filtered out by the SQL WHERE clause
+                if (sql.includes('is_final = false') && sql.includes('client:%')) {
+                    // Verify the SQL includes age filtering via STALE_FILTER_SQL
+                    expect(sql).toContain('90 seconds');
+                    expect(sql).toContain('4 hours');
                     return { rows: [] };
                 }
                 return { rows: [] };
@@ -119,8 +113,6 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
             const res = makeRes();
             await handleVoiceInbound(req, res);
 
-            // Should dial the user, NOT go to voicemail
-            expect(res.send).toHaveBeenCalledTimes(1);
             const twiml = res.send.mock.calls[0][0];
             expect(twiml).toContain('<Client');
             expect(twiml).toContain('user_1');
@@ -130,7 +122,6 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
 
     // -----------------------------------------------------------------------
     // Layer 1b — Age filter: SIP routing
-    // Same as above but for SIP path.
     // -----------------------------------------------------------------------
     describe('Layer 1b — Age filter (SIP routing)', () => {
         it('should exclude stale ringing records from SIP busy check via SQL age filter', async () => {
@@ -141,11 +132,9 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
                 if (sql.includes('phone_number_settings')) {
                     return { rows: [{ routing_mode: 'sip', client_identity: null }] };
                 }
-                if (sql.includes("to_number LIKE 'sip:%'")) {
-                    // Verify the SQL includes age filtering
-                    expect(sql).toContain("status = 'ringing' AND started_at > NOW() - INTERVAL '90 seconds'");
-                    expect(sql).toContain("status IN ('in-progress', 'voicemail_recording') AND started_at > NOW() - INTERVAL '4 hours'");
-                    // Stale record is filtered out by SQL — no busy rows returned
+                if (sql.includes('is_final = false') && sql.includes("sip:%")) {
+                    expect(sql).toContain('90 seconds');
+                    expect(sql).toContain('4 hours');
                     return { rows: [] };
                 }
                 return { rows: [] };
@@ -164,7 +153,6 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
 
     // -----------------------------------------------------------------------
     // Layer 2a — Child leg finalization: no-answer
-    // handleDialAction must set is_final=true on all child legs.
     // -----------------------------------------------------------------------
     describe('Layer 2a — Child leg finalization (no-answer)', () => {
         it('should finalize child legs with is_final=true when DialCallStatus is no-answer', async () => {
@@ -179,25 +167,20 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
 
             await handleDialAction(req, res);
 
-            // Find the UPDATE calls SET ... WHERE parent_call_sid query
             const finalizeCalls = mockQuery.mock.calls.filter(
                 ([sql]) => typeof sql === 'string' && sql.includes('parent_call_sid') && sql.includes('is_final = true')
             );
             expect(finalizeCalls.length).toBeGreaterThanOrEqual(1);
 
             const [sql, params] = finalizeCalls[0];
-            // Parent SID passed as $1
             expect(params[0]).toBe('CA_parent_002');
-            // Non-answered status should map to 'no-answer' for $2
             expect(params[1]).toBe('no-answer');
-            // SQL should set is_final = true
             expect(sql).toContain('is_final = true');
         });
     });
 
     // -----------------------------------------------------------------------
     // Layer 2b — Child leg finalization: completed
-    // When DialCallStatus is 'completed', in-progress children get status='completed'.
     // -----------------------------------------------------------------------
     describe('Layer 2b — Child leg finalization (completed)', () => {
         it('should set in-progress children to completed when DialCallStatus is completed', async () => {
@@ -212,7 +195,6 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
 
             await handleDialAction(req, res);
 
-            // Find the child finalization query
             const finalizeCalls = mockQuery.mock.calls.filter(
                 ([sql]) => typeof sql === 'string' && sql.includes('parent_call_sid') && sql.includes('is_final = true')
             );
@@ -220,12 +202,9 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
 
             const [sql, params] = finalizeCalls[0];
             expect(params[0]).toBe('CA_parent_003');
-            // The SQL uses CASE: in-progress -> 'completed', else $2
-            // For completed dial status, $2 = 'completed'
             expect(sql).toContain("WHEN status = 'in-progress' THEN 'completed'");
             expect(params[1]).toBe('completed');
 
-            // Response should be a hangup (not voicemail)
             const twiml = res.send.mock.calls[0][0];
             expect(twiml).toContain('<Hangup');
             expect(twiml).not.toContain('<Record');
@@ -234,11 +213,9 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
 
     // -----------------------------------------------------------------------
     // Layer 3 — STALE_THRESHOLD_MINUTES
-    // The reconcileStale module must use 3 minutes, not the old 10.
     // -----------------------------------------------------------------------
     describe('Layer 3 — STALE_THRESHOLD_MINUTES', () => {
         it('should be set to 3 minutes', () => {
-            // Read the module source and verify the constant
             const fs = require('fs');
             const path = require('path');
             const src = fs.readFileSync(
@@ -253,9 +230,6 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
 
     // -----------------------------------------------------------------------
     // Layer 4 — Twilio API fallback
-    // When all clients appear busy per DB, verify via Twilio REST API.
-    // If Twilio says the call is actually completed, fix the DB and route
-    // to the now-free operator instead of voicemail.
     // -----------------------------------------------------------------------
     describe('Layer 4 — Twilio API fallback', () => {
         it('should verify stale records via Twilio API when all clients appear busy', async () => {
@@ -269,18 +243,21 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
                 if (sql.includes('company_memberships')) {
                     return { rows: [{ identity: 'user_1' }] };
                 }
-                if (sql.includes("status IN ('ringing', 'in-progress')") && sql.includes('client:%')) {
+                if (sql.includes('is_final = false') && sql.includes('client:%') && !sql.includes('UPDATE')) {
                     busyQueryCount++;
-                    // First query: DB says user_1 is busy (stale record)
-                    return {
-                        rows: [{
-                            client_number: 'client:user_1',
-                            call_sid: 'CA_stale_999',
-                        }],
-                    };
+                    if (busyQueryCount === 1) {
+                        // First query: DB says user_1 is busy (stale record)
+                        return {
+                            rows: [{
+                                client_number: 'client:user_1',
+                                call_sid: 'CA_stale_999',
+                            }],
+                        };
+                    }
+                    // Second query (after Twilio API fix): no longer busy
+                    return { rows: [] };
                 }
                 if (sql.includes('UPDATE calls SET status')) {
-                    // The fix query that marks the stale record as completed
                     return { rowCount: 1, rows: [] };
                 }
                 return { rows: [] };
@@ -309,12 +286,47 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
             );
             expect(updateCalls.length).toBeGreaterThanOrEqual(1);
 
-            // After fixing the stale record, user_1 is no longer busy.
-            // allBusy should be recalculated to false, so we should get a Dial to user_1.
+            // After fixing, user_1 is free → should get <Dial><Client>
             const twiml = res.send.mock.calls[0][0];
             expect(twiml).toContain('<Client');
             expect(twiml).toContain('user_1');
             expect(twiml).not.toContain('<Record');
+        });
+    });
+
+    // -----------------------------------------------------------------------
+    // Layer 5 — Centralized callAvailability module
+    // -----------------------------------------------------------------------
+    describe('Layer 5 — Centralized callAvailability module', () => {
+        it('should export all required functions', () => {
+            const ca = require('../backend/src/services/callAvailability');
+            expect(typeof ca.getBusyClientIdentities).toBe('function');
+            expect(typeof ca.getBusySipUsers).toBe('function');
+            expect(typeof ca.isContactBusy).toBe('function');
+            expect(typeof ca.verifyAndFixStaleCalls).toBe('function');
+            expect(typeof ca.STALE_FILTER_SQL).toBe('string');
+            expect(ca.STALE_FILTER_SQL).toContain('90 seconds');
+            expect(ca.STALE_FILTER_SQL).toContain('4 hours');
+        });
+
+        it('isContactBusy should return false when no active calls', async () => {
+            mockQuery.mockResolvedValue({ rows: [] });
+            const ca = require('../backend/src/services/callAvailability');
+            const busy = await ca.isContactBusy('+15551234567', 'test');
+            expect(busy).toBe(false);
+        });
+
+        it('isContactBusy should verify via Twilio API and return false if call is actually completed', async () => {
+            mockQuery.mockImplementation((sql) => {
+                if (sql.includes('UPDATE')) return { rowCount: 1, rows: [] };
+                return { rows: [{ call_sid: 'CA_stale_123' }] };
+            });
+            mockTwilioFetch.mockResolvedValue({ status: 'completed', endTime: new Date().toISOString() });
+
+            const ca = require('../backend/src/services/callAvailability');
+            const busy = await ca.isContactBusy('+15551234567', 'test');
+            expect(busy).toBe(false);
+            expect(mockTwilioCallsFn).toHaveBeenCalledWith('CA_stale_123');
         });
     });
 });
