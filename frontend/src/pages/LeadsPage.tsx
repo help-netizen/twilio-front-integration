@@ -8,7 +8,6 @@ import { CreateLeadDialog } from '../components/leads/CreateLeadDialog';
 import { EditLeadDialog } from '../components/leads/EditLeadDialog';
 import { ColumnSettingsDialog } from '../components/leads/ColumnSettingsDialog';
 import { ConvertToJobDialog } from '../components/leads/ConvertToJobDialog';
-import { Button } from '../components/ui/button';
 import { Plus, Settings } from 'lucide-react';
 import * as leadsApi from '../services/leadsApi';
 import { useLeadFormSettings } from '../hooks/useLeadFormSettings';
@@ -72,9 +71,22 @@ export function LeadsPage() {
         <div className="blanc-page-wrapper">
             <div className="blanc-page-header">
                 <h1 className="blanc-heading blanc-heading-lg">Leads</h1>
-                <div className="flex items-center gap-2">
-                    <Button variant="outline" size="icon" onClick={() => setSettingsDialogOpen(true)} title="Column settings"><Settings className="size-4" /></Button>
-                    <Button onClick={() => setCreateDialogOpen(true)}><Plus className="size-4 mr-2" />Create Lead</Button>
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={() => setSettingsDialogOpen(true)}
+                        className="inline-flex items-center justify-center transition-opacity hover:opacity-70"
+                        style={{ width: 42, height: 42, borderRadius: 14, border: '1px solid rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', color: 'var(--blanc-ink-2)', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
+                        title="Column settings"
+                    >
+                        <Settings className="size-4" />
+                    </button>
+                    <button
+                        onClick={() => setCreateDialogOpen(true)}
+                        className="inline-flex items-center gap-2.5 px-6 text-[15px] font-semibold transition-opacity hover:opacity-85"
+                        style={{ background: 'var(--blanc-info)', color: '#fff', minHeight: 48, borderRadius: 16, border: 'none', boxShadow: 'rgba(48, 39, 28, 0.08) 0px 8px 20px' }}
+                    >
+                        <Plus className="size-4" />Create Lead
+                    </button>
                 </div>
             </div>
             <div className="blanc-page-toolbar">

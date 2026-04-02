@@ -299,7 +299,7 @@ table tbody tr:hover {
 }
 
 /* Page header primary action buttons — scaled up to match heading */
-.blanc-page-header [data-slot="button"][class*="h-9"] {
+.blanc-page-header [data-slot="button"][class*="h-9"]:not([class*="size-9"]) {
     min-height: 48px !important;
     height: 48px !important;
     padding-left: 24px !important;
@@ -308,6 +308,18 @@ table tbody tr:hover {
     font-weight: 600 !important;
     gap: 10px !important;
     border-radius: 16px !important;
+}
+
+/* Icon-only buttons in page header — 42px square, Blanc style */
+.blanc-page-header [data-slot="button"][class*="size-9"] {
+    min-height: 42px !important;
+    height: 42px !important;
+    width: 42px !important;
+    border-radius: 14px !important;
+    border: 1px solid rgba(104, 95, 80, 0.14) !important;
+    background: var(--blanc-surface-strong) !important;
+    color: var(--blanc-ink-2) !important;
+    box-shadow: rgba(48, 39, 28, 0.06) 0px 6px 16px !important;
 }
 
 /* Toolbar area — frosted glass controls bar, matches CalendarControls in Schedule */
@@ -360,6 +372,43 @@ table tbody tr:hover {
 /* Toggle/switch container in toolbar */
 .blanc-page-toolbar [data-slot="switch"] {
     border-radius: 999px !important;
+}
+
+/* ── Table styling inside page cards ─────────────────────────────── */
+
+/* Table borders use warm blanc-line */
+.blanc-page-card table {
+    border-collapse: collapse;
+}
+
+.blanc-page-card thead tr {
+    border-bottom: 1px solid var(--blanc-line) !important;
+}
+
+.blanc-page-card tbody tr {
+    border-bottom: 1px solid rgba(117, 106, 89, 0.08) !important;
+}
+
+.blanc-page-card tbody tr:last-child {
+    border-bottom: none !important;
+}
+
+/* Table header: eyebrow style */
+.blanc-page-card thead th {
+    color: var(--blanc-ink-3) !important;
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.08em !important;
+    padding: 14px 16px !important;
+    background: var(--blanc-surface-strong) !important;
+}
+
+/* Table cells: comfortable padding */
+.blanc-page-card tbody td {
+    padding: 12px 16px !important;
+    color: var(--blanc-ink-1);
+    font-size: 14px;
 }
 
 @media (max-width: 1100px) {

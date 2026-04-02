@@ -171,13 +171,16 @@ export function LeadsFilters({
             />
 
             {/* Only Open Toggle */}
-            <div className="flex items-center gap-2 px-3 py-2 border rounded-md">
+            <div
+                className="flex items-center gap-2.5 px-4"
+                style={{ minHeight: 42, borderRadius: 14, border: '1px solid rgba(104, 95, 80, 0.16)', background: 'rgba(255, 255, 255, 0.55)', boxShadow: '0 2px 6px rgba(48, 39, 28, 0.05)' }}
+            >
                 <Switch
                     id="only-open"
                     checked={filters.only_open}
                     onCheckedChange={(checked) => onFiltersChange({ only_open: checked })}
                 />
-                <Label htmlFor="only-open" className="cursor-pointer">
+                <Label htmlFor="only-open" className="cursor-pointer text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>
                     Only Open
                 </Label>
             </div>
