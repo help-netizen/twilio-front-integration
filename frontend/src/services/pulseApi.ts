@@ -19,13 +19,13 @@ apiClient.interceptors.request.use((config) => {
 
 export const pulseApi = {
     /** Get combined timeline (calls + messages) for a contact */
-    getTimeline: async (contactId: number): Promise<PulseTimelineResponse> => {
-        const response = await apiClient.get<PulseTimelineResponse>(`/pulse/timeline/${contactId}`);
+    getTimeline: async (contactId: number, signal?: AbortSignal): Promise<PulseTimelineResponse> => {
+        const response = await apiClient.get<PulseTimelineResponse>(`/pulse/timeline/${contactId}`, { signal });
         return response.data;
     },
     /** Get combined timeline (calls + messages) by timeline ID */
-    getTimelineById: async (timelineId: number): Promise<PulseTimelineResponse> => {
-        const response = await apiClient.get<PulseTimelineResponse>(`/pulse/timeline-by-id/${timelineId}`);
+    getTimelineById: async (timelineId: number, signal?: AbortSignal): Promise<PulseTimelineResponse> => {
+        const response = await apiClient.get<PulseTimelineResponse>(`/pulse/timeline-by-id/${timelineId}`, { signal });
         return response.data;
     },
     /** Find or create a timeline for a phone number, optionally linking to a contact */

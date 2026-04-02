@@ -5,6 +5,9 @@ import { useCallback } from 'react';
 /**
  * Hook: combined timeline (calls + SMS) for a contact or timeline.
  * Supports both contactId (legacy) and timelineId (new).
+ *
+ * React Query passes an AbortSignal to queryFn — when the user switches
+ * timelines rapidly, the previous in-flight request is automatically cancelled.
  */
 export const usePulseTimeline = (contactId: number, timelineId?: number) => {
     const queryClient = useQueryClient();
@@ -13,9 +16,9 @@ export const usePulseTimeline = (contactId: number, timelineId?: number) => {
 
     const query = useQuery({
         queryKey: ['pulse-timeline', mode, key],
-        queryFn: () => timelineId
-            ? pulseApi.getTimelineById(timelineId)
-            : pulseApi.getTimeline(contactId),
+        queryFn: ({ signal }) => timelineId
+            ? pulseApi.getTimelineById(timelineId, signal)
+            : pulseApi.getTimeline(contactId, signal),
         enabled: !!key,
         staleTime: 30000,
     });
