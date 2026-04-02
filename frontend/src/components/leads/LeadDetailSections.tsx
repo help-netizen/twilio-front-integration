@@ -54,23 +54,23 @@ export function LeadDetailFooter({ lead, onEdit, onMarkLost, onActivate, onConve
                 <div className="flex gap-2">
                     <button
                         onClick={() => onEdit(lead)}
-                        className="inline-flex items-center justify-center gap-2 h-11 px-4 text-sm font-medium rounded-xl transition-colors"
-                        style={{ border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-2)', background: 'var(--blanc-surface-strong)' }}
+                        className="inline-flex items-center justify-center transition-opacity hover:opacity-70"
+                        style={{ width: 42, height: 42, borderRadius: 14, border: '1px solid rgba(104, 95, 80, 0.14)', color: 'var(--blanc-ink-3)', background: 'var(--blanc-surface-strong)', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
                     >
-                        <Edit className="size-4" />Edit
+                        <Edit className="size-4" />
                     </button>
                     <button
                         onClick={() => onConvert(lead.UUID)}
-                        className="flex-1 inline-flex items-center justify-center gap-2 h-11 px-4 text-sm font-semibold rounded-xl transition-opacity"
-                        style={{ background: 'var(--blanc-info)', color: '#fff' }}
+                        className="inline-flex items-center justify-center gap-2 px-5 text-sm font-semibold transition-opacity hover:opacity-85"
+                        style={{ background: 'var(--blanc-info)', color: '#fff', minHeight: 42, borderRadius: 14, border: 'none', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
                     >
                         <Briefcase className="size-4" />Convert to Job
                     </button>
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                             <button
-                                className="inline-flex items-center justify-center h-11 w-11 rounded-xl transition-colors"
-                                style={{ border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-3)', background: 'var(--blanc-surface-strong)' }}
+                                className="inline-flex items-center justify-center transition-opacity hover:opacity-70"
+                                style={{ width: 42, height: 42, borderRadius: 14, border: '1px solid rgba(104, 95, 80, 0.14)', color: 'var(--blanc-ink-3)', background: 'var(--blanc-surface-strong)', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
                             >
                                 <MoreVertical className="size-4" />
                             </button>
@@ -90,16 +90,16 @@ export function LeadDetailFooter({ lead, onEdit, onMarkLost, onActivate, onConve
                 <div className="flex gap-2">
                     <button
                         onClick={() => onEdit(lead)}
-                        className="inline-flex items-center justify-center gap-2 h-11 px-4 text-sm font-medium rounded-xl transition-colors"
-                        style={{ border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-2)', background: 'var(--blanc-surface-strong)' }}
+                        className="inline-flex items-center justify-center transition-opacity hover:opacity-70"
+                        style={{ width: 42, height: 42, borderRadius: 14, border: '1px solid rgba(104, 95, 80, 0.14)', color: 'var(--blanc-ink-3)', background: 'var(--blanc-surface-strong)', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
                     >
-                        <Edit className="size-4" />Edit
+                        <Edit className="size-4" />
                     </button>
                     {lead.LeadLost && (
                         <button
                             onClick={() => onActivate(lead.UUID)}
-                            className="flex-1 inline-flex items-center justify-center gap-2 h-11 px-4 text-sm font-semibold rounded-xl transition-opacity"
-                            style={{ background: 'var(--blanc-success)', color: '#fff' }}
+                            className="inline-flex items-center justify-center gap-2 px-5 text-sm font-semibold transition-opacity hover:opacity-85"
+                            style={{ background: 'var(--blanc-success)', color: '#fff', minHeight: 42, borderRadius: 14, border: 'none', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
                         >
                             <CheckCircle2 className="size-4" />Activate
                         </button>
@@ -107,8 +107,8 @@ export function LeadDetailFooter({ lead, onEdit, onMarkLost, onActivate, onConve
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                             <button
-                                className="inline-flex items-center justify-center h-11 w-11 rounded-xl transition-colors"
-                                style={{ border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-3)', background: 'var(--blanc-surface-strong)' }}
+                                className="inline-flex items-center justify-center transition-opacity hover:opacity-70"
+                                style={{ width: 42, height: 42, borderRadius: 14, border: '1px solid rgba(104, 95, 80, 0.14)', color: 'var(--blanc-ink-3)', background: 'var(--blanc-surface-strong)', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
                             >
                                 <MoreVertical className="size-4" />
                             </button>

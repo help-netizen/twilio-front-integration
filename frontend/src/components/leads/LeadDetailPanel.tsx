@@ -83,8 +83,8 @@ export function LeadDetailPanel({ lead, onClose, onEdit, onMarkLost, onActivate,
                         </h2>
                         <button
                             onClick={() => onEdit(lead)}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors shrink-0"
-                            style={{ border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-3)' }}
+                            className="inline-flex items-center gap-1.5 px-3 text-xs font-medium transition-opacity hover:opacity-70 shrink-0"
+                            style={{ border: '1px solid rgba(104, 95, 80, 0.14)', color: 'var(--blanc-ink-3)', background: 'var(--blanc-surface-strong)', minHeight: 32, borderRadius: 10, boxShadow: 'rgba(48, 39, 28, 0.04) 0px 4px 12px' }}
                         >
                             Edit
                         </button>
@@ -103,10 +103,11 @@ export function LeadDetailPanel({ lead, onClose, onEdit, onMarkLost, onActivate,
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                                 <button
-                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-sm font-semibold transition-colors focus:outline-none"
+                                    className="inline-flex items-center gap-1.5 px-4 text-sm font-semibold transition-colors focus:outline-none"
                                     style={{
                                         background: lead.LeadLost ? 'rgba(212,77,60,0.1)' : 'rgba(27,139,99,0.1)',
                                         color: lead.LeadLost ? '#d44d3c' : 'var(--blanc-success)',
+                                        minHeight: 42, borderRadius: 14,
                                     }}
                                 >
                                     {lead.Status}<ChevronDown className="size-3.5" />
@@ -123,8 +124,8 @@ export function LeadDetailPanel({ lead, onClose, onEdit, onMarkLost, onActivate,
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                                 <button
-                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-sm font-medium transition-colors focus:outline-none"
-                                    style={{ background: 'rgba(117,106,89,0.08)', color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)' }}
+                                    className="inline-flex items-center gap-1.5 px-4 text-sm font-medium transition-colors focus:outline-none"
+                                    style={{ background: 'rgba(117,106,89,0.08)', color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)', minHeight: 42, borderRadius: 14 }}
                                 >
                                     {lead.JobSource || 'No Source'}<ChevronDown className="size-3.5" />
                                 </button>
@@ -138,7 +139,7 @@ export function LeadDetailPanel({ lead, onClose, onEdit, onMarkLost, onActivate,
                             </DropdownMenuContent>
                         </DropdownMenu>
                         {lead.SubStatus && (
-                            <span className="px-2.5 py-1 rounded-lg text-sm font-medium" style={{ background: 'rgba(117,106,89,0.08)', color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)' }}>
+                            <span className="inline-flex items-center px-4 text-sm font-medium" style={{ background: 'rgba(117,106,89,0.08)', color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)', minHeight: 42, borderRadius: 14 }}>
                                 {lead.SubStatus}
                             </span>
                         )}
