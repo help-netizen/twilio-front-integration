@@ -81,7 +81,7 @@ export function useJobsExport({
                 formatDateOnly(j.end_date),
                 j.blanc_status || '',
                 (j.assigned_techs || []).map(t => t.name).filter(Boolean).join(', '),
-                j.invoice_total || '',
+                j.amount_paid || '',
                 formatDateOnly(j.start_date),
                 j.metadata ? Object.values(j.metadata).filter(v => v != null && v !== '').join('; ') : '',
             ]);

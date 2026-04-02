@@ -408,9 +408,24 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
         }
     }
 
+    // Fetch actual paid amounts from invoices for all jobs in batch
+    let amountPaidMap = {};
+    if (jobIds.length > 0 && companyId) {
+        const { rows: paidRows } = await db.query(`
+            SELECT i.job_id, SUM(COALESCE(i.amount_paid, 0)) AS total_paid
+            FROM invoices i
+            WHERE i.job_id = ANY($1) AND i.company_id = $2
+            GROUP BY i.job_id
+        `, [jobIds, companyId]);
+        for (const pr of paidRows) {
+            amountPaidMap[pr.job_id] = pr.total_paid;
+        }
+    }
+
     const results = rows.map(r => {
         const job = rowToJob(r);
         job.tags = tagsMap[r.id] || [];
+        job.amount_paid = amountPaidMap[r.id] || null;
         return job;
     });
 

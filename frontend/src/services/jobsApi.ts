@@ -40,6 +40,7 @@ export interface LocalJob {
     territory?: string;
     invoice_total?: string;
     invoice_status?: string;
+    amount_paid?: string | null;
     assigned_techs?: Array<{ id: string; name: string }>;
     notes?: Array<{ text: string; created: string }>;
     tags?: JobTag[];
