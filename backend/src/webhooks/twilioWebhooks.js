@@ -217,8 +217,11 @@ async function handleVoiceInbound(req, res) {
         // Determine direction and return TwiML
         const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
         const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
-        const dialActionUrl = `${baseUrl}/webhooks/twilio/voice-dial-action`;
         const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;
+
+        // Track dial attempts and hold retries across redirects
+        const dialAttempt = parseInt(req.query.dialAttempt || '0', 10);
+        const dialActionUrl = `${baseUrl}/webhooks/twilio/voice-dial-action?dialAttempt=${dialAttempt}&holdRetry=${parseInt(req.query.holdRetry || '0', 10)}`;
 
         // Realtime transcription: build <Start><Stream> block if enabled
         const realtimeEnabled = process.env.FEATURE_REALTIME_TRANSCRIPTION === 'true';
@@ -378,7 +381,7 @@ async function handleVoiceInbound(req, res) {
 
                     // Parse retry counter from query string (redirect loop)
                     const holdRetry = parseInt(req.query.holdRetry || '0', 10);
-                    const maxHoldRetries = 48; // 48 × 5s = 4 minutes max hold
+                    const maxHoldRetries = 120; // 120 × 2s = 4 minutes max hold
 
                     if (allBusy && holdRetry < maxHoldRetries) {
                         // All operators busy → hold loop
@@ -386,7 +389,7 @@ async function handleVoiceInbound(req, res) {
                             ? 'All representatives are currently assisting other customers. Please stay on the line.'
                             : '';
                         const holdLanguage = process.env.VM_LANGUAGE || 'en-US';
-                        const redirectUrl = `${baseUrl}/webhooks/twilio/voice-inbound?holdRetry=${holdRetry + 1}`;
+                        const redirectUrl = `${baseUrl}/webhooks/twilio/voice-inbound?holdRetry=${holdRetry + 1}&dialAttempt=${dialAttempt}`;
 
                         console.log(`[${traceId}] All clients busy — hold loop (retry ${holdRetry}/${maxHoldRetries})`);
 
@@ -408,7 +411,7 @@ async function handleVoiceInbound(req, res) {
                         const sayXml = holdMsg ? `\n    <Say language="${holdLanguage}">${holdMsg}</Say>` : '';
                         twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>${sayXml}
-    <Pause length="5"/>
+    <Pause length="2"/>
     <Redirect method="POST">${redirectUrl}</Redirect>
 </Response>`;
                     } else if (allBusy && holdRetry >= maxHoldRetries) {
@@ -444,7 +447,8 @@ async function handleVoiceInbound(req, res) {
                         ).join('\n');
 
                         const inboundTimeout = Number(process.env.DIAL_TIMEOUT || 25);
-                        const inboundStreamXml = realtimeEnabled ? `
+                        // Skip realtime stream on re-dial to avoid duplicate media streams
+                        const inboundStreamXml = realtimeEnabled && dialAttempt === 0 ? `
     <Start>
         <Stream name="realtime-transcript" url="${mediaStreamUrl}" track="both_tracks">
             <Parameter name="callSid" value="${CallSid}" />
@@ -542,7 +546,8 @@ ${clientEndpoints}
                     ).join('\n');
 
                     const inboundTimeout = Number(process.env.DIAL_TIMEOUT || 25);
-                    const inboundStreamXml = realtimeEnabled ? `
+                    // Skip realtime stream on re-dial to avoid duplicate media streams
+                    const inboundStreamXml = realtimeEnabled && dialAttempt === 0 ? `
     <Start>
         <Stream name="realtime-transcript" url="${mediaStreamUrl}" track="both_tracks">
             <Parameter name="callSid" value="${CallSid}" />
@@ -622,11 +627,49 @@ async function handleDialAction(req, res) {
             console.warn(`[${traceId}] Failed to finalize child legs:`, childErr.message);
         }
 
-        const toVoicemail = dialStatus !== 'completed' && dialStatus !== 'answered';
+        const dialFailed = dialStatus !== 'completed' && dialStatus !== 'answered';
+        const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
+
+        // Determine if this is an inbound call (outbound calls start from sip: or client:)
+        const fromNumber = req.body.From || '';
+        const isInbound = !fromNumber.startsWith('sip:') && !fromNumber.startsWith('client:');
+
+        // Re-routing: for inbound calls that failed dial, redirect back to
+        // handleVoiceInbound to try again instead of going straight to voicemail.
+        // This fixes the call queue bug where a rejected call blocks the next caller.
+        const dialAttempt = parseInt(req.query.dialAttempt || '0', 10);
+        const holdRetry = parseInt(req.query.holdRetry || '0', 10);
+        const MAX_DIAL_ATTEMPTS = 3;
 
         let twiml;
-        if (toVoicemail) {
-            const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
+        if (dialFailed && isInbound && dialAttempt < MAX_DIAL_ATTEMPTS) {
+            // Redirect back to handleVoiceInbound to re-route the call
+            const nextDialAttempt = dialAttempt + 1;
+            const redirectUrl = `${baseUrl}/webhooks/twilio/voice-inbound?holdRetry=${holdRetry}&dialAttempt=${nextDialAttempt}`;
+
+            console.log(`[${traceId}] Dial failed (${dialStatus}) → redirect to re-route (attempt ${nextDialAttempt}/${MAX_DIAL_ATTEMPTS})`);
+
+            // Notify frontend on first re-route so "Call waiting" banner appears
+            if (dialAttempt === 0) {
+                try {
+                    const realtimeService = require('../services/realtimeService');
+                    realtimeService.broadcast('call.holding', {
+                        call_sid: CallSid,
+                        from_number: fromNumber,
+                        to_number: req.body.To,
+                        holdRetry: 0,
+                    });
+                } catch (sseErr) {
+                    console.warn(`[${traceId}] SSE broadcast failed:`, sseErr.message);
+                }
+            }
+
+            twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Redirect method="POST">${redirectUrl}</Redirect>
+</Response>`;
+        } else if (dialFailed) {
+            // Max dial attempts exhausted or outbound call → voicemail
             const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;
             const vmLanguage = process.env.VM_LANGUAGE || 'en-US';
             const vmGreeting = process.env.VM_GREETING || 'Hello! Our team is currently assisting other customers. Please leave your name and phone number, and we will call you back as soon as possible.';
@@ -634,7 +677,7 @@ async function handleDialAction(req, res) {
             const vmSilenceTimeout = Number(process.env.VM_SILENCE_TIMEOUT || 5);
             const vmFinishOnKey = process.env.VM_FINISH_ON_KEY || '#';
 
-            console.log(`[${traceId}] No answer (${dialStatus}) → voicemail`);
+            console.log(`[${traceId}] No answer (${dialStatus}, attempt ${dialAttempt}/${MAX_DIAL_ATTEMPTS}) → voicemail`);
 
             twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>

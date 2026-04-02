@@ -116,11 +116,11 @@ async function processEvent(inboxEvent) {
 
     try {
         if (source === 'voice' || source === 'dial') {
-            await processVoiceEvent(payload, event_type, traceId);
+            await processVoiceEvent(payload, event_type, traceId, source);
         } else if (source === 'recording') {
-            await processRecordingEvent(payload, traceId);
+            await processRecordingEvent(payload, traceId, source);
         } else if (source === 'transcription') {
-            await processTranscriptionEvent(payload, traceId);
+            await processTranscriptionEvent(payload, traceId, source);
         } else if (source === 'zenbooker') {
             // Zenbooker events are processed inline by the webhook route.
             // Nothing to do here — just mark as processed.
@@ -140,7 +140,7 @@ async function processEvent(inboxEvent) {
 // Voice event → upsert call + resolve contact
 // =============================================================================
 
-async function processVoiceEvent(payload, eventType, traceId) {
+async function processVoiceEvent(payload, eventType, traceId, source = 'webhook') {
     const normalized = normalizeVoiceEvent(payload);
 
     // Resolve external party via CallProcessor
@@ -347,7 +347,8 @@ async function processVoiceEvent(payload, eventType, traceId) {
         normalized.callSid,
         eventType || 'call.status_changed',
         normalized.eventTime,
-        { ...normalized, raw: payload }
+        { ...normalized, raw: payload },
+        source
     );
 
     // Enrich from Twilio API on final status (skip if voicemail — we manage those statuses ourselves)
@@ -533,7 +534,7 @@ async function reconcileParentCall(parentCallSid, traceId) {
 // Recording event → upsert recording
 // =============================================================================
 
-async function processRecordingEvent(payload, traceId) {
+async function processRecordingEvent(payload, traceId, source = 'webhook') {
     const normalized = normalizeRecordingEvent(payload);
 
     const recording = await queries.upsertRecording({
@@ -560,7 +561,8 @@ async function processRecordingEvent(payload, traceId) {
         normalized.callSid,
         'recording.updated',
         normalized.eventTime,
-        { ...normalized, raw: payload }
+        { ...normalized, raw: payload },
+        source
     );
 
     // Publish realtime event
@@ -606,7 +608,7 @@ async function processRecordingEvent(payload, traceId) {
 // Transcription event → upsert transcript
 // =============================================================================
 
-async function processTranscriptionEvent(payload, traceId) {
+async function processTranscriptionEvent(payload, traceId, source = 'webhook') {
     const normalized = normalizeTranscriptionEvent(payload);
 
     const transcript = await queries.upsertTranscript({
@@ -632,7 +634,8 @@ async function processTranscriptionEvent(payload, traceId) {
         normalized.callSid,
         'transcript.updated',
         normalized.eventTime,
-        { ...normalized, raw: payload }
+        { ...normalized, raw: payload },
+        source
     );
 
     // Publish realtime event

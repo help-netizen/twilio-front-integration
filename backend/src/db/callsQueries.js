@@ -359,12 +359,12 @@ async function getTranscriptsByCallSid(callSid) {
 // Call events (immutable log)
 // =============================================================================
 
-async function appendCallEvent(callSid, eventType, eventTime, payload, companyId = null) {
+async function appendCallEvent(callSid, eventType, eventTime, payload, source = 'webhook', companyId = null) {
     const result = await db.query(
-        `INSERT INTO call_events (call_sid, event_type, event_time, payload, company_id)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO call_events (call_sid, event_type, event_time, payload, source, company_id)
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING *`,
-        [callSid, eventType, eventTime, JSON.stringify(payload), companyId || DEFAULT_COMPANY_ID]
+        [callSid, eventType, eventTime, JSON.stringify(payload), source, companyId || DEFAULT_COMPANY_ID]
     );
     return result.rows[0];
 }

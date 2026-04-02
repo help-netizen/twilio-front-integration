@@ -6,6 +6,24 @@
 
 ## 2026-04-02
 
+### BUG011: Fix incoming call queue — redirect rejected calls instead of voicemail
+
+**Problem:** When two clients called simultaneously and the operator rejected the first call, the second call never reached the operator. The rejected call went straight to voicemail, and the second call (if in a hold loop) waited too long due to 5-second pause intervals.
+
+**Root cause:** `handleDialAction` unconditionally sent all non-answered dials to voicemail. It should redirect the call back to `handleVoiceInbound` so the system can re-route to an available operator.
+
+**Fix:**
+1. Modified `handleDialAction` to redirect inbound calls back to `handleVoiceInbound` with a `dialAttempt` counter (up to 3 attempts before voicemail fallback). Outbound calls (from SIP/Client) still go to voicemail as before.
+2. Added `dialAttempt` tracking through the entire call flow: `handleVoiceInbound` → `dialActionUrl` → `handleDialAction` → redirect back.
+3. Reduced hold loop pause from 5s to 2s (maxHoldRetries adjusted from 48 to 120 to maintain 4-minute budget).
+4. Skip realtime transcription `<Stream>` on re-dial attempts to avoid duplicate media streams.
+5. Broadcast SSE `call.holding` on first redirect so frontend shows "Call waiting" banner.
+
+**Files changed:**
+- `backend/src/webhooks/twilioWebhooks.js` — handleDialAction redirect logic, dialAttempt counter, hold loop timing
+
+**Tests:** `tests/bug011-call-queue-redirect.test.js` — 9 tests (all passing)
+
 ### BUG012: SSE singleton — eliminate duplicate EventSource connections
 
 **Problem:** 9 independent `useRealtimeEvents()` hook instances each created their own `EventSource` connection. When Fly.io's HTTP/2 proxy dropped the connection (`ERR_HTTP2_PROTOCOL_ERROR`), all 9 reconnected independently, creating hundreds of Fetch/XHR requests.
