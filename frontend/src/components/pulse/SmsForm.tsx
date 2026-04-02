@@ -20,6 +20,8 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
     const [toDropdownOpen, setToDropdownOpen] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const quickBtnRef = useRef<HTMLButtonElement>(null);
+    const quickDropdownRef = useRef<HTMLDivElement>(null);
     const [quickMessages, setQuickMessages] = useState<QuickMessage[]>([]);
     const navigate = useNavigate();
 
@@ -27,6 +29,18 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
 
     const fetchQuickMessages = useCallback(async () => { try { const res = await authedFetch(`${API_BASE}/api/quick-messages`); const data = await res.json(); setQuickMessages(data.messages || []); } catch (err) { console.error('Failed to load quick messages:', err); } }, []);
     useEffect(() => { fetchQuickMessages(); }, [fetchQuickMessages]);
+
+    // Close quick messages dropdown on click outside (no overlay blocking scroll)
+    useEffect(() => {
+        if (!isPresetsOpen) return;
+        const handler = (e: MouseEvent) => {
+            const target = e.target as Node;
+            if (quickDropdownRef.current?.contains(target) || quickBtnRef.current?.contains(target)) return;
+            setIsPresetsOpen(false);
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [isPresetsOpen]);
 
     const handleSend = () => { if (message.trim() || attachedFiles.length > 0) { onSend(message, attachedFiles, selectedPhone); setMessage(''); setAttachedFiles([]); } };
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => { const files = Array.from(e.target.files || []); setAttachedFiles(prev => [...prev, ...files]); if (fileInputRef.current) fileInputRef.current.value = ''; };
@@ -71,6 +85,7 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
                 <div className="flex items-center gap-2">
                     <div className="relative">
                         <button
+                            ref={quickBtnRef}
                             onClick={() => setIsPresetsOpen(!isPresetsOpen)}
                             className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium hover:bg-muted/60 rounded-lg transition-colors border"
                             style={{ color: 'var(--blanc-ink-2)', borderColor: 'var(--blanc-line)' }}
@@ -79,7 +94,7 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
                             <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isPresetsOpen ? 'rotate-180' : ''}`} />
                             Quick
                         </button>
-                        {isPresetsOpen && (<><div className="fixed inset-0 z-10" onClick={() => setIsPresetsOpen(false)} /><div className="absolute left-0 bottom-full mb-1 w-64 rounded-xl shadow-lg z-20 py-1 flex flex-col" style={{ background: 'var(--blanc-surface-strong)', border: '1px solid var(--blanc-line)', maxHeight: '60vh' }}><div className="overflow-y-auto flex-1">{quickMessages.map(qm => <button key={qm.id} onClick={() => handlePresetSelect(qm.content)} className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors"><div className="text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>{qm.title}</div><div className="text-xs line-clamp-1" style={{ color: 'var(--blanc-ink-3)' }}>{qm.content}</div></button>)}</div><div className="border-t my-1 flex-shrink-0" style={{ borderColor: 'var(--blanc-line)' }} /><button onClick={() => { setIsPresetsOpen(false); navigate('/settings/quick-messages'); }} className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors flex-shrink-0"><div className="text-sm font-medium" style={{ color: 'var(--blanc-info)' }}>+ Add New</div></button></div></>)}
+                        {isPresetsOpen && (<div ref={quickDropdownRef} className="fixed w-72 rounded-xl shadow-lg z-[101] py-1 flex flex-col" style={{ background: 'var(--blanc-surface-strong)', border: '1px solid var(--blanc-line)', maxHeight: '50vh', left: quickBtnRef.current ? quickBtnRef.current.getBoundingClientRect().left : 0, bottom: quickBtnRef.current ? window.innerHeight - quickBtnRef.current.getBoundingClientRect().top + 4 : 0 }}><div className="overflow-y-auto flex-1">{quickMessages.map(qm => <button key={qm.id} onClick={() => handlePresetSelect(qm.content)} className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors"><div className="text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>{qm.title}</div><div className="text-xs line-clamp-1" style={{ color: 'var(--blanc-ink-3)' }}>{qm.content}</div></button>)}</div><div className="border-t my-1 flex-shrink-0" style={{ borderColor: 'var(--blanc-line)' }} /><button onClick={() => { setIsPresetsOpen(false); navigate('/settings/quick-messages'); }} className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors flex-shrink-0"><div className="text-sm font-medium" style={{ color: 'var(--blanc-info)' }}>+ Add New</div></button></div>)}
                     </div>
                     <button onClick={() => fileInputRef.current?.click()} className="p-1.5 hover:bg-muted/60 rounded-lg transition-colors" style={{ color: 'var(--blanc-ink-2)' }} title="Attach file"><Paperclip className="w-4 h-4" /></button>
                     <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} className="hidden" />

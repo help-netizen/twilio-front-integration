@@ -255,7 +255,7 @@ export const PulsePage: React.FC = () => {
                             {/* Detail card: Lead / Contact / Wizard */}
                             {(p.contactId || p.timelineId) && p.phone ? (
                                 p.lead ? (
-                                    <div className="pulse-card">
+                                    <div className="pulse-card pulse-accent-top" style={{ '--card-accent': 'var(--blanc-info)' } as React.CSSProperties}>
                                         <LeadDetailPanel
                                             lead={p.lead}
                                             embedded
@@ -271,7 +271,7 @@ export const PulsePage: React.FC = () => {
                                         />
                                     </div>
                                 ) : !p.leadLoading && p.contact?.id && p.contactDetail ? (
-                                    <div className="pulse-card">
+                                    <div className="pulse-card pulse-accent-top" style={{ '--card-accent': 'var(--blanc-success)' } as React.CSSProperties}>
                                         <PulseContactPanel
                                             contact={p.contactDetail.contact}
                                             leads={p.contactDetail.leads}
@@ -281,7 +281,10 @@ export const PulsePage: React.FC = () => {
                                         />
                                     </div>
                                 ) : !p.leadLoading && !p.contact?.id ? (
-                                    <div className="pulse-card" style={{ borderLeft: '3px solid var(--blanc-warning)' }}>
+                                    <div className="pulse-card pulse-accent-top" style={{ '--card-accent': 'var(--blanc-warning)' } as React.CSSProperties}>
+                                        <div className="px-5 pt-3 pb-0">
+                                            <span className="text-[10px] font-semibold uppercase tracking-widest inline-block" style={{ color: 'var(--blanc-warning)', letterSpacing: '0.12em' }}>New Lead</span>
+                                        </div>
                                         <CreateLeadJobWizard
                                             phone={p.phone}
                                             hasActiveCall={p.hasActiveCall}

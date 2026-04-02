@@ -2,13 +2,13 @@ import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Textarea } from '../ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
-import { Briefcase, Clock, DollarSign } from 'lucide-react';
+import { Clock, DollarSign } from 'lucide-react';
 import type { WizardState } from './wizardTypes';
 
 export function WizardStep2(s: WizardState) {
     return (
         <div className="wizard__body">
-            <div className="wizard__section-title"><Briefcase className="w-4" /> Select Service</div>
+            <div className="wizard__section-title">Service Details</div>
             <p className="wizard__hint">Define the job type, description, duration, and price.</p>
             <div className="wizard__field">
                 <Label htmlFor="wz-jobtype">Job Type</Label>

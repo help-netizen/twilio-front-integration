@@ -91,6 +91,8 @@ export function PulseContactPanel({ contact, leads, loading, onAddressesChanged,
             <div className="pulse-contact-header-grid px-5 pt-5 pb-4">
                 {/* Left: Name + contacts */}
                 <div>
+                    {/* Type label */}
+                    <span className="text-[10px] font-semibold uppercase tracking-widest mb-1 inline-block" style={{ color: 'var(--blanc-success)', letterSpacing: '0.12em' }}>Contact</span>
                     {/* Name + ZB + Edit */}
                     <div className="flex items-center gap-2 mb-1">
                         <h2 className="font-bold text-2xl leading-tight truncate" style={{ color: 'var(--blanc-ink-1)', fontFamily: 'var(--blanc-font-heading)' }}>

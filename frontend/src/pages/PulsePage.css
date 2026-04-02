@@ -145,12 +145,29 @@
 
 /* Shared floating card style for right-column blocks */
 .pulse-card {
+    position: relative;
     background: var(--blanc-surface-strong);
     border: 1px solid var(--blanc-line, rgba(104, 95, 80, 0.14));
     border-radius: var(--blanc-radius-xl);
     box-shadow: var(--blanc-shadow-main);
     overflow: hidden;
     flex-shrink: 0;
+}
+
+/* Top accent stripe — sits inside card, card's own top border hidden */
+.pulse-accent-top {
+    border-top-color: transparent;
+}
+.pulse-accent-top::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--card-accent, transparent);
+    pointer-events: none;
+    z-index: 1;
 }
 
 /* Empty state fills the viewport height */

@@ -12,8 +12,8 @@ export function WizardStep3(s: WizardState) {
     return (
         <div className="wizard__body">
             <div className="wizard__section-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Calendar className="w-4" /> Available Timeslots</span>
-                <Button size="sm" variant="outline" onClick={() => setShowCustomTime(true)} className="flex items-center gap-1">
+                <span>Timeslots</span>
+                <Button size="sm" variant="outline" onClick={() => setShowCustomTime(true)} className="flex items-center gap-1" style={{ textTransform: 'none', letterSpacing: 'normal', fontSize: 12 }}>
                     <Clock className="w-3.5" /> Custom Time
                 </Button>
             </div>
@@ -27,8 +27,8 @@ export function WizardStep3(s: WizardState) {
                     <Button size="sm" variant="outline" onClick={s.fetchTimeslots} disabled={s.timeslotsLoading}>{s.timeslotsLoading ? 'Loading…' : 'Refresh'}</Button>
                 </div>
             </div>
-            {s.timeslotsLoading && <p className="text-sm text-muted-foreground animate-pulse mt-2">Fetching available times…</p>}
-            {s.timeslotsError && !s.timeslotsLoading && <p className="text-sm text-destructive mt-2">{s.timeslotsError}</p>}
+            {s.timeslotsLoading && <p className="text-sm animate-pulse mt-2" style={{ color: 'var(--blanc-ink-3)' }}>Fetching available times…</p>}
+            {s.timeslotsError && !s.timeslotsLoading && <p className="text-sm mt-2" style={{ color: 'var(--blanc-danger, #d44d3c)' }}>{s.timeslotsError}</p>}
             <div className="wizard__timeslots">
                 {s.timeslotDays.map((day) => {
                     if (!day.timeslots?.length) return null;
@@ -44,7 +44,7 @@ export function WizardStep3(s: WizardState) {
                     );
                 })}
             </div>
-            <div className="wizard__divider" />
+            <div className="wizard__section-gap" />
             {!s.showSkipConfirm ? (
                 <Button variant="ghost" size="sm" onClick={() => s.setShowSkipConfirm(true)} className="wizard__skip-btn"><SkipForward className="w-4 mr-1" /> Skip — create lead without scheduling</Button>
             ) : (

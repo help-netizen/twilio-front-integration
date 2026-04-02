@@ -64,7 +64,7 @@ export function LeadDetailPanel({ lead, onClose, onEdit, onMarkLost, onActivate,
     return (
         <div
             className={embedded ? 'flex flex-col' : 'fixed inset-0 z-50 bg-background md:relative md:inset-auto md:z-auto md:w-[400px] md:min-w-[240px] md:border-l md:h-full flex flex-col md:bg-background shrink-0'}
-            style={{ background: 'var(--blanc-surface-strong)', borderLeft: '3px solid var(--blanc-info)' }}
+            style={{ background: 'var(--blanc-surface-strong)' }}
         >
             {/* ── Header: two-column grid — left: identity, right: comments ── */}
             <div className={embedded ? 'pulse-contact-header-grid px-5 pt-5 pb-4' : 'px-5 pt-5 pb-4'}>

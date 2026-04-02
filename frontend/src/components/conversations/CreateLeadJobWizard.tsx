@@ -9,7 +9,7 @@ import * as zenbookerApi from '../../services/zenbookerApi';
 import * as leadsApi from '../../services/leadsApi';
 import type { Timeslot, TimeslotDay } from '../../services/zenbookerApi';
 import { useZipCheck } from '../../hooks/useZipCheck';
-import { ChevronRight, ChevronLeft, User, Phone } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Phone } from 'lucide-react';
 import type { Step } from './wizardTypes';
 import { STEP_LABELS, DEFAULT_JOB_TYPES } from './wizardTypes';
 import { WizardStep1 } from './WizardStep1';
@@ -212,8 +212,9 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, timelineId, onLeadCr
             <div className="wizard__header">
                 <div className="wizard__header-content">
                     <div className="wizard__header-left">
-                        <div className="wizard__avatar"><User className="wizard__avatar-icon" /></div>
-                        <div><div className="wizard__title">New Lead / Job</div><div className="wizard__phone-row"><Phone className="w-3.5" /><span>{formatPhone(phone)}</span></div></div>
+                        <div>
+                            <div className="wizard__phone-row"><Phone className="w-4" style={{ color: 'var(--blanc-ink-3)' }} /><span>{formatPhone(phone)}</span></div>
+                        </div>
                     </div>
                     <div className="wizard__header-right">
                         {hasActiveCall ? (
@@ -235,12 +236,16 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, timelineId, onLeadCr
             )}
             <div className="wizard__steps">
                 {([1, 2, 3, 4] as Step[]).map(s => (
-                    <div key={s} className="wizard__step-item">
-                        <div className={`wizard__step-circle ${s === step ? 'wizard__step-circle--active' : s < step ? 'wizard__step-circle--done' : ''}`}>{s < step ? '✓' : s}</div>
-                        {s < 4 && <div className={`wizard__step-line ${s < step ? 'wizard__step-line--done' : ''}`} />}
-                    </div>
+                    <button
+                        key={s}
+                        type="button"
+                        className={`wizard__step-pill${s === step ? ' wizard__step-pill--active' : s < step ? ' wizard__step-pill--done wizard__step-pill--clickable' : ''}`}
+                        onClick={() => { if (s < step) setStep(s); }}
+                        disabled={s > step}
+                    >
+                        {s < step ? `✓ ${STEP_LABELS[s]}` : STEP_LABELS[s]}
+                    </button>
                 ))}
-                <span className="wizard__step-label">{STEP_LABELS[step]}</span>
             </div>
             {step === 1 && <WizardStep1 {...ws} />}
             {step === 2 && <WizardStep2 {...ws} />}
