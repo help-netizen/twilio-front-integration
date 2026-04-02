@@ -21,7 +21,7 @@ export function MetadataSection({ lead }: { lead: Lead }) {
                     <div>
                         <div className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>Created</div>
                         <div className="text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>
-                            {format(new Date(lead.CreatedDate), 'MMM dd, yyyy HH:mm')}
+                            {format(new Date(lead.CreatedDate!), 'MMM dd, yyyy HH:mm')}
                         </div>
                     </div>
                 )}

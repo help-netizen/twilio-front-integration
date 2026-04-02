@@ -38,16 +38,15 @@ const JOB_SOURCES = ['Website', 'Referral', 'Google Ads', 'Facebook', 'Yelp', 'D
 
 export function LeadDetailPanel({ lead, onClose, onEdit, onMarkLost, onActivate, onConvert, onUpdateComments, onUpdateStatus, onUpdateSource, onDelete, embedded }: LeadDetailPanelProps) {
     const [comments, setComments] = useState('');
-    const [isEditingComments, setIsEditingComments] = useState(false);
+
     const [activeTab, setActiveTab] = useState<'details' | 'financials'>('details');
 
     useEffect(() => {
-        if (lead) { setComments(lead.Comments || ''); setIsEditingComments(false); setActiveTab('details'); }
+        if (lead) { setComments(lead.Comments || ''); setActiveTab('details'); }
     }, [lead]);
 
     const handleSaveComments = () => {
         if (lead && comments !== lead.Comments) onUpdateComments(lead.UUID, comments);
-        if (!comments.trim()) setIsEditingComments(false);
     };
 
     if (!lead) return embedded ? null : (
