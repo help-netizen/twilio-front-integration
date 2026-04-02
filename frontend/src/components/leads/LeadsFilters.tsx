@@ -1,8 +1,6 @@
-import { Input } from '../ui/input';
 import { Switch } from '../ui/switch';
-import { Label } from '../ui/label';
 import { Badge } from '../ui/badge';
-import { Search, X, Check } from 'lucide-react';
+import { X, Check } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import type { LeadsListParams } from '../../types/lead';
 import { LEAD_STATUSES, JOB_SOURCES } from '../../types/lead';
@@ -32,6 +30,7 @@ export function LeadsFilters({
 }: LeadsFiltersProps) {
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
+    const inputRef = useRef<HTMLInputElement>(null);
     const { jobTypes: dynamicJobTypes } = useLeadFormSettings();
 
     // Close dropdown on outside click
@@ -79,21 +78,33 @@ export function LeadsFilters({
     };
 
     return (
-        <div className="flex flex-wrap gap-3 items-center">
-            {/* Search + Filter Dropdown */}
-            <div className="relative flex-1 min-w-[200px]" ref={containerRef}>
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground z-10" />
-                <Input
-                    placeholder="Search by name, phone, email, ID..."
+        <>
+            {/* Borderless inline search — Pulse style */}
+            <div className="flex-1 min-w-0 relative" ref={containerRef}>
+                <input
+                    ref={inputRef}
+                    type="text"
+                    placeholder="type to find anything..."
                     value={searchQuery}
                     onChange={(e) => onSearchChange(e.target.value)}
                     onFocus={() => setDropdownOpen(true)}
-                    className="pl-9"
+                    className="pulse-search-input"
+                    style={{ width: '100%' }}
                 />
 
                 {/* Filter Dropdown Panel */}
                 {dropdownOpen && (
-                    <div className="absolute top-full left-0 right-0 mt-1 bg-popover border rounded-lg shadow-lg z-50 p-0 overflow-hidden">
+                    <div
+                        className="fixed z-50 rounded-xl overflow-hidden"
+                        style={{
+                            background: 'var(--blanc-surface-strong)',
+                            border: '1px solid var(--blanc-line)',
+                            boxShadow: 'var(--blanc-shadow-main)',
+                            width: Math.min(containerRef.current?.getBoundingClientRect().width || 500, 600),
+                            left: containerRef.current?.getBoundingClientRect().left || 0,
+                            top: (containerRef.current?.getBoundingClientRect().bottom || 0) + 8,
+                        }}
+                    >
                         {/* Active filter badges */}
                         {activeFilterCount > 0 && (
                             <div className="flex flex-wrap gap-1.5 p-3 pb-0 items-center">
@@ -117,7 +128,8 @@ export function LeadsFilters({
                                 ))}
                                 <button
                                     onClick={clearAllFilters}
-                                    className="text-xs text-muted-foreground hover:text-foreground ml-1"
+                                    className="text-xs ml-1 transition-opacity hover:opacity-70"
+                                    style={{ color: 'var(--blanc-ink-3)' }}
                                 >
                                     Clear all
                                 </button>
@@ -125,38 +137,18 @@ export function LeadsFilters({
                         )}
 
                         {/* Columns */}
-                        <div className="grid grid-cols-3 divide-x p-3 gap-0">
-                            {/* Status Column */}
-                            <FilterColumn
-                                title="STATUS"
-                                items={LEAD_STATUSES as unknown as string[]}
-                                selected={filters.status || []}
-                                onToggle={toggleStatus}
-                            />
-
-                            {/* Source Column */}
-                            <FilterColumn
-                                title="SOURCE"
-                                items={JOB_SOURCES as unknown as string[]}
-                                selected={sourceFilter}
-                                onToggle={toggleSource}
-                            />
-
-                            {/* Job Type Column */}
-                            <FilterColumn
-                                title="JOB TYPE"
-                                items={dynamicJobTypes}
-                                selected={jobTypeFilter}
-                                onToggle={toggleJobType}
-                            />
+                        <div className="grid grid-cols-3 p-3 gap-0" style={{ borderTop: activeFilterCount > 0 ? '1px solid var(--blanc-line)' : undefined, marginTop: activeFilterCount > 0 ? 8 : 0 }}>
+                            <FilterColumn title="STATUS" items={LEAD_STATUSES as unknown as string[]} selected={filters.status || []} onToggle={toggleStatus} />
+                            <FilterColumn title="SOURCE" items={JOB_SOURCES as unknown as string[]} selected={sourceFilter} onToggle={toggleSource} />
+                            <FilterColumn title="JOB TYPE" items={dynamicJobTypes} selected={jobTypeFilter} onToggle={toggleJobType} />
                         </div>
                     </div>
                 )}
             </div>
 
-            {/* Active filter count badge */}
+            {/* Active filter count badge — inline with other controls */}
             {activeFilterCount > 0 && (
-                <Badge variant="secondary" className="gap-1">
+                <Badge variant="secondary" className="gap-1 shrink-0">
                     {activeFilterCount} filter{activeFilterCount > 1 ? 's' : ''}
                     <X className="size-3 cursor-pointer" onClick={clearAllFilters} />
                 </Badge>
@@ -172,19 +164,19 @@ export function LeadsFilters({
 
             {/* Only Open Toggle */}
             <div
-                className="flex items-center gap-2.5 px-4"
-                style={{ minHeight: 42, borderRadius: 14, border: '1px solid rgba(104, 95, 80, 0.16)', background: 'rgba(255, 255, 255, 0.55)', boxShadow: '0 2px 6px rgba(48, 39, 28, 0.05)' }}
+                className="flex items-center gap-2.5 px-4 shrink-0"
+                style={{ minHeight: 42, borderRadius: 14, border: '1px solid rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
             >
                 <Switch
                     id="only-open"
                     checked={filters.only_open}
                     onCheckedChange={(checked) => onFiltersChange({ only_open: checked })}
                 />
-                <Label htmlFor="only-open" className="cursor-pointer text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>
+                <label htmlFor="only-open" className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>
                     Only Open
-                </Label>
+                </label>
             </div>
-        </div>
+        </>
     );
 }
 
@@ -203,7 +195,10 @@ function FilterColumn({
 }) {
     return (
         <div className="px-3 space-y-1">
-            <div className="text-[11px] font-semibold text-muted-foreground tracking-wider uppercase mb-2">
+            <div
+                className="text-[11px] font-semibold tracking-wider uppercase mb-2"
+                style={{ color: 'var(--blanc-ink-3)', letterSpacing: '0.08em' }}
+            >
                 {title}
             </div>
             <div className="space-y-0.5 max-h-[240px] overflow-y-auto">
@@ -214,14 +209,21 @@ function FilterColumn({
                             key={item}
                             type="button"
                             onClick={() => onToggle(item)}
-                            className={`flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-md text-sm transition-colors ${isSelected
-                                ? 'bg-primary/10 text-primary font-medium'
-                                : 'hover:bg-muted text-foreground'
-                                }`}
+                            className="flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-lg text-sm transition-colors"
+                            style={{
+                                background: isSelected ? 'rgba(37, 99, 235, 0.08)' : undefined,
+                                color: isSelected ? 'var(--blanc-info)' : 'var(--blanc-ink-1)',
+                                fontWeight: isSelected ? 500 : 400,
+                            }}
                         >
-                            <div className={`size-4 border rounded flex items-center justify-center shrink-0 ${isSelected ? 'bg-primary border-primary' : 'border-input'
-                                }`}>
-                                {isSelected && <Check className="size-3 text-primary-foreground" />}
+                            <div
+                                className="size-4 border rounded flex items-center justify-center shrink-0"
+                                style={{
+                                    borderColor: isSelected ? 'var(--blanc-info)' : 'var(--blanc-line)',
+                                    background: isSelected ? 'var(--blanc-info)' : 'transparent',
+                                }}
+                            >
+                                {isSelected && <Check className="size-3 text-white" />}
                             </div>
                             {item}
                         </button>

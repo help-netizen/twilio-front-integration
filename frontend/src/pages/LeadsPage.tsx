@@ -9,6 +9,7 @@ import { EditLeadDialog } from '../components/leads/EditLeadDialog';
 import { ColumnSettingsDialog } from '../components/leads/ColumnSettingsDialog';
 import { ConvertToJobDialog } from '../components/leads/ConvertToJobDialog';
 import { Plus, Settings } from 'lucide-react';
+import './PulsePage.css';
 import * as leadsApi from '../services/leadsApi';
 import { useLeadFormSettings } from '../hooks/useLeadFormSettings';
 import type { Lead, LeadsListParams, TableColumn } from '../types/lead';
@@ -69,9 +70,15 @@ export function LeadsPage() {
 
     return (
         <div className="blanc-page-wrapper">
-            <div className="blanc-page-header">
-                <h1 className="blanc-heading blanc-heading-lg">Leads</h1>
-                <div className="flex items-center gap-3">
+            {/* Unified header: title + search + controls — same row, like Pulse */}
+            <div className="pulse-unified-header">
+                <h1 className="pulse-header-title">Leads</h1>
+
+                <div className="pulse-search-wrapper">
+                    <LeadsFilters filters={filters} searchQuery={searchQuery} sourceFilter={sourceFilter} jobTypeFilter={jobTypeFilter} onFiltersChange={handleFiltersChange} onSearchChange={setSearchQuery} onSourceFilterChange={setSourceFilter} onJobTypeFilterChange={setJobTypeFilter} />
+                </div>
+
+                <div className="pulse-filters-group">
                     <button
                         onClick={() => setSettingsDialogOpen(true)}
                         className="inline-flex items-center justify-center transition-opacity hover:opacity-70"
@@ -83,14 +90,11 @@ export function LeadsPage() {
                     <button
                         onClick={() => setCreateDialogOpen(true)}
                         className="inline-flex items-center gap-2.5 px-6 text-[15px] font-semibold transition-opacity hover:opacity-85"
-                        style={{ background: 'var(--blanc-info)', color: '#fff', minHeight: 48, borderRadius: 16, border: 'none', boxShadow: 'rgba(48, 39, 28, 0.08) 0px 8px 20px' }}
+                        style={{ background: 'var(--blanc-info)', color: '#fff', minHeight: 42, borderRadius: 14, border: 'none', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
                     >
                         <Plus className="size-4" />Create Lead
                     </button>
                 </div>
-            </div>
-            <div className="blanc-page-toolbar">
-                <LeadsFilters filters={filters} searchQuery={searchQuery} sourceFilter={sourceFilter} jobTypeFilter={jobTypeFilter} onFiltersChange={handleFiltersChange} onSearchChange={setSearchQuery} onSourceFilterChange={setSourceFilter} onJobTypeFilterChange={setJobTypeFilter} />
             </div>
             <div className="blanc-page-card">
                 <div className={`flex-1 flex flex-col overflow-x-auto ${selectedLead ? 'hidden md:flex' : 'flex'}`}>
