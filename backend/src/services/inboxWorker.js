@@ -248,10 +248,17 @@ async function processVoiceEvent(payload, eventType, traceId) {
                     console.log(`[${traceId}] Skipping upsert — call is final (${existing.status}), ignoring non-final ${normalized.eventStatus}`);
                     skipUpsert = true;
                 }
-                // Allow final events (completed, no-answer, etc.) to overwrite voicemail states
-                // (e.g. caller hangs up during greeting before recording starts)
+                // Don't let voicemail/missed states be overwritten by non-final events
                 if (isInVoicemailFlow && !isFinal) {
                     console.log(`[${traceId}] Skipping upsert — call is in ${existing.status} status, ignoring non-final ${normalized.eventStatus}`);
+                    skipUpsert = true;
+                }
+                // Don't let Twilio's "completed" overwrite missed/voicemail statuses.
+                // Twilio sends "completed" when TwiML execution finishes, even for
+                // unanswered calls — this would erase the meaningful no-answer/voicemail status.
+                const isMissedOrVoicemail = ['no-answer', 'voicemail_recording', 'voicemail_left'].includes(existing.status);
+                if (isMissedOrVoicemail && normalized.eventStatus === 'completed') {
+                    console.log(`[${traceId}] Skipping upsert — preserving ${existing.status}, ignoring Twilio completed`);
                     skipUpsert = true;
                 }
             }
@@ -637,8 +644,20 @@ async function enrichFromTwilioApi(callSid, existingCall, traceId) {
         const details = await client.calls(callSid).fetch();
         const db = require('../db/connection');
 
+        // Preserve missed/voicemail statuses — Twilio always reports "completed"
+        // for parent calls when TwiML finishes, even if the call was unanswered.
+        const currentStatus = existingCall?.status;
+        const preserveStatus = ['no-answer', 'voicemail_recording', 'voicemail_left'].includes(currentStatus)
+            && details.status === 'completed';
+        const effectiveStatus = preserveStatus ? currentStatus : (details.status || null);
+        const effectiveIsFinal = preserveStatus ? existingCall.is_final : (isFinalStatus(details.status) || false);
+
+        if (preserveStatus) {
+            console.log(`[${traceId}] Enrichment: preserving ${currentStatus} status (Twilio reports completed)`);
+        }
+
         // Direct UPDATE bypassing the timestamp guard in upsertCall
-        // The enrichment should always overwrite with authoritative Twilio API data
+        // Enriches with authoritative Twilio API data (price, duration, timestamps)
         await db.query(
             `UPDATE calls SET
                 parent_call_sid = COALESCE($2, parent_call_sid),
@@ -656,8 +675,8 @@ async function enrichFromTwilioApi(callSid, existingCall, traceId) {
                 callSid,
                 details.parentCallSid || null,
                 existingCall?.direction || details.direction,
-                details.status || null,
-                isFinalStatus(details.status) || false,
+                effectiveStatus,
+                effectiveIsFinal,
                 details.startTime ? new Date(details.startTime) : null,
                 details.startTime ? new Date(details.startTime) : null,
                 details.endTime ? new Date(details.endTime) : null,
