@@ -1,8 +1,10 @@
 import { useJobsPage } from '../hooks/useJobsPage';
-import { JobsHeader, JobsFieldsButton } from '../components/jobs/JobsHeader';
+import { JobsFieldsButton } from '../components/jobs/JobsHeader';
 import { JobsFilters } from '../components/jobs/JobsFilters';
 import { JobsTable } from '../components/jobs/JobsTable';
 import { JobDetailPanel } from '../components/jobs/JobDetailPanel';
+import { Download, Loader2 } from 'lucide-react';
+import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 
 // ─── Jobs Page ───────────────────────────────────────────────────────────────
 
@@ -11,24 +13,21 @@ export function JobsPage() {
 
     return (
         <div className="blanc-page-wrapper">
-            <div className="blanc-page-header">
-                <JobsHeader
-                    loading={page.loading}
-                    exporting={page.exporting}
-                    filteredJobsCount={page.filteredJobs.length}
-                    visibleFields={page.visibleFields}
-                    allColumns={page.allColumns}
-                    allFieldKeys={page.allFieldKeys}
-                    onRefresh={() => page.loadJobs(page.offset)}
-                    onExportCSV={page.handleExportCSV}
-                    onSaveFields={page.saveVisibleFields}
-                />
-            </div>
-            <div className="blanc-page-toolbar" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ flex: 1 }}>
+            <div className="blanc-unified-header">
+                <h1 className="blanc-header-title">Jobs</h1>
+
+                <div className="blanc-search-wrapper">
+                    <input
+                        type="text"
+                        placeholder="type to find anything..."
+                        value={page.searchQuery}
+                        onChange={(e) => page.setSearchQuery(e.target.value)}
+                        className="blanc-search-input"
+                    />
+                </div>
+
+                <div className="blanc-controls-group">
                     <JobsFilters
-                        searchQuery={page.searchQuery}
-                        onSearchChange={page.setSearchQuery}
                         statusFilter={page.statusFilter}
                         onStatusFilterChange={page.setStatusFilter}
                         providerFilter={page.providerFilter}
@@ -48,17 +47,25 @@ export function JobsPage() {
                         allTags={page.allTags}
                         jobs={page.jobs}
                     />
+                    <JobsFieldsButton
+                        visibleFields={page.visibleFields}
+                        allColumns={page.allColumns}
+                        allFieldKeys={page.allFieldKeys}
+                        onSaveFields={page.saveVisibleFields}
+                    />
+                    <button
+                        onClick={page.handleExportCSV}
+                        disabled={page.filteredJobs.length === 0 || page.exporting}
+                        className="blanc-control-chip"
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: (page.filteredJobs.length === 0 || page.exporting) ? 0.5 : 1 }}
+                    >
+                        {page.exporting ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+                        Export
+                    </button>
                 </div>
-                <JobsFieldsButton
-                    visibleFields={page.visibleFields}
-                    allColumns={page.allColumns}
-                    allFieldKeys={page.allFieldKeys}
-                    onSaveFields={page.saveVisibleFields}
-                />
             </div>
             <div className="blanc-page-card">
-                {/* ── Left: Jobs List ─────────────────────────────────────── */}
-                <div className={`flex flex-col overflow-hidden ${page.selectedJob ? 'hidden md:flex md:w-[340px] md:flex-shrink-0' : 'flex flex-1'}`}>
+                <div className="flex flex-1 flex-col overflow-hidden">
                     <JobsTable
                         jobs={page.filteredJobs}
                         loading={page.loading}
@@ -76,8 +83,8 @@ export function JobsPage() {
                         onLoadJobs={page.loadJobs}
                     />
                 </div>
-
-                {/* ── Right: Detail Panel ─────────────────────────────────── */}
+            </div>
+            <FloatingDetailPanel open={!!page.selectedJob} onClose={page.handleCloseDetail} wide>
                 {page.selectedJob && (
                     <JobDetailPanel
                         job={page.selectedJob}
@@ -100,7 +107,7 @@ export function JobsPage() {
                         onJobUpdated={page.handleJobUpdated}
                     />
                 )}
-            </div>
+            </FloatingDetailPanel>
         </div>
     );
 }

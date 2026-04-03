@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Separator } from '../ui/separator';
-import { ScrollArea } from '../ui/scroll-area';
 import { X, Send, Pencil, Trash2, Loader2, Clock, Ban, CreditCard, RefreshCw } from 'lucide-react';
 import type { Invoice, InvoiceEvent, RecordPaymentData } from '../../services/invoicesApi';
 import { fetchInvoicePayments } from '../../services/invoicesApi';
@@ -77,7 +76,7 @@ export function InvoiceDetailPanel({ invoice, events, loading, onClose, onEdit, 
 
     if (loading) {
         return (
-            <div className="w-96 border-l flex items-center justify-center">
+            <div className="h-full flex items-center justify-center">
                 <Loader2 className="size-6 animate-spin text-muted-foreground" />
             </div>
         );
@@ -91,7 +90,7 @@ export function InvoiceDetailPanel({ invoice, events, loading, onClose, onEdit, 
     const paymentProgress = totalNum > 0 ? Math.min((paidNum / totalNum) * 100, 100) : 0;
 
     return (
-        <div className="w-96 border-l flex flex-col bg-background">
+        <div className="flex flex-col h-full overflow-y-auto">
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b">
                 <div className="flex items-center gap-2">
@@ -100,12 +99,12 @@ export function InvoiceDetailPanel({ invoice, events, loading, onClose, onEdit, 
                         {invoice.status}
                     </Badge>
                 </div>
-                <Button variant="ghost" size="sm" className="size-7 p-0" onClick={onClose}>
+                <Button variant="ghost" size="sm" className="size-7 p-0 md:hidden" onClick={onClose}>
                     <X className="size-4" />
                 </Button>
             </div>
 
-            <ScrollArea className="flex-1">
+            <div>
                 <div className="p-4 space-y-4">
                     {/* Title */}
                     {invoice.title && (
@@ -350,7 +349,7 @@ export function InvoiceDetailPanel({ invoice, events, loading, onClose, onEdit, 
                         </>
                     )}
                 </div>
-            </ScrollArea>
+            </div>
 
             <RecordPaymentDialog
                 open={showRecordPayment}

@@ -95,7 +95,7 @@ export const SidebarStack: React.FC<SidebarStackProps> = ({
                                 <User className="size-3" /> Customer
                             </span>
                             <button type="button" onClick={index === 0 ? onClearStack : onPopLayer}
-                                className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-white/50 transition-colors">
+                                className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-white/50 transition-colors lg:hidden">
                                 <X className="size-4" style={{ color: 'var(--sched-ink-2)' }} />
                             </button>
                         </div>
@@ -183,7 +183,7 @@ export const SidebarStack: React.FC<SidebarStackProps> = ({
                                 Provider
                             </span>
                             <button type="button" onClick={index === 0 ? onClearStack : onPopLayer}
-                                className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-white/50 transition-colors">
+                                className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-white/50 transition-colors lg:hidden">
                                 <X className="size-4" style={{ color: 'var(--sched-ink-2)' }} />
                             </button>
                         </div>
@@ -300,29 +300,39 @@ export const SidebarStack: React.FC<SidebarStackProps> = ({
             onMouseEnter={() => setHoverStack(true)}
             onMouseLeave={() => setHoverStack(false)}
         >
-            {/* Close-all button — appears on hover to the left of the stack */}
+            {/* Close-all hover zone — invisible area that keeps hover state while cursor moves to the button */}
             {stack.length > 0 && (
-                <button
-                    type="button"
-                    onClick={onClearStack}
-                    className="absolute flex items-center justify-center transition-all"
+                <div
                     style={{
-                        left: '8px',
-                        top: '12px',
-                        width: '28px',
-                        height: '28px',
-                        borderRadius: '50%',
-                        background: hoverStack ? 'var(--sched-ink-1)' : 'transparent',
-                        color: hoverStack ? '#fff' : 'transparent',
-                        border: hoverStack ? 'none' : '1px solid transparent',
-                        opacity: hoverStack ? 1 : 0,
-                        pointerEvents: hoverStack ? 'auto' : 'none' as const,
-                        boxShadow: hoverStack ? '0 4px 12px rgba(0,0,0,0.15)' : 'none',
+                        position: 'absolute',
+                        left: 0,
+                        top: 0,
+                        width: `${closeAllZone}px`,
+                        height: '80px',
+                        pointerEvents: 'auto',
                     }}
-                    title="Close all"
                 >
-                    <X className="size-3.5" />
-                </button>
+                    <button
+                        type="button"
+                        onClick={onClearStack}
+                        className="absolute flex items-center justify-center transition-all"
+                        style={{
+                            left: '8px',
+                            top: '12px',
+                            width: '28px',
+                            height: '28px',
+                            borderRadius: '50%',
+                            background: hoverStack ? 'var(--sched-ink-1)' : 'transparent',
+                            color: hoverStack ? '#fff' : 'transparent',
+                            border: hoverStack ? 'none' : '1px solid transparent',
+                            opacity: hoverStack ? 1 : 0,
+                            boxShadow: hoverStack ? '0 4px 12px rgba(0,0,0,0.15)' : 'none',
+                        }}
+                        title="Close all"
+                    >
+                        <X className="size-3.5" />
+                    </button>
+                </div>
             )}
 
             {/* Stacked layers */}

@@ -79,11 +79,20 @@ export function TagBadge({ tag, small }: { tag: JobTag; small?: boolean }) {
     );
 }
 
+function hexToRgba(hex: string, alpha: number): string {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+}
+
 export function BlancBadge({ status }: { status: string }) {
-    const dotColor = BLANC_STATUS_COLORS[status] || '#9CA3AF';
+    const color = BLANC_STATUS_COLORS[status] || '#9CA3AF';
     return (
-        <span className="inline-flex items-center gap-1.5 px-1 py-0.5 text-sm font-medium text-gray-700">
-            <span className="shrink-0 rounded-full" style={{ backgroundColor: dotColor, width: 10, height: 10 }} />
+        <span
+            className="inline-flex items-center px-3 text-xs font-semibold"
+            style={{ backgroundColor: hexToRgba(color, 0.1), color, minHeight: 28, borderRadius: 8 }}
+        >
             {status}
         </span>
     );
@@ -146,12 +155,7 @@ export const STATIC_COLUMNS: Record<string, ColumnDef> = {
     },
     blanc_status: {
         key: 'blanc_status', label: 'Status', sortKey: 'blanc_status',
-        render: (j) => (
-            <div className="flex flex-col gap-1">
-                <BlancBadge status={j.blanc_status} />
-                <ZbBadge status={j.zb_status} />
-            </div>
-        ),
+        render: (j) => <BlancBadge status={j.blanc_status} />,
     },
     zb_status: {
         key: 'zb_status', label: 'ZB Status', sortKey: 'zb_status',

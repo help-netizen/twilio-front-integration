@@ -49,7 +49,7 @@ interface FooterProps {
 
 export function LeadDetailFooter({ lead, onEdit, onMarkLost, onActivate, onConvert, onDelete }: FooterProps) {
     return (
-        <div className="px-5 py-3 shrink-0" style={{ background: 'var(--blanc-surface-strong)' }}>
+        <div className="px-5 py-3 pb-[max(12px,env(safe-area-inset-bottom))] shrink-0" style={{ background: 'var(--blanc-surface-strong)', borderTop: '1px solid var(--blanc-line)' }}>
             {lead.Status !== 'Converted' && !lead.LeadLost && (
                 <div className="flex gap-2">
                     <button

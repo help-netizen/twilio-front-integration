@@ -162,19 +162,20 @@ export type TableColumn = {
     visible: boolean;
     order: number;
     locked?: boolean;
+    sortKey?: string;
 };
 
 export const DEFAULT_COLUMNS: TableColumn[] = [
-    { id: 'status', label: 'Status', visible: true, order: 0 },
-    { id: 'name', label: 'Name', visible: true, order: 1 },
-    { id: 'phone', label: 'Phone', visible: true, order: 2 },
-    { id: 'email', label: 'Email', visible: true, order: 3 },
-    { id: 'location', label: 'Location', visible: true, order: 4 },
-    { id: 'jobType', label: 'Job Type', visible: true, order: 5 },
-    { id: 'jobSource', label: 'Source', visible: true, order: 6 },
-    { id: 'contact', label: 'Contact', visible: true, order: 7 },
-    { id: 'created', label: 'Created', visible: true, order: 8 },
-    { id: 'serialId', label: 'ID', visible: true, order: 9 },
+    { id: 'status',    label: 'Status',   visible: true, order: 0, sortKey: 'Status' },
+    { id: 'name',      label: 'Name',     visible: true, order: 1, sortKey: 'FirstName' },
+    { id: 'phone',     label: 'Phone',    visible: true, order: 2, sortKey: 'Phone' },
+    { id: 'email',     label: 'Email',    visible: true, order: 3, sortKey: 'Email' },
+    { id: 'location',  label: 'Location', visible: true, order: 4, sortKey: 'City' },
+    { id: 'jobType',   label: 'Job Type', visible: true, order: 5, sortKey: 'JobType' },
+    { id: 'jobSource', label: 'Source',   visible: true, order: 6, sortKey: 'JobSource' },
+    { id: 'contact',   label: 'Contact',  visible: true, order: 7 },
+    { id: 'created',   label: 'Created',  visible: true, order: 8, sortKey: 'CreatedDate' },
+    { id: 'serialId',  label: 'ID',       visible: true, order: 9, sortKey: 'SerialId' },
 ];
 
 export type LeadStatus =

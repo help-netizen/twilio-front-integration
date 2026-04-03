@@ -65,8 +65,8 @@ export const PulsePage: React.FC = () => {
 
     return (
         <div className="blanc-page-wrapper">
-            {/* Unified header: title + search + filters in one row */}
-            <div className="pulse-unified-header">
+            {/* Unified header: title + search + controls in one row */}
+            <div className="blanc-unified-header">
                 {/* Mobile back button — only shown on mobile when in content panel */}
                 <button
                     className={`pulse-back-btn${mobilePanel === 'list' ? ' pulse-back-btn-hidden' : ''}`}
@@ -76,27 +76,24 @@ export const PulsePage: React.FC = () => {
                     <ChevronLeft className="size-5" />
                 </button>
 
-                {/* Title */}
-                <h1 className="pulse-header-title">Pulse</h1>
+                <h1 className="blanc-header-title">Pulse</h1>
 
-                {/* Inline search — same size as title, thin weight, feels like a continuation */}
-                <div className="pulse-search-wrapper">
+                <div className="blanc-search-wrapper">
                     <input
                         type="text"
                         placeholder="type to find anything..."
                         value={p.searchQuery}
                         onChange={(e) => p.setSearchQuery(e.target.value)}
-                        className="pulse-search-input"
+                        className="blanc-search-input"
                     />
                 </div>
 
-                {/* Filter chips — right side */}
-                <div className="pulse-filters-group">
+                <div className="blanc-controls-group">
                     {(['all', 'unread', 'action_required'] as const).map(f => (
                         <button
                             key={f}
                             onClick={() => setActiveFilter(f)}
-                            className="pulse-filter-chip"
+                            className="blanc-control-chip"
                             data-active={activeFilter === f || undefined}
                         >
                             {f === 'all' ? 'All' : f === 'unread' ? 'Unread' : 'Action Required'}

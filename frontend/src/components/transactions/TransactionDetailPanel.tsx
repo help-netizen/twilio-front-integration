@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Separator } from '../ui/separator';
-import { ScrollArea } from '../ui/scroll-area';
 import { X, Undo2, Ban, Send, Receipt } from 'lucide-react';
 import type { PaymentTransaction, PaymentReceipt, SendReceiptData, RefundData } from '../../services/paymentsCanonicalApi';
 import { RefundDialog } from './RefundDialog';
@@ -94,7 +93,7 @@ export function TransactionDetailPanel({ transaction, receipt, onClose, onRefund
     };
 
     return (
-        <div className="w-96 border-l flex flex-col overflow-hidden">
+        <div className="flex flex-col h-full overflow-y-auto">
             {/* Header */}
             <div className="border-b p-4 flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -106,12 +105,12 @@ export function TransactionDetailPanel({ transaction, receipt, onClose, onRefund
                         {transaction.status}
                     </Badge>
                 </div>
-                <Button variant="ghost" size="sm" className="size-7 p-0" onClick={onClose}>
+                <Button variant="ghost" size="sm" className="size-7 p-0 md:hidden" onClick={onClose}>
                     <X className="size-4" />
                 </Button>
             </div>
 
-            <ScrollArea className="flex-1">
+            <div>
                 <div className="p-4 space-y-4">
                     {/* Amount */}
                     <div>
@@ -296,7 +295,7 @@ export function TransactionDetailPanel({ transaction, receipt, onClose, onRefund
                         )}
                     </div>
                 </div>
-            </ScrollArea>
+            </div>
 
             {/* Refund dialog */}
             <RefundDialog

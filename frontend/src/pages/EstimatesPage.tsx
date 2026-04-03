@@ -4,12 +4,12 @@ import { EstimateDetailPanel } from '../components/estimates/EstimateDetailPanel
 import { EstimateEditorDialog } from '../components/estimates/EstimateEditorDialog';
 import { EstimateSendDialog } from '../components/estimates/EstimateSendDialog';
 import { Button } from '../components/ui/button';
-import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
-import { Plus, Search, MoreHorizontal, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, MoreHorizontal, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { Estimate, EstimateCreateData } from '../services/estimatesApi';
+import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 
 // ── Status helpers ───────────────────────────────────────────────────────────
 
@@ -79,26 +79,21 @@ export function EstimatesPage() {
 
     return (
         <div className="blanc-page-wrapper">
-            {/* ── Page Header ──────────────────────────────────────────── */}
-            <div className="blanc-page-header">
-                <h1 className="blanc-heading blanc-heading-lg">Estimates</h1>
-                <Button onClick={handleCreate}>
-                    <Plus className="size-4 mr-1" />New Estimate
-                </Button>
-            </div>
+            {/* ── Unified Header ──────────────────────────────────────── */}
+            <div className="blanc-unified-header">
+                <h1 className="blanc-header-title">Estimates</h1>
 
-            {/* ── Toolbar: Filters ─────────────────────────────────────── */}
-            <div className="blanc-page-toolbar">
-                <div className="flex items-center gap-2">
-                    <div className="relative flex-1">
-                        <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-                        <Input
-                            placeholder="Search estimates..."
-                            className="pl-8"
-                            value={page.filters.search}
-                            onChange={e => page.setSearch(e.target.value)}
-                        />
-                    </div>
+                <div className="blanc-search-wrapper">
+                    <input
+                        type="text"
+                        placeholder="type to find anything..."
+                        value={page.filters.search}
+                        onChange={e => page.setSearch(e.target.value)}
+                        className="blanc-search-input"
+                    />
+                </div>
+
+                <div className="blanc-controls-group">
                     <Select
                         value={page.filters.status || '_all'}
                         onValueChange={v => page.setStatus(v === '_all' ? '' : v)}
@@ -112,13 +107,16 @@ export function EstimatesPage() {
                             ))}
                         </SelectContent>
                     </Select>
+                    <button onClick={handleCreate} className="blanc-control-chip-primary">
+                        <Plus className="size-4" />New Estimate
+                    </button>
                 </div>
             </div>
 
             {/* ── Content Card ─────────────────────────────────────────── */}
             <div className="blanc-page-card">
             {/* ── Left: Estimates List ──────────────────────────────────── */}
-            <div className={`flex flex-col overflow-hidden ${page.selectedEstimate ? 'hidden md:flex md:w-[400px] md:flex-shrink-0 border-r' : 'flex flex-1'}`}>
+            <div className="flex flex-1 flex-col overflow-hidden">
 
                 {/* Table */}
                 <div className="flex-1 overflow-auto">
@@ -208,22 +206,6 @@ export function EstimatesPage() {
                 )}
             </div>
 
-            {/* ── Right: Detail Panel ──────────────────────────────────── */}
-            {page.selectedEstimate && (
-                <EstimateDetailPanel
-                    estimate={page.selectedEstimate}
-                    events={page.events}
-                    loading={page.detailLoading}
-                    onClose={page.closeDetail}
-                    onEdit={() => handleEdit(page.selectedEstimate!)}
-                    onSend={() => handleSend(page.selectedEstimate!.id)}
-                    onApprove={() => page.handleApproveEstimate(page.selectedEstimate!.id)}
-                    onDecline={() => page.handleDeclineEstimate(page.selectedEstimate!.id)}
-                    onDelete={() => page.handleDeleteEstimate(page.selectedEstimate!.id)}
-                    onLinkJob={(jobId: number) => page.handleLinkJob(page.selectedEstimate!.id, jobId)}
-                />
-            )}
-
             {/* ── Dialogs ─────────────────────────────────────────────── */}
             <EstimateEditorDialog
                 open={editorOpen}
@@ -242,6 +224,23 @@ export function EstimatesPage() {
                 />
             )}
             </div>
+
+            <FloatingDetailPanel open={!!page.selectedEstimate} onClose={page.closeDetail}>
+                {page.selectedEstimate && (
+                    <EstimateDetailPanel
+                        estimate={page.selectedEstimate}
+                        events={page.events}
+                        loading={page.detailLoading}
+                        onClose={page.closeDetail}
+                        onEdit={() => handleEdit(page.selectedEstimate!)}
+                        onSend={() => handleSend(page.selectedEstimate!.id)}
+                        onApprove={() => page.handleApproveEstimate(page.selectedEstimate!.id)}
+                        onDecline={() => page.handleDeclineEstimate(page.selectedEstimate!.id)}
+                        onDelete={() => page.handleDeleteEstimate(page.selectedEstimate!.id)}
+                        onLinkJob={(jobId: number) => page.handleLinkJob(page.selectedEstimate!.id, jobId)}
+                    />
+                )}
+            </FloatingDetailPanel>
         </div>
     );
 }

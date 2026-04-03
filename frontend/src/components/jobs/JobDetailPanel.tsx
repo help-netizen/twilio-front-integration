@@ -1,13 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Separator } from '../ui/separator';
 import { Loader2 } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';
 import type { LocalJob, JobTag } from '../../services/jobsApi';
 import { JobDetailHeader } from './JobDetailHeader';
-import { JobActionBar } from './JobActionBar';
+import { JobOpsSection } from './JobStatusTags';
 import { JobInfoSections } from './JobInfoSections';
 import { JobMetadataSection } from './JobMetadataSection';
-import { JobStatusTags } from './JobStatusTags';
 import { JobFinancialsTab } from './JobFinancialsTab';
 import {
     JobDescription, JobComments, JobNotesList,
@@ -46,91 +44,77 @@ export function JobDetailPanel({
     onMarkEnroute, onMarkInProgress, onMarkComplete, onCancel,
     navigate, allTags, onTagsChange, onJobUpdated,
 }: JobDetailPanelProps) {
-    const [showMobileNotes, setShowMobileNotes] = useState(false);
-    const [rightTab, setRightTab] = useState<'details' | 'financials'>('details');
+    const [rightTab, setRightTab] = useState<'notes' | 'financials'>('notes');
 
     useEffect(() => {
-        setShowMobileNotes(false);
-        setRightTab('details');
+        setRightTab('notes');
     }, [job.id]);
 
     const noteProps = { job, noteJobId, noteText, setNoteText, setNoteJobId, onAddNote };
+    const opsProps = { job, allTags, onTagsChange, onMarkEnroute, onMarkInProgress, onMarkComplete, onCancel };
 
     return (
-        <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
-            {/* ═══ LEFT COLUMN ═══ */}
-            <div className="w-full md:w-1/2 flex flex-col overflow-hidden border-l">
+        <div className="flex flex-col md:flex-row h-full overflow-hidden">
+            {/* ═══ LEFT COLUMN — Identity, Ops, Info ═══ */}
+            <div className="w-full md:w-1/2 flex flex-col overflow-y-auto">
+                {/* Identity: eyebrow, title, customer */}
                 <JobDetailHeader
                     job={job}
                     contactInfo={contactInfo}
-                    showMobileNotes={showMobileNotes}
-                    setShowMobileNotes={setShowMobileNotes}
-                    onClose={onClose}
                     navigate={navigate}
+                    onBlancStatusChange={onBlancStatusChange}
                 />
 
-                <JobActionBar
-                    job={job}
-                    onMarkEnroute={onMarkEnroute}
-                    onMarkInProgress={onMarkInProgress}
-                    onMarkComplete={onMarkComplete}
-                    onCancel={onCancel}
-                />
+                {/* Ops: status + tags + action chips — all in one compact band */}
+                <JobOpsSection {...opsProps} />
 
-                {/* Scrollable content */}
+                {/* Logistics + contact info */}
                 {detailLoading ? (
-                    <div className="flex-1 flex items-center justify-center text-muted-foreground">
-                        <Loader2 className="size-5 animate-spin mr-2" /> Loading...
+                    <div className="flex-1 flex items-center justify-center" style={{ color: 'var(--blanc-ink-3)' }}>
+                        <Loader2 className="size-5 animate-spin mr-2" /> Loading…
                     </div>
                 ) : (
-                    <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                    <>
                         <JobInfoSections job={job} contactInfo={contactInfo} onJobUpdated={onJobUpdated} />
 
-                        {/* ── Mobile-only: Description, Comments, Metadata, Notes, Financials ── */}
-                        <div className="md:hidden space-y-6">
-                            <Separator />
+                        {/* Mobile-only: comments, description, notes, metadata, financials */}
+                        <div className="md:hidden px-5 pb-6 space-y-5">
                             <JobDescription job={job} />
                             <JobComments job={job} />
-                            <JobMetadataSection job={job} />
                             <JobNotesList job={job} />
+                            <JobMetadataSection job={job} />
                             <JobMobileAddNote {...noteProps} />
-                            <Separator />
-                            <p className="text-sm font-semibold">Estimates &amp; Invoices</p>
+                            <p className="blanc-eyebrow pt-2">Estimates &amp; Invoices</p>
                             <JobFinancialsTab jobId={job.id} />
                         </div>
-                    </div>
+                    </>
                 )}
             </div>
 
-            {/* ═══ RIGHT COLUMN (desktop only) ═══ */}
-            <div className="w-full md:w-1/2 flex-col overflow-hidden border-l hidden md:flex">
-                <Tabs value={rightTab} onValueChange={v => setRightTab(v as 'details' | 'financials')} className="flex flex-col h-full">
-                    <div className="border-b px-4 pt-2 shrink-0">
+            {/* ═══ RIGHT COLUMN (desktop only) — Notes & Financials ═══ */}
+            <div
+                className="w-full md:w-1/2 flex-col overflow-y-auto hidden md:flex"
+                style={{ borderLeft: '1px solid rgba(117, 106, 89, 0.07)' }}
+            >
+                <Tabs value={rightTab} onValueChange={v => setRightTab(v as 'notes' | 'financials')} className="flex flex-col h-full">
+                    <div className="shrink-0" style={{ padding: '8px 16px 0' }}>
                         <TabsList className="h-9">
-                            <TabsTrigger value="details" className="text-xs">Details &amp; Notes</TabsTrigger>
-                            <TabsTrigger value="financials" className="text-xs">Estimates &amp; Invoices</TabsTrigger>
+                            <TabsTrigger value="notes" className="text-xs">Details</TabsTrigger>
+                            <TabsTrigger value="financials" className="text-xs">Finance</TabsTrigger>
                         </TabsList>
                     </div>
 
-                    <TabsContent value="details" className="flex-1 flex flex-col overflow-hidden mt-0 data-[state=inactive]:hidden">
-                        <JobStatusTags
-                            job={job}
-                            allTags={allTags}
-                            onBlancStatusChange={onBlancStatusChange}
-                            onTagsChange={onTagsChange}
-                        />
-
-                        <div className="flex-1 overflow-y-auto p-4 space-y-6">
+                    <TabsContent value="notes" className="flex-1 flex flex-col mt-0 min-h-0 data-[state=inactive]:hidden">
+                        <div className="flex-1 overflow-y-auto p-4 space-y-5">
                             <JobDescription job={job} />
                             <JobComments job={job} />
-                            <JobMetadataSection job={job} />
                             <JobNotesList job={job} />
+                            <JobMetadataSection job={job} />
                         </div>
-
                         <JobAddNote {...noteProps} />
                     </TabsContent>
 
-                    <TabsContent value="financials" className="flex-1 flex flex-col overflow-hidden mt-0 data-[state=inactive]:hidden">
+                    <TabsContent value="financials" className="flex-1 flex flex-col mt-0 data-[state=inactive]:hidden">
                         <JobFinancialsTab jobId={job.id} />
                     </TabsContent>
                 </Tabs>

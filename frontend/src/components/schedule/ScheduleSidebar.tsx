@@ -102,10 +102,11 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
                             {item.status}
                         </span>
                     )}
+                    {/* Close button — mobile/tablet only; desktop uses the hover X on the SidebarStack */}
                     <button
                         type="button"
                         onClick={onClose}
-                        className="ml-auto w-7 h-7 rounded-full flex items-center justify-center hover:bg-white/50 transition-colors"
+                        className="ml-auto w-7 h-7 rounded-full flex items-center justify-center hover:bg-white/50 transition-colors lg:hidden"
                     >
                         <X className="size-4" style={{ color: 'var(--sched-ink-2)' }} />
                     </button>

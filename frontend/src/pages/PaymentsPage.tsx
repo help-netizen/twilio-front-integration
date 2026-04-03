@@ -4,10 +4,9 @@
  */
 
 import {
-    Loader2, Download, Search, DollarSign, X,
+    Loader2, Download, DollarSign, X,
     ChevronLeft, ChevronRight, RefreshCw, CalendarIcon,
 } from 'lucide-react';
-import { Input } from '../components/ui/input';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
@@ -20,6 +19,7 @@ import {
     type SortField,
 } from '../components/payments/paymentTypes';
 import './PaymentsPage.css';
+import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
@@ -28,134 +28,139 @@ export default function PaymentsPage() {
 
     return (
         <div className="blanc-page-wrapper">
-            {/* ── Page Header ────────────────────────────────────────── */}
-            <div className="blanc-page-header">
-                <div className="flex items-center gap-2">
-                    <h1 className="blanc-heading blanc-heading-lg">Payments</h1>
-                    <div className="flex gap-1">
-                        <Button variant={pm.quickFilter === 'all' ? 'default' : 'outline'} size="sm" onClick={() => { pm.setQuickFilter('all'); pm.setPage(0); }}>All</Button>
-                        <Button variant={pm.quickFilter === 'new_checks' ? 'default' : 'outline'} size="sm" onClick={() => { pm.setQuickFilter('new_checks'); pm.setPage(0); }} className="gap-1.5">
-                            New checks
-                            {pm.undepositedCheckCount > 0 && (
-                                <Badge variant="destructive" className="text-[10px] px-1.5 py-0 min-w-[18px] h-[18px] justify-center">{pm.undepositedCheckCount}</Badge>
-                            )}
-                        </Button>
-                    </div>
-                </div>
-                <div className="flex items-center gap-2">
-                    {pm.syncResult && (<span style={{ fontSize: '12px', color: pm.syncResult.startsWith('Sync error') ? '#ef4444' : '#22c55e' }}>{pm.syncResult}</span>)}
-                    <Button variant="outline" size="sm" onClick={pm.handleSync} disabled={pm.syncing}>
-                        <RefreshCw className={`size-4 mr-1 ${pm.syncing ? 'animate-spin' : ''}`} />
-                        {pm.syncing ? 'Syncing…' : 'Sync'}
-                    </Button>
-                    <Button size="sm" onClick={pm.handleExportCSV} disabled={pm.sortedRows.length === 0 || pm.exporting}>
-                        {pm.exporting ? <Loader2 className="size-4 mr-1 animate-spin" /> : <Download className="size-4 mr-1" />}
-                        {pm.exporting ? 'Exporting…' : 'Export'}
-                    </Button>
-                </div>
-            </div>
+            {/* ── Unified Header ──────────────────────────────────────── */}
+            <div className="blanc-unified-header">
+                <h1 className="blanc-header-title">Payments</h1>
 
-            {/* ── Toolbar: Filters ───────────────────────────────────── */}
-            <div className="blanc-page-toolbar">
-                <div className="flex flex-wrap gap-3 items-center">
-                        <div className="relative flex-1 min-w-[200px]" ref={pm.filterRef}>
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground z-10" />
-                            <Input placeholder="Search customer, job #, provider…" value={pm.searchInput} onChange={e => pm.setSearchInput(e.target.value)} onFocus={() => pm.setFiltersOpen(true)} className="pl-9" />
-                            {pm.filtersOpen && (
-                                <div className="absolute top-full left-0 right-0 mt-1 bg-popover border rounded-lg shadow-lg z-50 p-0 overflow-hidden">
-                                    {pm.activeFilterCount > 0 && (
-                                        <div className="flex flex-wrap gap-1.5 p-3 pb-0 items-center">
-                                            {pm.methodFilter && (<Badge variant="secondary" className="gap-1 text-xs">{pm.methodFilter}<X className="size-3 cursor-pointer" onClick={() => pm.setMethodFilter('')} /></Badge>)}
-                                            {pm.providerFilter && (<Badge variant="outline" className="gap-1 text-xs">{pm.providerFilter}<X className="size-3 cursor-pointer" onClick={() => pm.setProviderFilter('')} /></Badge>)}
-                                            {pm.paidFilter && (<Badge variant="default" className="gap-1 text-xs">{pm.paidFilter === 'paid' ? 'Paid in Full' : 'Has Balance Due'}<X className="size-3 cursor-pointer" onClick={() => pm.setPaidFilter('')} /></Badge>)}
-                                            <button onClick={pm.clearAllFilters} className="text-xs text-muted-foreground hover:text-foreground ml-1">Clear all</button>
-                                        </div>
-                                    )}
-                                    <div className="grid grid-cols-3 divide-x p-3 gap-0">
-                                        <div className="px-3">
-                                            <div className="text-[11px] font-semibold text-muted-foreground tracking-wider uppercase mb-2">PAYMENT METHOD</div>
-                                            <div className="space-y-0.5 max-h-[240px] overflow-y-auto">
-                                                {pm.uniqueMethods.length === 0 && (<div className="text-xs text-muted-foreground italic py-1">None available</div>)}
-                                                {pm.uniqueMethods.map(m => {
-                                                    const sel = pm.methodFilter === m; return (
-                                                        <button key={m} type="button" onClick={() => pm.setMethodFilter(sel ? '' : m)} className={`flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-md text-sm transition-colors ${sel ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-muted text-foreground'}`}>
-                                                            <div className={`size-4 border rounded flex items-center justify-center shrink-0 ${sel ? 'bg-primary border-primary' : 'border-input'}`}>{sel && <span className="text-[10px] text-primary-foreground">✓</span>}</div>{m}
-                                                        </button>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-                                        <div className="px-3">
-                                            <div className="text-[11px] font-semibold text-muted-foreground tracking-wider uppercase mb-2">PROVIDER</div>
-                                            <div className="space-y-0.5 max-h-[240px] overflow-y-auto">
-                                                {pm.uniqueProviders.length === 0 && (<div className="text-xs text-muted-foreground italic py-1">None available</div>)}
-                                                {pm.uniqueProviders.map(p => {
-                                                    const sel = pm.providerFilter === p; return (
-                                                        <button key={p} type="button" onClick={() => pm.setProviderFilter(sel ? '' : p)} className={`flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-md text-sm transition-colors ${sel ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-muted text-foreground'}`}>
-                                                            <div className={`size-4 border rounded flex items-center justify-center shrink-0 ${sel ? 'bg-primary border-primary' : 'border-input'}`}>{sel && <span className="text-[10px] text-primary-foreground">✓</span>}</div>{p}
-                                                        </button>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-                                        <div className="px-3">
-                                            <div className="text-[11px] font-semibold text-muted-foreground tracking-wider uppercase mb-2">INVOICE STATUS</div>
-                                            <div className="space-y-0.5">
-                                                {(['paid', 'due'] as const).map(val => {
-                                                    const sel = pm.paidFilter === val; const label = val === 'paid' ? 'Paid in Full' : 'Has Balance Due'; return (
-                                                        <button key={val} type="button" onClick={() => pm.setPaidFilter(sel ? '' : val)} className={`flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-md text-sm transition-colors ${sel ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-muted text-foreground'}`}>
-                                                            <div className={`size-4 border rounded flex items-center justify-center shrink-0 ${sel ? 'bg-primary border-primary' : 'border-input'}`}>{sel && <span className="text-[10px] text-primary-foreground">✓</span>}</div>{label}
-                                                        </button>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-                                    </div>
+                <div className="blanc-search-wrapper" ref={pm.filterRef}>
+                    <input
+                        type="text"
+                        placeholder="type to find anything..."
+                        value={pm.searchInput}
+                        onChange={e => pm.setSearchInput(e.target.value)}
+                        onFocus={() => pm.setFiltersOpen(true)}
+                        className="blanc-search-input"
+                    />
+                    {pm.filtersOpen && (
+                        <div className="absolute top-full left-0 right-0 mt-1 rounded-xl overflow-hidden z-50" style={{ background: 'var(--blanc-surface-strong)', border: '1px solid var(--blanc-line)', boxShadow: 'var(--blanc-shadow-main)' }}>
+                            {pm.activeFilterCount > 0 && (
+                                <div className="flex flex-wrap gap-1.5 p-3 pb-0 items-center">
+                                    {pm.methodFilter && (<Badge variant="secondary" className="gap-1 text-xs">{pm.methodFilter}<X className="size-3 cursor-pointer" onClick={() => pm.setMethodFilter('')} /></Badge>)}
+                                    {pm.providerFilter && (<Badge variant="outline" className="gap-1 text-xs">{pm.providerFilter}<X className="size-3 cursor-pointer" onClick={() => pm.setProviderFilter('')} /></Badge>)}
+                                    {pm.paidFilter && (<Badge variant="default" className="gap-1 text-xs">{pm.paidFilter === 'paid' ? 'Paid in Full' : 'Has Balance Due'}<X className="size-3 cursor-pointer" onClick={() => pm.setPaidFilter('')} /></Badge>)}
+                                    <button onClick={pm.clearAllFilters} className="text-xs text-muted-foreground hover:text-foreground ml-1">Clear all</button>
                                 </div>
                             )}
+                            <div className="grid grid-cols-3 divide-x p-3 gap-0">
+                                <div className="px-3">
+                                    <div className="text-[11px] font-semibold text-muted-foreground tracking-wider uppercase mb-2">PAYMENT METHOD</div>
+                                    <div className="space-y-0.5 max-h-[240px] overflow-y-auto">
+                                        {pm.uniqueMethods.length === 0 && (<div className="text-xs text-muted-foreground italic py-1">None available</div>)}
+                                        {pm.uniqueMethods.map(m => {
+                                            const sel = pm.methodFilter === m; return (
+                                                <button key={m} type="button" onClick={() => pm.setMethodFilter(sel ? '' : m)} className={`flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-md text-sm transition-colors ${sel ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-muted text-foreground'}`}>
+                                                    <div className={`size-4 border rounded flex items-center justify-center shrink-0 ${sel ? 'bg-primary border-primary' : 'border-input'}`}>{sel && <span className="text-[10px] text-primary-foreground">✓</span>}</div>{m}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                                <div className="px-3">
+                                    <div className="text-[11px] font-semibold text-muted-foreground tracking-wider uppercase mb-2">PROVIDER</div>
+                                    <div className="space-y-0.5 max-h-[240px] overflow-y-auto">
+                                        {pm.uniqueProviders.length === 0 && (<div className="text-xs text-muted-foreground italic py-1">None available</div>)}
+                                        {pm.uniqueProviders.map(p => {
+                                            const sel = pm.providerFilter === p; return (
+                                                <button key={p} type="button" onClick={() => pm.setProviderFilter(sel ? '' : p)} className={`flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-md text-sm transition-colors ${sel ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-muted text-foreground'}`}>
+                                                    <div className={`size-4 border rounded flex items-center justify-center shrink-0 ${sel ? 'bg-primary border-primary' : 'border-input'}`}>{sel && <span className="text-[10px] text-primary-foreground">✓</span>}</div>{p}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                                <div className="px-3">
+                                    <div className="text-[11px] font-semibold text-muted-foreground tracking-wider uppercase mb-2">INVOICE STATUS</div>
+                                    <div className="space-y-0.5">
+                                        {(['paid', 'due'] as const).map(val => {
+                                            const sel = pm.paidFilter === val; const label = val === 'paid' ? 'Paid in Full' : 'Has Balance Due'; return (
+                                                <button key={val} type="button" onClick={() => pm.setPaidFilter(sel ? '' : val)} className={`flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-md text-sm transition-colors ${sel ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-muted text-foreground'}`}>
+                                                    <div className={`size-4 border rounded flex items-center justify-center shrink-0 ${sel ? 'bg-primary border-primary' : 'border-input'}`}>{sel && <span className="text-[10px] text-primary-foreground">✓</span>}</div>{label}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                        {pm.activeFilterCount > 0 && (<Badge variant="secondary" className="gap-1">{pm.activeFilterCount} filter{pm.activeFilterCount > 1 ? 's' : ''}<X className="size-3 cursor-pointer" onClick={pm.clearAllFilters} /></Badge>)}
-                        <Popover open={pm.datePickerOpen} onOpenChange={pm.setDatePickerOpen}>
-                            <PopoverTrigger asChild>
-                                <Button variant="outline" className="gap-2">
-                                    <CalendarIcon className="size-4" />
-                                    {pm.dateFrom && pm.dateTo
-                                        ? `${format(new Date(pm.dateFrom + 'T00:00:00'), 'MMM dd')} – ${format(new Date(pm.dateTo + 'T00:00:00'), 'MMM dd, yyyy')}`
-                                        : pm.dateFrom ? `From ${format(new Date(pm.dateFrom + 'T00:00:00'), 'MMM dd, yyyy')}` : 'Date Range'}
-                                </Button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-auto p-0" align="end">
-                                <div className="flex">
-                                    <div className="border-r p-3 space-y-1">
-                                        <div className="text-sm font-medium mb-2">Presets</div>
-                                        <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => { const t = new Date(); pm.setDateFrom(format(t, 'yyyy-MM-dd')); pm.setDateTo(format(t, 'yyyy-MM-dd')); pm.setDatePickerOpen(false); }}>Today</Button>
-                                        <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => { const d = new Date(); d.setDate(d.getDate() - 7); pm.setDateFrom(format(d, 'yyyy-MM-dd')); pm.setDateTo(format(new Date(), 'yyyy-MM-dd')); pm.setDatePickerOpen(false); }}>Last 7 days</Button>
-                                        <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => { const d = new Date(); d.setDate(d.getDate() - 30); pm.setDateFrom(format(d, 'yyyy-MM-dd')); pm.setDateTo(format(new Date(), 'yyyy-MM-dd')); pm.setDatePickerOpen(false); }}>Last 30 days</Button>
-                                        <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => { const n = new Date(); pm.setDateFrom(format(new Date(n.getFullYear(), n.getMonth(), 1), 'yyyy-MM-dd')); pm.setDateTo(format(n, 'yyyy-MM-dd')); pm.setDatePickerOpen(false); }}>This Month</Button>
-                                        <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => { const n = new Date(); const p = new Date(n.getFullYear(), n.getMonth() - 1, 1); const l = new Date(n.getFullYear(), n.getMonth(), 0); pm.setDateFrom(format(p, 'yyyy-MM-dd')); pm.setDateTo(format(l, 'yyyy-MM-dd')); pm.setDatePickerOpen(false); }}>Last Month</Button>
-                                    </div>
-                                    <div className="p-3">
-                                        <div className="text-xs text-muted-foreground mb-1">From</div>
-                                        <Calendar mode="single" selected={pm.dateFrom ? new Date(pm.dateFrom + 'T00:00:00') : undefined} onSelect={(date) => { if (date) pm.setDateFrom(format(date, 'yyyy-MM-dd')); }} />
-                                        <div className="text-xs text-muted-foreground mb-1 mt-2">To</div>
-                                        <Calendar mode="single" selected={pm.dateTo ? new Date(pm.dateTo + 'T00:00:00') : undefined} onSelect={(date) => { if (date) pm.setDateTo(format(date, 'yyyy-MM-dd')); }} />
-                                    </div>
-                                </div>
-                            </PopoverContent>
-                        </Popover>
-                    </div>
+                    )}
+                </div>
 
-                {pm.rows.length > 0 && (
-                    <div className="payments-summary-bar mt-2">
-                        <span>{pm.sortedRows.length} transactions</span><span>·</span>
-                        <span className="payments-summary-amount">{formatCurrency(pm.totalAmount.toFixed(2))}</span>
-                    </div>
-                )}
+                <div className="blanc-controls-group">
+                    <button
+                        className={`blanc-control-chip ${pm.quickFilter === 'all' ? 'active' : ''}`}
+                        onClick={() => { pm.setQuickFilter('all'); pm.setPage(0); }}
+                    >All</button>
+                    <button
+                        className={`blanc-control-chip ${pm.quickFilter === 'new_checks' ? 'active' : ''}`}
+                        onClick={() => { pm.setQuickFilter('new_checks'); pm.setPage(0); }}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    >
+                        New checks
+                        {pm.undepositedCheckCount > 0 && (
+                            <Badge variant="destructive" className="text-[10px] px-1.5 py-0 min-w-[18px] h-[18px] justify-center">{pm.undepositedCheckCount}</Badge>
+                        )}
+                    </button>
+                    {pm.activeFilterCount > 0 && (<Badge variant="secondary" className="gap-1">{pm.activeFilterCount} filter{pm.activeFilterCount > 1 ? 's' : ''}<X className="size-3 cursor-pointer" onClick={pm.clearAllFilters} /></Badge>)}
+                    <Popover open={pm.datePickerOpen} onOpenChange={pm.setDatePickerOpen}>
+                        <PopoverTrigger asChild>
+                            <button className="blanc-control-chip" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                <CalendarIcon className="size-3.5" />
+                                {pm.dateFrom && pm.dateTo
+                                    ? `${format(new Date(pm.dateFrom + 'T00:00:00'), 'MMM dd')} – ${format(new Date(pm.dateTo + 'T00:00:00'), 'MMM dd, yyyy')}`
+                                    : pm.dateFrom ? `From ${format(new Date(pm.dateFrom + 'T00:00:00'), 'MMM dd, yyyy')}` : 'Date Range'}
+                            </button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="end">
+                            <div className="flex">
+                                <div className="border-r p-3 space-y-1">
+                                    <div className="text-sm font-medium mb-2">Presets</div>
+                                    <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => { const t = new Date(); pm.setDateFrom(format(t, 'yyyy-MM-dd')); pm.setDateTo(format(t, 'yyyy-MM-dd')); pm.setDatePickerOpen(false); }}>Today</Button>
+                                    <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => { const d = new Date(); d.setDate(d.getDate() - 7); pm.setDateFrom(format(d, 'yyyy-MM-dd')); pm.setDateTo(format(new Date(), 'yyyy-MM-dd')); pm.setDatePickerOpen(false); }}>Last 7 days</Button>
+                                    <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => { const d = new Date(); d.setDate(d.getDate() - 30); pm.setDateFrom(format(d, 'yyyy-MM-dd')); pm.setDateTo(format(new Date(), 'yyyy-MM-dd')); pm.setDatePickerOpen(false); }}>Last 30 days</Button>
+                                    <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => { const n = new Date(); pm.setDateFrom(format(new Date(n.getFullYear(), n.getMonth(), 1), 'yyyy-MM-dd')); pm.setDateTo(format(n, 'yyyy-MM-dd')); pm.setDatePickerOpen(false); }}>This Month</Button>
+                                    <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => { const n = new Date(); const p = new Date(n.getFullYear(), n.getMonth() - 1, 1); const l = new Date(n.getFullYear(), n.getMonth(), 0); pm.setDateFrom(format(p, 'yyyy-MM-dd')); pm.setDateTo(format(l, 'yyyy-MM-dd')); pm.setDatePickerOpen(false); }}>Last Month</Button>
+                                </div>
+                                <div className="p-3">
+                                    <div className="text-xs text-muted-foreground mb-1">From</div>
+                                    <Calendar mode="single" selected={pm.dateFrom ? new Date(pm.dateFrom + 'T00:00:00') : undefined} onSelect={(date) => { if (date) pm.setDateFrom(format(date, 'yyyy-MM-dd')); }} />
+                                    <div className="text-xs text-muted-foreground mb-1 mt-2">To</div>
+                                    <Calendar mode="single" selected={pm.dateTo ? new Date(pm.dateTo + 'T00:00:00') : undefined} onSelect={(date) => { if (date) pm.setDateTo(format(date, 'yyyy-MM-dd')); }} />
+                                </div>
+                            </div>
+                        </PopoverContent>
+                    </Popover>
+                    {pm.syncResult && (<span style={{ fontSize: '12px', color: pm.syncResult.startsWith('Sync error') ? '#ef4444' : '#22c55e' }}>{pm.syncResult}</span>)}
+                    <button className="blanc-control-chip" onClick={pm.handleSync} disabled={pm.syncing} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: pm.syncing ? 0.5 : 1 }}>
+                        <RefreshCw className={`size-3.5 ${pm.syncing ? 'animate-spin' : ''}`} />
+                        {pm.syncing ? 'Syncing…' : 'Sync'}
+                    </button>
+                    <button className="blanc-control-chip" onClick={pm.handleExportCSV} disabled={pm.sortedRows.length === 0 || pm.exporting} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: (pm.sortedRows.length === 0 || pm.exporting) ? 0.5 : 1 }}>
+                        {pm.exporting ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+                        {pm.exporting ? 'Exporting…' : 'Export'}
+                    </button>
+                </div>
             </div>
+
+            {pm.rows.length > 0 && (
+                <div className="payments-summary-bar" style={{ padding: '0 4px 12px' }}>
+                    <span>{pm.sortedRows.length} transactions</span><span>·</span>
+                    <span className="payments-summary-amount">{formatCurrency(pm.totalAmount.toFixed(2))}</span>
+                </div>
+            )}
 
             {/* ── Content Card ───────────────────────────────────────── */}
             <div className="blanc-page-card">
-                <div className={`payments-list-panel ${pm.selectedId ? 'has-detail' : ''}`}>
+                <div className="payments-list-panel">
                 {/* Error */}
                 {pm.error && <div className="payments-error">⚠️ {pm.error}</div>}
 
@@ -205,11 +210,10 @@ export default function PaymentsPage() {
                 )}
                 </div>
 
-                {/* ── Right: Detail Panel ──────────────────────────────── */}
-                {pm.selectedId && (
-                    <PaymentDetailPanel detail={pm.detail} loading={pm.detailLoading} onClose={pm.handleCloseDetail} onToggleDeposited={pm.handleToggleDeposited} />
-                )}
             </div>
+            <FloatingDetailPanel open={!!pm.selectedId} onClose={pm.handleCloseDetail}>
+                <PaymentDetailPanel detail={pm.detail} loading={pm.detailLoading} onClose={pm.handleCloseDetail} onToggleDeposited={pm.handleToggleDeposited} />
+            </FloatingDetailPanel>
         </div>
     );
 }

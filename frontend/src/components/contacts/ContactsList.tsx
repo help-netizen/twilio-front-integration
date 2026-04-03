@@ -7,8 +7,6 @@ import type { Contact } from '../../types/contact';
 interface ContactsListProps {
     contacts: Contact[];
     loading: boolean;
-    search: string;
-    onSearchChange: (value: string) => void;
     selectedContactId?: number;
     onSelectContact: (contact: Contact) => void;
     offset: number;
@@ -30,8 +28,6 @@ function formatPhone(phone: string | null): string {
 export function ContactsList({
     contacts,
     loading,
-    search,
-    onSearchChange,
     selectedContactId,
     onSelectContact,
     offset,
@@ -41,19 +37,6 @@ export function ContactsList({
 }: ContactsListProps) {
     return (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-            {/* Search */}
-            <div style={{ padding: '12px 16px', borderBottom: '1px solid #e5e7eb' }}>
-                <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-                    <Input
-                        placeholder="Search by name, phone, email..."
-                        value={search}
-                        onChange={(e) => onSearchChange(e.target.value)}
-                        className="pl-9"
-                    />
-                </div>
-            </div>
-
             {/* List */}
             <div style={{ flex: 1, overflow: 'auto' }}>
                 {loading ? (

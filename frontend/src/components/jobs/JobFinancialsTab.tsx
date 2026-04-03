@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
-import { Separator } from '../ui/separator';
 import { Dialog, DialogContent } from '../ui/dialog';
 import { Plus, Loader2 } from 'lucide-react';
 import { useJobFinancials } from '../../hooks/useJobFinancials';
@@ -100,7 +99,6 @@ export function JobFinancialsTab({ jobId }: Props) {
                 </div>
             </div>
 
-            <Separator />
 
             {loading && (
                 <div className="flex items-center justify-center py-4 text-muted-foreground">
@@ -137,7 +135,6 @@ export function JobFinancialsTab({ jobId }: Props) {
                 </div>
             </div>
 
-            <Separator />
 
             {/* Invoices */}
             <div>

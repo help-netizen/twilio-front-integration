@@ -4,12 +4,12 @@ import { InvoiceDetailPanel } from '../components/invoices/InvoiceDetailPanel';
 import { InvoiceEditorDialog } from '../components/invoices/InvoiceEditorDialog';
 import { InvoiceSendDialog } from '../components/invoices/InvoiceSendDialog';
 import { Button } from '../components/ui/button';
-import { Input } from '../components/ui/input';
 import { Badge } from '../components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
-import { Plus, Search, MoreHorizontal, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, MoreHorizontal, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { Invoice, InvoiceCreateData } from '../services/invoicesApi';
+import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 
 // ── Status helpers ───────────────────────────────────────────────────────────
 
@@ -81,26 +81,21 @@ export function InvoicesPage() {
 
     return (
         <div className="blanc-page-wrapper">
-            {/* ── Page Header ──────────────────────────────────────────── */}
-            <div className="blanc-page-header">
-                <h1 className="blanc-heading blanc-heading-lg">Invoices</h1>
-                <Button onClick={handleCreate}>
-                    <Plus className="size-4 mr-1" />New Invoice
-                </Button>
-            </div>
+            {/* ── Unified Header ──────────────────────────────────────── */}
+            <div className="blanc-unified-header">
+                <h1 className="blanc-header-title">Invoices</h1>
 
-            {/* ── Toolbar: Filters ─────────────────────────────────────── */}
-            <div className="blanc-page-toolbar">
-                <div className="flex items-center gap-2">
-                    <div className="relative flex-1">
-                        <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-                        <Input
-                            placeholder="Search invoices..."
-                            className="pl-8"
-                            value={page.filters.search}
-                            onChange={e => page.setSearch(e.target.value)}
-                        />
-                    </div>
+                <div className="blanc-search-wrapper">
+                    <input
+                        type="text"
+                        placeholder="type to find anything..."
+                        value={page.filters.search}
+                        onChange={e => page.setSearch(e.target.value)}
+                        className="blanc-search-input"
+                    />
+                </div>
+
+                <div className="blanc-controls-group">
                     <Select
                         value={page.filters.status || '_all'}
                         onValueChange={v => page.setStatus(v === '_all' ? '' : v)}
@@ -114,13 +109,16 @@ export function InvoicesPage() {
                             ))}
                         </SelectContent>
                     </Select>
+                    <button onClick={handleCreate} className="blanc-control-chip-primary">
+                        <Plus className="size-4" />New Invoice
+                    </button>
                 </div>
             </div>
 
             {/* ── Content Card ─────────────────────────────────────────── */}
             <div className="blanc-page-card">
             {/* ── Left: Invoices List ──────────────────────────────────── */}
-            <div className={`flex flex-col overflow-hidden ${page.selectedInvoice ? 'hidden md:flex md:w-[400px] md:flex-shrink-0 border-r' : 'flex flex-1'}`}>
+            <div className="flex flex-1 flex-col overflow-hidden">
 
                 {/* Table */}
                 <div className="flex-1 overflow-auto">
@@ -223,22 +221,6 @@ export function InvoicesPage() {
                 )}
             </div>
 
-            {/* ── Right: Detail Panel ──────────────────────────────────── */}
-            {page.selectedInvoice && (
-                <InvoiceDetailPanel
-                    invoice={page.selectedInvoice}
-                    events={page.events}
-                    loading={page.detailLoading}
-                    onClose={page.closeDetail}
-                    onEdit={() => handleEdit(page.selectedInvoice!)}
-                    onSend={() => handleSend(page.selectedInvoice!.id)}
-                    onVoid={() => page.handleVoidInvoice(page.selectedInvoice!.id)}
-                    onRecordPayment={(data) => page.handleRecordPayment(page.selectedInvoice!.id, data)}
-                    onSyncEstimate={() => page.handleSyncItems(page.selectedInvoice!.id)}
-                    onDelete={() => page.handleDeleteInvoice(page.selectedInvoice!.id)}
-                />
-            )}
-
             {/* ── Dialogs ─────────────────────────────────────────────── */}
             <InvoiceEditorDialog
                 open={editorOpen}
@@ -257,6 +239,23 @@ export function InvoicesPage() {
                 />
             )}
             </div>
+
+            <FloatingDetailPanel open={!!page.selectedInvoice} onClose={page.closeDetail}>
+                {page.selectedInvoice && (
+                    <InvoiceDetailPanel
+                        invoice={page.selectedInvoice}
+                        events={page.events}
+                        loading={page.detailLoading}
+                        onClose={page.closeDetail}
+                        onEdit={() => handleEdit(page.selectedInvoice!)}
+                        onSend={() => handleSend(page.selectedInvoice!.id)}
+                        onVoid={() => page.handleVoidInvoice(page.selectedInvoice!.id)}
+                        onRecordPayment={(data) => page.handleRecordPayment(page.selectedInvoice!.id, data)}
+                        onSyncEstimate={() => page.handleSyncItems(page.selectedInvoice!.id)}
+                        onDelete={() => page.handleDeleteInvoice(page.selectedInvoice!.id)}
+                    />
+                )}
+            </FloatingDetailPanel>
         </div>
     );
 }
