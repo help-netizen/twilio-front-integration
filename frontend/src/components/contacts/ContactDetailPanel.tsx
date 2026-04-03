@@ -83,7 +83,7 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
         if (contact.phone_e164) {
             try {
                 const tl = await pulseApi.ensureTimeline(contact.phone_e164);
-                navigate(`/pulse/timeline/${tl.id}`);
+                navigate(`/pulse/timeline/${tl.timelineId}`);
             } catch { navigate('/pulse'); }
         } else { navigate('/pulse'); }
     };
