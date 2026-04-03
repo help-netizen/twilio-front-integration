@@ -1,23 +1,90 @@
-import { useState, useEffect } from 'react';
+/**
+ * PaymentDetailPanel — two-column layout matching Job/Lead/Contact panels.
+ *
+ * LEFT:  Header (amount + client + status pills) → Invoice tile → Job tile → Provider tile
+ * RIGHT: Attachments gallery → Metadata → Check deposit
+ */
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
-    Loader2, X, FileText, User2, MapPin, Receipt,
-    ChevronDown, ChevronLeft, ChevronRight,
-    ImageIcon, ExternalLink, RotateCcw,
+    Loader2, FileText, ChevronDown, ChevronLeft, ChevronRight as ChevronRightIcon,
+    ImageIcon, ExternalLink, RotateCcw, Receipt,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import type { PaymentDetail } from './paymentTypes';
-import { formatPaymentDate, formatCurrency, paymentMethodIcon } from './paymentTypes';
+import { formatPaymentDate, formatCurrency } from './paymentTypes';
+
+// ─── Shared tile styles ──────────────────────────────────────────────────────
+
+const sectionCard: React.CSSProperties = {
+    padding: '16px 16px 18px',
+    borderRadius: '20px',
+    border: '1px solid rgba(117, 106, 89, 0.14)',
+    background: 'rgba(255, 255, 255, 0.5)',
+};
+
+const eyebrow: React.CSSProperties = {
+    fontSize: '11px',
+    fontWeight: 600,
+    letterSpacing: '0.14em',
+    textTransform: 'uppercase' as const,
+    color: 'var(--blanc-ink-3)',
+    marginBottom: '8px',
+};
+
+const infoRow: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '10px 0',
+    borderBottom: '1px dashed rgba(117, 106, 89, 0.16)',
+};
+
+const infoLabel: React.CSSProperties = {
+    fontSize: '13px',
+    color: 'var(--blanc-ink-3)',
+    flexShrink: 0,
+    width: '72px',
+};
+
+// ─── Status colors ───────────────────────────────────────────────────────────
+
+const STATUS_COLORS: Record<string, string> = {
+    'succeeded': '#1B8B63', 'paid': '#1B8B63',
+    'failed': '#EF4444', 'refunded': '#EF4444', 'voided': '#EF4444',
+    'pending': '#F59E0B', 'processing': '#F59E0B',
+};
+
+function hexToRgba(hex: string, alpha: number): string {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function statusPill(label: string) {
+    const color = STATUS_COLORS[label.toLowerCase()] || '#6B7280';
+    return (
+        <span
+            className="inline-flex items-center px-3 text-xs font-semibold"
+            style={{ background: hexToRgba(color, 0.1), color, minHeight: 28, borderRadius: 8 }}
+        >
+            {label}
+        </span>
+    );
+}
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function PaymentDetailPanel({
-    detail, loading, onClose, onToggleDeposited,
+    detail, loading, onClose: _onClose, onToggleDeposited,
 }: {
     detail: PaymentDetail | null;
     loading: boolean;
     onClose: () => void;
     onToggleDeposited: (deposited: boolean) => void;
 }) {
+    const navigate = useNavigate();
     const [showMetadata, setShowMetadata] = useState(false);
     const [galleryIndex, setGalleryIndex] = useState(0);
     const [rotation, setRotation] = useState(0);
@@ -31,183 +98,324 @@ export function PaymentDetailPanel({
 
     if (loading) {
         return (
-            <div className="payment-detail-panel">
-                <button className="payment-detail-close" onClick={onClose}><X size={18} /></button>
-                <div className="payment-detail-loading">
-                    <Loader2 size={24} className="animate-spin" style={{ color: '#9ca3af' }} />
-                </div>
+            <div className="flex items-center justify-center h-full" style={{ color: 'var(--blanc-ink-3)' }}>
+                <Loader2 className="size-5 animate-spin" />
             </div>
         );
     }
 
     if (!detail) {
         return (
-            <div className="payment-detail-panel">
-                <button className="payment-detail-close" onClick={onClose}><X size={18} /></button>
-                <div className="payment-detail-empty">
-                    <Receipt size={40} style={{ color: '#d1d5db' }} />
-                    <p>Unable to load payment details.</p>
-                </div>
+            <div className="flex flex-col items-center justify-center h-full gap-3" style={{ color: 'var(--blanc-ink-3)' }}>
+                <Receipt className="size-10 opacity-20" />
+                <p className="text-sm">Unable to load payment details.</p>
             </div>
         );
     }
 
-    const allAttachments = detail.attachments;
+    const allAttachments = detail.attachments || [];
+    const method = detail.display_payment_method || detail.payment_methods || '';
+    const isCheck = method.toLowerCase() === 'check';
 
     return (
-        <div className="payment-detail-panel">
-            {/* Header */}
-            <div className="payment-detail-header">
-                <button className="payment-detail-close" onClick={onClose}><X size={18} /></button>
-                <div className="payment-detail-header-content">
-                    <div className="payment-detail-method-label">
-                        <span className="payment-detail-method-icon">{paymentMethodIcon(detail.payment_methods)}</span>
-                        {detail.display_payment_method || detail.payment_methods}
-                    </div>
-                    <div className="payment-detail-amount">{formatCurrency(detail.amount_paid)}</div>
-                    <div className="payment-detail-subtitle">
-                        Paid by <strong>{detail.client}</strong> for <strong>#{detail.job_number}</strong>
-                    </div>
-                    <div className="payment-detail-date">{formatPaymentDate(detail.payment_date)}</div>
-                    <div className="payment-detail-badges">
-                        <span className={`payment-badge ${detail.transaction_status === 'succeeded' ? 'badge-success' : detail.transaction_status === 'voided' ? 'badge-danger' : 'badge-neutral'}`}>
-                            {detail.transaction_status}
+        <div className="flex flex-col h-full overflow-y-auto">
+
+            {/* ═══ TOP: Header + Tiles (two-column on desktop) ═══ */}
+            <div className="flex flex-col md:flex-row">
+
+            {/* LEFT: Header + Tiles */}
+            <div className="w-full md:w-1/2 flex flex-col">
+                {/* Header */}
+                <div className="px-5 pt-5 pb-3">
+                    <div className="mb-2">
+                        <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: 'var(--blanc-ink-3)', letterSpacing: '0.12em' }}>
+                            Payment {method && `· ${method}`} · {formatPaymentDate(detail.payment_date)}
                         </span>
-                        {detail.invoice && (
-                            <span className={`payment-badge ${detail.invoice.paid_in_full ? 'badge-success' : 'badge-warning'}`}>
-                                {detail.invoice.paid_in_full ? '✓ Paid in Full' : `Invoice: ${detail.invoice.status}`}
-                            </span>
-                        )}
-                        {(detail.display_payment_method || '').toLowerCase() === 'check' && (
+                    </div>
+                    <h2
+                        className="text-2xl font-bold leading-tight mb-1"
+                        style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)', letterSpacing: '-0.03em' }}
+                    >
+                        {formatCurrency(detail.amount_paid)}
+                    </h2>
+                    <p className="text-sm mb-3" style={{ color: 'var(--blanc-ink-2)' }}>
+                        Paid by <strong style={{ color: 'var(--blanc-ink-1)' }}>{detail.client}</strong> for <strong style={{ color: 'var(--blanc-ink-1)' }}>#{detail.job_number}</strong>
+                    </p>
+                    {/* Status pills */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                        {statusPill(detail.transaction_status)}
+                        {detail.invoice && statusPill(detail.invoice.paid_in_full ? 'Paid In Full' : `Due: ${formatCurrency(detail.invoice.amount_due)}`)}
+                        {isCheck && (
                             <Popover>
                                 <PopoverTrigger asChild>
-                                    <button className={`payment-badge cursor-pointer border-0 ${detail.check_deposited ? 'badge-success' : 'badge-danger'}`}>
+                                    <button
+                                        className="inline-flex items-center px-3 text-xs font-semibold cursor-pointer"
+                                        style={{
+                                            background: hexToRgba(detail.check_deposited ? '#1B8B63' : '#EF4444', 0.1),
+                                            color: detail.check_deposited ? '#1B8B63' : '#EF4444',
+                                            minHeight: 28, borderRadius: 8, border: 'none',
+                                        }}
+                                    >
                                         {detail.check_deposited ? 'Deposited' : 'Not Deposited'}
                                     </button>
                                 </PopoverTrigger>
                                 <PopoverContent className="w-auto p-1" align="start">
                                     <button className="flex items-center gap-2 w-full text-left px-3 py-1.5 rounded text-sm hover:bg-muted" onClick={() => onToggleDeposited(true)}>
-                                        <span className="size-2 rounded-full bg-green-500" /> Deposited
+                                        <span className="size-2 rounded-full" style={{ background: '#1B8B63' }} /> Deposited
                                     </button>
                                     <button className="flex items-center gap-2 w-full text-left px-3 py-1.5 rounded text-sm hover:bg-muted" onClick={() => onToggleDeposited(false)}>
-                                        <span className="size-2 rounded-full bg-red-500" /> Not Deposited
+                                        <span className="size-2 rounded-full" style={{ background: '#EF4444' }} /> Not Deposited
                                     </button>
                                 </PopoverContent>
                             </Popover>
                         )}
                     </div>
                 </div>
-            </div>
 
-            {/* Body */}
-            <div className="payment-detail-body">
-                {detail._warning && (<div className="payment-detail-warning">⚠️ {detail._warning}</div>)}
-
-                {/* Invoice Summary */}
-                {detail.invoice && (
-                    <div className="payment-detail-section">
-                        <h3><Receipt size={14} /> Invoice Summary</h3>
-                        <div className="payment-detail-invoice-grid">
-                            <div className="invoice-stat"><span className="invoice-stat-label">Total</span><span className="invoice-stat-value">{formatCurrency(detail.invoice.total)}</span></div>
-                            <div className="invoice-stat"><span className="invoice-stat-label">Paid</span><span className="invoice-stat-value paid">{formatCurrency(detail.invoice.amount_paid)}</span></div>
-                            <div className="invoice-stat"><span className="invoice-stat-label">Due</span><span className={`invoice-stat-value ${parseFloat(detail.invoice.amount_due) > 0 ? 'due' : ''}`}>{formatCurrency(detail.invoice.amount_due)}</span></div>
-                            <div className="invoice-stat"><span className="invoice-stat-label">Status</span><span className="invoice-stat-value">{detail.invoice.status}</span></div>
-                        </div>
+                {/* Warning */}
+                {detail._warning && (
+                    <div className="mx-5 mb-3 px-3 py-2 rounded-xl text-[12px]" style={{ background: 'rgba(217,119,6,0.06)', border: '1px solid rgba(217,119,6,0.2)', color: 'var(--blanc-ink-2)' }}>
+                        {detail._warning}
                     </div>
                 )}
 
-                {/* Job */}
-                {detail.job && (
-                    <div className="payment-detail-section">
-                        <h3><FileText size={14} /> Job</h3>
-                        <div className="payment-detail-job-info">
-                            {detail.job.job_number && (<div className="job-info-row"><span className="job-info-label">Job #</span><span className="job-info-value">{detail.job.job_number}</span></div>)}
-                            {detail.job.service_name && (<div className="job-info-row"><span className="job-info-label">Service</span><span className="job-info-value">{detail.job.service_name}</span></div>)}
-                            {detail.job.service_address && (<div className="job-info-row"><MapPin size={12} className="job-info-icon" /><span className="job-info-value">{detail.job.service_address}</span></div>)}
-                        </div>
-                    </div>
-                )}
-
-                {/* Providers */}
-                {detail.job && detail.job.providers.length > 0 && (
-                    <div className="payment-detail-section">
-                        <h3><User2 size={14} /> Provider{detail.job.providers.length > 1 ? 's' : ''}</h3>
-                        <div className="payment-detail-providers">
-                            {detail.job.providers.map((p, i) => (
-                                <div key={i} className="provider-card">
-                                    <div className="provider-avatar">{(p.name || '?')[0].toUpperCase()}</div>
-                                    <div className="provider-info">
-                                        <div className="provider-name">{p.name || '—'}</div>
-                                        {p.email && <div className="provider-contact">{p.email}</div>}
-                                        {p.phone && <div className="provider-contact">{p.phone}</div>}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {/* Attachments Gallery */}
-                <div className="payment-detail-section">
-                    <h3><ImageIcon size={14} /> Attachments ({allAttachments.length})</h3>
-                    {allAttachments.length === 0 ? (
-                        <div className="attachments-empty">No attachments found</div>
-                    ) : (
-                        <div className="attachments-gallery">
-                            <div className="attachments-thumbs">
-                                {allAttachments.map((att, i) => (
-                                    <button key={i} className={`attachment-thumb ${galleryIndex === i ? 'active' : ''}`} onClick={() => { setGalleryIndex(i); setShowLargePreview(true); }}>
-                                        {att.kind === 'image' ? (<img src={att.url} alt={att.filename} />) : (
-                                            <div className="attachment-file-thumb"><FileText size={18} /><span>{att.filename.split('.').pop()?.toUpperCase() || 'FILE'}</span></div>
-                                        )}
-                                    </button>
-                                ))}
+                {/* Tiles */}
+                <div className="px-4 py-4 space-y-3">
+                    {/* Invoice tile */}
+                    {detail.invoice && (
+                        <div style={sectionCard}>
+                            <p style={eyebrow}>Invoice</p>
+                            <div style={infoRow}>
+                                <span style={infoLabel}>Total</span>
+                                <span className="text-[13px] font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>{formatCurrency(detail.invoice.total)}</span>
                             </div>
-                            {showLargePreview && allAttachments[galleryIndex] && (
-                                <div className="attachments-preview">
-                                    <div className="attachments-preview-controls">
-                                        <button disabled={galleryIndex === 0} onClick={() => { setGalleryIndex(i => i - 1); setRotation(0); }}><ChevronLeft size={16} /></button>
-                                        <span className="attachments-counter">{galleryIndex + 1} / {allAttachments.length}</span>
-                                        <button disabled={galleryIndex >= allAttachments.length - 1} onClick={() => { setGalleryIndex(i => i + 1); setRotation(0); }}><ChevronRight size={16} /></button>
-                                        <button onClick={() => setRotation(r => r - 90)} title="Rotate 90° counter-clockwise"><RotateCcw size={14} /></button>
-                                        <a href={allAttachments[galleryIndex].url} target="_blank" rel="noopener noreferrer" className="attachments-open-link"><ExternalLink size={14} /></a>
-                                    </div>
-                                    <div className="attachments-preview-content">
-                                        {allAttachments[galleryIndex].kind === 'image' ? (
-                                            <img src={allAttachments[galleryIndex].url} alt={allAttachments[galleryIndex].filename} style={rotation ? { transform: `rotate(${rotation}deg)` } : undefined} />
-                                        ) : (
-                                            <div className="attachment-file-preview">
-                                                <FileText size={40} /><span>{allAttachments[galleryIndex].filename}</span>
-                                                <a href={allAttachments[galleryIndex].url} target="_blank" rel="noopener noreferrer" className="payments-btn payments-btn-secondary">Open File</a>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                            )}
+                            <div style={infoRow}>
+                                <span style={infoLabel}>Paid</span>
+                                <span className="text-[13px] font-semibold" style={{ color: '#1B8B63' }}>{formatCurrency(detail.invoice.amount_paid)}</span>
+                            </div>
+                            <div style={{ ...infoRow, borderBottom: 'none', paddingBottom: 0 }}>
+                                <span style={infoLabel}>Due</span>
+                                <span className="text-[13px] font-semibold" style={{ color: parseFloat(detail.invoice.amount_due) > 0 ? '#EF4444' : 'var(--blanc-ink-1)' }}>
+                                    {formatCurrency(detail.invoice.amount_due)}
+                                </span>
+                            </div>
                         </div>
                     )}
+
                 </div>
 
-                {/* Transaction Metadata */}
-                <div className="payment-detail-section">
-                    <button className="payment-metadata-toggle" onClick={() => setShowMetadata(!showMetadata)}>
-                        <ChevronDown size={14} className={`metadata-chevron ${showMetadata ? 'open' : ''}`} />
-                        Transaction Metadata
-                    </button>
-                    {showMetadata && detail.metadata && (
-                        <div className="payment-metadata-content">
-                            {Object.entries(detail.metadata).map(([key, val]) => (
-                                val ? (
-                                    <div key={key} className="metadata-row">
-                                        <span className="metadata-key">{key.replace(/_/g, ' ')}</span>
-                                        <span className="metadata-val">{val}</span>
-                                    </div>
-                                ) : null
+            </div>
+
+            {/* RIGHT: Job + Providers + Metadata */}
+            <div className="w-full md:w-1/2 flex flex-col px-4 py-4 space-y-3">
+                {/* Job tile */}
+                {detail.job && (
+                    <div
+                        style={{ ...sectionCard, cursor: 'pointer' }}
+                        onClick={() => detail.job?.job_id && navigate(`/jobs/${detail.job.job_id}`)}
+                        className="transition-opacity hover:opacity-80"
+                    >
+                        <p style={eyebrow}>Job</p>
+                        <div
+                            className="text-[15px] leading-snug font-semibold"
+                            style={{ fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.02em', color: 'var(--blanc-ink-1)' }}
+                        >
+                            {detail.job.job_number && `#${detail.job.job_number}`}
+                            {detail.job.service_name && ` · ${detail.job.service_name}`}
+                        </div>
+                        {detail.job.service_address && (
+                            <div className="text-[13px] mt-1" style={{ color: 'var(--blanc-ink-2)' }}>
+                                {detail.job.service_address}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* Provider tile */}
+                {detail.job && detail.job.providers.length > 0 && (
+                    <div style={sectionCard}>
+                        <p style={eyebrow}>Providers</p>
+                        <div className="flex flex-wrap gap-2">
+                            {detail.job.providers.map((p, i) => (
+                                <span
+                                    key={i}
+                                    className="inline-flex items-center gap-1 min-h-[34px] px-3.5 rounded-full text-[13px] font-medium"
+                                    style={{ background: 'rgba(117, 106, 89, 0.07)', border: '1px solid rgba(117, 106, 89, 0.14)', color: 'var(--blanc-ink-1)' }}
+                                >
+                                    {p.name}
+                                </span>
                             ))}
                         </div>
-                    )}
-                </div>
+                    </div>
+                )}
+
+                <MetadataSection metadata={detail.metadata} showMetadata={showMetadata} setShowMetadata={setShowMetadata} />
             </div>
+
+            </div>
+
+            {/* ═══ BOTTOM: Attachments (full width) ═══ */}
+            <div className="px-4 pb-4">
+                <AttachmentsSection
+                    attachments={allAttachments}
+                    galleryIndex={galleryIndex} setGalleryIndex={setGalleryIndex}
+                    rotation={rotation} setRotation={setRotation}
+                    showLargePreview={showLargePreview} setShowLargePreview={setShowLargePreview}
+                />
+            </div>
+        </div>
+    );
+}
+
+// ─── Attachments Section ─────────────────────────────────────────────────────
+
+function AttachmentsSection({ attachments, galleryIndex, setGalleryIndex, rotation, setRotation, showLargePreview, setShowLargePreview }: {
+    attachments: PaymentDetail['attachments'];
+    galleryIndex: number; setGalleryIndex: (v: number | ((n: number) => number)) => void;
+    rotation: number; setRotation: (v: number | ((n: number) => number)) => void;
+    showLargePreview: boolean; setShowLargePreview: (v: boolean) => void;
+}) {
+    if (attachments.length === 0) return null;
+
+    return (
+        <div>
+            <p style={eyebrow}>Attachments ({attachments.length})</p>
+            <div className="flex gap-2 overflow-x-auto pb-1">
+                {attachments.map((att, i) => (
+                    <button
+                        key={i}
+                        onClick={() => { setGalleryIndex(i); setShowLargePreview(true); setRotation(0); }}
+                        className="shrink-0 overflow-hidden transition-all"
+                        style={{
+                            width: 56, height: 56, borderRadius: 10,
+                            border: galleryIndex === i && showLargePreview ? '2px solid var(--blanc-info)' : '1px solid var(--blanc-line)',
+                            background: 'rgba(117,106,89,0.04)',
+                        }}
+                    >
+                        {att.kind === 'image' ? (
+                            <img src={att.url} alt={att.filename} className="w-full h-full object-cover" />
+                        ) : (
+                            <div className="flex flex-col items-center justify-center h-full text-[9px] font-semibold" style={{ color: 'var(--blanc-ink-3)' }}>
+                                <FileText className="size-4 mb-0.5" />
+                                {att.filename.split('.').pop()?.toUpperCase()}
+                            </div>
+                        )}
+                    </button>
+                ))}
+            </div>
+            {showLargePreview && attachments[galleryIndex] && (
+                <div className="mt-2 rounded-xl overflow-hidden" style={{ border: '1px solid var(--blanc-line)' }}>
+                    <div className="flex items-center gap-2 px-3 py-2" style={{ borderBottom: '1px solid var(--blanc-line)', background: 'var(--blanc-surface-strong)' }}>
+                        <button disabled={galleryIndex === 0} onClick={() => { setGalleryIndex(i => i - 1); setRotation(0); }} className="p-1 disabled:opacity-30"><ChevronLeft className="size-4" /></button>
+                        <span className="text-[12px] font-medium" style={{ color: 'var(--blanc-ink-2)' }}>{galleryIndex + 1} / {attachments.length}</span>
+                        <button disabled={galleryIndex >= attachments.length - 1} onClick={() => { setGalleryIndex(i => i + 1); setRotation(0); }} className="p-1 disabled:opacity-30"><ChevronRightIcon className="size-4" /></button>
+                        <button onClick={() => setRotation(r => r - 90)} className="p-1 ml-auto" style={{ color: 'var(--blanc-ink-3)' }}><RotateCcw className="size-3.5" /></button>
+                        <a href={attachments[galleryIndex].url} target="_blank" rel="noopener noreferrer" className="p-1" style={{ color: 'var(--blanc-info)' }}><ExternalLink className="size-3.5" /></a>
+                    </div>
+                    <div className="flex items-center justify-center p-3" style={{ background: 'rgba(30,30,30,0.95)', minHeight: 200, overflow: 'hidden' }}>
+                        {attachments[galleryIndex].kind === 'image' ? (
+                            <RotatableImage
+                                src={attachments[galleryIndex].url}
+                                alt={attachments[galleryIndex].filename}
+                                rotation={rotation}
+                            />
+                        ) : (
+                            <div className="flex flex-col items-center gap-2 text-white/60">
+                                <FileText className="size-10" />
+                                <span className="text-sm">{attachments[galleryIndex].filename}</span>
+                                <a href={attachments[galleryIndex].url} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-1.5 rounded-lg" style={{ background: 'var(--blanc-info)', color: '#fff' }}>Open File</a>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ─── RotatableImage — fits container width even when rotated 90/270 ──────────
+
+function RotatableImage({ src, alt, rotation }: { src: string; alt: string; rotation: number }) {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const imgRef = useRef<HTMLImageElement>(null);
+    const [scale, setScale] = useState(1);
+    const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
+
+    const isRotatedSideways = Math.abs(rotation % 360) === 90 || Math.abs(rotation % 360) === 270;
+
+    const recalc = useCallback(() => {
+        if (!containerRef.current || !naturalSize.w || !naturalSize.h) return;
+        const containerW = containerRef.current.clientWidth - 24;
+        if (isRotatedSideways) {
+            const rotatedVisualW = naturalSize.h;
+            const rotatedVisualH = naturalSize.w;
+            const s = Math.min(containerW / rotatedVisualW, (window.innerHeight * 0.7) / rotatedVisualH, 1);
+            setScale(s);
+        } else {
+            setScale(1);
+        }
+    }, [naturalSize, isRotatedSideways]);
+
+    useEffect(() => { recalc(); }, [recalc, rotation]);
+
+    const handleLoad = () => {
+        if (imgRef.current) {
+            setNaturalSize({ w: imgRef.current.naturalWidth, h: imgRef.current.naturalHeight });
+        }
+    };
+
+    const wrapperH = isRotatedSideways && naturalSize.w ? naturalSize.w * scale : undefined;
+
+    return (
+        <div ref={containerRef} style={{ width: '100%', height: wrapperH, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+            <img
+                ref={imgRef}
+                src={src}
+                alt={alt}
+                onLoad={handleLoad}
+                className="rounded"
+                style={{
+                    maxWidth: isRotatedSideways ? undefined : '100%',
+                    maxHeight: isRotatedSideways ? undefined : '70vh',
+                    objectFit: 'contain',
+                    transform: `rotate(${rotation}deg) scale(${isRotatedSideways ? scale : 1})`,
+                    transformOrigin: 'center center',
+                    transition: 'transform 0.2s ease',
+                }}
+            />
+        </div>
+    );
+}
+
+// ─── Metadata Section ────────────────────────────────────────────────────────
+
+function MetadataSection({ metadata, showMetadata, setShowMetadata }: {
+    metadata: Record<string, string> | null | undefined;
+    showMetadata: boolean;
+    setShowMetadata: (v: boolean) => void;
+}) {
+    if (!metadata || Object.keys(metadata).length === 0) return null;
+
+    return (
+        <div>
+            <button
+                onClick={() => setShowMetadata(!showMetadata)}
+                className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest transition-opacity hover:opacity-70"
+                style={{ color: 'var(--blanc-ink-3)', letterSpacing: '0.14em', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+            >
+                <ChevronDown className="size-3" style={{ transform: showMetadata ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s' }} />
+                Transaction Metadata
+            </button>
+            {showMetadata && (
+                <div className="mt-2 space-y-1">
+                    {Object.entries(metadata).map(([key, val]) => val ? (
+                        <div key={key} className="flex gap-2 text-[12px]">
+                            <span style={{ color: 'var(--blanc-ink-3)', minWidth: 100, textTransform: 'capitalize' as const }}>{key.replace(/_/g, ' ')}</span>
+                            <span className="font-mono text-[11px]" style={{ color: 'var(--blanc-ink-1)', wordBreak: 'break-all' as const }}>{val}</span>
+                        </div>
+                    ) : null)}
+                </div>
+            )}
         </div>
     );
 }

@@ -226,10 +226,9 @@ export const PulsePage: React.FC = () => {
                             {/* Detail card: Lead / Contact / Wizard */}
                             {(p.contactId || p.timelineId) && p.phone ? (
                                 p.lead ? (
-                                    <div className="pulse-card pulse-accent-top" style={{ '--card-accent': 'var(--blanc-info)' } as React.CSSProperties}>
+                                    <div className="pulse-card pulse-accent-top" style={{ '--card-accent': 'var(--blanc-info)', height: 560 } as React.CSSProperties}>
                                         <LeadDetailPanel
                                             lead={p.lead}
-                                            embedded
                                             onClose={() => { }}
                                             onEdit={(lead) => p.setEditingLead(lead)}
                                             onMarkLost={p.handleMarkLost}

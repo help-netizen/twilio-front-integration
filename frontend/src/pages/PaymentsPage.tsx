@@ -211,7 +211,7 @@ export default function PaymentsPage() {
                 </div>
 
             </div>
-            <FloatingDetailPanel open={!!pm.selectedId} onClose={pm.handleCloseDetail}>
+            <FloatingDetailPanel open={!!pm.selectedId} onClose={pm.handleCloseDetail} wide>
                 <PaymentDetailPanel detail={pm.detail} loading={pm.detailLoading} onClose={pm.handleCloseDetail} onToggleDeposited={pm.handleToggleDeposited} />
             </FloatingDetailPanel>
         </div>
