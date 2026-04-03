@@ -114,7 +114,7 @@ export function ContactInfoSections({ contact, onAddressesChanged }: ContactInfo
 function AddressTile({ address, index, contactId, onSaved }: { address: ContactAddress; index: number; contactId: number; onSaved?: () => void }) {
     const [editing, setEditing] = useState(false);
     const [saving, setSaving] = useState(false);
-    const [editedAddr, setEditedAddr] = useState({ street: '', apt: '', city: '', state: '', zip: '', lat: null as number | null, lng: null as number | null });
+    const [editedAddr, setEditedAddr] = useState<{ street: string; apt: string; city: string; state: string; zip: string; lat: number | null | undefined; lng: number | null | undefined }>({ street: '', apt: '', city: '', state: '', zip: '', lat: null, lng: null });
 
     const startEdit = () => {
         setEditedAddr({ street: address.line1 || '', apt: address.line2 || '', city: address.city || '', state: address.state || '', zip: address.postal_code || '', lat: address.lat ?? null, lng: address.lng ?? null });

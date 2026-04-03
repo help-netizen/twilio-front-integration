@@ -7,7 +7,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
     Loader2, FileText, ChevronDown, ChevronLeft, ChevronRight as ChevronRightIcon,
-    ImageIcon, ExternalLink, RotateCcw, Receipt,
+    ExternalLink, RotateCcw, Receipt,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
@@ -212,7 +212,7 @@ export function PaymentDetailPanel({
                 {detail.job && (
                     <div
                         style={{ ...sectionCard, cursor: 'pointer' }}
-                        onClick={() => detail.job?.job_id && navigate(`/jobs/${detail.job.job_id}`)}
+                        onClick={() => detail.job?.job_number && navigate(`/jobs/${detail.job.job_id}`)}
                         className="transition-opacity hover:opacity-80"
                     >
                         <p style={eyebrow}>Job</p>
@@ -390,7 +390,7 @@ function RotatableImage({ src, alt, rotation }: { src: string; alt: string; rota
 // ─── Metadata Section ────────────────────────────────────────────────────────
 
 function MetadataSection({ metadata, showMetadata, setShowMetadata }: {
-    metadata: Record<string, string> | null | undefined;
+    metadata: Record<string, string | null> | null | undefined;
     showMetadata: boolean;
     setShowMetadata: (v: boolean) => void;
 }) {
