@@ -212,7 +212,7 @@ export function PaymentDetailPanel({
                 {detail.job && (
                     <div
                         style={{ ...sectionCard, cursor: 'pointer' }}
-                        onClick={() => detail.job?.job_number && navigate(`/jobs/${detail.job.job_id}`)}
+                        onClick={() => detail.job_id && navigate(`/jobs/${detail.job_id}`)}
                         className="transition-opacity hover:opacity-80"
                     >
                         <p style={eyebrow}>Job</p>

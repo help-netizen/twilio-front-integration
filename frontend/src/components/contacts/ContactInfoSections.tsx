@@ -1,4 +1,4 @@
-import { ChevronRight, Pencil } from 'lucide-react';
+import { Pencil } from 'lucide-react';
 import { useState } from 'react';
 import { Badge } from '../ui/badge';
 import { toast } from 'sonner';
@@ -91,7 +91,7 @@ export function ContactInfoSections({ contact, onAddressesChanged }: ContactInfo
                         </div>
                     )}
                     {email && (
-                        <div style={{ ...infoRow, borderBottom: (!secondaryPhone && !phone) ? 'none' : infoRow.borderBottom, ...((!phone && !secondaryPhone) ? {} : {}), borderBottom: 'none', paddingBottom: 0 }}>
+                        <div style={{ ...infoRow, borderBottom: 'none', paddingBottom: 0 }}>
                             <span style={infoLabel}>Email</span>
                             <a href={`mailto:${email}`} className="text-[13px] font-semibold hover:underline" style={{ color: 'var(--blanc-ink-1)', wordBreak: 'break-all' as const }}>
                                 {email}
@@ -147,7 +147,7 @@ function AddressTile({ address, index, contactId, onSaved }: { address: ContactA
                         </button>
                     </div>
                 </div>
-                <AddressAutocomplete idPrefix={`addr-${index}`} defaultUseDetails={true} value={editedAddr} onChange={setEditedAddr} />
+                <AddressAutocomplete idPrefix={`addr-${index}`} defaultUseDetails={true} value={editedAddr} onChange={(v: any) => setEditedAddr(v)} />
             </div>
         );
     }

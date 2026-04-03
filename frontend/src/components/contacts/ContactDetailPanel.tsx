@@ -12,7 +12,7 @@ import { Skeleton } from '../ui/skeleton';
 import { Switch } from '../ui/switch';
 import type { Contact, ContactLead } from '../../types/contact';
 import * as contactsApi from '../../services/contactsApi';
-import * as pulseApi from '../../services/pulseApi';
+import { pulseApi } from '../../services/pulseApi';
 import { ContactInfoSections } from './ContactInfoSections';
 import { EditContactDialog } from './EditContactDialog';
 import { JobsList } from './ContactJobsList';
@@ -175,7 +175,7 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
                 open={editOpen}
                 onOpenChange={setEditOpen}
                 contact={contact}
-                onSaved={() => { setEditOpen(false); onContactChanged?.(); }}
+                onSuccess={() => { setEditOpen(false); onContactChanged?.(); }}
             />
         </>
     );
