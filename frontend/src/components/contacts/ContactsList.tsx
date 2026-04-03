@@ -1,6 +1,5 @@
-import { Search, ChevronLeft, ChevronRight, User } from 'lucide-react';
+import { ChevronLeft, ChevronRight, User } from 'lucide-react';
 import { Button } from '../ui/button';
-import { Input } from '../ui/input';
 import { Skeleton } from '../ui/skeleton';
 import type { Contact } from '../../types/contact';
 
@@ -55,7 +54,7 @@ export function ContactsList({
                         fontSize: '14px',
                     }}>
                         <User style={{ width: '40px', height: '40px', margin: '0 auto 12px', opacity: 0.4 }} />
-                        <div>{search ? 'No contacts match your search' : 'No contacts found'}</div>
+                        <div>No contacts found</div>
                     </div>
                 ) : (
                     contacts.map((contact) => (

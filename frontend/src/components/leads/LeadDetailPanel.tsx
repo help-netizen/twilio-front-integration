@@ -10,7 +10,6 @@ import { ChevronDown, Users } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import type { Lead } from '../../types/lead';
 import { LEAD_STATUSES } from '../../types/lead';
-import { Button } from '../ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { MetadataSection, LeadDetailFooter } from './LeadDetailSections';
@@ -90,7 +89,7 @@ function JobDetailsSection({ lead }: { lead: Lead }) {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export function LeadDetailPanel({ lead, onClose, onEdit, onMarkLost, onActivate, onConvert, onUpdateComments, onUpdateStatus, onUpdateSource, onDelete, embedded }: LeadDetailPanelProps) {
+export function LeadDetailPanel({ lead, onClose: _onClose, onEdit, onMarkLost, onActivate, onConvert, onUpdateComments, onUpdateStatus, onUpdateSource, onDelete, embedded }: LeadDetailPanelProps) {
     const [comments, setComments] = useState('');
     const [rightTab, setRightTab] = useState<'details' | 'financials'>('details');
 
