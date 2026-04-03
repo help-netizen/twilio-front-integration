@@ -75,7 +75,7 @@ export function JobsTable({
             {/* Table */}
             <div className="flex-1 overflow-auto">
                 <table className="w-full text-sm">
-                    <thead className="bg-white sticky top-0 z-10 shadow-[0_1px_0_0_hsl(var(--border))]">
+                    <thead className="sticky top-0 z-10" style={{ background: 'var(--blanc-surface-strong)', boxShadow: '0 1px 0 0 var(--blanc-line)' }}>
                         <tr className="border-b text-left">
                             {visibleFields.map(fk => {
                                 const col = allColumns[fk];

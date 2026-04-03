@@ -44,7 +44,6 @@ export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChang
                     Job
                     {(job.job_number || job.id) && (
                         <>
-                            <span style={{ opacity: 0.4 }}>·</span>
                             {job.zenbooker_job_id ? (
                                 <a
                                     href={`https://zenbooker.com/app?view=jobs&view-job=${job.zenbooker_job_id}`}
@@ -62,9 +61,7 @@ export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChang
                         </>
                     )}
                     {showServiceInEyebrow && (
-                        <>
-                            <span style={{ opacity: 0.4 }}>·</span>
-                            <span style={{
+                        <span style={{
                                 color: 'var(--blanc-ink-3)',
                                 fontWeight: 500,
                                 textTransform: 'none',
@@ -72,8 +69,7 @@ export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChang
                                 fontSize: 11,
                             }}>
                                 {job.service_name}
-                            </span>
-                        </>
+                        </span>
                     )}
                 </span>
             </div>
