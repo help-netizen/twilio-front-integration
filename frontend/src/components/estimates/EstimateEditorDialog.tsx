@@ -1,3 +1,9 @@
+/**
+ * EstimateEditorDialog — clean form for creating/editing estimates.
+ *
+ * When opened from a Job context (defaultJobId), hides ID fields and shows context.
+ * Backend auto-resolves contact_id/lead_id from job_id.
+ */
 import { useState, useEffect, useCallback } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog';
 import { Button } from '../ui/button';
@@ -6,11 +12,10 @@ import { Label } from '../ui/label';
 import { Textarea } from '../ui/textarea';
 import { Checkbox } from '../ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
-import { Separator } from '../ui/separator';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, ChevronDown } from 'lucide-react';
 import type { Estimate, EstimateCreateData } from '../../services/estimatesApi';
 
-// ── Item row type ────────────────────────────────────────────────────────────
+// ── Line item type ───────────────────────────────────────────────────────────
 
 interface LineItem {
     key: string;
@@ -23,18 +28,10 @@ interface LineItem {
 }
 
 function emptyItem(): LineItem {
-    return {
-        key: crypto.randomUUID(),
-        name: '',
-        description: '',
-        quantity: '1',
-        unit: '',
-        unit_price: '0',
-        taxable: true,
-    };
+    return { key: crypto.randomUUID(), name: '', description: '', quantity: '1', unit: '', unit_price: '0', taxable: true };
 }
 
-function calcItemAmount(item: LineItem): number {
+function calcAmount(item: LineItem): number {
     return (parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0);
 }
 
@@ -50,15 +47,17 @@ interface Props {
     estimate: Estimate | null;
     defaultJobId?: number;
     defaultLeadId?: number;
+    defaultContext?: string;
     onSave: (data: EstimateCreateData) => Promise<void>;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobId, defaultLeadId, onSave }: Props) {
+export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobId, defaultLeadId, defaultContext, onSave }: Props) {
     const isEdit = !!estimate;
+    const hasJobContext = !!defaultJobId && !isEdit;
 
-    // ── Form state ───────────────────────────────────────────────────────
+    // Form state
     const [contactId, setContactId] = useState('');
     const [leadId, setLeadId] = useState('');
     const [jobId, setJobId] = useState('');
@@ -73,9 +72,10 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
     const [depositValue, setDepositValue] = useState('0');
     const [validUntil, setValidUntil] = useState('');
     const [signatureRequired, setSignatureRequired] = useState(false);
+    const [showOptions, setShowOptions] = useState(false);
     const [saving, setSaving] = useState(false);
 
-    // ── Populate on edit ─────────────────────────────────────────────────
+    // Populate on open
     useEffect(() => {
         if (!open) return;
         if (estimate) {
@@ -92,21 +92,11 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
             setDepositValue(estimate.deposit_value || '0');
             setValidUntil(estimate.valid_until ? estimate.valid_until.split('T')[0] : '');
             setSignatureRequired(estimate.signature_required);
-            if (estimate.items && estimate.items.length > 0) {
-                setItems(estimate.items.map(it => ({
-                    key: crypto.randomUUID(),
-                    name: it.name,
-                    description: it.description || '',
-                    quantity: it.quantity,
-                    unit: it.unit || '',
-                    unit_price: it.unit_price,
-                    taxable: it.taxable,
-                })));
-            } else {
-                setItems([emptyItem()]);
-            }
+            setShowOptions(estimate.deposit_required || estimate.signature_required || !!estimate.valid_until);
+            if (estimate.items?.length) {
+                setItems(estimate.items.map(it => ({ key: crypto.randomUUID(), name: it.name, description: it.description || '', quantity: it.quantity, unit: it.unit || '', unit_price: it.unit_price, taxable: it.taxable })));
+            } else { setItems([emptyItem()]); }
         } else {
-            // Reset for create
             setContactId('');
             setLeadId(defaultLeadId ? String(defaultLeadId) : '');
             setJobId(defaultJobId ? String(defaultJobId) : '');
@@ -121,32 +111,25 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
             setDepositValue('0');
             setValidUntil('');
             setSignatureRequired(false);
+            setShowOptions(false);
         }
-    }, [open, estimate]);
+    }, [open, estimate]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // ── Calculations ─────────────────────────────────────────────────────
-    const subtotal = items.reduce((sum, it) => sum + calcItemAmount(it), 0);
+    // Calculations
+    const subtotal = items.reduce((sum, it) => sum + calcAmount(it), 0);
     const discount = parseFloat(discountAmount) || 0;
-    const taxableSubtotal = items
-        .filter(it => it.taxable)
-        .reduce((sum, it) => sum + calcItemAmount(it), 0);
-    const taxAmt = (taxableSubtotal - discount) * ((parseFloat(taxRate) || 0) / 100);
-    const total = subtotal - discount + Math.max(taxAmt, 0);
+    const taxableSubtotal = items.filter(it => it.taxable).reduce((sum, it) => sum + calcAmount(it), 0);
+    const taxAmt = Math.max((taxableSubtotal - discount) * ((parseFloat(taxRate) || 0) / 100), 0);
+    const total = subtotal - discount + taxAmt;
 
-    // ── Item mutations ───────────────────────────────────────────────────
+    // Item mutations
     const updateItem = useCallback((key: string, field: keyof LineItem, value: string | boolean) => {
         setItems(prev => prev.map(it => it.key === key ? { ...it, [field]: value } : it));
     }, []);
+    const addItem = useCallback(() => setItems(prev => [...prev, emptyItem()]), []);
+    const removeItem = useCallback((key: string) => setItems(prev => prev.length > 1 ? prev.filter(it => it.key !== key) : prev), []);
 
-    const addItem = useCallback(() => {
-        setItems(prev => [...prev, emptyItem()]);
-    }, []);
-
-    const removeItem = useCallback((key: string) => {
-        setItems(prev => prev.length > 1 ? prev.filter(it => it.key !== key) : prev);
-    }, []);
-
-    // ── Save ─────────────────────────────────────────────────────────────
+    // Save
     const handleSave = async () => {
         setSaving(true);
         try {
@@ -165,263 +148,240 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                 signature_required: signatureRequired,
                 valid_until: validUntil || null,
                 items: items.filter(it => it.name.trim()).map((it, idx) => ({
-                    sort_order: idx,
-                    name: it.name,
-                    description: it.description || null,
-                    quantity: it.quantity,
-                    unit: it.unit || null,
-                    unit_price: it.unit_price,
-                    amount: String(calcItemAmount(it)),
-                    taxable: it.taxable,
-                    metadata: null,
+                    sort_order: idx, name: it.name, description: it.description || null,
+                    quantity: it.quantity, unit: it.unit || null, unit_price: it.unit_price,
+                    amount: String(calcAmount(it)), taxable: it.taxable, metadata: null,
                 })),
             };
             await onSave(data);
-        } finally {
-            setSaving(false);
-        }
+        } finally { setSaving(false); }
     };
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" style={{ background: 'var(--blanc-surface-strong)' }}>
                 <DialogHeader>
-                    <DialogTitle>{isEdit ? 'Edit Estimate' : 'New Estimate'}</DialogTitle>
+                    <DialogTitle style={{ fontFamily: 'var(--blanc-font-heading)', fontSize: 20, fontWeight: 700, color: 'var(--blanc-ink-1)' }}>
+                        {isEdit ? 'Edit Estimate' : 'New Estimate'}
+                    </DialogTitle>
                 </DialogHeader>
 
-                <div className="space-y-4 py-2">
-                    {/* Customer / Links */}
-                    <div className="grid grid-cols-3 gap-3">
-                        <div>
-                            <Label className="text-xs">Contact ID</Label>
-                            <Input value={contactId} onChange={e => setContactId(e.target.value)} placeholder="Contact ID" />
+                <div className="space-y-5 py-2">
+                    {/* Context banner (when from Job) */}
+                    {hasJobContext && defaultContext && (
+                        <div className="text-[12px] font-medium" style={{ color: 'var(--blanc-ink-3)' }}>
+                            {defaultContext}
                         </div>
-                        <div>
-                            <Label className="text-xs">Lead ID</Label>
-                            <Input value={leadId} onChange={e => setLeadId(e.target.value)} placeholder="Optional" />
+                    )}
+
+                    {/* IDs — only show when NOT from job context */}
+                    {!hasJobContext && (
+                        <div className="grid grid-cols-3 gap-3">
+                            <div>
+                                <Label className="text-xs" style={{ color: 'var(--blanc-ink-2)' }}>Contact ID</Label>
+                                <Input value={contactId} onChange={e => setContactId(e.target.value)} placeholder="Contact ID" />
+                            </div>
+                            <div>
+                                <Label className="text-xs" style={{ color: 'var(--blanc-ink-2)' }}>Lead ID</Label>
+                                <Input value={leadId} onChange={e => setLeadId(e.target.value)} placeholder="Optional" />
+                            </div>
+                            <div>
+                                <Label className="text-xs" style={{ color: 'var(--blanc-ink-2)' }}>Job ID</Label>
+                                <Input value={jobId} onChange={e => setJobId(e.target.value)} placeholder="Optional" />
+                            </div>
                         </div>
-                        <div>
-                            <Label className="text-xs">Job ID</Label>
-                            <Input value={jobId} onChange={e => setJobId(e.target.value)} placeholder="Optional" />
-                        </div>
-                    </div>
+                    )}
 
                     {/* Title */}
                     <div>
-                        <Label className="text-xs">Title</Label>
-                        <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Estimate title" />
+                        <Label className="text-xs" style={{ color: 'var(--blanc-ink-2)' }}>Title</Label>
+                        <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Estimate title" style={{ fontSize: 15, fontWeight: 500 }} />
                     </div>
 
-                    <Separator />
-
-                    {/* Line Items */}
+                    {/* ── Line Items ── */}
                     <div>
-                        <div className="flex items-center justify-between mb-2">
-                            <Label className="text-xs font-medium uppercase tracking-wide">Line Items</Label>
-                            <Button variant="ghost" size="sm" onClick={addItem}>
-                                <Plus className="size-3.5 mr-1" />Add Item
-                            </Button>
+                        <div className="flex items-center justify-between mb-3">
+                            <span className="text-[11px] font-semibold uppercase tracking-widest" style={{ color: 'var(--blanc-ink-3)', letterSpacing: '0.14em' }}>Line Items</span>
+                            <button onClick={addItem} className="inline-flex items-center gap-1 text-[12px] font-medium transition-opacity hover:opacity-70" style={{ color: 'var(--blanc-info)', background: 'none', border: 'none', cursor: 'pointer' }}>
+                                <Plus className="size-3.5" /> Add Item
+                            </button>
                         </div>
                         <div className="space-y-2">
-                            {items.map(item => (
-                                <div key={item.key} className="grid grid-cols-12 gap-2 items-end border rounded-md p-2">
-                                    <div className="col-span-4">
-                                        <Label className="text-xs">Name</Label>
-                                        <Input
-                                            value={item.name}
-                                            onChange={e => updateItem(item.key, 'name', e.target.value)}
-                                            placeholder="Item name"
-                                        />
+                            {items.map(item => {
+                                const amt = calcAmount(item);
+                                return (
+                                    <div
+                                        key={item.key}
+                                        className="rounded-xl p-3"
+                                        style={{ border: '1px solid var(--blanc-line)', background: 'rgba(255,255,255,0.5)' }}
+                                    >
+                                        {/* Row 1: Name + Amount */}
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <Input
+                                                value={item.name}
+                                                onChange={e => updateItem(item.key, 'name', e.target.value)}
+                                                placeholder="Item name"
+                                                className="flex-1"
+                                                style={{ fontSize: 14, fontWeight: 500 }}
+                                            />
+                                            <span className="text-sm font-semibold font-mono shrink-0 w-20 text-right" style={{ color: 'var(--blanc-ink-1)' }}>
+                                                ${money(amt)}
+                                            </span>
+                                        </div>
+                                        {/* Row 2: Qty × Price + controls */}
+                                        <div className="flex items-center gap-2">
+                                            <div className="flex items-center gap-1.5">
+                                                <Input
+                                                    type="number"
+                                                    value={item.quantity}
+                                                    onChange={e => updateItem(item.key, 'quantity', e.target.value)}
+                                                    min="0" step="any"
+                                                    className="w-16 text-center"
+                                                    style={{ fontSize: 13 }}
+                                                />
+                                                <span className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>×</span>
+                                                <div className="relative">
+                                                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs" style={{ color: 'var(--blanc-ink-3)' }}>$</span>
+                                                    <Input
+                                                        type="number"
+                                                        value={item.unit_price}
+                                                        onChange={e => updateItem(item.key, 'unit_price', e.target.value)}
+                                                        min="0" step="0.01"
+                                                        className="w-24 pl-5"
+                                                        style={{ fontSize: 13 }}
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-2 ml-auto">
+                                                <div className="flex items-center gap-1.5">
+                                                    <Checkbox
+                                                        checked={item.taxable}
+                                                        onCheckedChange={checked => updateItem(item.key, 'taxable', !!checked)}
+                                                    />
+                                                    <span className="text-[11px]" style={{ color: 'var(--blanc-ink-3)' }}>Tax</span>
+                                                </div>
+                                                <button
+                                                    onClick={() => removeItem(item.key)}
+                                                    className="p-1 transition-opacity hover:opacity-70"
+                                                    style={{ color: 'var(--blanc-ink-3)' }}
+                                                >
+                                                    <Trash2 className="size-3.5" />
+                                                </button>
+                                            </div>
+                                        </div>
                                     </div>
-                                    <div className="col-span-2">
-                                        <Label className="text-xs">Qty</Label>
-                                        <Input
-                                            type="number"
-                                            value={item.quantity}
-                                            onChange={e => updateItem(item.key, 'quantity', e.target.value)}
-                                            min="0"
-                                            step="any"
-                                        />
-                                    </div>
-                                    <div className="col-span-2">
-                                        <Label className="text-xs">Unit Price</Label>
-                                        <Input
-                                            type="number"
-                                            value={item.unit_price}
-                                            onChange={e => updateItem(item.key, 'unit_price', e.target.value)}
-                                            min="0"
-                                            step="0.01"
-                                        />
-                                    </div>
-                                    <div className="col-span-2 text-right">
-                                        <Label className="text-xs">Amount</Label>
-                                        <p className="h-9 flex items-center justify-end font-mono text-sm">
-                                            ${money(calcItemAmount(item))}
-                                        </p>
-                                    </div>
-                                    <div className="col-span-1 flex items-center gap-1">
-                                        <Checkbox
-                                            checked={item.taxable}
-                                            onCheckedChange={(checked) => updateItem(item.key, 'taxable', !!checked)}
-                                            title="Taxable"
-                                        />
-                                    </div>
-                                    <div className="col-span-1 flex justify-end">
-                                        <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            className="size-7 p-0 text-muted-foreground hover:text-red-600"
-                                            onClick={() => removeItem(item.key)}
-                                        >
-                                            <Trash2 className="size-3.5" />
-                                        </Button>
-                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    {/* ── Financials ── */}
+                    <div className="flex items-start gap-4">
+                        <div className="flex items-center gap-3">
+                            <div>
+                                <Label className="text-[11px]" style={{ color: 'var(--blanc-ink-3)' }}>Tax %</Label>
+                                <Input type="number" value={taxRate} onChange={e => setTaxRate(e.target.value)} min="0" step="0.01" className="w-20" style={{ fontSize: 13 }} />
+                            </div>
+                            <div>
+                                <Label className="text-[11px]" style={{ color: 'var(--blanc-ink-3)' }}>Discount $</Label>
+                                <Input type="number" value={discountAmount} onChange={e => setDiscountAmount(e.target.value)} min="0" step="0.01" className="w-24" style={{ fontSize: 13 }} />
+                            </div>
+                        </div>
+                        <div className="ml-auto text-right space-y-1">
+                            <div className="flex justify-between gap-6 text-[13px]" style={{ color: 'var(--blanc-ink-2)' }}>
+                                <span>Subtotal</span>
+                                <span className="font-mono">${money(subtotal)}</span>
+                            </div>
+                            {discount > 0 && (
+                                <div className="flex justify-between gap-6 text-[13px]" style={{ color: '#EF4444' }}>
+                                    <span>Discount</span>
+                                    <span className="font-mono">-${money(discount)}</span>
                                 </div>
-                            ))}
-                        </div>
-                    </div>
-
-                    <Separator />
-
-                    {/* Tax & Discount */}
-                    <div className="grid grid-cols-2 gap-3">
-                        <div>
-                            <Label className="text-xs">Tax Rate (%)</Label>
-                            <Input
-                                type="number"
-                                value={taxRate}
-                                onChange={e => setTaxRate(e.target.value)}
-                                min="0"
-                                step="0.01"
-                            />
-                        </div>
-                        <div>
-                            <Label className="text-xs">Discount ($)</Label>
-                            <Input
-                                type="number"
-                                value={discountAmount}
-                                onChange={e => setDiscountAmount(e.target.value)}
-                                min="0"
-                                step="0.01"
-                            />
-                        </div>
-                    </div>
-
-                    {/* Totals summary */}
-                    <div className="bg-muted/50 rounded-md p-3 space-y-1 text-sm">
-                        <div className="flex justify-between">
-                            <span>Subtotal</span>
-                            <span className="font-mono">${money(subtotal)}</span>
-                        </div>
-                        {discount > 0 && (
-                            <div className="flex justify-between text-red-600">
-                                <span>Discount</span>
-                                <span className="font-mono">-${money(discount)}</span>
-                            </div>
-                        )}
-                        {taxAmt > 0 && (
-                            <div className="flex justify-between">
-                                <span>Tax ({taxRate}%)</span>
-                                <span className="font-mono">${money(Math.max(taxAmt, 0))}</span>
-                            </div>
-                        )}
-                        <div className="flex justify-between font-semibold border-t pt-1">
-                            <span>Total</span>
-                            <span className="font-mono">${money(total)}</span>
-                        </div>
-                    </div>
-
-                    <Separator />
-
-                    {/* Deposit */}
-                    <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                            <Checkbox
-                                id="deposit-required"
-                                checked={depositRequired}
-                                onCheckedChange={(checked) => setDepositRequired(!!checked)}
-                            />
-                            <Label htmlFor="deposit-required" className="text-sm cursor-pointer">Deposit required</Label>
-                        </div>
-                        {depositRequired && (
-                            <div className="grid grid-cols-2 gap-3 pl-6">
-                                <div>
-                                    <Label className="text-xs">Type</Label>
-                                    <Select value={depositType} onValueChange={setDepositType}>
-                                        <SelectTrigger>
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="fixed">Fixed Amount</SelectItem>
-                                            <SelectItem value="percentage">Percentage</SelectItem>
-                                        </SelectContent>
-                                    </Select>
+                            )}
+                            {taxAmt > 0 && (
+                                <div className="flex justify-between gap-6 text-[13px]" style={{ color: 'var(--blanc-ink-2)' }}>
+                                    <span>Tax ({taxRate}%)</span>
+                                    <span className="font-mono">${money(taxAmt)}</span>
                                 </div>
-                                <div>
-                                    <Label className="text-xs">Value</Label>
-                                    <Input
-                                        type="number"
-                                        value={depositValue}
-                                        onChange={e => setDepositValue(e.target.value)}
-                                        min="0"
-                                        step="0.01"
-                                    />
-                                </div>
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Valid until + signature */}
-                    <div className="grid grid-cols-2 gap-3">
-                        <div>
-                            <Label className="text-xs">Valid Until</Label>
-                            <Input
-                                type="date"
-                                value={validUntil}
-                                onChange={e => setValidUntil(e.target.value)}
-                            />
-                        </div>
-                        <div className="flex items-end pb-2">
-                            <div className="flex items-center gap-2">
-                                <Checkbox
-                                    id="signature-required"
-                                    checked={signatureRequired}
-                                    onCheckedChange={(checked) => setSignatureRequired(!!checked)}
-                                />
-                                <Label htmlFor="signature-required" className="text-sm cursor-pointer">Signature required</Label>
+                            )}
+                            <div className="flex justify-between gap-6 text-[15px] font-semibold pt-1" style={{ borderTop: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-1)' }}>
+                                <span>Total</span>
+                                <span className="font-mono">${money(total)}</span>
                             </div>
                         </div>
                     </div>
 
-                    <Separator />
-
-                    {/* Notes */}
+                    {/* ── Options (collapsed) ── */}
                     <div>
-                        <Label className="text-xs">Notes (visible to customer)</Label>
-                        <Textarea
-                            value={notes}
-                            onChange={e => setNotes(e.target.value)}
-                            placeholder="Notes for the customer..."
-                            rows={2}
-                        />
+                        <button
+                            onClick={() => setShowOptions(!showOptions)}
+                            className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest transition-opacity hover:opacity-70"
+                            style={{ color: 'var(--blanc-ink-3)', letterSpacing: '0.14em', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                        >
+                            <ChevronDown className="size-3" style={{ transform: showOptions ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s' }} />
+                            Options
+                        </button>
+                        {showOptions && (
+                            <div className="mt-3 space-y-3">
+                                {/* Deposit */}
+                                <div className="flex items-center gap-2">
+                                    <Checkbox id="est-deposit" checked={depositRequired} onCheckedChange={checked => setDepositRequired(!!checked)} />
+                                    <Label htmlFor="est-deposit" className="text-sm cursor-pointer" style={{ color: 'var(--blanc-ink-1)' }}>Deposit required</Label>
+                                </div>
+                                {depositRequired && (
+                                    <div className="grid grid-cols-2 gap-3 pl-6">
+                                        <div>
+                                            <Label className="text-[11px]" style={{ color: 'var(--blanc-ink-3)' }}>Type</Label>
+                                            <Select value={depositType} onValueChange={setDepositType}>
+                                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="fixed">Fixed Amount</SelectItem>
+                                                    <SelectItem value="percentage">Percentage</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                        <div>
+                                            <Label className="text-[11px]" style={{ color: 'var(--blanc-ink-3)' }}>Value</Label>
+                                            <Input type="number" value={depositValue} onChange={e => setDepositValue(e.target.value)} min="0" step="0.01" />
+                                        </div>
+                                    </div>
+                                )}
+                                {/* Valid until + signature */}
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <Label className="text-[11px]" style={{ color: 'var(--blanc-ink-3)' }}>Valid Until</Label>
+                                        <Input type="date" value={validUntil} onChange={e => setValidUntil(e.target.value)} />
+                                    </div>
+                                    <div className="flex items-end pb-2">
+                                        <div className="flex items-center gap-2">
+                                            <Checkbox id="est-sig" checked={signatureRequired} onCheckedChange={checked => setSignatureRequired(!!checked)} />
+                                            <Label htmlFor="est-sig" className="text-sm cursor-pointer" style={{ color: 'var(--blanc-ink-1)' }}>Signature required</Label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
-                    <div>
-                        <Label className="text-xs">Internal Note</Label>
-                        <Textarea
-                            value={internalNote}
-                            onChange={e => setInternalNote(e.target.value)}
-                            placeholder="Internal notes (not visible to customer)..."
-                            rows={2}
-                        />
+
+                    {/* ── Notes ── */}
+                    <div className="space-y-3">
+                        <div>
+                            <Label className="text-[11px]" style={{ color: 'var(--blanc-ink-3)' }}>Notes (visible to customer)</Label>
+                            <Textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Notes for the customer..." rows={2} />
+                        </div>
+                        <div>
+                            <Label className="text-[11px]" style={{ color: 'var(--blanc-ink-3)' }}>Internal Note</Label>
+                            <Textarea value={internalNote} onChange={e => setInternalNote(e.target.value)} placeholder="Internal notes (not visible)..." rows={2} />
+                        </div>
                     </div>
                 </div>
 
                 <DialogFooter>
-                    <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+                    <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
                         Cancel
                     </Button>
-                    <Button onClick={handleSave} disabled={saving}>
-                        {saving ? 'Saving...' : isEdit ? 'Update Estimate' : 'Create Estimate'}
+                    <Button type="button" onClick={handleSave} disabled={saving} style={{ background: 'var(--blanc-info)', color: '#fff' }}>
+                        {saving ? 'Saving...' : isEdit ? 'Update Estimate' : 'Save Estimate'}
                     </Button>
                 </DialogFooter>
             </DialogContent>
