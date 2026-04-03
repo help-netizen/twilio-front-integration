@@ -9,12 +9,12 @@ import { EditLeadDialog } from '../components/leads/EditLeadDialog';
 import { ColumnSettingsDialog } from '../components/leads/ColumnSettingsDialog';
 import { ConvertToJobDialog } from '../components/leads/ConvertToJobDialog';
 import { Plus, Settings } from 'lucide-react';
-import './PulsePage.css';
 import * as leadsApi from '../services/leadsApi';
 import { useLeadFormSettings } from '../hooks/useLeadFormSettings';
 import type { Lead, LeadsListParams, TableColumn } from '../types/lead';
 import { DEFAULT_COLUMNS } from '../types/lead';
 import { createLeadActions } from '../hooks/useLeadsActions';
+import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 
 const STORAGE_KEY = 'leads-table-columns';
 
@@ -34,6 +34,8 @@ export function LeadsPage() {
     const [sourceFilter, setSourceFilter] = useState<string[]>([]);
     const [jobTypeFilter, setJobTypeFilter] = useState<string[]>([]);
     const [hasMore, setHasMore] = useState(false);
+    const [sortBy, setSortBy] = useState<string>('CreatedDate');
+    const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
     const { customFields: allSettingsFields } = useLeadFormSettings();
     const searchableFields = useMemo(() => allSettingsFields.filter(f => f.is_searchable && !f.is_system).map(f => ({ api_name: f.api_name })), [allSettingsFields]);
 
@@ -57,8 +59,15 @@ export function LeadsPage() {
         if (searchQuery.trim()) { const q = searchQuery.toLowerCase(); result = result.filter(lead => { const fn = `${lead.FirstName || ''} ${lead.LastName || ''}`.toLowerCase(); if (fn.includes(q) || lead.Company?.toLowerCase().includes(q) || lead.Phone?.includes(q) || lead.Email?.toLowerCase().includes(q) || String(lead.SerialId)?.includes(q)) return true; if (lead.Metadata && searchableFields.length > 0) { for (const f of searchableFields) { const v = (lead.Metadata as any)[f.api_name]; if (v && String(v).toLowerCase().includes(q)) return true; } } return false; }); }
         if (sourceFilter.length > 0) result = result.filter(l => l.JobSource && sourceFilter.includes(l.JobSource));
         if (jobTypeFilter.length > 0) result = result.filter(l => l.JobType && jobTypeFilter.includes(l.JobType));
+        // Client-side sort
+        result = [...result].sort((a, b) => {
+            const av = (a as any)[sortBy] ?? '';
+            const bv = (b as any)[sortBy] ?? '';
+            const cmp = String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' });
+            return sortOrder === 'asc' ? cmp : -cmp;
+        });
         return result;
-    }, [leads, searchQuery, sourceFilter, jobTypeFilter, searchableFields]);
+    }, [leads, searchQuery, sourceFilter, jobTypeFilter, searchableFields, sortBy, sortOrder]);
 
     const handleFiltersChange = (nf: Partial<LeadsListParams>) => setFilters(prev => ({ ...prev, ...nf, offset: 0 }));
     const handleNextPage = () => { if (hasMore) setFilters(prev => ({ ...prev, offset: (prev.offset || 0) + (prev.records || 100) })); };
@@ -70,38 +79,45 @@ export function LeadsPage() {
 
     return (
         <div className="blanc-page-wrapper">
-            {/* Unified header: title + search + controls — same row, like Pulse */}
-            <div className="pulse-unified-header">
-                <h1 className="pulse-header-title">Leads</h1>
+            {/* Unified header: title + search + controls in one row */}
+            <div className="blanc-unified-header">
+                <h1 className="blanc-header-title">Leads</h1>
 
-                <div className="pulse-search-wrapper">
-                    <LeadsFilters filters={filters} searchQuery={searchQuery} sourceFilter={sourceFilter} jobTypeFilter={jobTypeFilter} onFiltersChange={handleFiltersChange} onSearchChange={setSearchQuery} onSourceFilterChange={setSourceFilter} onJobTypeFilterChange={setJobTypeFilter} />
+                <div className="blanc-search-wrapper">
+                    <input
+                        type="text"
+                        placeholder="type to find anything..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="blanc-search-input"
+                    />
                 </div>
 
-                <div className="pulse-filters-group">
+                <div className="blanc-controls-group">
+                    <LeadsFilters filters={filters} sourceFilter={sourceFilter} jobTypeFilter={jobTypeFilter} onFiltersChange={handleFiltersChange} onSourceFilterChange={setSourceFilter} onJobTypeFilterChange={setJobTypeFilter} />
                     <button
                         onClick={() => setSettingsDialogOpen(true)}
-                        className="inline-flex items-center justify-center transition-opacity hover:opacity-70"
-                        style={{ width: 42, height: 42, borderRadius: 14, border: '1px solid rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', color: 'var(--blanc-ink-2)', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
+                        className="blanc-control-chip-icon"
                         title="Column settings"
                     >
                         <Settings className="size-4" />
                     </button>
                     <button
                         onClick={() => setCreateDialogOpen(true)}
-                        className="inline-flex items-center gap-2.5 px-6 text-[15px] font-semibold transition-opacity hover:opacity-85"
-                        style={{ background: 'var(--blanc-info)', color: '#fff', minHeight: 42, borderRadius: 14, border: 'none', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
+                        className="blanc-control-chip-primary"
                     >
                         <Plus className="size-4" />Create Lead
                     </button>
                 </div>
             </div>
             <div className="blanc-page-card">
-                <div className={`flex-1 flex flex-col overflow-x-auto ${selectedLead ? 'hidden md:flex' : 'flex'}`}>
-                    <LeadsTable leads={filteredLeads} loading={loading} selectedLeadId={selectedLead?.UUID} columns={columns} onSelectLead={handleSelectLead} onMarkLost={actions.handleMarkLost} onActivate={actions.handleActivate} onConvert={actions.handleConvert} offset={filters.offset || 0} hasMore={hasMore} onNextPage={handleNextPage} onPrevPage={handlePrevPage} />
+                <div className="flex-1 flex flex-col overflow-x-auto">
+                    <LeadsTable leads={filteredLeads} loading={loading} selectedLeadId={selectedLead?.UUID} columns={columns} onSelectLead={handleSelectLead} onMarkLost={actions.handleMarkLost} onActivate={actions.handleActivate} onConvert={actions.handleConvert} offset={filters.offset || 0} hasMore={hasMore} onNextPage={handleNextPage} onPrevPage={handlePrevPage} sortBy={sortBy} sortOrder={sortOrder} onSortChange={(field, order) => { setSortBy(field); setSortOrder(order); }} />
                 </div>
-                {selectedLead && <div className="border-l" style={{ borderColor: 'var(--blanc-line)' }}><LeadDetailPanel lead={selectedLead} onClose={() => { setSelectedLead(null); navigate('/leads', { replace: true }); }} onEdit={l => setEditingLead(l)} onMarkLost={actions.handleMarkLost} onActivate={actions.handleActivate} onConvert={actions.handleConvert} onUpdateComments={actions.handleUpdateComments} onUpdateStatus={actions.handleUpdateStatus} onUpdateSource={actions.handleUpdateSource} onDelete={actions.handleDelete} /></div>}
             </div>
+            <FloatingDetailPanel open={!!selectedLead} onClose={() => { setSelectedLead(null); navigate('/leads', { replace: true }); }}>
+                <LeadDetailPanel lead={selectedLead} onClose={() => { setSelectedLead(null); navigate('/leads', { replace: true }); }} onEdit={l => setEditingLead(l)} onMarkLost={actions.handleMarkLost} onActivate={actions.handleActivate} onConvert={actions.handleConvert} onUpdateComments={actions.handleUpdateComments} onUpdateStatus={actions.handleUpdateStatus} onUpdateSource={actions.handleUpdateSource} onDelete={actions.handleDelete} />
+            </FloatingDetailPanel>
             <CreateLeadDialog open={createDialogOpen} onOpenChange={setCreateDialogOpen} onSuccess={actions.handleCreateLead} />
             {editingLead && <EditLeadDialog lead={editingLead} open={!!editingLead} onOpenChange={open => !open && setEditingLead(null)} onSuccess={actions.handleUpdateLead} />}
             <ColumnSettingsDialog open={settingsDialogOpen} onOpenChange={setSettingsDialogOpen} columns={columns} onSave={handleSaveColumns} />

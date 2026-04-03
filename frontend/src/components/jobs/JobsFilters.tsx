@@ -1,18 +1,15 @@
-import { Input } from '../ui/input';
 import { Switch } from '../ui/switch';
-import { Label } from '../ui/label';
 import type { JobTag } from '../../services/jobsApi';
 import { Badge } from '../ui/badge';
-import { Search, X } from 'lucide-react';
+import { SlidersHorizontal, X } from 'lucide-react';
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { JOB_SOURCES } from '../../types/lead';
 import { authedFetch } from '../../services/apiClient';
 import type { LocalJob } from '../../services/jobsApi';
 import { DateRangePickerPopover } from '../ui/DateRangePickerPopover';
-import { BLANC_STATUSES, FilterColumn } from './jobsFilterHelpers';
+import { BLANC_STATUSES, BLANC_STATUS_COLORS, FilterColumn } from './jobsFilterHelpers';
 
 interface JobsFiltersProps {
-    searchQuery: string; onSearchChange: (q: string) => void;
     statusFilter: string[]; onStatusFilterChange: (v: string[]) => void;
     providerFilter: string[]; onProviderFilterChange: (v: string[]) => void;
     sourceFilter: string[]; onSourceFilterChange: (v: string[]) => void;
@@ -24,7 +21,7 @@ interface JobsFiltersProps {
     jobs: LocalJob[];
 }
 
-export function JobsFilters({ searchQuery, onSearchChange, statusFilter, onStatusFilterChange, providerFilter, onProviderFilterChange, sourceFilter, onSourceFilterChange, jobTypeFilter, onJobTypeFilterChange, startDate, onStartDateChange, endDate, onEndDateChange, onlyOpen, onOnlyOpenChange, tagFilter, onTagFilterChange, allTags, jobs }: JobsFiltersProps) {
+export function JobsFilters({ statusFilter, onStatusFilterChange, providerFilter, onProviderFilterChange, sourceFilter, onSourceFilterChange, jobTypeFilter, onJobTypeFilterChange, startDate, onStartDateChange, endDate, onEndDateChange, onlyOpen, onOnlyOpenChange, tagFilter, onTagFilterChange, allTags, jobs }: JobsFiltersProps) {
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
     const [dynamicJobTypes, setDynamicJobTypes] = useState<string[]>([]);
@@ -41,16 +38,51 @@ export function JobsFilters({ searchQuery, onSearchChange, statusFilter, onStatu
     const toggleTag = (tagId: number) => onTagFilterChange(tagFilter.includes(tagId) ? tagFilter.filter(id => id !== tagId) : [...tagFilter, tagId]);
 
     return (
-        <div className="flex flex-wrap gap-3 items-center">
-            <div className="relative flex-1 min-w-[200px]" ref={containerRef}>
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground z-10" />
-                <Input placeholder="Search by name, phone, service, address..." value={searchQuery} onChange={e => onSearchChange(e.target.value)} onFocus={() => setDropdownOpen(true)} className="pl-9" />
+        <>
+            {/* Date Range Picker */}
+            <DateRangePickerPopover dateFrom={startDate} dateTo={endDate} onDateFromChange={d => onStartDateChange(d)} onDateToChange={d => onEndDateChange(d)} />
+
+            {/* Only Open Toggle */}
+            <div
+                className="flex items-center gap-2.5 px-4 shrink-0"
+                style={{ minHeight: 42, borderRadius: 14, border: '1px solid rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
+            >
+                <Switch id="only-open-jobs" checked={onlyOpen} onCheckedChange={onOnlyOpenChange} />
+                <label htmlFor="only-open-jobs" className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>Only Open</label>
+            </div>
+
+            {/* Filters button + dropdown */}
+            <div className="relative" ref={containerRef}>
+                <button
+                    onClick={() => setDropdownOpen(!dropdownOpen)}
+                    className="blanc-control-chip"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
+                    <SlidersHorizontal className="size-3.5" />
+                    Filters
+                    {activeFilterCount > 0 && (
+                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 min-w-[18px] h-[18px] justify-center ml-0.5">
+                            {activeFilterCount}
+                        </Badge>
+                    )}
+                </button>
+
                 {dropdownOpen && (
-                    <div className="absolute top-full left-0 right-0 mt-1 bg-popover border rounded-lg shadow-lg z-50 p-0 overflow-hidden">
+                    <div
+                        className="absolute z-50 rounded-xl overflow-hidden"
+                        style={{
+                            background: 'var(--blanc-surface-strong)',
+                            border: '1px solid var(--blanc-line)',
+                            boxShadow: 'var(--blanc-shadow-main)',
+                            width: 'min(760px, calc(100vw - 80px))',
+                            right: 0,
+                            top: 'calc(100% + 8px)',
+                        }}
+                    >
                         {activeFilterCount > 0 && <div className="flex flex-wrap gap-1.5 p-3 pb-0 items-center">{statusFilter.map(s => <Badge key={`st-${s}`} variant="secondary" className="gap-1 text-xs">{s}<X className="size-3 cursor-pointer" onClick={() => toggle(statusFilter, s, onStatusFilterChange)} /></Badge>)}{providerFilter.map(s => <Badge key={`pr-${s}`} variant="outline" className="gap-1 text-xs">{s}<X className="size-3 cursor-pointer" onClick={() => toggle(providerFilter, s, onProviderFilterChange)} /></Badge>)}{sourceFilter.map(s => <Badge key={`src-${s}`} variant="outline" className="gap-1 text-xs">{s}<X className="size-3 cursor-pointer" onClick={() => toggle(sourceFilter, s, onSourceFilterChange)} /></Badge>)}{jobTypeFilter.map(t => <Badge key={`jt-${t}`} variant="default" className="gap-1 text-xs">{t}<X className="size-3 cursor-pointer" onClick={() => toggle(jobTypeFilter, t, onJobTypeFilterChange)} /></Badge>)}{tagFilter.map(id => { const tag = allTags.find(t => t.id === id); return tag ? <Badge key={`tag-${id}`} variant="outline" className="gap-1 text-xs"><span className="size-2 rounded-full" style={{ backgroundColor: tag.color }} />{tag.name}<X className="size-3 cursor-pointer" onClick={() => toggleTag(id)} /></Badge> : null; })}<button onClick={clearAllFilters} className="text-xs text-muted-foreground hover:text-foreground ml-1">Clear all</button></div>}
-                        <div className="grid grid-cols-5 divide-x p-3 gap-0">
-                            <FilterColumn title="STATUS" items={BLANC_STATUSES} selected={statusFilter} onToggle={item => toggle(statusFilter, item, onStatusFilterChange)} />
-                            <FilterColumn title="ASSIGNED PROVIDERS" items={providerNames} selected={providerFilter} onToggle={item => toggle(providerFilter, item, onProviderFilterChange)} />
+                        <div className="grid p-3 gap-0" style={{ gridTemplateColumns: '1.8fr 1.4fr 1.2fr 1fr 1fr' }}>
+                            <FilterColumn title="STATUS" items={BLANC_STATUSES} selected={statusFilter} onToggle={item => toggle(statusFilter, item, onStatusFilterChange)} colorMap={BLANC_STATUS_COLORS} />
+                            <FilterColumn title="PROVIDERS" items={providerNames} selected={providerFilter} onToggle={item => toggle(providerFilter, item, onProviderFilterChange)} />
                             <FilterColumn title="SOURCE" items={JOB_SOURCES as unknown as string[]} selected={sourceFilter} onToggle={item => toggle(sourceFilter, item, onSourceFilterChange)} />
                             <FilterColumn title="JOB TYPE" items={dynamicJobTypes} selected={jobTypeFilter} onToggle={item => toggle(jobTypeFilter, item, onJobTypeFilterChange)} />
                             <div className="px-3"><div className="text-xs font-semibold text-muted-foreground mb-2">TAGS</div><div className="space-y-1 max-h-56 overflow-y-auto">{allTags.filter(t => t.is_active).map(tag => <label key={tag.id} className={`flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer text-sm transition-colors ${tagFilter.includes(tag.id) ? 'bg-primary/10 font-medium' : 'hover:bg-muted/50'}`}><input type="checkbox" checked={tagFilter.includes(tag.id)} onChange={() => toggleTag(tag.id)} className="sr-only" /><span className={`size-3 rounded-full shrink-0 border ${tagFilter.includes(tag.id) ? 'ring-2 ring-primary ring-offset-1' : ''}`} style={{ backgroundColor: tag.color }} />{tag.name}</label>)}</div></div>
@@ -58,9 +90,6 @@ export function JobsFilters({ searchQuery, onSearchChange, statusFilter, onStatu
                     </div>
                 )}
             </div>
-            {activeFilterCount > 0 && <Badge variant="secondary" className="gap-1">{activeFilterCount} filter{activeFilterCount > 1 ? 's' : ''}<X className="size-3 cursor-pointer" onClick={clearAllFilters} /></Badge>}
-            <DateRangePickerPopover dateFrom={startDate} dateTo={endDate} onDateFromChange={d => onStartDateChange(d)} onDateToChange={d => onEndDateChange(d)} />
-            <div className="flex items-center gap-2 px-3 py-2 border rounded-md"><Switch id="only-open-jobs" checked={onlyOpen} onCheckedChange={onOnlyOpenChange} /><Label htmlFor="only-open-jobs" className="cursor-pointer">Only Open</Label></div>
-        </div>
+        </>
     );
 }

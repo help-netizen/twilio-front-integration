@@ -1,71 +1,72 @@
-import { Tag, ChevronDown, Plus, CheckCircle2, CircleDot } from 'lucide-react';
+import { Plus, Navigation, Play, CheckCircle2 } from 'lucide-react';
 import type { LocalJob, JobTag } from '../../services/jobsApi';
 import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
-import { BLANC_STATUSES, TagBadge, BlancBadge, ZbBadge } from './jobHelpers';
+import { TagBadge } from './jobHelpers';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-interface JobStatusTagsProps {
+interface JobOpsSectionProps {
     job: LocalJob;
     allTags: JobTag[];
-    onBlancStatusChange: (id: number, s: string) => void;
     onTagsChange: (jobId: number, tagIds: number[]) => void;
+    onMarkEnroute: (id: number) => void;
+    onMarkInProgress: (id: number) => void;
+    onMarkComplete: (id: number) => void;
+    onCancel: (id: number) => void;
 }
+
+// ─── Styles ──────────────────────────────────────────────────────────────────
+
+const SECONDARY_BTN: React.CSSProperties = {
+    color: 'var(--blanc-ink-3)',
+    fontSize: 12,
+    fontWeight: 500,
+    cursor: 'pointer',
+    background: 'none',
+    border: 'none',
+    padding: 0,
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 3,
+};
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export function JobStatusTags({ job, allTags, onBlancStatusChange, onTagsChange }: JobStatusTagsProps) {
-    return (
-        <>
-            {/* Status row */}
-            <div className="flex items-center gap-2 px-4 py-3">
-                <CircleDot className="size-4 text-muted-foreground shrink-0" />
-                <span className="text-sm text-muted-foreground font-medium shrink-0">Status:</span>
-                <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                        <button className="inline-flex items-center gap-1 focus:outline-none rounded-sm">
-                            <BlancBadge status={job.blanc_status} />
-                            <ChevronDown className="size-3 text-muted-foreground" />
-                        </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start">
-                        {BLANC_STATUSES.map(s => (
-                            <DropdownMenuItem
-                                key={s}
-                                onClick={() => onBlancStatusChange(job.id, s)}
-                                className={s === job.blanc_status ? 'bg-accent' : ''}
-                            >
-                                {s}
-                            </DropdownMenuItem>
-                        ))}
-                    </DropdownMenuContent>
-                </DropdownMenu>
-                {job.zb_status && <ZbBadge status={job.zb_status} />}
-            </div>
+export function JobOpsSection({
+    job, allTags, onTagsChange,
+    onMarkEnroute, onMarkInProgress, onMarkComplete, onCancel,
+}: JobOpsSectionProps) {
+    const isActionable = !job.zb_canceled && job.zb_status !== 'complete';
 
-            {/* Tag selector */}
-            <div className="flex items-center gap-2 px-4 py-3 flex-wrap">
-                <Tag className="size-4 text-muted-foreground shrink-0" />
-                <span className="text-sm text-muted-foreground font-medium shrink-0">Tags:</span>
+    return (
+        <div className="px-5 pb-4 space-y-3">
+            {/* ── Tags ── */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+                <span
+                    className="text-[10px] font-semibold uppercase shrink-0 mr-0.5"
+                    style={{ color: 'var(--blanc-ink-3)', letterSpacing: '0.08em' }}
+                >
+                    Tags
+                </span>
+
                 {job.tags && job.tags.length > 0 && job.tags.map((t: JobTag) => (
-                    <button
-                        key={t.id}
+                    <button key={t.id} className="group/tag relative" title={`Remove "${t.name}"`}
                         onClick={() => {
                             const newIds = (job.tags || []).filter(x => x.id !== t.id).map(x => x.id);
                             onTagsChange(job.id, newIds);
-                        }}
-                        className="group relative"
-                        title={`Remove "${t.name}"`}
-                    >
-                        <TagBadge tag={t} />
-                        <span className="absolute -top-1.5 -right-1.5 size-4 bg-destructive text-white rounded-full text-[9px] leading-4 text-center hidden group-hover:block">×</span>
+                        }}>
+                        <TagBadge tag={t} small />
+                        <span className="absolute -top-1.5 -right-1.5 size-4 bg-destructive text-white rounded-full text-[9px] leading-4 text-center hidden group-hover/tag:block">×</span>
                     </button>
                 ))}
+
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                        <button className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs text-muted-foreground hover:bg-muted transition-colors">
+                        <button type="button"
+                            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs transition-colors hover:bg-muted"
+                            style={{ color: 'var(--blanc-ink-3)' }}>
                             <Plus className="size-3" /> Add
                         </button>
                     </DropdownMenuTrigger>
@@ -74,13 +75,11 @@ export function JobStatusTags({ job, allTags, onBlancStatusChange, onTagsChange 
                             const assignedIds = new Set((job.tags || []).map(t => t.id));
                             const activeTags = allTags.filter(t => t.is_active);
                             const inactiveAssigned = allTags.filter(t => !t.is_active && assignedIds.has(t.id));
-                            const combined = [...activeTags, ...inactiveAssigned];
-                            return combined.map(t => {
+                            return [...activeTags, ...inactiveAssigned].map(t => {
                                 const isAssigned = assignedIds.has(t.id);
                                 const isInactive = !t.is_active;
                                 return (
-                                    <DropdownMenuItem
-                                        key={t.id}
+                                    <DropdownMenuItem key={t.id}
                                         disabled={isInactive && !isAssigned}
                                         onClick={() => {
                                             if (isInactive && !isAssigned) return;
@@ -89,13 +88,10 @@ export function JobStatusTags({ job, allTags, onBlancStatusChange, onTagsChange 
                                                 ? currentIds.filter(id => id !== t.id)
                                                 : [...currentIds, t.id];
                                             onTagsChange(job.id, newIds);
-                                        }}
-                                    >
+                                        }}>
                                         <span className="flex items-center gap-2 w-full">
-                                            <span
-                                                className={`size-3 rounded-full shrink-0 ${isInactive ? 'opacity-40' : ''}`}
-                                                style={{ backgroundColor: t.color }}
-                                            />
+                                            <span className={`size-3 rounded-full shrink-0 ${isInactive ? 'opacity-40' : ''}`}
+                                                style={{ backgroundColor: t.color }} />
                                             <span className={`flex-1 ${isInactive ? 'text-muted-foreground' : ''}`}>
                                                 {t.name}
                                                 {isInactive && <span className="text-[10px] ml-1 text-muted-foreground">(Archived)</span>}
@@ -109,6 +105,79 @@ export function JobStatusTags({ job, allTags, onBlancStatusChange, onTagsChange 
                     </DropdownMenuContent>
                 </DropdownMenu>
             </div>
-        </>
+
+            {/* ── Actions ── */}
+            {isActionable && (
+                <div className="space-y-2">
+                    {/* Primary CTA — full width, tall */}
+                    {(job.zb_status === 'scheduled' || job.zb_status === 'en-route') && (
+                        <button onClick={() => onMarkInProgress(job.id)}
+                            className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-semibold"
+                            style={{
+                                minHeight: 40, borderRadius: 12,
+                                background: 'linear-gradient(180deg, #f5874a 0%, #e06020 100%)',
+                                color: '#fff', border: 'none',
+                                boxShadow: '0 4px 12px rgba(224,96,32,0.25)',
+                                cursor: 'pointer',
+                            }}>
+                            <Play className="size-4" /> Start Job
+                        </button>
+                    )}
+                    {job.zb_status === 'in-progress' && (
+                        <button onClick={() => onMarkComplete(job.id)}
+                            className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-semibold"
+                            style={{
+                                minHeight: 40, borderRadius: 12,
+                                background: 'linear-gradient(180deg, #4ade80 0%, #22c55e 100%)',
+                                color: '#fff', border: 'none',
+                                boxShadow: '0 4px 12px rgba(34,197,94,0.25)',
+                                cursor: 'pointer',
+                            }}>
+                            <CheckCircle2 className="size-4" /> Complete Job
+                        </button>
+                    )}
+
+                    {/* Secondary actions — small text links */}
+                    <div className="flex items-center gap-4">
+                        {/* En-route */}
+                        {job.zb_status === 'en-route' ? (
+                            <span style={{ ...SECONDARY_BTN, opacity: 0.5, cursor: 'default' }}>
+                                <Navigation className="size-3" /> En-route
+                            </span>
+                        ) : job.zb_status === 'scheduled' ? (
+                            <button style={SECONDARY_BTN} className="hover:opacity-70 transition-opacity"
+                                onClick={() => onMarkEnroute(job.id)}>
+                                <Navigation className="size-3" /> En-route
+                            </button>
+                        ) : null}
+
+                        {/* In Progress indicator */}
+                        {job.zb_status === 'in-progress' && (
+                            <span style={{ ...SECONDARY_BTN, opacity: 0.5, cursor: 'default' }}>
+                                <Play className="size-3" /> In Progress
+                            </span>
+                        )}
+
+                        {/* Complete — only as secondary when primary is Start Job */}
+                        {(job.zb_status === 'scheduled' || job.zb_status === 'en-route') && (
+                            <button style={SECONDARY_BTN} className="hover:opacity-70 transition-opacity"
+                                onClick={() => onMarkComplete(job.id)}>
+                                <CheckCircle2 className="size-3" /> Complete
+                            </button>
+                        )}
+
+                        {/* Cancel */}
+                        <button
+                            style={{ ...SECONDARY_BTN, color: '#dc2626', marginLeft: 'auto' }}
+                            className="hover:opacity-70 transition-opacity"
+                            onClick={() => onCancel(job.id)}
+                            title="Cancel job"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            )}
+        </div>
     );
 }

@@ -1,6 +1,6 @@
 import { Switch } from '../ui/switch';
 import { Badge } from '../ui/badge';
-import { X, Check } from 'lucide-react';
+import { X, SlidersHorizontal } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import type { LeadsListParams } from '../../types/lead';
 import { LEAD_STATUSES, JOB_SOURCES } from '../../types/lead';
@@ -9,28 +9,23 @@ import { DateRangePickerPopover } from '../ui/DateRangePickerPopover';
 
 interface LeadsFiltersProps {
     filters: LeadsListParams;
-    searchQuery: string;
     sourceFilter: string[];
     jobTypeFilter: string[];
     onFiltersChange: (filters: Partial<LeadsListParams>) => void;
-    onSearchChange: (query: string) => void;
     onSourceFilterChange: (sources: string[]) => void;
     onJobTypeFilterChange: (types: string[]) => void;
 }
 
 export function LeadsFilters({
     filters,
-    searchQuery,
     sourceFilter,
     jobTypeFilter,
     onFiltersChange,
-    onSearchChange,
     onSourceFilterChange,
     onJobTypeFilterChange,
 }: LeadsFiltersProps) {
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
-    const inputRef = useRef<HTMLInputElement>(null);
     const { jobTypes: dynamicJobTypes } = useLeadFormSettings();
 
     // Close dropdown on outside click
@@ -79,30 +74,56 @@ export function LeadsFilters({
 
     return (
         <>
-            {/* Borderless inline search — Pulse style */}
-            <div className="flex-1 min-w-0 relative" ref={containerRef}>
-                <input
-                    ref={inputRef}
-                    type="text"
-                    placeholder="type to find anything..."
-                    value={searchQuery}
-                    onChange={(e) => onSearchChange(e.target.value)}
-                    onFocus={() => setDropdownOpen(true)}
-                    className="pulse-search-input"
-                    style={{ width: '100%' }}
+            {/* Date Range Picker */}
+            <DateRangePickerPopover
+                dateFrom={filters.start_date}
+                dateTo={filters.end_date}
+                onDateFromChange={(d) => onFiltersChange({ start_date: d })}
+                onDateToChange={(d) => onFiltersChange({ end_date: d })}
+            />
+
+            {/* Only Open Toggle */}
+            <div
+                className="flex items-center gap-2.5 px-4 shrink-0"
+                style={{ minHeight: 42, borderRadius: 14, border: '1px solid rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
+            >
+                <Switch
+                    id="only-open"
+                    checked={filters.only_open}
+                    onCheckedChange={(checked) => onFiltersChange({ only_open: checked })}
                 />
+                <label htmlFor="only-open" className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>
+                    Only Open
+                </label>
+            </div>
+
+            {/* Filters button + dropdown */}
+            <div className="relative" ref={containerRef}>
+                <button
+                    onClick={() => setDropdownOpen(!dropdownOpen)}
+                    className="blanc-control-chip"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
+                    <SlidersHorizontal className="size-3.5" />
+                    Filters
+                    {activeFilterCount > 0 && (
+                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 min-w-[18px] h-[18px] justify-center ml-0.5">
+                            {activeFilterCount}
+                        </Badge>
+                    )}
+                </button>
 
                 {/* Filter Dropdown Panel */}
                 {dropdownOpen && (
                     <div
-                        className="fixed z-50 rounded-xl overflow-hidden"
+                        className="absolute z-50 rounded-xl overflow-hidden"
                         style={{
                             background: 'var(--blanc-surface-strong)',
                             border: '1px solid var(--blanc-line)',
                             boxShadow: 'var(--blanc-shadow-main)',
-                            width: Math.min(containerRef.current?.getBoundingClientRect().width || 500, 600),
-                            left: containerRef.current?.getBoundingClientRect().left || 0,
-                            top: (containerRef.current?.getBoundingClientRect().bottom || 0) + 8,
+                            width: 500,
+                            right: 0,
+                            top: 'calc(100% + 8px)',
                         }}
                     >
                         {/* Active filter badges */}
@@ -138,47 +159,29 @@ export function LeadsFilters({
 
                         {/* Columns */}
                         <div className="grid grid-cols-3 p-3 gap-0" style={{ borderTop: activeFilterCount > 0 ? '1px solid var(--blanc-line)' : undefined, marginTop: activeFilterCount > 0 ? 8 : 0 }}>
-                            <FilterColumn title="STATUS" items={LEAD_STATUSES as unknown as string[]} selected={filters.status || []} onToggle={toggleStatus} />
+                            <FilterColumn title="STATUS" items={LEAD_STATUSES as unknown as string[]} selected={filters.status || []} onToggle={toggleStatus} colorMap={LEAD_STATUS_COLORS} />
                             <FilterColumn title="SOURCE" items={JOB_SOURCES as unknown as string[]} selected={sourceFilter} onToggle={toggleSource} />
                             <FilterColumn title="JOB TYPE" items={dynamicJobTypes} selected={jobTypeFilter} onToggle={toggleJobType} />
                         </div>
                     </div>
                 )}
             </div>
-
-            {/* Active filter count badge — inline with other controls */}
-            {activeFilterCount > 0 && (
-                <Badge variant="secondary" className="gap-1 shrink-0">
-                    {activeFilterCount} filter{activeFilterCount > 1 ? 's' : ''}
-                    <X className="size-3 cursor-pointer" onClick={clearAllFilters} />
-                </Badge>
-            )}
-
-            {/* Date Range Picker */}
-            <DateRangePickerPopover
-                dateFrom={filters.start_date}
-                dateTo={filters.end_date}
-                onDateFromChange={(d) => onFiltersChange({ start_date: d })}
-                onDateToChange={(d) => onFiltersChange({ end_date: d })}
-            />
-
-            {/* Only Open Toggle */}
-            <div
-                className="flex items-center gap-2.5 px-4 shrink-0"
-                style={{ minHeight: 42, borderRadius: 14, border: '1px solid rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
-            >
-                <Switch
-                    id="only-open"
-                    checked={filters.only_open}
-                    onCheckedChange={(checked) => onFiltersChange({ only_open: checked })}
-                />
-                <label htmlFor="only-open" className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>
-                    Only Open
-                </label>
-            </div>
         </>
     );
 }
+
+/* ────────────── Lead status colors ────────────── */
+
+const LEAD_STATUS_COLORS: Record<string, string> = {
+    'Submitted':     '#3B82F6',
+    'New':           '#8B5CF6',
+    'Contacted':     '#1B8B63',
+    'Qualified':     '#22C55E',
+    'Proposal Sent': '#F59E0B',
+    'Negotiation':   '#F97316',
+    'Lost':          '#EF4444',
+    'Converted':     '#6B7280',
+};
 
 /* ────────────── Filter Column sub-component ────────────── */
 
@@ -187,11 +190,13 @@ function FilterColumn({
     items,
     selected,
     onToggle,
+    colorMap,
 }: {
     title: string;
     items: string[];
     selected: string[];
     onToggle: (item: string) => void;
+    colorMap?: Record<string, string>;
 }) {
     return (
         <div className="px-3 space-y-1">
@@ -204,6 +209,7 @@ function FilterColumn({
             <div className="space-y-0.5 max-h-[240px] overflow-y-auto">
                 {items.map((item) => {
                     const isSelected = selected.includes(item);
+                    const dotColor = colorMap?.[item];
                     return (
                         <button
                             key={item}
@@ -216,15 +222,12 @@ function FilterColumn({
                                 fontWeight: isSelected ? 500 : 400,
                             }}
                         >
-                            <div
-                                className="size-4 border rounded flex items-center justify-center shrink-0"
-                                style={{
-                                    borderColor: isSelected ? 'var(--blanc-info)' : 'var(--blanc-line)',
-                                    background: isSelected ? 'var(--blanc-info)' : 'transparent',
-                                }}
-                            >
-                                {isSelected && <Check className="size-3 text-white" />}
-                            </div>
+                            {dotColor && (
+                                <span
+                                    className="shrink-0 rounded-full"
+                                    style={{ width: 10, height: 10, background: dotColor, opacity: isSelected ? 1 : 0.55, flexShrink: 0 }}
+                                />
+                            )}
                             {item}
                         </button>
                     );

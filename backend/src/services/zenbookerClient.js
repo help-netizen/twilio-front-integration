@@ -519,7 +519,8 @@ async function retryRequest(requestFn, maxRetries = 3) {
  * @param {Object} params - { service_provider?, deactivated? }
  * @returns {Array} All team member objects
  */
-async function getTeamMembers(params = {}) {
+async function getTeamMembers(params = {}, companyId = null) {
+    const client = companyId ? await getClientForCompany(companyId) : getClient();
     const allResults = [];
     let cursor = 0;
     const limit = 100;
@@ -530,7 +531,7 @@ async function getTeamMembers(params = {}) {
         if (params.deactivated !== undefined) queryParams.deactivated = params.deactivated;
 
         const res = await retryRequest(() =>
-            getClient().get('/team_members', { params: queryParams })
+            client.get('/team_members', { params: queryParams })
         );
 
         const data = res.data;

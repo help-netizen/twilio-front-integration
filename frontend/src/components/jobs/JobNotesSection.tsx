@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Button } from '../ui/button';
-import { CornerDownLeft, Plus } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import type { LocalJob } from '../../services/jobsApi';
 import { formatSchedule } from './jobHelpers';
 
@@ -30,47 +30,25 @@ export function JobDescription({ job }: { job: LocalJob }) {
 
 export function JobComments({ job }: { job: LocalJob }) {
     const [comments, setComments] = useState(job.comments || '');
-    const [isFocused, setIsFocused] = useState(false);
-    const [isEditingComments, setIsEditingComments] = useState(false);
 
     const handleSaveComments = async () => {
-        setIsFocused(false);
-        if (!comments.trim()) setIsEditingComments(false);
         // TODO: save comments via API when endpoint exists
     };
 
     return (
-        <div>
-            <h3 className="text-sm font-semibold text-muted-foreground mb-3">Comments</h3>
-            {(comments.trim() || isEditingComments) ? (
-                <div className="relative bg-rose-50 rounded-lg border border-rose-100 py-1 px-2">
-                    <textarea
-                        ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } }}
-                        className="w-full text-sm resize-none bg-transparent border-none outline-none min-h-[24px] pr-16 leading-6"
-                        value={comments}
-                        onChange={e => setComments(e.target.value)}
-                        onFocus={() => setIsFocused(true)}
-                        onBlur={handleSaveComments}
-                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSaveComments(); } }}
-                        placeholder="Add comments..."
-                        rows={1}
-                        autoFocus={isEditingComments}
-                        style={{ height: 'auto', minHeight: '24px' }}
-                        onInput={e => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = `${t.scrollHeight}px`; }}
-                    />
-                    {isFocused && (
-                        <Button size="sm" className="absolute top-1 right-1.5 h-6 px-2 text-xs"
-                            onMouseDown={e => e.preventDefault()} onClick={handleSaveComments}>
-                            <CornerDownLeft className="size-3 mr-1" /> Enter
-                        </Button>
-                    )}
-                </div>
-            ) : (
-                <button onClick={() => { setIsEditingComments(true); setIsFocused(true); }}
-                    className="text-sm text-muted-foreground hover:text-foreground transition-colors underline decoration-dashed decoration-1 underline-offset-4">
-                    + Add comment
-                </button>
-            )}
+        <div style={{ padding: '14px 16px 16px', borderRadius: 16, background: '#fef9e7', borderLeft: '3px solid #f6d860' }}>
+            <h4 className="blanc-eyebrow mb-2">Notes</h4>
+            <textarea
+                ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } }}
+                className="w-full text-sm resize-none bg-transparent border-none outline-none leading-6"
+                style={{ minHeight: 36, color: comments ? 'var(--blanc-ink-1)' : undefined }}
+                value={comments}
+                onChange={e => setComments(e.target.value)}
+                onBlur={handleSaveComments}
+                onInput={e => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = `${t.scrollHeight}px`; }}
+                placeholder="Add comments…"
+                rows={2}
+            />
         </div>
     );
 }
@@ -78,9 +56,6 @@ export function JobComments({ job }: { job: LocalJob }) {
 export function JobNotesList({ job }: { job: LocalJob }) {
     return (
         <div>
-            <h3 className="text-sm font-semibold text-muted-foreground mb-3">
-                Job Notes ({job.notes?.length || 0})
-            </h3>
             <div className="space-y-3">
                 {job.notes && job.notes.length > 0 ? job.notes.map((note: any, i: number) => (
                     <div key={note.id || i} className="p-3 bg-muted rounded-lg space-y-2">
@@ -124,22 +99,80 @@ export function JobNotesList({ job }: { job: LocalJob }) {
 }
 
 export function JobAddNote({ job, noteJobId, noteText, setNoteText, setNoteJobId, onAddNote }: JobNotesSectionProps) {
+    const [expanded, setExpanded] = useState(false);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const text = noteJobId === job.id ? noteText : '';
+
+    const expand = () => {
+        setExpanded(true);
+        if (noteJobId !== job.id) setNoteJobId(job.id);
+        setTimeout(() => textareaRef.current?.focus(), 0);
+    };
+
+    const handleBlur = () => {
+        if (!text.trim()) {
+            setExpanded(false);
+        }
+    };
+
+    const handleSubmit = () => {
+        onAddNote();
+        setExpanded(false);
+    };
+
     return (
-        <div className="border-t bg-background p-4 space-y-3">
-            <textarea
-                className="w-full border rounded-md px-3 py-2 text-sm resize-none min-h-[80px]"
-                placeholder="Write a note..."
-                value={noteJobId === job.id ? noteText : ''}
-                onChange={e => { setNoteJobId(job.id); setNoteText(e.target.value); }}
-                onFocus={() => { if (noteJobId !== job.id) setNoteJobId(job.id); }}
-                onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); onAddNote(); } }}
-            />
-            <div className="flex items-center justify-between">
-                <p className="text-xs text-muted-foreground">⌘ + Enter to submit</p>
-                <Button size="sm" onClick={onAddNote} disabled={!noteText.trim() || noteJobId !== job.id}>
-                    <Plus className="size-4 mr-1" /> Add Note
-                </Button>
-            </div>
+        <div style={{
+            padding: '10px 14px',
+            background: 'rgba(117,106,89,0.03)',
+            borderTop: '1px solid rgba(117,106,89,0.08)',
+            borderRadius: '0 0 var(--blanc-radius-xl) 0',
+        }}>
+            {expanded ? (
+                <div className="space-y-2">
+                    <textarea
+                        ref={textareaRef}
+                        className="w-full text-sm resize-none outline-none bg-transparent leading-5"
+                        style={{
+                            border: '1px solid var(--blanc-line)',
+                            borderRadius: 10,
+                            padding: '8px 12px',
+                            minHeight: 72,
+                            color: 'var(--blanc-ink-1)',
+                        }}
+                        placeholder="Write a note..."
+                        value={text}
+                        onChange={e => { setNoteJobId(job.id); setNoteText(e.target.value); }}
+                        onBlur={handleBlur}
+                        onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); handleSubmit(); } }}
+                        onInput={e => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = `${t.scrollHeight}px`; }}
+                        autoFocus
+                    />
+                    <div className="flex items-center justify-between">
+                        <p className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>⌘ + Enter</p>
+                        <Button size="sm" onClick={handleSubmit} disabled={!text.trim()}>
+                            <Plus className="size-4 mr-1" /> Add Note
+                        </Button>
+                    </div>
+                </div>
+            ) : (
+                <button
+                    onClick={expand}
+                    className="w-full flex items-center gap-2 transition-opacity hover:opacity-70"
+                    style={{
+                        height: 34,
+                        borderRadius: 10,
+                        border: '1px solid var(--blanc-line)',
+                        background: 'transparent',
+                        paddingLeft: 12,
+                        paddingRight: 12,
+                        cursor: 'text',
+                        textAlign: 'left',
+                    }}
+                >
+                    <Plus className="size-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />
+                    <span className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Add note…</span>
+                </button>
+            )}
         </div>
     );
 }

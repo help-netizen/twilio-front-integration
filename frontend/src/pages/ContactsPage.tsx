@@ -4,6 +4,7 @@ import { ContactsList } from '../components/contacts/ContactsList';
 import { ContactDetailPanel } from '../components/contacts/ContactDetailPanel';
 import * as contactsApi from '../services/contactsApi';
 import type { Contact, ContactLead } from '../types/contact';
+import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 
 export function ContactsPage() {
     const navigate = useNavigate();
@@ -98,17 +99,23 @@ export function ContactsPage() {
 
     return (
         <div className="blanc-page-wrapper">
-            <div className="blanc-page-header">
-                <h1 className="blanc-heading blanc-heading-lg">Contacts</h1>
+            <div className="blanc-unified-header">
+                <h1 className="blanc-header-title">Contacts</h1>
+                <div className="blanc-search-wrapper">
+                    <input
+                        type="text"
+                        placeholder="type to find anything..."
+                        value={search}
+                        onChange={(e) => handleSearch(e.target.value)}
+                        className="blanc-search-input"
+                    />
+                </div>
             </div>
             <div className="blanc-page-card">
-                {/* Left: Contacts List */}
-                <div style={{ width: '380px', minWidth: '380px', borderRight: '1px solid var(--blanc-line)', overflow: 'auto' }}>
+                <div style={{ flex: 1, overflow: 'auto' }}>
                     <ContactsList
                         contacts={contacts}
                         loading={loading}
-                        search={search}
-                        onSearchChange={handleSearch}
                         selectedContactId={selectedContact?.id}
                         onSelectContact={handleSelectContact}
                         offset={offset}
@@ -117,31 +124,18 @@ export function ContactsPage() {
                         onPrevPage={handlePrevPage}
                     />
                 </div>
-
-                {/* Right: Detail Panel */}
-                <div style={{ flex: 1, overflow: 'auto' }}>
-                    {selectedContact ? (
-                        <ContactDetailPanel
-                            contact={selectedContact}
-                            leads={selectedLeads}
-                            loading={detailLoading}
-                            onAddressesChanged={() => selectedContact && handleSelectContact(selectedContact)}
-                            onContactChanged={() => selectedContact && handleSelectContact(selectedContact)}
-                        />
-                    ) : (
-                        <div style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            height: '100%',
-                            color: 'var(--blanc-ink-3)',
-                            fontSize: '15px',
-                        }}>
-                            Select a contact to view details
-                        </div>
-                    )}
-                </div>
             </div>
+            <FloatingDetailPanel open={!!selectedContact} onClose={() => { setSelectedContact(null); navigate('/contacts', { replace: true }); }}>
+                {selectedContact && (
+                    <ContactDetailPanel
+                        contact={selectedContact}
+                        leads={selectedLeads}
+                        loading={detailLoading}
+                        onAddressesChanged={() => selectedContact && handleSelectContact(selectedContact)}
+                        onContactChanged={() => selectedContact && handleSelectContact(selectedContact)}
+                    />
+                )}
+            </FloatingDetailPanel>
         </div>
     );
 }

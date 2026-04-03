@@ -1,7 +1,6 @@
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Separator } from '../ui/separator';
-import { ScrollArea } from '../ui/scroll-area';
 import { useState } from 'react';
 import { X, Send, Check, XCircle, Link2, Pencil, Trash2, Loader2, Clock, FileText } from 'lucide-react';
 import type { Estimate, EstimateEvent } from '../../services/estimatesApi';
@@ -71,7 +70,7 @@ export function EstimateDetailPanel({ estimate, events, loading, onClose, onEdit
 
     if (loading) {
         return (
-            <div className="w-96 border-l flex items-center justify-center">
+            <div className="h-full flex items-center justify-center">
                 <Loader2 className="size-6 animate-spin text-muted-foreground" />
             </div>
         );
@@ -82,7 +81,7 @@ export function EstimateDetailPanel({ estimate, events, loading, onClose, onEdit
     const isAccepted = estimate.status === 'accepted';
 
     return (
-        <div className="w-96 border-l flex flex-col bg-background">
+        <div className="flex flex-col h-full overflow-y-auto">
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b">
                 <div className="flex items-center gap-2">
@@ -91,12 +90,12 @@ export function EstimateDetailPanel({ estimate, events, loading, onClose, onEdit
                         {estimate.status}
                     </Badge>
                 </div>
-                <Button variant="ghost" size="sm" className="size-7 p-0" onClick={onClose}>
+                <Button variant="ghost" size="sm" className="size-7 p-0 md:hidden" onClick={onClose}>
                     <X className="size-4" />
                 </Button>
             </div>
 
-            <ScrollArea className="flex-1">
+            <div>
                 <div className="p-4 space-y-4">
                     {/* Title */}
                     {estimate.title && (
@@ -309,7 +308,7 @@ export function EstimateDetailPanel({ estimate, events, loading, onClose, onEdit
                         </>
                     )}
                 </div>
-            </ScrollArea>
+            </div>
         </div>
     );
 }

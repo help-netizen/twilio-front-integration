@@ -63,15 +63,24 @@ export function LeadDetailPanel({ lead, onClose, onEdit, onMarkLost, onActivate,
 
     return (
         <div
-            className={embedded ? 'flex flex-col' : 'fixed inset-0 z-50 bg-background md:relative md:inset-auto md:z-auto md:w-[400px] md:min-w-[240px] md:border-l md:h-full flex flex-col md:bg-background shrink-0'}
-            style={{ background: 'var(--blanc-surface-strong)' }}
+            className={embedded ? 'flex flex-col' : 'flex flex-col h-full'}
         >
+            {/* Scrollable content area */}
+            <div className="flex-1 overflow-y-auto min-h-0">
             {/* ── Header: two-column grid — left: identity, right: comments ── */}
             <div className={embedded ? 'pulse-contact-header-grid px-5 pt-5 pb-4' : 'px-5 pt-5 pb-4'}>
                 {/* Left: Name + status badges + contacts */}
                 <div>
                     {/* Type label */}
-                    <span className="text-[10px] font-semibold uppercase tracking-widest mb-1 inline-block" style={{ color: 'var(--blanc-info)', letterSpacing: '0.12em' }}>Lead</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-widest mb-1 inline-flex items-center gap-1.5" style={{ color: 'var(--blanc-info)', letterSpacing: '0.12em' }}>
+                        Lead
+                        {lead.SerialId && (
+                            <>
+                                <span style={{ opacity: 0.4 }}>·</span>
+                                <span className="font-mono">#{lead.SerialId}</span>
+                            </>
+                        )}
+                    </span>
 
                     {/* Name + Edit + Close */}
                     <div className="flex items-center gap-2 mb-1">
@@ -89,7 +98,7 @@ export function LeadDetailPanel({ lead, onClose, onEdit, onMarkLost, onActivate,
                             Edit
                         </button>
                         {!embedded && (
-                            <Button variant="ghost" size="sm" onClick={onClose} className="ml-auto shrink-0">
+                            <Button variant="ghost" size="sm" onClick={onClose} className="ml-auto shrink-0 md:hidden">
                                 <X className="size-4" />
                             </Button>
                         )}
@@ -226,7 +235,7 @@ export function LeadDetailPanel({ lead, onClose, onEdit, onMarkLost, onActivate,
 
             {/* ── Details tab ── */}
             {activeTab === 'details' && (
-                <div className={embedded ? '' : 'flex-1 overflow-y-auto'}>
+                <div>
                     <div className={embedded ? 'grid grid-cols-2 gap-x-6 gap-y-4 p-5' : 'p-5 space-y-4'}>
                         {/* Left column: Job Details + Metadata */}
                         <div className="space-y-4">
@@ -270,7 +279,7 @@ export function LeadDetailPanel({ lead, onClose, onEdit, onMarkLost, onActivate,
 
             {/* ── Financials tab ── */}
             {activeTab === 'financials' && (
-                <div className={embedded ? 'p-5' : 'flex-1 overflow-y-auto p-5'}>
+                <div className="p-5">
                     {lead.SerialId ? (
                         <LeadFinancialsTab leadId={lead.SerialId} />
                     ) : (
@@ -278,6 +287,9 @@ export function LeadDetailPanel({ lead, onClose, onEdit, onMarkLost, onActivate,
                     )}
                 </div>
             )}
+
+            </div>
+            {/* End scrollable content */}
 
             <LeadDetailFooter lead={lead} onEdit={onEdit} onMarkLost={onMarkLost} onActivate={onActivate} onConvert={onConvert} onDelete={onDelete} />
         </div>

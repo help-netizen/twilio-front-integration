@@ -1,7 +1,7 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
 import { Skeleton } from '../ui/skeleton';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../ui/dropdown-menu';
-import { Phone, MoreVertical, PhoneOff, CheckCircle2, Briefcase } from 'lucide-react';
+import { Phone, MoreVertical, PhoneOff, CheckCircle2, Briefcase, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import type { Lead, TableColumn } from '../../types/lead';
 import { renderCell, handleCall } from './leadsTableHelpers';
 
@@ -10,10 +10,21 @@ interface LeadsTableProps {
     onSelectLead: (lead: Lead) => void; onMarkLost: (uuid: string) => void;
     onActivate: (uuid: string) => void; onConvert: (uuid: string) => void;
     offset: number; hasMore: boolean; onNextPage: () => void; onPrevPage: () => void;
+    sortBy?: string; sortOrder?: 'asc' | 'desc';
+    onSortChange?: (field: string, order: 'asc' | 'desc') => void;
 }
 
-export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLead, onMarkLost, onActivate, onConvert, offset, hasMore, onNextPage, onPrevPage }: LeadsTableProps) {
+export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLead, onMarkLost, onActivate, onConvert, offset, hasMore, onNextPage, onPrevPage, sortBy, sortOrder, onSortChange }: LeadsTableProps) {
     const visibleColumns = columns.filter(col => col.visible).sort((a, b) => a.order - b.order);
+
+    const handleHeaderClick = (col: TableColumn) => {
+        if (!col.sortKey || !onSortChange) return;
+        if (sortBy === col.sortKey) {
+            onSortChange(col.sortKey, sortOrder === 'asc' ? 'desc' : 'asc');
+        } else {
+            onSortChange(col.sortKey, 'asc');
+        }
+    };
 
     if (loading) return <div className="flex-1 overflow-auto p-5"><div className="space-y-3">{[...Array(8)].map((_, i) => <Skeleton key={i} className="h-16 w-full rounded-xl" />)}</div></div>;
     if (leads.length === 0) return <div className="flex-1 flex items-center justify-center"><div className="text-center"><p className="text-lg mb-2" style={{ color: 'var(--blanc-ink-1)', fontFamily: 'var(--blanc-font-heading)' }}>No leads found</p><p className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Try adjusting your filters or create a new lead</p></div></div>;
@@ -27,10 +38,20 @@ export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLe
                             {visibleColumns.map(c => (
                                 <TableHead
                                     key={c.id}
-                                    className="text-[11px] font-semibold uppercase tracking-wider px-4 h-11"
+                                    className={`text-[11px] font-semibold uppercase tracking-wider px-4 h-11 select-none${c.sortKey ? ' cursor-pointer hover:opacity-70 transition-opacity' : ''}`}
                                     style={{ color: 'var(--blanc-ink-3)', letterSpacing: '0.08em' }}
+                                    onClick={() => handleHeaderClick(c)}
                                 >
-                                    {c.label}
+                                    <span className="inline-flex items-center gap-1">
+                                        {c.label}
+                                        {c.sortKey && (
+                                            sortBy === c.sortKey
+                                                ? (sortOrder === 'asc'
+                                                    ? <ArrowUp className="size-3" />
+                                                    : <ArrowDown className="size-3" />)
+                                                : <ArrowUpDown className="size-3 opacity-30" />
+                                        )}
+                                    </span>
                                 </TableHead>
                             ))}
                             <TableHead className="w-[50px]" />
