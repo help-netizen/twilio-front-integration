@@ -488,6 +488,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
     const [techPage, setTechPage] = useState(0);
     const [jobs, setJobs] = useState<LocalJob[]>([]);
     const [providers, setProviders] = useState<TeamMember[]>([]);
+    const [providerError, setProviderError] = useState('');
     const [loading, setLoading] = useState(false);
     const durationMin = newJobDuration || DEFAULT_DURATION_MIN;
 
@@ -496,7 +497,10 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
         let cancelled = false;
         getTeamMembers().then(members => {
             if (!cancelled) setProviders(members);
-        }).catch(() => {});
+        }).catch((err) => {
+            if (!cancelled) setProviderError('Failed to load technicians');
+            console.error('[CustomTimeModal] getTeamMembers error:', err);
+        });
         return () => { cancelled = true; };
     }, []);
 
@@ -646,7 +650,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                         )}
 
                         {techGroups.length === 0 && !loading && (
-                            <div className="ctm-timelines__empty">No technicians found</div>
+                            <div className="ctm-timelines__empty">{providerError || 'No technicians found'}</div>
                         )}
 
                         {techGroups.length > 0 && (

@@ -112,11 +112,10 @@ router.post('/jobs', async (req, res) => {
 // GET /api/zenbooker/team-members — Fetch service providers
 router.get('/team-members', async (req, res) => {
     try {
-        const companyId = req.company?.id || req.user?.company_id;
         const members = await zenbookerClient.getTeamMembers({
             service_provider: true,
             deactivated: false,
-        }, companyId);
+        });
         res.json({ ok: true, data: members });
     } catch (err) {
         console.error('[Zenbooker] team-members error:', err.response?.data || err.message);
