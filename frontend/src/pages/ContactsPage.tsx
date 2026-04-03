@@ -125,7 +125,7 @@ export function ContactsPage() {
                     />
                 </div>
             </div>
-            <FloatingDetailPanel open={!!selectedContact} onClose={() => { setSelectedContact(null); navigate('/contacts', { replace: true }); }}>
+            <FloatingDetailPanel open={!!selectedContact} onClose={() => { setSelectedContact(null); navigate('/contacts', { replace: true }); }} wide>
                 {selectedContact && (
                     <ContactDetailPanel
                         contact={selectedContact}

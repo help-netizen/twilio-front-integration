@@ -48,7 +48,7 @@ export function JobsList({ contactId }: { contactId: number }) {
                 <div className="space-y-2">
                     {jobs.map(job => {
                         const st = getJobStatusStyle(job.blanc_status); const date = job.start_date ? new Date(job.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null; return (
-                            <div key={job.id} onClick={() => navigate(`/jobs/${job.id}`)} className="flex items-center justify-between p-3 rounded-xl cursor-pointer hover:shadow-sm transition-all" style={{ background: 'rgba(117, 106, 89, 0.04)', border: '1px solid rgba(117, 106, 89, 0.1)' }}>
+                            <div key={job.id} onClick={() => navigate(`/jobs/${job.id}`)} className="flex items-center justify-between p-3 rounded-xl cursor-pointer hover:shadow-sm transition-all" style={{ border: '1px solid var(--blanc-line)', background: 'transparent' }}>
                                 <div className="flex-1 min-w-0"><div className="flex items-center gap-2 flex-wrap"><span className="text-sm font-medium">{job.service_name || 'Job'}</span>{job.job_number && <span className="text-xs text-muted-foreground font-mono">#{job.job_number}</span>}<span className="text-[11px] font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: st.bg, color: st.color }}>{job.blanc_status}</span></div><div className="flex gap-3 mt-1 text-xs text-muted-foreground">{job.assigned_techs && job.assigned_techs.length > 0 && <span>👤 {job.assigned_techs.map((p: any) => p.name).join(', ')}</span>}{date && <span>📅 {date}</span>}{job.invoice_total && <span>💰 ${job.invoice_total}</span>}</div></div>
                             </div>
                         );
@@ -78,7 +78,7 @@ export function AddressCard({ address, index, contactId, onSaved }: { address: C
     const cityState = [address.city, address.state ? `${address.state} ${address.postal_code || ''}`.trim() : address.postal_code].filter(Boolean).join(', ');
 
     return (
-        <div className="flex items-start gap-2 rounded-xl p-3 mb-2" style={{ background: 'rgba(117, 106, 89, 0.04)', border: '1px solid rgba(117, 106, 89, 0.1)' }}>
+        <div className="flex items-start gap-2 rounded-xl p-3 mb-2" style={{ border: '1px solid var(--blanc-line)', background: 'transparent' }}>
             <MapPin className="size-4 text-indigo-500 shrink-0 mt-0.5" />
             <div className="flex-1 min-w-0"><div className="text-sm font-medium">{line1 + unit || '—'}</div>{cityState && <div className="text-xs text-muted-foreground">{cityState}</div>}</div>
             {address.is_default_address_for_customer && <Badge variant="secondary" className="text-[10px] shrink-0">Default</Badge>}

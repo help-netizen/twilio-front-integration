@@ -10,6 +10,8 @@ import * as leadsApi from '../../services/leadsApi';
 import type { Timeslot, TimeslotDay } from '../../services/zenbookerApi';
 import { useZipCheck } from '../../hooks/useZipCheck';
 import { ChevronRight, ChevronLeft, Phone } from 'lucide-react';
+import { ClickToCallButton } from '../softphone/ClickToCallButton';
+import { OpenTimelineButton } from '../softphone/OpenTimelineButton';
 import type { Step } from './wizardTypes';
 import { STEP_LABELS, DEFAULT_JOB_TYPES } from './wizardTypes';
 import { WizardStep1 } from './WizardStep1';
@@ -35,7 +37,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, timelineId, onLeadCr
     const [step, setStep] = useState<Step>(1);
     const [submitting, setSubmitting] = useState(false);
     const [showSkipConfirm, setShowSkipConfirm] = useState(false);
-    const [confirmCall, setConfirmCall] = useState(false);
+
 
     const [postalCode, setPostalCode] = useState('');
     const zipCheck = useZipCheck(postalCode);
@@ -212,28 +214,15 @@ export function CreateLeadJobWizard({ phone, hasActiveCall, timelineId, onLeadCr
             <div className="wizard__header">
                 <div className="wizard__header-content">
                     <div className="wizard__header-left">
-                        <div>
-                            <div className="wizard__phone-row"><Phone className="w-4" style={{ color: 'var(--blanc-ink-3)' }} /><span>{formatPhone(phone)}</span></div>
+                        <div className="wizard__phone-row">
+                            <Phone className="w-4" style={{ color: 'var(--blanc-ink-3)' }} />
+                            <span>{formatPhone(phone)}</span>
+                            <ClickToCallButton phone={phone} contactName={firstName ? `${firstName} ${lastName}`.trim() : undefined} />
+                            <OpenTimelineButton phone={phone} />
                         </div>
-                    </div>
-                    <div className="wizard__header-right">
-                        {hasActiveCall ? (
-                            <span className="wizard__call-btn wizard__call-btn--disabled" title="Someone is already on a call with this customer, try again later"><Phone className="w-4" /><span>Call</span></span>
-                        ) : (
-                            <button type="button" onClick={() => setConfirmCall(c => !c)} className="wizard__call-btn" title={`Call ${formatPhone(phone)}`}><Phone className="w-4" /><span>Call</span></button>
-                        )}
                     </div>
                 </div>
             </div>
-            {confirmCall && (
-                <div className="wizard__confirm-call">
-                    <span className="wizard__confirm-label">Call {formatPhone(phone)}?</span>
-                    <div className="wizard__confirm-actions">
-                        <button type="button" className="wizard__confirm-cancel" onClick={() => setConfirmCall(false)}>Cancel</button>
-                        <a href={`tel:${phone}`} className="wizard__confirm-btn" onClick={() => setConfirmCall(false)}><Phone className="w-4" /> Call Now</a>
-                    </div>
-                </div>
-            )}
             <div className="wizard__steps">
                 {([1, 2, 3, 4] as Step[]).map(s => (
                     <button
