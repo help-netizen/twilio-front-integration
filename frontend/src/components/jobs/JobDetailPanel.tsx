@@ -40,7 +40,7 @@ export interface JobDetailPanelProps {
 export function JobDetailPanel({
     job, contactInfo, detailLoading,
     noteJobId, noteText, setNoteText, setNoteJobId,
-    onClose, onBlancStatusChange, onAddNote,
+    onClose: _onClose, onBlancStatusChange, onAddNote,
     onMarkEnroute, onMarkInProgress, onMarkComplete, onCancel,
     navigate, allTags, onTagsChange, onJobUpdated,
 }: JobDetailPanelProps) {
