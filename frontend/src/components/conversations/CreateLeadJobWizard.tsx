@@ -29,7 +29,7 @@ interface CreateLeadJobWizardProps {
     onLeadCreated?: () => void;
 }
 
-export function CreateLeadJobWizard({ phone, hasActiveCall, timelineId, onLeadCreated }: CreateLeadJobWizardProps) {
+export function CreateLeadJobWizard({ phone, hasActiveCall: _hasActiveCall, timelineId, onLeadCreated }: CreateLeadJobWizardProps) {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const { company } = useAuth();
