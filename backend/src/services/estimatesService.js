@@ -47,11 +47,21 @@ async function getEstimate(companyId, id) {
  * Create a new estimate with optional line items.
  */
 async function createEstimate(companyId, userId, data) {
-    if (!data.contact_id) {
-        throw new EstimatesServiceError('VALIDATION', 'contact_id is required', 400);
+    // Auto-resolve contact_id and lead_id from job if not provided
+    if (data.job_id && (!data.contact_id || !data.lead_id)) {
+        const db = require('../db/connection');
+        const { rows } = await db.query(
+            'SELECT contact_id, lead_id FROM jobs WHERE id = $1 AND company_id = $2',
+            [data.job_id, companyId]
+        );
+        if (rows[0]) {
+            if (!data.contact_id && rows[0].contact_id) data.contact_id = rows[0].contact_id;
+            if (!data.lead_id && rows[0].lead_id) data.lead_id = rows[0].lead_id;
+        }
     }
-    if (!data.lead_id && !data.job_id) {
-        throw new EstimatesServiceError('VALIDATION', 'At least one of lead_id or job_id is required', 400);
+
+    if (!data.contact_id && !data.job_id) {
+        throw new EstimatesServiceError('VALIDATION', 'contact_id or job_id is required', 400);
     }
 
     const estimate = await estimatesQueries.createEstimate(companyId, {
