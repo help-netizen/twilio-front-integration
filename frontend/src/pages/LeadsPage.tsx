@@ -115,7 +115,7 @@ export function LeadsPage() {
                     <LeadsTable leads={filteredLeads} loading={loading} selectedLeadId={selectedLead?.UUID} columns={columns} onSelectLead={handleSelectLead} onMarkLost={actions.handleMarkLost} onActivate={actions.handleActivate} onConvert={actions.handleConvert} offset={filters.offset || 0} hasMore={hasMore} onNextPage={handleNextPage} onPrevPage={handlePrevPage} sortBy={sortBy} sortOrder={sortOrder} onSortChange={(field, order) => { setSortBy(field); setSortOrder(order); }} />
                 </div>
             </div>
-            <FloatingDetailPanel open={!!selectedLead} onClose={() => { setSelectedLead(null); navigate('/leads', { replace: true }); }}>
+            <FloatingDetailPanel open={!!selectedLead} onClose={() => { setSelectedLead(null); navigate('/leads', { replace: true }); }} wide>
                 <LeadDetailPanel lead={selectedLead} onClose={() => { setSelectedLead(null); navigate('/leads', { replace: true }); }} onEdit={l => setEditingLead(l)} onMarkLost={actions.handleMarkLost} onActivate={actions.handleActivate} onConvert={actions.handleConvert} onUpdateComments={actions.handleUpdateComments} onUpdateStatus={actions.handleUpdateStatus} onUpdateSource={actions.handleUpdateSource} onDelete={actions.handleDelete} />
             </FloatingDetailPanel>
             <CreateLeadDialog open={createDialogOpen} onOpenChange={setCreateDialogOpen} onSuccess={actions.handleCreateLead} />

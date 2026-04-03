@@ -86,6 +86,55 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
     return (
         <div className="px-4 py-4 space-y-3">
 
+            {/* ── CONTACT ── */}
+            {(customerName || phone || email) && (
+                <div style={sectionCard}>
+                    <p style={eyebrow}>Contact</p>
+                    {customerName && (
+                        <div style={infoRow}>
+                            <span style={infoLabel}>Customer</span>
+                            {(contactInfo?.id || job.contact_id) ? (
+                                <button
+                                    type="button"
+                                    onClick={() => navigate(`/contacts/${contactInfo?.id ?? job.contact_id}`)}
+                                    className="flex items-center gap-1 text-[13px] font-semibold hover:underline"
+                                    style={{ color: 'var(--blanc-info)', background: 'none', border: 'none', cursor: 'pointer' }}
+                                >
+                                    {customerName}
+                                    <ChevronRight className="size-3 flex-shrink-0" />
+                                </button>
+                            ) : (
+                                <span className="text-[13px] font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>{customerName}</span>
+                            )}
+                        </div>
+                    )}
+                    {phone && (
+                        <div style={infoRow}>
+                            <span style={infoLabel}>Phone</span>
+                            <div className="flex items-center gap-2">
+                                <a href={`tel:${phone}`} className="text-[13px] font-semibold hover:underline" style={{ color: 'var(--blanc-ink-1)' }}>
+                                    {formatPhone(phone)}
+                                </a>
+                                <ClickToCallButton phone={phone} contactName={customerName || undefined} />
+                                <OpenTimelineButton phone={phone} contactId={contactInfo?.id} />
+                            </div>
+                        </div>
+                    )}
+                    {email && (
+                        <div style={{ ...infoRow, borderBottom: 'none', paddingBottom: 0 }}>
+                            <span style={infoLabel}>Email</span>
+                            <a
+                                href={`mailto:${email}`}
+                                className="text-[13px] font-semibold hover:underline"
+                                style={{ color: 'var(--blanc-ink-1)', wordBreak: 'break-all' }}
+                            >
+                                {email}
+                            </a>
+                        </div>
+                    )}
+                </div>
+            )}
+
             {/* ── SCHEDULED + LOCATION + PROVIDERS (one card) ── */}
             {(job.start_date || job.address || job.territory || (job.assigned_techs && job.assigned_techs.length > 0)) && (
                 <div style={sectionCard}>
@@ -163,55 +212,6 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
                                     </span>
                                 ))}
                             </div>
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {/* ── CONTACT ── */}
-            {(customerName || phone || email) && (
-                <div style={sectionCard}>
-                    <p style={eyebrow}>Contact</p>
-                    {customerName && (
-                        <div style={infoRow}>
-                            <span style={infoLabel}>Customer</span>
-                            {(contactInfo?.id || job.contact_id) ? (
-                                <button
-                                    type="button"
-                                    onClick={() => navigate(`/contacts/${contactInfo?.id ?? job.contact_id}`)}
-                                    className="flex items-center gap-1 text-[13px] font-semibold hover:underline"
-                                    style={{ color: 'var(--blanc-info)', background: 'none', border: 'none', cursor: 'pointer' }}
-                                >
-                                    {customerName}
-                                    <ChevronRight className="size-3 flex-shrink-0" />
-                                </button>
-                            ) : (
-                                <span className="text-[13px] font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>{customerName}</span>
-                            )}
-                        </div>
-                    )}
-                    {phone && (
-                        <div style={infoRow}>
-                            <span style={infoLabel}>Phone</span>
-                            <div className="flex items-center gap-2">
-                                <a href={`tel:${phone}`} className="text-[13px] font-semibold hover:underline" style={{ color: 'var(--blanc-ink-1)' }}>
-                                    {formatPhone(phone)}
-                                </a>
-                                <ClickToCallButton phone={phone} contactName={customerName || undefined} />
-                                <OpenTimelineButton phone={phone} contactId={contactInfo?.id} />
-                            </div>
-                        </div>
-                    )}
-                    {email && (
-                        <div style={{ ...infoRow, borderBottom: 'none', paddingBottom: 0 }}>
-                            <span style={infoLabel}>Email</span>
-                            <a
-                                href={`mailto:${email}`}
-                                className="text-[13px] font-semibold hover:underline"
-                                style={{ color: 'var(--blanc-ink-1)', wordBreak: 'break-all' }}
-                            >
-                                {email}
-                            </a>
                         </div>
                     )}
                 </div>

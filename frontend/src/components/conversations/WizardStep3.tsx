@@ -17,7 +17,6 @@ export function WizardStep3(s: WizardState) {
                     <Clock className="w-3.5" /> Custom Time
                 </Button>
             </div>
-            <p className="wizard__hint">Select a date and timeslot, or skip to create a lead only.</p>
             <div className="wizard__row wizard__row--align-end">
                 <div className="wizard__field">
                     <Label htmlFor="wz-date">Starting Date</Label>
@@ -44,7 +43,6 @@ export function WizardStep3(s: WizardState) {
                     );
                 })}
             </div>
-            <div className="wizard__section-gap" />
             {!s.showSkipConfirm ? (
                 <Button variant="ghost" size="sm" onClick={() => s.setShowSkipConfirm(true)} className="wizard__skip-btn"><SkipForward className="w-4 mr-1" /> Skip — create lead without scheduling</Button>
             ) : (

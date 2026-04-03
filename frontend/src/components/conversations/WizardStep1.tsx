@@ -1,14 +1,12 @@
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { PhoneInput } from '../ui/PhoneInput';
-import { Badge } from '../ui/badge';
 import type { WizardState } from './wizardTypes';
 
 export function WizardStep1(s: WizardState) {
     return (
         <div className="wizard__body">
             <div className="wizard__section-title">Territory Check</div>
-            <p className="wizard__hint">Enter the customer's zip code to verify the area is serviced.</p>
             <div className="wizard__row wizard__row--align-end">
                 <div className="wizard__field" style={{ marginBottom: 0 }}>
                     <Label htmlFor="wz-zip">Zip Code *</Label>
@@ -16,13 +14,19 @@ export function WizardStep1(s: WizardState) {
                 </div>
                 <div className="wizard__territory-status">
                     {s.territoryLoading && <span className="text-sm animate-pulse" style={{ color: 'var(--blanc-ink-3)' }}>Checking…</span>}
-                    {s.zipExists && <Badge variant="default" className="bg-green-600">✓ {s.zipArea || s.territoryResult?.service_territory?.name || 'In service area'}</Badge>}
-                    {s.territoryError && !s.territoryLoading && <Badge variant="destructive">✗ {s.territoryError}</Badge>}
+                    {s.zipExists && (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '6px 12px', borderRadius: 999, background: 'rgba(27, 139, 99, 0.1)', color: 'var(--blanc-success, #1b8b63)', fontSize: 13, fontWeight: 700 }}>
+                            ✓ {s.zipArea || s.territoryResult?.service_territory?.name || 'In service area'}
+                        </span>
+                    )}
+                    {s.territoryError && !s.territoryLoading && (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '6px 12px', borderRadius: 999, background: 'rgba(212, 77, 60, 0.1)', color: 'var(--blanc-danger, #d44d3c)', fontSize: 13, fontWeight: 700 }}>
+                            ✗ {s.territoryError}
+                        </span>
+                    )}
                 </div>
             </div>
-            <div className="wizard__section-gap" />
-            <div className="wizard__section-title">Customer</div>
-            <p className="wizard__hint">Phone is pre-filled. Name & email are optional.</p>
+            <div className="wizard__section-title" style={{ marginTop: 18 }}>Customer</div>
             <div className="wizard__row">
                 <div className="wizard__field wizard__field--wide"><Label htmlFor="wz-fname">First Name</Label><Input id="wz-fname" value={s.firstName} onChange={(e) => s.setFirstName(e.target.value)} placeholder="John" /></div>
                 <div className="wizard__field wizard__field--wide"><Label htmlFor="wz-lname">Last Name</Label><Input id="wz-lname" value={s.lastName} onChange={(e) => s.setLastName(e.target.value)} placeholder="Doe" /></div>
