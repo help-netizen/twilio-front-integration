@@ -9,6 +9,7 @@ import { useNavigate } from 'react-router-dom';
 import { authedFetch } from '../../services/apiClient';
 import { formatFileSize, formatDisplayPhone, resolveVariables } from './smsFormHelpers';
 import type { SmsFormProps, QuickMessage } from './smsFormHelpers';
+import { isMobileViewport, clampToViewport } from '../../hooks/useViewportSafePosition';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -62,7 +63,7 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
                             {toDropdownOpen ? <ChevronUp className="w-3 h-3" style={{ color: 'var(--blanc-ink-3)' }} /> : <ChevronDown className="w-3 h-3" style={{ color: 'var(--blanc-ink-3)' }} />}
                         </button>
                     </div>
-                    {toDropdownOpen && (<><div className="fixed inset-0 z-10" onClick={() => setToDropdownOpen(false)} /><div className="absolute left-0 top-full mt-1 rounded-xl shadow-lg z-20 py-1 min-w-[260px]" style={{ background: 'var(--blanc-surface-strong)', border: '1px solid var(--blanc-line)' }}><button onClick={() => { onPhoneChange?.(mainPhone); setToDropdownOpen(false); }} className={`w-full text-left px-3 py-2 hover:bg-muted/50 text-sm flex items-center justify-between ${selectedPhone !== secondaryPhone ? 'text-primary' : ''}`} style={{ color: selectedPhone !== secondaryPhone ? 'var(--blanc-info)' : 'var(--blanc-ink-1)' }}><span>{formatDisplayPhone(mainPhone)} — Main number</span>{selectedPhone !== secondaryPhone && <span className="text-xs">✓</span>}</button><button onClick={() => { onPhoneChange?.(secondaryPhone); setToDropdownOpen(false); }} className={`w-full text-left px-3 py-2 hover:bg-muted/50 text-sm flex items-center justify-between`} style={{ color: selectedPhone === secondaryPhone ? 'var(--blanc-info)' : 'var(--blanc-ink-1)' }}><span>{formatDisplayPhone(secondaryPhone)}{secondaryPhoneName ? ` — ${secondaryPhoneName}` : ''}</span>{selectedPhone === secondaryPhone && <span className="text-xs">✓</span>}</button></div></>)}
+                    {toDropdownOpen && (<><div className="fixed inset-0 z-10" onClick={() => setToDropdownOpen(false)} /><div className="absolute left-0 top-full mt-1 rounded-xl shadow-lg z-20 py-1 min-w-[260px] max-w-[calc(100vw-32px)]" style={{ background: 'var(--blanc-surface-strong)', border: '1px solid var(--blanc-line)' }}><button onClick={() => { onPhoneChange?.(mainPhone); setToDropdownOpen(false); }} className={`w-full text-left px-3 py-2 hover:bg-muted/50 text-sm flex items-center justify-between ${selectedPhone !== secondaryPhone ? 'text-primary' : ''}`} style={{ color: selectedPhone !== secondaryPhone ? 'var(--blanc-info)' : 'var(--blanc-ink-1)' }}><span>{formatDisplayPhone(mainPhone)} — Main number</span>{selectedPhone !== secondaryPhone && <span className="text-xs">✓</span>}</button><button onClick={() => { onPhoneChange?.(secondaryPhone); setToDropdownOpen(false); }} className={`w-full text-left px-3 py-2 hover:bg-muted/50 text-sm flex items-center justify-between`} style={{ color: selectedPhone === secondaryPhone ? 'var(--blanc-info)' : 'var(--blanc-ink-1)' }}><span>{formatDisplayPhone(secondaryPhone)}{secondaryPhoneName ? ` — ${secondaryPhoneName}` : ''}</span>{selectedPhone === secondaryPhone && <span className="text-xs">✓</span>}</button></div></>)}
                 </div>
             )}
             {attachedFiles.length > 0 && (
@@ -81,7 +82,7 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
                     </div>
                 )}
             </div>
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center justify-between gap-2 max-md:flex-wrap">
                 <div className="flex items-center gap-2">
                     <div className="relative">
                         <button
@@ -94,7 +95,45 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
                             <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isPresetsOpen ? 'rotate-180' : ''}`} />
                             Quick
                         </button>
-                        {isPresetsOpen && (<div ref={quickDropdownRef} className="fixed w-72 rounded-xl shadow-lg z-[101] py-1 flex flex-col" style={{ background: 'var(--blanc-surface-strong)', border: '1px solid var(--blanc-line)', maxHeight: '50vh', left: quickBtnRef.current ? quickBtnRef.current.getBoundingClientRect().left : 0, bottom: quickBtnRef.current ? window.innerHeight - quickBtnRef.current.getBoundingClientRect().top + 4 : 0 }}><div className="overflow-y-auto flex-1">{quickMessages.map(qm => <button key={qm.id} onClick={() => handlePresetSelect(qm.content)} className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors"><div className="text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>{qm.title}</div><div className="text-xs line-clamp-1" style={{ color: 'var(--blanc-ink-3)' }}>{qm.content}</div></button>)}</div><div className="border-t my-1 flex-shrink-0" style={{ borderColor: 'var(--blanc-line)' }} /><button onClick={() => { setIsPresetsOpen(false); navigate('/settings/quick-messages'); }} className="w-full text-left px-3 py-2 hover:bg-muted/50 transition-colors flex-shrink-0"><div className="text-sm font-medium" style={{ color: 'var(--blanc-info)' }}>+ Add New</div></button></div>)}
+                        {isPresetsOpen && (() => {
+                            const quickContent = (
+                                <>
+                                    <div className="overflow-y-auto flex-1">
+                                        {quickMessages.map(qm => (
+                                            <button key={qm.id} onClick={() => handlePresetSelect(qm.content)} className="w-full text-left px-4 py-3 hover:bg-muted/50 transition-colors">
+                                                <div className="text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>{qm.title}</div>
+                                                <div className="text-xs line-clamp-1" style={{ color: 'var(--blanc-ink-3)' }}>{qm.content}</div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <div className="border-t my-1 flex-shrink-0" style={{ borderColor: 'var(--blanc-line)' }} />
+                                    <button onClick={() => { setIsPresetsOpen(false); navigate('/settings/quick-messages'); }} className="w-full text-left px-4 py-3 hover:bg-muted/50 transition-colors flex-shrink-0">
+                                        <div className="text-sm font-medium" style={{ color: 'var(--blanc-info)' }}>+ Add New</div>
+                                    </button>
+                                </>
+                            );
+                            if (isMobileViewport()) {
+                                return (
+                                    <>
+                                        <div className="blanc-mobile-sheet-backdrop" onClick={() => setIsPresetsOpen(false)} />
+                                        <div ref={quickDropdownRef} className="blanc-mobile-sheet flex flex-col">
+                                            <div className="blanc-mobile-sheet-header">
+                                                <h3>Quick Messages</h3>
+                                                <button onClick={() => setIsPresetsOpen(false)} className="p-1 rounded-lg" style={{ color: 'var(--blanc-ink-3)' }}><X className="size-5" /></button>
+                                            </div>
+                                            {quickContent}
+                                        </div>
+                                    </>
+                                );
+                            }
+                            const btnRect = quickBtnRef.current?.getBoundingClientRect();
+                            const pos = btnRect ? clampToViewport(btnRect, 288, 320, false) : { left: 0, top: 0 };
+                            return (
+                                <div ref={quickDropdownRef} className="fixed w-72 rounded-xl shadow-lg z-[101] py-1 flex flex-col" style={{ background: 'var(--blanc-surface-strong)', border: '1px solid var(--blanc-line)', maxHeight: '50vh', left: pos.left, bottom: btnRect ? window.innerHeight - btnRect.top + 4 : 0 }}>
+                                    {quickContent}
+                                </div>
+                            );
+                        })()}
                     </div>
                     <button onClick={() => fileInputRef.current?.click()} className="flex items-center justify-center transition-opacity hover:opacity-70" style={{ width: 42, height: 42, borderRadius: 14, border: '1px solid rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', color: 'var(--blanc-ink-2)', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }} title="Attach file"><Paperclip className="w-4 h-4" /></button>
                     <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} className="hidden" />

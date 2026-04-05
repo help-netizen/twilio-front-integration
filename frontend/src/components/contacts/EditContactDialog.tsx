@@ -88,7 +88,7 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
                         <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
                             Client Details
                         </h3>
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
                                 <Label htmlFor="ec-first-name" className="mb-1.5">First Name</Label>
                                 <Input
@@ -144,7 +144,7 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
                             />
                         </div>
                         {showSecondary && (
-                            <div className="grid grid-cols-2 gap-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div>
                                     <Label htmlFor="ec-secondary-phone" className="mb-1.5">Secondary Phone</Label>
                                     <PhoneInput

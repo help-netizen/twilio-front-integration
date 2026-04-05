@@ -4,7 +4,7 @@
  * LEFT:  Header (amount + client + status pills) → Invoice tile → Job tile → Provider tile
  * RIGHT: Attachments gallery → Metadata → Check deposit
  */
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
     Loader2, FileText, ChevronDown, ChevronLeft, ChevronRight as ChevronRightIcon,
     ExternalLink, RotateCcw, Receipt,
@@ -338,25 +338,20 @@ function AttachmentsSection({ attachments, galleryIndex, setGalleryIndex, rotati
 function RotatableImage({ src, alt, rotation }: { src: string; alt: string; rotation: number }) {
     const containerRef = useRef<HTMLDivElement>(null);
     const imgRef = useRef<HTMLImageElement>(null);
-    const [scale, setScale] = useState(1);
     const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
+    const [containerW, setContainerW] = useState(0);
 
-    const isRotatedSideways = Math.abs(rotation % 360) === 90 || Math.abs(rotation % 360) === 270;
+    const norm = ((rotation % 360) + 360) % 360;
+    const isRotatedSideways = norm === 90 || norm === 270;
 
-    const recalc = useCallback(() => {
-        if (!containerRef.current || !naturalSize.w || !naturalSize.h) return;
-        const containerW = containerRef.current.clientWidth - 24;
-        if (isRotatedSideways) {
-            const rotatedVisualW = naturalSize.h;
-            const rotatedVisualH = naturalSize.w;
-            const s = Math.min(containerW / rotatedVisualW, (window.innerHeight * 0.7) / rotatedVisualH, 1);
-            setScale(s);
-        } else {
-            setScale(1);
-        }
-    }, [naturalSize, isRotatedSideways]);
-
-    useEffect(() => { recalc(); }, [recalc, rotation]);
+    useEffect(() => {
+        if (!containerRef.current) return;
+        const measure = () => setContainerW(containerRef.current!.clientWidth);
+        measure();
+        const ro = new ResizeObserver(measure);
+        ro.observe(containerRef.current);
+        return () => ro.disconnect();
+    }, []);
 
     const handleLoad = () => {
         if (imgRef.current) {
@@ -364,7 +359,42 @@ function RotatableImage({ src, alt, rotation }: { src: string; alt: string; rota
         }
     };
 
-    const wrapperH = isRotatedSideways && naturalSize.w ? naturalSize.w * scale : undefined;
+    // When rotated sideways, CSS width/height are swapped relative to visual output:
+    //   visual width  = CSS height
+    //   visual height = CSS width
+    // We want visual width = containerW, so CSS height = containerW
+    // and CSS width = containerW * (naturalW / naturalH) to keep aspect ratio
+    let imgStyle: React.CSSProperties;
+    let wrapperH: number | undefined;
+
+    if (isRotatedSideways && naturalSize.w && naturalSize.h && containerW) {
+        const ratio = naturalSize.w / naturalSize.h;
+        const visualW = containerW;                // fills container width
+        const visualH = containerW * ratio;        // proportional height
+        const maxVisualH = window.innerHeight * 0.7;
+        const finalScale = visualH > maxVisualH ? maxVisualH / visualH : 1;
+        const cssH = visualW * finalScale;         // after rotation → visual width
+        const cssW = visualH * finalScale;         // after rotation → visual height
+        wrapperH = cssW;                           // container height = visual height
+        imgStyle = {
+            width: cssW,
+            height: cssH,
+            objectFit: 'contain',
+            transform: `rotate(${rotation}deg)`,
+            transformOrigin: 'center center',
+            transition: 'transform 0.2s ease',
+        };
+    } else {
+        wrapperH = undefined;
+        imgStyle = {
+            maxWidth: '100%',
+            maxHeight: '70vh',
+            objectFit: 'contain',
+            transform: rotation ? `rotate(${rotation}deg)` : undefined,
+            transformOrigin: 'center center',
+            transition: 'transform 0.2s ease',
+        };
+    }
 
     return (
         <div ref={containerRef} style={{ width: '100%', height: wrapperH, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
@@ -374,14 +404,7 @@ function RotatableImage({ src, alt, rotation }: { src: string; alt: string; rota
                 alt={alt}
                 onLoad={handleLoad}
                 className="rounded"
-                style={{
-                    maxWidth: isRotatedSideways ? undefined : '100%',
-                    maxHeight: isRotatedSideways ? undefined : '70vh',
-                    objectFit: 'contain',
-                    transform: `rotate(${rotation}deg) scale(${isRotatedSideways ? scale : 1})`,
-                    transformOrigin: 'center center',
-                    transition: 'transform 0.2s ease',
-                }}
+                style={imgStyle}
             />
         </div>
     );

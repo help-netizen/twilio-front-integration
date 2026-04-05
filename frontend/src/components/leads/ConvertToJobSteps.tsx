@@ -53,7 +53,7 @@ export function StepIndicator({ step }: { step: Step }) {
 export function ConvertStep1({ name, setName, phone, setPhone, email, setEmail, addressFields, setAddressFields, setCoords, territoryLoading, territoryResult, territoryError, zipExists, zipArea, zipSource }: StepProps) {
     return (
         <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3"><div><Label htmlFor="cj-name">Full Name *</Label><Input id="cj-name" value={name} onChange={e => setName(e.target.value)} placeholder="John Doe" /></div><div><Label htmlFor="cj-phone">Phone</Label><Input id="cj-phone" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+1..." /></div></div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><div><Label htmlFor="cj-name">Full Name *</Label><Input id="cj-name" value={name} onChange={e => setName(e.target.value)} placeholder="John Doe" /></div><div><Label htmlFor="cj-phone">Phone</Label><Input id="cj-phone" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+1..." /></div></div>
             <div><Label htmlFor="cj-email">Email</Label><Input id="cj-email" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="email@example.com" /></div>
             <AddressAutocomplete header={<Label className="text-sm font-medium">Address</Label>} idPrefix="cj" defaultUseDetails={true} value={addressFields} onChange={addr => { setAddressFields(addr); if (addr.lat && addr.lng) setCoords({ lat: addr.lat, lng: addr.lng }); }} />
             <div className="flex items-center gap-2 min-h-[28px]">
@@ -73,7 +73,7 @@ export function ConvertStep2({ serviceName, setServiceName, serviceDescription, 
                 {jobTypes.length > 0 ? (<Select value={serviceName} onValueChange={setServiceName}><SelectTrigger id="cj-svc-name"><SelectValue placeholder="Select service type" /></SelectTrigger><SelectContent>{jobTypes.map(jt => <SelectItem key={jt} value={jt}>{jt}</SelectItem>)}{serviceName && !jobTypes.includes(serviceName) && <SelectItem key={serviceName} value={serviceName}>{serviceName}</SelectItem>}</SelectContent></Select>) : (<Input id="cj-svc-name" value={serviceName} onChange={e => setServiceName(e.target.value)} placeholder="Plumbing Repair" />)}
             </div>
             <div><Label htmlFor="cj-svc-desc">Description</Label><Textarea id="cj-svc-desc" value={serviceDescription} onChange={e => setServiceDescription(e.target.value)} placeholder="Job description or notes..." rows={4} /></div>
-            <div className="grid grid-cols-2 gap-3"><div><Label htmlFor="cj-svc-price">Price ($)</Label><Input id="cj-svc-price" type="number" min="0" step="0.01" value={servicePrice} onChange={e => setServicePrice(e.target.value)} /></div><div><Label htmlFor="cj-svc-duration">Duration (min) *</Label><Input id="cj-svc-duration" type="number" min="15" step="15" value={serviceDuration} onChange={e => setServiceDuration(e.target.value)} /></div></div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><div><Label htmlFor="cj-svc-price">Price ($)</Label><Input id="cj-svc-price" type="number" min="0" step="0.01" value={servicePrice} onChange={e => setServicePrice(e.target.value)} /></div><div><Label htmlFor="cj-svc-duration">Duration (min) *</Label><Input id="cj-svc-duration" type="number" min="15" step="15" value={serviceDuration} onChange={e => setServiceDuration(e.target.value)} /></div></div>
         </div>
     );
 }
@@ -122,7 +122,7 @@ export function ConvertStep3({ selectedDate, setSelectedDate, timeslotsLoading, 
 
             {/* Timeslot grid */}
             <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
-                {timeslotDays.map(day => { if (!day.timeslots?.length) return null; return (<div key={day.date}><p className="text-xs font-semibold text-muted-foreground mb-1.5">{new Date(day.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</p><div className="grid grid-cols-2 gap-1.5">{day.timeslots.map(slot => (<button key={slot.id} type="button" onClick={() => setSelectedTimeslot(slot)} className={`p-2 rounded-md border text-sm text-left transition-colors ${selectedTimeslot?.id === slot.id ? 'border-primary bg-primary/10 font-medium' : 'border-border hover:border-primary/50 hover:bg-muted/50'}`}>{slot.formatted}</button>))}</div></div>); })}
+                {timeslotDays.map(day => { if (!day.timeslots?.length) return null; return (<div key={day.date}><p className="text-xs font-semibold text-muted-foreground mb-1.5">{new Date(day.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</p><div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">{day.timeslots.map(slot => (<button key={slot.id} type="button" onClick={() => setSelectedTimeslot(slot)} className={`p-2 rounded-md border text-sm text-left transition-colors ${selectedTimeslot?.id === slot.id ? 'border-primary bg-primary/10 font-medium' : 'border-border hover:border-primary/50 hover:bg-muted/50'}`}>{slot.formatted}</button>))}</div></div>); })}
             </div>
 
             <CustomTimeModal

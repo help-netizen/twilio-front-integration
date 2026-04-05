@@ -173,7 +173,7 @@ export function PulseContactPanel({ contact, leads, loading, onAddressesChanged,
             </div>
 
             {/* ── Body ── */}
-            <div className="grid grid-cols-2 gap-x-6 px-5 pb-5">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4 px-5 pb-5">
                 {/* Left column — Leads & Jobs */}
                 <div>
                     <div className="flex items-center gap-2 mb-3">

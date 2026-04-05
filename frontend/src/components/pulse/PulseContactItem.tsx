@@ -206,7 +206,7 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                         tabIndex={0}
                         onClick={(e) => { e.stopPropagation(); setMenuOpen(prev => !prev); }}
                         onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMenuOpen(prev => !prev); } }}
-                        className={`p-1 rounded-lg transition-colors cursor-pointer ${menuOpen ? 'bg-muted/80' : 'opacity-0 group-hover:opacity-100'} ${isActive ? 'opacity-100' : ''}`}
+                        className={`p-1.5 rounded-lg transition-colors cursor-pointer min-w-[32px] min-h-[32px] flex items-center justify-center ${menuOpen ? 'bg-muted/80' : 'max-md:opacity-70 md:opacity-0 md:group-hover:opacity-100'} ${isActive ? '!opacity-100' : ''}`}
                         title="More options"
                     >
                         <MoreVertical className="size-3.5" style={{ color: 'var(--blanc-ink-3)' }} />
@@ -244,7 +244,7 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                                         <Clock className="size-3.5" /> Snooze…
                                     </div>
                                     {snoozeMenuOpen && (
-                                        <div className="absolute right-full top-0 mr-1 z-[100] bg-card rounded-xl shadow-lg border border-border py-1 min-w-[140px]">
+                                        <div className="absolute max-md:left-0 max-md:top-full max-md:mt-1 md:right-full md:top-0 md:mr-1 z-[100] bg-card rounded-xl shadow-lg border border-border py-1 min-w-[140px]">
                                             {SNOOZE_OPTIONS.map(opt => (
                                                 <div key={opt.label} role="button" tabIndex={0}
                                                     onClick={(e) => { e.stopPropagation(); setMenuOpen(false); setSnoozeMenuOpen(false); if (tlId && onSnooze) onSnooze(tlId, getSnoozeUntil(opt, companyTz)); }}

@@ -74,7 +74,7 @@ export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLe
                                 <DropdownMenu>
                                     <DropdownMenuTrigger asChild>
                                         <button
-                                            className="inline-flex items-center justify-center transition-opacity hover:opacity-70"
+                                            className="inline-flex items-center justify-center transition-opacity hover:opacity-70 max-md:min-w-[44px] max-md:min-h-[44px]"
                                             style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid rgba(104, 95, 80, 0.1)', color: 'var(--blanc-ink-3)', background: 'transparent' }}
                                         >
                                             <MoreVertical className="size-3.5" />

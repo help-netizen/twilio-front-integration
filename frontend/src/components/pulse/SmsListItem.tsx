@@ -91,7 +91,7 @@ export function SmsListItem({ sms }: SmsListItemProps) {
                                         />
                                         <button
                                             onClick={(e) => { e.stopPropagation(); handleDownload(media); }}
-                                            className={`absolute top-2 right-2 p-1.5 rounded-full shadow-lg transition-opacity opacity-0 group-hover:opacity-100 ${isOutgoing ? 'bg-blue-700/80' : 'bg-black/40'}`}
+                                            className={`absolute top-2 right-2 p-1.5 rounded-full shadow-lg transition-opacity max-md:opacity-70 md:opacity-0 md:group-hover:opacity-100 ${isOutgoing ? 'bg-blue-700/80' : 'bg-black/40'}`}
                                             title="Download"
                                         >
                                             <Download className="w-3.5 h-3.5 text-white" />

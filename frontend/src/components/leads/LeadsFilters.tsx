@@ -6,6 +6,7 @@ import type { LeadsListParams } from '../../types/lead';
 import { LEAD_STATUSES, JOB_SOURCES } from '../../types/lead';
 import { useLeadFormSettings } from '../../hooks/useLeadFormSettings';
 import { DateRangePickerPopover } from '../ui/DateRangePickerPopover';
+import { isMobileViewport } from '../../hooks/useViewportSafePosition';
 
 interface LeadsFiltersProps {
     filters: LeadsListParams;
@@ -114,57 +115,81 @@ export function LeadsFilters({
                 </button>
 
                 {/* Filter Dropdown Panel */}
-                {dropdownOpen && (
-                    <div
-                        className="absolute z-50 rounded-xl overflow-hidden"
-                        style={{
-                            background: 'var(--blanc-surface-strong)',
-                            border: '1px solid var(--blanc-line)',
-                            boxShadow: 'var(--blanc-shadow-main)',
-                            width: 500,
-                            right: 0,
-                            top: 'calc(100% + 8px)',
-                        }}
-                    >
-                        {/* Active filter badges */}
-                        {activeFilterCount > 0 && (
-                            <div className="flex flex-wrap gap-1.5 p-3 pb-0 items-center">
-                                {(filters.status || []).map(s => (
-                                    <Badge key={`s-${s}`} variant="secondary" className="gap-1 text-xs">
-                                        {s}
-                                        <X className="size-3 cursor-pointer" onClick={() => toggleStatus(s)} />
-                                    </Badge>
-                                ))}
-                                {sourceFilter.map(s => (
-                                    <Badge key={`src-${s}`} variant="outline" className="gap-1 text-xs">
-                                        {s}
-                                        <X className="size-3 cursor-pointer" onClick={() => toggleSource(s)} />
-                                    </Badge>
-                                ))}
-                                {jobTypeFilter.map(t => (
-                                    <Badge key={`jt-${t}`} variant="default" className="gap-1 text-xs">
-                                        {t}
-                                        <X className="size-3 cursor-pointer" onClick={() => toggleJobType(t)} />
-                                    </Badge>
-                                ))}
-                                <button
-                                    onClick={clearAllFilters}
-                                    className="text-xs ml-1 transition-opacity hover:opacity-70"
-                                    style={{ color: 'var(--blanc-ink-3)' }}
-                                >
-                                    Clear all
-                                </button>
-                            </div>
-                        )}
+                {dropdownOpen && (() => {
+                    const isMobile = isMobileViewport();
+                    const filterContent = (
+                        <>
+                            {/* Active filter badges */}
+                            {activeFilterCount > 0 && (
+                                <div className="flex flex-wrap gap-1.5 p-3 pb-0 items-center">
+                                    {(filters.status || []).map(s => (
+                                        <Badge key={`s-${s}`} variant="secondary" className="gap-1 text-xs">
+                                            {s}
+                                            <X className="size-3 cursor-pointer" onClick={() => toggleStatus(s)} />
+                                        </Badge>
+                                    ))}
+                                    {sourceFilter.map(s => (
+                                        <Badge key={`src-${s}`} variant="outline" className="gap-1 text-xs">
+                                            {s}
+                                            <X className="size-3 cursor-pointer" onClick={() => toggleSource(s)} />
+                                        </Badge>
+                                    ))}
+                                    {jobTypeFilter.map(t => (
+                                        <Badge key={`jt-${t}`} variant="default" className="gap-1 text-xs">
+                                            {t}
+                                            <X className="size-3 cursor-pointer" onClick={() => toggleJobType(t)} />
+                                        </Badge>
+                                    ))}
+                                    <button
+                                        onClick={clearAllFilters}
+                                        className="text-xs ml-1 transition-opacity hover:opacity-70"
+                                        style={{ color: 'var(--blanc-ink-3)' }}
+                                    >
+                                        Clear all
+                                    </button>
+                                </div>
+                            )}
 
-                        {/* Columns */}
-                        <div className="grid grid-cols-3 p-3 gap-0" style={{ borderTop: activeFilterCount > 0 ? '1px solid var(--blanc-line)' : undefined, marginTop: activeFilterCount > 0 ? 8 : 0 }}>
-                            <FilterColumn title="STATUS" items={LEAD_STATUSES as unknown as string[]} selected={filters.status || []} onToggle={toggleStatus} colorMap={LEAD_STATUS_COLORS} />
-                            <FilterColumn title="SOURCE" items={JOB_SOURCES as unknown as string[]} selected={sourceFilter} onToggle={toggleSource} />
-                            <FilterColumn title="JOB TYPE" items={dynamicJobTypes} selected={jobTypeFilter} onToggle={toggleJobType} />
+                            {/* Columns */}
+                            <div className="grid grid-cols-1 sm:grid-cols-3 p-3 gap-3 sm:gap-0" style={{ borderTop: activeFilterCount > 0 ? '1px solid var(--blanc-line)' : undefined, marginTop: activeFilterCount > 0 ? 8 : 0 }}>
+                                <FilterColumn title="STATUS" items={LEAD_STATUSES as unknown as string[]} selected={filters.status || []} onToggle={toggleStatus} colorMap={LEAD_STATUS_COLORS} />
+                                <FilterColumn title="SOURCE" items={JOB_SOURCES as unknown as string[]} selected={sourceFilter} onToggle={toggleSource} />
+                                <FilterColumn title="JOB TYPE" items={dynamicJobTypes} selected={jobTypeFilter} onToggle={toggleJobType} />
+                            </div>
+                        </>
+                    );
+
+                    if (isMobile) {
+                        return (
+                            <>
+                                <div className="blanc-mobile-sheet-backdrop" onClick={() => setDropdownOpen(false)} />
+                                <div className="blanc-mobile-sheet">
+                                    <div className="blanc-mobile-sheet-header">
+                                        <span className="text-sm font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>Filters</span>
+                                        <button onClick={() => setDropdownOpen(false)} className="p-1.5 rounded-lg" style={{ color: 'var(--blanc-ink-3)' }}><X className="size-4" /></button>
+                                    </div>
+                                    {filterContent}
+                                </div>
+                            </>
+                        );
+                    }
+
+                    return (
+                        <div
+                            className="absolute z-50 rounded-xl overflow-hidden"
+                            style={{
+                                background: 'var(--blanc-surface-strong)',
+                                border: '1px solid var(--blanc-line)',
+                                boxShadow: 'var(--blanc-shadow-main)',
+                                width: 500,
+                                right: 0,
+                                top: 'calc(100% + 8px)',
+                            }}
+                        >
+                            {filterContent}
                         </div>
-                    </div>
-                )}
+                    );
+                })()}
             </div>
         </>
     );
