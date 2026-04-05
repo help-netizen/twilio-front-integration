@@ -141,6 +141,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall: _hasActiveCall, time
                     customer: { name: [firstName, lastName].filter(Boolean).join(' ') || 'Unknown', ...(phoneNumber && { phone: toE164(phoneNumber) }), ...(email && { email }) },
                     address: { line1: streetAddress || 'N/A', city: city || 'N/A', ...(state && { state }), ...(postalCode && { postal_code: postalCode }), country: 'US' },
                     services: [{ custom_service: { name: jobType || 'General Service', description: description || '', price: Number(price) || 95, duration: Number(duration) || 120, taxable: false } }],
+                    min_providers_needed: 1,
                     sms_notifications: true, email_notifications: true,
                 };
                 if (selectedTimeslot?.id) {
@@ -161,6 +162,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall: _hasActiveCall, time
                     const tomorrowStart = tomorrowAtInTZ(8, 0, companyTz);
                     const tomorrowEnd = new Date(tomorrowStart.getTime() + 4 * 60 * 60 * 1000);
                     zbJobPayload.timeslot = { type: 'arrival_window', start: tomorrowStart.toISOString(), end: tomorrowEnd.toISOString() };
+                    zbJobPayload.assignment_method = 'auto';
                 }
                 const result = await leadsApi.convertLead(createdUUID, {
                     zb_job_payload: zbJobPayload, service: { name: jobType || 'General Service' },

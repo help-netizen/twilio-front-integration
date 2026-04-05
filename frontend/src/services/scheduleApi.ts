@@ -46,13 +46,14 @@ export interface ScheduleFilters {
     jobType?: string;
     source?: string;
     providerIds?: string[];
+    tags?: string[];
 }
 
 // ── Filter persistence ──────────────────────────────────────────────────────
 
 const FILTER_STORAGE_KEY = 'schedule-filters';
 
-export type PersistableFilters = Pick<ScheduleFilters, 'entityTypes' | 'statuses' | 'unassignedOnly' | 'search' | 'jobType' | 'source' | 'providerIds'>;
+export type PersistableFilters = Pick<ScheduleFilters, 'entityTypes' | 'statuses' | 'unassignedOnly' | 'search' | 'jobType' | 'source' | 'providerIds' | 'tags'>;
 
 export function loadPersistedFilters(): Partial<PersistableFilters> {
     try {
@@ -64,7 +65,7 @@ export function loadPersistedFilters(): Partial<PersistableFilters> {
 
 export function persistFilters(filters: Partial<PersistableFilters>): void {
     try {
-        const { entityTypes, statuses, unassignedOnly, search, jobType, source } = filters;
+        const { entityTypes, statuses, unassignedOnly, search, jobType, source, tags } = filters;
         const toSave: Partial<PersistableFilters> = {};
         if (entityTypes?.length) toSave.entityTypes = entityTypes;
         if (statuses?.length) toSave.statuses = statuses;
@@ -72,6 +73,7 @@ export function persistFilters(filters: Partial<PersistableFilters>): void {
         if (search) toSave.search = search;
         if (jobType) toSave.jobType = jobType;
         if (source) toSave.source = source;
+        if (tags?.length) toSave.tags = tags;
         if (Object.keys(toSave).length) {
             localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(toSave));
         } else {
@@ -159,6 +161,7 @@ export interface CreateFromSlotPayload {
     title: string;
     start_at: string;
     end_at: string;
+    entity_type?: string;
     assigned_provider_id?: string | null;
 }
 

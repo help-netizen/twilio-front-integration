@@ -1,3 +1,6 @@
+import { syncClock } from './utils/serverClock';
+syncClock(); // align client clock with server — fixes timezone DB drift (e.g. Kazakhstan)
+
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './auth/AuthProvider';

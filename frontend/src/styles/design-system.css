@@ -137,8 +137,8 @@
     --destructive: var(--blanc-danger);
     --destructive-foreground: #ffffff;
     --border: var(--blanc-line);
-    --input: transparent;
-    --input-background: rgba(255, 253, 249, 0.7);
+    --input: rgba(104, 95, 80, 0.28);
+    --input-background: #ffffff;
     --switch-background: rgba(117, 106, 89, 0.2);
     --ring: var(--blanc-job);
     --chart-1: var(--blanc-lead);

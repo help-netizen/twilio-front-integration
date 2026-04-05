@@ -14,6 +14,7 @@ import {
     todayInTZ, dateInTZ, minutesSinceMidnight,
     formatTimeInTZ, dateKeyInTZ,
 } from '../../utils/companyTime';
+import { serverDate } from '../../utils/serverClock';
 import { assignLanes } from '../../utils/scheduleLayout';
 import type { LayoutItem } from '../../utils/scheduleLayout';
 import { setDragData, getDragData, hasDragData } from '../../hooks/useScheduleDnD';
@@ -79,7 +80,7 @@ export const WeekView: React.FC<WeekViewProps> = ({ currentDate, items, settings
     const todayStr = todayInTZ(tz);
     const isTodayCol = (dayKey: string) => dayKey === todayStr;
 
-    const nowMinFromGrid = minutesSinceMidnight(new Date(), tz) - startHour * 60;
+    const nowMinFromGrid = minutesSinceMidnight(serverDate(), tz) - startHour * 60;
     const pastHeight = Math.max(0, Math.min(nowMinFromGrid, totalHours * 60)) / 60 * HOUR_HEIGHT;
 
     const [refY, refM, refD] = dayKeys[0].split('-').map(Number);
@@ -386,7 +387,7 @@ export const WeekView: React.FC<WeekViewProps> = ({ currentDate, items, settings
                     startAt={slotMenu.startAt}
                     endAt={slotMenu.endAt}
                     timezone={tz}
-                    onCreateTask={(title) => onCreateFromSlot(title, slotMenu.startAt, slotMenu.endAt)}
+                    onCreateJob={(title) => onCreateFromSlot(title, slotMenu.startAt, slotMenu.endAt)}
                     onClose={() => setSlotMenu(null)}
                 />
             )}

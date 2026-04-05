@@ -8,11 +8,17 @@
 import React, { useMemo, useState, useCallback } from 'react';
 import { startOfWeek, addDays, format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
+import { SlotContextMenu } from './SlotContextMenu';
 import type { ScheduleItem, DispatchSettings } from '../../services/scheduleApi';
 import type { ProviderInfo } from '../../hooks/useScheduleData';
-import { todayInTZ, dateKeyInTZ } from '../../utils/companyTime';
+import { todayInTZ, dateKeyInTZ, dateInTZ } from '../../utils/companyTime';
 import { setDragData, getDragData, hasDragData } from '../../hooks/useScheduleDnD';
 import { getProviderColor } from '../../utils/providerColors';
+
+function parseTime(t: string): number {
+    const [h, m] = t.split(':').map(Number);
+    return h + (m || 0) / 60;
+}
 
 interface TimelineWeekViewProps {
     currentDate: Date;
@@ -21,6 +27,7 @@ interface TimelineWeekViewProps {
     allProviders?: ProviderInfo[];
     onSelectItem: (item: ScheduleItem) => void;
     onReassign?: (entityType: string, entityId: number, assigneeId: string | null, assigneeName?: string, title?: string) => void;
+    onCreateFromSlot?: (title: string, startAt: string, endAt: string) => void;
 }
 
 interface ProviderGroup {
@@ -30,14 +37,17 @@ interface ProviderGroup {
 }
 
 export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
-    currentDate, items, settings, allProviders = [], onSelectItem, onReassign,
+    currentDate, items, settings, allProviders = [], onSelectItem, onReassign, onCreateFromSlot,
 }) => {
     const tz = settings.timezone || 'America/New_York';
+    const slotDuration = settings.slot_duration || 60;
+    const workStartHour = parseTime(settings.work_start_time);
     const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
     const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
     const dayKeys = useMemo(() => days.map(d => format(d, 'yyyy-MM-dd')), [days]);
 
     const [dropHighlightCol, setDropHighlightCol] = useState<string | null>(null);
+    const [slotMenu, setSlotMenu] = useState<{ top: number; left: number; startAt: string; endAt: string; providerId?: string; providerName?: string } | null>(null);
 
     const providerGroups: ProviderGroup[] = useMemo(() => {
         const map = new Map<string, ProviderGroup>();
@@ -89,6 +99,24 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
         const assigneeName = group.id === '__unassigned' ? undefined : group.label;
         onReassign(data.entityType, data.entityId, assigneeId, assigneeName, data.title);
     }, [onReassign]);
+
+    // ── Slot click for create-from-slot ────────────────────────────────────
+
+    const handleSlotClick = useCallback((dayKey: string, group: ProviderGroup, e: React.MouseEvent) => {
+        if (!onCreateFromSlot) return;
+        if ((e.target as HTMLElement).closest('[data-schedule-item]')) return;
+        const [y, m, d] = dayKey.split('-').map(Number);
+        const startHr = Math.floor(workStartHour);
+        const startMn = Math.round((workStartHour - startHr) * 60);
+        const endMin = startHr * 60 + startMn + slotDuration;
+        const startAt = dateInTZ(y, m, d, startHr, startMn, tz).toISOString();
+        const endAt = dateInTZ(y, m, d, Math.floor(endMin / 60), endMin % 60, tz).toISOString();
+        setSlotMenu({
+            top: e.clientY, left: e.clientX, startAt, endAt,
+            providerId: group.id === '__unassigned' ? undefined : group.id,
+            providerName: group.id === '__unassigned' ? undefined : group.label,
+        });
+    }, [onCreateFromSlot, workStartHour, slotDuration, tz]);
 
     // Grid: 1 day-label column + N provider columns
     const gridCols = `140px repeat(${colCount}, minmax(140px, 1fr))`;
@@ -208,6 +236,7 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
                                     onDragOver={(e) => handleDragOver(group.id, e)}
                                     onDrop={(e) => handleDrop(group, e)}
                                     onDragLeave={() => setDropHighlightCol(null)}
+                                    onClick={(e) => handleSlotClick(dayKey, group, e)}
                                 >
                                     {cellItems.map(item => {
                                         const isDraggable = item.entity_type !== 'lead';
@@ -248,6 +277,20 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
                     </div>
                 );
             })}
+
+            {/* Slot context menu */}
+            {slotMenu && onCreateFromSlot && (
+                <SlotContextMenu
+                    anchorRect={{ top: slotMenu.top, left: slotMenu.left }}
+                    startAt={slotMenu.startAt}
+                    endAt={slotMenu.endAt}
+                    timezone={tz}
+                    providerId={slotMenu.providerId}
+                    providerName={slotMenu.providerName}
+                    onCreateJob={(title) => onCreateFromSlot(title, slotMenu.startAt, slotMenu.endAt)}
+                    onClose={() => setSlotMenu(null)}
+                />
+            )}
         </div>
     );
 };

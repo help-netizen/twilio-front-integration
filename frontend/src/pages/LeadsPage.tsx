@@ -12,6 +12,7 @@ import { Plus, Settings } from 'lucide-react';
 import * as leadsApi from '../services/leadsApi';
 import { useLeadFormSettings } from '../hooks/useLeadFormSettings';
 import type { Lead, LeadsListParams, TableColumn } from '../types/lead';
+import { serverNow, serverDate } from '../utils/serverClock';
 import { DEFAULT_COLUMNS } from '../types/lead';
 import { createLeadActions } from '../hooks/useLeadsActions';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
@@ -29,7 +30,7 @@ export function LeadsPage() {
     const [convertingLead, setConvertingLead] = useState<Lead | null>(null);
     const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
     const [columns, setColumns] = useState<TableColumn[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? JSON.parse(saved) : DEFAULT_COLUMNS; });
-    const [filters, setFilters] = useState<LeadsListParams>({ start_date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], end_date: new Date().toISOString().split('T')[0], offset: 0, records: 100, only_open: true, status: [] });
+    const [filters, setFilters] = useState<LeadsListParams>({ start_date: new Date(serverNow() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], end_date: serverDate().toISOString().split('T')[0], offset: 0, records: 100, only_open: true, status: [] });
     const [searchQuery, setSearchQuery] = useState('');
     const [sourceFilter, setSourceFilter] = useState<string[]>([]);
     const [jobTypeFilter, setJobTypeFilter] = useState<string[]>([]);

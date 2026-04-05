@@ -3,7 +3,6 @@ import { useLeadFormSettings } from '../../hooks/useLeadFormSettings';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
-import { Label } from '../ui/label';
 import { PhoneInput, toE164 } from '../ui/PhoneInput';
 import { Textarea } from '../ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
@@ -12,6 +11,7 @@ import * as leadsApi from '../../services/leadsApi';
 import type { Lead, CreateLeadInput } from '../../types/lead';
 import { AddressAutocomplete } from '../AddressAutocomplete';
 import { useContactSearch, snapshotFromForm, hasFieldChanges } from './useContactSearch';
+import './CreateLeadDialog.css';
 
 interface CreateLeadDialogProps {
     open: boolean;
@@ -19,12 +19,12 @@ interface CreateLeadDialogProps {
     onSuccess: (lead: Lead) => void;
 }
 
-
 const JOB_SOURCES = ['eLocals', 'ServiceDirect', 'Inquirly', 'Rely', 'LHG', 'NSA', 'Other'];
 
 export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDialogProps) {
     const [loading, setLoading] = useState(false);
     const [showSecondary, setShowSecondary] = useState(false);
+    const [showCompany, setShowCompany] = useState(false);
     const { customFields: allFields, jobTypes: dynamicJobTypes } = useLeadFormSettings(open);
     const customFields = allFields.filter(f => !f.is_system);
     const jobTypes = dynamicJobTypes.length > 0 ? dynamicJobTypes : ['COD Service', 'COD Repair', 'Warranty', 'INS Service', 'INS Repair'];
@@ -44,19 +44,16 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
         setShowSecondary, setContactSnapshot,
     });
 
-
-
     useEffect(() => {
         if (!open) {
             cs.setCandidates([]); setSelectedContactId(null); cs.setSelectedName(''); setContactSnapshot(null);
             cs.setSavedAddresses([]); cs.setSelectedAddrId(null); cs.setShowDropdown(false);
             setShowConfirmModal(false); setPendingSubmitData(null);
+            setShowSecondary(false); setShowCompany(false);
         }
     }, [open]);
 
     const handleRemoveContact = () => { setSelectedContactId(null); cs.setSelectedName(''); setContactSnapshot(null); cs.setSavedAddresses([]); cs.setSelectedAddrId(null); };
-
-
 
     const submitLead = async (data: CreateLeadInput, mode: string) => {
         setLoading(true); setShowConfirmModal(false);
@@ -88,77 +85,166 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
 
     const updateMetadata = (apiName: string, value: string) => setFormData(prev => ({ ...prev, Metadata: { ...(prev.Metadata || {}), [apiName]: value } }));
 
+    // Reveal company if it has data (e.g. from contact autofill)
+    const companyVisible = showCompany || !!formData.Company;
+
     return (
         <>
             <Dialog open={open} onOpenChange={onOpenChange}>
-                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                    <DialogHeader><DialogTitle>Create New Lead</DialogTitle><DialogDescription>Enter the lead's details below to create a new lead.</DialogDescription></DialogHeader>
-                    <form onSubmit={handleSubmit} className="space-y-6">
-                        <div className="space-y-4" ref={cs.dropdownRef}>
-                            <h3 className="font-medium">Contact Information</h3>
+                <DialogContent className="cld-dialog max-w-[560px] max-h-[88vh] p-0 overflow-hidden flex flex-col">
+                    {/* ── Header ── */}
+                    <DialogHeader className="cld-header">
+                        <DialogTitle className="cld-header__title">New Lead</DialogTitle>
+                        <DialogDescription className="sr-only">Create a new lead</DialogDescription>
+                    </DialogHeader>
+
+                    {/* ── Scrollable body ── */}
+                    <form onSubmit={handleSubmit} className="cld-body">
+
+                        {/* ── Contact ── */}
+                        <div className="cld-section" ref={cs.dropdownRef}>
                             {cs.renderSelectedBadge(selectedContactId, handleRemoveContact)}
                             {cs.renderSoftWarning()}
-                            <div className="relative">
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div><Label htmlFor="firstName" className="mb-2">First Name <span className="text-destructive">*</span></Label><Input id="firstName" value={formData.FirstName} onChange={(e) => cs.handleFieldChange('FirstName', e.target.value)} required /></div>
-                                    <div><Label htmlFor="lastName" className="mb-2">Last Name <span className="text-destructive">*</span></Label><Input id="lastName" value={formData.LastName} onChange={(e) => cs.handleFieldChange('LastName', e.target.value)} required /></div>
+
+                            <div className="cld-row" style={{ position: 'relative' }}>
+                                <div className="cld-field">
+                                    <label className="cld-label">First Name<span className="cld-label__req">*</span></label>
+                                    <Input value={formData.FirstName} onChange={(e) => cs.handleFieldChange('FirstName', e.target.value)} required />
+                                </div>
+                                <div className="cld-field">
+                                    <label className="cld-label">Last Name<span className="cld-label__req">*</span></label>
+                                    <Input value={formData.LastName} onChange={(e) => cs.handleFieldChange('LastName', e.target.value)} required />
                                 </div>
                                 {cs.renderDropdown('name')}
                             </div>
-                            <div className="relative">
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div><Label htmlFor="phone" className="mb-2">Phone <span className="text-destructive">*</span></Label><PhoneInput id="phone" value={formData.Phone} onChange={(f) => cs.handleFieldChange('Phone', f)} required /></div>
-                                    <div><Label htmlFor="email" className="mb-2">Email</Label><Input id="email" type="email" value={formData.Email} onChange={(e) => cs.handleFieldChange('Email', e.target.value)} /></div>
+
+                            <div className="cld-row" style={{ position: 'relative' }}>
+                                <div className="cld-field">
+                                    <label className="cld-label">Phone<span className="cld-label__req">*</span></label>
+                                    <PhoneInput value={formData.Phone} onChange={(f) => cs.handleFieldChange('Phone', f)} required />
+                                </div>
+                                <div className="cld-field">
+                                    <label className="cld-label">Email</label>
+                                    <Input type="email" value={formData.Email} onChange={(e) => cs.handleFieldChange('Email', e.target.value)} />
                                 </div>
                                 {cs.renderDropdown('phone')}{cs.renderDropdown('email')}
                             </div>
-                            {!showSecondary ? <button type="button" onClick={() => setShowSecondary(true)} className="text-xs text-primary hover:underline">+ Secondary Phone</button> : (
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div><Label htmlFor="secondPhone" className="mb-2">Secondary Phone</Label><PhoneInput id="secondPhone" value={formData.SecondPhone || ''} onChange={(f) => setFormData({ ...formData, SecondPhone: f })} /></div>
-                                    <div><Label htmlFor="secondPhoneName" className="mb-2">Secondary Name</Label><Input id="secondPhoneName" value={formData.SecondPhoneName || ''} onChange={(e) => setFormData({ ...formData, SecondPhoneName: e.target.value })} placeholder="e.g. Tenant, Wife" /></div>
+
+                            {/* Progressive disclosure: secondary phone + company */}
+                            {(showSecondary || companyVisible) && (
+                                <div className="cld-row">
+                                    {showSecondary && (
+                                        <div className="cld-field">
+                                            <label className="cld-label">Secondary Phone</label>
+                                            <PhoneInput value={formData.SecondPhone || ''} onChange={(f) => setFormData({ ...formData, SecondPhone: f })} />
+                                        </div>
+                                    )}
+                                    {showSecondary && (
+                                        <div className="cld-field">
+                                            <label className="cld-label">Secondary Name</label>
+                                            <Input value={formData.SecondPhoneName || ''} onChange={(e) => setFormData({ ...formData, SecondPhoneName: e.target.value })} placeholder="e.g. Tenant, Wife" />
+                                        </div>
+                                    )}
+                                    {companyVisible && !showSecondary && (
+                                        <div className="cld-field">
+                                            <label className="cld-label">Company</label>
+                                            <Input value={formData.Company} onChange={(e) => setFormData({ ...formData, Company: e.target.value })} />
+                                        </div>
+                                    )}
                                 </div>
                             )}
-                            <div><Label htmlFor="company" className="mb-2">Company</Label><Input id="company" value={formData.Company} onChange={(e) => setFormData({ ...formData, Company: e.target.value })} /></div>
+                            {companyVisible && showSecondary && (
+                                <div className="cld-row">
+                                    <div className="cld-field">
+                                        <label className="cld-label">Company</label>
+                                        <Input value={formData.Company} onChange={(e) => setFormData({ ...formData, Company: e.target.value })} />
+                                    </div>
+                                </div>
+                            )}
+
+                            {(!showSecondary || !companyVisible) && (
+                                <div className="cld-extras">
+                                    {!showSecondary && <button type="button" className="cld-extras__btn" onClick={() => setShowSecondary(true)}>+ Secondary phone</button>}
+                                    {!companyVisible && <button type="button" className="cld-extras__btn" onClick={() => setShowCompany(true)}>+ Company</button>}
+                                </div>
+                            )}
                         </div>
-                        <div className="space-y-4">
-                            <AddressAutocomplete header={<h3 className="font-medium">Address</h3>} idPrefix="create-lead" defaultUseDetails={true} savedAddresses={cs.savedAddresses} onSelectSaved={(id) => cs.setSelectedAddrId(id)}
+
+                        {/* ── Address ── */}
+                        <div className="cld-section">
+                            <AddressAutocomplete
+                                header={<div className="cld-eyebrow">Address</div>}
+                                idPrefix="create-lead"
+                                defaultUseDetails={true}
+                                savedAddresses={cs.savedAddresses}
+                                onSelectSaved={(id) => cs.setSelectedAddrId(id)}
                                 value={{ street: formData.Address || '', apt: formData.Unit || '', city: formData.City || '', state: formData.State || '', zip: formData.PostalCode || '' }}
-                                onChange={(addr) => { cs.setSelectedAddrId(null); setFormData({ ...formData, Address: addr.street, Unit: addr.apt || '', City: addr.city, State: addr.state, PostalCode: addr.zip, Latitude: addr.lat ?? null, Longitude: addr.lng ?? null }); }} />
+                                onChange={(addr) => { cs.setSelectedAddrId(null); setFormData({ ...formData, Address: addr.street, Unit: addr.apt || '', City: addr.city, State: addr.state, PostalCode: addr.zip, Latitude: addr.lat ?? null, Longitude: addr.lng ?? null }); }}
+                            />
                         </div>
-                        <div className="space-y-4">
-                            <h3 className="font-medium">Job Details</h3>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div><Label htmlFor="jobType" className="mb-2">Job Type</Label><Select value={formData.JobType} onValueChange={(v) => setFormData({ ...formData, JobType: v })}><SelectTrigger id="jobType"><SelectValue placeholder="Select job type" /></SelectTrigger><SelectContent>{jobTypes.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent></Select></div>
-                                <div><Label htmlFor="jobSource" className="mb-2">Job Source</Label><Select value={formData.JobSource} onValueChange={(v) => setFormData({ ...formData, JobSource: v })}><SelectTrigger id="jobSource"><SelectValue placeholder="Select source" /></SelectTrigger><SelectContent>{JOB_SOURCES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div>
+
+                        {/* ── Job ── */}
+                        <div className="cld-section">
+                            <div className="cld-eyebrow">Job</div>
+                            <div className="cld-row">
+                                <div className="cld-field">
+                                    <label className="cld-label">Type</label>
+                                    <Select value={formData.JobType} onValueChange={(v) => setFormData({ ...formData, JobType: v })}>
+                                        <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
+                                        <SelectContent>{jobTypes.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="cld-field">
+                                    <label className="cld-label">Source</label>
+                                    <Select value={formData.JobSource} onValueChange={(v) => setFormData({ ...formData, JobSource: v })}>
+                                        <SelectTrigger><SelectValue placeholder="Select source" /></SelectTrigger>
+                                        <SelectContent>{JOB_SOURCES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                                    </Select>
+                                </div>
                             </div>
-                            <div><Label htmlFor="leadNotes" className="mb-2">Description</Label><Textarea id="leadNotes" value={formData.Description} onChange={(e) => setFormData({ ...formData, Description: e.target.value })} rows={3} placeholder="Additional notes about this lead..." /></div>
+                            <div className="cld-field">
+                                <label className="cld-label">Description</label>
+                                <Textarea value={formData.Description} onChange={(e) => setFormData({ ...formData, Description: e.target.value })} rows={2} placeholder="Additional notes..." />
+                            </div>
                         </div>
+
+                        {/* ── Custom metadata (only if fields configured) ── */}
                         {customFields.length > 0 && (
-                            <div className="space-y-4">
-                                <h3 className="font-medium">Metadata</h3>
-                                <div className="grid grid-cols-2 gap-4">
+                            <div className="cld-section">
+                                <div className="cld-eyebrow">Additional info</div>
+                                <div className="cld-row">
                                     {customFields.map(field => (
-                                        <div key={field.id} className={field.field_type === 'textarea' || field.field_type === 'richtext' ? 'col-span-2' : ''}>
-                                            <Label htmlFor={`meta-${field.api_name}`} className="mb-2">{field.display_name}</Label>
-                                            {field.field_type === 'textarea' || field.field_type === 'richtext' ? <Textarea id={`meta-${field.api_name}`} value={formData.Metadata?.[field.api_name] || ''} onChange={(e) => updateMetadata(field.api_name, e.target.value)} rows={3} /> : <Input id={`meta-${field.api_name}`} type={field.field_type === 'number' ? 'number' : 'text'} value={formData.Metadata?.[field.api_name] || ''} onChange={(e) => updateMetadata(field.api_name, e.target.value)} />}
+                                        <div key={field.id} className={`cld-field ${field.field_type === 'textarea' || field.field_type === 'richtext' ? 'cld-field--full' : ''}`}>
+                                            <label className="cld-label">{field.display_name}</label>
+                                            {field.field_type === 'textarea' || field.field_type === 'richtext'
+                                                ? <Textarea value={formData.Metadata?.[field.api_name] || ''} onChange={(e) => updateMetadata(field.api_name, e.target.value)} rows={2} />
+                                                : <Input type={field.field_type === 'number' ? 'number' : 'text'} value={formData.Metadata?.[field.api_name] || ''} onChange={(e) => updateMetadata(field.api_name, e.target.value)} />
+                                            }
                                         </div>
                                     ))}
                                 </div>
                             </div>
                         )}
-                        <DialogFooter>
-                            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>Cancel</Button>
+
+                        {/* ── Footer ── */}
+                        <div className="cld-footer" style={{ padding: '14px 0 4px' }}>
+                            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={loading}>Cancel</Button>
                             <Button type="submit" disabled={loading}>{loading ? 'Creating...' : 'Create Lead'}</Button>
-                        </DialogFooter>
+                        </div>
                     </form>
                 </DialogContent>
             </Dialog>
+
+            {/* ── Contact update confirmation ── */}
             <Dialog open={showConfirmModal} onOpenChange={setShowConfirmModal}>
-                <DialogContent className="max-w-sm">
-                    <DialogHeader><DialogTitle>Change client</DialogTitle><DialogDescription>Do you want these changes to also be applied to the client?</DialogDescription></DialogHeader>
-                    <div className="flex flex-col gap-2 pt-2">
+                <DialogContent className="cld-confirm max-w-[380px]">
+                    <DialogHeader>
+                        <DialogTitle>Update contact?</DialogTitle>
+                        <DialogDescription>You changed some fields. Apply these changes to the existing contact too?</DialogDescription>
+                    </DialogHeader>
+                    <div className="cld-confirm__actions">
                         <Button onClick={() => { if (pendingSubmitData) submitLead(pendingSubmitData, 'update_contact'); }} disabled={loading}>{loading ? 'Saving...' : 'Update contact'}</Button>
-                        <Button variant="outline" onClick={() => { if (pendingSubmitData) submitLead(pendingSubmitData, 'only_lead'); }} disabled={loading}>New contact</Button>
+                        <Button variant="outline" onClick={() => { if (pendingSubmitData) submitLead(pendingSubmitData, 'only_lead'); }} disabled={loading}>Keep separate</Button>
                         <Button variant="ghost" onClick={() => { setShowConfirmModal(false); setPendingSubmitData(null); }} disabled={loading}>Cancel</Button>
                     </div>
                 </DialogContent>

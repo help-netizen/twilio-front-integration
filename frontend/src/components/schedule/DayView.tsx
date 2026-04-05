@@ -14,6 +14,7 @@ import {
     todayInTZ, dateInTZ, minutesSinceMidnight,
     formatTimeInTZ, dateKeyInTZ,
 } from '../../utils/companyTime';
+import { serverDate } from '../../utils/serverClock';
 import { assignLanes } from '../../utils/scheduleLayout';
 import type { LayoutItem } from '../../utils/scheduleLayout';
 import { setDragData, getDragData, hasDragData } from '../../hooks/useScheduleDnD';
@@ -71,7 +72,7 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
     const isToday = dateKey === todayStr;
 
     const nowMinFromGrid = isToday
-        ? minutesSinceMidnight(new Date(), tz) - startHour * 60
+        ? minutesSinceMidnight(serverDate(), tz) - startHour * 60
         : 0;
     const pastHeight = isToday
         ? Math.max(0, Math.min(nowMinFromGrid, totalHours * 60)) / 60 * HOUR_HEIGHT
@@ -238,7 +239,7 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                                             color: '#fff',
                                         }}
                                     >
-                                        {formatTimeInTZ(new Date(), tz)}
+                                        {formatTimeInTZ(serverDate(), tz)}
                                     </div>
                                 </>
                             )}
@@ -378,7 +379,7 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                     startAt={slotMenu.startAt}
                     endAt={slotMenu.endAt}
                     timezone={tz}
-                    onCreateTask={(title) => onCreateFromSlot(title, slotMenu.startAt, slotMenu.endAt)}
+                    onCreateJob={(title) => onCreateFromSlot(title, slotMenu.startAt, slotMenu.endAt)}
                     onClose={() => setSlotMenu(null)}
                 />
             )}

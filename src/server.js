@@ -68,6 +68,7 @@ app.use((req, res, next) => {
 
 // API Routes (before static files)
 app.use('/health', healthRouter);
+app.use('/api/time', require('../backend/src/routes/time'));
 app.use('/webhooks', webhooksRouter);
 app.use('/twiml', twimlRouter);
 app.use('/api/voice', voiceTwimlRouter); // TwiML endpoints (Twilio-called, no auth)

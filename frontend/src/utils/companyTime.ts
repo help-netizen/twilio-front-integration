@@ -3,6 +3,8 @@
 // browser's local timezone.  These helpers convert "wall-clock" date/time
 // components in a named IANA timezone to proper UTC Date objects.
 
+import { serverDate } from './serverClock';
+
 const DEFAULT_TZ = 'America/New_York';
 
 /**
@@ -35,7 +37,7 @@ export function dateInTZ(
  */
 export function todayInTZ(tz: string = DEFAULT_TZ): string {
     // en-CA locale formats as YYYY-MM-DD
-    return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
+    return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(serverDate());
 }
 
 /**

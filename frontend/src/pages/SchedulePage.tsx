@@ -31,7 +31,7 @@ export function SchedulePage() {
     };
 
     const handleCreateFromSlot = useCallback((title: string, startAt: string, endAt: string) => {
-        const payload: CreateFromSlotPayload = { title, start_at: startAt, end_at: endAt };
+        const payload: CreateFromSlotPayload = { title, start_at: startAt, end_at: endAt, entity_type: 'job' };
         schedule.handleCreateFromSlot(payload);
     }, [schedule.handleCreateFromSlot]);
 
@@ -78,9 +78,9 @@ export function SchedulePage() {
             case 'month':
                 return <MonthView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectDay={handleMonthDaySelect} onSelectItem={schedule.selectItem} />;
             case 'timeline':
-                return <TimelineView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} onSelectItem={schedule.selectItem} onReschedule={schedule.handleReschedule} onReassign={schedule.handleReassign} />;
+                return <TimelineView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} onSelectItem={schedule.selectItem} onReschedule={schedule.handleReschedule} onReassign={schedule.handleReassign} onCreateFromSlot={handleCreateFromSlot} />;
             case 'timeline-week':
-                return <TimelineWeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} onSelectItem={schedule.selectItem} onReassign={schedule.handleReassign} />;
+                return <TimelineWeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} onSelectItem={schedule.selectItem} onReassign={schedule.handleReassign} onCreateFromSlot={handleCreateFromSlot} />;
             default:
                 return null;
         }
@@ -140,6 +140,7 @@ export function SchedulePage() {
                         itemCounts={schedule.itemCounts}
                         loading={schedule.loading}
                         providers={schedule.providers}
+                        allTags={schedule.allTags}
                         onViewModeChange={schedule.setViewMode}
                         onNavigateDate={schedule.navigateDate}
                         onFiltersChange={schedule.setFilters}

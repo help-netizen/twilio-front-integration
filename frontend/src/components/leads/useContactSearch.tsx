@@ -129,23 +129,23 @@ export function useContactSearch(opts: UseContactSearchOptions) {
     const renderDropdown = (fieldGroup: 'name' | 'phone' | 'email') => {
         if (!showDropdown || candidates.length === 0 || activeField !== fieldGroup) return null;
         return (
-            <div className="absolute left-0 right-0 z-50 bg-white border rounded-lg shadow-lg max-h-64 overflow-y-auto" style={{ top: '100%', marginTop: '4px' }}>
-                <div className="px-3 py-2 text-xs font-medium text-muted-foreground border-b bg-muted/30">{candidates.length} existing contact{candidates.length !== 1 ? 's' : ''} found</div>
+            <div className="cld-candidates">
+                <div className="cld-candidates__header">{candidates.length} existing contact{candidates.length !== 1 ? 's' : ''} found</div>
                 {candidates.map(c => (
-                    <div key={c.id} onClick={() => selectCandidate(c)} className="flex items-center gap-3 px-3 py-2.5 hover:bg-muted/50 cursor-pointer transition-colors border-b last:border-b-0">
-                        <div className="size-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0"><User className="size-4 text-primary" /></div>
-                        <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                                <span className="text-sm font-medium truncate">{c.full_name || `${c.first_name || ''} ${c.last_name || ''}`.trim()}</span>
-                                {c.phone_match && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-green-100 text-green-700">Phone match</span>}
-                                {c.email_match && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">Email match</span>}
-                                {c.name_match && !c.phone_match && !c.email_match && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">Name match</span>}
+                    <div key={c.id} onClick={() => selectCandidate(c)} className="cld-candidates__item">
+                        <div className="cld-candidates__avatar"><User /></div>
+                        <div className="cld-candidates__info">
+                            <div className="cld-candidates__name">
+                                <span>{c.full_name || `${c.first_name || ''} ${c.last_name || ''}`.trim()}</span>
+                                {c.phone_match && <span className="cld-candidates__match cld-candidates__match--phone">Phone</span>}
+                                {c.email_match && <span className="cld-candidates__match cld-candidates__match--email">Email</span>}
+                                {c.name_match && !c.phone_match && !c.email_match && <span className="cld-candidates__match cld-candidates__match--name">Name</span>}
                             </div>
-                            <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
-                                {c.phone_e164 && <span className="inline-flex items-center gap-1"><Phone className="size-3" />{c.phone_e164}</span>}
-                                {c.email && <span className="inline-flex items-center gap-1"><Mail className="size-3" />{c.email}</span>}
-                                {c.company_name && <span className="inline-flex items-center gap-1"><Building2 className="size-3" />{c.company_name}</span>}
-                                {(c.city || c.state) && <span className="inline-flex items-center gap-1"><MapPin className="size-3" />{[c.city, c.state].filter(Boolean).join(', ')}</span>}
+                            <div className="cld-candidates__meta">
+                                {c.phone_e164 && <span className="cld-candidates__meta-item"><Phone />{c.phone_e164}</span>}
+                                {c.email && <span className="cld-candidates__meta-item"><Mail />{c.email}</span>}
+                                {c.company_name && <span className="cld-candidates__meta-item"><Building2 />{c.company_name}</span>}
+                                {(c.city || c.state) && <span className="cld-candidates__meta-item"><MapPin />{[c.city, c.state].filter(Boolean).join(', ')}</span>}
                             </div>
                         </div>
                     </div>
@@ -157,10 +157,10 @@ export function useContactSearch(opts: UseContactSearchOptions) {
     const renderSelectedBadge = (contactId: number | null, onRemove: () => void) => {
         if (!contactId) return null;
         return (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-green-50 border border-green-200">
-                <Check className="size-4 text-green-600 shrink-0" />
-                <span className="text-sm text-green-800 font-medium flex-1">Selected existing contact: {selectedName}</span>
-                <button type="button" onClick={onRemove} className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium text-red-600 hover:bg-red-50 rounded transition-colors"><X className="size-3" /> Remove</button>
+            <div className="cld-contact-badge">
+                <Check style={{ width: 16, height: 16, color: 'var(--blanc-success)', flexShrink: 0 }} />
+                <span className="cld-contact-badge__text">{selectedName}</span>
+                <button type="button" onClick={onRemove} className="cld-contact-badge__remove"><X style={{ width: 12, height: 12 }} /> Remove</button>
             </div>
         );
     };
@@ -168,9 +168,9 @@ export function useContactSearch(opts: UseContactSearchOptions) {
     const renderSoftWarning = () => {
         if (!softWarning) return null;
         return (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200">
-                <AlertTriangle className="size-4 text-amber-600 shrink-0" />
-                <span className="text-xs text-amber-800">A contact with this phone/email already exists.{' '}<button type="button" onClick={() => { setActiveField('phone'); setShowDropdown(true); }} className="underline font-medium hover:text-amber-900">Select it to avoid duplicates.</button></span>
+            <div className="cld-warning">
+                <AlertTriangle style={{ width: 16, height: 16, color: 'var(--blanc-warning)', flexShrink: 0 }} />
+                <span className="cld-warning__text">A contact with this phone/email already exists. <button type="button" onClick={() => { setActiveField('phone'); setShowDropdown(true); }} className="cld-warning__link">Select to avoid duplicates</button></span>
             </div>
         );
     };

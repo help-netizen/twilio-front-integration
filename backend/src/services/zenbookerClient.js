@@ -171,6 +171,8 @@ async function createJobFromLead(lead) {
                 },
             },
         ],
+        min_providers_needed: 1,
+        assignment_method: 'auto',
     };
 
     // Strip undefined values from nested objects

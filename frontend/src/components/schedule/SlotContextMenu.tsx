@@ -1,10 +1,10 @@
 /**
  * SlotContextMenu — Floating menu shown when user clicks an empty time slot.
- * Offers "Create Task" action with inline title input.
+ * Offers "Create Job" action with inline title input.
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, CheckSquare } from 'lucide-react';
+import { Plus, Briefcase } from 'lucide-react';
 import { Input } from '../ui/input';
 import { Button } from '../ui/button';
 import { formatTimeInTZ } from '../../utils/companyTime';
@@ -17,12 +17,15 @@ interface SlotContextMenuProps {
     /** ISO string of slot end in company TZ */
     endAt: string;
     timezone: string;
-    onCreateTask: (title: string) => void;
+    /** Provider info for timeline views */
+    providerId?: string;
+    providerName?: string;
+    onCreateJob: (title: string) => void;
     onClose: () => void;
 }
 
 export const SlotContextMenu: React.FC<SlotContextMenuProps> = ({
-    anchorRect, startAt, endAt, timezone, onCreateTask, onClose,
+    anchorRect, startAt, endAt, timezone, providerId, providerName, onCreateJob, onClose,
 }) => {
     const [showInput, setShowInput] = useState(false);
     const [title, setTitle] = useState('');
@@ -55,7 +58,7 @@ export const SlotContextMenu: React.FC<SlotContextMenuProps> = ({
     const handleSubmit = () => {
         const trimmed = title.trim();
         if (!trimmed) return;
-        onCreateTask(trimmed);
+        onCreateJob(trimmed);
         onClose();
     };
 
@@ -70,6 +73,7 @@ export const SlotContextMenu: React.FC<SlotContextMenuProps> = ({
         >
             <div className="px-3 py-1.5 text-[11px] text-gray-400 font-medium">
                 {timeLabel}
+                {providerName && <span className="ml-1">· {providerName}</span>}
             </div>
 
             {!showInput ? (
@@ -78,14 +82,14 @@ export const SlotContextMenu: React.FC<SlotContextMenuProps> = ({
                     className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
                     onClick={() => setShowInput(true)}
                 >
-                    <CheckSquare className="size-4 text-green-600" />
-                    Create Task
+                    <Briefcase className="size-4 text-blue-600" />
+                    Create Job
                 </button>
             ) : (
                 <div className="px-3 py-2 space-y-2">
                     <Input
                         ref={inputRef}
-                        placeholder="Task title..."
+                        placeholder="Job title..."
                         className="h-8 text-sm"
                         value={title}
                         onChange={e => setTitle(e.target.value)}

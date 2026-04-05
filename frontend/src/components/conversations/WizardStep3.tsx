@@ -4,6 +4,7 @@ import { Label } from '../ui/label';
 import { Button } from '../ui/button';
 import { Clock, SkipForward, AlertTriangle } from 'lucide-react';
 import type { WizardState, Step } from './wizardTypes';
+import { serverDate } from '../../utils/serverClock';
 import { CustomTimeModal } from './CustomTimeModal';
 
 export function WizardStep3(s: WizardState) {
@@ -20,7 +21,7 @@ export function WizardStep3(s: WizardState) {
             <div className="wizard__row wizard__row--align-end">
                 <div className="wizard__field">
                     <Label htmlFor="wz-date">Starting Date</Label>
-                    <Input id="wz-date" type="date" value={s.selectedDate} onChange={(e) => { s.setSelectedDate(e.target.value); s.setSelectedTimeslot(null); s.setTimeslotSkipped(false); }} min={new Date().toISOString().split('T')[0]} />
+                    <Input id="wz-date" type="date" value={s.selectedDate} onChange={(e) => { s.setSelectedDate(e.target.value); s.setSelectedTimeslot(null); s.setTimeslotSkipped(false); }} min={serverDate().toISOString().split('T')[0]} />
                 </div>
                 <div className="wizard__field" style={{ justifyContent: 'flex-end' }}>
                     <Button size="sm" variant="outline" onClick={s.fetchTimeslots} disabled={s.timeslotsLoading}>{s.timeslotsLoading ? 'Loading…' : 'Refresh'}</Button>

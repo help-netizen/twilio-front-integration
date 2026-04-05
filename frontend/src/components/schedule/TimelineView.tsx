@@ -8,12 +8,14 @@
 import React, { useMemo, useState, useCallback, useRef } from 'react';
 import { format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
+import { SlotContextMenu } from './SlotContextMenu';
 import type { ScheduleItem, DispatchSettings } from '../../services/scheduleApi';
 import type { ProviderInfo } from '../../hooks/useScheduleData';
 import {
     todayInTZ, dateInTZ, minutesSinceMidnight,
     formatTimeInTZ, dateKeyInTZ,
 } from '../../utils/companyTime';
+import { serverDate } from '../../utils/serverClock';
 import { setDragData, getDragData, hasDragData } from '../../hooks/useScheduleDnD';
 import { getProviderColor } from '../../utils/providerColors';
 
@@ -27,6 +29,7 @@ interface TimelineViewProps {
     onSelectItem: (item: ScheduleItem) => void;
     onReschedule?: (entityType: string, entityId: number, startAt: string, endAt: string, title?: string) => void;
     onReassign?: (entityType: string, entityId: number, assigneeId: string | null, assigneeName?: string, title?: string) => void;
+    onCreateFromSlot?: (title: string, startAt: string, endAt: string) => void;
 }
 
 function parseTime(t: string): number {
@@ -41,7 +44,7 @@ interface ProviderGroup {
 }
 
 export const TimelineView: React.FC<TimelineViewProps> = ({
-    currentDate, items, settings, allProviders = [], onSelectItem, onReschedule, onReassign,
+    currentDate, items, settings, allProviders = [], onSelectItem, onReschedule, onReassign, onCreateFromSlot,
 }) => {
     const tz = settings.timezone || 'America/New_York';
     const slotDuration = settings.slot_duration || 60;
@@ -50,6 +53,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     const totalHours = endHour - startHour;
 
     const [dropHighlight, setDropHighlight] = useState<{ providerId: string; topPct: number } | null>(null);
+    const [slotMenu, setSlotMenu] = useState<{ top: number; left: number; startAt: string; endAt: string; providerId?: string; providerName?: string } | null>(null);
     const colRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
     const hours = useMemo(() => {
@@ -95,7 +99,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     const todayStr = todayInTZ(tz);
     const isToday = dateKey === todayStr;
     const nowMinFromGrid = isToday
-        ? minutesSinceMidnight(new Date(), tz) - startHour * 60
+        ? minutesSinceMidnight(serverDate(), tz) - startHour * 60
         : 0;
     const nowPx = isToday
         ? Math.max(0, Math.min(nowMinFromGrid / 60 * HOUR_HEIGHT, totalHours * HOUR_HEIGHT))
@@ -146,6 +150,26 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
             onReassign(data.entityType, data.entityId, assigneeId, assigneeName, data.title);
         }
     }, [onReschedule, onReassign, pctToMinutes, refY, refM, refD, tz]);
+
+    // ── Slot click for create-from-slot ────────────────────────────────────
+
+    const handleSlotClick = useCallback((group: ProviderGroup, e: React.MouseEvent) => {
+        if (!onCreateFromSlot) return;
+        if ((e.target as HTMLElement).closest('[data-schedule-item]')) return;
+        const col = colRefs.current.get(group.id);
+        if (!col) return;
+        const rect = col.getBoundingClientRect();
+        const pct = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+        const clickMin = pctToMinutes(pct);
+        const endMin = clickMin + slotDuration;
+        const startAt = dateInTZ(refY, refM, refD, Math.floor(clickMin / 60), clickMin % 60, tz).toISOString();
+        const endAt = dateInTZ(refY, refM, refD, Math.floor(endMin / 60), endMin % 60, tz).toISOString();
+        setSlotMenu({
+            top: e.clientY, left: e.clientX, startAt, endAt,
+            providerId: group.id === '__unassigned' ? undefined : group.id,
+            providerName: group.id === '__unassigned' ? undefined : group.label,
+        });
+    }, [onCreateFromSlot, pctToMinutes, slotDuration, refY, refM, refD, tz]);
 
     return (
         <div
@@ -249,6 +273,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                             onDragOver={(e) => handleDragOver(group.id, e)}
                             onDrop={(e) => handleDrop(group, e)}
                             onDragLeave={() => setDropHighlight(null)}
+                            onClick={(e) => handleSlotClick(group, e)}
                         >
                             {/* Hour grid lines */}
                             {hours.map(h => (
@@ -335,6 +360,20 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                     ))}
                 </div>
             </div>
+
+            {/* Slot context menu */}
+            {slotMenu && onCreateFromSlot && (
+                <SlotContextMenu
+                    anchorRect={{ top: slotMenu.top, left: slotMenu.left }}
+                    startAt={slotMenu.startAt}
+                    endAt={slotMenu.endAt}
+                    timezone={tz}
+                    providerId={slotMenu.providerId}
+                    providerName={slotMenu.providerName}
+                    onCreateJob={(title) => onCreateFromSlot(title, slotMenu.startAt, slotMenu.endAt)}
+                    onClose={() => setSlotMenu(null)}
+                />
+            )}
         </div>
     );
 };

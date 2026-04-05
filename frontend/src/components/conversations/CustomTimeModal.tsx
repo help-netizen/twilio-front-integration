@@ -10,6 +10,7 @@ import { getTeamMembers } from '../../services/zenbookerApi';
 import type { TeamMember } from '../../services/zenbookerApi';
 import { useAuth } from '../../auth/AuthProvider';
 import { dateInTZ, todayInTZ, minutesSinceMidnight, formatTimeInTZ } from '../../utils/companyTime';
+import { serverDate, serverNow } from '../../utils/serverClock';
 import './CustomTimeModal.css';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -156,7 +157,7 @@ function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectS
 
     // Compute past-time overlay height (only for today)
     const isToday = selectedDate === todayInTZ(companyTz);
-    const nowMinFromGrid = isToday ? minutesSinceMidnight(new Date(), companyTz) - HOUR_START * 60 : 0;
+    const nowMinFromGrid = isToday ? minutesSinceMidnight(serverDate(), companyTz) - HOUR_START * 60 : 0;
     const pastHeight = isToday ? Math.max(0, Math.min(nowMinFromGrid, TOTAL_HOURS * 60)) / 60 * HOUR_HEIGHT : 0;
 
     const handleMouseMove = useCallback((e: React.MouseEvent) => {
@@ -544,7 +545,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
     const handleConfirm = () => {
         if (!selectedSlot) return;
         // Prevent confirming a timeslot in the past
-        if (selectedSlot.start.getTime() < Date.now()) {
+        if (selectedSlot.start.getTime() < serverNow()) {
             alert('Selected time is in the past. Please choose a future time.');
             return;
         }
@@ -666,7 +667,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                                                 </div>
                                             ))}
                                             {selectedDate === today && (() => {
-                                                const nowMin = minutesSinceMidnight(new Date(), companyTz) - HOUR_START * 60;
+                                                const nowMin = minutesSinceMidnight(serverDate(), companyTz) - HOUR_START * 60;
                                                 const clampedPx = Math.max(0, Math.min(nowMin, TOTAL_HOURS * 60)) / 60 * HOUR_HEIGHT;
                                                 return clampedPx > 0 ? <div className="tech-timeline__now-line" style={{ top: clampedPx }} /> : null;
                                             })()}

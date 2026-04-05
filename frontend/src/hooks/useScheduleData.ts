@@ -62,7 +62,7 @@ export function useScheduleData() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [currentDate, setCurrentDate] = useState<Date>(new Date());
-    const [viewMode, setViewMode] = useState<ViewMode>('week');
+    const [viewMode, setViewMode] = useState<ViewMode>('timeline');
     const [filters, setFiltersRaw] = useState<Partial<ScheduleFilters>>(() => loadPersistedFilters());
 
     const setFilters = useCallback((f: Partial<ScheduleFilters>) => {
@@ -211,14 +211,22 @@ export function useScheduleData() {
     // ── Computed ─────────────────────────────────────────────────────────────
 
     const providerFilteredItems = useMemo(() => {
-        if (!filters.providerIds?.length) return items;
-        const wantUnassigned = filters.providerIds.includes('__unassigned__');
-        return items.filter(item => {
-            const techs = item.assigned_techs;
-            if (!techs?.length) return wantUnassigned;
-            return techs.some(t => filters.providerIds!.includes(t.id || t.name));
-        });
-    }, [items, filters.providerIds]);
+        let result = items;
+        if (filters.providerIds?.length) {
+            const wantUnassigned = filters.providerIds.includes('__unassigned__');
+            result = result.filter(item => {
+                const techs = item.assigned_techs;
+                if (!techs?.length) return wantUnassigned;
+                return techs.some(t => filters.providerIds!.includes(t.id || t.name));
+            });
+        }
+        if (filters.tags?.length) {
+            result = result.filter(item =>
+                item.tags?.some(t => filters.tags!.includes(t)),
+            );
+        }
+        return result;
+    }, [items, filters.providerIds, filters.tags]);
 
     const scheduledItems = useMemo(() => providerFilteredItems.filter(i => i.start_at != null), [providerFilteredItems]);
     const unscheduledItems = useMemo(() => providerFilteredItems.filter(i => i.start_at == null), [providerFilteredItems]);
@@ -232,6 +240,14 @@ export function useScheduleData() {
         }
         return counts;
     }, [scheduledItems]);
+
+    const allTags = useMemo(() => {
+        const tagSet = new Set<string>();
+        for (const item of items) {
+            if (item.tags) for (const t of item.tags) tagSet.add(t);
+        }
+        return Array.from(tagSet).sort();
+    }, [items]);
 
     // ── Mutations ──────────────────────────────────────────────────────────
 
@@ -278,10 +294,10 @@ export function useScheduleData() {
     const handleCreateFromSlot = useCallback(async (payload: CreateFromSlotPayload) => {
         try {
             await createFromSlot(payload);
-            toast.success(`Task "${payload.title}" created`);
+            toast.success(`Job "${payload.title}" created`);
             loadItems();
         } catch (err: any) {
-            toast.error(err.message || 'Failed to create task');
+            toast.error(err.message || 'Failed to create job');
         }
     }, [loadItems]);
 
@@ -304,6 +320,7 @@ export function useScheduleData() {
         scheduledItems,
         unscheduledItems,
         itemCounts,
+        allTags,
         settings: effectiveSettings,
         providers,
         loading,

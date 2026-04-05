@@ -1,0 +1,305 @@
+/* ─── Create Lead Dialog ─────────────────────────────────────────────────────
+   Blanc design system aligned. Warm, clean, structured.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* ── Dialog container override ── */
+.cld-dialog {
+    background: var(--blanc-surface-strong) !important;
+    border: 1px solid var(--blanc-line) !important;
+    border-radius: var(--blanc-radius-lg) !important;
+    box-shadow: var(--blanc-shadow-card) !important;
+}
+
+/* ── Header ── */
+.cld-header {
+    padding: 20px 24px 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.cld-header__title {
+    font-family: var(--blanc-font-heading);
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--blanc-ink-1);
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+}
+
+/* ── Scrollable form body ── */
+.cld-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 20px 24px 8px;
+}
+
+/* ── Sections ── */
+.cld-section {
+    margin-bottom: 20px;
+}
+.cld-section:last-child {
+    margin-bottom: 8px;
+}
+
+/* Eyebrow section label */
+.cld-eyebrow {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--blanc-ink-3);
+    margin-bottom: 12px;
+    line-height: 1;
+}
+
+/* ── Field grid ── */
+.cld-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+.cld-row--3col {
+    grid-template-columns: 2fr 72px 1fr;
+}
+.cld-row--street {
+    grid-template-columns: 1fr 100px;
+}
+
+.cld-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.cld-field--full {
+    grid-column: 1 / -1;
+}
+
+/* Labels */
+.cld-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--blanc-ink-2);
+    line-height: 1;
+}
+.cld-label__req {
+    color: var(--blanc-danger);
+    margin-left: 2px;
+}
+
+/* ── Progressive disclosure toggles ── */
+.cld-extras {
+    display: flex;
+    gap: 12px;
+    margin-top: 2px;
+    margin-bottom: 2px;
+}
+.cld-extras__btn {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--blanc-ink-3);
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    transition: color 0.15s;
+}
+.cld-extras__btn:hover {
+    color: var(--blanc-ink-1);
+}
+
+/* ── Contact dedup badge ── */
+.cld-contact-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: var(--blanc-radius-sm);
+    background: rgba(27, 139, 99, 0.06);
+    border: 1px solid rgba(27, 139, 99, 0.18);
+    margin-bottom: 12px;
+}
+.cld-contact-badge__text {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--blanc-success);
+    flex: 1;
+}
+.cld-contact-badge__remove {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--blanc-danger);
+    background: none;
+    border: none;
+    padding: 2px 6px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+}
+.cld-contact-badge__remove:hover {
+    background: rgba(212, 77, 60, 0.08);
+}
+
+/* ── Soft warning (dedup) ── */
+.cld-warning {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: var(--blanc-radius-sm);
+    background: rgba(178, 106, 29, 0.06);
+    border: 1px solid rgba(178, 106, 29, 0.18);
+    margin-bottom: 12px;
+}
+.cld-warning__text {
+    font-size: 12px;
+    color: var(--blanc-warning);
+    line-height: 1.4;
+}
+.cld-warning__link {
+    font-weight: 600;
+    text-decoration: underline;
+    cursor: pointer;
+}
+.cld-warning__link:hover {
+    color: var(--blanc-ink-1);
+}
+
+/* ── Candidate dropdown ── */
+.cld-candidates {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    margin-top: 4px;
+    z-index: 50;
+    background: var(--blanc-surface-strong);
+    border: 1px solid var(--blanc-line-strong);
+    border-radius: var(--blanc-radius-sm);
+    box-shadow: var(--blanc-shadow-md);
+    max-height: 240px;
+    overflow-y: auto;
+}
+.cld-candidates__header {
+    padding: 8px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--blanc-ink-3);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    border-bottom: 1px solid var(--blanc-line);
+    background: var(--blanc-surface-muted);
+    border-radius: var(--blanc-radius-sm) var(--blanc-radius-sm) 0 0;
+}
+.cld-candidates__item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: background 0.1s;
+    border-bottom: 1px solid var(--blanc-line);
+}
+.cld-candidates__item:last-child {
+    border-bottom: none;
+}
+.cld-candidates__item:hover {
+    background: rgba(117, 106, 89, 0.05);
+}
+.cld-candidates__avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--blanc-job-soft);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.cld-candidates__avatar svg {
+    width: 14px;
+    height: 14px;
+    color: var(--blanc-job);
+}
+.cld-candidates__info {
+    flex: 1;
+    min-width: 0;
+}
+.cld-candidates__name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--blanc-ink-1);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.cld-candidates__match {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+    line-height: 1.6;
+}
+.cld-candidates__match--phone {
+    background: rgba(27, 139, 99, 0.1);
+    color: var(--blanc-success);
+}
+.cld-candidates__match--email {
+    background: var(--blanc-job-soft);
+    color: var(--blanc-job);
+}
+.cld-candidates__match--name {
+    background: var(--blanc-lead-soft);
+    color: var(--blanc-lead);
+}
+.cld-candidates__meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--blanc-ink-3);
+}
+.cld-candidates__meta svg {
+    width: 11px;
+    height: 11px;
+}
+.cld-candidates__meta-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+}
+
+/* ── Footer ── */
+.cld-footer {
+    padding: 14px 24px 20px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+.cld-footer [data-slot="button"] {
+    border-radius: var(--blanc-radius-sm);
+    min-height: 40px;
+    font-weight: 600;
+    font-size: 14px;
+    padding: 0 20px;
+}
+
+/* ── Confirm modal ── */
+.cld-confirm {
+    background: var(--blanc-surface-strong) !important;
+    border: 1px solid var(--blanc-line) !important;
+    border-radius: var(--blanc-radius-md) !important;
+    box-shadow: var(--blanc-shadow-card) !important;
+}
+.cld-confirm__actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 8px;
+}
