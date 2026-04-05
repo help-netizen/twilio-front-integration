@@ -25,7 +25,7 @@ interface SlotContextMenuProps {
 }
 
 export const SlotContextMenu: React.FC<SlotContextMenuProps> = ({
-    anchorRect, startAt, endAt, timezone, providerId, providerName, onCreateJob, onClose,
+    anchorRect, startAt, endAt, timezone, providerId: _providerId, providerName, onCreateJob, onClose,
 }) => {
     const [showInput, setShowInput] = useState(false);
     const [title, setTitle] = useState('');

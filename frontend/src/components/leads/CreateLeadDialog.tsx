@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useLeadFormSettings } from '../../hooks/useLeadFormSettings';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { PhoneInput, toE164 } from '../ui/PhoneInput';
