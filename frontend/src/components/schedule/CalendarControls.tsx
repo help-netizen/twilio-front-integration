@@ -199,7 +199,7 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
     for (const s of STATUS_OPTIONS) statusColorMap[s.label] = s.color;
 
     return (
-        <div style={frostedCard} className="overflow-hidden">
+        <div style={frostedCard} className="overflow-visible">
             <div className="px-5 py-4">
                 {/* Main controls row */}
                 <div className="flex items-center justify-between gap-3">
