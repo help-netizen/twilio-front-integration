@@ -336,22 +336,11 @@ function AttachmentsSection({ attachments, galleryIndex, setGalleryIndex, rotati
 // ─── RotatableImage — fits container width even when rotated 90/270 ──────────
 
 function RotatableImage({ src, alt, rotation }: { src: string; alt: string; rotation: number }) {
-    const containerRef = useRef<HTMLDivElement>(null);
     const imgRef = useRef<HTMLImageElement>(null);
     const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
-    const [containerW, setContainerW] = useState(0);
 
     const norm = ((rotation % 360) + 360) % 360;
     const isRotatedSideways = norm === 90 || norm === 270;
-
-    useEffect(() => {
-        if (!containerRef.current) return;
-        const measure = () => setContainerW(containerRef.current!.clientWidth);
-        measure();
-        const ro = new ResizeObserver(measure);
-        ro.observe(containerRef.current);
-        return () => ro.disconnect();
-    }, []);
 
     const handleLoad = () => {
         if (imgRef.current) {
@@ -359,33 +348,40 @@ function RotatableImage({ src, alt, rotation }: { src: string; alt: string; rota
         }
     };
 
-    // When rotated sideways, CSS width/height are swapped relative to visual output:
-    //   visual width  = CSS height
-    //   visual height = CSS width
-    // We want visual width = containerW, so CSS height = containerW
-    // and CSS width = containerW * (naturalW / naturalH) to keep aspect ratio
-    let imgStyle: React.CSSProperties;
-    let wrapperH: number | undefined;
+    // When rotated 90°/270°, CSS transform swaps visual axes:
+    //   visual width = CSS height, visual height = CSS width
+    // Image has width:100% → CSS width = containerW, CSS height = containerW * nH/nW (auto)
+    // After rotate, visual width = containerW * nH/nW — too narrow or too wide.
+    // scale(nW/nH) compensates: visual width = containerW * nH/nW * nW/nH = containerW ✓
+    // Wrapper aspect-ratio = nH/nW to match the visual height after rotation.
 
-    if (isRotatedSideways && naturalSize.w && naturalSize.h && containerW) {
-        const ratio = naturalSize.w / naturalSize.h;
-        const visualW = containerW;                // fills container width
-        const visualH = containerW * ratio;        // proportional height
-        const maxVisualH = window.innerHeight * 0.7;
-        const finalScale = visualH > maxVisualH ? maxVisualH / visualH : 1;
-        const cssH = visualW * finalScale;         // after rotation → visual width
-        const cssW = visualH * finalScale;         // after rotation → visual height
-        wrapperH = cssW;                           // container height = visual height
+    let imgStyle: React.CSSProperties;
+    let wrapperStyle: React.CSSProperties;
+
+    if (isRotatedSideways && naturalSize.w && naturalSize.h) {
+        const scale = naturalSize.w / naturalSize.h;
+        wrapperStyle = {
+            width: '100%',
+            aspectRatio: `${naturalSize.h} / ${naturalSize.w}`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            overflow: 'hidden',
+        };
         imgStyle = {
-            width: cssW,
-            height: cssH,
-            objectFit: 'contain',
-            transform: `rotate(${rotation}deg)`,
+            width: '100%',
+            transform: `rotate(${rotation}deg) scale(${scale})`,
             transformOrigin: 'center center',
             transition: 'transform 0.2s ease',
         };
     } else {
-        wrapperH = undefined;
+        wrapperStyle = {
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            overflow: 'hidden',
+        };
         imgStyle = {
             maxWidth: '100%',
             maxHeight: '70vh',
@@ -397,7 +393,7 @@ function RotatableImage({ src, alt, rotation }: { src: string; alt: string; rota
     }
 
     return (
-        <div ref={containerRef} style={{ width: '100%', height: wrapperH, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+        <div style={wrapperStyle}>
             <img
                 ref={imgRef}
                 src={src}
