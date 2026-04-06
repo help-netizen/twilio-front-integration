@@ -16,6 +16,7 @@ export interface PaymentRow {
     transaction_id: string;
     invoice_id: string;
     job_id: string;
+    local_job_id: number | null;
     transaction_status: string;
     missing_job_link: boolean;
     invoice_status: string | null;

@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { Button } from './button';
 import { Popover, PopoverContent, PopoverTrigger } from './popover';
 import { Calendar } from './calendar';
-import { CalendarIcon } from 'lucide-react';
+import { CalendarIcon, X } from 'lucide-react';
 import { format } from 'date-fns';
+import { isMobileViewport } from '../../hooks/useViewportSafePosition';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -42,6 +43,82 @@ export function DateRangePickerPopover({
         return 'Date Range';
     })();
 
+    const presetButtons = (
+        <>
+            <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => {
+                const today = new Date();
+                applyPreset(today, today);
+            }}>Today</Button>
+            <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => {
+                const d = new Date(); d.setDate(d.getDate() - 7);
+                applyPreset(d, new Date());
+            }}>Last 7 days</Button>
+            <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => {
+                const d = new Date(); d.setDate(d.getDate() - 30);
+                applyPreset(d, new Date());
+            }}>Last 30 days</Button>
+            <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => {
+                const now = new Date();
+                applyPreset(new Date(now.getFullYear(), now.getMonth(), 1), now);
+            }}>This Month</Button>
+            <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => {
+                const now = new Date();
+                const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+                const last = new Date(now.getFullYear(), now.getMonth(), 0);
+                applyPreset(prev, last);
+            }}>Last Month</Button>
+        </>
+    );
+
+    const calendars = (
+        <>
+            <div className="text-xs text-muted-foreground mb-1">From</div>
+            <Calendar
+                mode="single"
+                selected={dateFrom ? new Date(dateFrom + 'T00:00:00') : undefined}
+                onSelect={(date) => { if (date) onDateFromChange(format(date, 'yyyy-MM-dd')); }}
+            />
+            <div className="text-xs text-muted-foreground mb-1 mt-2">To</div>
+            <Calendar
+                mode="single"
+                selected={dateTo ? new Date(dateTo + 'T00:00:00') : undefined}
+                onSelect={(date) => { if (date) onDateToChange(format(date, 'yyyy-MM-dd')); }}
+            />
+        </>
+    );
+
+    const isMobile = isMobileViewport();
+
+    if (isMobile) {
+        return (
+            <>
+                <Button variant="outline" className="gap-2" onClick={() => setOpen(true)}>
+                    <CalendarIcon className="size-4" />
+                    {label}
+                </Button>
+                {open && (
+                    <>
+                        <div className="blanc-mobile-sheet-backdrop" onClick={() => setOpen(false)} />
+                        <div className="blanc-mobile-sheet" style={{ maxHeight: '85vh' }}>
+                            <div className="blanc-mobile-sheet-header">
+                                <span className="text-sm font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>Date Range</span>
+                                <button onClick={() => setOpen(false)} className="p-1.5 rounded-lg" style={{ color: 'var(--blanc-ink-3)' }}><X className="size-4" /></button>
+                            </div>
+                            <div className="px-4 pb-2">
+                                <div className="flex flex-wrap gap-1.5 mb-3">
+                                    {presetButtons}
+                                </div>
+                                <div className="flex flex-col items-center">
+                                    {calendars}
+                                </div>
+                            </div>
+                        </div>
+                    </>
+                )}
+            </>
+        );
+    }
+
     return (
         <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
@@ -54,42 +131,10 @@ export function DateRangePickerPopover({
                 <div className="flex">
                     <div className="border-r p-3 space-y-1">
                         <div className="text-sm font-medium mb-2">Presets</div>
-                        <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => {
-                            const today = new Date();
-                            applyPreset(today, today);
-                        }}>Today</Button>
-                        <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => {
-                            const d = new Date(); d.setDate(d.getDate() - 7);
-                            applyPreset(d, new Date());
-                        }}>Last 7 days</Button>
-                        <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => {
-                            const d = new Date(); d.setDate(d.getDate() - 30);
-                            applyPreset(d, new Date());
-                        }}>Last 30 days</Button>
-                        <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => {
-                            const now = new Date();
-                            applyPreset(new Date(now.getFullYear(), now.getMonth(), 1), now);
-                        }}>This Month</Button>
-                        <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => {
-                            const now = new Date();
-                            const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-                            const last = new Date(now.getFullYear(), now.getMonth(), 0);
-                            applyPreset(prev, last);
-                        }}>Last Month</Button>
+                        {presetButtons}
                     </div>
                     <div className="p-3">
-                        <div className="text-xs text-muted-foreground mb-1">From</div>
-                        <Calendar
-                            mode="single"
-                            selected={dateFrom ? new Date(dateFrom + 'T00:00:00') : undefined}
-                            onSelect={(date) => { if (date) onDateFromChange(format(date, 'yyyy-MM-dd')); }}
-                        />
-                        <div className="text-xs text-muted-foreground mb-1 mt-2">To</div>
-                        <Calendar
-                            mode="single"
-                            selected={dateTo ? new Date(dateTo + 'T00:00:00') : undefined}
-                            onSelect={(date) => { if (date) onDateToChange(format(date, 'yyyy-MM-dd')); }}
-                        />
+                        {calendars}
                     </div>
                 </div>
             </PopoverContent>

@@ -164,7 +164,7 @@ function AddressTile({ address, index, contactId, onSaved }: { address: ContactA
                     {address.is_default_address_for_customer && <Badge variant="secondary" className="text-[10px]">Default</Badge>}
                 </div>
                 {address.id && (
-                    <button onClick={startEdit} className="p-1 transition-opacity hover:opacity-70" style={{ color: 'var(--blanc-ink-3)' }}>
+                    <button onClick={startEdit} className="p-1 max-md:p-2.5 transition-opacity hover:opacity-70" style={{ color: 'var(--blanc-ink-3)' }}>
                         <Pencil className="size-3" />
                     </button>
                 )}

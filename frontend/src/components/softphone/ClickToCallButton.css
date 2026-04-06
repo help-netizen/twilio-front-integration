@@ -51,3 +51,11 @@
     opacity: 1;
     transform: scale(1);
 }
+
+/* Always visible on mobile — no hover on touch devices */
+@media (max-width: 767px) {
+    .click-to-call-btn {
+        opacity: 1;
+        transform: scale(1);
+    }
+}

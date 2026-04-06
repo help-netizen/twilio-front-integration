@@ -211,9 +211,9 @@ export function PaymentDetailPanel({
                 {/* Job tile */}
                 {detail.job && (
                     <div
-                        style={{ ...sectionCard, cursor: 'pointer' }}
-                        onClick={() => detail.job_id && navigate(`/jobs/${detail.job_id}`)}
-                        className="transition-opacity hover:opacity-80"
+                        style={{ ...sectionCard, cursor: detail.local_job_id ? 'pointer' : 'default' }}
+                        onClick={() => detail.local_job_id && navigate(`/jobs/${detail.local_job_id}`)}
+                        className={detail.local_job_id ? 'transition-opacity hover:opacity-80' : ''}
                     >
                         <p style={eyebrow}>Job</p>
                         <div

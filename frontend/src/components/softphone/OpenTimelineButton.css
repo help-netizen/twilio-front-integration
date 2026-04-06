@@ -56,3 +56,11 @@
     opacity: 1;
     transform: scale(1);
 }
+
+/* Always visible on mobile — no hover on touch devices */
+@media (max-width: 767px) {
+    .open-timeline-btn {
+        opacity: 1;
+        transform: scale(1);
+    }
+}

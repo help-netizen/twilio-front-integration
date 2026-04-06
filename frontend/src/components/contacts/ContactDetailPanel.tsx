@@ -127,14 +127,14 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
                                 {contact.full_name || 'Unknown'}
                             </h2>
                             <div className="flex items-center gap-1 ml-auto shrink-0">
-                                <button onClick={handleViewInPulse} title="View in Pulse" className="p-1.5 rounded-lg transition-opacity hover:opacity-70" style={{ color: 'var(--blanc-ink-3)' }}>
-                                    <Activity className="size-3.5" />
+                                <button onClick={handleViewInPulse} title="View in Pulse" className="p-1.5 max-md:p-3 rounded-lg transition-opacity hover:opacity-70" style={{ color: 'var(--blanc-ink-3)' }}>
+                                    <Activity className="size-3.5 max-md:size-4" />
                                 </button>
-                                <button onClick={() => setEditOpen(true)} title="Edit contact" className="p-1.5 rounded-lg transition-opacity hover:opacity-70" style={{ color: 'var(--blanc-ink-3)' }}>
-                                    <Pencil className="size-3.5" />
+                                <button onClick={() => setEditOpen(true)} title="Edit contact" className="p-1.5 max-md:p-3 rounded-lg transition-opacity hover:opacity-70" style={{ color: 'var(--blanc-ink-3)' }}>
+                                    <Pencil className="size-3.5 max-md:size-4" />
                                 </button>
-                                <button onClick={handleSync} disabled={syncing} title={contact.zenbooker_customer_id ? 'Sync to Zenbooker' : 'Create in Zenbooker'} className="p-1.5 rounded-lg transition-opacity hover:opacity-70 disabled:opacity-40" style={{ color: 'var(--blanc-ink-3)' }}>
-                                    {syncing ? <Loader2 className="size-3.5 animate-spin" /> : contact.zenbooker_customer_id ? <RefreshCw className="size-3.5" /> : <CloudUpload className="size-3.5" />}
+                                <button onClick={handleSync} disabled={syncing} title={contact.zenbooker_customer_id ? 'Sync to Zenbooker' : 'Create in Zenbooker'} className="p-1.5 max-md:p-3 rounded-lg transition-opacity hover:opacity-70 disabled:opacity-40" style={{ color: 'var(--blanc-ink-3)' }}>
+                                    {syncing ? <Loader2 className="size-3.5 max-md:size-4 animate-spin" /> : contact.zenbooker_customer_id ? <RefreshCw className="size-3.5 max-md:size-4" /> : <CloudUpload className="size-3.5 max-md:size-4" />}
                                 </button>
                             </div>
                         </div>

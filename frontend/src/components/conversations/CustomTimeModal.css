@@ -457,9 +457,29 @@
 }
 
 /* ── Responsive ── */
-@media (max-width: 768px) {
+@media (max-width: 767px) {
+    .ctm-dialog {
+        padding: 16px 12px !important;
+    }
     .ctm-body {
         grid-template-columns: 1fr;
-        grid-template-rows: 1fr 280px;
+        grid-template-rows: 1fr 320px;
+        gap: 8px;
+    }
+    .ctm-footer {
+        padding-top: 8px;
+    }
+    .ctm-footer button {
+        min-height: 44px;
+        font-size: 15px;
+    }
+    .ctm-tech-bar__arrow {
+        width: 36px;
+        height: 36px;
+        min-width: 36px;
+    }
+    .ctm-date-nav__arrow {
+        width: 44px;
+        height: 44px;
     }
 }

@@ -40,6 +40,15 @@ export function FloatingDetailPanel({ open, onClose, wide, children }: Props) {
                     className={`blanc-floating-panel${wide ? ' blanc-floating-panel--wide' : ''}`}
                     onMouseEnter={() => setHovered(true)}
                 >
+                    {/* Mobile close button — visible only on mobile since hover close is hidden */}
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="absolute top-3 right-3 z-10 p-2 rounded-xl md:hidden"
+                        style={{ background: 'rgba(117, 106, 89, 0.08)', color: 'var(--blanc-ink-2)' }}
+                    >
+                        <X className="size-4" />
+                    </button>
                     {children}
                 </div>
                 {/* Hover close button — left of the panel */}

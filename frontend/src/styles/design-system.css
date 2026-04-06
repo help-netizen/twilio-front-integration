@@ -834,29 +834,25 @@ table tbody tr:hover {
 }
 
 @media (max-width: 768px) {
-    /* Mobile: dark backdrop + tap to close */
+    /* Mobile: full-screen panel, no backdrop needed */
     .blanc-floating-backdrop {
-        display: block;
-        position: fixed;
-        inset: 0;
-        background: rgba(32, 39, 52, 0.55);
-        backdrop-filter: blur(4px);
-        z-index: 50;
-        animation: blancFadeIn 0.2s ease-out;
+        display: none;
     }
     .blanc-floating-close-zone {
         top: 0;
         right: 0;
         bottom: 0;
+        left: 0;
         padding-left: 0;
-        z-index: 51;
+        z-index: 50;
     }
     .blanc-floating-panel,
     .blanc-floating-panel--wide {
-        width: min(90vw, 440px);
-        border-radius: var(--blanc-radius-xl) 0 0 var(--blanc-radius-xl);
+        width: 100vw;
+        max-height: 100vh;
+        border-radius: 0;
         animation: blancSlideInRight 0.25s ease-out;
-        box-shadow: -8px 0 32px rgba(47, 39, 28, 0.15);
+        box-shadow: none;
     }
     .blanc-floating-close-btn,
     .blanc-floating-hover-bridge {

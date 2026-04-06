@@ -529,4 +529,34 @@
     font-size: 13px;
 }
 
+/* ── Mobile responsive ────────────────────────────────── */
+
+@media (max-width: 767px) {
+    .payments-table td {
+        max-width: none;
+        padding: 8px 8px;
+        font-size: 12px;
+    }
+
+    .payments-table th {
+        padding: 8px 8px;
+        font-size: 10px;
+    }
+
+    .payments-pagination button {
+        min-height: 40px;
+        min-width: 40px;
+        padding: 8px 12px;
+        justify-content: center;
+    }
+
+    .payments-pagination {
+        padding: 8px 16px;
+    }
+
+    .payments-list-panel {
+        border-right: none;
+    }
+}
+
 /* Detail panel styles are now inline in PaymentDetailPanel.tsx using Blanc design tokens */

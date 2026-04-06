@@ -588,21 +588,23 @@ async function listPaymentsForExport(companyId, { dateFrom, dateTo, paymentMetho
 async function getPaymentDetail(companyId, paymentId) {
     const result = await db.query(
         `SELECT
-            id, transaction_id, invoice_id, job_id,
-            job_number, client, job_type, status,
-            payment_methods, display_payment_method,
-            amount_paid::text as amount_paid,
-            tags, payment_date, source, tech,
-            transaction_status, missing_job_link,
-            invoice_status,
-            invoice_total::text as invoice_total,
-            invoice_amount_paid::text as invoice_amount_paid,
-            invoice_amount_due::text as invoice_amount_due,
-            invoice_paid_in_full,
-            check_deposited,
-            job_detail, invoice_detail, attachments, metadata
-        FROM zb_payments
-        WHERE company_id = $1 AND id = $2`,
+            p.id, p.transaction_id, p.invoice_id, p.job_id,
+            p.job_number, p.client, p.job_type, p.status,
+            p.payment_methods, p.display_payment_method,
+            p.amount_paid::text as amount_paid,
+            p.tags, p.payment_date, p.source, p.tech,
+            p.transaction_status, p.missing_job_link,
+            p.invoice_status,
+            p.invoice_total::text as invoice_total,
+            p.invoice_amount_paid::text as invoice_amount_paid,
+            p.invoice_amount_due::text as invoice_amount_due,
+            p.invoice_paid_in_full,
+            p.check_deposited,
+            p.job_detail, p.invoice_detail, p.attachments, p.metadata,
+            j.id as local_job_id
+        FROM zb_payments p
+        LEFT JOIN jobs j ON j.job_number = p.job_number AND j.company_id = p.company_id
+        WHERE p.company_id = $1 AND p.id = $2`,
         [companyId, paymentId]
     );
 
@@ -628,6 +630,7 @@ async function getPaymentDetail(companyId, paymentId) {
         transaction_id: r.transaction_id,
         invoice_id: r.invoice_id || '',
         job_id: r.job_id || '',
+        local_job_id: r.local_job_id || null,
         transaction_status: r.transaction_status,
         missing_job_link: r.missing_job_link,
         invoice_status: r.invoice_status,

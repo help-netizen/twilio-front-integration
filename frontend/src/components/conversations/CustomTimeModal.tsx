@@ -578,7 +578,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
 
     return (
         <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
-            <DialogContent className="max-w-5xl max-h-[90vh] ctm-dialog" aria-describedby={undefined}>
+            <DialogContent className="md:max-w-5xl max-h-[90vh] ctm-dialog" aria-describedby={undefined}>
                 <DialogTitle className="sr-only">Schedule Time Slot</DialogTitle>
 
                 {/* Date navigation */}

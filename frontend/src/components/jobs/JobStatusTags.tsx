@@ -58,7 +58,7 @@ export function JobOpsSection({
                             onTagsChange(job.id, newIds);
                         }}>
                         <TagBadge tag={t} small />
-                        <span className="absolute -top-1.5 -right-1.5 size-4 bg-destructive text-white rounded-full text-[9px] leading-4 text-center hidden group-hover/tag:block">×</span>
+                        <span className="absolute -top-1.5 -right-1.5 size-4 bg-destructive text-white rounded-full text-[9px] leading-4 text-center hidden group-hover/tag:block max-md:block">×</span>
                     </button>
                 ))}
 
@@ -138,14 +138,14 @@ export function JobOpsSection({
                     )}
 
                     {/* Secondary actions — small text links */}
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-4 max-md:gap-2 max-md:flex-wrap">
                         {/* En-route */}
                         {job.zb_status === 'en-route' ? (
-                            <span style={{ ...SECONDARY_BTN, opacity: 0.5, cursor: 'default' }}>
+                            <span style={{ ...SECONDARY_BTN, opacity: 0.5, cursor: 'default' }} className="max-md:min-h-[44px] max-md:px-2">
                                 <Navigation className="size-3" /> En-route
                             </span>
                         ) : job.zb_status === 'scheduled' ? (
-                            <button style={SECONDARY_BTN} className="hover:opacity-70 transition-opacity"
+                            <button style={SECONDARY_BTN} className="hover:opacity-70 transition-opacity max-md:min-h-[44px] max-md:px-2"
                                 onClick={() => onMarkEnroute(job.id)}>
                                 <Navigation className="size-3" /> En-route
                             </button>
@@ -153,14 +153,14 @@ export function JobOpsSection({
 
                         {/* In Progress indicator */}
                         {job.zb_status === 'in-progress' && (
-                            <span style={{ ...SECONDARY_BTN, opacity: 0.5, cursor: 'default' }}>
+                            <span style={{ ...SECONDARY_BTN, opacity: 0.5, cursor: 'default' }} className="max-md:min-h-[44px] max-md:px-2">
                                 <Play className="size-3" /> In Progress
                             </span>
                         )}
 
                         {/* Complete — only as secondary when primary is Start Job */}
                         {(job.zb_status === 'scheduled' || job.zb_status === 'en-route') && (
-                            <button style={SECONDARY_BTN} className="hover:opacity-70 transition-opacity"
+                            <button style={SECONDARY_BTN} className="hover:opacity-70 transition-opacity max-md:min-h-[44px] max-md:px-2"
                                 onClick={() => onMarkComplete(job.id)}>
                                 <CheckCircle2 className="size-3" /> Complete
                             </button>
@@ -169,7 +169,7 @@ export function JobOpsSection({
                         {/* Cancel */}
                         <button
                             style={{ ...SECONDARY_BTN, color: '#dc2626', marginLeft: 'auto' }}
-                            className="hover:opacity-70 transition-opacity"
+                            className="hover:opacity-70 transition-opacity max-md:min-h-[44px] max-md:px-2"
                             onClick={() => onCancel(job.id)}
                             title="Cancel job"
                         >
