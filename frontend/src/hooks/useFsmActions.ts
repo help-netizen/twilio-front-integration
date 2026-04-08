@@ -85,14 +85,19 @@ export function useApplyTransition(machineKey: string) {
  * Fetch all states for a machine (used by override UI).
  * GET /api/fsm/:machineKey/states
  */
+interface FsmStatesResult {
+    states: string[];
+    initialState: string | null;
+}
+
 export function useFsmStates(machineKey: string, enabled = false) {
-    return useQuery<string[]>({
+    return useQuery<FsmStatesResult>({
         queryKey: ['fsm', machineKey, 'states'],
         queryFn: async () => {
             const res = await authedFetch(`${API_BASE}/api/fsm/${machineKey}/states`);
             const json = await res.json();
             if (!res.ok || !json.ok) throw new Error(json.error || 'Failed to load states');
-            return json.data;
+            return { states: json.data, initialState: json.initialState ?? null };
         },
         enabled,
     });

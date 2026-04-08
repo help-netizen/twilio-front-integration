@@ -29,8 +29,8 @@ export function LeadsFilters({
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
     const { jobTypes: dynamicJobTypes } = useLeadFormSettings();
-    const { data: fsmStatuses } = useFsmStates('lead', true);
-    const statuses = fsmStatuses && fsmStatuses.length > 0 ? fsmStatuses : LEAD_STATUSES as unknown as string[];
+    const { data: fsmData } = useFsmStates('lead', true);
+    const statuses = fsmData?.states && fsmData.states.length > 0 ? fsmData.states : LEAD_STATUSES as unknown as string[];
 
     // Close dropdown on outside click
     useEffect(() => {

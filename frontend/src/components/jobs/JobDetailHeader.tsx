@@ -1,4 +1,4 @@
-import { ExternalLink, ChevronDown } from 'lucide-react';
+import { ExternalLink, ChevronDown, RotateCcw } from 'lucide-react';
 import type { LocalJob } from '../../services/jobsApi';
 import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -27,12 +27,14 @@ function hexToRgba(hex: string, alpha: number) {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChange }: JobDetailHeaderProps) {
-    const { data: fsmStatuses } = useFsmStates('job', true);
-    const allStatuses = fsmStatuses && fsmStatuses.length > 0 ? fsmStatuses : BLANC_STATUSES;
+    const { data: fsmData } = useFsmStates('job', true);
+    const allStatuses = fsmData?.states && fsmData.states.length > 0 ? fsmData.states : BLANC_STATUSES;
+    const initialState = fsmData?.initialState || null;
     const { data: fsmActions } = useFsmActions('job', job.blanc_status);
     const allowedTargets = new Set(fsmActions?.map(a => a.target) || []);
     const reachable = allStatuses.filter(s => s !== job.blanc_status && allowedTargets.has(s));
     const unreachable = allStatuses.filter(s => s !== job.blanc_status && !allowedTargets.has(s));
+    const canReset = initialState && job.blanc_status !== initialState;
 
     const customerName = contactInfo?.name || job.customer_name;
     const showServiceInEyebrow = !!job.service_name && !!customerName;
@@ -137,6 +139,19 @@ export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChang
                                 {s}
                             </DropdownMenuItem>
                         ))}
+                        {canReset && (
+                            <>
+                                <div className="my-1.5 mx-2 h-px" style={{ background: 'var(--blanc-line)' }} />
+                                <DropdownMenuItem
+                                    onClick={() => onBlancStatusChange(job.id, initialState!)}
+                                    className="flex items-center gap-2 text-xs font-medium mx-1 mb-1 rounded-md"
+                                    style={{ background: 'rgba(117,106,89,0.06)', color: 'var(--blanc-ink-2)' }}
+                                >
+                                    <RotateCcw className="size-3" />
+                                    Reset to {initialState}
+                                </DropdownMenuItem>
+                            </>
+                        )}
                     </DropdownMenuContent>
                 </DropdownMenu>
 

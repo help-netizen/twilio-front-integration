@@ -312,12 +312,21 @@ router.get('/:machineKey/states', async (req, res) => {
     const companyId = req.companyFilter?.company_id;
     const { machineKey } = req.params;
 
-    const states = await fsmService.getAllStates(companyId, machineKey);
-    if (!states) {
-      return res.json({ ok: true, data: [] });
+    const graph = await fsmService.getPublishedGraph(companyId, machineKey);
+    if (!graph) {
+      return res.json({ ok: true, data: [], initialState: null });
     }
 
-    res.json({ ok: true, data: states });
+    const states = [];
+    for (const state of graph.states.values()) {
+      states.push(state.statusName);
+    }
+
+    // Resolve initialState statusName
+    const initialNode = graph.states.get(graph.initialState);
+    const initialState = initialNode ? initialNode.statusName : graph.initialState;
+
+    res.json({ ok: true, data: states, initialState });
   } catch (err) {
     console.error('[FSM] getStates error:', err);
     res.status(500).json({ ok: false, error: 'Internal error' });

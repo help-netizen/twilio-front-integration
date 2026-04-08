@@ -6,7 +6,7 @@
  *
  * Embedded mode (Pulse): single-column with tiles, notes in header area.
  */
-import { ChevronDown, Users } from 'lucide-react';
+import { ChevronDown, Users, RotateCcw } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import type { Lead } from '../../types/lead';
 import { LEAD_STATUSES } from '../../types/lead';
@@ -222,12 +222,14 @@ function LeadHeader({ lead, contactName, statusColor, onUpdateStatus, onUpdateSo
     onUpdateStatus: (uuid: string, status: string) => void;
     onUpdateSource: (uuid: string, source: string) => void;
 }) {
-    const { data: fsmStatuses } = useFsmStates('lead', true);
-    const allStatuses = fsmStatuses && fsmStatuses.length > 0 ? fsmStatuses : LEAD_STATUSES;
+    const { data: fsmData } = useFsmStates('lead', true);
+    const allStatuses = fsmData?.states && fsmData.states.length > 0 ? fsmData.states : (LEAD_STATUSES as unknown as string[]);
+    const initialState = fsmData?.initialState || null;
     const { data: fsmActions } = useFsmActions('lead', lead.Status);
     const allowedTargets = new Set(fsmActions?.map(a => a.target) || []);
     const reachable = allStatuses.filter(s => s !== lead.Status && allowedTargets.has(s));
     const unreachable = allStatuses.filter(s => s !== lead.Status && !allowedTargets.has(s));
+    const canReset = initialState && lead.Status !== initialState;
 
     return (
         <>
@@ -282,6 +284,19 @@ function LeadHeader({ lead, contactName, statusColor, onUpdateStatus, onUpdateSo
                                 {status}
                             </DropdownMenuItem>
                         ))}
+                        {canReset && (
+                            <>
+                                <div className="my-1.5 mx-2 h-px" style={{ background: 'var(--blanc-line)' }} />
+                                <DropdownMenuItem
+                                    onClick={() => onUpdateStatus(lead.UUID, initialState!)}
+                                    className="flex items-center gap-2 text-xs font-medium mx-1 mb-1 rounded-md"
+                                    style={{ background: 'rgba(117,106,89,0.06)', color: 'var(--blanc-ink-2)' }}
+                                >
+                                    <RotateCcw className="size-3" />
+                                    Reset to {initialState}
+                                </DropdownMenuItem>
+                            </>
+                        )}
                     </DropdownMenuContent>
                 </DropdownMenu>
 

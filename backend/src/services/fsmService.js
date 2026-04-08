@@ -638,6 +638,17 @@ async function resolveTransition(companyId, machineKey, currentState, eventOrTar
     };
   }
 
+  // d. Allow reset to initial state from any state
+  const initialNode = graph.states.get(graph.initialState);
+  const initialStatusName = initialNode ? initialNode.statusName : graph.initialState;
+  if (eventOrTarget === initialStatusName || eventOrTarget === graph.initialState) {
+    return {
+      valid: true,
+      targetState: initialStatusName,
+      event: '__RESET__',
+    };
+  }
+
   return { valid: false, error: 'Transition not allowed' };
 }
 

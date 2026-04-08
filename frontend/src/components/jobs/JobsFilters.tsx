@@ -27,8 +27,8 @@ export function JobsFilters({ statusFilter, onStatusFilterChange, providerFilter
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
     const [dynamicJobTypes, setDynamicJobTypes] = useState<string[]>([]);
-    const { data: fsmStatuses } = useFsmStates('job', true);
-    const statuses = fsmStatuses && fsmStatuses.length > 0 ? fsmStatuses : BLANC_STATUSES;
+    const { data: fsmData } = useFsmStates('job', true);
+    const statuses = fsmData?.states && fsmData.states.length > 0 ? fsmData.states : BLANC_STATUSES;
 
     useEffect(() => { authedFetch('/api/settings/lead-form').then(r => r.json()).then(data => { if (data.success && data.jobTypes?.length > 0) setDynamicJobTypes(data.jobTypes.map((jt: { name: string }) => jt.name)); }).catch(() => { }); }, []);
 
