@@ -45,7 +45,7 @@ import {
     usePublishDraft,
     type ValidationResult,
 } from '../../hooks/useFsmEditor';
-import { useAuthz } from '../../hooks/useAuthz';
+
 import { layoutWithElkLayered } from '../../utils/workflowElkLayout';
 import {
     scxmlToGraph,
@@ -140,7 +140,6 @@ export default function WorkflowBuilderPage() {
     const saveDraft = useSaveDraft(machineKey || '');
     const validateScxml = useValidateScxml(machineKey || '');
     const publishDraft = usePublishDraft(machineKey || '');
-    const { hasPermission } = useAuthz();
     // canPublish check removed — Save auto-publishes
 
     // ── Graph state ───────────────────────────────────────────────────────
@@ -159,7 +158,7 @@ export default function WorkflowBuilderPage() {
 
     const initialised = useRef(false);
     const pendingLayoutRef = useRef(false);
-    const reactFlowRef = useRef<ReactFlowInstance | null>(null);
+    const reactFlowRef = useRef<ReactFlowInstance<Node<WorkflowNodeData>, Edge> | null>(null);
 
     const { push: pushSnap, undo, redo, canUndo, canRedo } = useUndoRedo(nodes, edges, setNodes, setEdges);
 

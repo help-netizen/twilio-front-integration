@@ -144,7 +144,7 @@ interface StateInspectorProps {
 export function StateInspector({
     node,
     edges,
-    nodes,
+    nodes: _nodes,
     onUpdateNode,
     onDeleteNode,
     onSetInitial,
