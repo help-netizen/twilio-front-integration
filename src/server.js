@@ -23,6 +23,7 @@ const messagingRouter = require('../backend/src/routes/messaging');
 const pulseRouter = require('../backend/src/routes/pulse');
 const quickMessagesRouter = require('../backend/src/routes/quick-messages');
 const textPolishRouter = require('../backend/src/routes/text-polish');
+const fsmRouter = require('../backend/src/routes/fsm');
 const authRouter = require('../backend/src/routes/auth');
 const requestId = require('../backend/src/middleware/requestId');
 const { authenticate, requireRole, requireCompanyAccess } = require('../backend/src/middleware/keycloakAuth');
@@ -160,6 +161,7 @@ app.use('/api/estimates', authenticate, requireCompanyAccess, estimatesRouter);
 app.use('/api/invoices', authenticate, requireCompanyAccess, invoicesRouter);
 app.use('/api/payments', authenticate, requireCompanyAccess, paymentsCanonicalRouter);
 app.use('/api/portal', portalRouter); // public auth + portal-session auth inside router
+app.use('/api/fsm', authenticate, requireCompanyAccess, fsmRouter);
 
 // BLANC Integrations API (secured header-based auth)
 app.use('/api/v1/integrations', integrationsLeadsRouter);

@@ -8,6 +8,7 @@ import { authedFetch } from '../../services/apiClient';
 import type { LocalJob } from '../../services/jobsApi';
 import { DateRangePickerPopover } from '../ui/DateRangePickerPopover';
 import { BLANC_STATUSES, BLANC_STATUS_COLORS, FilterColumn } from './jobsFilterHelpers';
+import { useFsmStates } from '../../hooks/useFsmActions';
 import { isMobileViewport } from '../../hooks/useViewportSafePosition';
 
 interface JobsFiltersProps {
@@ -26,6 +27,8 @@ export function JobsFilters({ statusFilter, onStatusFilterChange, providerFilter
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
     const [dynamicJobTypes, setDynamicJobTypes] = useState<string[]>([]);
+    const { data: fsmStatuses } = useFsmStates('job', true);
+    const statuses = fsmStatuses && fsmStatuses.length > 0 ? fsmStatuses : BLANC_STATUSES;
 
     useEffect(() => { authedFetch('/api/settings/lead-form').then(r => r.json()).then(data => { if (data.success && data.jobTypes?.length > 0) setDynamicJobTypes(data.jobTypes.map((jt: { name: string }) => jt.name)); }).catch(() => { }); }, []);
 
@@ -74,7 +77,7 @@ export function JobsFilters({ statusFilter, onStatusFilterChange, providerFilter
                         <>
                             {activeFilterCount > 0 && <div className="flex flex-wrap gap-1.5 p-3 pb-0 items-center">{statusFilter.map(s => <Badge key={`st-${s}`} variant="secondary" className="gap-1 text-xs">{s}<X className="size-3 cursor-pointer" onClick={() => toggle(statusFilter, s, onStatusFilterChange)} /></Badge>)}{providerFilter.map(s => <Badge key={`pr-${s}`} variant="outline" className="gap-1 text-xs">{s}<X className="size-3 cursor-pointer" onClick={() => toggle(providerFilter, s, onProviderFilterChange)} /></Badge>)}{sourceFilter.map(s => <Badge key={`src-${s}`} variant="outline" className="gap-1 text-xs">{s}<X className="size-3 cursor-pointer" onClick={() => toggle(sourceFilter, s, onSourceFilterChange)} /></Badge>)}{jobTypeFilter.map(t => <Badge key={`jt-${t}`} variant="default" className="gap-1 text-xs">{t}<X className="size-3 cursor-pointer" onClick={() => toggle(jobTypeFilter, t, onJobTypeFilterChange)} /></Badge>)}{tagFilter.map(id => { const tag = allTags.find(t => t.id === id); return tag ? <Badge key={`tag-${id}`} variant="outline" className="gap-1 text-xs"><span className="size-2 rounded-full" style={{ backgroundColor: tag.color }} />{tag.name}<X className="size-3 cursor-pointer" onClick={() => toggleTag(id)} /></Badge> : null; })}<button onClick={clearAllFilters} className="text-xs text-muted-foreground hover:text-foreground ml-1">Clear all</button></div>}
                             <div className="grid grid-cols-1 sm:grid-cols-5 p-3 gap-3 sm:gap-0">
-                                <FilterColumn title="STATUS" items={BLANC_STATUSES} selected={statusFilter} onToggle={item => toggle(statusFilter, item, onStatusFilterChange)} colorMap={BLANC_STATUS_COLORS} />
+                                <FilterColumn title="STATUS" items={statuses} selected={statusFilter} onToggle={item => toggle(statusFilter, item, onStatusFilterChange)} colorMap={BLANC_STATUS_COLORS} />
                                 <FilterColumn title="PROVIDERS" items={providerNames} selected={providerFilter} onToggle={item => toggle(providerFilter, item, onProviderFilterChange)} />
                                 <FilterColumn title="SOURCE" items={JOB_SOURCES as unknown as string[]} selected={sourceFilter} onToggle={item => toggle(sourceFilter, item, onSourceFilterChange)} />
                                 <FilterColumn title="JOB TYPE" items={dynamicJobTypes} selected={jobTypeFilter} onToggle={item => toggle(jobTypeFilter, item, onJobTypeFilterChange)} />

@@ -4,6 +4,7 @@ import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
 import { BLANC_STATUSES, BLANC_STATUS_COLORS } from './jobHelpers';
+import { useFsmStates, useFsmActions } from '../../hooks/useFsmActions';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -26,6 +27,13 @@ function hexToRgba(hex: string, alpha: number) {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChange }: JobDetailHeaderProps) {
+    const { data: fsmStatuses } = useFsmStates('job', true);
+    const allStatuses = fsmStatuses && fsmStatuses.length > 0 ? fsmStatuses : BLANC_STATUSES;
+    const { data: fsmActions } = useFsmActions('job', job.blanc_status);
+    const allowedTargets = new Set(fsmActions?.map(a => a.target) || []);
+    const reachable = allStatuses.filter(s => s !== job.blanc_status && allowedTargets.has(s));
+    const unreachable = allStatuses.filter(s => s !== job.blanc_status && !allowedTargets.has(s));
+
     const customerName = contactInfo?.name || job.customer_name;
     const showServiceInEyebrow = !!job.service_name && !!customerName;
     const mainTitle = customerName || job.service_name || 'Job';
@@ -116,9 +124,16 @@ export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChang
                         </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start">
-                        {BLANC_STATUSES.map(s => (
-                            <DropdownMenuItem key={s} onClick={() => onBlancStatusChange(job.id, s)}
-                                className={s === job.blanc_status ? 'bg-accent' : ''}>
+                        {reachable.map(s => (
+                            <DropdownMenuItem key={s} onClick={() => onBlancStatusChange(job.id, s)}>
+                                {s}
+                            </DropdownMenuItem>
+                        ))}
+                        {unreachable.length > 0 && reachable.length > 0 && (
+                            <div className="my-1" />
+                        )}
+                        {unreachable.map(s => (
+                            <DropdownMenuItem key={s} disabled className="text-[var(--blanc-ink-3)] opacity-50">
                                 {s}
                             </DropdownMenuItem>
                         ))}

@@ -4,6 +4,7 @@ import { X, SlidersHorizontal } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import type { LeadsListParams } from '../../types/lead';
 import { LEAD_STATUSES, JOB_SOURCES } from '../../types/lead';
+import { useFsmStates } from '../../hooks/useFsmActions';
 import { useLeadFormSettings } from '../../hooks/useLeadFormSettings';
 import { DateRangePickerPopover } from '../ui/DateRangePickerPopover';
 import { isMobileViewport } from '../../hooks/useViewportSafePosition';
@@ -28,6 +29,8 @@ export function LeadsFilters({
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
     const { jobTypes: dynamicJobTypes } = useLeadFormSettings();
+    const { data: fsmStatuses } = useFsmStates('lead', true);
+    const statuses = fsmStatuses && fsmStatuses.length > 0 ? fsmStatuses : LEAD_STATUSES as unknown as string[];
 
     // Close dropdown on outside click
     useEffect(() => {
@@ -152,7 +155,7 @@ export function LeadsFilters({
 
                             {/* Columns */}
                             <div className="grid grid-cols-1 sm:grid-cols-3 p-3 gap-3 sm:gap-0" style={{ borderTop: activeFilterCount > 0 ? '1px solid var(--blanc-line)' : undefined, marginTop: activeFilterCount > 0 ? 8 : 0 }}>
-                                <FilterColumn title="STATUS" items={LEAD_STATUSES as unknown as string[]} selected={filters.status || []} onToggle={toggleStatus} colorMap={LEAD_STATUS_COLORS} />
+                                <FilterColumn title="STATUS" items={statuses} selected={filters.status || []} onToggle={toggleStatus} colorMap={LEAD_STATUS_COLORS} />
                                 <FilterColumn title="SOURCE" items={JOB_SOURCES as unknown as string[]} selected={sourceFilter} onToggle={toggleSource} />
                                 <FilterColumn title="JOB TYPE" items={dynamicJobTypes} selected={jobTypeFilter} onToggle={toggleJobType} />
                             </div>

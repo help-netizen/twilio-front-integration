@@ -30,6 +30,7 @@ import InvoicesPage from './pages/InvoicesPage';
 import TransactionsPage from './pages/TransactionsPage';
 import RouteManagerOverviewPage from './pages/telephony/RouteManagerOverviewPage';
 import CallFlowBuilderPage from './pages/telephony/CallFlowBuilderPage';
+import WorkflowBuilderPage from './pages/workflows/WorkflowBuilderPage';
 import PhoneNumbersPage from './pages/telephony/PhoneNumbersPage';
 import AudioLibraryPage from './pages/telephony/AudioLibraryPage';
 import ProviderSettingsPage from './pages/telephony/ProviderSettingsPage';
@@ -111,6 +112,9 @@ function App() {
 
               {/* Call Flow Builder — full-screen, accessed from User Group detail */}
               <Route path="/settings/telephony/user-groups/:groupId/flow" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><CallFlowBuilderPage /></ProtectedRoute>} />
+
+              {/* Workflow Builder — full-screen visual FSM editor */}
+              <Route path="/settings/workflows/:machineKey" element={<ProtectedRoute permissions={['tenant.company.manage']}><WorkflowBuilderPage /></ProtectedRoute>} />
 
               {/* Operations — Dashboard & Queue (with sidebar) */}
               <Route path="/calls/dashboard" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><OperationsDashboardPage /></TelephonyLayout></ProtectedRoute>} />

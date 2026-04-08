@@ -10,6 +10,7 @@ import { ChevronDown, Users } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import type { Lead } from '../../types/lead';
 import { LEAD_STATUSES } from '../../types/lead';
+import { useFsmStates, useFsmActions } from '../../hooks/useFsmActions';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { MetadataSection, LeadDetailFooter } from './LeadDetailSections';
@@ -221,6 +222,13 @@ function LeadHeader({ lead, contactName, statusColor, onUpdateStatus, onUpdateSo
     onUpdateStatus: (uuid: string, status: string) => void;
     onUpdateSource: (uuid: string, source: string) => void;
 }) {
+    const { data: fsmStatuses } = useFsmStates('lead', true);
+    const allStatuses = fsmStatuses && fsmStatuses.length > 0 ? fsmStatuses : LEAD_STATUSES;
+    const { data: fsmActions } = useFsmActions('lead', lead.Status);
+    const allowedTargets = new Set(fsmActions?.map(a => a.target) || []);
+    const reachable = allStatuses.filter(s => s !== lead.Status && allowedTargets.has(s));
+    const unreachable = allStatuses.filter(s => s !== lead.Status && !allowedTargets.has(s));
+
     return (
         <>
             {/* Eyebrow */}
@@ -261,8 +269,16 @@ function LeadHeader({ lead, contactName, statusColor, onUpdateStatus, onUpdateSo
                         </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start">
-                        {LEAD_STATUSES.map(status => (
-                            <DropdownMenuItem key={status} onClick={() => onUpdateStatus(lead.UUID, status)} className={status === lead.Status ? 'bg-accent' : ''}>
+                        {reachable.map(status => (
+                            <DropdownMenuItem key={status} onClick={() => onUpdateStatus(lead.UUID, status)}>
+                                {status}
+                            </DropdownMenuItem>
+                        ))}
+                        {unreachable.length > 0 && reachable.length > 0 && (
+                            <div className="my-1" />
+                        )}
+                        {unreachable.map(status => (
+                            <DropdownMenuItem key={status} disabled className="text-[var(--blanc-ink-3)] opacity-50">
                                 {status}
                             </DropdownMenuItem>
                         ))}

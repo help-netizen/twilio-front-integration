@@ -14,6 +14,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import ProblemsPanel from './ProblemsPanel';
+import { DiagramPreview } from './DiagramPreview';
 import {
   useFsmDraft,
   useFsmActiveVersion,
@@ -300,16 +301,13 @@ export default function WorkflowEditor({ machineKey, onBack }: WorkflowEditorPro
           />
         </div>
 
-        {/* Right pane: Diagram preview placeholder */}
-        <div className="w-[45%] border-l border-[var(--blanc-line)] p-4 overflow-auto">
-          <p className="blanc-eyebrow mb-3">Diagram Preview</p>
-          <div className="flex items-center justify-center h-48 rounded-2xl bg-[rgba(117,106,89,0.04)] text-[var(--blanc-ink-3)] text-sm">
-            Diagram will render here
-          </div>
+        {/* Right pane: Diagram preview */}
+        <div className="w-[45%] border-l border-[var(--blanc-line)] flex flex-col overflow-hidden">
+          <DiagramPreview scxmlContent={_debouncedContent} />
 
           {/* Problems panel */}
           {validationResult && !validationResult.valid && (
-            <div className="mt-4">
+            <div className="border-t border-[var(--blanc-line)] p-4">
               <ProblemsPanel
                 errors={validationResult.errors}
                 warnings={validationResult.warnings}

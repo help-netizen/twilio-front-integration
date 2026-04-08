@@ -7,6 +7,7 @@
 
 const db = require('../db/connection');
 const zenbookerClient = require('./zenbookerClient');
+const fsmService = require('./fsmService');
 
 // =============================================================================
 // UUID Generation (Workiz-style 6-char alphanumeric)
@@ -378,6 +379,25 @@ async function updateLead(uuid, fields, companyId = null) {
 
     if (Object.keys(columns).length === 0) {
         throw new LeadsServiceError('VALIDATION_ERROR', 'At least one field must be provided', 400);
+    }
+
+    // FSM status transition validation (additive — no published FSM = no restriction)
+    if (columns.status && companyId) {
+        const { rows: currentRows } = await db.query(
+            'SELECT status FROM leads WHERE uuid = $1', [uuid]
+        );
+        const currentStatus = currentRows.length > 0 ? currentRows[0].status : null;
+        if (currentStatus && columns.status !== currentStatus) {
+            const result = await fsmService.resolveTransition(companyId, 'lead', currentStatus, columns.status);
+            if (result.valid === false) {
+                throw new LeadsServiceError(
+                    'FSM_TRANSITION_DENIED',
+                    result.error || `Lead status transition ${currentStatus} → ${columns.status} is not allowed`,
+                    403
+                );
+            }
+            // If valid or fallback (no published FSM), proceed with update
+        }
     }
 
     const setClauses = [];
@@ -876,6 +896,18 @@ async function getLeadByPhone(phone, companyId = null) {
 }
 
 // =============================================================================
+// Get Available Lead Transitions (FSM-aware)
+// =============================================================================
+async function getLeadTransitions(companyId, currentStatus, userRoles) {
+    const result = await fsmService.getAvailableActions(companyId, 'lead', currentStatus, userRoles);
+    if (!result.fallback) {
+        return result.actions;
+    }
+    // Fallback: permissive (no restrictions without FSM)
+    return [];
+}
+
+// =============================================================================
 // Exports
 // =============================================================================
 module.exports = {
@@ -890,5 +922,6 @@ module.exports = {
     assignUser,
     unassignUser,
     convertLead,
+    getLeadTransitions,
     LeadsServiceError,
 };

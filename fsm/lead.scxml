@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml"
+       xmlns:blanc="https://blanc.app/fsm"
+       version="1.0"
+       initial="Submitted"
+       blanc:machine="lead"
+       blanc:title="Lead Workflow">
+
+  <state id="Submitted" blanc:label="Submitted">
+    <transition event="TO_NEW" target="New" blanc:action="true" blanc:label="Mark New" blanc:order="1" />
+  </state>
+
+  <state id="New" blanc:label="New">
+    <transition event="TO_CONTACTED" target="Contacted" blanc:action="true" blanc:label="Contacted" blanc:order="1" />
+    <transition event="TO_LOST" target="Lost" blanc:action="true" blanc:label="Lost" blanc:order="2" blanc:confirm="true" blanc:confirmText="Are you sure you want to mark this lead as lost?" />
+  </state>
+
+  <state id="Contacted" blanc:label="Contacted">
+    <transition event="TO_QUALIFIED" target="Qualified" blanc:action="true" blanc:label="Qualified" blanc:order="1" />
+    <transition event="TO_LOST" target="Lost" blanc:action="true" blanc:label="Lost" blanc:order="2" blanc:confirm="true" blanc:confirmText="Are you sure you want to mark this lead as lost?" />
+  </state>
+
+  <state id="Qualified" blanc:label="Qualified">
+    <transition event="TO_PROPOSAL_SENT" target="Proposal_Sent" blanc:action="true" blanc:label="Proposal Sent" blanc:order="1" />
+    <transition event="TO_LOST" target="Lost" blanc:action="true" blanc:label="Lost" blanc:order="2" blanc:confirm="true" blanc:confirmText="Are you sure you want to mark this lead as lost?" />
+  </state>
+
+  <state id="Proposal_Sent" blanc:label="Proposal Sent" blanc:statusName="Proposal Sent">
+    <transition event="TO_NEGOTIATION" target="Negotiation" blanc:action="true" blanc:label="Negotiation" blanc:order="1" />
+    <transition event="TO_LOST" target="Lost" blanc:action="true" blanc:label="Lost" blanc:order="2" blanc:confirm="true" blanc:confirmText="Are you sure you want to mark this lead as lost?" />
+  </state>
+
+  <state id="Negotiation" blanc:label="Negotiation">
+    <transition event="TO_CONVERTED" target="Converted" blanc:action="true" blanc:label="Convert" blanc:order="1" />
+    <transition event="TO_LOST" target="Lost" blanc:action="true" blanc:label="Lost" blanc:order="2" blanc:confirm="true" blanc:confirmText="Are you sure you want to mark this lead as lost?" />
+  </state>
+
+  <final id="Lost" blanc:label="Lost" />
+  <final id="Converted" blanc:label="Converted" />
+
+</scxml>

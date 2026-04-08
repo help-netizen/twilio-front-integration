@@ -12,6 +12,7 @@
 
 const db = require('../db/connection');
 const zenbookerClient = require('./zenbookerClient');
+const fsmService = require('./fsmService');
 
 // =============================================================================
 // Constants
@@ -442,17 +443,40 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
 // FSM — Manual status transitions
 // =============================================================================
 
-async function updateBlancStatus(jobId, newStatus) {
-    if (!BLANC_STATUSES.includes(newStatus)) {
-        throw new Error(`Invalid blanc_status: ${newStatus}`);
-    }
-
+async function updateBlancStatus(jobId, newStatus, companyId) {
     const job = await getJobById(jobId);
     if (!job) throw new Error(`Job #${jobId} not found`);
 
-    const allowed = ALLOWED_TRANSITIONS[job.blanc_status] || [];
-    if (!allowed.includes(newStatus)) {
-        throw new Error(`Transition ${job.blanc_status} → ${newStatus} is not allowed`);
+    // Try FSM resolution first
+    if (companyId) {
+        const result = await fsmService.resolveTransition(companyId, 'job', job.blanc_status, newStatus);
+        if (result.valid === true) {
+            // FSM approved the transition — proceed with DB update below
+        } else if (result.valid === false) {
+            throw new Error(result.error || `Transition ${job.blanc_status} → ${newStatus} is not allowed`);
+        }
+        // If result.fallback === true, fall through to hardcoded check
+        if (!result.fallback) {
+            // FSM gave a definitive answer, skip hardcoded validation
+        } else {
+            // Fallback: original hardcoded validation
+            if (!BLANC_STATUSES.includes(newStatus)) {
+                throw new Error(`Invalid blanc_status: ${newStatus}`);
+            }
+            const allowed = ALLOWED_TRANSITIONS[job.blanc_status] || [];
+            if (!allowed.includes(newStatus)) {
+                throw new Error(`Transition ${job.blanc_status} → ${newStatus} is not allowed`);
+            }
+        }
+    } else {
+        // No companyId — use hardcoded validation
+        if (!BLANC_STATUSES.includes(newStatus)) {
+            throw new Error(`Invalid blanc_status: ${newStatus}`);
+        }
+        const allowed = ALLOWED_TRANSITIONS[job.blanc_status] || [];
+        if (!allowed.includes(newStatus)) {
+            throw new Error(`Transition ${job.blanc_status} → ${newStatus} is not allowed`);
+        }
     }
 
     await db.query(
@@ -772,6 +796,28 @@ async function updateJobTags(jobId, tagIds) {
 }
 
 // =============================================================================
+// FSM — Available transitions for UI
+// =============================================================================
+
+async function getJobTransitions(companyId, currentState, userRoles) {
+    const result = await fsmService.getAvailableActions(companyId, 'job', currentState, userRoles);
+    if (!result.fallback) {
+        return result.actions;
+    }
+    // Fallback to hardcoded
+    const allowed = ALLOWED_TRANSITIONS[currentState] || [];
+    return allowed.map((target, i) => ({
+        event: `TO_${target.toUpperCase().replace(/ /g, '_')}`,
+        label: target,
+        targetStatusName: target,
+        action: true,
+        confirm: target === 'Canceled',
+        confirmText: target === 'Canceled' ? 'Are you sure you want to cancel this job?' : null,
+        order: (i + 1) * 10,
+    }));
+}
+
+// =============================================================================
 // Exports
 // =============================================================================
 
@@ -799,4 +845,5 @@ module.exports = {
     updateJobTags,
     getTagsForJob,
     updateCoords,
+    getJobTransitions,
 };
