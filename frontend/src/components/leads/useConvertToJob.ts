@@ -30,7 +30,7 @@ export function useConvertToJob(lead: Lead, open: boolean, onSuccess: (lead: Lea
 
     // Shared zip check hook — fast API for UI, Zenbooker in background for timeslots
     const zipCheck = useZipCheck(addressFields.zip);
-    const { territoryResult, territoryLoading, territoryError, zipExists, zipArea, matchedZip, zipSource, coords, setCoords } = zipCheck;
+    const { territoryResult, territoryLoading, territoryError, zipExists, zipArea, zipSource, coords, setCoords } = zipCheck;
 
     const [serviceName, setServiceName] = useState('');
     const [serviceDescription, setServiceDescription] = useState('');
