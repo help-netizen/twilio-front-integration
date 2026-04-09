@@ -74,9 +74,14 @@ export function parseDescription(desc: string): AddressFields {
     const stateZipRe = /^([A-Z]{2})(?:\s+(\d{5}(?:-\d{4})?))?$/;
 
     if (parts.length >= 3) {
-        // "123 Main St, Norwood, MA 02062"
-        const match = parts[2].match(stateZipRe);
-        return { street: parts[0], apt: "", city: parts[1], state: match?.[1] || parts[2], zip: match?.[2] || "" };
+        // State+zip is always the LAST part, city is second-to-last, everything before is street
+        // "123 Main St, Norwood, MA 02062" → street="123 Main St", city="Norwood", state="MA", zip="02062"
+        // "US Fish & Wildlife, Everett Ave, Chelsea, MA" → street="US Fish & Wildlife, Everett Ave", city="Chelsea", state="MA"
+        const last = parts[parts.length - 1];
+        const match = last.match(stateZipRe);
+        const cityPart = parts[parts.length - 2];
+        const streetParts = parts.slice(0, parts.length - 2);
+        return { street: streetParts.join(", "), apt: "", city: match ? cityPart : parts[parts.length - 2], state: match?.[1] || last, zip: match?.[2] || "" };
     }
 
     // 2 parts: could be "City, ST 02062" or "Street, City"

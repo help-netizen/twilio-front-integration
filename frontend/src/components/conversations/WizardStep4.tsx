@@ -30,7 +30,7 @@ export function WizardStep4(s: WizardState) {
                 <AddressAutocomplete
                     header={<h4 className="wizard__review-title" style={{ margin: 0 }}>Address{s.zipExists && <Badge variant="default" className="bg-green-600 ml-2 text-[10px]">✓ {s.zipArea || s.territoryResult?.service_territory?.name}</Badge>}{s.zbLoading && <span className="ml-2 text-xs animate-pulse" style={{ color: 'var(--blanc-ink-3)' }}>loading territory…</span>}</h4>}
                     idPrefix="wz4"
-                    value={{ street: s.streetAddress, apt: s.unit, city: s.city, state: s.state, zip: s.postalCode }}
+                    value={{ street: s.streetAddress, apt: s.unit, city: s.city, state: s.state, zip: /^\d/.test(s.postalCode) ? s.postalCode : (s.matchedZip || '') }}
                     onChange={(addr) => {
                         s.setStreetAddress(addr.street); s.setUnit(addr.apt || ''); s.setCity(addr.city); s.setState(addr.state); s.setPostalCode(addr.zip);
                         if (addr.lat != null && addr.lng != null) s.setCoords({ lat: addr.lat, lng: addr.lng });

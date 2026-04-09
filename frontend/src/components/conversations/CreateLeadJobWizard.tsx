@@ -125,7 +125,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall: _hasActiveCall, time
             const leadInput: Record<string, unknown> = {
                 FirstName: firstName || 'Unknown', LastName: lastName || '', Phone: toE164(phoneNumber),
                 Email: email || undefined, Address: streetAddress || undefined, Unit: unit || undefined,
-                City: city || undefined, State: state || undefined, PostalCode: matchedZip || postalCode || undefined,
+                City: city || undefined, State: state || undefined, PostalCode: matchedZip || (/^\d/.test(postalCode) ? postalCode : undefined),
                 Latitude: finalCoords?.lat || undefined, Longitude: finalCoords?.lng || undefined,
                 JobType: jobType || undefined, Description: description || undefined,
                 Status: withJob ? 'Converted' : 'Submitted', JobSource: 'Phone Call',
@@ -140,7 +140,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall: _hasActiveCall, time
                 const zbJobPayload: Record<string, unknown> = {
                     territory_id: territoryId,
                     customer: { name: [firstName, lastName].filter(Boolean).join(' ') || 'Unknown', ...(phoneNumber && { phone: toE164(phoneNumber) }), ...(email && { email }) },
-                    address: { line1: streetAddress || 'N/A', ...(unit && { line2: unit }), city: city || 'N/A', ...(state && { state }), ...((matchedZip || postalCode) && { postal_code: matchedZip || postalCode }), country: 'US' },
+                    address: { line1: streetAddress || 'N/A', ...(unit && { line2: unit }), city: city || 'N/A', ...(state && { state }), ...((matchedZip || (/^\d/.test(postalCode) && postalCode)) && { postal_code: matchedZip || postalCode }), country: 'US' },
                     services: [{ custom_service: { name: jobType || 'General Service', description: description || '', price: Number(price) || 95, duration: Number(duration) || 120, taxable: false } }],
                     min_providers_needed: 1,
                     sms_notifications: true, email_notifications: true,
@@ -168,7 +168,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall: _hasActiveCall, time
                 const result = await leadsApi.convertLead(createdUUID, {
                     zb_job_payload: zbJobPayload, service: { name: jobType || 'General Service' },
                     customer: { name: [firstName, lastName].filter(Boolean).join(' ') || 'Unknown', phone: toE164(phoneNumber), email: email || undefined },
-                    address: { line1: streetAddress, line2: unit, city, state, postal_code: postalCode },
+                    address: { line1: streetAddress, line2: unit, city, state, postal_code: matchedZip || (/^\d/.test(postalCode) ? postalCode : '') },
                     ...(timelineId ? { timeline_id: timelineId } : {}),
                 });
                 const jobId = result.data?.job_id;

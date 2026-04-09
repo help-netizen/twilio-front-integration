@@ -138,7 +138,10 @@ export function WizardStep1(s: WizardState) {
                         s.setStreetAddress(parsed.street);
                         s.setCity(parsed.city);
                         s.setState(parsed.state);
-                        // Territory check uses zip or city — NOT the full address string
+                        // postalCode is dual-purpose: territory check query + zip in Step4
+                        // If we have a real zip, use it (works for both purposes)
+                        // If no zip, use city for territory check — but matchedZip will be
+                        // used for the actual zip field in payloads (see CreateLeadJobWizard)
                         s.setPostalCode(parsed.zip || parsed.city || '');
                         if (parsed.lat != null && parsed.lng != null) s.setCoords({ lat: parsed.lat, lng: parsed.lng });
                     }}

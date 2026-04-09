@@ -106,7 +106,7 @@ async function search(companyId, query) {
         return findByZip(companyId, trimmed);
     }
 
-    // Text search: match city, area, or county
+    // Text search: exact match on city, area, or county
     const result = await db.query(
         `SELECT zip, area, city, state, county FROM service_territories
          WHERE company_id = $1 AND (city ILIKE $2 OR area ILIKE $2 OR county ILIKE $2)
