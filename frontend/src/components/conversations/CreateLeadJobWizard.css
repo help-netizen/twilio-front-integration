@@ -398,7 +398,7 @@
 
 .wizard__nav {
     display: flex;
-    justify-content: space-between;
+    justify-content: flex-start;
     align-items: center;
     padding: 10px 20px 14px;
     background: var(--blanc-surface-strong, #fff);
