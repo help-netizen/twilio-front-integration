@@ -1,36 +1,36 @@
 /**
- * Fast Zip Code Check — proxies rely-lead-processor API
- * GET /api/zip-check?zip=02101
+ * Territory Check — searches service_territories by zip, city, or area
+ * GET /api/zip-check?q=02101      (zip code)
+ * GET /api/zip-check?q=Boston     (city / area name)
+ * GET /api/zip-check?zip=02101    (legacy backward compat)
  */
 const express = require('express');
 const router = express.Router();
+const stQueries = require('../db/serviceTerritoryQueries');
 
-const RELY_API_URL = 'https://rely-lead-processor.fly.dev/api/zip-codes/check';
-const RELY_API_KEY = process.env.RELY_INTERNAL_API_KEY;
+const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
+
+function getCompanyId(req) {
+    return req.user?.company_id
+        || req.companyFilter?.company_id
+        || DEFAULT_COMPANY_ID;
+}
 
 router.get('/', async (req, res) => {
     try {
-        const { zip } = req.query;
-        if (!zip) return res.status(400).json({ ok: false, error: 'zip is required' });
+        const query = req.query.q || req.query.zip;
+        if (!query) return res.status(400).json({ ok: false, error: 'q or zip parameter is required' });
 
-        if (!RELY_API_KEY) {
-            console.warn('[ZipCheck] RELY_INTERNAL_API_KEY not configured, skipping fast check');
-            return res.status(503).json({ ok: false, error: 'Zip check service not configured' });
-        }
-
-        const response = await fetch(`${RELY_API_URL}?zip=${encodeURIComponent(zip)}`, {
-            headers: { 'X-Internal-API-Key': RELY_API_KEY },
-            signal: AbortSignal.timeout(5000),
+        const row = await stQueries.search(getCompanyId(req), query);
+        res.json({
+            ok: true,
+            data: {
+                success: true,
+                exists: !!row,
+                area: row?.area || '',
+                zip: row?.zip || '',
+            },
         });
-
-        if (!response.ok) {
-            const text = await response.text().catch(() => '');
-            console.error(`[ZipCheck] Upstream error ${response.status}:`, text);
-            return res.status(response.status).json({ ok: false, error: `Upstream error (${response.status})` });
-        }
-
-        const data = await response.json();
-        res.json({ ok: true, data });
     } catch (err) {
         console.error('[ZipCheck] error:', err.message);
         res.status(500).json({ ok: false, error: err.message });

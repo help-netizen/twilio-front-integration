@@ -192,12 +192,16 @@ async function createJobFromLead(lead) {
 // ─── Scheduling methods (for custom booking flow) ─────────────────────────────
 
 /**
- * Check if a postal code is in a service area.
+ * Check if a location is in a service area.
+ * Accepts postal_code string (legacy) or params object { postal_code?, address?, lat?, lng? }.
  * Returns { in_service_area, service_territory, customer_location }
  */
-async function checkServiceArea(postalCode) {
+async function checkServiceArea(queryParams) {
+    const params = typeof queryParams === 'string'
+        ? { postal_code: queryParams }
+        : queryParams;
     const res = await retryRequest(() =>
-        getClient().get('/scheduling/service_area_check', { params: { postal_code: postalCode } })
+        getClient().get('/scheduling/service_area_check', { params })
     );
     return res.data;
 }

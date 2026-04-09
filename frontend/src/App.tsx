@@ -23,6 +23,7 @@ import PaymentsPage from './pages/PaymentsPage';
 import ProvidersPage from './pages/ProvidersPage';
 import PhoneCallsSettingsPage from './pages/PhoneCallsSettingsPage';
 import ActionRequiredSettingsPage from './pages/ActionRequiredSettingsPage';
+import ServiceTerritoriesPage from './pages/ServiceTerritoriesPage';
 import JobsPage from './pages/JobsPage';
 import { SchedulePage } from './pages/SchedulePage';
 import EstimatesPage from './pages/EstimatesPage';
@@ -98,6 +99,7 @@ function App() {
               <Route path="/settings/action-required" element={<Navigate to="/settings/actions-notifications" replace />} />
               <Route path="/settings/actions-notifications" element={<ProtectedRoute permissions={['tenant.company.manage']}><ActionRequiredSettingsPage /></ProtectedRoute>} />
               
+              <Route path="/settings/service-territories" element={<ProtectedRoute permissions={['tenant.company.manage']}><ServiceTerritoriesPage /></ProtectedRoute>} />
               <Route path="/settings/users" element={<ProtectedRoute permissions={['tenant.users.manage']}><CompanyUsersPage /></ProtectedRoute>} />
               <Route path="/settings/admin" element={<ProtectedRoute roles={['super_admin']}><SuperAdminPage /></ProtectedRoute>} />
               <Route path="/settings/admin/companies/:companyId" element={<ProtectedRoute roles={['super_admin']}><AdminCompanyDetailPage /></ProtectedRoute>} />

@@ -7,23 +7,31 @@ const express = require('express');
 const router = express.Router();
 const zenbookerClient = require('../services/zenbookerClient');
 
-// GET /api/zenbooker/service-area-check?postal_code=02101
+// GET /api/zenbooker/service-area-check?postal_code=02101  OR  ?address=Boston+MA
 router.get('/service-area-check', async (req, res) => {
     try {
-        const { postal_code } = req.query;
-        if (!postal_code) {
-            return res.status(400).json({ ok: false, error: 'postal_code is required' });
+        const { postal_code, address } = req.query;
+        if (!postal_code && !address) {
+            return res.status(400).json({ ok: false, error: 'postal_code or address is required' });
         }
+
+        // Build params for Zenbooker API (supports postal_code or address)
+        const zbParams = {};
+        if (postal_code) zbParams.postal_code = postal_code;
+        else if (address) zbParams.address = address;
 
         // Try the scheduling endpoint first
         try {
-            const data = await zenbookerClient.checkServiceArea(postal_code);
+            const data = await zenbookerClient.checkServiceArea(zbParams);
             return res.json({ ok: true, data });
         } catch (primaryErr) {
             console.warn('[Zenbooker] service_area_check failed, trying territory fallback:', primaryErr.response?.data?.error?.message || primaryErr.message);
         }
 
-        // Fallback: use our territory postal-code matching
+        // Fallback: use our territory postal-code matching (only works with postal_code)
+        if (!postal_code) {
+            return res.json({ ok: true, data: { in_service_area: false, service_territory: null, customer_location: null } });
+        }
         try {
             const territoryId = await zenbookerClient.findTerritoryByPostalCode(postal_code);
             const territories = await zenbookerClient.getTerritories();

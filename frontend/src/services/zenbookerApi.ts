@@ -88,24 +88,26 @@ export interface CreateJobResult {
     status: string;
 }
 
-// ─── Fast Zip Check (rely-lead-processor) ─────────────────────────────────────
+// ─── Territory Check (local service_territories lookup) ──────────────────────
 
 export interface ZipCheckResult {
     success: boolean;
     exists: boolean;
     area: string;
+    zip: string;
 }
 
-export async function checkZipCode(zip: string): Promise<ZipCheckResult> {
-    return zbRequest<ZipCheckResult>(`/api/zip-check?zip=${encodeURIComponent(zip)}`);
+export async function checkZipCode(query: string): Promise<ZipCheckResult> {
+    return zbRequest<ZipCheckResult>(`/api/zip-check?q=${encodeURIComponent(query)}`);
 }
 
 // ─── API calls ────────────────────────────────────────────────────────────────
 
-export async function checkServiceArea(postalCode: string): Promise<ServiceAreaResult> {
-    return zbRequest<ServiceAreaResult>(
-        `${ZB_BASE}/service-area-check?postal_code=${encodeURIComponent(postalCode)}`
-    );
+export async function checkServiceArea(query: string | { postal_code?: string; address?: string }): Promise<ServiceAreaResult> {
+    const params = typeof query === 'string'
+        ? `postal_code=${encodeURIComponent(query)}`
+        : Object.entries(query).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v!)}`).join('&');
+    return zbRequest<ServiceAreaResult>(`${ZB_BASE}/service-area-check?${params}`);
 }
 
 export async function getTimeslots(params: {

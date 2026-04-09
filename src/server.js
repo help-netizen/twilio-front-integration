@@ -175,6 +175,8 @@ app.use('/api/settings/job-tags', authenticate, requirePermission('tenant.compan
 app.use('/api/settings/jobs-list-fields', authenticate, requirePermission('tenant.company.manage'), requireCompanyAccess, jobsListFieldsRouter);
 const actionRequiredSettingsRouter = require('../backend/src/routes/action-required-settings');
 app.use('/api/settings/action-required', authenticate, requirePermission('tenant.company.manage'), requireCompanyAccess, actionRequiredSettingsRouter);
+const serviceTerritoryRouter = require('../backend/src/routes/service-territories');
+app.use('/api/settings/service-territories', authenticate, requirePermission('tenant.company.manage'), requireCompanyAccess, serviceTerritoryRouter);
 
 // Notification settings (GET = any user; PUT = admin-only, checked inside route)
 const notificationSettingsRouter = require('../backend/src/routes/notification-settings');

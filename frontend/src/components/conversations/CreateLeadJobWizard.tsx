@@ -39,9 +39,10 @@ export function CreateLeadJobWizard({ phone, hasActiveCall: _hasActiveCall, time
     const [showSkipConfirm, setShowSkipConfirm] = useState(false);
 
 
-    const [postalCode, setPostalCode] = useState('');
+    const [territoryQuery, setTerritoryQuery] = useState(''); // full display text in territory input
+    const [postalCode, setPostalCode] = useState('');        // zip/city for territory check
     const zipCheck = useZipCheck(postalCode);
-    const { territoryResult, territoryLoading, territoryError, zipExists, zipArea, zipSource, zbLoading, coords, setCoords } = zipCheck;
+    const { territoryResult, territoryLoading, territoryError, zipExists, zipArea, matchedZip, zipSource, zbLoading, coords, setCoords } = zipCheck;
 
     const [phoneNumber, setPhoneNumber] = useState(formatUSPhone(phone));
     const [firstName, setFirstName] = useState('');
@@ -68,7 +69,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall: _hasActiveCall, time
     const [timeslotSkipped, setTimeslotSkipped] = useState(false);
 
     useEffect(() => { setSelectedDate(todayInTZ(companyTz)); }, []);
-    useEffect(() => { if (step === 4 && postalCode && !streetAddress) setStreetAddress(postalCode + ' '); }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Note: Step 1 now uses AddressAutocomplete which fills streetAddress directly — no need to pre-fill from postalCode
 
     const fetchTimeslots = useCallback(async () => {
         const territoryId = territoryResult?.service_territory?.id;
@@ -124,7 +125,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall: _hasActiveCall, time
             const leadInput: Record<string, unknown> = {
                 FirstName: firstName || 'Unknown', LastName: lastName || '', Phone: toE164(phoneNumber),
                 Email: email || undefined, Address: streetAddress || undefined, Unit: unit || undefined,
-                City: city || undefined, State: state || undefined, PostalCode: postalCode || undefined,
+                City: city || undefined, State: state || undefined, PostalCode: matchedZip || postalCode || undefined,
                 Latitude: finalCoords?.lat || undefined, Longitude: finalCoords?.lng || undefined,
                 JobType: jobType || undefined, Description: description || undefined,
                 Status: withJob ? 'Converted' : 'Submitted', JobSource: 'Phone Call',
@@ -139,7 +140,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall: _hasActiveCall, time
                 const zbJobPayload: Record<string, unknown> = {
                     territory_id: territoryId,
                     customer: { name: [firstName, lastName].filter(Boolean).join(' ') || 'Unknown', ...(phoneNumber && { phone: toE164(phoneNumber) }), ...(email && { email }) },
-                    address: { line1: streetAddress || 'N/A', city: city || 'N/A', ...(state && { state }), ...(postalCode && { postal_code: postalCode }), country: 'US' },
+                    address: { line1: streetAddress || 'N/A', ...(unit && { line2: unit }), city: city || 'N/A', ...(state && { state }), ...((matchedZip || postalCode) && { postal_code: matchedZip || postalCode }), country: 'US' },
                     services: [{ custom_service: { name: jobType || 'General Service', description: description || '', price: Number(price) || 95, duration: Number(duration) || 120, taxable: false } }],
                     min_providers_needed: 1,
                     sms_notifications: true, email_notifications: true,
@@ -201,7 +202,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall: _hasActiveCall, time
     const canProceedStep3 = !!selectedTimeslot || timeslotSkipped;
 
     const ws = {
-        postalCode, setPostalCode, territoryResult, territoryLoading, territoryError, zipExists, zipArea, zipSource, zbLoading,
+        territoryQuery, setTerritoryQuery, postalCode, setPostalCode, territoryResult, territoryLoading, territoryError, zipExists, zipArea, matchedZip, zipSource, zbLoading,
         firstName, setFirstName, lastName, setLastName, phoneNumber, setPhoneNumber, email, setEmail,
         jobTypes, jobType, setJobType, description, setDescription, duration, setDuration, price, setPrice,
         selectedDate, setSelectedDate, timeslotDays, selectedTimeslot, setSelectedTimeslot,

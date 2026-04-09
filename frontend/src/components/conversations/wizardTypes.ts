@@ -11,9 +11,10 @@ export const DEFAULT_JOB_TYPES = ['COD Service', 'COD Repair', 'Warranty', 'INS 
 
 export interface WizardState {
     // Step 1
+    territoryQuery: string; setTerritoryQuery: (v: string) => void;
     postalCode: string; setPostalCode: (v: string) => void;
     territoryResult: any; territoryLoading: boolean; territoryError: string;
-    zipExists: boolean | null; zipArea: string; zipSource: string;
+    zipExists: boolean | null; zipArea: string; matchedZip: string; zipSource: string;
     zbLoading: boolean;
     firstName: string; setFirstName: (v: string) => void;
     lastName: string; setLastName: (v: string) => void;

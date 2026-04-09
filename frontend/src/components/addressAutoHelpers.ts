@@ -63,16 +63,29 @@ export function parseDescription(desc: string): AddressFields {
     const parts = cleaned.split(",").map((p) => p.trim());
 
     if (parts.length < 2) {
+        // Single part — could be a zip code or city name
+        const zipOnly = cleaned.match(/^(\d{5}(?:-\d{4})?)$/);
+        if (zipOnly) return { ...EMPTY_ADDRESS, zip: zipOnly[1] };
         return { ...EMPTY_ADDRESS, street: cleaned };
     }
 
-    const street = parts[0];
-    const cityPart = parts[1];
-    const stateZipStr = parts[2] || "";
-    const stateZipMatch = stateZipStr.match(/^([A-Z]{2})(?:\s+(\d{5}(?:-\d{4})?))?$/);
+    // Try to extract state+zip from the last meaningful part
+    // Handles both "Street, City, ST 02062" (3 parts) and "City, ST 02062" (2 parts)
+    const stateZipRe = /^([A-Z]{2})(?:\s+(\d{5}(?:-\d{4})?))?$/;
 
-    const statePart = stateZipMatch ? stateZipMatch[1] : stateZipStr;
-    const zipPart = stateZipMatch?.[2] || "";
+    if (parts.length >= 3) {
+        // "123 Main St, Norwood, MA 02062"
+        const match = parts[2].match(stateZipRe);
+        return { street: parts[0], apt: "", city: parts[1], state: match?.[1] || parts[2], zip: match?.[2] || "" };
+    }
 
-    return { street, apt: "", city: cityPart, state: statePart, zip: zipPart };
+    // 2 parts: could be "City, ST 02062" or "Street, City"
+    const match = parts[1].match(stateZipRe);
+    if (match) {
+        // "Norwood, MA 02062" → city=Norwood, state=MA, zip=02062
+        return { street: "", apt: "", city: parts[0], state: match[1], zip: match[2] || "" };
+    }
+
+    // "123 Main St, Norwood" → street + city
+    return { street: parts[0], apt: "", city: parts[1], state: "", zip: "" };
 }
