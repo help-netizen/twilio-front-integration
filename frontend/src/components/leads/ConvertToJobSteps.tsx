@@ -50,7 +50,7 @@ export function StepIndicator({ step }: { step: Step }) {
     );
 }
 
-export function ConvertStep1({ name, setName, phone, setPhone, email, setEmail, addressFields, setAddressFields, setCoords, territoryLoading, territoryResult, territoryError, zipExists, zipArea, zipSource }: StepProps) {
+export function ConvertStep1({ name, setName, phone, setPhone, email, setEmail, addressFields, setAddressFields, setCoords, territoryLoading, territoryError, zipExists, zipArea }: StepProps) {
     return (
         <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><div><Label htmlFor="cj-name">Full Name *</Label><Input id="cj-name" value={name} onChange={e => setName(e.target.value)} placeholder="John Doe" /></div><div><Label htmlFor="cj-phone">Phone</Label><Input id="cj-phone" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+1..." /></div></div>
