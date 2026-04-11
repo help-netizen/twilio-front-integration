@@ -638,19 +638,38 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
     console.log(`[ConvertLead] Local job created: ${localJobId}`);
 
     // 2a. Link contact to timeline (adopt orphan timeline)
+    // Only adopt if the timeline's phone matches the contact's phone —
+    // prevents cross-contamination when user changes phone in the wizard
     if (overrides.timeline_id && contactId) {
         try {
-            await db.query(
-                `UPDATE timelines SET contact_id = $1, phone_e164 = NULL, updated_at = now()
-                 WHERE id = $2 AND contact_id IS NULL`,
-                [contactId, overrides.timeline_id]
-            );
-            // Also link all calls on this timeline to the contact
-            await db.query(
-                `UPDATE calls SET contact_id = $1 WHERE timeline_id = $2 AND contact_id IS NULL`,
-                [contactId, overrides.timeline_id]
-            );
-            console.log(`[ConvertLead] Linked timeline ${overrides.timeline_id} to contact ${contactId}`);
+            const contactRow = await db.query('SELECT phone_e164, secondary_phone FROM contacts WHERE id = $1', [contactId]);
+            const c = contactRow.rows[0];
+            const contactDigits = [];
+            if (c?.phone_e164) contactDigits.push(c.phone_e164.replace(/\D/g, '').slice(-10));
+            if (c?.secondary_phone) contactDigits.push(c.secondary_phone.replace(/\D/g, '').slice(-10));
+
+            const tlRow = await db.query('SELECT phone_e164 FROM timelines WHERE id = $1 AND contact_id IS NULL', [overrides.timeline_id]);
+            const tl = tlRow.rows[0];
+
+            if (tl) {
+                const tlDigits = tl.phone_e164 ? tl.phone_e164.replace(/\D/g, '').slice(-10) : null;
+                const phoneMatches = tlDigits && contactDigits.includes(tlDigits);
+
+                if (phoneMatches) {
+                    await db.query(
+                        `UPDATE timelines SET contact_id = $1, phone_e164 = NULL, updated_at = now()
+                         WHERE id = $2 AND contact_id IS NULL`,
+                        [contactId, overrides.timeline_id]
+                    );
+                    await db.query(
+                        `UPDATE calls SET contact_id = $1 WHERE timeline_id = $2 AND contact_id IS NULL`,
+                        [contactId, overrides.timeline_id]
+                    );
+                    console.log(`[ConvertLead] Linked timeline ${overrides.timeline_id} to contact ${contactId}`);
+                } else {
+                    console.warn(`[ConvertLead] Skipped timeline ${overrides.timeline_id} adoption — phone mismatch (timeline: ${tl.phone_e164}, contact digits: ${contactDigits.join(',')})`);
+                }
+            }
         } catch (err) {
             console.error('[ConvertLead] Timeline linking error (non-blocking):', err.message);
         }
