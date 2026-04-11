@@ -85,15 +85,17 @@ async function bulkReplace(companyId, rows) {
 }
 
 async function findByZip(companyId, zip) {
+    // Primary: dim_zip (shared reference table, always available)
     const result = await db.query(
-        `SELECT zip, area, city, state, county FROM service_territories WHERE company_id = $1 AND zip = $2`,
-        [companyId, zip]
+        `SELECT zip, service_zone AS area, city, state FROM dim_zip WHERE zip = $1`,
+        [zip]
     );
     return result.rows[0] || null;
 }
 
 /**
- * Search service territories by zip code, city, area, or county.
+ * Search service territories by zip code, city, area, or full address.
+ * Uses dim_zip shared reference table (no company_id scoping).
  * Handles raw zip, city name, or full address strings like "123 Main St, Brockton, MA, USA".
  */
 async function search(companyId, query) {
@@ -105,12 +107,12 @@ async function search(companyId, query) {
         return findByZip(companyId, trimmed);
     }
 
-    // 2) Try exact match on city, area, or county
+    // 2) Try exact match on city or service_zone
     const exact = await db.query(
-        `SELECT zip, area, city, state, county FROM service_territories
-         WHERE company_id = $1 AND (city ILIKE $2 OR area ILIKE $2 OR county ILIKE $2)
-         ORDER BY area, zip LIMIT 1`,
-        [companyId, trimmed]
+        `SELECT zip, service_zone AS area, city, state FROM dim_zip
+         WHERE city ILIKE $1 OR service_zone ILIKE $1
+         ORDER BY service_zone, zip LIMIT 1`,
+        [trimmed]
     );
     if (exact.rows[0]) return exact.rows[0];
 
@@ -124,13 +126,13 @@ async function search(companyId, query) {
     // 4) Try each comma-separated part as a city name
     const parts = trimmed.split(',').map(p => p.trim()).filter(Boolean);
     for (const part of parts) {
-        // Skip parts that look like state codes, zip codes, "USA", or street addresses (contain digits)
+        // Skip parts that look like state codes, zip codes, "USA", or street addresses (start with digit)
         if (/^\d/.test(part) || /^[A-Z]{2}(\s+\d{5})?$/.test(part) || /^(USA|United States)$/i.test(part)) continue;
         const partResult = await db.query(
-            `SELECT zip, area, city, state, county FROM service_territories
-             WHERE company_id = $1 AND (city ILIKE $2 OR area ILIKE $2 OR county ILIKE $2)
-             ORDER BY area, zip LIMIT 1`,
-            [companyId, part]
+            `SELECT zip, service_zone AS area, city, state FROM dim_zip
+             WHERE city ILIKE $1 OR service_zone ILIKE $1
+             ORDER BY service_zone, zip LIMIT 1`,
+            [part]
         );
         if (partResult.rows[0]) return partResult.rows[0];
     }
