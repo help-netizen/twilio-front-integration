@@ -6,22 +6,19 @@ const db = require('./connection');
 
 async function getAll(companyId) {
     const result = await db.query(
-        `SELECT zip, area, city, state, county, created_at
-         FROM service_territories
-         WHERE company_id = $1
-         ORDER BY area ASC, zip ASC`,
-        [companyId]
+        `SELECT zip, service_zone AS area, city, state, NULL AS county, NULL AS created_at
+         FROM dim_zip
+         ORDER BY service_zone ASC, zip ASC`
     );
     return result.rows;
 }
 
 async function getAreas(companyId) {
     const result = await db.query(
-        `SELECT DISTINCT area
-         FROM service_territories
-         WHERE company_id = $1 AND area != ''
-         ORDER BY area ASC`,
-        [companyId]
+        `SELECT DISTINCT service_zone AS area
+         FROM dim_zip
+         WHERE service_zone IS NOT NULL AND service_zone != ''
+         ORDER BY service_zone ASC`
     );
     return result.rows.map(r => r.area);
 }
