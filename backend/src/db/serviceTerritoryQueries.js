@@ -94,26 +94,48 @@ async function findByZip(companyId, zip) {
 
 /**
  * Search service territories by zip code, city, area, or county.
- * If query looks like a zip (digits only, 3+ chars), does exact zip match.
- * Otherwise does ILIKE search on city, area, county.
+ * Handles raw zip, city name, or full address strings like "123 Main St, Brockton, MA, USA".
  */
 async function search(companyId, query) {
     const trimmed = query.trim();
     if (!trimmed) return null;
 
-    // If looks like a zip code (digits only, at least 3 chars)
+    // 1) If looks like a zip code (digits only, at least 3 chars)
     if (/^\d{3,10}$/.test(trimmed)) {
         return findByZip(companyId, trimmed);
     }
 
-    // Text search: exact match on city, area, or county
-    const result = await db.query(
+    // 2) Try exact match on city, area, or county
+    const exact = await db.query(
         `SELECT zip, area, city, state, county FROM service_territories
          WHERE company_id = $1 AND (city ILIKE $2 OR area ILIKE $2 OR county ILIKE $2)
          ORDER BY area, zip LIMIT 1`,
         [companyId, trimmed]
     );
-    return result.rows[0] || null;
+    if (exact.rows[0]) return exact.rows[0];
+
+    // 3) Extract zip from the string (e.g. "123 Main St, Brockton, MA 02301, USA")
+    const zipMatch = trimmed.match(/\b(\d{5})(?:-\d{4})?\b/);
+    if (zipMatch) {
+        const row = await findByZip(companyId, zipMatch[1]);
+        if (row) return row;
+    }
+
+    // 4) Try each comma-separated part as a city name
+    const parts = trimmed.split(',').map(p => p.trim()).filter(Boolean);
+    for (const part of parts) {
+        // Skip parts that look like state codes, zip codes, "USA", or street addresses (contain digits)
+        if (/^\d/.test(part) || /^[A-Z]{2}(\s+\d{5})?$/.test(part) || /^(USA|United States)$/i.test(part)) continue;
+        const partResult = await db.query(
+            `SELECT zip, area, city, state, county FROM service_territories
+             WHERE company_id = $1 AND (city ILIKE $2 OR area ILIKE $2 OR county ILIKE $2)
+             ORDER BY area, zip LIMIT 1`,
+            [companyId, part]
+        );
+        if (partResult.rows[0]) return partResult.rows[0];
+    }
+
+    return null;
 }
 
 module.exports = {
