@@ -4,6 +4,7 @@ import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '../ui/dropdown-menu';
 import { TagBadge } from './jobHelpers';
+import { ActionsBlock } from '../workflows/ActionsBlock';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -106,7 +107,7 @@ export function JobOpsSection({
                 </DropdownMenu>
             </div>
 
-            {/* ── Actions ── */}
+            {/* ── Zenbooker Actions ── */}
             {isActionable && (
                 <div className="space-y-2">
                     {/* Primary CTA — full width, tall */}
@@ -178,6 +179,9 @@ export function JobOpsSection({
                     </div>
                 </div>
             )}
+
+            {/* ── FSM Status Transitions ── */}
+            <ActionsBlock machineKey="job" entityId={job.id} currentState={job.blanc_status} />
         </div>
     );
 }

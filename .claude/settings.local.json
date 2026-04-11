@@ -7,7 +7,13 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git push:*)",
-      "Bash(fly deploy:*)"
+      "Bash(fly deploy:*)",
+      "Bash(node scripts/zb-jobs-audit.js)",
+      "Bash(psql -d twilio_calls -c \"\\\\d sms_conversations\")",
+      "Bash(find /Users/rgareev91/contact_center/twilio-front-integration -name .env* -o -name *.env*)",
+      "Bash(find /Users/rgareev91/contact_center/twilio-front-integration -path *routes/zenbooker* -type f)",
+      "Bash(grep -r \"ZipCheckResult\\\\|ServiceAreaResult\" /Users/rgareev91/contact_center/twilio-front-integration/frontend/src --include=*.ts --include=*.tsx)",
+      "Bash(find /Users/rgareev91/NoteStream -type f \\\\\\(-name *zip* -o -name *zipcode* \\\\\\))"
     ]
   }
 }

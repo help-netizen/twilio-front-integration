@@ -1,57 +1,715 @@
-# Активные задачи — Blanc Contact Center
+# Blanc Contact Center — Tasks
 
-> Этот файл содержит backlog для инициативы `F011: Refactor-readiness audit`.
+> FSM-001: FSM/SCXML Workflow Editor — Task Breakdown
 
-## Refactor Backlog
+**Feature:** Database-driven FSM replacing hardcoded status constants
+**Migration range:** 072–074
+**Total tasks:** 30
+**Phases:** 5
 
-| ID | Статус | Приоритет | Задача | Область | Acceptance criteria | Depends on |
-|---|---|---|---|---|---|---|
-| RF001 | planned | P0 | Синхронизировать `requirements.md`, `architecture.md`, `project-spec.md` и `README.md` с фактической структурой кода | `docs/`, `README.md` | Документы описывают `src/`, `backend/src/`, `frontend/src/`, protected zones и актуальные интеграции | - |
-| RF002 | done | P0 | Зафиксировать и классифицировать quality baseline | `tests/`, `frontend` scripts | Список красных Jest suites, build warnings и lint categories зафиксирован и воспроизводим | RF001 |
-| RF003 | done | P1 | Выбрать canonical frontend transport layer и убрать новые ad-hoc клиенты | `frontend/src/services/*`, `frontend/src/pages/SuperAdminPage.tsx` | Все новые запросы идут через один transport path, raw `fetch` не размножается | RF002 |
-| RF004 | done | P1 | Вынести shared source для `lead-form` settings | `frontend/src/components/*`, `frontend/src/hooks/*` | Повторные вызовы `/api/settings/lead-form` сведены к shared hook/query source без изменения UI | RF003 |
-| RF005 | done | P1 | Подготовить backend communication slices | `backend/src/routes/{pulse,calls,messaging,conversations}.js`, `backend/src/services/*` | Определены application/service/query boundaries для Pulse, calls, messaging и action-required | RF002 |
-| RF006 | done | P1 | Разделить `backend/src/db/queries.js` на feature-specific query modules | `backend/src/db/*` | Query layer разложен по slices без изменения runtime контрактов | RF005 |
-| RF007 | done | P2 | Консолидировать audio/transcription UI и phone helper contracts | `frontend/src/components/*`, `frontend/src/utils/*`, `frontend/src/lib/*`, `backend/src/utils/*` | Один shared audio/transcription contract и один canonical phone helper surface | RF003 |
-| RF008 | done | P2 | Изолировать telephony admin flows от ad-hoc patterns | `frontend/src/pages/telephony/*`, `backend/src/routes/{callFlows,userGroups,phoneNumbers,vapi}.js` | Telephony admin использует те же transport/state conventions, что и остальной frontend/backend | RF003 |
-| RF010 | planned | P2 | Добавить smoke/regression harness для критичных frontend flows | `frontend` test harness, `docs/test-cases/` | Есть минимальный automated coverage для Pulse, realtime и shared settings flows | RF002 |
+---
 
-## Tenant Team Management MVP (PF102 Sprint 3)
+## Phase 1: Database & Parser Foundation
 
-| ID | Статус | Приоритет | Задача | Область | Acceptance criteria | Depends on |
-|---|---|---|---|---|---|---|
-| TM001 | planned | P0 | Backend: расширение User Management API | `backend/src/routes/users.js`, `backend/src/services/userService.js` | PATCH поддерживает `role_key`, `status` и обновляет `company_user_profiles`. | PF103 Contracts |
-| TM002 | planned | P0 | Frontend: расширение Company Users Table | `frontend/src/pages/CompanyUsersPage.tsx` | Таблица отображает локальные поля профиля, статус и системную `role_key`. | TM001 |
-| TM003 | planned | P1 | Frontend: диалоги создания и редактирования | `frontend/src/pages/CompanyUserDialogs.tsx` | Диалоги позволяют настроить schedule color, phone calls и новые системные роли. | TM002 |
+---
 
-## F013 Schedule Sprint 3: UX Hardening + Interactive Dispatch
+### TASK-001: Migration — fsm_machines, fsm_versions, fsm_audit_log tables
+**Phase:** 1
+**Status:** pending
+**Dependencies:** none
+**Files to modify:**
+- `backend/db/migrations/072_create_fsm_tables.sql` — CREATE TABLE fsm_machines, fsm_versions, fsm_audit_log with indexes, FK constraint from fsm_machines.active_version_id to fsm_versions.id
+**Files NOT to modify:**
+- `src/server.js` (protected)
+- `backend/db/migrations/README.md` — do not rename existing migrations
+**Acceptance criteria:**
+- [ ] `fsm_machines` table created with columns: id, machine_key, company_id (FK to companies), title, description, active_version_id, created_at, updated_at
+- [ ] UNIQUE constraint on (company_id, machine_key)
+- [ ] `fsm_versions` table created with columns: id, machine_id (FK to fsm_machines ON DELETE CASCADE), company_id (FK to companies), version_number, status (CHECK 'draft'/'published'/'archived'), scxml_source, change_note, created_by, created_at, published_by, published_at
+- [ ] `fsm_audit_log` table created with columns: id, company_id, machine_key, version_id, actor_id, actor_email, action, payload_json (JSONB), created_at
+- [ ] All indexes from architecture spec created (idx_fsm_machines_company, idx_fsm_versions_machine, idx_fsm_versions_company, idx_fsm_versions_status, idx_fsm_audit_company, idx_fsm_audit_machine, idx_fsm_audit_created)
+- [ ] Migration runs without errors on a fresh DB with existing `companies` table
+**Related test cases:** TC-FSM-008 (data isolation depends on schema)
 
-| ID | Статус | Приоритет | Задача | Область | Acceptance criteria | Depends on |
-|---|---|---|---|---|---|---|
-| SC301 | pending | P0 | Shared timezone utils: вынести `minutesSinceMidnight` + `formatTimeInTZ` в `companyTime.ts` | `frontend/src/utils/companyTime.ts`, `frontend/src/components/conversations/CustomTimeModal.tsx` | `minutesSinceMidnight` и `formatTimeInTZ` экспортируются из `companyTime.ts`; CustomTimeModal импортирует оттуда вместо локальной копии; существующие тесты проходят | - |
-| SC302 | pending | P0 | Timezone-aware DayView + WeekView | `frontend/src/components/schedule/DayView.tsx`, `frontend/src/components/schedule/WeekView.tsx` | Часовые label и item positioning используют `settings.timezone` (не browser TZ); "Today" highlight через `todayInTZ(tz)` | SC301 |
-| SC303 | pending | P0 | Timezone-aware TimelineView + sidebar + card | `frontend/src/components/schedule/TimelineView.tsx`, `frontend/src/components/schedule/ScheduleSidebar.tsx`, `frontend/src/components/schedule/ScheduleItemCard.tsx` | Time labels в TZ компании; sidebar показывает время в company TZ; card time label в company TZ | SC301 |
-| SC304 | pending | P0 | Past-time overlay + now-line (DayView + WeekView) | `frontend/src/components/schedule/DayView.tsx`, `frontend/src/components/schedule/WeekView.tsx` | Серый overlay + красная now-line на today; no overlay на других днях; clamp to work hours | SC302 |
-| SC305 | pending | P1 | Past-time overlay (TimelineView + TimelineWeekView) | `frontend/src/components/schedule/TimelineView.tsx`, `frontend/src/components/schedule/TimelineWeekView.tsx` | Past overlay на today-колонке TimelineView (горизонтальный); today highlight на TimelineWeekView | SC303 |
-| SC306 | pending | P1 | Realtime SSE подписка для schedule | `frontend/src/hooks/useScheduleData.ts` | Hook подписан на onJobUpdate/onLeadUpdate/onTaskUpdate → debounced refresh (500ms); items обновляются при изменениях | - |
-| SC307 | pending | P1 | Drag-and-drop reschedule (DayView + WeekView) | `frontend/src/components/schedule/DayView.tsx`, `frontend/src/components/schedule/WeekView.tsx`, `frontend/src/hooks/useScheduleData.ts` | Job/task draggable → drop на новый слот → snap-to-grid → API PATCH /reschedule → toast; leads не draggable; error → revert | SC302 |
-| SC308 | pending | P1 | Drag-and-drop reschedule (TimelineView) | `frontend/src/components/schedule/TimelineView.tsx` | Горизонтальный drag по time axis → reschedule; snap-to-grid | SC303 |
-| SC309 | pending | P1 | Drag-and-drop reassign (TimelineView + TimelineWeekView) | `frontend/src/components/schedule/TimelineView.tsx`, `frontend/src/components/schedule/TimelineWeekView.tsx`, `frontend/src/hooks/useScheduleData.ts` | Drag между provider rows → PATCH /reassign → toast; drag to Unassigned → assignee_id=null; leads → error toast | SC305 |
-| SC310 | pending | P1 | Расширенные фильтры в ScheduleToolbar | `frontend/src/components/schedule/ScheduleToolbar.tsx`, `frontend/src/hooks/useScheduleData.ts`, `frontend/src/services/scheduleApi.ts` | Status multi-select, job_type, source, tags фильтры; localStorage persistence; reset button | - |
-| SC311 | pending | P2 | DispatchSettingsDialog | `frontend/src/components/schedule/DispatchSettingsDialog.tsx` (новый), `frontend/src/components/schedule/ScheduleToolbar.tsx` | Gear button → modal: timezone dropdown, work hours pickers, work days toggles, slot duration select; save → PATCH /settings → toast + views re-render | - |
-| SC312 | pending | P2 | Create-from-slot (DayView + WeekView) | `frontend/src/components/schedule/DayView.tsx`, `frontend/src/components/schedule/WeekView.tsx` | Click empty slot → context menu → "Create Task" → inline form → POST /from-slot; lead/job → открывает CreateLeadJobWizard | SC302 |
+---
 
-## PF100 P0 Core Business Suite — Sprints 3–5 (remaining tasks)
+### TASK-002: Migration — FSM permission roles
+**Phase:** 1
+**Status:** pending
+**Dependencies:** none
+**Files to modify:**
+- `backend/db/migrations/074_add_fsm_permissions.sql` — INSERT fsm.viewer, fsm.editor, fsm.publisher, fsm.override into role_permissions
+**Files NOT to modify:**
+- `src/server.js` (protected)
+- `backend/src/middleware/authorization.js` — existing requirePermission middleware already supports arbitrary permission keys
+**Acceptance criteria:**
+- [ ] `admin` role receives all four permissions: fsm.viewer, fsm.editor, fsm.publisher, fsm.override
+- [ ] `manager` role receives only fsm.viewer
+- [ ] ON CONFLICT DO NOTHING ensures idempotent reruns
+- [ ] Migration runs without errors
+**Related test cases:** TC-FSM-007
 
-| ID | Статус | Приоритет | Задача | Область | Acceptance criteria | Depends on |
-|---|---|---|---|---|---|---|
-| PF100-S3T1-BE | done | P0 | Backend: EstimatesEditorDialog — добавить `defaultLeadId` prop | `frontend/src/components/estimates/EstimateEditorDialog.tsx` | Prop `defaultLeadId?: number` передаётся в диалог, поле Lead ID предзаполнено | - |
-| PF100-S3T1-HOOK | done | P0 | Frontend hook: `useLeadFinancials` | `frontend/src/hooks/useLeadFinancials.ts` (new) | Hook загружает estimates и invoices по `lead_id`, exposes CRUD handlers + refresh(); аналог `useJobFinancials` | - |
-| PF100-S3T1-UI | done | P0 | Frontend UI: `LeadFinancialsTab` компонент | `frontend/src/components/leads/LeadFinancialsTab.tsx` (new) | Summary cards, списки estimates/invoices, кнопки "+ New", открытие detail panels в Dialog | PF100-S3T1-HOOK |
-| PF100-S3T1-PANEL | done | P0 | Frontend: Tabs в LeadDetailPanel | `frontend/src/components/leads/LeadDetailPanel.tsx` | Правая колонка переведена на Tabs: "Details & Notes" + "Estimates & Invoices"; `<LeadFinancialsTab>` в tab 2; reset на смену лида | PF100-S3T1-UI |
-| PF100-S4T1-BE | done | P0 | Backend: `POST /api/estimates/:id/convert` endpoint | `backend/src/routes/estimates.js`, `backend/src/services/estimatesService.js` | Реализует 501-stub; копирует items; middleware `authenticate, requireCompanyAccess`; `company_id` из `req.companyFilter?.company_id`; 400 если status != accepted, 409 если уже конвертирована, 404 при чужом ID | - |
-| PF100-S4T1-FE | done | P0 | Frontend: кнопка "Create Invoice" в EstimateDetailPanel | `frontend/src/components/estimates/EstimateDetailPanel.tsx`, `frontend/src/services/estimatesApi.ts` | Кнопка видна только при `status==='accepted'`; вызывает `convertEstimateToInvoice(id)`; после успеха toast + refresh | PF100-S4T1-BE |
-| PF100-S4T2 | done | P1 | Frontend: секция Transactions в InvoiceDetailPanel | `frontend/src/components/invoices/InvoiceDetailPanel.tsx` | Загружает `GET /api/transactions?invoice_id=N`, отображает список платежей и итог "Paid: $X" | - |
-| PF100-S5T1 | done | P0 | Frontend: заменить `window.prompt` на RecordPaymentDialog | `frontend/src/components/invoices/InvoiceDetailPanel.tsx` | `window.prompt` удалён, `<RecordPaymentDialog>` открывается по клику с `defaultInvoiceId`; hidden если status=paid | - |
-| PF100-PULSE-BE | done | P1 | Backend: financial events в buildTimeline | `backend/src/routes/pulse.js` | `buildTimeline()` additive JOIN на estimates + invoices → события estimate_created/sent/accepted/declined, invoice_created/sent/paid; регрессия существующих событий не нарушена; company_id изолирован | - |
-| PF100-PULSE-FE | done | P1 | Frontend: рендеринг financial events в Pulse | `frontend/src/types/pulse.ts`, `frontend/src/components/pulse/PulseTimeline.tsx`, `frontend/src/components/pulse/FinancialEventListItem.tsx` (new) | Тип `FinancialEvent` добавлен; `FinancialEventListItem` рендерит reference, amount, status badge; PulseTimeline использует компонент для финансовых типов | PF100-PULSE-BE |
+---
+
+### TASK-003: Install backend dependency (fast-xml-parser)
+**Phase:** 1
+**Status:** pending
+**Dependencies:** none
+**Files to modify:**
+- `backend/package.json` — add `fast-xml-parser` dependency
+**Files NOT to modify:**
+- `frontend/package.json`
+- `src/server.js` (protected)
+**Acceptance criteria:**
+- [ ] `fast-xml-parser` added to `dependencies` (not devDependencies)
+- [ ] `npm install` in backend directory succeeds
+- [ ] Package version is latest stable (^5.x)
+**Related test cases:** TC-FSM-001 (parser depends on this)
+
+---
+
+### TASK-004: SCXML parser service — parseSCXML, validateSCXML
+**Phase:** 1
+**Status:** pending
+**Dependencies:** TASK-003
+**Files to modify:**
+- `backend/src/services/fsmService.js` — NEW FILE: implement `parseSCXML(xml)` and `validateSCXML(xml)` functions using fast-xml-parser
+**Files NOT to modify:**
+- `backend/src/services/jobsService.js` — do not modify yet
+- `backend/src/services/leadsService.js` — do not modify yet
+- `src/server.js` (protected)
+**Acceptance criteria:**
+- [ ] `parseSCXML(xmlString)` returns a ParsedGraph object with: `states` (Map of state id -> { id, label, statusName, transitions, isFinal }), `initialState` (string), `finalStates` (array), `metadata` ({ machine, title })
+- [ ] Transitions parsed with all `blanc:*` namespace attributes: action (bool), label, confirm (bool), confirmText, roles (array), order (number), icon
+- [ ] State `blanc:label` and `blanc:statusName` attributes extracted correctly
+- [ ] `<final>` elements parsed with `isFinal: true`
+- [ ] `validateSCXML(xmlString)` returns `{ valid: boolean, errors: [{line, col, message, severity}], warnings: [{...}] }`
+- [ ] Forbidden elements rejected: `<script>`, `<invoke>`, `<send>`, `<onentry>`, `<onexit>`, `<parallel>`, `<history>`, `<datamodel>`
+- [ ] Missing `initial` attribute on `<scxml>` root produces error
+- [ ] Transition target referencing non-existent state produces error
+- [ ] Unreachable states (no incoming transitions, not initial) produce warning
+- [ ] Duplicate events in same state produce warning
+- [ ] Malformed XML returns parse error
+- [ ] Module exports: `parseSCXML`, `validateSCXML`
+**Related test cases:** TC-FSM-001, TC-FSM-002, TC-FSM-003, TC-FSM-004, TC-FSM-020, TC-FSM-021, TC-FSM-030
+
+---
+
+### TASK-005: Seed SCXML files for reference
+**Phase:** 1
+**Status:** pending
+**Dependencies:** none
+**Files to modify:**
+- `fsm/job.scxml` — NEW FILE: Job workflow SCXML matching ALLOWED_TRANSITIONS in jobsService.js exactly (7 states: Submitted, Waiting_for_parts, Follow_Up_with_Client, Visit_completed, Job_is_Done, Rescheduled, Canceled)
+- `fsm/lead.scxml` — NEW FILE: Lead workflow SCXML (8 states: Submitted, New, Contacted, Qualified, Proposal_Sent, Negotiation, Lost, Converted)
+**Files NOT to modify:**
+- `backend/src/services/jobsService.js` — reference only, do not modify
+- `src/server.js` (protected)
+**Acceptance criteria:**
+- [ ] `fsm/job.scxml` is valid SCXML with `xmlns:blanc="https://blanc.app/fsm"`, `initial="Submitted"`, `blanc:machine="job"`, `blanc:title="Job Workflow"`
+- [ ] All 7 job states present with correct transitions matching architecture spec
+- [ ] All `blanc:confirm` and `blanc:confirmText` attributes present on Cancel transitions
+- [ ] `fsm/lead.scxml` is valid SCXML with 8 lead states and correct transitions
+- [ ] `<final>` used for terminal states (Canceled for jobs; Lost, Converted for leads)
+- [ ] Both files pass `validateSCXML()` with zero errors
+**Related test cases:** TC-FSM-001, TC-FSM-005
+
+---
+
+### TASK-006: Migration — seed initial published FSM versions for existing companies
+**Phase:** 1
+**Status:** pending
+**Dependencies:** TASK-001
+**Files to modify:**
+- `backend/db/migrations/073_seed_fsm_machines.sql` — DO $$ block that iterates over all companies, inserts fsm_machines rows for 'job' and 'lead', inserts fsm_versions with status='published' and version_number=1, updates active_version_id
+**Files NOT to modify:**
+- `src/server.js` (protected)
+- `backend/db/migrations/072_create_fsm_tables.sql` — already created in TASK-001
+**Acceptance criteria:**
+- [ ] For every existing company: 2 fsm_machines rows (job, lead) created with ON CONFLICT DO NOTHING
+- [ ] For each machine: 1 fsm_versions row with status='published', version_number=1, scxml_source matching seed SCXML from architecture spec
+- [ ] `fsm_machines.active_version_id` updated to point to the published version
+- [ ] created_by and published_by set to 'system'
+- [ ] Migration is idempotent (ON CONFLICT DO NOTHING)
+- [ ] SCXML content in SQL exactly matches the seed SCXML from Docs/architecture.md
+**Related test cases:** TC-FSM-005, TC-FSM-008
+
+---
+
+## Phase 2: Backend API
+
+---
+
+### TASK-007: FSM service — machine CRUD and version reads
+**Phase:** 2
+**Status:** pending
+**Dependencies:** TASK-001, TASK-004, TASK-006
+**Files to modify:**
+- `backend/src/services/fsmService.js` — add functions: `listMachines(companyId)`, `getActiveVersion(companyId, machineKey)`, `getDraft(companyId, machineKey)`, `listVersions(companyId, machineKey)`
+**Files NOT to modify:**
+- `src/server.js` (protected)
+- `backend/src/services/jobsService.js`
+**Acceptance criteria:**
+- [ ] `listMachines(companyId)` queries fsm_machines WHERE company_id=$1, joins fsm_versions for active_version info and has_draft boolean
+- [ ] `getActiveVersion(companyId, machineKey)` returns published version with scxml_source, version_number, published_at, published_by
+- [ ] `getDraft(companyId, machineKey)` returns draft version or null if none exists
+- [ ] `listVersions(companyId, machineKey)` returns all versions sorted by version_number DESC
+- [ ] All queries filter by company_id — data isolated between tenants
+- [ ] Returns null/empty for non-existent machines (not error)
+**Related test cases:** TC-FSM-008, TC-FSM-009, TC-FSM-012
+
+---
+
+### TASK-008: FSM service — draft management (saveDraft, publishDraft, restoreVersion)
+**Phase:** 2
+**Status:** pending
+**Dependencies:** TASK-007
+**Files to modify:**
+- `backend/src/services/fsmService.js` — add functions: `saveDraft(companyId, machineKey, scxml, userId, email)`, `publishDraft(companyId, machineKey, changeNote, userId, email)`, `restoreVersion(companyId, machineKey, versionId, userId, email)`, `logAudit(companyId, machineKey, versionId, actorId, actorEmail, action, payload)`, `invalidateCache(companyId, machineKey)`
+**Files NOT to modify:**
+- `src/server.js` (protected)
+- `backend/src/services/jobsService.js`
+**Acceptance criteria:**
+- [ ] `saveDraft` validates SCXML first (returns 400 equivalent on errors), then upserts draft version; logs `save_draft` to fsm_audit_log
+- [ ] `saveDraft` supports optimistic concurrency: if version_id provided and differs from current draft, throws conflict error
+- [ ] `publishDraft` in a DB transaction: re-validates, archives current published, promotes draft to published with incremented version_number, updates fsm_machines.active_version_id, invalidates cache, logs `publish`
+- [ ] `publishDraft` rejects if draft has validation errors (returns errors array)
+- [ ] `restoreVersion` copies scxml_source from specified version into a new/updated draft; logs `restore`
+- [ ] `logAudit` inserts into fsm_audit_log with payload_json
+- [ ] `invalidateCache` clears in-memory parsed graph for (companyId, machineKey)
+- [ ] In-memory graph cache: Map keyed by `${companyId}:${machineKey}`, stores ParsedGraph, invalidated on publish
+**Related test cases:** TC-FSM-009, TC-FSM-010, TC-FSM-011, TC-FSM-024, TC-FSM-027
+
+---
+
+### TASK-009: FSM routes — read endpoints
+**Phase:** 2
+**Status:** pending
+**Dependencies:** TASK-007, TASK-002
+**Files to modify:**
+- `backend/src/routes/fsm.js` — NEW FILE: Express router with GET /machines, GET /:machineKey/active, GET /:machineKey/draft, GET /:machineKey/versions, GET /:machineKey/actions
+**Files NOT to modify:**
+- `src/server.js` (protected — mounting happens in TASK-012)
+- `frontend/src/lib/authedFetch.ts` (protected)
+**Acceptance criteria:**
+- [ ] `GET /machines` requires `fsm.viewer` permission via `requirePermission('fsm.viewer')`
+- [ ] `GET /:machineKey/active` requires `fsm.viewer`
+- [ ] `GET /:machineKey/draft` requires `fsm.editor`
+- [ ] `GET /:machineKey/versions` requires `fsm.viewer`
+- [ ] `GET /:machineKey/actions` requires any authenticated user (no additional permission)
+- [ ] company_id obtained via `req.companyFilter?.company_id` (NOT req.companyId)
+- [ ] All responses follow `{ ok: true, data: ... }` pattern
+- [ ] Actions endpoint accepts `?state=X&roles=a,b` query params
+- [ ] 404 returned for non-existent machines, not 500
+**Related test cases:** TC-FSM-007, TC-FSM-008, TC-FSM-012, TC-FSM-022, TC-FSM-023, TC-FSM-031, TC-FSM-032
+
+---
+
+### TASK-010: FSM routes — write endpoints
+**Phase:** 2
+**Status:** pending
+**Dependencies:** TASK-008, TASK-009
+**Files to modify:**
+- `backend/src/routes/fsm.js` — add PUT /:machineKey/draft, POST /:machineKey/validate, POST /:machineKey/publish, POST /:machineKey/versions/:versionId/restore
+**Files NOT to modify:**
+- `src/server.js` (protected)
+- `frontend/src/lib/authedFetch.ts` (protected)
+**Acceptance criteria:**
+- [ ] `PUT /:machineKey/draft` requires `fsm.editor`, accepts `{ scxml_source }`, validates, upserts draft
+- [ ] `POST /:machineKey/validate` requires `fsm.editor`, accepts `{ scxml_source }`, returns `{ valid, errors, warnings }`
+- [ ] `POST /:machineKey/publish` requires `fsm.publisher`, accepts `{ change_note }`, promotes draft
+- [ ] `POST /:machineKey/versions/:versionId/restore` requires `fsm.editor`, copies version as new draft
+- [ ] 400 returned with error details when SCXML validation fails
+- [ ] 409 returned on draft version conflict
+- [ ] 404 returned when no draft exists for publish, or version not found for restore
+- [ ] company_id from `req.companyFilter?.company_id`
+- [ ] Empty change_note on publish returns 400
+**Related test cases:** TC-FSM-009, TC-FSM-010, TC-FSM-011, TC-FSM-024, TC-FSM-027
+
+---
+
+### TASK-011: FSM runtime — resolveTransition, getAvailableActions, apply, override
+**Phase:** 2
+**Status:** pending
+**Dependencies:** TASK-008
+**Files to modify:**
+- `backend/src/services/fsmService.js` — add functions: `resolveTransition(companyId, machineKey, currentState, event)`, `getAvailableActions(companyId, machineKey, currentState, userRoles)`
+- `backend/src/routes/fsm.js` — add POST /:machineKey/apply, POST /:machineKey/override
+**Files NOT to modify:**
+- `src/server.js` (protected)
+- `backend/src/services/jobsService.js` — do not modify yet (Phase 4)
+- `backend/src/services/leadsService.js` — do not modify yet (Phase 4)
+**Acceptance criteria:**
+- [ ] `resolveTransition` loads published graph from cache or DB, finds matching transition from currentState with given event, returns `{ valid: true, targetState }` using blanc:statusName or state id
+- [ ] `resolveTransition` returns `{ valid: false }` for invalid event from current state
+- [ ] `resolveTransition` falls back to hardcoded ALLOWED_TRANSITIONS when no published FSM exists
+- [ ] `getAvailableActions` filters by blanc:action="true", filters by user roles (intersection with blanc:roles or no roles = visible to all), sorts by blanc:order
+- [ ] `getAvailableActions` falls back to hardcoded constants when no published FSM
+- [ ] `POST /:machineKey/apply` loads entity via jobsService/leadsService, validates transition, updates status, logs audit
+- [ ] `POST /:machineKey/override` requires `fsm.override`, validates target state exists in SCXML, requires non-empty reason, updates status, logs audit
+- [ ] Override rejects if target state equals current state (400)
+- [ ] Override rejects if target state does not exist in published SCXML (400)
+- [ ] Entity not found returns 404 (not 403 — data isolation)
+**Related test cases:** TC-FSM-005, TC-FSM-006, TC-FSM-013, TC-FSM-014, TC-FSM-015, TC-FSM-016, TC-FSM-017, TC-FSM-018, TC-FSM-019, TC-FSM-022, TC-FSM-025, TC-FSM-026
+
+---
+
+### TASK-012: Mount FSM route in server.js + audit logging
+**Phase:** 2
+**Status:** pending
+**Dependencies:** TASK-009, TASK-010, TASK-011
+**Files to modify:**
+- `src/server.js` — add import for fsmRouter and mount line: `app.use('/api/fsm', authenticate, requireCompanyAccess, fsmRouter)` in the "Auth + tenant-scoped CRM API routes" section
+**Files NOT to modify:**
+- `frontend/src/lib/authedFetch.ts` (protected)
+- `frontend/src/hooks/useRealtimeEvents.ts` (protected)
+**Acceptance criteria:**
+- [ ] Only ONE new require/import line and ONE app.use() line added to server.js
+- [ ] Route mounted in correct section (alongside other authenticated routes)
+- [ ] No other changes to server.js
+- [ ] `GET /api/fsm/machines` accessible with valid auth token
+- [ ] `GET /api/fsm/machines` returns 401 without token
+**Related test cases:** TC-FSM-007
+
+---
+
+## Phase 3: Frontend Editor
+
+---
+
+### TASK-013: Install frontend dependencies
+**Phase:** 3
+**Status:** pending
+**Dependencies:** none
+**Files to modify:**
+- `frontend/package.json` — add `@monaco-editor/react` and `state-machine-cat` as dependencies
+**Files NOT to modify:**
+- `backend/package.json`
+- `src/server.js` (protected)
+**Acceptance criteria:**
+- [ ] `@monaco-editor/react` added to dependencies
+- [ ] `state-machine-cat` added to dependencies
+- [ ] `npm install` in frontend directory succeeds
+- [ ] Both packages importable in a .tsx file without type errors
+**Related test cases:** TC-FSM-028, TC-FSM-029
+
+---
+
+### TASK-014: FSM API client hooks — useFsmEditor.ts, useFsmActions.ts
+**Phase:** 3
+**Status:** pending
+**Dependencies:** TASK-012
+**Files to modify:**
+- `frontend/src/hooks/useFsmEditor.ts` — NEW FILE: React Query hooks for editor operations (load draft, load active, save draft, validate, publish, list versions, restore)
+- `frontend/src/hooks/useFsmActions.ts` — NEW FILE: React Query hooks for runtime (fetch available actions, apply transition, override)
+**Files NOT to modify:**
+- `frontend/src/lib/authedFetch.ts` (protected — use it, don't modify)
+- `frontend/src/hooks/useRealtimeEvents.ts` (protected)
+**Acceptance criteria:**
+- [ ] `useFsmEditor(machineKey)` provides: draft query, active query, saveDraft mutation, validate mutation, publish mutation, versions query, restore mutation
+- [ ] All API calls use `authedFetch` with correct paths (`/api/fsm/...`)
+- [ ] `useFsmActions(machineKey, currentState, roles)` provides: actions query, applyTransition mutation
+- [ ] Override mutation in separate hook or export
+- [ ] Proper React Query cache invalidation on save/publish/restore/apply
+- [ ] Loading, error, and success states handled
+- [ ] Types defined for API responses
+**Related test cases:** TC-FSM-009, TC-FSM-013
+
+---
+
+### TASK-015: LeadFormSettingsPage — add Shadcn Tabs wrapper
+**Phase:** 3
+**Status:** pending
+**Dependencies:** none
+**Files to modify:**
+- `frontend/src/pages/LeadFormSettingsPage.tsx` — wrap existing content in Shadcn Tabs component, add "Workflows" tab trigger (gated by fsm_editor_enabled feature flag)
+**Files NOT to modify:**
+- `frontend/src/pages/LeadFormSettingsPage.css` — no CSS changes needed (Tabs component uses its own styles)
+- `src/server.js` (protected)
+**Acceptance criteria:**
+- [ ] Existing page content wrapped in `<Tabs defaultValue="settings">`
+- [ ] `<TabsTrigger value="settings">Settings</TabsTrigger>` renders for all users
+- [ ] `<TabsTrigger value="workflows">Workflows</TabsTrigger>` renders only when `fsm_editor_enabled` feature flag is true
+- [ ] `<TabsContent value="settings">` contains all existing page content unchanged — no functional changes
+- [ ] `<TabsContent value="workflows">` renders `<MachineList />` placeholder (or empty div until TASK-016)
+- [ ] All existing functionality (Job Types, Metadata Fields, Job Tags, DnD) works exactly as before
+**Related test cases:** SC-01 (spec scenario)
+
+---
+
+### TASK-016: MachineList component
+**Phase:** 3
+**Status:** pending
+**Dependencies:** TASK-014
+**Files to modify:**
+- `frontend/src/components/workflows/MachineList.tsx` — NEW FILE: list of FSM machines with active version badge and draft indicator; "Open Editor" action per machine
+**Files NOT to modify:**
+- `frontend/src/pages/LeadFormSettingsPage.tsx` — already has Workflows tab from TASK-015
+- `src/server.js` (protected)
+**Acceptance criteria:**
+- [ ] Fetches machines via `useFsmEditor` or direct `authedFetch` to `GET /api/fsm/machines`
+- [ ] Renders each machine: title, description, active version number, published_at date, has_draft indicator
+- [ ] "Open Editor" button/link per machine row
+- [ ] Loading state while fetching
+- [ ] Error state with retry button on fetch failure
+- [ ] Empty state if no machines (unlikely but handled)
+- [ ] Styling follows Blanc design system: `--blanc-line` borders, `rounded-xl`, no decorative elements
+**Related test cases:** SC-01
+
+---
+
+### TASK-017: WorkflowEditor — Monaco editor pane
+**Phase:** 3
+**Status:** pending
+**Dependencies:** TASK-013, TASK-014
+**Files to modify:**
+- `frontend/src/components/workflows/WorkflowEditor.tsx` — NEW FILE: split-view layout with Monaco editor (left pane), manages SCXML draft state, toolbar with validate/save/publish/export/history buttons
+**Files NOT to modify:**
+- `frontend/src/lib/authedFetch.ts` (protected)
+- `src/server.js` (protected)
+**Acceptance criteria:**
+- [ ] Split-view layout: Monaco editor (left), diagram preview placeholder (right)
+- [ ] Monaco configured with XML language, line numbers, minimap enabled
+- [ ] Loads draft SCXML first; falls back to active version if no draft; falls back to minimal template if neither
+- [ ] 300ms debounce on content changes for preview updates
+- [ ] Toolbar buttons: Validate, Save Draft, Publish, Export, Version History
+- [ ] Dirty state tracked (comparing editor content to last saved)
+- [ ] Status pill: "Valid" (green), "Draft has changes" (yellow), "Has errors" (red)
+- [ ] Save Draft button disabled while save request in flight
+- [ ] Publish button hidden for users without fsm.publisher role
+**Related test cases:** SC-01, SC-02, SC-03
+
+---
+
+### TASK-018: DiagramPreview component — SCXML to SVG rendering
+**Phase:** 3
+**Status:** pending
+**Dependencies:** TASK-013
+**Files to modify:**
+- `frontend/src/components/workflows/DiagramPreview.tsx` — NEW FILE: renders SVG from SCXML via state-machine-cat, pan/zoom support, error overlay
+**Files NOT to modify:**
+- `src/server.js` (protected)
+**Acceptance criteria:**
+- [ ] Converts SCXML to smcat format, then renders SVG via state-machine-cat
+- [ ] SVG rendering triggered by parent passing SCXML string (debounced by parent)
+- [ ] Pan and zoom support on the SVG container
+- [ ] Error overlay when SCXML is malformed: "Can't render diagram" + error message
+- [ ] Loading spinner during render
+- [ ] Warning for large diagrams (>1 second render time)
+- [ ] SVG contains visual state nodes and transition arrows
+**Related test cases:** TC-FSM-028, TC-FSM-029, SC-01
+
+---
+
+### TASK-019: ProblemsPanel + toolbar integration
+**Phase:** 3
+**Status:** pending
+**Dependencies:** TASK-017
+**Files to modify:**
+- `frontend/src/components/workflows/ProblemsPanel.tsx` — NEW FILE: collapsible panel displaying validation errors (red) and warnings (yellow) with line:column references; click navigates Monaco to error line
+**Files NOT to modify:**
+- `src/server.js` (protected)
+**Acceptance criteria:**
+- [ ] Panel below editor, collapsible
+- [ ] Errors shown with red severity icon, warnings with yellow
+- [ ] Each entry: severity, message, line:column reference
+- [ ] Clicking an entry scrolls Monaco to that line and highlights it (via ref callback from WorkflowEditor)
+- [ ] Panel opens automatically when validation returns errors
+- [ ] "N errors, M warnings" summary in panel header
+**Related test cases:** SC-02 (validate and save flow)
+
+---
+
+### TASK-020: VersionHistory modal + PublishDialog modal
+**Phase:** 3
+**Status:** pending
+**Dependencies:** TASK-014
+**Files to modify:**
+- `frontend/src/components/workflows/VersionHistory.tsx` — NEW FILE: modal listing versions with restore action
+- `frontend/src/components/workflows/PublishDialog.tsx` — NEW FILE: confirmation modal with change note textarea
+**Files NOT to modify:**
+- `src/server.js` (protected)
+**Acceptance criteria:**
+- [ ] VersionHistory modal lists versions: version_number, status badge, author, date, change_note (truncated with expand)
+- [ ] Versions sorted by version_number DESC
+- [ ] "Restore as draft" button per archived/published version
+- [ ] Restore confirmation if unsaved changes exist in editor
+- [ ] PublishDialog: textarea for change_note (required), "Confirm Publish" button disabled when empty
+- [ ] Both modals follow Blanc design: no `<hr>`, section separation by spacing, `--blanc-line` borders
+**Related test cases:** SC-03, SC-06, TC-FSM-024
+
+---
+
+## Phase 4: Runtime Integration
+
+---
+
+### TASK-021: ActionsBlock component
+**Phase:** 4
+**Status:** pending
+**Dependencies:** TASK-014
+**Files to modify:**
+- `frontend/src/components/workflows/ActionsBlock.tsx` — NEW FILE: renders hot action buttons from published SCXML transitions; handles confirmation dialogs; override dropdown for fsm.override role
+**Files NOT to modify:**
+- `frontend/src/components/jobs/JobStatusTags.tsx` — not yet (TASK-022)
+- `src/server.js` (protected)
+**Acceptance criteria:**
+- [ ] Props: machineKey, entityId, currentState
+- [ ] Fetches available actions via `useFsmActions` hook
+- [ ] Renders button per action, label from `blanc:label`, sorted by `blanc:order`
+- [ ] Handles `confirm: true` actions: shows confirmation dialog with `confirmText` (or default text)
+- [ ] Clicking action calls `POST /api/fsm/:machineKey/apply`
+- [ ] "Change status..." link visible only for users with fsm.override role
+- [ ] Override dropdown lists all states from published SCXML (excluding current)
+- [ ] Override requires reason textarea, calls `POST /api/fsm/:machineKey/override`
+- [ ] Empty actions = no buttons rendered, no "Actions" header
+- [ ] React Query cache invalidation on successful transition
+**Related test cases:** TC-FSM-022, TC-FSM-023, SC-04, SC-05, SC-08
+
+---
+
+### TASK-022: Replace hardcoded buttons in JobStatusTags.tsx with ActionsBlock
+**Phase:** 4
+**Status:** pending
+**Dependencies:** TASK-021
+**Files to modify:**
+- `frontend/src/components/jobs/JobStatusTags.tsx` — replace hardcoded status-change dropdown/buttons with `<ActionsBlock machineKey="job" entityId={job.id} currentState={job.blanc_status} />`
+**Files NOT to modify:**
+- `src/server.js` (protected)
+- `frontend/src/lib/authedFetch.ts` (protected)
+**Acceptance criteria:**
+- [ ] Hardcoded status dropdown removed
+- [ ] `<ActionsBlock>` component renders in its place
+- [ ] All other card content, layout, and styling preserved
+- [ ] Existing status badge display unchanged
+- [ ] Works with both FSM-driven and fallback (hardcoded) actions
+**Related test cases:** SC-04
+
+---
+
+### TASK-023: Manual override UI in ActionsBlock
+**Phase:** 4
+**Status:** pending
+**Dependencies:** TASK-021
+**Files to modify:**
+- `frontend/src/components/workflows/ActionsBlock.tsx` — ensure override UI is complete: dropdown of all states, reason textarea, confirmation dialog
+**Files NOT to modify:**
+- `src/server.js` (protected)
+**Acceptance criteria:**
+- [ ] "Change status..." link only visible if user has `fsm.override` role (checked via Keycloak token claims)
+- [ ] Dropdown lists all valid states from published SCXML excluding current state
+- [ ] Confirmation dialog: "This is an override. It bypasses allowed transitions." + reason textarea (mandatory)
+- [ ] On confirm, calls `POST /api/fsm/:machineKey/override` with entityId, targetState, reason
+- [ ] Toast on success: "Status changed to X (override)"
+- [ ] Toast on error with server message
+- [ ] Falls back to BLANC_STATUSES list when no published FSM
+**Related test cases:** TC-FSM-015, TC-FSM-016, TC-FSM-017, TC-FSM-025, TC-FSM-026, SC-05
+
+---
+
+### TASK-024: Modify jobsService.js — delegate to FSM runtime with fallback
+**Phase:** 4
+**Status:** pending
+**Dependencies:** TASK-011
+**Files to modify:**
+- `backend/src/services/jobsService.js` — modify `updateBlancStatus()` to try fsmService.resolveTransition first, fall back to ALLOWED_TRANSITIONS; add `getJobTransitions(companyId, currentState, userRoles)` export
+**Files NOT to modify:**
+- `src/server.js` (protected)
+- OUTBOUND_MAP, computeBlancStatusFromZb, syncFromZenbooker, cancelJob, markEnroute, markInProgress, markComplete, zbJobToColumns — preserve all Zenbooker logic
+**Acceptance criteria:**
+- [ ] `updateBlancStatus()` calls `fsmService.resolveTransition(companyId, 'job', currentState, newStatus)` first
+- [ ] If no published FSM exists (fsmService returns fallback), uses existing ALLOWED_TRANSITIONS check
+- [ ] BLANC_STATUSES and ALLOWED_TRANSITIONS constants kept intact as fallback
+- [ ] `getJobTransitions(companyId, currentState, userRoles)` delegates to fsmService.getAvailableActions or falls back to ALLOWED_TRANSITIONS
+- [ ] OUTBOUND_MAP and Zenbooker sync logic completely unchanged
+- [ ] All existing Zenbooker pass-through actions (cancelJob, markEnroute, markInProgress, markComplete) unchanged
+**Related test cases:** TC-FSM-005, TC-FSM-014, TC-FSM-018
+
+---
+
+### TASK-025: Modify leadsService.js — delegate to FSM runtime with fallback
+**Phase:** 4
+**Status:** pending
+**Dependencies:** TASK-011
+**Files to modify:**
+- `backend/src/services/leadsService.js` — modify `updateLead()` to validate Status changes via fsmService.resolveTransition when published FSM exists; add `getLeadTransitions(companyId, currentStatus, userRoles)` export
+**Files NOT to modify:**
+- `src/server.js` (protected)
+- All existing CRUD, convertLead, markLost, activateLead, phone normalization, metadata extraction — preserve
+**Acceptance criteria:**
+- [ ] When `Status` field changes in `updateLead()`, validates via `fsmService.resolveTransition(companyId, 'lead', currentStatus, newStatus)` if published FSM exists
+- [ ] If no published FSM, allows current implicit behavior (no validation)
+- [ ] `getLeadTransitions(companyId, currentStatus, userRoles)` delegates to fsmService.getAvailableActions or returns empty array as fallback
+- [ ] All existing CRUD, convertLead, markLost, activateLead functions unchanged
+**Related test cases:** TC-FSM-018
+
+---
+
+### TASK-026: Feature flag gating
+**Phase:** 4
+**Status:** pending
+**Dependencies:** TASK-015, TASK-021
+**Files to modify:**
+- `frontend/src/pages/LeadFormSettingsPage.tsx` — ensure Workflows tab visibility gated by `fsm_editor_enabled` flag
+- `backend/src/routes/fsm.js` — check `fsm_publishing_enabled` flag on publish endpoint; check `fsm_editor_enabled` on editor endpoints
+**Files NOT to modify:**
+- `src/server.js` (protected)
+- `frontend/src/lib/authedFetch.ts` (protected)
+**Acceptance criteria:**
+- [ ] Workflows tab hidden when `fsm_editor_enabled` is false
+- [ ] Publish endpoint returns 403 when `fsm_publishing_enabled` is false
+- [ ] Editor read/write endpoints return 403 when `fsm_editor_enabled` is false
+- [ ] Runtime endpoints (actions, apply, override) always available regardless of feature flags
+- [ ] Feature flags read from company settings or environment config
+**Related test cases:** SC-01 (feature flag precondition)
+
+---
+
+## Phase 5: Tests
+
+---
+
+### TASK-027: Unit tests — SCXML parser
+**Phase:** 5
+**Status:** pending
+**Dependencies:** TASK-004, TASK-005
+**Files to modify:**
+- `tests/services/fsmService.test.js` — NEW FILE: unit tests for parseSCXML and validateSCXML
+**Files NOT to modify:**
+- `backend/src/services/fsmService.js` — test only, do not modify
+- `src/server.js` (protected)
+**Acceptance criteria:**
+- [ ] TC-FSM-001: valid SCXML produces correct graph (7 job states, all transitions, initialState, finalStates, metadata)
+- [ ] TC-FSM-002: forbidden elements (`<script>`, `<invoke>`, `<send>`, `<onentry>`, `<onexit>`, `<parallel>`, `<history>`, `<datamodel>`) rejected
+- [ ] TC-FSM-003: missing initial state produces error
+- [ ] TC-FSM-004: blanc namespace attributes extracted correctly (label, statusName, action, confirm, confirmText, roles, order, icon)
+- [ ] TC-FSM-020: unreachable states detected as warning
+- [ ] TC-FSM-021: duplicate events in same state detected as warning
+- [ ] TC-FSM-030: malformed XML returns parse error
+- [ ] All tests pass with `npm test`
+**Related test cases:** TC-FSM-001, TC-FSM-002, TC-FSM-003, TC-FSM-004, TC-FSM-020, TC-FSM-021, TC-FSM-030
+
+---
+
+### TASK-028: Integration tests — FSM API endpoints
+**Phase:** 5
+**Status:** pending
+**Dependencies:** TASK-012
+**Files to modify:**
+- `tests/routes/fsm.test.js` — NEW FILE: integration tests for all FSM API endpoints
+**Files NOT to modify:**
+- `backend/src/routes/fsm.js` — test only
+- `src/server.js` (protected)
+**Acceptance criteria:**
+- [ ] TC-FSM-007: 401 without token, 403 without permission for each endpoint
+- [ ] TC-FSM-008: company A cannot access company B's FSM data (machines, active, history, apply, override)
+- [ ] TC-FSM-009: save draft, load draft, load active — draft does not affect active
+- [ ] TC-FSM-010: publish draft — version incremented, active updated, old version archived
+- [ ] TC-FSM-011: publish blocked when validation errors exist
+- [ ] TC-FSM-012: version history returns in order
+- [ ] TC-FSM-019: entity not found returns 404
+- [ ] TC-FSM-027: version conflict returns 409
+- [ ] TC-FSM-032: missing state query parameter returns 400
+- [ ] All tests use proper test DB setup/teardown with company isolation
+**Related test cases:** TC-FSM-007 through TC-FSM-019, TC-FSM-027, TC-FSM-032
+
+---
+
+### TASK-029: Unit tests — FSM runtime (transitions, fallback)
+**Phase:** 5
+**Status:** pending
+**Dependencies:** TASK-011
+**Files to modify:**
+- `tests/services/fsmService.test.js` — add test suites for resolveTransition and getAvailableActions (append to file from TASK-027)
+**Files NOT to modify:**
+- `backend/src/services/fsmService.js` — test only
+- `src/server.js` (protected)
+**Acceptance criteria:**
+- [ ] TC-FSM-005: valid transition applied correctly (Submitted + TO_FOLLOW_UP -> Follow Up with Client)
+- [ ] TC-FSM-006: invalid transition rejected (Canceled + TO_FOLLOW_UP -> invalid)
+- [ ] TC-FSM-018: fallback to hardcoded constants when no published FSM exists
+- [ ] TC-FSM-022: actions filtered by role (admin-only transition hidden from agent)
+- [ ] TC-FSM-023: confirm dialog metadata returned in actions
+- [ ] TC-FSM-031: fallback actions from hardcoded constants
+- [ ] All tests pass with `npm test`
+**Related test cases:** TC-FSM-005, TC-FSM-006, TC-FSM-018, TC-FSM-022, TC-FSM-023, TC-FSM-031
+
+---
+
+### TASK-030: Integration tests — ActionsBlock, WorkflowEditor
+**Phase:** 5
+**Status:** pending
+**Dependencies:** TASK-021, TASK-017
+**Files to modify:**
+- `tests/components/ActionsBlock.test.tsx` — NEW FILE: component tests for ActionsBlock
+- `tests/components/WorkflowEditor.test.tsx` — NEW FILE: component tests for WorkflowEditor
+**Files NOT to modify:**
+- `src/server.js` (protected)
+**Acceptance criteria:**
+- [ ] ActionsBlock renders correct buttons for a given state and actions response
+- [ ] ActionsBlock shows confirmation dialog for confirm transitions
+- [ ] ActionsBlock hides override link when user lacks fsm.override role
+- [ ] ActionsBlock renders empty when no actions available
+- [ ] WorkflowEditor loads draft/active SCXML correctly
+- [ ] WorkflowEditor toolbar buttons trigger correct API calls
+- [ ] TC-FSM-013: apply endpoint integration — entity status updated
+- [ ] TC-FSM-014: Zenbooker outbound sync fires on mapped statuses
+- [ ] TC-FSM-015: override requires fsm.override role
+- [ ] TC-FSM-016: successful override with audit log
+- [ ] TC-FSM-017: missing reason rejected
+- [ ] TC-FSM-025: target state not in SCXML rejected
+- [ ] TC-FSM-026: override to current state rejected
+**Related test cases:** TC-FSM-013 through TC-FSM-017, TC-FSM-025, TC-FSM-026
+
+---
+
+## Dependency Graph
+
+```
+TASK-001 (migration: tables) ─────────────────────┐
+TASK-002 (migration: permissions)                  │
+TASK-003 (install fast-xml-parser) ───► TASK-004   │
+TASK-005 (seed SCXML files)                        │
+TASK-006 (migration: seed data) ◄─── TASK-001     │
+                                                   │
+TASK-004 + TASK-006 ──► TASK-007 (service: reads)  │
+TASK-007 ──► TASK-008 (service: writes)            │
+TASK-007 + TASK-002 ──► TASK-009 (routes: read)    │
+TASK-008 + TASK-009 ──► TASK-010 (routes: write)   │
+TASK-008 ──► TASK-011 (runtime)                    │
+TASK-009 + TASK-010 + TASK-011 ──► TASK-012 (mount)│
+                                                   │
+TASK-013 (install frontend deps)                   │
+TASK-012 ──► TASK-014 (hooks)                      │
+TASK-015 (tabs wrapper)                            │
+TASK-014 ──► TASK-016 (MachineList)                │
+TASK-013 + TASK-014 ──► TASK-017 (WorkflowEditor)  │
+TASK-013 ──► TASK-018 (DiagramPreview)             │
+TASK-017 ──► TASK-019 (ProblemsPanel)              │
+TASK-014 ──► TASK-020 (VersionHistory + Publish)   │
+                                                   │
+TASK-014 ──► TASK-021 (ActionsBlock)               │
+TASK-021 ──► TASK-022 (replace JobStatusTags)      │
+TASK-021 ──► TASK-023 (override UI)                │
+TASK-011 ──► TASK-024 (jobsService integration)    │
+TASK-011 ──► TASK-025 (leadsService integration)   │
+TASK-015 + TASK-021 ──► TASK-026 (feature flags)   │
+                                                   │
+TASK-004 + TASK-005 ──► TASK-027 (parser tests)    │
+TASK-012 ──► TASK-028 (API tests)                  │
+TASK-011 ──► TASK-029 (runtime tests)              │
+TASK-021 + TASK-017 ──► TASK-030 (component tests) │
+```
+
+## Execution Order (recommended)
+
+**Wave 1 (parallel):** TASK-001, TASK-002, TASK-003, TASK-005, TASK-013
+**Wave 2:** TASK-004, TASK-006
+**Wave 3:** TASK-007
+**Wave 4:** TASK-008
+**Wave 5 (parallel):** TASK-009, TASK-011, TASK-015
+**Wave 6:** TASK-010
+**Wave 7:** TASK-012, TASK-014
+**Wave 8 (parallel):** TASK-016, TASK-017, TASK-018, TASK-020, TASK-021, TASK-027
+**Wave 9 (parallel):** TASK-019, TASK-022, TASK-023, TASK-024, TASK-025, TASK-028, TASK-029
+**Wave 10:** TASK-026, TASK-030

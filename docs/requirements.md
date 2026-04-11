@@ -1,309 +1,205 @@
-# Требования — Blanc Contact Center
+# Blanc Contact Center — Requirements
 
-## Статус фич
-
-| ID | Фича | Статус | Расположение |
-|---|---|---|---|
-| F001 | Pulse (Timeline + SMS + Call Log) | ✅ Реализована | `frontend/src/pages/PulsePage.tsx`, `frontend/src/components/pulse/`, `backend/src/routes/pulse.js`, `backend/src/routes/calls.js`, `backend/src/routes/messaging.js` |
-| F002 | Softphone (Twilio Device SDK) | ✅ Реализована | `frontend/src/components/softphone/`, `frontend/src/contexts/SoftPhoneContext.tsx`, `backend/src/routes/voice.js` |
-| F003 | Contacts (Master List + Detail) | ✅ Реализована | `frontend/src/pages/ContactsPage.tsx`, `frontend/src/components/contacts/`, `backend/src/routes/contacts.js` |
-| F004 | Leads (Фильтры + Таблица + Detail) | ✅ Реализована | `frontend/src/pages/LeadsPage.tsx`, `frontend/src/components/leads/`, `backend/src/routes/leads.js` |
-| F005 | Jobs (Zenbooker + Таблица + Detail) | ✅ Реализована | `frontend/src/pages/JobsPage.tsx`, `frontend/src/components/jobs/`, `backend/src/routes/jobs.js`, `backend/src/routes/zenbooker/jobs.js` |
-| F006 | Real-time (SSE + WebSocket) | ✅ Реализована | `src/server.js`, `backend/src/routes/events.js`, `backend/src/services/realtimeService.js`, `frontend/src/hooks/useRealtimeEvents.ts` |
-| F007 | Twilio-Front интеграция (Channel API) | ✅ Реализована | `src/services/frontAPI.js`, `src/services/jwtService.js`, `src/services/callFormatter.js` |
-| F008 | Zenbooker интеграция | ✅ Реализована | `backend/src/routes/zenbooker.js`, `backend/src/routes/integrations-zenbooker.js`, `backend/src/services/zenbookerClient.js`, `backend/src/services/zenbookerSyncService.js` |
-| F009 | Action Required / Snooze система | ✅ Реализована | `frontend/src/components/pulse/`, `backend/src/routes/pulse.js`, `backend/src/services/` |
-| F010 | AI функции (Summary, Polish, Transcript) | ✅ Реализована | `backend/src/`, Gemini API |
-| F011 | Refactor-readiness audit | ⏳ Запланирована | `docs/`, `src/server.js`, `backend/src/`, `frontend/src/`, `tests/` |
-| F012 | Multi-tenant company model, Super Admin & RBAC | ⏳ Запланирована | `docs/specs/PF007-multitenant-company-model-rbac.md`, `docs/specs/PF007-technical-design.md`, `docs/specs/PF102-tenancy-rbac-sprint-plan.md`, `docs/specs/PF103-tenancy-rbac-db-api-contracts.md` |
-| F013 | Schedule / Dispatcher MVP + UX hardening | 🔧 В разработке (Sprint 2 ✅, Sprint 3 ✅, Sprint 4 partial ✅) | `frontend/src/pages/SchedulePage.tsx`, `frontend/src/components/schedule/`, `frontend/src/hooks/useScheduleData.ts`, `frontend/src/services/scheduleApi.ts`, `backend/src/routes/schedule.js`, `backend/src/services/scheduleService.js`, `backend/src/db/scheduleQueries.js`, `docs/specs/PF001-unified-schedule-dispatcher.md` |
-| PF100-S3 | Estimates MVP (completion) | 🔧 В разработке — S3-T1: LeadDetailPanel estimates tab; S3-T2: Create from Contact; S3-T3: Pulse timeline events | `frontend/src/components/leads/LeadDetailPanel.tsx`, `frontend/src/components/contacts/ContactDetailPanel.tsx`, `backend/src/routes/pulse.js` |
-| PF100-S4 | Invoices MVP (completion) | 🔧 В разработке — S4-T1: Estimate→Invoice conversion; S4-T2: Invoice→Transactions link; S4-T3: Pulse events | `frontend/src/components/estimates/EstimateDetailPanel.tsx`, `frontend/src/components/invoices/InvoiceDetailPanel.tsx` |
-| PF100-S5 | Payment Collection MVP | 📋 Запланирована — S5-T1: RecordPaymentDialog replace prompt; S5-T2: Send Receipt; S5-T3: TransactionsPage verify; S5-T4: Deposit collection | `frontend/src/components/transactions/`, `frontend/src/pages/TransactionsPage.tsx`, `frontend/src/components/invoices/InvoiceDetailPanel.tsx` |
+> Formalized feature requirements for the system.
 
 ---
 
-## Подробные требования
+## FSM-001: FSM/SCXML Workflow Editor
 
-> Подробное описание текущего функционала см. в `docs/current_functionality.md`
+**Status:** Requirements
+**Priority:** High
+**Owner:** FSM/Platform
+**Feature flags:** `fsm_editor_enabled`, `fsm_publishing_enabled`
 
-### F001: Pulse
-- Трёхколоночный layout: список контактов → карточка → хронология
-- Server-side поиск по номеру, infinite scroll
-- Объединённая хронология звонков + SMS
-- Если по thread нет готового `Lead` или `Contact`, в middle-column открывается `CreateLeadJobWizard` для создания лида/работы прямо из текущего conversation context
-- Аудиоплеер с записями, транскрипция, AI-summary
-- Voicemail уже отображается в текущем `Pulse` timeline как call-item (`voicemail_recording` / `voicemail_left`) и использует тот же recording/transcript pipeline
-- SMS форма с Quick Messages, AI Polish, вложения
-- Real-time через SSE: onCallUpdate, onMessageAdded, etc.
-- `Pulse` является canonical client timeline и основным operator workspace по клиенту: все high-value client events должны быть доступны в его timeline, а не в отдельных activity feeds других модулей
-- `Messaging`, `Phone Ops`, `Voicemail`, future `Email`, `Call Tracking` и `AI communication` должны рассматриваться как развитие `Pulse`, его timeline items, queue-state и middle-card controls, а не как отдельные конкурирующие рабочие пространства
-- `Action Required / Snooze / Tasks` остаются отдельными operator controls и queue-signals вне timeline; при просмотре клиента они должны быть доступны в left queue и middle-card/navigation area, а их lifecycle может дополнительно отражаться в timeline как события
-- SSE/event-delivery machine документируется вместе с Pulse, даже если часть событий обновляет не только сам Pulse, но и bubbles, leads, jobs, payments и другие экраны
-- Любая новая клиентская фича, которая добавляет significant event или новый realtime update на фронт, обязана описывать Pulse/SSE integration и обновлять пакет `PF008`
-- Следующий communication gap для `Pulse` — email внутри текущего timeline/thread model, а не новый отдельный message center
-- Стратегическое развитие `Pulse` как communication/event core описано в `docs/specs/PF008-pulse-client-timeline-core.md`, `docs/specs/PF104-pulse-sprint-plan.md`, `docs/specs/PF105-pulse-db-api-contracts.md`, `docs/specs/PF008-technical-design.md`
+### 1. Description
 
-### F002: Softphone
-- VoIP на базе Twilio Device SDK
-- Состояния: Idle → Incoming → Connecting → Ringing → Connected → Ended
-- Caller ID picker, поиск контактов, pre-flight busy check
-- Minimize в header, DTMF keypad, Mute/Unmute
-- ClickToCallButton интеграция
-- `Softphone` и будущие phone-ops улучшения должны оставаться связанными с `Pulse` thread/timeline model, а не становиться отдельным операторским history surface
+Replace hardcoded status lists (`BLANC_STATUSES`, `ALLOWED_TRANSITIONS` in `jobsService.js`) and lead status constants with a database-driven FSM model defined in SCXML. Provide an admin UI for editing, validating, versioning, and publishing workflow definitions. The editor renders a live diagram preview alongside a Monaco-based SCXML editor. Entity cards (Lead, Job) derive their action buttons from the published SCXML transitions at runtime.
 
-### F003: Contacts
-- Master list с поиском и pagination
-- Детальная панель: контактная информация, адреса (geocoding), лиды, jobs
-- Edit Contact dialog
-- Zenbooker sync
+### 2. User Scenarios
 
-### F004: Leads
-- Фильтры: текст, дата, статус, источник, тип
-- Таблица с настраиваемыми колонками
-- Детальная панель: header, actions, metadata
-- Create Lead dialog (многоступенчатая форма)
-- Convert to Job (4-step wizard → Zenbooker)
+#### SC-01: View and edit a workflow definition
+**Actor:** Admin with `fsm.editor` role
+**Precondition:** User navigates to `/settings/lead-form`, selects the "Workflows" tab
+**Flow:**
+1. User sees a list of FSM machines (Lead, Job) with their active version and draft status.
+2. User opens the Job FSM editor.
+3. Split-view loads: Monaco editor (left) with current draft or published SCXML, diagram preview (right).
+4. User modifies SCXML (adds a new state, changes a transition target).
+5. After 300 ms debounce, the diagram preview updates to reflect changes.
+6. If SCXML is malformed, an error overlay appears on the diagram pane and errors populate the Problems panel.
 
-### F005: Jobs
-- Фильтры: текст, дата, статус, провайдер, источник, тип, теги
-- Таблица с сортировкой, pagination, CSV export
-- Двухколоночная детальная панель
-- Action Bar: Mark Enroute/In Progress/Complete/Cancel
-- Notes секция
+#### SC-02: Validate and save a draft
+**Actor:** Admin with `fsm.editor` role
+**Precondition:** SCXML has been modified in the editor
+**Flow:**
+1. User clicks "Validate". Backend returns errors (blocking) and warnings (non-blocking).
+2. Errors display in the Problems panel with line/column references.
+3. User fixes errors, re-validates — result is clean.
+4. User clicks "Save Draft". Draft version is persisted to `fsm_versions` with status `draft`.
+5. Audit log records the save action with actor identity and timestamp.
 
-### F011: Refactor-readiness audit
-- Цель: подготовить проект к поэтапному рефакторингу без изменения пользовательского поведения
-- Артефакты: audit report, обновлённые docs, спецификация и тест-кейсы для refactor slices
-- Обязательные результаты: карта расхождений `docs vs code`, список архитектурного долга и дублей, baseline по тестам/сборке/lint и refactor backlog с независимыми slices
-- Ограничения: не менять protected runtime paths без отдельной задачи; не делать big-bang rewrite; не создавать новые параллельные реализации существующих auth/realtime/phone helper paths
-- Затронутые области: `src/server.js`, `backend/src/routes/*`, `backend/src/services/*`, `backend/src/db/*`, `frontend/src/pages/*`, `frontend/src/components/*`, `frontend/src/hooks/*`, `frontend/src/services/*`, `tests/*`, `docs/*`
+#### SC-03: Publish a workflow version
+**Actor:** Admin with `fsm.publisher` role
+**Precondition:** A valid draft exists with zero blocking errors
+**Flow:**
+1. User clicks "Publish". A confirmation modal appears requiring a change note.
+2. User enters a change note and confirms.
+3. Backend promotes the draft to `published`, increments `version_number`, updates `fsm_machines.active_version_id`.
+4. Runtime immediately uses the new published version for transition resolution.
+5. Audit log records the publish event including the change note.
 
-### F012: Multi-tenant company model, Super Admin & RBAC
-- `Keycloak` остаётся canonical identity provider и session/authentication слоем; tenant authorization, фиксированные системные роли, матрицы прав по ролям, user-level permission overrides и permission scopes становятся responsibility приложения и его БД.
-- `super_admin` становится platform-only ролью и не должен иметь доступа к данным tenant-компаний, их `Jobs / Leads / Contacts / Pulse / Payments / Settings` и не должен обходить `company_id`-изоляцию через пустой `companyFilter`.
-- Платформа должна поддерживать несколько tenant-компаний через существующий `companies` контур, но без franchise/sub-account модели и без impersonation/jump-into-tenant сценариев.
-- Для каждой активной tenant-компании должен существовать минимум один активный tenant-admin; создание компании и первого пользователя должно быть атомарным, а первый пользователь компании всегда получает tenant-admin доступ.
-- Текущий экран `Company Users` должен быть расширен до полноценного `Team Management`, а `Super Admin` — до platform admin workspace; greenfield-параллельные user-management экраны создавать нельзя.
-- Система ролей должна опираться на Workiz-подобную модель без `Subcontractors` и `Franchises`, но механика настройки должна быть ближе к Zenbooker: фиксированные системные роли `Tenant Admin`, `Manager`, `Dispatcher`, `Provider`, для которых tenant-admin настраивает матрицу прав внутри компании без создания custom roles.
-- Изменять матрицу прав ролей и дополнительные permission toggles в профиле конкретного сотрудника может только tenant-admin; `Manager` и другие роли не должны управлять role governance.
-- Матрица прав должна покрывать текущие продуктовые модули: `Pulse`, `Messages`, `Contacts`, `Leads`, `Jobs`, `Payments`, `Providers`, `Quick Messages`, `Lead Form`, `Action Required`, `Telephony`, `Integrations`, `Super Admin`, а также будущие `Schedule / Estimates / Invoices / Client Portal / Automation Engine`.
-- Должны поддерживаться advanced restrictions в духе Workiz, но встроенные в текущий продукт: `assigned jobs only`, `financial data hidden`, `dashboard/report visibility`, `close jobs`, `collect payments`, `client job history`, `phone access`, `provider status`, `schedule color`, `call masking`, `GPS/location tracking`, `service areas`, `job types/skills`.
-- Ограничения на видимость и действия должны применяться не только в UI, но и на backend: списки, detail pages, search, exports, SMS/thread access, phone operations, audit, webhook side effects и realtime payloads.
-- Текущие глобальные роли `company_admin` / `company_member` и `ProtectedRoute roles=[...]` должны рассматриваться как migration compatibility слой, а не как конечная authorization model.
-- Потенциально вовлечённые модули/части системы:
-  - `backend/src/middleware/keycloakAuth.js`, `backend/src/routes/users.js`, `backend/src/services/userService.js`, `backend/src/services/auditService.js`
-  - `backend/db/migrations/*`, `backend/src/db/*`
-  - `frontend/src/auth/*`, `frontend/src/App.tsx`, `frontend/src/pages/CompanyUsersPage.tsx`, `frontend/src/pages/SuperAdminPage.tsx`, `frontend/src/components/layout/*`
-  - все tenant-scoped routes/services/pages, использующие `company_id`
-- Защищённые части кода:
-  - `src/server.js` runtime wiring
-  - `frontend/src/services/apiClient.ts`
-  - `frontend/src/hooks/useRealtimeEvents.ts`
-  - `backend/db/` schema и migrations менять только по выделенному rollout-плану
-  - legacy `src/routes/*` и `src/services/*` не превращать в новый RBAC/business layer
+#### SC-04: Perform a status transition via hot action button
+**Actor:** Agent viewing a Lead or Job card
+**Precondition:** Entity is in state `Submitted`; published SCXML defines transitions from `Submitted`
+**Flow:**
+1. Card "Actions" block renders buttons derived from transitions where `blanc:action="true"` and the user's role matches `blanc:roles`.
+2. User clicks "Follow up" button.
+3. Frontend calls `POST /api/fsm/job/apply` with `{ entityId, event: "TO_FOLLOW_UP" }`.
+4. Backend loads active published SCXML, verifies transition exists from current state, applies transition, updates entity status.
+5. If the entity has a `zenbooker_job_id` and the new status maps to an outbound Zenbooker status, the sync fires.
+6. Audit log records the transition.
 
----
+#### SC-05: Manual status override
+**Actor:** Admin with `fsm.override` role
+**Precondition:** Entity is in a state with no outgoing transition to the desired target
+**Flow:**
+1. User sees "Change status..." link (only visible to `fsm.override` role).
+2. User selects target status from dropdown, enters a mandatory reason comment.
+3. Confirmation dialog warns: "This is an override. It bypasses allowed transitions."
+4. Backend applies the override, logs it as a separate audit event type (`override`).
+5. Zenbooker outbound sync still fires if applicable.
 
-## Общие паттерны
+#### SC-06: View version history and restore a previous version
+**Actor:** Admin with `fsm.editor` role
+**Flow:**
+1. User clicks "View history" in the version selector.
+2. Modal lists all versions with version number, status, author, date, and change note.
+3. User selects a previous published version and clicks "Restore as draft".
+4. The selected version's SCXML is copied into a new draft. No published version is altered.
 
-- **Аутентификация:** authedFetch + auth headers
-- **Real-time:** SSE через useRealtimeEvents hook
-- **UI:** Shadcn/ui, Lucide React icons
-- **Timezone:** America/New_York
-- **Data fetching:** смешанный слой (`React Query`, `authedFetch`, `axios`) — требует унификации
-- **Toasts:** sonner
+#### SC-07: Export SCXML and generate diagrams via CLI
+**Actor:** Developer
+**Flow:**
+1. In the editor, user clicks "Export" to download the current SCXML as a file.
+2. Locally, developer runs `npm run fsm:build` which invokes `smcat` CLI to generate SVG and DOT artifacts from `./fsm/*.scxml`.
+3. Artifacts are written to `./fsm/out/`.
 
----
+#### SC-08: Transition with confirmation dialog
+**Actor:** Agent viewing a Job card
+**Precondition:** SCXML transition has `blanc:confirm="true"` and `blanc:confirmText="..."` attributes
+**Flow:**
+1. User clicks the action button (e.g. "Job Done").
+2. A confirmation dialog appears with the configured confirmation text.
+3. On confirm, the transition request proceeds as in SC-04.
+4. On cancel, no action is taken.
 
-### F012 Sprint 3: Tenant Team Management MVP
-- **Цель:** Превратить текущий список `Company Users` в полноценный интерфейс управления командой (tenant admin).
-- **Сценарии использования:**
-  - Admin (Tenant) просматривает список всех сотрудников компании с фильтрацией (по статусу, роли).
-  - Admin может пригласить нового пользователя (Email, Role, First Name). Если пользователь уже есть в Keycloak - он привязывается, если нет - создается профиль с Action Email.
-  - Admin может деактивировать/активировать сотрудника с указанием причины (например `left_company`).
-  - Admin может изменить роль сотруднику (только из фиксированных системных `tenant_admin`, `manager`, `dispatcher`, `provider`).
-  - Admin управляет профилем сотрудника: включает/выключает Service Areas, Skills/Job Types, Phone Call Masking, Location Tracking.
-  - Обязательно соблюдается ограничение: `check_last_admin` (нельзя удалить последнего `tenant_admin`).
-- **Зависимости:** `req.authz` middleware из Sprint 1, контракты таблиц из `PF103`.
+### 3. Non-Functional Requirements
 
-### F013: Schedule / Dispatcher MVP + UX hardening
+#### NFR-01: Security
+- SCXML is used strictly as a declarative schema. Executable SCXML elements (`<script>`, `<invoke>`, `<send>`, `<onentry>`, `<onexit>`, `<parallel>`, `<history>`, `<datamodel>`) are forbidden and must be rejected at validation time.
+- All FSM API endpoints require `authenticate` + `requireCompanyAccess` middleware.
+- `company_id` is derived exclusively from `req.companyFilter?.company_id` — never from client payload.
+- RBAC roles (`fsm.viewer`, `fsm.editor`, `fsm.publisher`, `fsm.override`) are enforced server-side via Keycloak.
+- `blanc:roles` on transitions controls client-side button visibility and is verified server-side before applying events.
 
-**Краткое описание:** Единое диспетчерское расписание поверх существующих jobs/leads/tasks — без отдельной schedule entity table. Объединяет read-модель через UNION ALL, 5 видов календаря, sidebar quick-view, dispatch settings. UX hardening: timezone-awareness, past-time overlay, duration-based cards, collision lanes, interactive reschedule/reassign, realtime refresh, расширенные фильтры.
+#### NFR-02: Performance
+- Live preview debounce: 300 ms (configurable 250–400 ms).
+- Diagram render time: < 300 ms for schemas up to 100 states / 300 transitions.
+- Validation and error display must not block the editor (non-blocking async).
 
-**Принципы:**
-- Schedule — это **planning/dispatch surface**, НЕ замена Pulse как canonical operator workspace
-- Нет отдельной таблицы `schedule_items` — агрегационный слой поверх `jobs`, `leads`, `tasks`
-- Client-significant dispatch events (reschedule, reassign) должны публиковаться в Pulse timeline по правилам PF008
-- Timezone: все отображения времени и расчёты дат используют `company.timezone` из `dispatch_settings`, а не timezone браузера
-- UX hardening — расширение существующего schedule surface, без нового параллельного dispatcher UI
-- Desktop-first operator workflow, без деградации читаемости на узких экранах
+#### NFR-03: Audit and Versioning
+- Every save, publish, transition apply, and override is logged to `fsm_audit_log` with: actor_id, actor_email, action type, machine_key, version_id, payload JSON, timestamp.
+- Two version statuses coexist: one `draft` and one `published` (active) per machine per company.
+- Published versions are immutable; edits always create or update a draft.
 
-#### Подтверждённые UX-проблемы из аудита 2026-03-29
+#### NFR-04: Data Integrity
+- Seed SCXML for Job FSM must exactly reproduce the current hardcoded statuses: `Submitted`, `Waiting for parts`, `Follow Up with Client`, `Visit completed`, `Job is Done`, `Rescheduled`, `Canceled`.
+- Seed SCXML for Job FSM must exactly reproduce the current `ALLOWED_TRANSITIONS` map, including `Rescheduled -> [Submitted, Canceled]` and `Canceled -> []` (terminal).
+- Seed SCXML for Lead FSM must cover: `Submitted`, `New`, `Contacted`, `Qualified`, `Proposal Sent`, `Negotiation`, `Lost`, `Converted`.
+- Migration must be backward-compatible: if no published FSM version exists, the system falls back to the existing hardcoded constants.
 
-Источник: `https://abc-metrics.fly.dev/schedule`, неделя 2026-03-29 — 2026-04-04.
+### 4. Affected Modules
 
-| # | Проблема | Статус |
-|---|----------|--------|
-| UX-1 | **Карточки не растягиваются по длительности.** 120-минутные работы в Week/Day выглядят как однострочные бейджи вместо блоков пропорциональных реальной длительности. | ✅ Sprint 4 |
-| UX-2 | **Коллизии не раскладываются по lanes.** Три работы 9:00–11:00 ET + одна 10:00–12:00 ET на 2026-03-30 рендерятся поверх друг друга в одной колонке без горизонтального разделения. | ✅ Sprint 4 |
-| UX-3 | **SoftPhone Ready модалка и notification banner перекрывают /schedule.** Первый вход блокируется нецелевыми overlay — для dispatch-экрана это лишний блокер. | ✅ Sprint 4 |
-| UX-4 | **Заголовок недели показывает только "Mar 2026".** Нет явного диапазона (Mar 29 – Apr 4), при листании ухудшается ориентирование. | ✅ Sprint 4 |
-| UX-5 | **Operational states плохо читаются на карточках.** Canceled, Submitted, Rescheduled, assigned/unassigned и multi-assignee не различаются достаточно явно до открытия sidebar. | ✅ Sprint 4 |
-| UX-6 | **Timezone drift.** UI-state и time calculations не зафиксированы на `America/New_York` — зависят от locale/timezone браузера. | ✅ Sprint 3 |
+#### 4.1 Backend Services
+| Module | Change |
+|--------|--------|
+| `backend/src/services/jobsService.js` | Replace hardcoded `BLANC_STATUSES`, `ALLOWED_TRANSITIONS` with FSM runtime lookup from published SCXML. Preserve `OUTBOUND_MAP` for Zenbooker sync. |
+| `backend/src/services/leadsService.js` | Replace hardcoded lead status transitions with FSM runtime lookup. |
+| `backend/src/services/jobSyncService.js` | No direct changes — continues to use `sub_status` updates. Must remain compatible with new FSM-driven status values. |
+| **New:** `backend/src/services/fsmService.js` | FSM machine CRUD, version management, SCXML parsing, validation, transition resolution, audit logging. |
+| **New:** `backend/src/routes/fsm.js` | Express routes: `/api/fsm/machines`, `/api/fsm/:machineKey/*` (draft, active, validate, publish, apply, override, actions, render). |
 
-**Как должно быть:**
-- Календарные карточки должны визуально соответствовать реальной длительности интервала и занимать весь доступный vertical/horizontal slot в зависимости от view.
-- Пересекающиеся items должны автоматически раскладываться по параллельным подколонкам без взаимного перекрытия, с сохранением кликабельности и читаемости.
-- Первичный вход в `/schedule` не должен блокироваться softphone/notification onboarding; такие prompts должны быть неблокирующими и контекстно-подходящими.
-- Week/day views должны давать диспетчеру мгновенное понимание диапазона дат, статуса работы, назначения и конфликтов без обязательного открытия sidebar.
-- Все time calculations, filters и visual anchors должны быть согласованы с company dispatch timezone `America/New_York`.
+#### 4.2 Frontend Pages & Components
+| Module | Change |
+|--------|--------|
+| `frontend/src/pages/LeadFormSettingsPage.tsx` | Add Shadcn `Tabs` component at top level: "Settings" tab (existing content) + "Workflows" tab (new editor). |
+| **New:** `frontend/src/components/workflows/WorkflowEditor.tsx` | Split-view layout: Monaco editor (left) + diagram preview (right). Toolbar with validate/save/publish/export actions. |
+| **New:** `frontend/src/components/workflows/DiagramPreview.tsx` | SVG rendering via `state-machine-cat`, pan/zoom, error overlay. |
+| **New:** `frontend/src/components/workflows/ProblemsPanel.tsx` | Collapsible panel showing validation errors/warnings with line references. |
+| **New:** `frontend/src/components/workflows/VersionHistory.tsx` | Modal listing versions with restore-as-draft capability. |
+| **New:** `frontend/src/components/workflows/ActionsBlock.tsx` | Hot action buttons rendered from published SCXML transitions. Used in Lead and Job detail cards. |
+| Existing Job/Lead detail cards | Replace static status-change dropdowns with `ActionsBlock` and optional manual override (for `fsm.override`). |
 
-**Пользовательские сценарии (из аудита):**
-- Диспетчер открывает неделю и сразу понимает фактическую загрузку команды по длительности слотов, а не по списку однострочных бейджей.
-- Диспетчер видит одновременные работы без наложения и понимает, у кого конфликт по времени.
-- Оператор заходит в `/schedule` из Jobs/Pulse и может сразу работать с календарём без принудительного закрытия нерелевантных модалок.
-- Пользователь различает `Canceled / Submitted / Rescheduled / Unassigned` прямо в grid, не открывая каждую карточку отдельно.
-- Пользователь в любом view видит корректную временную привязку недели и дня в `America/New_York`.
+#### 4.3 Database (PostgreSQL)
+| Table | Description |
+|-------|-------------|
+| **New:** `fsm_machines` | `machine_key` (PK), `company_id`, `title`, `description`, `active_version_id`, `created_at`, `updated_at` |
+| **New:** `fsm_versions` | `version_id` (PK), `machine_key` (FK), `company_id`, `version_number`, `status` (draft/published/archived), `scxml_source`, `change_note`, `created_by`, `created_at`, `published_by`, `published_at` |
+| **New:** `fsm_audit_log` | `id` (PK), `company_id`, `machine_key`, `version_id`, `actor_id`, `actor_email`, `action`, `payload_json`, `created_at` |
+| **New (optional):** `fsm_render_cache` | `hash` (PK), `svg`, `created_at` |
 
-#### Реализовано (Sprint 1 + Sprint 2):
+All new tables must include `company_id` column for multi-tenant isolation.
 
-**Backend:**
-- `dispatch_settings` table — company-level конфигурация: timezone, work_start_time, work_end_time, work_days, slot_duration, buffer_minutes, settings_json
-- `scheduleQueries.js` — unified UNION ALL query по jobs/leads/tasks с динамическими фильтрами (date range, entity types, statuses, assignee, search, pagination)
-- `scheduleService.js` — service layer: getScheduleItems, rescheduleItem, reassignItem, createFromSlot (task), dispatch settings CRUD
-- `schedule.js` — route handlers для всех endpoints (кроме /availability — 501)
-- Data isolation: все запросы фильтруют по `company_id` через `req.companyFilter?.company_id`
+### 5. Affected Integrations
 
-**Frontend:**
-- `SchedulePage.tsx` — layout: toolbar + calendar view + unscheduled panel + sidebar
-- `useScheduleData.ts` — central state hook (items, settings, viewMode, filters, selectedItem)
-- `scheduleApi.ts` — API client для всех schedule endpoints
-- 5 видов календаря: DayView, WeekView, MonthView, TimelineView, TimelineWeekView
-- `ScheduleToolbar.tsx` — вкладки видов, навигация по датам, поиск, фильтр по entity type
-- `ScheduleItemCard.tsx` — цветовая кодировка (blue=job, amber=lead, green=task, gray-dashed=unassigned)
-- `ScheduleSidebar.tsx` — quick-view panel: контакт, адрес, статус, techs, deeplinks
-- `UnscheduledPanel.tsx` — collapsible panel для items без start_at
-- Навигация: `/schedule` в main nav между Jobs и Contacts
+#### 5.1 Zenbooker Outbound Sync (MUST PRESERVE)
+- `OUTBOUND_MAP` in `jobsService.js` maps Blanc statuses to Zenbooker API statuses (`Submitted -> scheduled`, `Waiting for parts -> complete`, `Job is Done -> complete`).
+- When FSM transitions change a Job's `blanc_status`, the outbound sync to Zenbooker must continue to fire based on the same mapping logic.
+- Cancel handling (special case outside `OUTBOUND_MAP`) must also be preserved.
+- The Zenbooker sync logic must not depend on which statuses exist in SCXML — it maps by status name, not by FSM structure.
 
-**Баги зафиксированные (hotfix 2026-03-29):**
-- `req.companyId` → `req.companyFilter?.company_id` (7 мест в schedule.js) — расписание было пустое из-за undefined company filter
-- `start_date <= endDate` → `start_date < (endDate::date + INTERVAL '1 day')` — TIMESTAMPTZ vs date truncation терял весь день
+#### 5.2 Twilio / Front
+- No direct impact. These integrations do not depend on Lead/Job status transitions.
 
-#### Sprint 3: Timezone awareness + Past overlay + SSE refresh (✅ DONE)
+#### 5.3 Keycloak
+- New RBAC roles must be registered: `fsm.viewer`, `fsm.editor`, `fsm.publisher`, `fsm.override`.
+- Role checks are enforced in FSM route middleware and in transition apply logic.
 
-**Реализовано:**
-- Timezone-aware отображение во всех 5 views (company.timezone из dispatch_settings, дефолт America/New_York)
-- Shared timezone utilities в `companyTime.ts`: minutesSinceMidnight, formatTimeInTZ, formatDateTimeInTZ, dateKeyInTZ, todayInTZ
-- Past-time overlay + red now-line в DayView, WeekView, TimelineView
-- SSE realtime refresh (debounced 500ms) через useRealtimeEvents
-- Item positioning и grouping по company TZ вместо browser TZ
-- 29 unit/integration tests (timezone, overlay, route data isolation)
+### 6. Protected Code (DO NOT MODIFY)
 
-**Закрывает UX-проблему:** UX-6 (timezone drift)
+| File | Reason |
+|------|--------|
+| `src/server.js` | Core server bootstrap — changes here risk breaking all services. |
+| `frontend/src/lib/authedFetch.ts` | Auth token handling — shared across all API calls. |
+| `frontend/src/hooks/useRealtimeEvents.ts` | WebSocket event infrastructure — shared across all real-time features. |
 
-#### Sprint 4: Duration cards + Collision lanes + Status visibility + UI polish (PENDING)
+### 7. Constraints
 
-**Пользовательские сценарии:**
+1. **Tab placement:** The workflow editor lives inside `/settings/lead-form` (LeadFormSettingsPage) as a second tab ("Workflows") via Shadcn `Tabs` component. It is NOT a standalone route.
+2. **CommonJS backend:** All new backend modules must use CommonJS (`require`/`module.exports`) to match existing codebase conventions.
+3. **No standalone SCXML runtime:** SCXML is used as a declarative state/transition graph only. No XState, no SCION, no runtime interpretation of executable content.
+4. **Blanc namespace:** Custom metadata uses `xmlns:blanc="https://blanc.app/fsm"` namespace exclusively. No other custom namespaces.
+5. **Allowed SCXML subset (MVP):** Only `<scxml>`, `<state>`, `<final>`, `<transition>` elements are permitted. All others are validation errors.
+6. **Backward compatibility:** Until a company publishes their first FSM version, the system must fall back to current hardcoded `BLANC_STATUSES` and `ALLOWED_TRANSITIONS`.
+7. **Multi-tenant isolation:** All FSM data (machines, versions, audit logs) is scoped by `company_id`. Queries must always filter by `company_id`.
+8. **Seed data completeness:** The Job FSM seed must include ALL 7 current statuses (`Submitted`, `Waiting for parts`, `Follow Up with Client`, `Visit completed`, `Job is Done`, `Rescheduled`, `Canceled`) and ALL transitions from the current `ALLOWED_TRANSITIONS` map, including terminal states.
+9. **Dependencies:** `monaco-editor` (or `@monaco-editor/react`) and `state-machine-cat` are added as project dependencies. `smcat` CLI is a devDependency for local/CI diagram generation.
+10. **Feature flags:** Editor UI is gated behind `fsm_editor_enabled`. Publishing capability is gated behind `fsm_publishing_enabled`. Both flags default to `false`.
 
-1. **Duration-proportional карточки** (UX-1)
-   - Карточки в Day/Week views растягиваются пропорционально длительности (start_at → end_at)
-   - Высота = (duration_minutes / 60) * HOUR_HEIGHT
-   - Минимальная высота для коротких items (< 30 мин) — 32px
-   - Контент карточки адаптируется: title всегда, time range при height > 48px, assignee при height > 64px
+### 8. Seed SCXML Corrections
 
-2. **Collision lanes** (UX-2)
-   - Пересекающиеся items раскладываются по параллельным подколонкам (lanes)
-   - Алгоритм: greedy interval scheduling — сортировка по start_at, назначение в первую свободную lane
-   - Ширина каждой lane = 1/N от колонки (N = макс. количество одновременных items)
-   - Сохранение кликабельности и читаемости при 2-3 lanes
+The original requirements document (section 12.2) contains a seed Job FSM that is incomplete relative to the current hardcoded data. The following discrepancies must be resolved in the final seed:
 
-3. **Enhanced status visibility** (UX-5)
-   - Status badge с цветовой кодировкой на каждой карточке: Canceled (red), Submitted (blue), Rescheduled (purple), En Route (teal), In Progress (orange), Completed (green)
-   - Unassigned items: dashed border + "Unassigned" label
-   - Multi-assignee: "+2 more" count badge
-   - Visual distinction без необходимости открывать sidebar
+| Issue | Current hardcoded value | Seed SCXML (section 12.2) |
+|-------|------------------------|--------------------------|
+| Missing status `Rescheduled` | Present in `BLANC_STATUSES` and `ALLOWED_TRANSITIONS` | Absent |
+| Missing status `Canceled` | Present as terminal (`Canceled: []`) with transitions from all non-terminal states | Absent |
+| Missing transition `Submitted -> Canceled` | Present in `ALLOWED_TRANSITIONS` | Absent |
+| Missing transition `Waiting for parts -> Canceled` | Present in `ALLOWED_TRANSITIONS` | Absent |
+| Missing transition `Follow Up with Client -> Submitted` | Present in `ALLOWED_TRANSITIONS` | Absent |
+| Missing transition `Visit completed -> Canceled` | Present in `ALLOWED_TRANSITIONS` | Absent |
+| Missing transition `Job is Done -> Canceled` | Present in `ALLOWED_TRANSITIONS` | Absent |
+| Missing transition `Rescheduled -> Submitted` | Present in `ALLOWED_TRANSITIONS` | Absent |
+| Missing transition `Rescheduled -> Canceled` | Present in `ALLOWED_TRANSITIONS` | Absent |
 
-4. **Week header с диапазоном дат** (UX-4)
-   - ScheduleToolbar: при viewMode='week' показывает "Mar 29 – Apr 4, 2026" вместо "Mar 2026"
-   - При листании — диапазон обновляется мгновенно
-
-5. **Non-blocking SoftPhone/notification prompts** (UX-3)
-   - SoftPhone Ready модалка не показывается на /schedule (или показывается как toast)
-   - Notification banner — dismissible и не перекрывает calendar grid
-
-6. **Drag-and-drop reschedule**
-   - Пользователь перетаскивает карточку job/task на другой временной слот → API `PATCH /reschedule`
-   - Snap-to-grid: привязка к slot_duration (по умолчанию 60 мин)
-   - Visual preview во время перетаскивания (ghost card)
-   - Toast confirmation: "Job #123 rescheduled to Mar 30, 2:00 PM"
-   - Leads НЕ поддерживают reschedule (lead_date_time — read-only из формы)
-
-7. **Drag-and-drop reassign (Timeline views)**
-   - В TimelineView/TimelineWeekView: перетаскивание карточки между строками провайдеров → API `PATCH /reassign`
-   - Toast: "Job #123 reassigned to John Smith"
-   - Leads НЕ поддерживают reassign (нет assigned_provider_id в схеме)
-   - Tasks поддерживают reassign через `assigned_provider_id`
-
-8. **Расширенные фильтры**
-   - Multi-select по статусам (job statuses: new, scheduled, en_route, in_progress, completed; lead statuses: new, contacted, qualified)
-   - Фильтр по job_type (тип работы)
-   - Фильтр по source (источник)
-   - Фильтр по tags (теги)
-   - Фильтр по action_required (только items с непросмотренными действиями)
-   - Сохранение фильтров в localStorage
-
-9. **Settings UI**
-   - Модальное окно или sidebar для редактирования dispatch_settings:
-     - Timezone (dropdown из списка IANA timezones)
-     - Business hours: work_start_time, work_end_time (time pickers)
-     - Work days: чекбоксы Mon-Sun
-     - Slot duration: 15 / 30 / 60 / 90 / 120 min
-     - Buffer between jobs: 0 / 15 / 30 / 60 min
-   - Только для пользователей с ролью admin/dispatcher
-
-10. **Create-from-slot (расширение)**
-    - Click на пустой слот в любом view → контекстное меню: "Create Task" / "Create Lead" / "Create Job"
-    - Task: создаётся сразу с start_at/end_at из слота + assigned_provider (если timeline view)
-    - Lead/Job: открывает существующий CreateLeadJobWizard с предзаполненным временем
-
-**Ограничения и нефункциональные требования:**
-- Schedule НЕ дублирует Pulse timeline — это planning surface, не event history
-- Не создавать отдельную `schedule_items` business table — read model поверх jobs/leads/tasks
-- Не ломать `Pulse-first` модель: dispatch-события остаются частью общего event/realtime контура
-- Не расширять protected runtime/auth/realtime paths без отдельной задачи
-- Максимум 500 items на один запрос (pagination)
-- Drag-and-drop работает только в Day/Week/Timeline/Timeline Week (не Month — month слишком компактный)
-- Reschedule/reassign логируются в domain_events для audit trail
-- При конфликте (два job на одного провайдера в одно время) — визуальное предупреждение (overlap indicator), но НЕ блокировка
-- Desktop-first operator workflow, без деградации читаемости на узких экранах
-
-**Потенциально вовлечённые модули/части системы:**
-- `frontend/src/pages/SchedulePage.tsx` — page composition
-- `frontend/src/hooks/useScheduleData.ts` — state management
-- `frontend/src/services/scheduleApi.ts` — API client
-- `frontend/src/components/schedule/*` — все view-компоненты
-- `frontend/src/utils/companyTime.ts` — timezone utilities (shared с CustomTimeModal)
-- `backend/src/routes/schedule.js` — route handlers
-- `backend/src/services/scheduleService.js` — business logic
-- `backend/src/db/scheduleQueries.js` — SQL queries
-- `backend/src/services/realtimeService.js` — SSE broadcast для schedule events
-
-**Затронутые интеграции:**
-- Twilio / SoftPhone — non-blocking onboarding внутри schedule workflow
-- Zenbooker — reschedule job может потребовать sync с ZB (если job синхронизирован)
-- Pulse / SSE — для сохранения общей event model при reschedule/reassign UX
-
-**Защищённые части кода (НЕЛЬЗЯ ломать):**
-- `src/server.js` core middleware и SSE infrastructure
-- `frontend/src/lib/authedFetch.ts`
-- `frontend/src/hooks/useRealtimeEvents.ts`
-- `backend/db/` schema — не менять без отдельной миграции
-- Pulse timeline и его event model — schedule публикует события в Pulse, но не модифицирует его
-- CustomTimeModal.tsx — уже реализованный timezone-aware timeslot picker; его паттерны (dateInTZ, todayInTZ, past-time overlay) переиспользуются, но сам компонент не меняется
-
-**Зависимости:**
-- `dispatch_settings` table (миграция 051, уже в production)
-- `company.timezone` — доступен через `useAuth().company.timezone` на фронтенде
-- `frontend/src/utils/companyTime.ts` — утилиты dateInTZ, todayInTZ, minutesSinceMidnight, formatTimeInTZ, dateKeyInTZ (уже реализованы)
-- `req.companyFilter?.company_id` middleware — уже настроен для `/api/schedule`
+The corrected Job FSM seed must faithfully represent all statuses and transitions from the current `ALLOWED_TRANSITIONS` map before being inserted as the initial published version during migration.
