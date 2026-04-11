@@ -17,8 +17,8 @@ export interface ZipCheckState {
 
 /**
  * Shared hook for territory checking.
- * Accepts zip code, city name, or area name — searches local service_territories table.
- * Then loads Zenbooker territory data in the background (needed for timeslots).
+ * Territory check uses ONLY the local service_territories table (managed via Settings).
+ * Zenbooker is called in the background solely for territory_id/coords needed by timeslots.
  *
  * @param query - zip code, city, or area to check (debounced at 600ms, minimum 3 chars)
  */
@@ -44,58 +44,40 @@ export function useZipCheck(query: string): ZipCheckState {
         setZipExists(null); setZipArea(''); setMatchedZip(''); setZipSource('');
         setZbLoading(true); setTerritoryResult(null);
 
-        console.log('[ZipCheck] Starting checks for:', val);
+        console.log('[ZipCheck] Checking service_territories for:', val);
 
-        // 1) Fast API — searches by zip, city, or area in service_territories
+        // Territory check — ONLY service_territories (via /api/zip-check)
         let fastZip = '';
         try {
             const fast = await zenbookerApi.checkZipCode(val);
-            console.log('[ZipCheck] ✓ Fast API responded:', fast);
+            console.log('[ZipCheck] Result:', fast);
             fastZip = fast.zip || '';
             setZipExists(fast.exists);
             setZipArea(fast.area || '');
             setMatchedZip(fastZip);
             setZipSource('fast');
-            setTerritoryLoading(false);
             if (!fast.exists) setTerritoryError('Not in any service area');
-        } catch (fastErr: any) {
-            console.warn('[ZipCheck] ✗ Fast API failed:', fastErr?.message || fastErr);
-            // Fast API failed — fall back to Zenbooker (awaited, not background)
-            try {
-                const zbFallback = await zenbookerApi.checkServiceArea(val);
-                setZipExists(zbFallback.in_service_area);
-                setZipArea(zbFallback.service_territory?.name || '');
-                setZipSource('zenbooker');
-                setTerritoryResult(zbFallback);
-                setZbLoading(false);
-                if (zbFallback.customer_location?.coordinates) setCoords(zbFallback.customer_location.coordinates);
-                if (!zbFallback.in_service_area) setTerritoryError('Not in any service area');
-            } catch {
-                console.error('[ZipCheck] ✗ Both APIs failed!');
-                setZipExists(false);
-                setZipSource('none');
-                setZbLoading(false);
-                setTerritoryError('Service area check failed');
-            }
-            setTerritoryLoading(false);
-            return; // Zenbooker already called in fallback
+        } catch (err: any) {
+            console.error('[ZipCheck] Failed:', err?.message || err);
+            setZipExists(false);
+            setZipSource('none');
+            setTerritoryError('Service area check failed');
         }
+        setTerritoryLoading(false);
 
-        // 2) Zenbooker — fire-and-forget in background (needed for territory ID & coords for timeslots)
-        //    Use matched zip from fast API, or pass raw text as address for Zenbooker
+        // Zenbooker background call — only for territory_id & coords (needed for timeslots)
+        // Does NOT affect territory check result (zipExists/zipArea)
         const zbQuery: { postal_code?: string; address?: string } = /^\d{3,10}$/.test(val)
             ? { postal_code: val }
             : fastZip
-                ? { postal_code: fastZip }    // fast API found a zip match for this city/area
-                : { address: val };            // pass raw text as address to Zenbooker
+                ? { postal_code: fastZip }
+                : { address: val };
 
         zenbookerApi.checkServiceArea(zbQuery).then((zbResult: ServiceAreaResult) => {
-            console.log('[ZipCheck] Zenbooker background result:', zbResult);
             setTerritoryResult(zbResult);
             setZbLoading(false);
             if (zbResult.customer_location?.coordinates) setCoords(zbResult.customer_location.coordinates);
-        }).catch((zbErr: any) => {
-            console.warn('[ZipCheck] Zenbooker background call failed:', zbErr?.message || zbErr);
+        }).catch(() => {
             setTerritoryResult(null);
             setZbLoading(false);
         });

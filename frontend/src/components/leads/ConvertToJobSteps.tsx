@@ -58,9 +58,8 @@ export function ConvertStep1({ name, setName, phone, setPhone, email, setEmail, 
             <AddressAutocomplete header={<Label className="text-sm font-medium">Address</Label>} idPrefix="cj" defaultUseDetails={true} value={addressFields} onChange={addr => { setAddressFields(addr); if (addr.lat && addr.lng) setCoords({ lat: addr.lat, lng: addr.lng }); }} />
             <div className="flex items-center gap-2 min-h-[28px]">
                 {territoryLoading && <span className="text-sm text-muted-foreground animate-pulse">Checking service area…</span>}
-                {zipExists && <Badge variant="default" className="bg-green-600">✓ {zipArea || territoryResult?.service_territory?.name || 'In service area'}</Badge>}
+                {zipExists && <Badge variant="default" className="bg-green-600">✓ {zipArea || 'In service area'}</Badge>}
                 {territoryError && !territoryLoading && <Badge variant="destructive">✗ {territoryError}</Badge>}
-                {zipSource && <span className="text-xs text-muted-foreground" style={{ opacity: 0.6 }}>via {zipSource === 'fast' ? '⚡ fast API' : zipSource === 'zenbooker' ? '🔄 zenbooker fallback' : '❌ none'}</span>}
             </div>
         </div>
     );

@@ -86,28 +86,20 @@ async function bulkReplace(companyId, rows) {
 
 // =============================================================================
 // Territory Lookup (search/findByZip)
-// Searches service_territories first (per-company), falls back to dim_zip (shared)
+// Uses ONLY service_territories table (managed via Settings page)
 // =============================================================================
 
 async function findByZip(companyId, zip) {
-    // 1) Per-company service_territories
-    const st = await db.query(
+    const result = await db.query(
         `SELECT zip, area, city, state, county FROM service_territories WHERE company_id = $1 AND zip = $2`,
         [companyId, zip]
     );
-    if (st.rows[0]) return st.rows[0];
-
-    // 2) Fallback: shared dim_zip reference table
-    const dz = await db.query(
-        `SELECT zip, service_zone AS area, city, state FROM dim_zip WHERE zip = $1`,
-        [zip]
-    );
-    return dz.rows[0] || null;
+    return result.rows[0] || null;
 }
 
 /**
  * Search service territories by zip code, city, area, or full address.
- * Tries service_territories (per-company) first, falls back to dim_zip (shared).
+ * Uses ONLY service_territories table (managed via /settings/service-territories).
  * Handles raw zip, city name, or full address strings like "123 Main St, Brockton, MA, USA".
  */
 async function search(companyId, query) {
@@ -119,23 +111,14 @@ async function search(companyId, query) {
         return findByZip(companyId, trimmed);
     }
 
-    // 2) Try exact match on city, area, or county — service_territories first
-    const stExact = await db.query(
+    // 2) Try exact match on city, area, or county
+    const exact = await db.query(
         `SELECT zip, area, city, state, county FROM service_territories
          WHERE company_id = $1 AND (city ILIKE $2 OR area ILIKE $2 OR county ILIKE $2)
          ORDER BY area, zip LIMIT 1`,
         [companyId, trimmed]
     );
-    if (stExact.rows[0]) return stExact.rows[0];
-
-    // Fallback: dim_zip
-    const dzExact = await db.query(
-        `SELECT zip, service_zone AS area, city, state FROM dim_zip
-         WHERE city ILIKE $1 OR service_zone ILIKE $1
-         ORDER BY service_zone, zip LIMIT 1`,
-        [trimmed]
-    );
-    if (dzExact.rows[0]) return dzExact.rows[0];
+    if (exact.rows[0]) return exact.rows[0];
 
     // 3) Extract zip from the string (e.g. "123 Main St, Brockton, MA 02301, USA")
     const zipMatch = trimmed.match(/\b(\d{5})(?:-\d{4})?\b/);
@@ -149,24 +132,13 @@ async function search(companyId, query) {
     for (const part of parts) {
         // Skip parts that look like state codes, zip codes, "USA", or street addresses (start with digit)
         if (/^\d/.test(part) || /^[A-Z]{2}(\s+\d{5})?$/.test(part) || /^(USA|United States)$/i.test(part)) continue;
-
-        // service_territories first
-        const stPart = await db.query(
+        const partResult = await db.query(
             `SELECT zip, area, city, state, county FROM service_territories
              WHERE company_id = $1 AND (city ILIKE $2 OR area ILIKE $2 OR county ILIKE $2)
              ORDER BY area, zip LIMIT 1`,
             [companyId, part]
         );
-        if (stPart.rows[0]) return stPart.rows[0];
-
-        // Fallback: dim_zip
-        const dzPart = await db.query(
-            `SELECT zip, service_zone AS area, city, state FROM dim_zip
-             WHERE city ILIKE $1 OR service_zone ILIKE $1
-             ORDER BY service_zone, zip LIMIT 1`,
-            [part]
-        );
-        if (dzPart.rows[0]) return dzPart.rows[0];
+        if (partResult.rows[0]) return partResult.rows[0];
     }
 
     return null;
