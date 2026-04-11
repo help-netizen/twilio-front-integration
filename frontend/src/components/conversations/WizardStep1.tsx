@@ -74,7 +74,8 @@ function TerritoryInput({ value, onChange, onDisplayChange, onAddressParsed }: {
                 onKeyDown={handleKeyDown}
                 disabled={!ready}
                 placeholder="e.g. 02101, Boston, or 123 Main St"
-                autoComplete="off"
+                autoComplete="new-address"
+                name="territory-search-nonautofill"
                 maxLength={100}
             />
             {showDropdown && (
@@ -149,12 +150,12 @@ export function WizardStep1(s: WizardState) {
             </div>
             <div className="wizard__section-title" style={{ marginTop: 18 }}>Customer</div>
             <div className="wizard__row">
-                <div className="wizard__field wizard__field--wide"><Label htmlFor="wz-fname">First Name</Label><Input id="wz-fname" value={s.firstName} onChange={(e) => s.setFirstName(e.target.value)} placeholder="John" /></div>
-                <div className="wizard__field wizard__field--wide"><Label htmlFor="wz-lname">Last Name</Label><Input id="wz-lname" value={s.lastName} onChange={(e) => s.setLastName(e.target.value)} placeholder="Doe" /></div>
+                <div className="wizard__field wizard__field--wide"><Label htmlFor="wz-fname">First Name</Label><Input id="wz-fname" name="lead-fname-nonautofill" autoComplete="new-password" value={s.firstName} onChange={(e) => s.setFirstName(e.target.value)} placeholder="John" /></div>
+                <div className="wizard__field wizard__field--wide"><Label htmlFor="wz-lname">Last Name</Label><Input id="wz-lname" name="lead-lname-nonautofill" autoComplete="new-password" value={s.lastName} onChange={(e) => s.setLastName(e.target.value)} placeholder="Doe" /></div>
             </div>
             <div className="wizard__row">
-                <div className="wizard__field wizard__field--wide"><Label htmlFor="wz-phone">Phone</Label><PhoneInput id="wz-phone" value={s.phoneNumber} onChange={s.setPhoneNumber} /></div>
-                <div className="wizard__field wizard__field--wide"><Label htmlFor="wz-email">Email</Label><Input id="wz-email" type="email" value={s.email} onChange={(e) => s.setEmail(e.target.value)} placeholder="email@example.com" /></div>
+                <div className="wizard__field wizard__field--wide"><Label htmlFor="wz-phone">Phone</Label><PhoneInput id="wz-phone" name="lead-phone-nonautofill" autoComplete="new-password" value={s.phoneNumber} onChange={s.setPhoneNumber} /></div>
+                <div className="wizard__field wizard__field--wide"><Label htmlFor="wz-email">Email</Label><Input id="wz-email" name="lead-email-nonautofill" autoComplete="new-password" type="email" value={s.email} onChange={(e) => s.setEmail(e.target.value)} placeholder="email@example.com" /></div>
             </div>
         </div>
     );

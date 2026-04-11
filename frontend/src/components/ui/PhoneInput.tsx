@@ -63,6 +63,7 @@ interface PhoneInputProps {
 
 export function PhoneInput({
     id,
+    name,
     value,
     onChange,
     onBlur,
@@ -70,7 +71,8 @@ export function PhoneInput({
     required,
     disabled,
     className,
-}: PhoneInputProps) {
+    autoComplete,
+}: PhoneInputProps & { name?: string; autoComplete?: string }) {
     const [focused, setFocused] = useState(false);
 
     const allDigits = digitsOnly(value);
@@ -92,7 +94,9 @@ export function PhoneInput({
         <div className="phone-input-wrapper" style={{ position: 'relative' }}>
             <Input
                 id={id}
+                name={name}
                 type="tel"
+                autoComplete={autoComplete}
                 value={displayValue}
                 onChange={handleChange}
                 onFocus={() => setFocused(true)}
