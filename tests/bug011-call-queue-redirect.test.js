@@ -113,34 +113,42 @@ describe('Bug #11 — handleDialAction voicemail and finalization', () => {
         expect(twiml).not.toContain('<Say');
     });
 
-    test('child leg finalization runs before voicemail TwiML', async () => {
-        mockQuery.mockResolvedValue({ rows: [], rowCount: 2 });
-        const req = makeDialActionReq({ DialCallStatus: 'no-answer' });
-        const res = makeRes();
-
-        await handleDialAction(req, res);
-
-        // Verify child leg finalization SQL was called
-        const updateCall = mockQuery.mock.calls.find(c =>
-            typeof c[0] === 'string' && c[0].includes('parent_call_sid') && c[0].includes('is_final = true')
-        );
-        expect(updateCall).toBeTruthy();
-
-        // And voicemail TwiML was returned
-        const twiml = res.send.mock.calls[0][0];
-        expect(twiml).toContain('<Record');
-    });
-
-    test('voicemail sets status to voicemail_recording in DB', async () => {
+    test('dial event is enqueued to webhook_inbox for async processing', async () => {
+        // Single-writer architecture: handleDialAction enqueues to webhook_inbox,
+        // child leg finalization + status updates are handled by processDialEvent
+        // in inboxWorker (tested in bug-answered-call-shown-missed.test.js)
         mockQuery.mockResolvedValue({ rows: [], rowCount: 0 });
         const req = makeDialActionReq({ DialCallStatus: 'no-answer' });
         const res = makeRes();
 
         await handleDialAction(req, res);
 
-        const vmUpdate = mockQuery.mock.calls.find(c =>
-            typeof c[0] === 'string' && c[0].includes('voicemail_recording')
+        // Verify event was enqueued via insertInboxEvent
+        expect(mockInsertInboxEvent).toHaveBeenCalledWith(
+            expect.objectContaining({
+                source: 'dial',
+                eventType: 'dial.action',
+            })
         );
-        expect(vmUpdate).toBeTruthy();
+
+        // And voicemail TwiML was returned
+        const twiml = res.send.mock.calls[0][0];
+        expect(twiml).toContain('<Record');
+    });
+
+    test('handleDialAction does NOT write directly to calls table', async () => {
+        mockQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+        const req = makeDialActionReq({ DialCallStatus: 'no-answer' });
+        const res = makeRes();
+
+        await handleDialAction(req, res);
+
+        // No direct DB writes to calls table (only webhook_inbox INSERT)
+        const callsWrites = mockQuery.mock.calls.filter(c =>
+            typeof c[0] === 'string' &&
+            c[0].includes('UPDATE calls') &&
+            !c[0].includes('webhook_inbox')
+        );
+        expect(callsWrites).toHaveLength(0);
     });
 });

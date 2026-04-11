@@ -153,10 +153,13 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
 
     // -----------------------------------------------------------------------
     // Layer 2a — Child leg finalization: no-answer
+    // (Single-writer: handleDialAction enqueues to webhook_inbox,
+    //  processDialEvent in inboxWorker handles DB writes.
+    //  DB finalization is tested in bug-answered-call-shown-missed.test.js)
     // -----------------------------------------------------------------------
     describe('Layer 2a — Child leg finalization (no-answer)', () => {
-        it('should finalize child legs with is_final=true when DialCallStatus is no-answer', async () => {
-            mockQuery.mockResolvedValue({ rowCount: 2, rows: [] });
+        it('should enqueue dial.action event and return voicemail TwiML when DialCallStatus is no-answer', async () => {
+            mockQuery.mockResolvedValue({ rowCount: 0, rows: [] });
 
             const req = makeReq({
                 DialCallStatus: 'no-answer',
@@ -167,24 +170,28 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
 
             await handleDialAction(req, res);
 
-            const finalizeCalls = mockQuery.mock.calls.filter(
-                ([sql]) => typeof sql === 'string' && sql.includes('parent_call_sid') && sql.includes('is_final = true')
+            // Verify event was enqueued via insertInboxEvent
+            expect(mockInsertInboxEvent).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    source: 'dial',
+                    eventType: 'dial.action',
+                })
             );
-            expect(finalizeCalls.length).toBeGreaterThanOrEqual(1);
 
-            const [sql, params] = finalizeCalls[0];
-            expect(params[0]).toBe('CA_parent_002');
-            expect(params[1]).toBe('no-answer');
-            expect(sql).toContain('is_final = true');
+            // Verify voicemail TwiML was returned
+            const twiml = res.send.mock.calls[0][0];
+            expect(twiml).toContain('<Record');
+            expect(twiml).toContain('<Say');
         });
     });
 
     // -----------------------------------------------------------------------
     // Layer 2b — Child leg finalization: completed
+    // (Single-writer: DB writes handled by processDialEvent in inboxWorker)
     // -----------------------------------------------------------------------
     describe('Layer 2b — Child leg finalization (completed)', () => {
-        it('should set in-progress children to completed when DialCallStatus is completed', async () => {
-            mockQuery.mockResolvedValue({ rowCount: 1, rows: [] });
+        it('should enqueue dial.action event and return hangup TwiML when DialCallStatus is completed', async () => {
+            mockQuery.mockResolvedValue({ rowCount: 0, rows: [] });
 
             const req = makeReq({
                 DialCallStatus: 'completed',
@@ -195,15 +202,13 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
 
             await handleDialAction(req, res);
 
-            const finalizeCalls = mockQuery.mock.calls.filter(
-                ([sql]) => typeof sql === 'string' && sql.includes('parent_call_sid') && sql.includes('is_final = true')
+            // Verify event was enqueued via insertInboxEvent
+            expect(mockInsertInboxEvent).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    source: 'dial',
+                    eventType: 'dial.action',
+                })
             );
-            expect(finalizeCalls.length).toBeGreaterThanOrEqual(1);
-
-            const [sql, params] = finalizeCalls[0];
-            expect(params[0]).toBe('CA_parent_003');
-            expect(sql).toContain("WHEN status = 'in-progress' THEN 'completed'");
-            expect(params[1]).toBe('completed');
 
             const twiml = res.send.mock.calls[0][0];
             expect(twiml).toContain('<Hangup');

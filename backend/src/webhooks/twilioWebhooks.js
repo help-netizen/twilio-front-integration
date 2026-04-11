@@ -597,6 +597,9 @@ async function handleDialAction(req, res) {
             return res.status(400).send('<Response></Response>');
         }
 
+        // Enqueue dial event for async processing by inboxWorker (single-writer architecture).
+        // All DB writes (child finalization, parent status, SSE) are handled by processDialEvent
+        // in inboxWorker to eliminate race conditions with voice-status event processing.
         await ingestToInbox({
             source: 'dial',
             eventType: 'dial.action',
@@ -605,27 +608,7 @@ async function handleDialAction(req, res) {
             traceId
         });
 
-        // Finalize all child legs for this parent call to prevent stale busy state
-        try {
-            const db = require('../db/connection');
-            const finalizeStatus = dialStatus === 'completed' || dialStatus === 'answered' ? 'completed' : 'no-answer';
-            const dialDuration = parseInt(req.body.DialCallDuration || 0) || null;
-            const result = await db.query(
-                `UPDATE calls SET status = CASE WHEN status = 'in-progress' THEN 'completed' ELSE $2 END,
-                        is_final = true,
-                        duration_sec = CASE WHEN status = 'in-progress' THEN COALESCE($3, duration_sec) ELSE duration_sec END,
-                        ended_at = COALESCE(ended_at, NOW())
-                 WHERE parent_call_sid = $1
-                   AND is_final = false`,
-                [CallSid, finalizeStatus, dialDuration]
-            );
-            if (result.rowCount > 0) {
-                console.log(`[${traceId}] Finalized ${result.rowCount} child leg(s) for parent ${CallSid}`);
-            }
-        } catch (childErr) {
-            console.warn(`[${traceId}] Failed to finalize child legs:`, childErr.message);
-        }
-
+        // Decide TwiML response based on DialCallStatus (no DB reads needed)
         const toVoicemail = dialStatus !== 'completed' && dialStatus !== 'answered';
 
         let twiml;
@@ -638,7 +621,7 @@ async function handleDialAction(req, res) {
             const vmSilenceTimeout = Number(process.env.VM_SILENCE_TIMEOUT || 5);
             const vmFinishOnKey = process.env.VM_FINISH_ON_KEY || '#';
 
-            console.log(`[${traceId}] No answer (${dialStatus}) → voicemail`);
+            console.log(`[${traceId}] No answer (${dialStatus}) → voicemail TwiML`);
 
             twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -652,43 +635,12 @@ async function handleDialAction(req, res) {
             recordingStatusCallbackMethod="POST" />
     <Hangup />
 </Response>`;
-
-            // Set call status to voicemail_recording so UI shows "Leaving voicemail"
-            try {
-                const db = require('../db/connection');
-                await db.query(
-                    `UPDATE calls SET status = 'voicemail_recording', is_final = false WHERE call_sid = $1`,
-                    [CallSid]
-                );
-                // Broadcast SSE so frontend updates immediately
-                const realtimeService = require('../services/realtimeService');
-                const freshCall = await queries.getCallByCallSid(CallSid);
-                if (freshCall) {
-                    realtimeService.publishCallUpdate({ eventType: 'call.updated', ...freshCall });
-                }
-                console.log(`[${traceId}] Status → voicemail_recording`);
-            } catch (vmErr) {
-                console.warn(`[${traceId}] Failed to set voicemail_recording:`, vmErr.message);
-            }
         } else {
-            console.log(`[${traceId}] Call completed (${dialStatus}) → hangup`);
+            console.log(`[${traceId}] Call completed (${dialStatus}) → hangup TwiML`);
             twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Hangup />
 </Response>`;
-
-            // Finalize the parent call itself (prevents stale in-progress parent legs)
-            try {
-                const db = require('../db/connection');
-                await db.query(
-                    `UPDATE calls SET status = 'completed', is_final = true, ended_at = COALESCE(ended_at, NOW())
-                     WHERE call_sid = $1 AND is_final = false`,
-                    [CallSid]
-                );
-                console.log(`[${traceId}] Parent ${CallSid} finalized as completed`);
-            } catch (parentErr) {
-                console.warn(`[${traceId}] Failed to finalize parent:`, parentErr.message);
-            }
         }
 
         res.type('text/xml');

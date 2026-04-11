@@ -115,7 +115,9 @@ async function processEvent(inboxEvent) {
     console.log(`[${traceId}] Processing`, { source, event_type, callSid: payload.CallSid });
 
     try {
-        if (source === 'voice' || source === 'dial') {
+        if (source === 'dial' && event_type === 'dial.action') {
+            await processDialEvent(payload, traceId);
+        } else if (source === 'voice' || source === 'dial') {
             await processVoiceEvent(payload, event_type, traceId, source);
         } else if (source === 'recording') {
             await processRecordingEvent(payload, traceId, source);
@@ -420,6 +422,88 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
 }
 
 // =============================================================================
+// Process dial.action event (single-writer architecture)
+// Replaces the direct DB writes that were previously in handleDialAction.
+// Runs AFTER child voice-status events have been processed (dial event arrives
+// last in webhook_inbox), so it has complete information about children.
+// =============================================================================
+
+async function processDialEvent(payload, traceId) {
+    const CallSid = payload.CallSid;
+    const dialStatus = (payload.DialCallStatus || '').toLowerCase();
+    const dialDuration = parseInt(payload.DialCallDuration || 0) || null;
+    const isAnswered = dialStatus === 'completed' || dialStatus === 'answered';
+
+    console.log(`[${traceId}] processDialEvent`, { CallSid, dialStatus, dialDuration });
+
+    // 1. Cross-check: child evidence overrides DialCallStatus
+    //    Defense against edge cases where DialCallStatus doesn't match reality
+    const childResult = await db.query(
+        `SELECT call_sid, status, duration_sec FROM calls
+         WHERE parent_call_sid = $1
+         ORDER BY duration_sec DESC NULLS LAST`,
+        [CallSid]
+    );
+    const children = childResult.rows;
+    const answeredChild = children.find(c =>
+        c.status === 'completed' && c.duration_sec && c.duration_sec > 0
+    );
+
+    // Trust child evidence: if a child was genuinely answered (completed + duration),
+    // treat the call as answered even if DialCallStatus says otherwise
+    const effectivelyAnswered = isAnswered || !!answeredChild;
+
+    if (!isAnswered && answeredChild) {
+        console.log(`[${traceId}] dial.action: DialCallStatus=${dialStatus} but child ${answeredChild.call_sid} is completed (duration=${answeredChild.duration_sec}s) — overriding to answered`);
+    }
+
+    // 2. Finalize non-final child legs
+    const finalizeStatus = effectivelyAnswered ? 'completed' : 'no-answer';
+    const finResult = await db.query(
+        `UPDATE calls SET
+            status = CASE WHEN status = 'in-progress' THEN 'completed' ELSE $2 END,
+            is_final = true,
+            duration_sec = CASE WHEN status = 'in-progress'
+                THEN COALESCE($3, duration_sec) ELSE duration_sec END,
+            ended_at = COALESCE(ended_at, NOW())
+         WHERE parent_call_sid = $1 AND is_final = false`,
+        [CallSid, finalizeStatus, dialDuration]
+    );
+    if (finResult.rowCount > 0) {
+        console.log(`[${traceId}] dial.action: finalized ${finResult.rowCount} child leg(s) as ${finalizeStatus}`);
+    }
+
+    // 3. Update parent status (authoritative — overrides any premature reconciliation result)
+    if (effectivelyAnswered) {
+        await db.query(
+            `UPDATE calls SET status = 'completed', is_final = true,
+             ended_at = COALESCE(ended_at, NOW())
+             WHERE call_sid = $1`,
+            [CallSid]
+        );
+        console.log(`[${traceId}] dial.action: parent ${CallSid} → completed`);
+    } else {
+        await db.query(
+            `UPDATE calls SET status = 'voicemail_recording', is_final = false
+             WHERE call_sid = $1`,
+            [CallSid]
+        );
+        console.log(`[${traceId}] dial.action: parent ${CallSid} → voicemail_recording`);
+    }
+
+    // 4. SSE broadcast so frontend updates
+    const freshCall = await queries.getCallByCallSid(CallSid);
+    if (freshCall) {
+        publishRealtimeEvent('call.updated', freshCall, traceId);
+    }
+
+    // 5. Final reconciliation to enrich parent with winner metadata (duration, answered_at, etc.)
+    if (effectivelyAnswered) {
+        await reconcileParentCall(CallSid, traceId);
+    }
+}
+
+// =============================================================================
 // Reconcile parent call from child legs
 // When child legs complete, update the parent with the winner's metadata
 // =============================================================================
@@ -434,8 +518,20 @@ async function reconcileParentCall(parentCallSid, traceId) {
         );
         const parentCurrentStatus = parentCheck.rows[0]?.status;
         if (['no-answer', 'voicemail_recording', 'voicemail_left'].includes(parentCurrentStatus)) {
-            console.log(`[${traceId}] Skipping reconciliation — parent is ${parentCurrentStatus}`);
-            return;
+            // Check if any child was genuinely answered (completed with real duration).
+            // If so, allow reconciliation — the parent status was likely set prematurely
+            // by partial reconciliation or should be corrected to completed.
+            const answeredCheck = await db.query(
+                `SELECT 1 FROM calls
+                 WHERE parent_call_sid = $1 AND status = 'completed' AND duration_sec > 0
+                 LIMIT 1`,
+                [parentCallSid]
+            );
+            if (answeredCheck.rows.length === 0) {
+                console.log(`[${traceId}] Skipping reconciliation — parent is ${parentCurrentStatus}, no answered children`);
+                return;
+            }
+            console.log(`[${traceId}] Parent is ${parentCurrentStatus} but has answered child — proceeding with reconciliation`);
         }
 
         // Get all child legs for this parent
@@ -797,6 +893,7 @@ async function startWorker() {
 module.exports = {
     startWorker,
     processEvent,
+    processDialEvent,
     normalizeVoiceEvent,
     normalizeRecordingEvent,
     normalizeTranscriptionEvent,
