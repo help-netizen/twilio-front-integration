@@ -185,7 +185,6 @@ export async function layoutWithElkLayered(
 
 const BIPARTITE_ROW_HEIGHT = 64;
 const BIPARTITE_COLUMN_GAP = 480;
-const _BIPARTITE_NODE_WIDTH = 200; // reserved for future bipartite layout
 
 /**
  * Bipartite two-column layout for FSM transition visualization.
