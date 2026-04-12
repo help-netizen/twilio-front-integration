@@ -158,7 +158,7 @@ twimlRouter.post('/twiml/outbound', async (req, res) => {
           recordingStatusCallback="${recordingStatusUrl}"
           recordingStatusCallbackMethod="POST">
         <Number statusCallback="${statusCallbackUrl}"
-                statusCallbackEvent="initiated ringing answered completed"
+                statusCallbackEvent="initiated ringing answered completed failed"
                 statusCallbackMethod="POST">${normalized}</Number>
     </Dial>
 </Response>`;
@@ -270,7 +270,7 @@ twimlRouter.post('/twiml/inbound', async (req, res) => {
           recordingStatusCallback="${recordingStatusUrl}"
           recordingStatusCallbackMethod="POST">
         <Client statusCallback="${statusCallbackUrl}"
-                statusCallbackEvent="initiated ringing answered completed"
+                statusCallbackEvent="initiated ringing answered completed failed"
                 statusCallbackMethod="POST">${defaultIdentity}</Client>
     </Dial>
 </Response>`;
@@ -286,8 +286,10 @@ twimlRouter.post('/twiml/inbound', async (req, res) => {
 twimlRouter.get('/blanc-numbers', async (req, res) => {
     try {
         const db = require('../db/connection');
+        const defaultCallerId = process.env.SOFTPHONE_CALLER_ID || '';
         const result = await db.query(
-            `SELECT phone_number, friendly_name FROM phone_number_settings WHERE routing_mode = 'client' ORDER BY phone_number`
+            `SELECT phone_number, friendly_name FROM phone_number_settings WHERE routing_mode = 'client' ORDER BY (phone_number = $1) DESC, phone_number`,
+            [defaultCallerId]
         );
         res.json({ ok: true, numbers: result.rows });
     } catch (err) {
