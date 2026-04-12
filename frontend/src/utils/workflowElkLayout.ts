@@ -181,6 +181,105 @@ export async function layoutWithElkLayered(
     };
 }
 
+// ─── Bipartite two-column layout ─────────────────────────────────────────────
+
+const BIPARTITE_ROW_HEIGHT = 64;
+const BIPARTITE_COLUMN_GAP = 480;
+const _BIPARTITE_NODE_WIDTH = 200; // reserved for future bipartite layout
+
+/**
+ * Bipartite two-column layout for FSM transition visualization.
+ * Left column = source states (FROM), right column = target states (TO).
+ * Edges connect left→right showing available transitions.
+ *
+ * Each state is duplicated: {id}__src (left) and {id}__tgt (right).
+ * Edges are remapped: {source}__src → {target}__tgt.
+ */
+export function layoutBipartite(
+    nodes: WorkflowNode[],
+    edges: WorkflowEdge[],
+): { nodes: WorkflowNode[]; edges: WorkflowEdge[] } {
+    if (nodes.length === 0) return { nodes: [], edges: [] };
+
+    // Sort: initial first, then non-final alphabetically, final last
+    const sorted = [...nodes].sort((a, b) => {
+        if (a.data?.isInitial && !b.data?.isInitial) return -1;
+        if (!a.data?.isInitial && b.data?.isInitial) return 1;
+        if (a.data?.isFinal && !b.data?.isFinal) return 1;
+        if (!a.data?.isFinal && b.data?.isFinal) return -1;
+        return String(a.id).localeCompare(String(b.id));
+    });
+
+    // Build sets of connected source/target IDs for dimming
+    const sourceIds = new Set(edges.map(e => e.source));
+    const targetIds = new Set(edges.map(e => e.target));
+
+    const bipartiteNodes: WorkflowNode[] = [];
+
+    for (let i = 0; i < sorted.length; i++) {
+        const node = sorted[i];
+        const y = i * BIPARTITE_ROW_HEIGHT;
+        const hasOutgoing = sourceIds.has(node.id);
+        const hasIncoming = targetIds.has(node.id);
+
+        // Left column node (source)
+        bipartiteNodes.push({
+            ...node,
+            id: `${node.id}__src`,
+            type: 'bipartiteSource',
+            position: { x: 0, y },
+            draggable: false,
+            data: {
+                ...node.data,
+                originalId: node.id,
+                bipartiteRole: 'source',
+                dimmed: !hasOutgoing,
+            } as any,
+            sourcePosition: Position.Right,
+            targetPosition: Position.Left,
+        } as any);
+
+        // Right column node (target)
+        bipartiteNodes.push({
+            ...node,
+            id: `${node.id}__tgt`,
+            type: 'bipartiteTarget',
+            position: { x: BIPARTITE_COLUMN_GAP, y },
+            draggable: false,
+            data: {
+                ...node.data,
+                originalId: node.id,
+                bipartiteRole: 'target',
+                dimmed: !hasIncoming,
+            } as any,
+            sourcePosition: Position.Right,
+            targetPosition: Position.Left,
+        } as any);
+    }
+
+    // Remap edges: source__src → target__tgt
+    // Labels hidden by default — only shown when a node is focused
+    const bipartiteEdges: WorkflowEdge[] = edges.map(edge => ({
+        ...edge,
+        id: `${edge.id}__bip`,
+        source: `${edge.source}__src`,
+        target: `${edge.target}__tgt`,
+        type: 'bipartiteEdge',
+        label: '',
+        sourceHandle: null,
+        targetHandle: null,
+        markerEnd: edge.markerEnd ?? { type: MarkerType.ArrowClosed },
+        data: {
+            ...(edge.data || {}),
+            originalEdgeId: edge.id,
+            originalSource: edge.source,
+            originalTarget: edge.target,
+        },
+    } as any));
+
+    return { nodes: bipartiteNodes, edges: bipartiteEdges };
+}
+
 // ─── Backward-compatible alias ───────────────────────────────────────────────
 
 export const layoutWorkflowGraph = layoutWithElkLayered;

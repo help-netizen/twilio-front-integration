@@ -12,7 +12,6 @@ import {
     MiniMap,
     useNodesState,
     useEdgesState,
-    addEdge,
     MarkerType,
     type Node,
     type Edge,
@@ -46,7 +45,7 @@ import {
     type ValidationResult,
 } from '../../hooks/useFsmEditor';
 
-import { layoutWithElkLayered } from '../../utils/workflowElkLayout';
+import { layoutBipartite } from '../../utils/workflowElkLayout';
 import {
     scxmlToGraph,
     graphToScxml,
@@ -57,6 +56,9 @@ import {
     WorkflowStateNode,
     WorkflowFinalNode,
     WorkflowInsertableEdge,
+    BipartiteSourceNode,
+    BipartiteTargetNode,
+    BipartiteEdge,
     setOnEdgeInsert,
 } from './workflowNodeTypes';
 import {
@@ -70,11 +72,26 @@ import {
 const nodeTypes: NodeTypes = {
     workflowState: WorkflowStateNode as any,
     workflowFinal: WorkflowFinalNode as any,
+    bipartiteSource: BipartiteSourceNode as any,
+    bipartiteTarget: BipartiteTargetNode as any,
 };
 
 const edgeTypes: EdgeTypes = {
     workflowInsertable: WorkflowInsertableEdge as any,
+    bipartiteEdge: BipartiteEdge as any,
 };
+
+// ─── Bipartite ID helpers ────────────────────────────────────────────────────
+
+/** Extract original state ID from bipartite node ID (e.g. "Submitted__src" → "Submitted") */
+function getOriginalId(bipartiteId: string): string {
+    return bipartiteId.replace(/__(?:src|tgt)$/, '');
+}
+
+/** Extract original edge ID from bipartite edge ID (e.g. "X--TO_Y--Z__bip" → "X--TO_Y--Z") */
+function getOriginalEdgeId(bipartiteId: string): string {
+    return bipartiteId.replace(/__bip$/, '');
+}
 
 // ─── Undo / Redo ─────────────────────────────────────────────────────────────
 
@@ -160,7 +177,26 @@ export default function WorkflowBuilderPage() {
     const pendingLayoutRef = useRef(false);
     const reactFlowRef = useRef<ReactFlowInstance<Node<WorkflowNodeData>, Edge> | null>(null);
 
+    // Logical model: original nodes/edges from SCXML (used for save, inspectors, undo)
+    const logicalNodesRef = useRef<Node<WorkflowNodeData>[]>([]);
+    const logicalEdgesRef = useRef<Edge[]>([]);
+
+    // Focus highlight: which bipartite node is focused (e.g. "Submitted__src")
+    const [focusedBipId, setFocusedBipId] = useState<string | null>(null);
+    // Suppress focus reset during edge drag
+    const connectingRef = useRef(false);
+
     const { push: pushSnap, undo, redo, canUndo, canRedo } = useUndoRedo(nodes, edges, setNodes, setEdges);
+
+    /** Apply bipartite layout from the logical model and set display nodes/edges */
+    const applyBipartiteLayout = useCallback((logNodes: Node<WorkflowNodeData>[], logEdges: Edge[]) => {
+        logicalNodesRef.current = logNodes;
+        logicalEdgesRef.current = logEdges;
+        const { nodes: bipNodes, edges: bipEdges } = layoutBipartite(logNodes, logEdges);
+        setNodes(bipNodes as any);
+        setEdges(bipEdges as any);
+        setTimeout(() => reactFlowRef.current?.fitView({ padding: 0.2 }), 100);
+    }, [setNodes, setEdges]);
 
     // ── Initialize from SCXML ─────────────────────────────────────────────
     useEffect(() => {
@@ -180,20 +216,13 @@ export default function WorkflowBuilderPage() {
             const graph = scxmlToGraph(scxmlSource);
             setInitialStateId(graph.initialStateId);
             setMachineTitle(graph.machineTitle);
-
-            // Auto-layout
-            layoutWithElkLayered(graph.nodes, graph.edges).then(({ nodes: laid, edges: laidEdges }) => {
-                setNodes(laid as any);
-                setEdges(laidEdges as any);
-                // fitView after initial layout (small delay for React to render)
-                setTimeout(() => reactFlowRef.current?.fitView({ padding: 0.2 }), 100);
-            });
+            applyBipartiteLayout(graph.nodes, graph.edges);
         } catch (err) {
             toast.error('Failed to parse SCXML: ' + (err instanceof Error ? err.message : String(err)));
         }
 
         initialised.current = true;
-    }, [draft, active, draftLoading, activeLoading, setNodes, setEdges]);
+    }, [draft, active, draftLoading, activeLoading, applyBipartiteLayout]);
 
     // ── Edge insert callback ──────────────────────────────────────────────
     useEffect(() => {
@@ -239,22 +268,19 @@ export default function WorkflowBuilderPage() {
 
     // ── Auto-layout after insert ──────────────────────────────────────────
     useEffect(() => {
-        if (!pendingLayoutRef.current || nodes.length === 0) return;
+        if (!pendingLayoutRef.current || logicalNodesRef.current.length === 0) return;
         pendingLayoutRef.current = false;
-        layoutWithElkLayered(nodes, edges).then(({ nodes: laid, edges: laidEdges }) => {
-            setNodes(laid as any);
-            setEdges(laidEdges as any);
-            setTimeout(() => reactFlowRef.current?.fitView({ padding: 0.2 }), 100);
-        });
-    }, [nodes, edges, setNodes, setEdges]);
+        applyBipartiteLayout(logicalNodesRef.current, logicalEdgesRef.current);
+    }, [nodes, edges, applyBipartiteLayout]);
 
-    // ── Keep selectedNode/Edge in sync with current state ─────────────────
+    // ── Keep selectedNode/Edge in sync with logical model ──────────────────
+    // selectedNode/Edge store ORIGINAL IDs, not bipartite IDs
     const currentSelectedNode = useMemo(
-        () => (selectedNode ? nodes.find((n) => n.id === selectedNode.id) || null : null),
-        [selectedNode, nodes],
+        () => (selectedNode ? logicalNodesRef.current.find((n) => n.id === selectedNode.id) || null : null),
+        [selectedNode, nodes], // nodes dep triggers re-eval when display updates
     );
     const currentSelectedEdge = useMemo(
-        () => (selectedEdge ? edges.find((e) => e.id === selectedEdge.id) || null : null),
+        () => (selectedEdge ? logicalEdgesRef.current.find((e) => e.id === selectedEdge.id) || null : null),
         [selectedEdge, edges],
     );
 
@@ -262,17 +288,24 @@ export default function WorkflowBuilderPage() {
 
     const onConnect = useCallback(
         (params: Connection) => {
+            // Map bipartite IDs to original IDs
+            const srcOriginal = getOriginalId(params.source || '');
+            const tgtOriginal = getOriginalId(params.target || '');
+
+            // Block self-loops (same state → same state)
+            if (srcOriginal === tgtOriginal) return;
+
             pushSnap();
             const newEdge: Edge = {
-                id: `${params.source}--new--${params.target}`,
-                source: params.source!,
-                target: params.target!,
+                id: `${srcOriginal}--new--${tgtOriginal}`,
+                source: srcOriginal,
+                target: tgtOriginal,
                 type: 'workflowInsertable',
                 markerEnd: { type: MarkerType.ArrowClosed },
                 style: { strokeWidth: 2 },
                 labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' },
                 data: {
-                    event: `TO_${(params.target || '').toUpperCase()}`,
+                    event: `TO_${tgtOriginal.toUpperCase()}`,
                     isAction: true,
                     label: 'New Transition',
                     icon: '',
@@ -284,30 +317,149 @@ export default function WorkflowBuilderPage() {
                 } as WorkflowEdgeData,
                 label: 'New Transition',
             };
-            setEdges((eds) => addEdge(newEdge, eds));
+            // Update logical model and re-apply layout
+            logicalEdgesRef.current = [...logicalEdgesRef.current, newEdge];
+            applyBipartiteLayout(logicalNodesRef.current, logicalEdgesRef.current);
             setSelectedEdge(newEdge);
             setSelectedNode(null);
             setDirty(true);
+            // Re-trigger focus highlighting (focusedBipId stays the same,
+            // but edges/nodes were replaced — bump to re-apply)
+            if (focusedBipId) {
+                const prev = focusedBipId;
+                setFocusedBipId(null);
+                setTimeout(() => setFocusedBipId(prev), 0);
+            }
         },
-        [pushSnap, setEdges],
+        [pushSnap, applyBipartiteLayout],
     );
+
+    // ── Focus highlighting ───────────────────────────────────────────────
+    // When a bipartite node is focused, dim everything except connected nodes/edges
+    useEffect(() => {
+        if (!focusedBipId) {
+            // Reset: re-apply clean bipartite layout from logical model
+            applyBipartiteLayout(logicalNodesRef.current, logicalEdgesRef.current);
+            return;
+        }
+
+        const originalId = getOriginalId(focusedBipId);
+        const isSource = focusedBipId.endsWith('__src');
+
+        // Find connected edges and nodes
+        const connectedEdgeBipIds = new Set<string>();
+        const connectedNodeBipIds = new Set<string>();
+        connectedNodeBipIds.add(focusedBipId);
+
+        for (const e of edges) {
+            const eSrc = getOriginalId(e.source);
+            const eTgt = getOriginalId(e.target);
+
+            if (isSource && eSrc === originalId) {
+                // Source node clicked → highlight outgoing edges + target nodes
+                connectedEdgeBipIds.add(e.id);
+                connectedNodeBipIds.add(`${eTgt}__tgt`);
+            } else if (!isSource && eTgt === originalId) {
+                // Target node clicked → highlight incoming edges + source nodes
+                connectedEdgeBipIds.add(e.id);
+                connectedNodeBipIds.add(`${eSrc}__src`);
+            }
+        }
+
+        // Visual states:
+        // - selected: indigo glow (the clicked node)
+        // - highlighted: indigo border (connected nodes)
+        // - neutral: no border, full opacity (opposite column, not connected — available for new edges)
+        // - dimmed: opacity 0.15 (same column, not connected)
+        const sameColumn = isSource ? '__src' : '__tgt';
+
+        setNodes(nds => nds.map(n => {
+            const isConnected = connectedNodeBipIds.has(n.id);
+            const isSelected = n.id === focusedBipId;
+            const isInSameColumn = n.id.endsWith(sameColumn);
+
+            return {
+                ...n,
+                data: {
+                    ...n.data,
+                    dimmed: isInSameColumn && !isConnected && !isSelected,
+                    highlighted: isConnected && !isSelected,
+                    neutral: !isInSameColumn && !isConnected, // opposite column, not connected
+                },
+            } as any;
+        }));
+
+        // Store original labels before dimming (so we can restore them)
+        const originalLabels = new Map<string, string>();
+        for (const le of logicalEdgesRef.current) {
+            const bipId = `${le.id}__bip`;
+            originalLabels.set(bipId, (le.data as any)?.label || String(le.label || ''));
+        }
+
+        // Label position: near target by default, near source when target node is focused
+        const labelNearSource = !isSource;
+
+        setEdges(eds => eds.map(e => {
+            const isConnected = connectedEdgeBipIds.has(e.id);
+            const origLabel = originalLabels.get(e.id) || e.label || '';
+            return {
+                ...e,
+                // zIndex: active edges render ABOVE dimmed ones (prevents label overlap)
+                zIndex: isConnected ? 1000 : 0,
+                label: isConnected ? origLabel : '',
+                data: { ...(e.data || {}), labelNearSource: isConnected ? labelNearSource : false },
+                style: {
+                    ...e.style,
+                    strokeWidth: isConnected ? 2.5 : 1.5,
+                    stroke: isConnected ? '#6366f1' : 'rgba(117,106,89,0.12)',
+                    opacity: isConnected ? 1 : 0.12,
+                },
+                labelStyle: {
+                    fontSize: 10,
+                    fontWeight: isConnected ? 700 : 500,
+                    fill: isConnected ? '#6366f1' : '#6b7280',
+                },
+            };
+        }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [focusedBipId]);
 
     const onNodeClick = useCallback(
         (_: React.MouseEvent, node: Node) => {
-            setSelectedNode(node as Node<WorkflowNodeData>);
+            // Map bipartite node to original logical node for inspector
+            const originalId = getOriginalId(node.id);
+            const logicalNode = logicalNodesRef.current.find(n => n.id === originalId);
+            setSelectedNode((logicalNode || node) as Node<WorkflowNodeData>);
             setSelectedEdge(null);
+            // Set focus for highlighting (store bipartite ID for direction awareness)
+            setFocusedBipId(node.id);
         },
         [],
     );
 
     const onEdgeClick = useCallback((_: React.MouseEvent, edge: Edge) => {
-        setSelectedEdge(edge);
+        // Map bipartite edge to original logical edge for inspector
+        const originalId = getOriginalEdgeId(edge.id);
+        const logicalEdge = logicalEdgesRef.current.find(e => e.id === originalId);
+        setSelectedEdge(logicalEdge || edge);
         setSelectedNode(null);
+        setFocusedBipId(null); // Clear node focus when edge is selected
     }, []);
 
     const onPaneClick = useCallback(() => {
+        // Don't reset during edge drag (user is connecting nodes)
+        if (connectingRef.current) return;
         setSelectedNode(null);
         setSelectedEdge(null);
+        setFocusedBipId(null);
+    }, []);
+
+    const onConnectStart = useCallback(() => {
+        connectingRef.current = true;
+    }, []);
+
+    const onConnectEnd = useCallback(() => {
+        connectingRef.current = false;
     }, []);
 
     // ── Node/Edge update handlers ─────────────────────────────────────────
@@ -315,52 +467,52 @@ export default function WorkflowBuilderPage() {
     const handleUpdateNode = useCallback(
         (id: string, data: Partial<WorkflowNodeData>) => {
             pushSnap();
-            setNodes((nds) =>
-                nds.map((n) =>
-                    n.id === id ? { ...n, data: { ...n.data, ...data } as WorkflowNodeData } : n,
-                ),
+            // Update logical model
+            logicalNodesRef.current = logicalNodesRef.current.map((n) =>
+                n.id === id ? { ...n, data: { ...n.data, ...data } as WorkflowNodeData } : n,
             );
+            applyBipartiteLayout(logicalNodesRef.current, logicalEdgesRef.current);
             setDirty(true);
         },
-        [pushSnap, setNodes],
+        [pushSnap, applyBipartiteLayout],
     );
 
     const handleUpdateEdge = useCallback(
         (id: string, data: Partial<WorkflowEdgeData>) => {
             pushSnap();
-            setEdges((eds) =>
-                eds.map((e) => {
-                    if (e.id !== id) return e;
-                    const newData = { ...(e.data || {}), ...data } as WorkflowEdgeData;
-                    return { ...e, data: newData, label: newData.label || e.label };
-                }),
-            );
+            // Update logical model
+            logicalEdgesRef.current = logicalEdgesRef.current.map((e) => {
+                if (e.id !== id) return e;
+                const newData = { ...(e.data || {}), ...data } as WorkflowEdgeData;
+                return { ...e, data: newData, label: newData.label || e.label };
+            });
+            applyBipartiteLayout(logicalNodesRef.current, logicalEdgesRef.current);
             setDirty(true);
         },
-        [pushSnap, setEdges],
+        [pushSnap, applyBipartiteLayout],
     );
 
     const handleSetInitial = useCallback(
         (id: string) => {
             pushSnap();
-            setNodes((nds) =>
-                nds.map((n) => ({
-                    ...n,
-                    data: { ...n.data, isInitial: n.id === id } as WorkflowNodeData,
-                })),
-            );
+            logicalNodesRef.current = logicalNodesRef.current.map((n) => ({
+                ...n,
+                data: { ...n.data, isInitial: n.id === id } as WorkflowNodeData,
+            }));
             setInitialStateId(id);
+            applyBipartiteLayout(logicalNodesRef.current, logicalEdgesRef.current);
             setDirty(true);
         },
-        [pushSnap, setNodes],
+        [pushSnap, applyBipartiteLayout],
     );
 
     const handleDeleteNode = useCallback(
         (id: string) => {
             pushSnap();
+            const logEdges = logicalEdgesRef.current;
             // Edge healing: connect all incoming sources to all outgoing targets
-            const incoming = edges.filter((e) => e.target === id);
-            const outgoing = edges.filter((e) => e.source === id);
+            const incoming = logEdges.filter((e) => e.target === id);
+            const outgoing = logEdges.filter((e) => e.source === id);
             const healedEdges: Edge[] = [];
             for (const inc of incoming) {
                 for (const out of outgoing) {
@@ -371,25 +523,27 @@ export default function WorkflowBuilderPage() {
                     });
                 }
             }
-            setEdges((eds) => [
-                ...eds.filter((e) => e.source !== id && e.target !== id),
+            logicalEdgesRef.current = [
+                ...logEdges.filter((e) => e.source !== id && e.target !== id),
                 ...healedEdges,
-            ]);
-            setNodes((nds) => nds.filter((n) => n.id !== id));
+            ];
+            logicalNodesRef.current = logicalNodesRef.current.filter((n) => n.id !== id);
+            applyBipartiteLayout(logicalNodesRef.current, logicalEdgesRef.current);
             setSelectedNode(null);
             setDirty(true);
         },
-        [pushSnap, edges, setEdges, setNodes],
+        [pushSnap, applyBipartiteLayout],
     );
 
     const handleDeleteEdge = useCallback(
         (id: string) => {
             pushSnap();
-            setEdges((eds) => eds.filter((e) => e.id !== id));
+            logicalEdgesRef.current = logicalEdgesRef.current.filter((e) => e.id !== id);
+            applyBipartiteLayout(logicalNodesRef.current, logicalEdgesRef.current);
             setSelectedEdge(null);
             setDirty(true);
         },
-        [pushSnap, setEdges],
+        [pushSnap, applyBipartiteLayout],
     );
 
     // ── Add State ─────────────────────────────────────────────────────────
@@ -417,9 +571,12 @@ export default function WorkflowBuilderPage() {
             },
         };
 
+        let logEdges = logicalEdgesRef.current;
+
         if (insertEdgeId) {
-            // Splice into edge
-            const edge = edges.find((e) => e.id === insertEdgeId);
+            // Splice into edge (use original edge ID, not bipartite)
+            const origEdgeId = getOriginalEdgeId(insertEdgeId);
+            const edge = logEdges.find((e) => e.id === origEdgeId);
             if (edge) {
                 const inEdge: Edge = {
                     id: `${edge.source}--to--${stateId}`,
@@ -455,36 +612,36 @@ export default function WorkflowBuilderPage() {
                         } as WorkflowEdgeData,
                         label: `To ${edge.target.replace(/_/g, ' ')}`,
                     };
-                    setEdges((eds) => [...eds.filter((e) => e.id !== insertEdgeId), inEdge, outEdge]);
+                    logEdges = [...logEdges.filter((e) => e.id !== origEdgeId), inEdge, outEdge];
                 } else {
-                    setEdges((eds) => [...eds.filter((e) => e.id !== insertEdgeId), inEdge]);
+                    logEdges = [...logEdges.filter((e) => e.id !== origEdgeId), inEdge];
                 }
             }
         }
 
-        setNodes((nds) => [...nds, newNode]);
+        logicalNodesRef.current = [...logicalNodesRef.current, newNode];
+        logicalEdgesRef.current = logEdges;
+
         setShowAddState(false);
         setInsertEdgeId(null);
         setNewStateName('');
         setNewStateIsFinal(false);
         setDirty(true);
         pendingLayoutRef.current = true;
-    }, [newStateName, newStateIsFinal, insertEdgeId, edges, pushSnap, setNodes, setEdges]);
+    }, [newStateName, newStateIsFinal, insertEdgeId, pushSnap]);
 
     // ── Actions ───────────────────────────────────────────────────────────
 
-    const handleAutoLayout = useCallback(async () => {
+    const handleAutoLayout = useCallback(() => {
         pushSnap();
-        const result = await layoutWithElkLayered(nodes, edges);
-        setNodes(result.nodes as any);
-        setEdges(result.edges as any);
-        setTimeout(() => reactFlowRef.current?.fitView({ padding: 0.2 }), 100);
-    }, [pushSnap, nodes, edges, setNodes, setEdges]);
+        applyBipartiteLayout(logicalNodesRef.current, logicalEdgesRef.current);
+    }, [pushSnap, applyBipartiteLayout]);
 
     const handleSave = useCallback(async () => {
         if (!dirty || saveDraft.isPending || publishDraft.isPending) return;
         try {
-            const scxml = graphToScxml(nodes, edges, initialStateId, machineKey, machineTitle);
+            // Use logical model (original IDs) for SCXML generation
+            const scxml = graphToScxml(logicalNodesRef.current, logicalEdgesRef.current, initialStateId, machineKey, machineTitle);
             await saveDraft.mutateAsync({ scxml_source: scxml });
             setDirty(false);
 
@@ -494,11 +651,12 @@ export default function WorkflowBuilderPage() {
         } catch (err: unknown) {
             toast.error(err instanceof Error ? err.message : 'Failed to save');
         }
-    }, [dirty, saveDraft, publishDraft, nodes, edges, initialStateId, machineKey, machineTitle]);
+    }, [dirty, saveDraft, publishDraft, initialStateId, machineKey, machineTitle]);
 
     const handleValidate = useCallback(async () => {
+        // Use logical model for validation
         try {
-            const scxml = graphToScxml(nodes, edges, initialStateId, machineKey, machineTitle);
+            const scxml = graphToScxml(logicalNodesRef.current, logicalEdgesRef.current, initialStateId, machineKey, machineTitle);
             const result = await validateScxml.mutateAsync({ scxml_source: scxml });
             setValidationResult(result);
             if (result.valid) {
@@ -512,7 +670,7 @@ export default function WorkflowBuilderPage() {
     }, [validateScxml, nodes, edges, initialStateId, machineKey, machineTitle]);
 
     const handleExport = useCallback(() => {
-        const scxml = graphToScxml(nodes, edges, initialStateId, machineKey, machineTitle);
+        const scxml = graphToScxml(logicalNodesRef.current, logicalEdgesRef.current, initialStateId, machineKey, machineTitle);
         const blob = new Blob([scxml], { type: 'application/xml' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -662,18 +820,21 @@ export default function WorkflowBuilderPage() {
                         onNodesChange={onNodesChange}
                         onEdgesChange={onEdgesChange}
                         onConnect={onConnect}
+                        onConnectStart={onConnectStart}
+                        onConnectEnd={onConnectEnd}
                         onNodeClick={onNodeClick}
                         onEdgeClick={onEdgeClick}
                         onPaneClick={onPaneClick}
                         onInit={(instance) => { reactFlowRef.current = instance; }}
                         nodeTypes={nodeTypes}
                         edgeTypes={edgeTypes}
+                        nodesDraggable={false}
                         fitView
-                        fitViewOptions={{ padding: 0.2 }}
+                        fitViewOptions={{ padding: 0.15 }}
                         defaultEdgeOptions={{
-                            type: 'workflowInsertable',
+                            type: 'bipartiteEdge',
                             markerEnd: { type: MarkerType.ArrowClosed },
-                            style: { strokeWidth: 2 },
+                            style: { strokeWidth: 1.5, stroke: 'rgba(117,106,89,0.35)' },
                         }}
                     >
                         <Background gap={20} size={1} color="rgba(117,106,89,0.08)" />
@@ -693,8 +854,8 @@ export default function WorkflowBuilderPage() {
                     {currentSelectedNode ? (
                         <StateInspector
                             node={currentSelectedNode}
-                            edges={edges}
-                            nodes={nodes}
+                            edges={logicalEdgesRef.current}
+                            nodes={logicalNodesRef.current}
                             onUpdateNode={handleUpdateNode}
                             onDeleteNode={handleDeleteNode}
                             onSetInitial={handleSetInitial}
@@ -702,14 +863,14 @@ export default function WorkflowBuilderPage() {
                     ) : currentSelectedEdge ? (
                         <TransitionInspector
                             edge={currentSelectedEdge}
-                            nodes={nodes}
+                            nodes={logicalNodesRef.current}
                             onUpdateEdge={handleUpdateEdge}
                             onDeleteEdge={handleDeleteEdge}
                         />
                     ) : (
                         <FlowPropertiesPanel
-                            nodes={nodes}
-                            edges={edges}
+                            nodes={logicalNodesRef.current}
+                            edges={logicalEdgesRef.current}
                             initialStateId={initialStateId}
                             machineTitle={machineTitle}
                             machineKey={machineKey || ''}
