@@ -275,6 +275,8 @@ function AttachmentsSection({ attachments, galleryIndex, setGalleryIndex, rotati
     rotation: number; setRotation: (v: number | ((n: number) => number)) => void;
     showLargePreview: boolean; setShowLargePreview: (v: boolean) => void;
 }) {
+    const [fullscreen, setFullscreen] = useState(false);
+
     if (attachments.length === 0) return null;
 
     return (
@@ -312,7 +314,11 @@ function AttachmentsSection({ attachments, galleryIndex, setGalleryIndex, rotati
                         <button onClick={() => setRotation(r => r - 90)} className="p-1 ml-auto" style={{ color: 'var(--blanc-ink-3)' }}><RotateCcw className="size-3.5" /></button>
                         <a href={attachments[galleryIndex].url} target="_blank" rel="noopener noreferrer" className="p-1" style={{ color: 'var(--blanc-info)' }}><ExternalLink className="size-3.5" /></a>
                     </div>
-                    <div className="flex items-center justify-center p-3" style={{ background: 'rgba(30,30,30,0.95)', minHeight: 200, overflow: 'hidden' }}>
+                    <div
+                        className="flex items-center justify-center p-3"
+                        style={{ background: 'rgba(30,30,30,0.95)', minHeight: 200, overflow: 'hidden', cursor: attachments[galleryIndex].kind === 'image' ? 'zoom-in' : undefined }}
+                        onClick={() => { if (attachments[galleryIndex].kind === 'image') setFullscreen(true); }}
+                    >
                         {attachments[galleryIndex].kind === 'image' ? (
                             <RotatableImage
                                 src={attachments[galleryIndex].url}
@@ -329,13 +335,124 @@ function AttachmentsSection({ attachments, galleryIndex, setGalleryIndex, rotati
                     </div>
                 </div>
             )}
+            {fullscreen && attachments[galleryIndex]?.kind === 'image' && (
+                <FullscreenViewer
+                    attachments={attachments}
+                    index={galleryIndex}
+                    setIndex={setGalleryIndex}
+                    rotation={rotation}
+                    setRotation={setRotation}
+                    onClose={() => setFullscreen(false)}
+                />
+            )}
+        </div>
+    );
+}
+
+// ─── Fullscreen Image Viewer ─────────────────────────────────────────────────
+
+function FullscreenViewer({ attachments, index, setIndex, rotation, setRotation, onClose }: {
+    attachments: PaymentDetail['attachments'];
+    index: number;
+    setIndex: (v: number | ((n: number) => number)) => void;
+    rotation: number;
+    setRotation: (v: number | ((n: number) => number)) => void;
+    onClose: () => void;
+}) {
+    const imageAttachments = attachments.filter(a => a.kind === 'image');
+    const currentAtt = attachments[index];
+
+    const handleKeyDown = useCallback((e: KeyboardEvent) => {
+        if (e.key === 'Escape') onClose();
+        if (e.key === 'ArrowLeft' && index > 0) { setIndex(i => i - 1); setRotation(0); }
+        if (e.key === 'ArrowRight' && index < attachments.length - 1) { setIndex(i => i + 1); setRotation(0); }
+    }, [index, attachments.length, onClose, setIndex, setRotation]);
+
+    useEffect(() => {
+        document.addEventListener('keydown', handleKeyDown);
+        document.body.style.overflow = 'hidden';
+        return () => {
+            document.removeEventListener('keydown', handleKeyDown);
+            document.body.style.overflow = '';
+        };
+    }, [handleKeyDown]);
+
+    return (
+        <div
+            className="fixed inset-0 z-[9999] flex flex-col"
+            style={{ background: 'rgba(0,0,0,0.92)' }}
+            onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+        >
+            {/* Top bar */}
+            <div className="flex items-center gap-3 px-4 py-3 shrink-0">
+                <span className="text-white/70 text-sm font-medium">{index + 1} / {attachments.length}</span>
+                <div className="flex items-center gap-1 ml-auto">
+                    <button onClick={() => setRotation(r => r - 90)} className="p-2 rounded-lg hover:bg-white/10 transition-colors" title="Rotate">
+                        <RotateCcw className="size-4 text-white/70" />
+                    </button>
+                    <a href={currentAtt.url} target="_blank" rel="noopener noreferrer" className="p-2 rounded-lg hover:bg-white/10 transition-colors" title="Open original">
+                        <ExternalLink className="size-4 text-white/70" />
+                    </a>
+                    <button onClick={onClose} className="p-2 rounded-lg hover:bg-white/10 transition-colors" title="Close">
+                        <X className="size-4 text-white/70" />
+                    </button>
+                </div>
+            </div>
+
+            {/* Image area */}
+            <div className="flex-1 flex items-center justify-center min-h-0 px-12 pb-4 relative">
+                {/* Prev */}
+                <button
+                    disabled={index === 0}
+                    onClick={(e) => { e.stopPropagation(); setIndex(i => i - 1); setRotation(0); }}
+                    className="absolute left-2 top-1/2 -translate-y-1/2 p-2 rounded-full hover:bg-white/10 transition-colors disabled:opacity-20"
+                >
+                    <ChevronLeft className="size-6 text-white" />
+                </button>
+
+                <RotatableImage
+                    src={currentAtt.url}
+                    alt={currentAtt.filename}
+                    rotation={rotation}
+                    fullscreen
+                />
+
+                {/* Next */}
+                <button
+                    disabled={index >= attachments.length - 1}
+                    onClick={(e) => { e.stopPropagation(); setIndex(i => i + 1); setRotation(0); }}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-full hover:bg-white/10 transition-colors disabled:opacity-20"
+                >
+                    <ChevronRightIcon className="size-6 text-white" />
+                </button>
+            </div>
+
+            {/* Thumbnail strip */}
+            {imageAttachments.length > 1 && (
+                <div className="flex justify-center gap-2 px-4 pb-4 shrink-0">
+                    {attachments.map((att, i) => att.kind === 'image' ? (
+                        <button
+                            key={i}
+                            onClick={() => { setIndex(i); setRotation(0); }}
+                            className="shrink-0 overflow-hidden rounded-lg transition-all"
+                            style={{
+                                width: 48, height: 48,
+                                border: i === index ? '2px solid var(--blanc-info)' : '1px solid rgba(255,255,255,0.15)',
+                                opacity: i === index ? 1 : 0.5,
+                            }}
+                        >
+                            <img src={att.url} alt={att.filename} className="w-full h-full object-cover" />
+                        </button>
+                    ) : null)}
+                </div>
+            )}
         </div>
     );
 }
 
 // ─── RotatableImage — fits container width even when rotated 90/270 ──────────
 
-function RotatableImage({ src, alt, rotation }: { src: string; alt: string; rotation: number }) {
+function RotatableImage({ src, alt, rotation, fullscreen }: { src: string; alt: string; rotation: number; fullscreen?: boolean }) {
     const imgRef = useRef<HTMLImageElement>(null);
     const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
 
@@ -384,7 +501,7 @@ function RotatableImage({ src, alt, rotation }: { src: string; alt: string; rota
         };
         imgStyle = {
             maxWidth: '100%',
-            maxHeight: '70vh',
+            maxHeight: fullscreen ? '85vh' : '70vh',
             objectFit: 'contain',
             transform: rotation ? `rotate(${rotation}deg)` : undefined,
             transformOrigin: 'center center',
