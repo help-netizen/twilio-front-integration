@@ -30,7 +30,7 @@ interface ProviderGroup {
 }
 
 /** Format date for day heading — compact: "Mon, Apr 15" or "Today" / "Yesterday" */
-function formatDayHeading(day: Date, todayStr: string, tz: string): string {
+function formatDayHeading(day: Date, todayStr: string, _tz: string): string {
     const dayKey = format(day, 'yyyy-MM-dd');
     if (dayKey === todayStr) return 'Today';
 
