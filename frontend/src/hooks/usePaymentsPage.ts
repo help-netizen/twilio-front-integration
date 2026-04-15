@@ -50,7 +50,7 @@ export function usePaymentsPage() {
 
     const handleSync = useCallback(async () => {
         setSyncing(true); setSyncResult(null);
-        try { const res = await authedFetch(`${API_BASE}/api/zenbooker/payments/sync`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date_from: dateFrom, date_to: dateTo }) }); const json = await res.json(); if (!res.ok || !json.ok) throw new Error(json.error || 'Sync failed'); setSyncResult(`Synced ${json.data.synced} payments`); fetchPayments(); }
+        try { const res = await authedFetch(`${API_BASE}/api/zenbooker/payments/sync`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date_from: dateFrom, date_to: dateTo }) }); let json; try { json = await res.json(); } catch { throw new Error(res.status === 502 ? 'Sync timed out — try a shorter date range' : `Server error (${res.status})`); } if (!res.ok || !json.ok) throw new Error(json.error || 'Sync failed'); setSyncResult(`Synced ${json.data.synced} payments`); fetchPayments(); }
         catch (err: any) { setSyncResult(`Sync error: ${err.message}`); } finally { setSyncing(false); setTimeout(() => setSyncResult(null), 5000); }
     }, [dateFrom, dateTo, fetchPayments]);
 

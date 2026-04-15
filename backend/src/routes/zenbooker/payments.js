@@ -15,6 +15,11 @@ const paymentsService = require('../../services/zenbookerPaymentsSyncService');
 // ═══════════════════════════════════════════════════════════════════════════════
 
 router.post('/sync', async (req, res) => {
+    // Sync can take minutes for large date ranges (many ZB API calls).
+    // Override the global 15s server.setTimeout for this request only.
+    req.setTimeout(300000);   // 5 min
+    res.setTimeout(300000);
+
     try {
         const companyId = req.user.company_id;
         if (!companyId) {
