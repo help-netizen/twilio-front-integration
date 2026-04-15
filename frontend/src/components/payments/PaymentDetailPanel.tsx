@@ -4,11 +4,12 @@
  * LEFT:  Header (amount + client + status pills) → Invoice tile → Job tile → Provider tile
  * RIGHT: Attachments gallery → Metadata → Check deposit
  */
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import {
     Loader2, FileText, ChevronDown, ChevronLeft, ChevronRight as ChevronRightIcon,
     ExternalLink, RotateCcw, Receipt,
 } from 'lucide-react';
+import { FullscreenImageViewer, RotatableImage } from '../shared/FullscreenImageViewer';
 import { useNavigate } from 'react-router-dom';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import type { PaymentDetail } from './paymentTypes';
@@ -277,6 +278,16 @@ function AttachmentsSection({ attachments, galleryIndex, setGalleryIndex, rotati
 }) {
     const [fullscreen, setFullscreen] = useState(false);
 
+    // Pre-compute image-only list and index mapping for fullscreen viewer
+    const imageOnly = attachments.filter(a => a.kind === 'image').map(a => ({ url: a.url, filename: a.filename }));
+    const galleryToImageIndex = (() => {
+        let count = 0;
+        for (let j = 0; j < galleryIndex; j++) {
+            if (attachments[j]?.kind === 'image') count++;
+        }
+        return attachments[galleryIndex]?.kind === 'image' ? count : 0;
+    })();
+
     if (attachments.length === 0) return null;
 
     return (
@@ -335,190 +346,25 @@ function AttachmentsSection({ attachments, galleryIndex, setGalleryIndex, rotati
                     </div>
                 </div>
             )}
-            {fullscreen && attachments[galleryIndex]?.kind === 'image' && (
-                <FullscreenViewer
-                    attachments={attachments}
-                    index={galleryIndex}
-                    setIndex={setGalleryIndex}
-                    rotation={rotation}
-                    setRotation={setRotation}
+            {fullscreen && imageOnly.length > 0 && (
+                <FullscreenImageViewer
+                    images={imageOnly}
+                    initialIndex={galleryToImageIndex}
+                    initialRotation={rotation}
                     onClose={() => setFullscreen(false)}
+                    onIndexChange={(imgIdx) => {
+                        // Map image-only index back to full attachments array index
+                        let count = 0;
+                        for (let j = 0; j < attachments.length; j++) {
+                            if (attachments[j].kind === 'image') {
+                                if (count === imgIdx) { setGalleryIndex(j); break; }
+                                count++;
+                            }
+                        }
+                    }}
+                    onRotationChange={setRotation}
                 />
             )}
-        </div>
-    );
-}
-
-// ─── Fullscreen Image Viewer ─────────────────────────────────────────────────
-
-function FullscreenViewer({ attachments, index, setIndex, rotation, setRotation, onClose }: {
-    attachments: PaymentDetail['attachments'];
-    index: number;
-    setIndex: (v: number | ((n: number) => number)) => void;
-    rotation: number;
-    setRotation: (v: number | ((n: number) => number)) => void;
-    onClose: () => void;
-}) {
-    const imageAttachments = attachments.filter(a => a.kind === 'image');
-    const currentAtt = attachments[index];
-
-    const handleKeyDown = useCallback((e: KeyboardEvent) => {
-        if (e.key === 'Escape') onClose();
-        if (e.key === 'ArrowLeft' && index > 0) { setIndex(i => i - 1); setRotation(0); }
-        if (e.key === 'ArrowRight' && index < attachments.length - 1) { setIndex(i => i + 1); setRotation(0); }
-    }, [index, attachments.length, onClose, setIndex, setRotation]);
-
-    useEffect(() => {
-        document.addEventListener('keydown', handleKeyDown);
-        document.body.style.overflow = 'hidden';
-        return () => {
-            document.removeEventListener('keydown', handleKeyDown);
-            document.body.style.overflow = '';
-        };
-    }, [handleKeyDown]);
-
-    return (
-        <div
-            className="fixed inset-0 z-[9999] flex flex-col"
-            style={{ background: 'rgba(0,0,0,0.92)' }}
-            onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-        >
-            {/* Top bar */}
-            <div className="flex items-center gap-3 px-4 py-3 shrink-0">
-                <span className="text-white/70 text-sm font-medium">{index + 1} / {attachments.length}</span>
-                <div className="flex items-center gap-1 ml-auto">
-                    <button onClick={() => setRotation(r => r - 90)} className="p-2 rounded-lg hover:bg-white/10 transition-colors" title="Rotate">
-                        <RotateCcw className="size-4 text-white/70" />
-                    </button>
-                    <a href={currentAtt.url} target="_blank" rel="noopener noreferrer" className="p-2 rounded-lg hover:bg-white/10 transition-colors" title="Open original">
-                        <ExternalLink className="size-4 text-white/70" />
-                    </a>
-                    <button onClick={onClose} className="p-2 rounded-lg hover:bg-white/10 transition-colors" title="Close">
-                        <X className="size-4 text-white/70" />
-                    </button>
-                </div>
-            </div>
-
-            {/* Image area */}
-            <div className="flex-1 flex items-center justify-center min-h-0 px-12 pb-4 relative">
-                {/* Prev */}
-                <button
-                    disabled={index === 0}
-                    onClick={(e) => { e.stopPropagation(); setIndex(i => i - 1); setRotation(0); }}
-                    className="absolute left-2 top-1/2 -translate-y-1/2 p-2 rounded-full hover:bg-white/10 transition-colors disabled:opacity-20"
-                >
-                    <ChevronLeft className="size-6 text-white" />
-                </button>
-
-                <RotatableImage
-                    src={currentAtt.url}
-                    alt={currentAtt.filename}
-                    rotation={rotation}
-                    fullscreen
-                />
-
-                {/* Next */}
-                <button
-                    disabled={index >= attachments.length - 1}
-                    onClick={(e) => { e.stopPropagation(); setIndex(i => i + 1); setRotation(0); }}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-full hover:bg-white/10 transition-colors disabled:opacity-20"
-                >
-                    <ChevronRightIcon className="size-6 text-white" />
-                </button>
-            </div>
-
-            {/* Thumbnail strip */}
-            {imageAttachments.length > 1 && (
-                <div className="flex justify-center gap-2 px-4 pb-4 shrink-0">
-                    {attachments.map((att, i) => att.kind === 'image' ? (
-                        <button
-                            key={i}
-                            onClick={() => { setIndex(i); setRotation(0); }}
-                            className="shrink-0 overflow-hidden rounded-lg transition-all"
-                            style={{
-                                width: 48, height: 48,
-                                border: i === index ? '2px solid var(--blanc-info)' : '1px solid rgba(255,255,255,0.15)',
-                                opacity: i === index ? 1 : 0.5,
-                            }}
-                        >
-                            <img src={att.url} alt={att.filename} className="w-full h-full object-cover" />
-                        </button>
-                    ) : null)}
-                </div>
-            )}
-        </div>
-    );
-}
-
-// ─── RotatableImage — fits container width even when rotated 90/270 ──────────
-
-function RotatableImage({ src, alt, rotation, fullscreen }: { src: string; alt: string; rotation: number; fullscreen?: boolean }) {
-    const imgRef = useRef<HTMLImageElement>(null);
-    const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
-
-    const norm = ((rotation % 360) + 360) % 360;
-    const isRotatedSideways = norm === 90 || norm === 270;
-
-    const handleLoad = () => {
-        if (imgRef.current) {
-            setNaturalSize({ w: imgRef.current.naturalWidth, h: imgRef.current.naturalHeight });
-        }
-    };
-
-    // When rotated 90°/270°, CSS transform swaps visual axes:
-    //   visual width = CSS height, visual height = CSS width
-    // Image has width:100% → CSS width = containerW, CSS height = containerW * nH/nW (auto)
-    // After rotate, visual width = containerW * nH/nW — too narrow or too wide.
-    // scale(nW/nH) compensates: visual width = containerW * nH/nW * nW/nH = containerW ✓
-    // Wrapper aspect-ratio = nH/nW to match the visual height after rotation.
-
-    let imgStyle: React.CSSProperties;
-    let wrapperStyle: React.CSSProperties;
-
-    if (isRotatedSideways && naturalSize.w && naturalSize.h) {
-        const scale = naturalSize.w / naturalSize.h;
-        wrapperStyle = {
-            width: '100%',
-            aspectRatio: `${naturalSize.h} / ${naturalSize.w}`,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            overflow: 'hidden',
-        };
-        imgStyle = {
-            width: '100%',
-            transform: `rotate(${rotation}deg) scale(${scale})`,
-            transformOrigin: 'center center',
-            transition: 'transform 0.2s ease',
-        };
-    } else {
-        wrapperStyle = {
-            width: '100%',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            overflow: 'hidden',
-        };
-        imgStyle = {
-            maxWidth: '100%',
-            maxHeight: fullscreen ? '85vh' : '70vh',
-            objectFit: 'contain',
-            transform: rotation ? `rotate(${rotation}deg)` : undefined,
-            transformOrigin: 'center center',
-            transition: 'transform 0.2s ease',
-        };
-    }
-
-    return (
-        <div style={wrapperStyle}>
-            <img
-                ref={imgRef}
-                src={src}
-                alt={alt}
-                onLoad={handleLoad}
-                className="rounded"
-                style={imgStyle}
-            />
         </div>
     );
 }

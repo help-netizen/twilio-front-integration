@@ -713,3 +713,65 @@ TASK-021 + TASK-017 ──► TASK-030 (component tests) │
 **Wave 8 (parallel):** TASK-016, TASK-017, TASK-018, TASK-020, TASK-021, TASK-027
 **Wave 9 (parallel):** TASK-019, TASK-022, TASK-023, TASK-024, TASK-025, TASK-028, TASK-029
 **Wave 10:** TASK-026, TASK-030
+
+---
+---
+
+# IMG-001: Fullscreen Image Viewer — Task Breakdown
+
+**Feature:** Shared fullscreen lightbox for image attachments
+**Total tasks:** 2
+**Phases:** 1
+
+---
+
+## Phase 1: Extract & Implement
+
+---
+
+### TASK-IMG-001: Extract FullscreenImageViewer + RotatableImage to shared component
+
+**Phase:** 1
+**Status:** done
+**Dependencies:** none
+**Files to modify:**
+- `frontend/src/components/shared/FullscreenImageViewer.tsx` — **NEW**: Create shared component with `FullscreenImageViewer` and `RotatableImage` exports
+- `frontend/src/components/payments/PaymentDetailPanel.tsx` — Remove inline `FullscreenViewer` and `RotatableImage`, import from shared
+
+**Files NOT to modify:**
+- `src/server.js` (protected)
+- `frontend/src/lib/authedFetch.ts` (protected)
+
+**Acceptance criteria:**
+- [ ] `FullscreenImageViewer` exported from shared with generic `{url, filename}[]` interface
+- [ ] `RotatableImage` exported from shared (used by both inline preview and fullscreen)
+- [ ] `PaymentDetailPanel` imports from shared, no inline FullscreenViewer/RotatableImage
+- [ ] Fullscreen opens on image click, closes on Escape/backdrop/X
+- [ ] Arrow key navigation works, rotation resets on navigate
+- [ ] Thumbnail strip at bottom, body scroll locked
+- [ ] TypeScript compiles without errors
+
+---
+
+### TASK-IMG-002: Write tests for FullscreenImageViewer
+
+**Phase:** 1
+**Status:** skipped (no frontend test infrastructure — Jest not configured for TSX/JSdom)
+**Dependencies:** TASK-IMG-001
+**Files to modify:**
+- `frontend/src/components/shared/__tests__/FullscreenImageViewer.test.tsx` — **NEW**: Jest + RTL tests
+
+**Files NOT to modify:**
+- All production code (only tests)
+
+**Acceptance criteria:**
+- [ ] Tests cover: open/close, keyboard navigation, rotation reset, body scroll lock, non-image skip
+- [ ] All tests pass with `npm test`
+- [ ] Test-cases from `Docs/test-cases/IMG-001-fullscreen-image-viewer.md` covered
+
+---
+
+## Execution Order
+
+**Wave 1:** TASK-IMG-001
+**Wave 2:** TASK-IMG-002

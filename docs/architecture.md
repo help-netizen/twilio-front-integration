@@ -600,3 +600,46 @@ The parsed graph contains:
 | `requirePermission()` | `authorization.js` | Reuse existing middleware for FSM route permission checks. |
 | `authenticate` / `requireCompanyAccess` | `keycloakAuth.js` | Reuse for FSM route mounting in server.js. |
 | React Query patterns | various hooks | New `useFsmEditor` and `useFsmActions` follow same `useQuery`/`useMutation` patterns. |
+
+---
+
+## IMG-001: Fullscreen Image Viewer
+
+**Status:** Architecture
+**Feature:** Shared fullscreen lightbox for image attachments
+
+### 1. Overview
+
+Extract the inline `FullscreenViewer` and `RotatableImage` from `PaymentDetailPanel.tsx` into a shared component. This enables reuse across `NoteAttachmentDisplay`, `MessageThread`, and any future attachment UI.
+
+### 2. New Files
+
+| File | Responsibility |
+|------|---------------|
+| `frontend/src/components/shared/FullscreenImageViewer.tsx` | Exported components: `FullscreenImageViewer` (overlay with navigation, rotation, thumbnails, keyboard shortcuts), `RotatableImage` (image with CSS rotation + scale compensation). Generic interface accepts `{url, filename}[]`. |
+
+### 3. Modified Files
+
+| File | Change | What to Preserve |
+|------|--------|-----------------|
+| `frontend/src/components/payments/PaymentDetailPanel.tsx` | Remove inline `FullscreenViewer` and `RotatableImage`. Import from shared. `AttachmentsSection` uses shared `FullscreenImageViewer`. | All other sections (header, invoice, metadata, etc.), `AttachmentsSection` thumbnail strip and inline preview. |
+
+### 4. Anti-Duplication
+
+| Existing | Reuse |
+|----------|-------|
+| `RotatableImage` in PaymentDetailPanel | Extract to shared, import back |
+| `NoteAttachmentDisplay` | Future consumer — currently opens in new tab, can later use `FullscreenImageViewer` |
+
+### 5. Component Interface
+
+```typescript
+interface FullscreenImageViewerProps {
+    images: { url: string; filename: string }[];
+    initialIndex?: number;
+    initialRotation?: number;
+    onClose: () => void;
+    onIndexChange?: (index: number) => void;
+    onRotationChange?: (rotation: number) => void;
+}
+```

@@ -4,6 +4,25 @@
 
 ---
 
+## 2026-04-15 — IMG-001: Fullscreen Image Viewer
+
+### New Feature
+- **Shared fullscreen image viewer** (lightbox) component at `frontend/src/components/shared/FullscreenImageViewer.tsx`
+- Opens on click in AttachmentsSection preview area (Telegram-like UX)
+- Arrow key navigation between images, side buttons
+- 90-degree rotation with scale compensation for sideways images
+- Thumbnail strip at bottom, body scroll lock
+- Close via Escape / backdrop click / X button
+- Open original in new tab
+
+### Files Added
+- `frontend/src/components/shared/FullscreenImageViewer.tsx` — exports `FullscreenImageViewer`, `RotatableImage`
+
+### Files Modified
+- `frontend/src/components/payments/PaymentDetailPanel.tsx` — removed inline `FullscreenViewer` + `RotatableImage`, imports from shared
+
+---
+
 ## 2026-04-06 — ELK-LAYOUT-001: Production ELK Layered Auto Layout
 
 ### Improvement

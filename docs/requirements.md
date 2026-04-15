@@ -203,3 +203,41 @@ The original requirements document (section 12.2) contains a seed Job FSM that i
 | Missing transition `Rescheduled -> Canceled` | Present in `ALLOWED_TRANSITIONS` | Absent |
 
 The corrected Job FSM seed must faithfully represent all statuses and transitions from the current `ALLOWED_TRANSITIONS` map before being inserted as the initial published version during migration.
+
+---
+
+## IMG-001: Fullscreen Image Viewer
+
+**Status:** Implementation
+**Priority:** Medium
+**Owner:** Frontend/UX
+
+### 1. Description
+
+Shared fullscreen image viewer (lightbox) component. Opens when user clicks on an image preview in AttachmentsSection. Enables examining small details on photos (serial numbers, receipts, documents). Supports navigation between images, 90-degree rotation, and keyboard shortcuts. UX similar to Telegram image viewer.
+
+### 2. User Scenarios
+
+1. **Open fullscreen** — click on image preview area opens fullscreen overlay with maximized image
+2. **Navigate** — arrow keys or side buttons to switch between images; thumbnail strip at bottom
+3. **Rotate** — button rotates image by -90 degrees (counter-clockwise)
+4. **Close** — Escape key, backdrop click, or X button
+5. **Open original** — ExternalLink opens full-size image in new tab
+
+### 3. Non-Functional Requirements
+
+- Frontend-only, no backend changes
+- Component must be shared/reusable (not coupled to payments)
+- Body scroll locked when overlay is open
+- z-index high enough to overlay floating panels (z-[9999])
+
+### 4. Affected Modules
+
+| Module | Change |
+|--------|--------|
+| `frontend/src/components/shared/FullscreenImageViewer.tsx` | **New:** Shared fullscreen overlay component |
+| `frontend/src/components/payments/PaymentDetailPanel.tsx` | Extract FullscreenViewer + RotatableImage to shared, import from shared |
+
+### 5. Affected Integrations
+
+None.
