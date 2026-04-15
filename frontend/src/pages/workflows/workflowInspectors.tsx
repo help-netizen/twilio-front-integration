@@ -6,11 +6,295 @@
  * TransitionInspector — shown when an edge is selected
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import type { Node, Edge } from '@xyflow/react';
-import { Copy, Check, Trash2 } from 'lucide-react';
+import {
+    Copy, Check, Trash2,
+    // icon picker icons
+    CheckCircle, XCircle, X, ArrowRight, ArrowLeft, ArrowUp, ArrowDown,
+    Phone, PhoneOff, PhoneCall, PhoneMissed, PhoneIncoming, PhoneOutgoing,
+    Mail, Send, Calendar, Clock, Clock1, Clock3, Clock9,
+    User, Users, UserCheck, UserX, UserPlus,
+    Briefcase, Wrench, Hammer,
+    Flag, Tag, Star, Bookmark,
+    RefreshCw, Repeat, RotateCw, RotateCcw,
+    AlertTriangle, AlertCircle, Info, HelpCircle,
+    Edit, Edit2, Edit3,
+    Trash, FileText, Clipboard, ClipboardCheck,
+    Plus, Minus, PlusCircle, MinusCircle,
+    MessageSquare, MessageCircle,
+    Bell, BellOff,
+    Home, Building, Building2,
+    MapPin, Navigation, Truck,
+    DollarSign, CreditCard, Receipt,
+    Settings, Sliders,
+    Eye, EyeOff,
+    Lock, Unlock, Key,
+    Zap, Activity, TrendingUp, TrendingDown,
+    ThumbsUp, ThumbsDown, Heart, Smile, Frown,
+    Package, Box, Archive,
+    Search, Filter, SortAsc,
+    Link, ExternalLink,
+    Upload, Download,
+    Image, Camera,
+    Headphones, Mic, MicOff,
+    Share2, Forward,
+    Ban, ShieldAlert, ShieldCheck,
+} from 'lucide-react';
 import type { WorkflowNodeData, WorkflowEdgeData } from './workflowScxmlCodec';
 import { graphToScxml } from './workflowScxmlCodec';
+
+// ─── Icon Picker ─────────────────────────────────────────────────────────────
+
+const ICON_MAP: Record<string, React.ComponentType<{ size?: number; color?: string }>> = {
+    'check': Check,
+    'check-circle': CheckCircle,
+    'x': X,
+    'x-circle': XCircle,
+    'arrow-right': ArrowRight,
+    'arrow-left': ArrowLeft,
+    'arrow-up': ArrowUp,
+    'arrow-down': ArrowDown,
+    'phone': Phone,
+    'phone-off': PhoneOff,
+    'phone-call': PhoneCall,
+    'phone-missed': PhoneMissed,
+    'phone-incoming': PhoneIncoming,
+    'phone-outgoing': PhoneOutgoing,
+    'mail': Mail,
+    'send': Send,
+    'calendar': Calendar,
+    'clock': Clock,
+    'clock-1': Clock1,
+    'clock-3': Clock3,
+    'clock-9': Clock9,
+    'user': User,
+    'users': Users,
+    'user-check': UserCheck,
+    'user-x': UserX,
+    'user-plus': UserPlus,
+    'briefcase': Briefcase,
+    'wrench': Wrench,
+    'tool': Wrench,
+    'hammer': Hammer,
+    'flag': Flag,
+    'tag': Tag,
+    'star': Star,
+    'bookmark': Bookmark,
+    'refresh-cw': RefreshCw,
+    'repeat': Repeat,
+    'rotate-cw': RotateCw,
+    'rotate-ccw': RotateCcw,
+    'alert-triangle': AlertTriangle,
+    'alert-circle': AlertCircle,
+    'info': Info,
+    'help-circle': HelpCircle,
+    'edit': Edit,
+    'edit-2': Edit2,
+    'edit-3': Edit3,
+    'trash': Trash,
+    'trash-2': Trash2,
+    'file-text': FileText,
+    'clipboard': Clipboard,
+    'clipboard-check': ClipboardCheck,
+    'plus': Plus,
+    'minus': Minus,
+    'plus-circle': PlusCircle,
+    'minus-circle': MinusCircle,
+    'message-square': MessageSquare,
+    'message-circle': MessageCircle,
+    'bell': Bell,
+    'bell-off': BellOff,
+    'home': Home,
+    'building': Building,
+    'building-2': Building2,
+    'map-pin': MapPin,
+    'navigation': Navigation,
+    'truck': Truck,
+    'dollar-sign': DollarSign,
+    'credit-card': CreditCard,
+    'receipt': Receipt,
+    'settings': Settings,
+    'sliders': Sliders,
+    'eye': Eye,
+    'eye-off': EyeOff,
+    'lock': Lock,
+    'unlock': Unlock,
+    'key': Key,
+    'zap': Zap,
+    'activity': Activity,
+    'trending-up': TrendingUp,
+    'trending-down': TrendingDown,
+    'thumbs-up': ThumbsUp,
+    'thumbs-down': ThumbsDown,
+    'heart': Heart,
+    'smile': Smile,
+    'frown': Frown,
+    'package': Package,
+    'box': Box,
+    'archive': Archive,
+    'search': Search,
+    'filter': Filter,
+    'sort-asc': SortAsc,
+    'link': Link,
+    'external-link': ExternalLink,
+    'upload': Upload,
+    'download': Download,
+    'image': Image,
+    'camera': Camera,
+    'headphones': Headphones,
+    'mic': Mic,
+    'mic-off': MicOff,
+    'share-2': Share2,
+    'forward': Forward,
+    'ban': Ban,
+    'shield-alert': ShieldAlert,
+    'shield-check': ShieldCheck,
+};
+
+const ICON_NAMES = Object.keys(ICON_MAP);
+
+function IconPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+    const [open, setOpen] = useState(false);
+    const [search, setSearch] = useState('');
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (!open) return;
+        function handleClick(e: MouseEvent) {
+            if (containerRef.current && !containerRef.current.contains(e.target as globalThis.Node)) {
+                setOpen(false);
+            }
+        }
+        document.addEventListener('mousedown', handleClick);
+        return () => document.removeEventListener('mousedown', handleClick);
+    }, [open]);
+
+    const filtered = useMemo(() => {
+        const q = search.toLowerCase().trim();
+        return q ? ICON_NAMES.filter(n => n.includes(q)) : ICON_NAMES;
+    }, [search]);
+
+    const CurrentIcon = value ? ICON_MAP[value] : null;
+
+    return (
+        <div ref={containerRef} style={{ position: 'relative' }}>
+            {/* Trigger button */}
+            <button
+                type="button"
+                onClick={() => { setOpen(o => !o); setSearch(''); }}
+                style={{
+                    width: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '6px 10px',
+                    borderRadius: 8,
+                    border: '1px solid var(--blanc-line)',
+                    background: '#fff',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    fontSize: 13,
+                    color: value ? 'var(--blanc-ink-1)' : 'var(--blanc-ink-3)',
+                }}
+            >
+                {CurrentIcon
+                    ? <CurrentIcon size={16} color="var(--blanc-ink-2)" />
+                    : <span style={{ width: 16, height: 16, display: 'inline-block' }} />
+                }
+                <span style={{ flex: 1 }}>{value || 'Выбрать иконку...'}</span>
+                {value && (
+                    <span
+                        role="button"
+                        onClick={(e) => { e.stopPropagation(); onChange(''); }}
+                        style={{ color: 'var(--blanc-ink-3)', lineHeight: 1, padding: '0 2px' }}
+                    >
+                        ×
+                    </span>
+                )}
+            </button>
+
+            {/* Dropdown */}
+            {open && (
+                <div style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 4px)',
+                    left: 0,
+                    right: 0,
+                    zIndex: 1000,
+                    background: '#fff',
+                    border: '1px solid var(--blanc-line)',
+                    borderRadius: 10,
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+                    overflow: 'hidden',
+                }}>
+                    {/* Search */}
+                    <div style={{ padding: '8px 8px 6px' }}>
+                        <input
+                            autoFocus
+                            type="text"
+                            placeholder="Поиск..."
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            style={{
+                                width: '100%',
+                                fontSize: 12,
+                                padding: '5px 8px',
+                                borderRadius: 6,
+                                border: '1px solid var(--blanc-line)',
+                                outline: 'none',
+                                background: 'rgba(117,106,89,0.04)',
+                                boxSizing: 'border-box',
+                            }}
+                        />
+                    </div>
+
+                    {/* Grid */}
+                    <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(6, 1fr)',
+                        gap: 2,
+                        padding: '4px 6px 8px',
+                        maxHeight: 240,
+                        overflowY: 'auto',
+                    }}>
+                        {filtered.map(name => {
+                            const Icon = ICON_MAP[name];
+                            const selected = name === value;
+                            return (
+                                <button
+                                    key={name}
+                                    type="button"
+                                    title={name}
+                                    onClick={() => { onChange(name); setOpen(false); }}
+                                    style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        width: '100%',
+                                        aspectRatio: '1',
+                                        borderRadius: 6,
+                                        border: selected ? '1.5px solid #6366f1' : '1.5px solid transparent',
+                                        background: selected ? 'rgba(99,102,241,0.08)' : 'transparent',
+                                        cursor: 'pointer',
+                                        padding: 4,
+                                    }}
+                                >
+                                    <Icon size={16} color={selected ? '#6366f1' : 'var(--blanc-ink-2)'} />
+                                </button>
+                            );
+                        })}
+                        {filtered.length === 0 && (
+                            <div style={{ gridColumn: '1/-1', textAlign: 'center', fontSize: 12, color: 'var(--blanc-ink-3)', padding: '12px 0' }}>
+                                Ничего не найдено
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
 
 // ─── Flow Properties (nothing selected) ─────────────────────────────────────
 
@@ -157,27 +441,6 @@ export function StateInspector({
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div className="blanc-eyebrow">State Inspector</div>
 
-            {/* Label */}
-            <div>
-                <label style={{ fontSize: 11, color: 'var(--blanc-ink-3)', display: 'block', marginBottom: 4 }}>
-                    Display Label
-                </label>
-                <input
-                    type="text"
-                    value={d.label}
-                    onChange={(e) => onUpdateNode(node.id, { label: e.target.value })}
-                    style={{
-                        width: '100%',
-                        fontSize: 13,
-                        padding: '6px 10px',
-                        borderRadius: 8,
-                        border: '1px solid var(--blanc-line)',
-                        background: '#fff',
-                        outline: 'none',
-                    }}
-                />
-            </div>
-
             {/* Status Name */}
             <div>
                 <label style={{ fontSize: 11, color: 'var(--blanc-ink-3)', display: 'block', marginBottom: 4 }}>
@@ -185,8 +448,8 @@ export function StateInspector({
                 </label>
                 <input
                     type="text"
-                    value={d.statusName}
-                    onChange={(e) => onUpdateNode(node.id, { statusName: e.target.value })}
+                    value={d.label}
+                    onChange={(e) => onUpdateNode(node.id, { label: e.target.value, statusName: e.target.value })}
                     style={{
                         width: '100%',
                         fontSize: 13,
@@ -299,31 +562,10 @@ export function TransitionInspector({
                 </strong>
             </div>
 
-            {/* Event */}
+            {/* Transition Name */}
             <div>
                 <label style={{ fontSize: 11, color: 'var(--blanc-ink-3)', display: 'block', marginBottom: 4 }}>
-                    Event Name
-                </label>
-                <input
-                    type="text"
-                    value={ed.event || ''}
-                    onChange={(e) => onUpdateEdge(edge.id, { event: e.target.value })}
-                    style={{
-                        width: '100%',
-                        fontSize: 13,
-                        padding: '6px 10px',
-                        borderRadius: 8,
-                        border: '1px solid var(--blanc-line)',
-                        background: '#fff',
-                        outline: 'none',
-                    }}
-                />
-            </div>
-
-            {/* Label */}
-            <div>
-                <label style={{ fontSize: 11, color: 'var(--blanc-ink-3)', display: 'block', marginBottom: 4 }}>
-                    Label
+                    Transition Name
                 </label>
                 <input
                     type="text"
@@ -339,6 +581,25 @@ export function TransitionInspector({
                         outline: 'none',
                     }}
                 />
+            </div>
+
+            {/* Transition ID (read-only) */}
+            <div>
+                <label style={{ fontSize: 11, color: 'var(--blanc-ink-3)', display: 'block', marginBottom: 4 }}>
+                    Transition ID
+                </label>
+                <div
+                    style={{
+                        fontSize: 12,
+                        fontFamily: 'monospace',
+                        padding: '6px 10px',
+                        borderRadius: 8,
+                        background: 'rgba(117,106,89,0.04)',
+                        color: 'var(--blanc-ink-2)',
+                    }}
+                >
+                    {ed.event || '—'}
+                </div>
             </div>
 
             {/* Is Action */}
@@ -359,20 +620,9 @@ export function TransitionInspector({
                 <label style={{ fontSize: 11, color: 'var(--blanc-ink-3)', display: 'block', marginBottom: 4 }}>
                     Icon
                 </label>
-                <input
-                    type="text"
+                <IconPicker
                     value={ed.icon || ''}
-                    onChange={(e) => onUpdateEdge(edge.id, { icon: e.target.value })}
-                    placeholder="e.g. check, x-circle"
-                    style={{
-                        width: '100%',
-                        fontSize: 13,
-                        padding: '6px 10px',
-                        borderRadius: 8,
-                        border: '1px solid var(--blanc-line)',
-                        background: '#fff',
-                        outline: 'none',
-                    }}
+                    onChange={(v) => onUpdateEdge(edge.id, { icon: v })}
                 />
             </div>
 
