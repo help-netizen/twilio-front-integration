@@ -24,7 +24,7 @@ export interface JobDetailPanelProps {
     setNoteJobId: (v: number | null) => void;
     onClose: () => void;
     onBlancStatusChange: (id: number, s: string) => void;
-    onAddNote: () => void;
+    onAddNote: (files?: File[]) => void;
     onMarkEnroute: (id: number) => void;
     onMarkInProgress: (id: number) => void;
     onMarkComplete: (id: number) => void;

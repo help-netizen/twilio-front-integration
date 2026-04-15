@@ -158,7 +158,7 @@ twimlRouter.post('/twiml/outbound', async (req, res) => {
           recordingStatusCallback="${recordingStatusUrl}"
           recordingStatusCallbackMethod="POST">
         <Number statusCallback="${statusCallbackUrl}"
-                statusCallbackEvent="initiated ringing answered completed failed"
+                statusCallbackEvent="initiated ringing answered completed"
                 statusCallbackMethod="POST">${normalized}</Number>
     </Dial>
 </Response>`;
@@ -270,7 +270,7 @@ twimlRouter.post('/twiml/inbound', async (req, res) => {
           recordingStatusCallback="${recordingStatusUrl}"
           recordingStatusCallbackMethod="POST">
         <Client statusCallback="${statusCallbackUrl}"
-                statusCallbackEvent="initiated ringing answered completed failed"
+                statusCallbackEvent="initiated ringing answered completed"
                 statusCallbackMethod="POST">${defaultIdentity}</Client>
     </Dial>
 </Response>`;

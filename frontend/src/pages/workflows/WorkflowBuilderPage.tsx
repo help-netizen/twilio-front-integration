@@ -183,6 +183,8 @@ export default function WorkflowBuilderPage() {
 
     // Focus highlight: which bipartite node is focused (e.g. "Submitted__src")
     const [focusedBipId, setFocusedBipId] = useState<string | null>(null);
+    // Active edge: the specifically clicked edge (highlighted green within the focused subgraph)
+    const [activeEdgeBipId, setActiveEdgeBipId] = useState<string | null>(null);
     // Suppress focus reset during edge drag
     const connectingRef = useRef(false);
 
@@ -401,28 +403,31 @@ export default function WorkflowBuilderPage() {
 
         setEdges(eds => eds.map(e => {
             const isConnected = connectedEdgeBipIds.has(e.id);
+            const isActive = e.id === activeEdgeBipId;
             const origLabel = originalLabels.get(e.id) || e.label || '';
+            // Active edge (clicked) = green, connected = indigo, dimmed = gray
+            const edgeColor = isActive ? '#059669' : isConnected ? '#6366f1' : 'rgba(117,106,89,0.12)';
             return {
                 ...e,
-                // zIndex: active edges render ABOVE dimmed ones (prevents label overlap)
-                zIndex: isConnected ? 1000 : 0,
+                // zIndex: active edge highest, connected above dimmed
+                zIndex: isActive ? 2000 : isConnected ? 1000 : 0,
                 label: isConnected ? origLabel : '',
                 data: { ...(e.data || {}), labelNearSource: isConnected ? labelNearSource : false },
                 style: {
                     ...e.style,
-                    strokeWidth: isConnected ? 2.5 : 1.5,
-                    stroke: isConnected ? '#6366f1' : 'rgba(117,106,89,0.12)',
+                    strokeWidth: isActive ? 3 : isConnected ? 2.5 : 1.5,
+                    stroke: edgeColor,
                     opacity: isConnected ? 1 : 0.12,
                 },
                 labelStyle: {
                     fontSize: 10,
-                    fontWeight: isConnected ? 700 : 500,
-                    fill: isConnected ? '#6366f1' : '#6b7280',
+                    fontWeight: isActive ? 800 : isConnected ? 700 : 500,
+                    fill: edgeColor,
                 },
             };
         }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [focusedBipId]);
+    }, [focusedBipId, activeEdgeBipId]);
 
     const onNodeClick = useCallback(
         (_: React.MouseEvent, node: Node) => {
@@ -433,6 +438,7 @@ export default function WorkflowBuilderPage() {
             setSelectedEdge(null);
             // Set focus for highlighting (store bipartite ID for direction awareness)
             setFocusedBipId(node.id);
+            setActiveEdgeBipId(null);
         },
         [],
     );
@@ -443,7 +449,10 @@ export default function WorkflowBuilderPage() {
         const logicalEdge = logicalEdgesRef.current.find(e => e.id === originalId);
         setSelectedEdge(logicalEdge || edge);
         setSelectedNode(null);
-        setFocusedBipId(null); // Clear node focus when edge is selected
+        // Focus on source node subgraph + mark this specific edge as active (green)
+        const srcBipId = `${getOriginalId(edge.source)}__src`;
+        setFocusedBipId(srcBipId);
+        setActiveEdgeBipId(edge.id);
     }, []);
 
     const onPaneClick = useCallback(() => {
@@ -452,6 +461,7 @@ export default function WorkflowBuilderPage() {
         setSelectedNode(null);
         setSelectedEdge(null);
         setFocusedBipId(null);
+        setActiveEdgeBipId(null);
     }, []);
 
     const onConnectStart = useCallback(() => {

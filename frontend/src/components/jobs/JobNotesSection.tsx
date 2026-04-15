@@ -1,8 +1,10 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Button } from '../ui/button';
 import { Plus } from 'lucide-react';
 import type { LocalJob } from '../../services/jobsApi';
 import { formatSchedule } from './jobHelpers';
+import { NoteAttachmentInput } from '../shared/NoteAttachmentInput';
+import { NoteAttachmentDisplay } from '../shared/NoteAttachmentDisplay';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -12,7 +14,7 @@ interface JobNotesSectionProps {
     noteText: string;
     setNoteText: (v: string) => void;
     setNoteJobId: (v: number | null) => void;
-    onAddNote: () => void;
+    onAddNote: (files?: File[]) => void;
 }
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
@@ -60,33 +62,13 @@ export function JobNotesList({ job }: { job: LocalJob }) {
                 {job.notes && job.notes.length > 0 ? job.notes.map((note: any, i: number) => (
                     <div key={note.id || i} className="p-3 bg-muted rounded-lg space-y-2">
                         {note.text && <p className="text-sm whitespace-pre-wrap">{note.text}</p>}
-                        {note.images && note.images.length > 0 && (
-                            <div className="flex flex-wrap gap-2">
-                                {note.images.map((url: string, j: number) => (
-                                    <a key={j} href={url} target="_blank" rel="noopener noreferrer">
-                                        <img
-                                            src={url}
-                                            alt={`Note image ${j + 1}`}
-                                            className="w-24 h-24 object-cover rounded-md border hover:opacity-80 transition-opacity"
-                                        />
-                                    </a>
-                                ))}
-                            </div>
-                        )}
-                        {note.files && note.files.length > 0 && (
-                            <div className="flex flex-wrap gap-2">
-                                {note.files.map((url: string, j: number) => (
-                                    <a key={j} href={url} target="_blank" rel="noopener noreferrer"
-                                        className="text-xs text-primary hover:underline">
-                                        📎 File {j + 1}
-                                    </a>
-                                ))}
-                            </div>
+                        {note.attachments && note.attachments.length > 0 && (
+                            <NoteAttachmentDisplay attachments={note.attachments} />
                         )}
                         {note.created && (
                             <p className="text-xs text-muted-foreground">{formatSchedule(note.created).date}</p>
                         )}
-                        {!note.text && (!note.images || note.images.length === 0) && (
+                        {!note.text && (!note.attachments || note.attachments.length === 0) && (
                             <p className="text-xs text-muted-foreground italic">Empty note</p>
                         )}
                     </div>
@@ -100,7 +82,9 @@ export function JobNotesList({ job }: { job: LocalJob }) {
 
 export function JobAddNote({ job, noteJobId, noteText, setNoteText, setNoteJobId, onAddNote }: JobNotesSectionProps) {
     const [expanded, setExpanded] = useState(false);
+    const [files, setFiles] = useState<File[]>([]);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
     const text = noteJobId === job.id ? noteText : '';
 
     const expand = () => {
@@ -109,19 +93,30 @@ export function JobAddNote({ job, noteJobId, noteText, setNoteText, setNoteJobId
         setTimeout(() => textareaRef.current?.focus(), 0);
     };
 
-    const handleBlur = () => {
-        if (!text.trim()) {
+    // Click-outside to collapse (replaces blur which breaks with file dialogs)
+    const handleClickOutside = useCallback((e: MouseEvent) => {
+        if (!containerRef.current?.contains(e.target as Node) && !text.trim() && files.length === 0) {
             setExpanded(false);
         }
-    };
+    }, [text, files.length]);
+
+    useEffect(() => {
+        if (expanded) {
+            document.addEventListener('mousedown', handleClickOutside);
+            return () => document.removeEventListener('mousedown', handleClickOutside);
+        }
+    }, [expanded, handleClickOutside]);
 
     const handleSubmit = () => {
-        onAddNote();
+        onAddNote(files.length > 0 ? files : undefined);
+        setFiles([]);
         setExpanded(false);
     };
 
+    const canSubmit = text.trim() || files.length > 0;
+
     return (
-        <div style={{
+        <div ref={containerRef} style={{
             padding: '10px 14px',
             background: 'rgba(117,106,89,0.03)',
             borderTop: '1px solid rgba(117,106,89,0.08)',
@@ -142,14 +137,16 @@ export function JobAddNote({ job, noteJobId, noteText, setNoteText, setNoteJobId
                         placeholder="Write a note..."
                         value={text}
                         onChange={e => { setNoteJobId(job.id); setNoteText(e.target.value); }}
-                        onBlur={handleBlur}
-                        onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); handleSubmit(); } }}
+                        onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canSubmit) { e.preventDefault(); handleSubmit(); } }}
                         onInput={e => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = `${t.scrollHeight}px`; }}
                         autoFocus
                     />
                     <div className="flex items-center justify-between">
-                        <p className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>⌘ + Enter</p>
-                        <Button size="sm" onClick={handleSubmit} disabled={!text.trim()}>
+                        <div className="flex items-center gap-3">
+                            <NoteAttachmentInput files={files} onChange={setFiles} compact />
+                            <p className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>Cmd + Enter</p>
+                        </div>
+                        <Button size="sm" onClick={handleSubmit} disabled={!canSubmit}>
                             <Plus className="size-4 mr-1" /> Add Note
                         </Button>
                     </div>
@@ -178,6 +175,14 @@ export function JobAddNote({ job, noteJobId, noteText, setNoteText, setNoteJobId
 }
 
 export function JobMobileAddNote({ job, noteJobId, noteText, setNoteText, setNoteJobId, onAddNote }: JobNotesSectionProps) {
+    const [files, setFiles] = useState<File[]>([]);
+    const canSubmit = (noteText.trim() || files.length > 0) && noteJobId === job.id;
+
+    const handleSubmit = () => {
+        onAddNote(files.length > 0 ? files : undefined);
+        setFiles([]);
+    };
+
     return (
         <div className="space-y-2">
             <textarea
@@ -187,9 +192,12 @@ export function JobMobileAddNote({ job, noteJobId, noteText, setNoteText, setNot
                 onChange={e => { setNoteJobId(job.id); setNoteText(e.target.value); }}
                 onFocus={() => { if (noteJobId !== job.id) setNoteJobId(job.id); }}
             />
-            <Button size="sm" onClick={onAddNote} disabled={!noteText.trim() || noteJobId !== job.id}>
-                <Plus className="size-4 mr-1" /> Add Note
-            </Button>
+            <div className="flex items-center justify-between">
+                <NoteAttachmentInput files={files} onChange={setFiles} />
+                <Button size="sm" onClick={handleSubmit} disabled={!canSubmit}>
+                    <Plus className="size-4 mr-1" /> Add Note
+                </Button>
+            </div>
         </div>
     );
 }

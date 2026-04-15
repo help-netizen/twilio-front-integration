@@ -600,16 +600,24 @@ async function handleDialAction(req, res) {
         // Enqueue dial event for async processing by inboxWorker (single-writer architecture).
         // All DB writes (child finalization, parent status, SSE) are handled by processDialEvent
         // in inboxWorker to eliminate race conditions with voice-status event processing.
-        await ingestToInbox({
-            source: 'dial',
-            eventType: 'dial.action',
-            payload: req.body,
-            req,
-            traceId
-        });
+        // Non-blocking: DB failure must not prevent TwiML response (causes Twilio 31005 error).
+        try {
+            await ingestToInbox({
+                source: 'dial',
+                eventType: 'dial.action',
+                payload: req.body,
+                req,
+                traceId
+            });
+        } catch (ingestErr) {
+            console.error(`[${traceId}] Inbox ingestion failed (non-blocking):`, ingestErr.message);
+        }
 
         // Decide TwiML response based on DialCallStatus (no DB reads needed)
-        const toVoicemail = dialStatus !== 'completed' && dialStatus !== 'answered';
+        // For outbound calls (operator → PSTN) skip voicemail — it's only for inbound callers.
+        const isOutbound = (req.body.Direction === 'outbound-api') ||
+                           (req.body.From || '').startsWith('client:');
+        const toVoicemail = !isOutbound && dialStatus !== 'completed' && dialStatus !== 'answered';
 
         let twiml;
         if (toVoicemail) {
@@ -647,7 +655,8 @@ async function handleDialAction(req, res) {
         res.send(twiml);
     } catch (error) {
         console.error(`[${traceId}] Error:`, error);
-        res.status(500).send('<Response><Hangup /></Response>');
+        // Never return 500 from TwiML webhooks — Twilio plays "application error" to the caller
+        res.type('text/xml').send('<?xml version="1.0" encoding="UTF-8"?><Response><Hangup /></Response>');
     }
 }
 

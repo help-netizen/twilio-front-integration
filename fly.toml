@@ -18,13 +18,13 @@ primary_region = 'ewr'
 
   [[http_service.http_checks]]
     interval = "15s"
-    grace_period = "10s"
+    grace_period = "30s"
     method = "GET"
-    path = "/health"
+    path = "/health/ready"
     protocol = "http"
     timeout = "5s"
 
 [[vm]]
-  memory = '512mb'
+  memory = '1024mb'
   cpu_kind = 'shared'
   cpus = 1

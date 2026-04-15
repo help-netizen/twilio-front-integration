@@ -1,9 +1,16 @@
 const express = require('express');
+const multer = require('multer');
 const router = express.Router();
 const contactsService = require('../services/contactsService');
 const contactDedupeService = require('../services/contactDedupeService');
 const zenbookerSyncService = require('../services/zenbookerSyncService');
+const noteAttachmentsService = require('../services/noteAttachmentsService');
 const { toE164 } = require('../utils/phoneUtils');
+
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: noteAttachmentsService.MAX_FILE_SIZE },
+});
 
 // =============================================================================
 // Helpers
@@ -334,6 +341,84 @@ router.put('/:id/addresses/:addressId/default', async (req, res) => {
     } catch (err) {
         console.error(`[ContactsAPI][${reqId}] Error:`, err);
         res.status(500).json(errorResponse('INTERNAL_ERROR', 'An unexpected error occurred', reqId));
+    }
+});
+
+// =============================================================================
+// Structured Notes (with file attachments)
+// =============================================================================
+
+router.get('/:id/notes', async (req, res) => {
+    const reqId = requestId();
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const contactId = parseInt(req.params.id, 10);
+        const contact = await contactsService.getById(contactId, companyId);
+        if (!contact) return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));
+
+        const notes = contact.structured_notes || [];
+        const attachments = await noteAttachmentsService.getAttachmentsForEntity(companyId, 'contact', contactId);
+        const byNote = {};
+        for (const a of attachments) {
+            if (!byNote[a.noteIndex]) byNote[a.noteIndex] = [];
+            byNote[a.noteIndex].push(a);
+        }
+
+        const enriched = notes.map((n, i) => ({ ...n, attachments: byNote[i] || [] }));
+        res.json(successResponse(enriched, reqId));
+    } catch (err) {
+        console.error(`[ContactsAPI][${reqId}] Get notes error:`, err.message);
+        res.status(500).json(errorResponse('INTERNAL_ERROR', err.message, reqId));
+    }
+});
+
+router.post('/:id/notes', upload.array('attachments', noteAttachmentsService.MAX_FILES_PER_NOTE), async (req, res) => {
+    const reqId = requestId();
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const userId = req.user?.sub || null;
+        const contactId = parseInt(req.params.id, 10);
+        const contact = await contactsService.getById(contactId, companyId);
+        if (!contact) return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));
+
+        const text = (req.body.text || '').trim();
+        const files = req.files || [];
+        if (!text && files.length === 0) return res.status(400).json(errorResponse('BAD_REQUEST', 'text or attachments required', reqId));
+
+        const existingNotes = contact.structured_notes || [];
+
+        // Migrate legacy notes text on first structured note
+        if (existingNotes.length === 0 && contact.notes?.trim()) {
+            existingNotes.push({ text: contact.notes.trim(), created: contact.created_at || new Date().toISOString(), migrated: true });
+        }
+
+        const noteIndex = existingNotes.length;
+        let attachmentsMeta = [];
+        if (files.length > 0) {
+            attachmentsMeta = await noteAttachmentsService.createAttachments(
+                companyId, 'contact', contactId, noteIndex, files, userId
+            );
+        }
+
+        const note = { text, created: new Date().toISOString() };
+        if (attachmentsMeta.length > 0) {
+            note.attachments = attachmentsMeta.map(a => ({
+                id: a.id, fileName: a.file_name, contentType: a.content_type, fileSize: a.file_size,
+            }));
+        }
+
+        const updatedNotes = [...existingNotes, note];
+        const db = require('../db/connection');
+        await db.query(
+            'UPDATE contacts SET structured_notes = $1::jsonb, updated_at = NOW() WHERE id = $2 AND company_id = $3',
+            [JSON.stringify(updatedNotes), contactId, companyId]
+        );
+
+        res.json(successResponse({ notes: updatedNotes }, reqId));
+    } catch (err) {
+        console.error(`[ContactsAPI][${reqId}] Add note error:`, err.message);
+        const status = err.status || 500;
+        res.status(status).json(errorResponse('INTERNAL_ERROR', err.message, reqId));
     }
 });
 

@@ -40,6 +40,7 @@ if command -v twilio &>/dev/null; then
         twilio api:core:incoming-phone-numbers:update \
             --sid "$sid" \
             --voice-url "$PROD_URL/webhooks/twilio/voice-inbound" \
+            --voice-fallback-url "$PROD_URL/webhooks/twilio/voice-fallback" \
             --status-callback "$PROD_URL/webhooks/twilio/voice-status" \
             -o json > /dev/null 2>&1 && \
             info "  Updated $sid ✓" || \

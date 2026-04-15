@@ -1,8 +1,10 @@
 const express = require('express');
 const router = express.Router();
+const db = require('../../backend/src/db/connection');
 
 /**
- * Health check endpoint
+ * Health check endpoint — liveness probe.
+ * Fly.dev calls this every 15s to know the process is alive.
  */
 router.get('/', (req, res) => {
     res.json({
@@ -14,21 +16,24 @@ router.get('/', (req, res) => {
 });
 
 /**
- * Readiness check (for Kubernetes/load balancers)
+ * Readiness check — verifies the app can serve real traffic.
+ * Returns 503 if database is unreachable so Fly.dev stops routing requests.
  */
-router.get('/ready', (req, res) => {
-    // Add checks for database, external services, etc.
+router.get('/ready', async (req, res) => {
+    let dbOk = false;
+    try {
+        await db.query('SELECT 1');
+        dbOk = true;
+    } catch { }
+
     const checks = {
         server: true,
-        // database: checkDatabaseConnection(),
-        // twilio: checkTwilioAPI(),
-        // front: checkFrontAPI()
+        database: dbOk,
     };
 
     const isReady = Object.values(checks).every(check => check === true);
-    const statusCode = isReady ? 200 : 503;
 
-    res.status(statusCode).json({
+    res.status(isReady ? 200 : 503).json({
         ready: isReady,
         checks,
         timestamp: new Date().toISOString()

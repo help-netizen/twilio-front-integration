@@ -8,10 +8,10 @@ const pool = new Pool({
     connectionTimeoutMillis: 2000, // Timeout after 2 seconds
 });
 
-// Handle pool errors
+// Handle pool errors — log but do NOT crash the process.
+// Idle client errors are recoverable; the pool will create new connections.
 pool.on('error', (err, client) => {
-    console.error('Unexpected error on idle database client:', err);
-    process.exit(-1);
+    console.error('Unexpected error on idle database client:', err.message);
 });
 
 // Test connection function

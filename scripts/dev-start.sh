@@ -138,6 +138,7 @@ except: pass
             twilio api:core:incoming-phone-numbers:update \
                 --sid "$sid" \
                 --voice-url "$NGROK_URL/webhooks/twilio/voice-inbound" \
+                --voice-fallback-url "$NGROK_URL/webhooks/twilio/voice-fallback" \
                 --status-callback "$NGROK_URL/webhooks/twilio/voice-status" \
                 -o json > /dev/null 2>&1 && \
                 info "  Updated $sid ✓" || \

@@ -176,6 +176,11 @@ function validateSCXML(xmlString) {
         errors.push({ message: `Transition target "${target}" does not exist (from state "${node['@_id']}")`, line: 1, col: 1, severity: 'error' });
       }
 
+      // E08: self-loop (state transitions to itself)
+      if (target && target === node['@_id']) {
+        errors.push({ message: `Self-loop: state "${node['@_id']}" transitions to itself`, line: 1, col: 1, severity: 'error' });
+      }
+
       // Track incoming transitions
       if (target && incomingCount.has(target)) {
         incomingCount.set(target, incomingCount.get(target) + 1);
@@ -615,6 +620,11 @@ async function resolveTransition(companyId, machineKey, currentState, eventOrTar
   const state = findState(graph.states, currentState);
   if (!state) {
     return { valid: false, error: `State '${currentState}' not found in published workflow` };
+  }
+
+  // Block self-loops at runtime
+  if (currentState === eventOrTarget) {
+    return { valid: false, error: 'Self-loop transitions are not allowed' };
   }
 
   // a. Try matching by event

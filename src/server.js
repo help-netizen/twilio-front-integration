@@ -24,6 +24,7 @@ const pulseRouter = require('../backend/src/routes/pulse');
 const quickMessagesRouter = require('../backend/src/routes/quick-messages');
 const textPolishRouter = require('../backend/src/routes/text-polish');
 const fsmRouter = require('../backend/src/routes/fsm');
+const noteAttachmentsRouter = require('../backend/src/routes/noteAttachments');
 const authRouter = require('../backend/src/routes/auth');
 const requestId = require('../backend/src/middleware/requestId');
 const { authenticate, requireRole, requireCompanyAccess } = require('../backend/src/middleware/keycloakAuth');
@@ -162,6 +163,7 @@ app.use('/api/invoices', authenticate, requireCompanyAccess, invoicesRouter);
 app.use('/api/payments', authenticate, requireCompanyAccess, paymentsCanonicalRouter);
 app.use('/api/portal', portalRouter); // public auth + portal-session auth inside router
 app.use('/api/fsm', authenticate, requireCompanyAccess, fsmRouter);
+app.use('/api/note-attachments', authenticate, requireCompanyAccess, noteAttachmentsRouter);
 
 // BLANC Integrations API (secured header-based auth)
 app.use('/api/v1/integrations', integrationsLeadsRouter);
@@ -299,6 +301,43 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
     } else {
         console.log('🎙️ Realtime transcription disabled (set FEATURE_REALTIME_TRANSCRIPTION=true to enable)');
     }
+
+    // Prevent accumulation of hung requests (e.g. when DB is unresponsive)
+    server.setTimeout(15000);
 });
+
+// ── Graceful shutdown ────────────────────────────────────────────────────────
+// Fly.dev sends SIGTERM before stopping the machine. Without this handler,
+// in-flight Twilio webhook requests are killed mid-response → HTTP 502.
+let shuttingDown = false;
+
+function gracefulShutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`\n${signal} received — graceful shutdown started`);
+
+    // Stop accepting new connections, finish in-flight requests
+    server.close(() => {
+        console.log('HTTP server closed');
+
+        // Close database pool
+        db.pool.end().then(() => {
+            console.log('Database pool closed');
+            process.exit(0);
+        }).catch((err) => {
+            console.error('Database pool close error:', err.message);
+            process.exit(1);
+        });
+    });
+
+    // Force exit after 10s if graceful shutdown hangs
+    setTimeout(() => {
+        console.error('Graceful shutdown timed out — forcing exit');
+        process.exit(1);
+    }, 10000);
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 module.exports = app;

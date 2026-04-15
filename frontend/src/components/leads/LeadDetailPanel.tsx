@@ -10,6 +10,7 @@ import { ChevronDown, Users, RotateCcw } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import type { Lead } from '../../types/lead';
 import { LEAD_STATUSES } from '../../types/lead';
+import { StructuredNotesSection } from '../shared/StructuredNotesSection';
 import { useFsmStates, useFsmActions } from '../../hooks/useFsmActions';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
@@ -48,27 +49,6 @@ function hexToRgba(hex: string, alpha: number): string {
     return `rgba(${r},${g},${b},${alpha})`;
 }
 
-// ─── Notes textarea (reusable) ───────────────────────────────────────────────
-
-function NotesTextarea({ comments, setComments, onSave }: { comments: string; setComments: (v: string) => void; onSave: () => void }) {
-    return (
-        <div style={{ padding: '14px 16px 16px', borderRadius: 16, background: '#fef9e7', borderLeft: '3px solid #f6d860' }}>
-            <h4 className="blanc-eyebrow mb-2">Notes</h4>
-            <textarea
-                ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } }}
-                className="w-full text-sm resize-none bg-transparent border-none outline-none leading-6"
-                style={{ minHeight: 36, color: comments ? 'var(--blanc-ink-1)' : undefined }}
-                value={comments}
-                onChange={e => setComments(e.target.value)}
-                onBlur={onSave}
-                onInput={e => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = `${t.scrollHeight}px`; }}
-                placeholder="Add comments…"
-                rows={2}
-            />
-        </div>
-    );
-}
-
 // ─── Job Details section ─────────────────────────────────────────────────────
 
 function JobDetailsSection({ lead }: { lead: Lead }) {
@@ -90,17 +70,12 @@ function JobDetailsSection({ lead }: { lead: Lead }) {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export function LeadDetailPanel({ lead, onClose: _onClose, onEdit, onMarkLost, onActivate, onConvert, onUpdateComments, onUpdateStatus, onUpdateSource, onDelete, embedded }: LeadDetailPanelProps) {
-    const [comments, setComments] = useState('');
+export function LeadDetailPanel({ lead, onClose: _onClose, onEdit, onMarkLost, onActivate, onConvert, onUpdateComments: _onUpdateComments, onUpdateStatus, onUpdateSource, onDelete, embedded }: LeadDetailPanelProps) {
     const [rightTab, setRightTab] = useState<'details' | 'financials'>('details');
 
     useEffect(() => {
-        if (lead) { setComments(lead.Comments || ''); setRightTab('details'); }
+        if (lead) { setRightTab('details'); }
     }, [lead]);
-
-    const handleSaveComments = () => {
-        if (lead && comments !== lead.Comments) onUpdateComments(lead.UUID, comments);
-    };
 
     if (!lead) return embedded ? null : (
         <div className="w-[400px] min-w-[240px] border-l bg-muted/20 hidden md:flex items-center justify-center shrink-0">
@@ -123,7 +98,7 @@ export function LeadDetailPanel({ lead, onClose: _onClose, onEdit, onMarkLost, o
                     <div>
                         <LeadHeader lead={lead} contactName={contactName} statusColor={statusColor} onUpdateStatus={onUpdateStatus} onUpdateSource={onUpdateSource} />
                     </div>
-                    <NotesTextarea comments={comments} setComments={setComments} onSave={handleSaveComments} />
+                    <StructuredNotesSection entityType="lead" entityId={lead.UUID} legacyText={lead.Comments || undefined} />
                 </div>
 
                 {/* Tiles */}
@@ -163,7 +138,7 @@ export function LeadDetailPanel({ lead, onClose: _onClose, onEdit, onMarkLost, o
 
                     {/* Mobile-only: right column content inline */}
                     <div className="md:hidden px-5 pb-6 space-y-5">
-                        <NotesTextarea comments={comments} setComments={setComments} onSave={handleSaveComments} />
+                        <StructuredNotesSection entityType="lead" entityId={lead.UUID} legacyText={lead.Comments || undefined} />
                         <JobDetailsSection lead={lead} />
                         <MetadataSection lead={lead} />
                         {lead.SerialId && (
@@ -190,7 +165,7 @@ export function LeadDetailPanel({ lead, onClose: _onClose, onEdit, onMarkLost, o
 
                         <TabsContent value="details" className="flex-1 flex flex-col mt-0 min-h-0 data-[state=inactive]:hidden">
                             <div className="flex-1 overflow-y-auto p-4 space-y-5">
-                                <NotesTextarea comments={comments} setComments={setComments} onSave={handleSaveComments} />
+                                <StructuredNotesSection entityType="lead" entityId={lead.UUID} legacyText={lead.Comments || undefined} />
                                 <JobDetailsSection lead={lead} />
                                 <MetadataSection lead={lead} />
                             </div>

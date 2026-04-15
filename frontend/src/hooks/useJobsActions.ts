@@ -97,10 +97,10 @@ export function useJobsActions({
         }
     };
 
-    const handleAddNote = async () => {
-        if (!noteJobId || !noteText.trim()) return;
+    const handleAddNote = async (files?: File[]) => {
+        if (!noteJobId || (!noteText.trim() && (!files || files.length === 0))) return;
         try {
-            await jobsApi.addJobNote(noteJobId, noteText.trim());
+            await jobsApi.addJobNote(noteJobId, noteText.trim(), files);
             toast.success('Note added');
             setNoteText('');
             setNoteJobId(null);

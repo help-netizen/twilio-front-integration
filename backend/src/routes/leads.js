@@ -8,8 +8,16 @@
  */
 
 const express = require('express');
+const multer = require('multer');
 const router = express.Router();
 const leadsService = require('../services/leadsService');
+const noteAttachmentsService = require('../services/noteAttachmentsService');
+const db = require('../db/connection');
+
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: noteAttachmentsService.MAX_FILE_SIZE },
+});
 const contactDedupeService = require('../services/contactDedupeService');
 const contactAddressService = require('../services/contactAddressService');
 
@@ -657,5 +665,85 @@ function handleError(err, reqId, res) {
     console.error(`[LeadsAPI][${reqId}] Unhandled error:`, err);
     res.status(500).json(errorResponse('INTERNAL_ERROR', err.message || 'An unexpected error occurred', reqId, err.stack));
 }
+
+// =============================================================================
+// Structured Notes (with file attachments)
+// =============================================================================
+
+router.get('/:uuid/notes', async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const lead = await leadsService.getLeadByUuid(req.params.uuid, companyId);
+        if (!lead) return res.status(404).json({ ok: false, error: 'Lead not found' });
+
+        const notes = lead.structured_notes || [];
+        // Enrich with presigned URLs for attachments
+        const leadId = lead.serial_id || lead.id;
+        const attachments = await noteAttachmentsService.getAttachmentsForEntity(companyId, 'lead', leadId);
+        const attachmentsByNote = {};
+        for (const a of attachments) {
+            if (!attachmentsByNote[a.noteIndex]) attachmentsByNote[a.noteIndex] = [];
+            attachmentsByNote[a.noteIndex].push(a);
+        }
+
+        const enriched = notes.map((n, i) => ({
+            ...n,
+            attachments: attachmentsByNote[i] || [],
+        }));
+
+        res.json({ ok: true, data: enriched });
+    } catch (err) {
+        console.error('[Leads] Get notes error:', err.message);
+        res.status(500).json({ ok: false, error: err.message });
+    }
+});
+
+router.post('/:uuid/notes', upload.array('attachments', noteAttachmentsService.MAX_FILES_PER_NOTE), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const userId = req.user?.sub || null;
+        const lead = await leadsService.getLeadByUuid(req.params.uuid, companyId);
+        if (!lead) return res.status(404).json({ ok: false, error: 'Lead not found' });
+
+        const text = (req.body.text || '').trim();
+        const files = req.files || [];
+        if (!text && files.length === 0) return res.status(400).json({ ok: false, error: 'text or attachments required' });
+
+        const leadId = lead.serial_id || lead.id;
+        const existingNotes = lead.structured_notes || [];
+
+        // Migrate legacy comments on first structured note if needed
+        if (existingNotes.length === 0 && lead.comments?.trim()) {
+            existingNotes.push({ text: lead.comments.trim(), created: lead.created_at || new Date().toISOString(), migrated: true });
+        }
+
+        const noteIndex = existingNotes.length;
+        let attachmentsMeta = [];
+        if (files.length > 0) {
+            attachmentsMeta = await noteAttachmentsService.createAttachments(
+                companyId, 'lead', leadId, noteIndex, files, userId
+            );
+        }
+
+        const note = { text, created: new Date().toISOString() };
+        if (attachmentsMeta.length > 0) {
+            note.attachments = attachmentsMeta.map(a => ({
+                id: a.id, fileName: a.file_name, contentType: a.content_type, fileSize: a.file_size,
+            }));
+        }
+
+        const updatedNotes = [...existingNotes, note];
+        await db.query(
+            'UPDATE leads SET structured_notes = $1::jsonb, updated_at = NOW() WHERE uuid = $2 AND company_id = $3',
+            [JSON.stringify(updatedNotes), req.params.uuid, companyId]
+        );
+
+        res.json({ ok: true, data: { notes: updatedNotes } });
+    } catch (err) {
+        console.error('[Leads] Add note error:', err.message);
+        const status = err.status || 500;
+        res.status(status).json({ ok: false, error: err.message });
+    }
+});
 
 module.exports = router;

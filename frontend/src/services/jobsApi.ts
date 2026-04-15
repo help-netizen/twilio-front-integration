@@ -147,11 +147,26 @@ export async function updateJobCoords(id: number | string, lat: number, lng: num
     });
 }
 
-export async function addJobNote(id: number, text: string): Promise<void> {
-    await jobsRequest(`${JOBS_BASE}/${id}/notes`, {
-        method: 'POST',
-        body: JSON.stringify({ text }),
-    });
+export async function addJobNote(id: number, text: string, files?: File[]): Promise<void> {
+    if (files && files.length > 0) {
+        const formData = new FormData();
+        formData.append('text', text);
+        files.forEach(f => formData.append('attachments', f));
+        const res = await authedFetch(`${JOBS_BASE}/${id}/notes`, {
+            method: 'POST',
+            body: formData,
+            // Don't set Content-Type — browser sets it with boundary for multipart
+        });
+        const json = await res.json();
+        if (!res.ok || !json.ok) {
+            throw new Error(json.error || `Upload failed (${res.status})`);
+        }
+    } else {
+        await jobsRequest(`${JOBS_BASE}/${id}/notes`, {
+            method: 'POST',
+            body: JSON.stringify({ text }),
+        });
+    }
 }
 
 export async function markEnroute(id: number): Promise<void> {
