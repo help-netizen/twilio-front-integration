@@ -8,6 +8,7 @@ const express = require('express');
 const router = express.Router();
 const { requirePermission } = require('../middleware/authorization');
 const fsmService = require('../services/fsmService');
+const jobsService = require('../services/jobsService');
 
 // Feature flags — default to true (enabled) during development
 const FSM_EDITOR_ENABLED = process.env.FSM_EDITOR_ENABLED !== 'false';
@@ -185,10 +186,17 @@ router.post('/:machineKey/apply', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'entityId and event are required' });
     }
 
-    // Placeholder: validate transition only. Full entity update in TASK-024/025.
-    // For now we pass event as currentState placeholder — the real implementation
-    // will load the entity's current state from jobsService/leadsService.
-    const result = await fsmService.resolveTransition(companyId, machineKey, null, event);
+    // Load entity's current state based on machine type
+    let currentState;
+    if (machineKey === 'job') {
+      const job = await jobsService.getJobById(entityId, companyId);
+      if (!job) return res.status(404).json({ ok: false, error: `Job #${entityId} not found` });
+      currentState = job.blanc_status;
+    } else {
+      return res.status(400).json({ ok: false, error: `Unsupported machine: ${machineKey}` });
+    }
+
+    const result = await fsmService.resolveTransition(companyId, machineKey, currentState, event);
 
     // If no published graph exists, allow as fallback
     if (result.valid === null && result.fallback) {
@@ -199,10 +207,15 @@ router.post('/:machineKey/apply', async (req, res) => {
       return res.status(400).json({ ok: false, error: result.error || 'Transition not allowed' });
     }
 
+    // Apply the transition — update the entity's status
+    if (machineKey === 'job') {
+      await jobsService.updateBlancStatus(parseInt(entityId, 10), result.targetState, companyId);
+    }
+
     res.json({ ok: true, data: { targetState: result.targetState, event: result.event } });
   } catch (err) {
     console.error('[FSM] apply error:', err);
-    res.status(500).json({ ok: false, error: 'Internal error' });
+    res.status(500).json({ ok: false, error: err.message || 'Internal error' });
   }
 });
 

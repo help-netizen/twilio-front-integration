@@ -5,9 +5,16 @@
  */
 
 const express = require('express');
+const multer = require('multer');
 const router = express.Router();
 const jobsService = require('../services/jobsService');
 const zenbookerClient = require('../services/zenbookerClient');
+const noteAttachmentsService = require('../services/noteAttachmentsService');
+
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: noteAttachmentsService.MAX_FILE_SIZE },
+});
 
 // ─── Sync Jobs from Zenbooker ────────────────────────────────────────────────
 
@@ -149,7 +156,7 @@ router.patch('/:id/status', async (req, res) => {
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
         const { blanc_status } = req.body;
         if (!blanc_status) return res.status(400).json({ ok: false, error: 'blanc_status required' });
-        const result = await jobsService.updateBlancStatus(parseInt(req.params.id, 10), blanc_status);
+        const result = await jobsService.updateBlancStatus(parseInt(req.params.id, 10), blanc_status, companyId);
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Jobs API] Status update error:', err.message);
@@ -160,18 +167,33 @@ router.patch('/:id/status', async (req, res) => {
 
 // ─── Add Note ────────────────────────────────────────────────────────────────
 
-router.post('/:id/notes', async (req, res) => {
+router.post('/:id/notes', upload.array('attachments', noteAttachmentsService.MAX_FILES_PER_NOTE), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
-        const existing = await jobsService.getJobById(req.params.id, companyId);
+        const userId = req.user?.sub || null;
+        const jobId = parseInt(req.params.id, 10);
+        const existing = await jobsService.getJobById(jobId, companyId);
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
-        const { text } = req.body;
-        if (!text?.trim()) return res.status(400).json({ ok: false, error: 'text required' });
-        const result = await jobsService.addNote(parseInt(req.params.id, 10), text.trim());
+
+        const text = (req.body.text || '').trim();
+        const files = req.files || [];
+        if (!text && files.length === 0) return res.status(400).json({ ok: false, error: 'text or attachments required' });
+
+        // Save note with attachment metadata
+        const noteIndex = (existing.notes || []).length;
+        let attachments = [];
+        if (files.length > 0) {
+            attachments = await noteAttachmentsService.createAttachments(
+                companyId, 'job', jobId, noteIndex, files, userId
+            );
+        }
+
+        const result = await jobsService.addNote(jobId, text, attachments);
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Jobs API] Add note error:', err.message);
-        res.status(500).json({ ok: false, error: err.message });
+        const status = err.status || 500;
+        res.status(status).json({ ok: false, error: err.message });
     }
 });
 
