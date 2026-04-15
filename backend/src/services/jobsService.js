@@ -545,6 +545,13 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
     const existing = await getJobByZbId(zbJobId);
 
     if (existing) {
+        // Preserve manually-set blanc_status (e.g. "Waiting for parts", "Follow Up with Client")
+        // when the inbound ZB webhook was triggered by our own outbound sync.
+        // Only overwrite blanc_status if it's one of the auto-computed statuses.
+        const autoStatuses = ['Submitted', 'Visit completed', 'Rescheduled', 'Canceled'];
+        const shouldUpdateBlancStatus = autoStatuses.includes(existing.blanc_status);
+        const effectiveBlancStatus = shouldUpdateBlancStatus ? newBlancStatus : existing.blanc_status;
+
         // Update existing job + link contact if not already linked
         await db.query(`
             UPDATE jobs SET
@@ -572,7 +579,7 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
             WHERE zenbooker_job_id = $19
         `, [
             cols.zb_status, cols.zb_canceled, cols.zb_rescheduled,
-            newBlancStatus,
+            effectiveBlancStatus,
             cols.job_number, cols.service_name, cols.start_date, cols.end_date,
             cols.customer_name, cols.customer_phone, cols.customer_email, cols.address,
             cols.territory, cols.invoice_total, cols.invoice_status,
@@ -580,8 +587,12 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
             zbJobId, contactId, cols.lat, cols.lng, companyId,
         ]);
 
-        console.log(`[JobsService] Synced job ${zbJobId}: blanc_status ${existing.blanc_status} → ${newBlancStatus}`);
-        return { updated: true, job_id: existing.id, blanc_status: newBlancStatus };
+        if (!shouldUpdateBlancStatus) {
+            console.log(`[JobsService] Synced job ${zbJobId}: preserved manual blanc_status "${existing.blanc_status}" (ZB would set "${newBlancStatus}")`);
+        } else {
+            console.log(`[JobsService] Synced job ${zbJobId}: blanc_status ${existing.blanc_status} → ${effectiveBlancStatus}`);
+        }
+        return { updated: true, job_id: existing.id, blanc_status: effectiveBlancStatus };
     } else {
         // Create new job linked to contact
         const job = await createJob({ zenbookerJobId: zbJobId, zbData, companyId, contactId });
@@ -614,16 +625,26 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
 // Notes
 // =============================================================================
 
-async function addNote(jobId, text) {
+async function addNote(jobId, text, attachments = []) {
     const job = await getJobById(jobId);
     if (!job) throw new Error(`Job #${jobId} not found`);
 
-    const notes = [...(job.notes || []), { text, created: new Date().toISOString() }];
+    const note = { text, created: new Date().toISOString() };
+    if (attachments.length > 0) {
+        note.attachments = attachments.map(a => ({
+            id: a.id,
+            fileName: a.file_name,
+            contentType: a.content_type,
+            fileSize: a.file_size,
+        }));
+    }
+
+    const notes = [...(job.notes || []), note];
     await db.query('UPDATE jobs SET notes = $1::jsonb, updated_at = NOW() WHERE id = $2',
         [JSON.stringify(notes), jobId]);
 
-    // Also push to Zenbooker if linked
-    if (job.zenbooker_job_id) {
+    // Also push text to Zenbooker if linked (attachments are local-only)
+    if (job.zenbooker_job_id && text) {
         try {
             await zenbookerClient.addJobNote(job.zenbooker_job_id, { text });
         } catch (err) {
