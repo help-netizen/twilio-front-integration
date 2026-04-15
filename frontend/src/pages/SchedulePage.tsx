@@ -5,7 +5,9 @@
  */
 
 import { useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useScheduleData } from '../hooks/useScheduleData';
+import { useJobDetail } from '../hooks/useJobDetail';
 import { ScheduleToolbar } from '../components/schedule/ScheduleToolbar';
 import { CalendarControls } from '../components/schedule/CalendarControls';
 import { AIAssistantModal } from '../components/schedule/AIAssistantModal';
@@ -17,13 +19,36 @@ import { TimelineWeekView } from '../components/schedule/TimelineWeekView';
 import { SidebarStack } from '../components/schedule/SidebarStack';
 import { UnscheduledPanel } from '../components/schedule/UnscheduledPanel';
 import { DispatchSettingsDialog } from '../components/schedule/DispatchSettingsDialog';
+import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
+import { JobDetailPanel } from '../components/jobs/JobDetailPanel';
 import { Skeleton } from '../components/ui/skeleton';
-import type { CreateFromSlotPayload } from '../services/scheduleApi';
+import type { ScheduleItem, CreateFromSlotPayload } from '../services/scheduleApi';
 
 export function SchedulePage() {
     const schedule = useScheduleData();
+    const navigate = useNavigate();
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [showAIAssistant, setShowAIAssistant] = useState(false);
+
+    // ─── Job detail floating panel (same as Jobs page) ───────────────
+    const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
+    const jobDetail = useJobDetail({
+        jobId: selectedJobId,
+        onJobMutated: schedule.refresh,
+    });
+
+    /** When a schedule item is clicked, jobs open in FloatingDetailPanel; others go to SidebarStack */
+    const handleSelectItem = useCallback((item: ScheduleItem) => {
+        if (item.entity_type === 'job') {
+            setSelectedJobId(item.entity_id);
+        } else {
+            schedule.selectItem(item);
+        }
+    }, [schedule.selectItem]);
+
+    const handleCloseJobDetail = useCallback(() => {
+        setSelectedJobId(null);
+    }, []);
 
     const handleMonthDaySelect = (date: Date) => {
         schedule.setCurrentDate(date);
@@ -72,15 +97,15 @@ export function SchedulePage() {
 
         switch (schedule.viewMode) {
             case 'week':
-                return <WeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={schedule.selectItem} onReschedule={schedule.handleReschedule} onCreateFromSlot={handleCreateFromSlot} />;
+                return <WeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onReschedule={schedule.handleReschedule} onCreateFromSlot={handleCreateFromSlot} />;
             case 'day':
-                return <DayView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={schedule.selectItem} onReschedule={schedule.handleReschedule} onCreateFromSlot={handleCreateFromSlot} />;
+                return <DayView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onReschedule={schedule.handleReschedule} onCreateFromSlot={handleCreateFromSlot} />;
             case 'month':
-                return <MonthView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectDay={handleMonthDaySelect} onSelectItem={schedule.selectItem} />;
+                return <MonthView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectDay={handleMonthDaySelect} onSelectItem={handleSelectItem} />;
             case 'timeline':
-                return <TimelineView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} onSelectItem={schedule.selectItem} onReschedule={schedule.handleReschedule} onReassign={schedule.handleReassign} onCreateFromSlot={handleCreateFromSlot} />;
+                return <TimelineView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} onSelectItem={handleSelectItem} onReschedule={schedule.handleReschedule} onReassign={schedule.handleReassign} onCreateFromSlot={handleCreateFromSlot} />;
             case 'timeline-week':
-                return <TimelineWeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} onSelectItem={schedule.selectItem} onReassign={schedule.handleReassign} onCreateFromSlot={handleCreateFromSlot} />;
+                return <TimelineWeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} onSelectItem={handleSelectItem} onReassign={schedule.handleReassign} onCreateFromSlot={handleCreateFromSlot} />;
             default:
                 return null;
         }
@@ -128,7 +153,7 @@ export function SchedulePage() {
                     {!schedule.loading && (
                         <UnscheduledPanel
                             items={schedule.unscheduledItems}
-                            onSelectItem={schedule.selectItem}
+                            onSelectItem={handleSelectItem}
                         />
                     )}
 
@@ -160,6 +185,32 @@ export function SchedulePage() {
                     timezone={schedule.settings.timezone}
                 />
             </div>
+
+            {/* Job detail panel — same FloatingDetailPanel as Jobs page */}
+            <FloatingDetailPanel open={!!jobDetail.job} onClose={handleCloseJobDetail} wide>
+                {jobDetail.job && (
+                    <JobDetailPanel
+                        job={jobDetail.job}
+                        contactInfo={jobDetail.contactInfo}
+                        detailLoading={jobDetail.detailLoading}
+                        noteJobId={jobDetail.noteJobId}
+                        noteText={jobDetail.noteText}
+                        setNoteText={jobDetail.setNoteText}
+                        setNoteJobId={jobDetail.setNoteJobId}
+                        onClose={handleCloseJobDetail}
+                        onBlancStatusChange={jobDetail.handleBlancStatusChange}
+                        onAddNote={jobDetail.handleAddNote}
+                        onMarkEnroute={jobDetail.handleMarkEnroute}
+                        onMarkInProgress={jobDetail.handleMarkInProgress}
+                        onMarkComplete={jobDetail.handleMarkComplete}
+                        onCancel={jobDetail.handleCancel}
+                        navigate={navigate}
+                        allTags={jobDetail.allTags}
+                        onTagsChange={jobDetail.handleTagsChange}
+                        onJobUpdated={jobDetail.handleJobUpdated}
+                    />
+                )}
+            </FloatingDetailPanel>
 
             {/* AI Assistant Modal */}
             <AIAssistantModal

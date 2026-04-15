@@ -1,10 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import * as jobsApi from '../services/jobsApi';
-import * as contactsApi from '../services/contactsApi';
 import type { LocalJob } from '../services/jobsApi';
 import { useJobsData, LIMIT } from './useJobsData';
-import { useJobsActions } from './useJobsActions';
+import { useJobDetail } from './useJobDetail';
 import { useJobsExport } from './useJobsExport';
 import { useRealtimeEvents, type SSEJobUpdatedEvent } from './useRealtimeEvents';
 
@@ -14,20 +12,17 @@ export function useJobsPage() {
     const navigate = useNavigate();
     const { jobId: urlJobId } = useParams<{ jobId?: string }>();
 
-    // Selection state
-    const [selectedJob, setSelectedJob] = useState<LocalJob | null>(null);
-    const [detailLoading, setDetailLoading] = useState(false);
-    const [contactInfo, setContactInfo] = useState<{ name: string; phone: string; email: string; id: number } | null>(null);
+    // Selection state — just the ID; useJobDetail handles fetching
+    const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
 
     // Compose sub-hooks
     const data = useJobsData();
-    const actions = useJobsActions({
-        selectedJob,
-        setSelectedJob,
-        setJobs: data.setJobs,
-        loadJobs: data.loadJobs,
-        offset: data.offset,
+
+    const detail = useJobDetail({
+        jobId: selectedJobId,
+        onJobMutated: useCallback(() => data.loadJobs(data.offset), [data.loadJobs, data.offset]),
     });
+
     const exportHook = useJobsExport({
         filteredJobs: data.filteredJobs,
         searchQuery: data.searchQuery,
@@ -45,91 +40,66 @@ export function useJobsPage() {
 
     // ─── Selection / Navigation ──────────────────────────────────────
 
-    const handleSelectJob = async (job: LocalJob) => {
-        setSelectedJob(job);
-        setDetailLoading(true);
-        setContactInfo(null);
+    const handleSelectJob = useCallback((job: LocalJob) => {
+        setSelectedJobId(job.id);
         navigate(`/jobs/${job.id}`, { replace: true });
-        try {
-            const detail = await jobsApi.getJob(job.id);
-            setSelectedJob(detail);
-            if (detail.contact_id) {
-                try {
-                    const resp = await contactsApi.getContact(detail.contact_id);
-                    const c = resp.data.contact;
-                    setContactInfo({ name: c.full_name || '—', phone: c.phone_e164 || '', email: c.email || '', id: c.id });
-                } catch { /* no contact found */ }
-            }
-        } catch {
-            // Keep the list-version
-        } finally {
-            setDetailLoading(false);
-        }
-    };
+    }, [navigate]);
 
-    const handleCloseDetail = () => {
-        setSelectedJob(null);
-        setContactInfo(null);
+    const handleCloseDetail = useCallback(() => {
+        setSelectedJobId(null);
         navigate('/jobs', { replace: true });
-    };
+    }, [navigate]);
 
     // Auto-select job from URL /jobs/:jobId
     useEffect(() => {
-        if (urlJobId && !selectedJob && !data.loading) {
-            const id = parseInt(urlJobId, 10);
-            const job = data.jobs.find(j => j.id === id);
-            if (job) {
-                handleSelectJob(job);
-            } else if (data.jobs.length > 0) {
-                (async () => {
-                    setDetailLoading(true);
-                    try {
-                        const detail = await jobsApi.getJob(id);
-                        setSelectedJob(detail);
-                        if (detail.contact_id) {
-                            try {
-                                const resp = await contactsApi.getContact(detail.contact_id);
-                                const c = resp.data.contact;
-                                setContactInfo({ name: c.full_name || '—', phone: c.phone_e164 || '', email: c.email || '', id: c.id });
-                            } catch { }
-                        }
-                    } catch { /* not found */ }
-                    finally { setDetailLoading(false); }
-                })();
-            }
+        if (urlJobId && !selectedJobId && !data.loading) {
+            setSelectedJobId(parseInt(urlJobId, 10));
         }
-    }, [urlJobId, data.jobs, data.loading]);
+    }, [urlJobId, selectedJobId, data.loading]);
 
-    // ─── SSE: update job in-place when backend syncs from ZB ─────────
+    // ─── SSE: update list in-place when backend syncs ────────────────
+    // (useJobDetail handles SSE for the selected job internally)
+
     const handleJobUpdated = useCallback((updatedJob: LocalJob) => {
         if (!updatedJob?.id) return;
-        setSelectedJob(prev => prev?.id === updatedJob.id ? updatedJob : prev);
+        // Update list
         data.setJobs(prev => prev.map(j => j.id === updatedJob.id ? updatedJob : j));
-    }, [data.setJobs]);
+        // Also update selected job via useJobDetail
+        detail.handleJobUpdated(updatedJob);
+    }, [data.setJobs, detail.handleJobUpdated]);
 
     useRealtimeEvents({
         onJobUpdated: useCallback((event: SSEJobUpdatedEvent) => {
-            const job = event.job as LocalJob;
-            handleJobUpdated(job);
+            handleJobUpdated(event.job as LocalJob);
         }, [handleJobUpdated]),
     });
 
-    // ─── Return ──────────────────────────────────────────────────────
+    // ─── Return (same surface as before) ─────────────────────────────
 
     return {
         // Data (from useJobsData)
         ...data,
         limit: LIMIT,
 
-        // Selection
-        selectedJob,
-        detailLoading,
-        contactInfo,
+        // Selection — expose detail.job as selectedJob for backward compat
+        selectedJob: detail.job,
+        detailLoading: detail.detailLoading,
+        contactInfo: detail.contactInfo,
         handleSelectJob,
         handleCloseDetail,
 
-        // Actions (from useJobsActions)
-        ...actions,
+        // Actions (from useJobDetail)
+        noteText: detail.noteText,
+        setNoteText: detail.setNoteText,
+        noteJobId: detail.noteJobId,
+        setNoteJobId: detail.setNoteJobId,
+        handleCancel: detail.handleCancel,
+        handleMarkEnroute: detail.handleMarkEnroute,
+        handleMarkInProgress: detail.handleMarkInProgress,
+        handleMarkComplete: detail.handleMarkComplete,
+        handleBlancStatusChange: detail.handleBlancStatusChange,
+        handleTagsChange: detail.handleTagsChange,
+        handleAddNote: detail.handleAddNote,
 
         // Export (from useJobsExport)
         ...exportHook,
