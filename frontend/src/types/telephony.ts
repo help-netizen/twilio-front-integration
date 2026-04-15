@@ -123,6 +123,8 @@ export interface RoutingLogEntry {
     flow_path: string[];
     latency_ms: number;
     error?: string;
+    direction?: 'inbound' | 'outbound';
+    contact_name?: string | null;
 }
 
 export interface AgentStatus {

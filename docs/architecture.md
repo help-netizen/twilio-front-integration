@@ -643,3 +643,82 @@ interface FullscreenImageViewerProps {
     onRotationChange?: (rotation: number) => void;
 }
 ```
+
+---
+
+## SCHED-LIST-001: Schedule List View
+
+**Status:** Architecture
+**Feature:** New "List" view mode for Schedule page — vertical job lists per technician column with date headings
+
+---
+
+### 1. System Overview
+
+Frontend-only feature. No backend/database changes. Reuses existing `fetchScheduleItems` API and all Schedule infrastructure.
+
+```
+SchedulePage.tsx
+├── CalendarControls.tsx  ← add 'list' to VIEW_OPTIONS
+├── useScheduleData.ts   ← add 'list' to ViewMode union + dateRange/navigation
+└── switch(viewMode)
+    ├── ...existing views...
+    └── case 'list' → <ListView />  ← NEW
+```
+
+### 2. New Files
+
+| File | Responsibility |
+|------|---------------|
+| `frontend/src/components/schedule/ListView.tsx` | Multi-column list view. Provider columns (same grouping logic as TimelineWeekView). Within each column: items grouped by day with DateSeparator-style headings (Pulse pattern). Items rendered via existing `ScheduleItemCard` (non-compact, showing time slot). Supports DnD reassign between columns. |
+
+### 3. Modified Files
+
+| File | Change | What to Preserve |
+|------|--------|-----------------|
+| `frontend/src/hooks/useScheduleData.ts` | Add `'list'` to `ViewMode` union type. Add `'list'` to `dateRange` switch (same week range as `'timeline-week'`). Add `'list'` to `navigateDate` (week-like navigation). | All existing state, fetching, SSE, sidebar, filter logic. |
+| `frontend/src/components/schedule/CalendarControls.tsx` | Add `{ value: 'list', label: 'List' }` to `VIEW_OPTIONS` array. | All existing controls, filters, date formatting. |
+| `frontend/src/pages/SchedulePage.tsx` | Add `case 'list'` to `renderCalendarView()` switch. Import `ListView`. | All existing view rendering, sidebar, job detail, AI assistant. |
+
+### 4. Reused Components (NO duplication)
+
+| Component | How Reused |
+|-----------|-----------|
+| `ScheduleItemCard` | Renders each item tile. `compact={false}` so time slot is visible. |
+| `DateSeparator` (from `frontend/src/components/pulse/DateSeparator.tsx`) | Imported for day headings — same visual as Pulse timeline. |
+| `getProviderColor` | Column header color dots — same as TimelineView. |
+| `dateKeyInTZ`, `formatTimeInTZ` | Timezone-aware date grouping and time display. |
+| `setDragData`, `getDragData`, `hasDragData` | DnD reassign between columns — same pattern as TimelineWeekView. |
+
+### 5. ListView Component Design
+
+```
+<div className="flex flex-col overflow-auto" style={schedSurface}>
+  {/* Sticky header: provider column headers */}
+  <div className="grid sticky top-0" style={gridCols}>
+    {providerGroups.map(group => <ProviderHeader />)}
+  </div>
+
+  {/* Body: grid of provider columns */}
+  <div className="grid flex-1" style={gridCols}>
+    {providerGroups.map(group => (
+      <div className="column">
+        {days.map(day => {
+          const dayItems = group.items.filter(byDay);
+          if (dayItems.length === 0) return null;  // skip empty days
+          return (
+            <>
+              <DateSeparator date={formatDay} />
+              {dayItems.sort(byStartAt).map(item => (
+                <ScheduleItemCard item={item} onClick={onSelectItem} timezone={tz} />
+              ))}
+            </>
+          );
+        })}
+      </div>
+    ))}
+  </div>
+</div>
+```
+
+Props: same as `TimelineWeekViewProps` (currentDate, items, settings, allProviders, onSelectItem, onReassign, onCreateFromSlot).

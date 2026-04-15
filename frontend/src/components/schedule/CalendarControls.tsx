@@ -31,6 +31,7 @@ const VIEW_OPTIONS: Array<{ value: ViewMode; label: string }> = [
     { value: 'month', label: 'Month' },
     { value: 'timeline', label: 'Timeline' },
     { value: 'timeline-week', label: 'Team Week' },
+    { value: 'list', label: 'List' },
 ];
 
 const STATUS_OPTIONS: Array<{ value: string; label: string; color: string }> = [
@@ -52,7 +53,8 @@ function getDateLabel(date: Date, mode: ViewMode): string {
         case 'timeline':
             return format(date, 'EEEE, MMM d, yyyy');
         case 'week':
-        case 'timeline-week': {
+        case 'timeline-week':
+        case 'list': {
             const start = startOfWeek(date);
             const end = endOfWeek(date);
             return format(start, 'MMM d') + ' \u2013 ' + format(end, 'MMM d, yyyy');

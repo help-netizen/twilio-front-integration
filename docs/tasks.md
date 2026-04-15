@@ -775,3 +775,78 @@ TASK-021 + TASK-017 ──► TASK-030 (component tests) │
 
 **Wave 1:** TASK-IMG-001
 **Wave 2:** TASK-IMG-002
+
+---
+
+# SCHED-LIST-001: Schedule List View — Tasks
+
+**Feature:** New "List" view mode for Schedule page
+**Total tasks:** 4
+**Phases:** 2
+
+---
+
+## Phase 1: Plumbing (ViewMode + wiring)
+
+### TASK-LIST-001: Add 'list' to ViewMode and useScheduleData
+**Phase:** 1
+**Status:** done
+**Dependencies:** none
+**Files to modify:**
+- `frontend/src/hooks/useScheduleData.ts` — Add `'list'` to ViewMode union, dateRange switch (week range), navigateDate (week-like)
+**Acceptance criteria:**
+- [ ] `ViewMode` type includes `'list'`
+- [ ] `dateRange` returns week range for `'list'`
+- [ ] `navigateDate` uses week navigation for `'list'`
+
+---
+
+### TASK-LIST-002: Add 'List' to CalendarControls VIEW_OPTIONS
+**Phase:** 1
+**Status:** done
+**Dependencies:** none
+**Files to modify:**
+- `frontend/src/components/schedule/CalendarControls.tsx` — Add `{ value: 'list', label: 'List' }` to VIEW_OPTIONS, add 'list' to getDateLabel
+**Acceptance criteria:**
+- [ ] VIEW_OPTIONS includes `{ value: 'list', label: 'List' }`
+- [ ] Date label shows week range for 'list' mode
+
+---
+
+## Phase 2: ListView component + wiring
+
+### TASK-LIST-003: Create ListView component
+**Phase:** 2
+**Status:** done
+**Dependencies:** TASK-LIST-001
+**Files to modify:**
+- `frontend/src/components/schedule/ListView.tsx` — NEW: Provider columns, day grouping with DateSeparator, ScheduleItemCard rendering, DnD support
+**Acceptance criteria:**
+- [ ] Provider columns rendered (sorted alphabetically, Unassigned last)
+- [ ] Items grouped by day with DateSeparator-style headings
+- [ ] Empty days not rendered
+- [ ] Items sorted by start_at within each day
+- [ ] ScheduleItemCard used with compact={false} (time slot visible)
+- [ ] Click triggers onSelectItem
+- [ ] DnD reassign between columns works
+- [ ] Horizontal scroll when columns overflow
+
+---
+
+### TASK-LIST-004: Wire ListView into SchedulePage
+**Phase:** 2
+**Status:** done
+**Dependencies:** TASK-LIST-003
+**Files to modify:**
+- `frontend/src/pages/SchedulePage.tsx` — Import ListView, add case 'list' to renderCalendarView switch
+**Acceptance criteria:**
+- [ ] SchedulePage renders ListView when viewMode === 'list'
+- [ ] All props passed correctly (currentDate, items, settings, providers, onSelectItem, onReassign, onCreateFromSlot)
+
+---
+
+## Execution Order
+
+**Wave 1:** TASK-LIST-001, TASK-LIST-002 (parallel)
+**Wave 2:** TASK-LIST-003
+**Wave 3:** TASK-LIST-004

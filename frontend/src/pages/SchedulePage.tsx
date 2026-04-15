@@ -16,6 +16,7 @@ import { DayView } from '../components/schedule/DayView';
 import { MonthView } from '../components/schedule/MonthView';
 import { TimelineView } from '../components/schedule/TimelineView';
 import { TimelineWeekView } from '../components/schedule/TimelineWeekView';
+import { ListView } from '../components/schedule/ListView';
 import { SidebarStack } from '../components/schedule/SidebarStack';
 import { UnscheduledPanel } from '../components/schedule/UnscheduledPanel';
 import { DispatchSettingsDialog } from '../components/schedule/DispatchSettingsDialog';
@@ -106,6 +107,8 @@ export function SchedulePage() {
                 return <TimelineView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} onSelectItem={handleSelectItem} onReschedule={schedule.handleReschedule} onReassign={schedule.handleReassign} onCreateFromSlot={handleCreateFromSlot} />;
             case 'timeline-week':
                 return <TimelineWeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} onSelectItem={handleSelectItem} onReassign={schedule.handleReassign} onCreateFromSlot={handleCreateFromSlot} />;
+            case 'list':
+                return <ListView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} onSelectItem={handleSelectItem} onReassign={schedule.handleReassign} onCreateFromSlot={handleCreateFromSlot} />;
             default:
                 return null;
         }

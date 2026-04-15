@@ -114,8 +114,49 @@ export const telephonyApi = {
     // Audio — still mock (no backend yet)
     listAudio: async (): Promise<AudioAsset[]> => { await delay(); return MOCK_AUDIO; },
 
-    // Logs — still mock
-    listLogs: async (): Promise<RoutingLogEntry[]> => { await delay(); return MOCK_LOGS; },
+    // Logs — real API (calls table)
+    listLogs: async (limit = 200): Promise<RoutingLogEntry[]> => {
+        try {
+            const data = await apiFetch<{ calls: any[]; next_cursor: number | null; count: number }>(
+                `/calls?limit=${limit}`,
+            );
+            const calls = (data.calls || []).filter((c: any) => !c.parent_call_sid);
+            return calls.map((c: any) => {
+                let result: RoutingLogEntry['result'] = 'answered';
+                if (c.status === 'failed') result = 'error';
+                else if (c.status === 'busy' || c.status === 'no-answer' || c.status === 'canceled') result = 'abandoned';
+                else if (c.status === 'completed' && !c.answered_at) result = 'voicemail';
+
+                const startedAt = c.started_at || c.created_at;
+                const answeredAt = c.answered_at;
+                const latencyMs = startedAt && answeredAt
+                    ? Math.round(new Date(answeredAt).getTime() - new Date(startedAt).getTime())
+                    : 0;
+
+                const flowPath: string[] = [c.direction === 'inbound' ? 'Inbound' : 'Outbound'];
+                if (c.status === 'completed' && c.answered_at) flowPath.push('Connected');
+                if (c.duration_sec && c.duration_sec > 0) flowPath.push('In Call');
+                flowPath.push(c.status === 'completed' ? 'Completed' : c.status);
+
+                return {
+                    id: String(c.id),
+                    session_id: c.call_sid || '',
+                    caller: c.direction === 'inbound' ? (c.from_number || '') : (c.to_number || ''),
+                    number_called: c.direction === 'inbound' ? (c.to_number || '') : (c.from_number || ''),
+                    result,
+                    duration_sec: c.duration_sec || 0,
+                    timestamp: startedAt || '',
+                    flow_path: flowPath,
+                    latency_ms: latencyMs,
+                    direction: c.direction || 'inbound',
+                    contact_name: c.contact?.full_name || null,
+                } as RoutingLogEntry;
+            });
+        } catch {
+            await delay();
+            return MOCK_LOGS;
+        }
+    },
 
     // Provider — still mock
     getProvider: async (): Promise<ProviderInfo> => { await delay(); return MOCK_PROVIDER; },

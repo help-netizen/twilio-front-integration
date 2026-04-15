@@ -4,6 +4,43 @@
 
 ---
 
+## 2026-04-15 — RL-001: Routing Logs — Real Data + Day Grouping
+
+### Improvement
+- **Routing Logs page** (`/settings/telephony/routing-logs`) now displays real call data from `GET /api/calls` instead of mock data
+- **Day grouping** — calls grouped by date with Pulse-style DateSeparator headings (no lines)
+- **Redesigned UI** — Blanc design system: call rows with direction icons, contact names, result badges, duration, time
+- **Detail panel** — click a call to see session ID, flow path, and latency
+- **200 most recent calls** loaded by default
+
+### Files Modified
+- `frontend/src/pages/telephony/RoutingLogsPage.tsx` — full rewrite with day grouping and Blanc design
+- `frontend/src/services/telephonyApi.ts` — `listLogs()` now calls real `/api/calls` endpoint, maps to `RoutingLogEntry`
+- `frontend/src/types/telephony.ts` — added `direction` and `contact_name` fields to `RoutingLogEntry`
+
+---
+
+## 2026-04-15 — SCHED-LIST-001: Schedule List View
+
+### New Feature
+- **List view mode** for Schedule page — vertical job lists per technician column
+- Jobs grouped by day with Pulse-style DateSeparator headings (no lines/borders)
+- Each job tile shows time slot (start – end) via existing `ScheduleItemCard`
+- Provider columns sorted alphabetically, "Unassigned" always last
+- Empty days are not rendered (no empty headings)
+- DnD reassign between provider columns supported
+- Week-based navigation (same as Team Week view)
+
+### Files Added
+- `frontend/src/components/schedule/ListView.tsx` — new list view component
+
+### Files Modified
+- `frontend/src/hooks/useScheduleData.ts` — added `'list'` to ViewMode, dateRange, navigateDate
+- `frontend/src/components/schedule/CalendarControls.tsx` — added List to VIEW_OPTIONS and getDateLabel
+- `frontend/src/pages/SchedulePage.tsx` — added `case 'list'` with ListView import
+
+---
+
 ## 2026-04-15 — IMG-001: Fullscreen Image Viewer
 
 ### New Feature

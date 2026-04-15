@@ -241,3 +241,85 @@ Shared fullscreen image viewer (lightbox) component. Opens when user clicks on a
 ### 5. Affected Integrations
 
 None.
+
+---
+
+## SCHED-LIST-001: Schedule List View
+
+**Status:** Requirements
+**Priority:** Medium
+**Owner:** Frontend/UX
+
+### 1. Description
+
+Add a new "List" view mode to the Schedule page. Unlike Timeline/TimelineWeek views that position items on an hourly grid, the List view renders a simple vertical list of jobs per technician column — no time axis, just stacked cards. Each job tile shows the time slot (start → end). Days are separated by date headings in the Pulse `DateSeparator` style (day name as a heading label, spacing only — no horizontal lines or borders).
+
+### 2. User Scenarios
+
+#### SC-01: Switch to List view
+**Actor:** Dispatcher / Admin
+**Precondition:** Schedule page is open in any view mode
+**Flow:**
+1. User selects "List" from the view mode dropdown in CalendarControls.
+2. The view switches to a multi-column layout: one column per technician, plus an "Unassigned" column.
+3. Within each column, items are grouped by day with a date heading (e.g. "Mon, Apr 15") separating groups.
+4. Items within each day are sorted chronologically by `start_at`.
+5. Each item tile shows: time slot (e.g. "9:00 AM – 11:30 AM"), title, status, customer name — same info density as existing `ScheduleItemCard`.
+
+#### SC-02: Navigate dates in List view
+**Actor:** Dispatcher
+**Precondition:** List view is active
+**Flow:**
+1. User clicks Previous/Next to navigate by week (same as Timeline Week behavior).
+2. The list shows 7 days (Mon–Sun), only rendering days that have items.
+3. "Today" button jumps to current week.
+
+#### SC-03: Click on item tile
+**Actor:** Dispatcher
+**Precondition:** List view is active
+**Flow:**
+1. User clicks a job tile — FloatingDetailPanel opens (same behavior as other views).
+2. User clicks a lead/task tile — SidebarStack opens.
+
+#### SC-04: Empty day handling
+**Actor:** Dispatcher
+**Flow:**
+1. If a day has no items for a specific technician, no date heading or empty state is shown for that day in that column. Only days with items appear.
+2. If a technician has zero items across the entire week, the column still renders with the header but no content below.
+
+### 3. Non-Functional Requirements
+
+#### NFR-01: Frontend-only
+- No backend changes. Reuses existing `fetchScheduleItems` API and `ScheduleItem` data structure.
+
+#### NFR-02: Performance
+- Must render smoothly for up to 20 providers × 7 days × 10 items per day.
+
+#### NFR-03: Consistency
+- Reuses existing `ScheduleItemCard` component for item tiles (adds time slot display).
+- Date separator follows Pulse `DateSeparator` visual pattern: heading-style label, no lines.
+- Column headers follow the same provider name + color dot pattern as TimelineView/TimelineWeekView.
+
+#### NFR-04: Responsive
+- Horizontal scroll when columns exceed viewport width (same as TimelineView behavior).
+
+### 4. Affected Modules
+
+| Module | Change |
+|--------|--------|
+| `frontend/src/hooks/useScheduleData.ts` | Extend `ViewMode` union with `'list'` |
+| `frontend/src/components/schedule/CalendarControls.tsx` | Add `{ value: 'list', label: 'List' }` to `VIEW_OPTIONS` |
+| `frontend/src/pages/SchedulePage.tsx` | Add `case 'list'` to the view switch, import `ListView` |
+| **New:** `frontend/src/components/schedule/ListView.tsx` | New list view component |
+
+### 5. Affected Integrations
+
+None.
+
+### 6. Constraints
+
+1. Reuse `ScheduleItemCard` — do not create a separate card component.
+2. Time slot display (start – end) should be added to the card when used in List view context.
+3. Date navigation granularity: week (7 days at a time), same as `timeline-week`.
+4. Date range calculation in `useScheduleData` should reuse `timeline-week` logic for the `list` view mode.
+5. Columns are sorted alphabetically by provider name, "Unassigned" always last — same as TimelineView.

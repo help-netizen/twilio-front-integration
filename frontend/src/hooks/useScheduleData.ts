@@ -27,7 +27,7 @@ export interface ProviderInfo {
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export type ViewMode = 'day' | 'week' | 'month' | 'timeline' | 'timeline-week';
+export type ViewMode = 'day' | 'week' | 'month' | 'timeline' | 'timeline-week' | 'list';
 
 export interface SidebarLayer {
     type: 'schedule-item' | 'customer' | 'provider';
@@ -82,7 +82,8 @@ export function useScheduleData() {
                     endDate: format(currentDate, 'yyyy-MM-dd'),
                 };
             case 'week':
-            case 'timeline-week': {
+            case 'timeline-week':
+            case 'list': {
                 const start = startOfWeek(currentDate, { weekStartsOn: 0 });
                 const end = endOfWeek(currentDate, { weekStartsOn: 0 });
                 return {
@@ -179,7 +180,7 @@ export function useScheduleData() {
         if (dir === 'today') { setCurrentDate(new Date()); return; }
         setCurrentDate(prev => {
             const isDayLike = viewMode === 'day' || viewMode === 'timeline';
-            const isWeekLike = viewMode === 'week' || viewMode === 'timeline-week';
+            const isWeekLike = viewMode === 'week' || viewMode === 'timeline-week' || viewMode === 'list';
             const fn = dir === 'next'
                 ? isDayLike ? addDays : isWeekLike ? addWeeks : addMonths
                 : isDayLike ? subDays : isWeekLike ? subWeeks : subMonths;
