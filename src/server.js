@@ -177,6 +177,14 @@ app.use('/api/settings/job-tags', authenticate, requirePermission('tenant.compan
 app.use('/api/settings/jobs-list-fields', authenticate, requirePermission('tenant.company.manage'), requireCompanyAccess, jobsListFieldsRouter);
 const actionRequiredSettingsRouter = require('../backend/src/routes/action-required-settings');
 app.use('/api/settings/action-required', authenticate, requirePermission('tenant.company.manage'), requireCompanyAccess, actionRequiredSettingsRouter);
+
+// Email settings + workspace (EMAIL-001)
+const emailSettingsRouter = require('../backend/src/routes/email-settings');
+const emailRouter = require('../backend/src/routes/email');
+const emailOAuthRouter = require('../backend/src/routes/email-oauth');
+app.use('/api/email/oauth', emailOAuthRouter); // public — Google redirects here
+app.use('/api/settings/email', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess, emailSettingsRouter);
+app.use('/api/email', authenticate, requireCompanyAccess, emailRouter);
 const serviceTerritoryRouter = require('../backend/src/routes/service-territories');
 app.use('/api/settings/service-territories', authenticate, requirePermission('tenant.company.manage'), requireCompanyAccess, serviceTerritoryRouter);
 
@@ -290,6 +298,10 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
     // Start daily Zenbooker jobs sync cron
     const zbSyncCron = require('../backend/src/services/zbJobsSyncCron');
     zbSyncCron.start();
+
+    // Start email sync scheduler (EMAIL-001)
+    const emailSyncService = require('../backend/src/services/emailSyncService');
+    emailSyncService.startScheduler();
 
 
 

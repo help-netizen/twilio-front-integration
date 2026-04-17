@@ -4,6 +4,105 @@
 
 ---
 
+## 2026-04-17 — EMAIL-001 Implementation (Full Stack)
+
+### Backend
+- Created migration `079_create_email_tables.sql`: 5 tables (`email_mailboxes`, `email_threads`, `email_messages`, `email_attachments`, `email_sync_state`), 12 indexes, 4 triggers
+- Created `backend/src/db/emailQueries.js`: full CRUD + sync queries with tenant isolation
+- Created `backend/src/services/emailMailboxService.js`: AES-256-GCM token encryption, HMAC-signed OAuth state, mailbox lifecycle
+- Created `backend/src/routes/email-settings.js`: 4 settings endpoints (GET status, POST connect, POST disconnect, POST sync)
+- Created `backend/src/routes/email-oauth.js`: public Google OAuth callback with state validation
+- Created `backend/src/services/emailSyncService.js`: Gmail backfill, incremental history sync, interval scheduler
+- Created `backend/src/services/emailService.js`: raw MIME send/reply, sent-message hydration, attachment proxy
+- Created `backend/src/routes/email.js`: 7 workspace endpoints (mailbox, threads, thread detail, mark-read, compose, reply, attachment download)
+- Modified `src/server.js`: mounted 3 route groups + email sync scheduler at boot
+
+### Frontend
+- Created `frontend/src/services/emailApi.ts`: typed API wrapper for all email endpoints
+- Created `frontend/src/pages/EmailSettingsPage.tsx`: mailbox status, connect/reconnect/disconnect, manual sync
+- Created `frontend/src/pages/EmailPage.tsx`: three-pane workspace (rail, thread list, thread detail)
+- Created email components: `MailboxRail`, `EmailThreadList`, `EmailThreadRow`, `EmailThreadPane`, `EmailMessageItem`, `EmailComposer`
+- Modified `frontend/src/App.tsx`: added `/settings/email` and `/email` routes
+- Modified `frontend/src/components/layout/appLayoutNavigation.tsx`: added Email to Settings dropdown
+
+### Tests
+- Created 3 test suites (41 tests): `emailMailboxService.test.js`, `emailSyncService.test.js`, `email.test.js`
+- Coverage: encryption round-trip, OAuth state signing, parsing helpers, route guards, CRUD operations
+
+### Dependencies
+- Added `googleapis` npm package
+
+---
+
+## 2026-04-17 — EMAIL-001 Pipeline Docs
+
+### Architecture
+- В `docs/architecture.md` добавлен полноценный architecture slice для `EMAIL-001`.
+- Зафиксированы:
+  - отдельные backend routes/services/query-layer для Gmail mailbox, sync и `/email`
+  - отдельная `email_mailboxes` persistence layer для encrypted OAuth credentials
+  - локальная thread/message/attachment sync-модель вместо live-only Gmail reads
+  - отдельный `/email` workspace без изменения top-level navigation
+
+### Spec / Test Cases / Tasks
+- Создан новый spec: `docs/specs/EMAIL-001-gmail-shared-mailbox-workspace.md`
+- Создан новый test-cases файл: `docs/test-cases/EMAIL-001-gmail-shared-mailbox-workspace.md`
+- В `docs/tasks.md` добавлен полный task breakdown для `EMAIL-001`:
+  - migration
+  - OAuth/settings
+  - sync service
+  - send/reply service
+  - backend routes
+  - frontend settings page
+  - `/email` workspace UI
+  - verification
+
+### Requirements Alignment
+- В `docs/requirements.md` уточнён persistence slice:
+  - `company_settings` оставлен для non-secret email prefs / UI metadata
+  - добавлена отдельная `email_mailboxes` table для mailbox state и secure token storage
+
+## 2026-04-16 — EMAIL-001 Requirements Alignment
+
+### Documentation
+- В `docs/requirements.md` добавлен новый formalized requirement `EMAIL-001: Gmail Shared Mailbox + Email Workspace`.
+- Зафиксированы продуктовые решения для первой итерации:
+  - отдельный route `/email`, без выноса в top navigation
+  - отдельная settings page для подключения Gmail в `Settings`
+  - один shared Gmail mailbox на компанию
+  - scope v1 ограничен `send / receive / thread / search / attachments`
+  - personal mailbox, delegated access, comments, shared drafts, assignment, snooze/later/done остаются вне scope
+
+### Backlog
+- В `docs/feature-backlog.md` обновлён email-эпик:
+  - вместо `Email in Pulse` теперь зафиксирован отдельный `Gmail shared mailbox + /email workspace`
+  - сохранена связь с текущими `Pulse`/Contacts/Leads/Jobs через deep-links, без слияния email в существующий `Pulse` timeline на этой фазе
+
+## 2026-04-16 — Backlog Status Refresh
+
+### Documentation
+- Актуализирован `docs/feature-backlog.md` под фактическое состояние продукта на 2026-04-16.
+- Добавлены:
+  - legend по статусам `done / partial / planned`
+  - отдельный status-summary по backlog-эпикам
+  - обновлённый раздел "Что уже есть как база"
+- Стало явно видно, что уже не является чистым backlog:
+  - `Schedule` уже в активной разработке
+  - `Estimates / Invoices / Transactions` уже существуют как реальные routes/pages
+  - `Client Portal` уже имеет backend/API foundation
+  - `AI communication` уже частично реализован через summary/transcript/polish
+  - `Automation`, `Tasks`, `Voicemail`, `Phone ops` имеют partial baseline, а не zero-state
+
+### Current Functionality
+- Обновлён `docs/current_functionality.md`
+- Добавлен новый раздел с кратким статусом более новых модулей:
+  - `Schedule`
+  - `Estimates / Invoices / Transactions`
+  - `Client Portal foundation`
+  - `Company / Admin / Territory management`
+  - `Workflow editor / FSM builder`
+
+
 ## 2026-04-15 — RL-001: Routing Logs — Real Data + Day Grouping
 
 ### Improvement
@@ -142,4 +241,3 @@
 ### Dependencies
 - Backend: `fast-xml-parser`
 - Frontend: `@monaco-editor/react`, `state-machine-cat`
-

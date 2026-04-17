@@ -323,3 +323,202 @@ None.
 3. Date navigation granularity: week (7 days at a time), same as `timeline-week`.
 4. Date range calculation in `useScheduleData` should reuse `timeline-week` logic for the `list` view mode.
 5. Columns are sorted alphabetically by provider name, "Unassigned" always last — same as TimelineView.
+
+---
+
+## EMAIL-001: Gmail Shared Mailbox + Email Workspace
+
+**Status:** Requirements
+**Priority:** High
+**Owner:** Messaging / Integrations
+**Feature flags:** `email_workspace_enabled`, `gmail_channel_enabled`
+
+### 1. Description
+
+Add a company-level Gmail connection page in Settings and a separate `/email` operator workspace inspired by Front's shared inbox layout. This feature is scoped to one shared Gmail / Google Workspace mailbox per company and must cover the core email workflow inside Blanc: connect mailbox, receive emails, send new emails, reply in-thread, search, and work with attachments.
+
+This slice is intentionally **not** an omnichannel expansion of `Pulse`. In v1, email lives in its own workspace because the desired UX is a Front-style inbox/list/thread surface, while the current `Pulse` implementation is phone/SMS-thread-first. The two areas may deep-link to each other when a contact or thread match exists, but they are not merged into one timeline in this iteration.
+
+### 2. User Scenarios
+
+#### SC-01: Connect the company Gmail mailbox from Settings
+**Actor:** Admin with integration/company settings access
+**Precondition:** User opens `/settings/email`
+**Flow:**
+1. User sees the current company email status: `Not connected`, `Connected`, `Reconnect required`, or `Sync error`.
+2. User clicks `Connect Gmail`.
+3. Google OAuth flow is started for a Gmail or Google Workspace mailbox.
+4. After successful authorization, Blanc stores the connection against the current `company_id`.
+5. Settings page shows the connected mailbox address, last successful sync time, and actions: `Reconnect` and `Disconnect`.
+
+#### SC-02: Open the email workspace
+**Actor:** Dispatcher / manager / agent with internal messaging access
+**Precondition:** User navigates directly to `/email` or opens it from the Settings menu
+**Flow:**
+1. The page loads a Front-like three-pane layout:
+   - left rail / mailbox navigation,
+   - middle thread list,
+   - right thread detail + composer pane.
+2. The workspace opens on the default company mailbox, not on a personal inbox.
+3. Threads are ordered by the most recent email activity.
+4. If no mailbox is connected, the page shows an empty state with a CTA to `/settings/email`.
+
+#### SC-03: Read a thread
+**Actor:** Internal user with email access
+**Precondition:** Company mailbox is connected and at least one thread exists
+**Flow:**
+1. User selects a thread from the list.
+2. The right pane shows the full thread in chronological order.
+3. Each message displays sender, recipients, CC, subject, timestamp, body, and attachments.
+4. Opening the thread marks unread state as read for Blanc's internal workspace.
+
+#### SC-04: Send a new email
+**Actor:** Internal user with send permission
+**Precondition:** Company mailbox is connected
+**Flow:**
+1. User clicks `Compose`.
+2. User enters `To`, optional `CC`, subject, body text, and attachments/images.
+3. The message is sent from the connected company mailbox.
+4. A new thread is created in `/email` and becomes visible in the thread list.
+
+#### SC-05: Reply inside an existing thread
+**Actor:** Internal user with send permission
+**Precondition:** Existing email thread is open
+**Flow:**
+1. User clicks `Reply` in the thread pane.
+2. User edits recipients as allowed by normal reply semantics, adds body text and optional attachments.
+3. The outbound message is stored and synced as part of the same thread.
+4. Subsequent inbound replies continue to appear in the same Blanc thread.
+
+#### SC-06: Receive inbound emails
+**Actor:** Internal user with email access
+**Precondition:** Company mailbox is connected
+**Flow:**
+1. New inbound emails synced from Gmail appear in `/email` without opening Gmail.
+2. If Gmail identifies the email as part of an existing thread, Blanc attaches it to that same internal thread.
+3. If it is a new conversation, Blanc creates a new thread row.
+4. Thread list row shows unread state, sender, subject/snippet, timestamp, and attachment indicator when applicable.
+
+#### SC-07: Search emails and threads
+**Actor:** Internal user with email access
+**Flow:**
+1. User enters a search query in `/email`.
+2. Blanc searches across sender/recipient addresses, CC, subject, body text, and attachment filename metadata.
+3. Results are returned as threads, not as detached individual messages.
+4. Selecting a result opens the matching thread and highlights the relevant message when possible.
+
+#### SC-08: Work with attachments
+**Actor:** Internal user with email access
+**Flow:**
+1. User can attach files and images to a new email or reply.
+2. Incoming and outgoing messages display attachment chips/previews.
+3. User can open or download an attachment from the thread pane.
+4. Attachment visibility stays scoped to the exact email message that contains it.
+
+### 3. Non-Functional Requirements
+
+#### NFR-01: Security and tenancy
+- All email routes require `authenticate` + `requireCompanyAccess`.
+- `company_id` must be resolved only from `req.companyFilter?.company_id`.
+- Gmail connection state is company-scoped; one company cannot access another company's mailbox or synced email data.
+- OAuth tokens / refresh tokens must not be exposed to the frontend after initial authorization and must be stored securely.
+
+#### NFR-02: RBAC reuse
+- V1 should reuse existing permissions instead of introducing a new RBAC matrix:
+  - `/settings/email` — `tenant.integrations.manage`
+  - `/email` read access — `messages.view_internal`
+  - send/compose/reply actions — `messages.send`
+- Users without send permission may still view threads if they have read permission, but composer actions must be hidden or disabled.
+
+#### NFR-03: Threading model
+- Gmail `threadId` is the canonical thread key whenever available.
+- Header-based email continuity (`Message-ID`, `In-Reply-To`, `References`) is the fallback for sync/import edge cases.
+- V1 does not expose configurable threading modes in UI; threading behavior is fixed and product-controlled.
+
+#### NFR-04: Delivery and sync model
+- V1 does not require Front-level collaboration or queue orchestration features such as assignment, internal comments, shared drafts, snooze/later/done, or inbox rules.
+- V1 does not require `Pulse`-grade real-time parity on day one; a reliable sync loop plus manual refresh is acceptable if Gmail push/SSE wiring is not ready yet.
+- Any future realtime support must be additive and must not change the core `/email` data model.
+
+#### NFR-05: Search and performance
+- Thread list and search must be server-driven, not client-filter-only.
+- Opening `/email` should render the initial thread list without loading full message history for every thread.
+- Thread detail loads on demand and supports attachments without blocking the full page render.
+
+#### NFR-06: UX direction
+- `/email` should visually follow a Front-like operator workflow: mailbox navigation, thread list, thread pane, inline composer.
+- This is a directional inspiration, not a 1:1 clone. V1 should not import advanced Front features that are outside the approved scope.
+
+### 4. Affected Modules
+
+#### 4.1 Backend Services
+| Module | Change |
+|--------|--------|
+| **New:** `backend/src/routes/email.js` | REST API for thread list, thread detail, send, reply, search, and attachment retrieval. |
+| **New:** `backend/src/routes/email-settings.js` | Company-scoped settings API for Gmail status, connect/reconnect/disconnect, and sync health. |
+| **New:** `backend/src/services/emailService.js` | Gmail API wrapper, send/reply logic, MIME parsing, threading, and attachment metadata extraction. |
+| **New:** `backend/src/services/emailSyncService.js` | Incremental sync/backfill worker for inbound email import and thread refresh. |
+| Existing worker/runtime services | May be extended only as needed for background sync scheduling or event fan-out. No requirement to refactor Twilio/Pulse workers as part of v1. |
+
+#### 4.2 Frontend Pages & Components
+| Module | Change |
+|--------|--------|
+| `frontend/src/App.tsx` | Add routes for `/email` and `/settings/email`. `/email` is a standalone route; it is not added to the top navigation tabs. |
+| `frontend/src/components/layout/appLayoutNavigation.tsx` | Add an `Email` entry to the Settings dropdown only. Keep top-level navigation unchanged. |
+| **New:** `frontend/src/pages/EmailPage.tsx` | Front-like email workspace shell and route component. |
+| **New:** `frontend/src/pages/EmailSettingsPage.tsx` | Settings page for connecting and managing the shared Gmail mailbox. |
+| **New:** `frontend/src/services/emailApi.ts` | Frontend API wrapper for `/api/email` and `/api/settings/email`. |
+| **New:** `frontend/src/components/email/*` | Thread list, thread row, thread pane, message item, composer, search bar, empty/error states. |
+
+#### 4.3 Database / persistence
+| Store | Description |
+|-------|-------------|
+| `company_settings` | Store non-secret email workspace preferences and optional UI metadata under a dedicated `setting_key`; OAuth credentials must not be stored here. |
+| **New:** `email_mailboxes` | Company-scoped connected mailbox record with provider account identity, encrypted tokens, connection state, and sync health. |
+| **New:** `email_threads` | Internal thread records scoped by `company_id`, keyed to Gmail thread identity and searchable in `/email`. |
+| **New:** `email_messages` | Individual inbound/outbound email records with sender, recipients, body, sync metadata, and provider IDs. |
+| **New:** `email_attachments` | Attachment metadata and storage references linked to `email_messages`. |
+| **New:** `email_sync_state` | Sync cursor / history state per company mailbox for incremental Gmail import. |
+
+### 5. Affected Integrations
+
+#### 5.1 Gmail / Google Workspace
+- Gmail is the only supported provider in v1.
+- Connection must support Gmail and Google Workspace mailboxes through Google OAuth.
+- V1 supports one shared company mailbox only.
+- Personal inboxes, delegated inboxes, aliases, and multi-mailbox routing are explicitly out of scope.
+
+#### 5.2 Existing Blanc messaging stack
+- Existing SMS routes/services (`/api/messaging`, `MessagesPage`, `Pulse`) must remain functional and unchanged in behavior.
+- Email must not reuse SMS-specific tables or Twilio-specific message services.
+- Contact/lead/job linking may be added opportunistically, but email send/receive/search must not depend on those links being present.
+
+#### 5.3 Keycloak / permissions
+- No new Keycloak roles are required for v1 if the existing permissions listed above are sufficient.
+- If later implementation discovers a real gap, it may introduce an email-specific permission as a follow-up, not as a prerequisite for this slice.
+
+### 6. Out of Scope (v1)
+
+1. Personal mailboxes or delegated teammate inboxes.
+2. More than one connected mailbox per company.
+3. Assignment, ownership queues, workload balancing, inbox rules, or routing automation.
+4. Internal comments / discussions on email threads.
+5. Shared drafts / collaborative drafting / draft takeover.
+6. Snooze, Later, Done, ticket statuses, archive workflow parity with Front.
+7. Embedding email into the current `Pulse` timeline.
+8. AI-generated replies or AI email drafting.
+9. Multi-provider support (Office 365, SMTP, IMAP, etc.).
+
+### 7. Constraints
+
+1. `/email` is a separate route and workspace, but it must not be added to the top navigation tabs in the current shell.
+2. The connection UI lives in Settings as a dedicated page (`/settings/email`), not buried inside the generic integrations table.
+3. V1 must assume exactly one shared mailbox per company.
+4. If a mailbox is disconnected or auth expires, `/email` should fail gracefully with a reconnect CTA instead of a broken list pane.
+5. Initial sync/backfill may be bounded to a recent window or a limited history import; full unlimited Gmail history import is not required for v1.
+6. The feature should reuse existing project patterns where they already fit:
+   - `company_settings` for company-level config,
+   - `authedFetch` / typed frontend API wrappers,
+   - route-level permission guards in `App.tsx`,
+   - lazy-loaded detail panes and server-side search patterns.
+7. `Pulse` remains the phone/SMS workspace in this phase; do not expand its current combined timeline contract to include email as part of this requirement.

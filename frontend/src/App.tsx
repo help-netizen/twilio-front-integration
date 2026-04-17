@@ -23,6 +23,8 @@ import PaymentsPage from './pages/PaymentsPage';
 import ProvidersPage from './pages/ProvidersPage';
 import PhoneCallsSettingsPage from './pages/PhoneCallsSettingsPage';
 import ActionRequiredSettingsPage from './pages/ActionRequiredSettingsPage';
+import EmailSettingsPage from './pages/EmailSettingsPage';
+import { EmailPage } from './pages/EmailPage';
 import ServiceTerritoriesPage from './pages/ServiceTerritoriesPage';
 import JobsPage from './pages/JobsPage';
 import { SchedulePage } from './pages/SchedulePage';
@@ -100,6 +102,8 @@ function App() {
               <Route path="/settings/actions-notifications" element={<ProtectedRoute permissions={['tenant.company.manage']}><ActionRequiredSettingsPage /></ProtectedRoute>} />
               
               <Route path="/settings/service-territories" element={<ProtectedRoute permissions={['tenant.company.manage']}><ServiceTerritoriesPage /></ProtectedRoute>} />
+              <Route path="/settings/email" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><EmailSettingsPage /></ProtectedRoute>} />
+              <Route path="/email" element={<ProtectedRoute permissions={['messages.view_internal']}><EmailPage /></ProtectedRoute>} />
               <Route path="/settings/users" element={<ProtectedRoute permissions={['tenant.users.manage']}><CompanyUsersPage /></ProtectedRoute>} />
               <Route path="/settings/admin" element={<ProtectedRoute roles={['super_admin']}><SuperAdminPage /></ProtectedRoute>} />
               <Route path="/settings/admin/companies/:companyId" element={<ProtectedRoute roles={['super_admin']}><AdminCompanyDetailPage /></ProtectedRoute>} />

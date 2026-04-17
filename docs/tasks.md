@@ -850,3 +850,274 @@ TASK-021 + TASK-017 ──► TASK-030 (component tests) │
 **Wave 1:** TASK-LIST-001, TASK-LIST-002 (parallel)
 **Wave 2:** TASK-LIST-003
 **Wave 3:** TASK-LIST-004
+
+---
+
+# EMAIL-001: Gmail Shared Mailbox + Email Workspace — Task Breakdown
+
+**Feature:** One shared Gmail mailbox per company + separate `/email` operator workspace
+**Migration range:** 079
+**Total tasks:** 12
+**Phases:** 5
+
+---
+
+## Phase 1: Persistence + OAuth Foundation
+
+### TASK-EMAIL-001: Migration — email mailbox, thread, message, attachment, and sync tables
+**Phase:** 1
+**Status:** done
+**Dependencies:** none
+**Files to modify:**
+- `backend/db/migrations/079_create_email_tables.sql` — **NEW**: create `email_mailboxes`, `email_threads`, `email_messages`, `email_attachments`, `email_sync_state` with indexes and constraints from architecture spec
+**Files NOT to modify:**
+- `src/server.js` (protected)
+- existing migrations `072`–`078`
+**Acceptance criteria:**
+- [ ] `email_mailboxes` created with UNIQUE (`company_id`, `provider`) and encrypted token columns
+- [ ] `email_threads` created with UNIQUE (`company_id`, `provider_thread_id`)
+- [ ] `email_messages` created with UNIQUE (`company_id`, `provider_message_id`)
+- [ ] `email_attachments` linked to `email_messages` with cascading delete
+- [ ] `email_sync_state` created with one row per mailbox
+- [ ] All new tables include `company_id` for tenant isolation
+- [ ] Required indexes for thread list sort/filter and provider id lookups created
+- [ ] Migration runs on a fresh DB without breaking existing tables
+**Related test cases:** TC-EMAIL-001, TC-EMAIL-004, TC-EMAIL-005, TC-EMAIL-010, TC-EMAIL-014
+
+---
+
+### TASK-EMAIL-002: Query layer + mailbox credential storage
+**Phase:** 1
+**Status:** pending
+**Dependencies:** TASK-EMAIL-001
+**Files to modify:**
+- `backend/src/db/emailQueries.js` — **NEW**: mailbox CRUD, thread list/detail queries, idempotent upserts, sync-state helpers
+- `backend/src/services/emailMailboxService.js` — **NEW**: token encryption/decryption, mailbox status updates, OAuth state signing/validation helpers
+- `package.json` — add `googleapis`
+**Files NOT to modify:**
+- `backend/src/db/queries.js` — keep existing cross-domain facade intact unless a thin export is strictly necessary
+- `frontend/package.json`
+**Acceptance criteria:**
+- [ ] `emailQueries` exposes canonical methods for mailbox lookup, thread list/detail, mark read, upsert thread/message/attachment, sync state, and due-mailbox selection
+- [ ] Gmail tokens are encrypted at rest via `EMAIL_TOKEN_ENCRYPTION_KEY`
+- [ ] Mailbox service never returns raw access/refresh tokens to route handlers or frontend payloads
+- [ ] Package install succeeds with new Gmail dependency
+**Related test cases:** TC-EMAIL-001, TC-EMAIL-003, TC-EMAIL-005, TC-EMAIL-012
+
+---
+
+### TASK-EMAIL-003: Settings routes + OAuth callback
+**Phase:** 1
+**Status:** pending
+**Dependencies:** TASK-EMAIL-002
+**Files to modify:**
+- `backend/src/routes/email-settings.js` — **NEW**: `GET /`, `POST /google/start`, `POST /disconnect`, `POST /sync`
+- `backend/src/routes/email-oauth.js` — **NEW**: `GET /google/callback`
+**Files NOT to modify:**
+- `frontend/src/lib/authedFetch.ts` (protected)
+- `frontend/src/auth/ProtectedRoute.tsx`
+**Acceptance criteria:**
+- [ ] Settings routes require `tenant.integrations.manage`
+- [ ] Callback route validates signed OAuth state and redirects back to `/settings/email`
+- [ ] Disconnect marks mailbox `disconnected` without deleting synced local history
+- [ ] Manual sync endpoint returns current sync status and does not leak credential data
+**Related test cases:** TC-EMAIL-001, TC-EMAIL-002, TC-EMAIL-003, TC-EMAIL-013
+
+---
+
+## Phase 2: Gmail Sync + Message Domain
+
+### TASK-EMAIL-004: Email sync service — bounded backfill and incremental history sync
+**Phase:** 2
+**Status:** pending
+**Dependencies:** TASK-EMAIL-002
+**Files to modify:**
+- `backend/src/services/emailSyncService.js` — **NEW**: `syncMailbox`, `runInitialBackfill`, `syncIncrementalHistory`, `startScheduler`
+**Files NOT to modify:**
+- `backend/src/services/inboxWorker.js` — keep Twilio worker isolated
+- `backend/src/services/conversationsService.js` — keep SMS provider logic isolated
+**Acceptance criteria:**
+- [ ] Initial sync imports a bounded recent window (`EMAIL_SYNC_LOOKBACK_DAYS`)
+- [ ] Incremental sync uses stored Gmail history checkpoint
+- [ ] Duplicate provider payloads are handled idempotently
+- [ ] Invalid/missing Gmail history checkpoint falls back to bounded backfill path
+- [ ] Mailbox sync status/timestamps updated on success and failure
+**Related test cases:** TC-EMAIL-004, TC-EMAIL-005, TC-EMAIL-013, TC-EMAIL-014
+
+---
+
+### TASK-EMAIL-005: Email service — send, reply, hydrate sent message, attachment proxy
+**Phase:** 2
+**Status:** pending
+**Dependencies:** TASK-EMAIL-002
+**Files to modify:**
+- `backend/src/services/emailService.js` — **NEW**: Gmail client factory, raw MIME send/reply, sent-message hydration, attachment streaming/download
+**Files NOT to modify:**
+- `backend/src/services/storageService.js` — do not introduce S3 persistence unless Gmail proxying proves insufficient
+- `backend/src/services/textPolishService.js`
+**Acceptance criteria:**
+- [ ] New email send supports To, CC, subject, body, and attachments
+- [ ] Reply uses existing Gmail thread context instead of creating a new thread
+- [ ] Backend fetches the canonical sent Gmail message after send and upserts local records
+- [ ] Attachment download streams through backend and enforces tenant scope
+- [ ] Compose/reply reject when mailbox is `reconnect_required` or `disconnected`
+**Related test cases:** TC-EMAIL-008, TC-EMAIL-009, TC-EMAIL-010, TC-EMAIL-011
+
+---
+
+## Phase 3: Backend API + App Wiring
+
+### TASK-EMAIL-006: Email workspace routes
+**Phase:** 3
+**Status:** pending
+**Dependencies:** TASK-EMAIL-004, TASK-EMAIL-005
+**Files to modify:**
+- `backend/src/routes/email.js` — **NEW**: `GET /mailbox`, `GET /threads`, `GET /threads/:id`, `POST /threads/:id/read`, `POST /threads/compose`, `POST /threads/:id/reply`, `GET /attachments/:attachmentId/download`
+**Files NOT to modify:**
+- `backend/src/routes/messaging.js` — keep SMS routes unchanged
+- `backend/src/routes/pulse.js` — keep Pulse timeline contract unchanged
+**Acceptance criteria:**
+- [ ] Read routes require `messages.view_internal`
+- [ ] `GET /api/email/mailbox` returns non-secret mailbox state for `/email`
+- [ ] Compose/reply routes require `messages.send`
+- [ ] Thread list supports server-driven `view`, `q`, `cursor`, `limit`
+- [ ] Thread detail returns messages + attachments in chronological order
+- [ ] Mark-read endpoint is idempotent and tenant-safe
+**Related test cases:** TC-EMAIL-006, TC-EMAIL-007, TC-EMAIL-008, TC-EMAIL-009, TC-EMAIL-010, TC-EMAIL-012, TC-EMAIL-028
+
+---
+
+### TASK-EMAIL-007: Mount routes and start sync scheduler
+**Phase:** 3
+**Status:** pending
+**Dependencies:** TASK-EMAIL-003, TASK-EMAIL-004, TASK-EMAIL-006
+**Files to modify:**
+- `src/server.js` — mount `/api/settings/email`, `/api/email`, `/api/email/oauth`; start email sync scheduler
+**Files NOT to modify:**
+- existing route protection order for unrelated modules
+- `frontend/src/hooks/useRealtimeEvents.ts` (protected)
+**Acceptance criteria:**
+- [ ] Public OAuth callback route is mounted before SPA/static fallbacks
+- [ ] Tenant-scoped email/settings routes are mounted with existing auth middleware
+- [ ] Scheduler starts once per backend process and does not block server boot
+- [ ] Existing `/api/messaging` and `/api/pulse` behavior is preserved
+**Related test cases:** TC-EMAIL-002, TC-EMAIL-013, TC-EMAIL-015
+
+---
+
+## Phase 4: Frontend Settings + Email Workspace
+
+### TASK-EMAIL-008: Email settings page + typed API wrapper
+**Phase:** 4
+**Status:** pending
+**Dependencies:** TASK-EMAIL-003, TASK-EMAIL-007
+**Files to modify:**
+- `frontend/src/services/emailApi.ts` — **NEW**: typed settings/workspace calls
+- `frontend/src/pages/EmailSettingsPage.tsx` — **NEW**: mailbox status, connect/reconnect/disconnect, manual sync
+- `frontend/src/App.tsx` — add `/settings/email`
+- `frontend/src/components/layout/appLayoutNavigation.tsx` — add Settings menu entry
+**Files NOT to modify:**
+- top navigation tabs in `AppNavTabs`
+- `frontend/src/services/messagingApi.ts`
+**Acceptance criteria:**
+- [ ] `/settings/email` is protected by `tenant.integrations.manage`
+- [ ] Settings dropdown contains `Email`
+- [ ] Top navigation tabs remain unchanged
+- [ ] Connect action redirects browser to backend-provided Google auth URL
+- [ ] Reconnect/disconnect/sync states are visible and user-readable
+**Related test cases:** TC-EMAIL-016, TC-EMAIL-024, TC-EMAIL-025, TC-EMAIL-026
+
+---
+
+### TASK-EMAIL-009: Email workspace shell + thread list
+**Phase:** 4
+**Status:** pending
+**Dependencies:** TASK-EMAIL-006, TASK-EMAIL-008
+**Files to modify:**
+- `frontend/src/pages/EmailPage.tsx` — **NEW**
+- `frontend/src/components/email/MailboxRail.tsx` — **NEW**
+- `frontend/src/components/email/EmailThreadList.tsx` — **NEW**
+- `frontend/src/components/email/EmailThreadRow.tsx` — **NEW**
+- `frontend/src/App.tsx` — add `/email`
+**Files NOT to modify:**
+- `frontend/src/pages/MessagesPage.tsx`
+- `frontend/src/pages/PulsePage.tsx`
+**Acceptance criteria:**
+- [ ] `/email` is protected by `messages.view_internal`
+- [ ] `/email` loads mailbox state from a reader-safe workspace endpoint, not the admin settings endpoint
+- [ ] No-mailbox state renders CTA to `/settings/email`
+- [ ] Left rail supports system views (`Inbox`, `All`, `Sent`, `Unread`, `With attachments`)
+- [ ] Thread list uses server-driven search/filter queries
+- [ ] Thread row shows sender, subject, preview, time, unread, attachment state
+**Related test cases:** TC-EMAIL-017, TC-EMAIL-018, TC-EMAIL-019, TC-EMAIL-023, TC-EMAIL-026, TC-EMAIL-028
+
+---
+
+### TASK-EMAIL-010: Thread pane + compose/reply + attachment UI
+**Phase:** 4
+**Status:** pending
+**Dependencies:** TASK-EMAIL-005, TASK-EMAIL-009
+**Files to modify:**
+- `frontend/src/components/email/EmailThreadPane.tsx` — **NEW**
+- `frontend/src/components/email/EmailMessageItem.tsx` — **NEW**
+- `frontend/src/components/email/EmailComposer.tsx` — **NEW**
+**Files NOT to modify:**
+- `frontend/src/components/pulse/SmsForm.tsx`
+- `frontend/src/components/messaging/MessageThread.tsx`
+**Acceptance criteria:**
+- [ ] Selecting a thread loads detail on demand
+- [ ] Opening unread thread triggers mark-read mutation
+- [ ] Composer supports new email + reply modes
+- [ ] Validation requires To + Subject + (body or attachment) for compose
+- [ ] Reply stays in current thread after success
+- [ ] Previewable image attachments can reuse existing fullscreen image viewer
+**Related test cases:** TC-EMAIL-020, TC-EMAIL-021, TC-EMAIL-022, TC-EMAIL-024, TC-EMAIL-027
+
+---
+
+## Phase 5: Verification
+
+### TASK-EMAIL-011: Backend automated tests
+**Phase:** 5
+**Status:** pending
+**Dependencies:** TASK-EMAIL-004, TASK-EMAIL-005, TASK-EMAIL-006, TASK-EMAIL-007
+**Files to modify:**
+- `tests/routes/email.test.js` — **NEW**
+- `tests/services/emailMailboxService.test.js` — **NEW**
+- `tests/services/emailSyncService.test.js` — **NEW**
+**Files NOT to modify:**
+- unrelated Twilio tests
+**Acceptance criteria:**
+- [ ] Route tests cover auth/permission guards, tenant isolation, list/detail/read, compose/reply, attachment download
+- [ ] Service tests cover token encryption, OAuth callback persistence, initial backfill, incremental sync idempotency, history-gap fallback
+- [ ] Jest suite passes with new email tests included
+**Related test cases:** TC-EMAIL-001 through TC-EMAIL-015
+
+---
+
+### TASK-EMAIL-012: Frontend verification and regression checklist
+**Phase:** 5
+**Status:** pending
+**Dependencies:** TASK-EMAIL-008, TASK-EMAIL-009, TASK-EMAIL-010
+**Files to modify:**
+- `docs/test-cases/EMAIL-001-gmail-shared-mailbox-workspace.md` — keep manual/visual verification aligned with implemented UI
+**Files NOT to modify:**
+- unrelated page specs
+**Acceptance criteria:**
+- [ ] QA pass covers route protection, no-mailbox state, thread selection, mark-read, compose, reply, search, attachment open/download, reconnect-required state
+- [ ] Regression pass confirms top nav unchanged and existing `MessagesPage`/`PulsePage` flows still work
+- [ ] Any missing frontend automation gaps are explicitly documented
+**Related test cases:** TC-EMAIL-016 through TC-EMAIL-027
+
+---
+
+## Execution Order
+
+**Wave 1:** TASK-EMAIL-001
+**Wave 2:** TASK-EMAIL-002, TASK-EMAIL-003 (serial preferred if OAuth state helpers live in mailbox service)
+**Wave 3:** TASK-EMAIL-004, TASK-EMAIL-005 (parallel)
+**Wave 4:** TASK-EMAIL-006
+**Wave 5:** TASK-EMAIL-007
+**Wave 6:** TASK-EMAIL-008, TASK-EMAIL-009 (parallel once routes exist)
+**Wave 7:** TASK-EMAIL-010
+**Wave 8:** TASK-EMAIL-011, TASK-EMAIL-012
