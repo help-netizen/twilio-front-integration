@@ -137,7 +137,7 @@ function EventRow({ item }: { item: HistoryItem }) {
 
     return (
         <div className="flex items-start gap-2.5 py-1.5">
-            <Icon className="size-3.5 shrink-0 mt-0.5" style={{ color: 'var(--blanc-ink-3)' }} />
+            <Icon className="size-3.5 shrink-0 mt-0.5 text-muted-foreground" />
             <div className="flex-1 min-w-0">
                 <p className="text-sm" style={{ color: 'var(--blanc-ink-2)' }}>{item.description}</p>
                 <p className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>
