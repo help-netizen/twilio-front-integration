@@ -37,12 +37,15 @@ interface NotesSectionProps {
 
 const NOTE_BG = '#fef9e7';
 
-function formatDate(iso: string): string {
+function formatDate(iso?: string | null): string {
+    if (!iso) return 'Unknown date';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return 'Unknown date';
     try {
         return new Intl.DateTimeFormat('en-US', {
             month: 'short', day: 'numeric', year: 'numeric',
             hour: 'numeric', minute: '2-digit',
-        }).format(new Date(iso));
+        }).format(d);
     } catch {
         return iso;
     }
