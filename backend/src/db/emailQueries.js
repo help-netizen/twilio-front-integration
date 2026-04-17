@@ -119,7 +119,10 @@ async function getThreads({ company_id, view = 'all', q, cursor, limit = 30 }) {
     let idx = 2;
 
     // View filters
-    if (view === 'inbox' || view === 'unread') {
+    if (view === 'inbox') {
+        // Inbox = threads that have at least one inbound message (excludes sent-only threads)
+        conditions.push(`EXISTS (SELECT 1 FROM email_messages m WHERE m.thread_id = t.id AND m.direction = 'inbound')`);
+    } else if (view === 'unread') {
         conditions.push(`t.unread_count > 0`);
     } else if (view === 'sent') {
         conditions.push(`t.last_message_direction = 'outbound'`);
@@ -127,10 +130,27 @@ async function getThreads({ company_id, view = 'all', q, cursor, limit = 30 }) {
         conditions.push(`t.has_attachments = true`);
     }
 
-    // Free-text search
+    // Free-text search across thread fields + messages body/recipients + attachment filenames
     if (q) {
-        conditions.push(`(t.subject ILIKE $${idx} OR t.last_message_preview ILIKE $${idx} OR t.last_message_from ILIKE $${idx})`);
-        params.push(`%${q}%`);
+        const qParam = `%${q}%`;
+        conditions.push(`(
+            t.subject ILIKE $${idx}
+            OR t.last_message_preview ILIKE $${idx}
+            OR t.last_message_from ILIKE $${idx}
+            OR EXISTS (
+                SELECT 1 FROM email_messages m
+                WHERE m.thread_id = t.id
+                  AND (m.body_text ILIKE $${idx} OR m.from_email ILIKE $${idx} OR m.from_name ILIKE $${idx}
+                       OR m.to_recipients_json::text ILIKE $${idx}
+                       OR m.cc_recipients_json::text ILIKE $${idx})
+            )
+            OR EXISTS (
+                SELECT 1 FROM email_attachments a
+                JOIN email_messages m2 ON m2.id = a.message_id
+                WHERE m2.thread_id = t.id AND a.file_name ILIKE $${idx}
+            )
+        )`);
+        params.push(qParam);
         idx++;
     }
 

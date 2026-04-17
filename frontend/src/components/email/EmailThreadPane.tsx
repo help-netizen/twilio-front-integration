@@ -1,11 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { Mail, Reply, PenSquare, AlertTriangle } from 'lucide-react';
 import { getThreadDetail, markThreadRead } from '../../services/emailApi';
 import { EmailMessageItem } from './EmailMessageItem';
 import { EmailComposer } from './EmailComposer';
-import { FullscreenImageViewer, type ViewerImage } from '../shared/FullscreenImageViewer';
 
 interface EmailThreadPaneProps {
     threadId: number | null;
@@ -17,15 +16,8 @@ export function EmailThreadPane({ threadId, mailboxStatus, onThreadUpdated }: Em
     const navigate = useNavigate();
     const [replyMode, setReplyMode] = useState(false);
     const [composeMode, setComposeMode] = useState(false);
-    const [viewerImages, setViewerImages] = useState<ViewerImage[] | null>(null);
-    const [viewerIndex, setViewerIndex] = useState(0);
 
     const canSend = mailboxStatus === 'connected';
-
-    const handleImagePreview = useCallback((images: ViewerImage[], index: number) => {
-        setViewerImages(images);
-        setViewerIndex(index);
-    }, []);
 
     // Reset modes when thread changes
     useEffect(() => {
@@ -155,7 +147,7 @@ export function EmailThreadPane({ threadId, mailboxStatus, onThreadUpdated }: Em
             {/* Messages */}
             <div className="flex-1 overflow-y-auto">
                 {messages.map((msg, i) => (
-                    <EmailMessageItem key={msg.id} message={msg} isLast={i === messages.length - 1} onImagePreview={handleImagePreview} />
+                    <EmailMessageItem key={msg.id} message={msg} isLast={i === messages.length - 1} />
                 ))}
             </div>
 
@@ -180,14 +172,6 @@ export function EmailThreadPane({ threadId, mailboxStatus, onThreadUpdated }: Em
                 />
             )}
 
-            {/* Fullscreen image viewer */}
-            {viewerImages && (
-                <FullscreenImageViewer
-                    images={viewerImages}
-                    initialIndex={viewerIndex}
-                    onClose={() => setViewerImages(null)}
-                />
-            )}
         </div>
     );
 }

@@ -1,19 +1,15 @@
 import { useState } from 'react';
 import DOMPurify from 'dompurify';
-import { ChevronDown, ChevronUp, Paperclip, Download, Image as ImageIcon } from 'lucide-react';
-import type { EmailMessage, EmailAttachment } from '../../services/emailApi';
+import { ChevronDown, ChevronUp } from 'lucide-react';
+import type { EmailMessage } from '../../services/emailApi';
 import { getAttachmentDownloadUrl } from '../../services/emailApi';
+import { AttachmentsSection, type AttachmentItem } from '../shared/AttachmentsSection';
 
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp', 'image/svg+xml'];
-
-function isPreviewableImage(att: EmailAttachment): boolean {
-    return !att.is_inline && !!att.content_type && IMAGE_TYPES.includes(att.content_type.toLowerCase());
-}
 
 interface EmailMessageItemProps {
     message: EmailMessage;
     isLast: boolean;
-    onImagePreview?: (images: { url: string; filename: string }[], index: number) => void;
 }
 
 function formatDateTime(iso: string | null): string {
@@ -26,16 +22,18 @@ function formatRecipients(recipients: { name?: string; email: string }[]): strin
     return recipients.map(r => r.name || r.email).join(', ');
 }
 
-function formatFileSize(bytes: number | null): string {
-    if (!bytes) return '';
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-export function EmailMessageItem({ message, isLast, onImagePreview }: EmailMessageItemProps) {
+export function EmailMessageItem({ message, isLast }: EmailMessageItemProps) {
     const [expanded, setExpanded] = useState(isLast);
     const isOutbound = message.direction === 'outbound';
+
+    // Map email attachments to universal AttachmentItem
+    const visibleAttachments: AttachmentItem[] = (message.attachments || [])
+        .filter(a => !a.is_inline)
+        .map(a => ({
+            url: getAttachmentDownloadUrl(a.id),
+            filename: a.file_name || 'attachment',
+            kind: (a.content_type && IMAGE_TYPES.includes(a.content_type.toLowerCase()) ? 'image' : 'file') as 'image' | 'file',
+        }));
 
     return (
         <div style={{ borderBottom: '1px solid var(--blanc-line)' }}>
@@ -98,58 +96,12 @@ export function EmailMessageItem({ message, isLast, onImagePreview }: EmailMessa
                         </pre>
                     )}
 
-                    {/* Attachments */}
-                    {message.attachments && message.attachments.length > 0 && (() => {
-                        const visibleAtts = message.attachments.filter(a => !a.is_inline);
-                        const imageAtts = visibleAtts.filter(isPreviewableImage);
-                        return (
-                            <div className="mt-3 flex flex-wrap gap-2">
-                                {visibleAtts.map(att => {
-                                    const isImage = isPreviewableImage(att);
-                                    return isImage && onImagePreview ? (
-                                        <button
-                                            key={att.id}
-                                            onClick={() => {
-                                                const images = imageAtts.map(a => ({
-                                                    url: getAttachmentDownloadUrl(a.id),
-                                                    filename: a.file_name || 'image',
-                                                }));
-                                                const idx = imageAtts.findIndex(a => a.id === att.id);
-                                                onImagePreview(images, idx >= 0 ? idx : 0);
-                                            }}
-                                            className="flex items-center gap-1.5 text-xs px-2.5 py-1.5"
-                                            style={{
-                                                border: '1px solid var(--blanc-line)', borderRadius: '8px',
-                                                color: '#5C6AC4', background: 'rgba(92, 106, 196, 0.06)',
-                                                cursor: 'pointer', textDecoration: 'none',
-                                            }}
-                                        >
-                                            <ImageIcon className="size-3" />
-                                            <span className="truncate max-w-[140px]">{att.file_name || 'image'}</span>
-                                            {att.file_size && <span style={{ color: 'var(--blanc-ink-3)' }}>{formatFileSize(att.file_size)}</span>}
-                                        </button>
-                                    ) : (
-                                        <a
-                                            key={att.id}
-                                            href={getAttachmentDownloadUrl(att.id)}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="flex items-center gap-1.5 text-xs px-2.5 py-1.5"
-                                            style={{
-                                                border: '1px solid var(--blanc-line)', borderRadius: '8px',
-                                                color: 'var(--blanc-ink-2)', textDecoration: 'none',
-                                            }}
-                                        >
-                                            <Paperclip className="size-3" />
-                                            <span className="truncate max-w-[140px]">{att.file_name || 'attachment'}</span>
-                                            {att.file_size && <span style={{ color: 'var(--blanc-ink-3)' }}>{formatFileSize(att.file_size)}</span>}
-                                            <Download className="size-3" />
-                                        </a>
-                                    );
-                                })}
-                            </div>
-                        );
-                    })()}
+                    {/* Attachments — universal gallery */}
+                    {visibleAttachments.length > 0 && (
+                        <div className="mt-3">
+                            <AttachmentsSection attachments={visibleAttachments} />
+                        </div>
+                    )}
                 </div>
             )}
         </div>

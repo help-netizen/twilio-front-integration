@@ -1121,3 +1121,358 @@ TASK-021 + TASK-017 ──► TASK-030 (component tests) │
 **Wave 6:** TASK-EMAIL-008, TASK-EMAIL-009 (parallel once routes exist)
 **Wave 7:** TASK-EMAIL-010
 **Wave 8:** TASK-EMAIL-011, TASK-EMAIL-012
+
+---
+
+# PF007-HARDENING-001: Provider Scope, Tenant Isolation & RBAC Hardening — Task Breakdown
+
+**Feature:** Enforce provider-assigned-only visibility, close tenant isolation gaps, and make backend/frontend RBAC deny-by-default
+**Migration range:** 080
+**Total tasks:** 17
+**Phases:** 5
+
+---
+
+## Phase 1: Ownership Foundation
+
+### TASK-RBAC-001: Migration — provider bridge and internal assignee mirrors
+**Phase:** 1
+**Status:** pending
+**Dependencies:** none
+**Files to modify:**
+- `backend/db/migrations/080_pf007_provider_scope_hardening.sql` — **NEW**: add provider bridge field on `company_user_profiles`, add internal assignee mirror on `jobs`, create indexes/backfill
+**Files NOT to modify:**
+- `src/server.js` (protected)
+- existing migrations `001`–`079`
+**Acceptance criteria:**
+- [ ] `company_user_profiles` has nullable `zenbooker_team_member_id` used only as an integration bridge
+- [ ] `jobs` has `assigned_provider_user_ids JSONB NOT NULL DEFAULT '[]'`
+- [ ] Required indexes exist for company-scoped provider visibility queries
+- [ ] Migration is idempotent and runs on a fresh DB without breaking existing PF007 tables
+- [ ] Internal ownership remains authoritative via `crm_users.id`; external provider ids do not become an auth source
+
+---
+
+### TASK-RBAC-002: Team Management API — expose provider bridge in user profile
+**Phase:** 1
+**Status:** pending
+**Dependencies:** TASK-RBAC-001
+**Files to modify:**
+- `backend/src/routes/users.js` — expose provider bridge field in user read/update flows
+- `backend/src/services/userService.js` — persist and validate `profile.zenbooker_team_member_id`
+- `backend/src/db/membershipQueries.js` — load/store profile mapping tenant-safely
+**Files NOT to modify:**
+- `src/server.js` (protected)
+- `frontend/src/pages/CompanyUsersPage.tsx` — frontend wiring comes later
+**Acceptance criteria:**
+- [ ] `GET /api/users/:id` returns membership profile including `zenbooker_team_member_id`
+- [ ] `PATCH /api/users/:id` accepts and persists `profile.zenbooker_team_member_id`
+- [ ] Updates stay tenant-scoped and cross-company user ids return `404`
+- [ ] Audit payload records mapping changes
+
+---
+
+### TASK-RBAC-003: Job sync — map external provider assignments to internal CRM users
+**Phase:** 1
+**Status:** pending
+**Dependencies:** TASK-RBAC-001, TASK-RBAC-002
+**Files to modify:**
+- `backend/src/services/jobsService.js` — populate `assigned_provider_user_ids` during upsert/sync
+- `backend/src/services/jobSyncService.js` — keep internal assignee mirror updated on assignment events
+- `backend/src/db/membershipQueries.js` — resolve company-scoped provider bridge lookups
+**Files NOT to modify:**
+- `backend/src/routes/jobs.js` — visibility enforcement comes later
+- `src/server.js` (protected)
+**Acceptance criteria:**
+- [ ] Job sync resolves external provider ids to internal `crm_users.id` within the same company
+- [ ] `jobs.assigned_provider_user_ids` is updated whenever Zenbooker assignment changes
+- [ ] Unmapped external provider ids do not grant visibility to any CRM user
+- [ ] Re-syncs remain idempotent and company-scoped
+
+---
+
+## Phase 2: Provider Scope and Tenant Isolation
+
+### TASK-RBAC-004: Jobs API — enforce `assigned_only` provider visibility
+**Phase:** 2
+**Status:** pending
+**Dependencies:** TASK-RBAC-003
+**Files to modify:**
+- `backend/src/routes/jobs.js` — enforce visibility checks on list/detail/history/notes surfaces
+- `backend/src/services/jobsService.js` — apply `req.authz.scopes.job_visibility` and current `crm_users.id`
+**Files NOT to modify:**
+- `src/server.js` (protected)
+- `frontend/src/pages/JobsPage.tsx` — frontend gating comes later
+**Acceptance criteria:**
+- [ ] When `job_visibility = assigned_only`, list queries return only jobs whose `assigned_provider_user_ids` include the current `crm_users.id`
+- [ ] `GET /api/jobs/:id`, `/history`, and `/notes` apply the same visibility rule
+- [ ] Non-visible jobs return `404`, not `403`
+- [ ] All jobs queries continue filtering by `company_id`
+- [ ] Roles with `job_visibility = all` keep current tenant-wide behavior
+
+---
+
+### TASK-RBAC-005: Schedule read model — provider sees only own work
+**Phase:** 2
+**Status:** pending
+**Dependencies:** TASK-RBAC-003
+**Files to modify:**
+- `backend/src/db/scheduleQueries.js` — filter `job` and `task` rows by current assignee for provider scope
+- `backend/src/services/scheduleService.js` — apply authz-aware filters for list/detail/mutations
+- `backend/src/routes/schedule.js` — enforce read vs dispatch capability boundaries
+**Files NOT to modify:**
+- `src/server.js` (protected)
+- `frontend/src/pages/SchedulePage.tsx` — frontend gating comes later
+**Acceptance criteria:**
+- [ ] Providers with `assigned_only` receive only their own `job` items and their own assigned `task` items
+- [ ] Provider schedule responses do not include `lead` items
+- [ ] Schedule item detail enforces the same scope and returns `404` for non-visible entities
+- [ ] Dispatch mutations and settings remain unavailable without dispatch-capable permissions
+- [ ] Tenant context is taken only from `req.companyFilter?.company_id`
+
+---
+
+### TASK-RBAC-006: Contacts API — tenant-safe queries and provider client scope
+**Phase:** 2
+**Status:** pending
+**Dependencies:** TASK-RBAC-004
+**Files to modify:**
+- `backend/src/routes/contacts.js` — require tenant-safe list/detail/update flows
+- `backend/src/services/contactsService.js` — add company-scoped and provider-scoped contact queries
+- `backend/src/db/contactsQueries.js` — remove cross-tenant phone lookups
+**Files NOT to modify:**
+- `src/server.js` (protected)
+- `frontend/src/pages/ContactsPage.tsx` — frontend changes come later
+**Acceptance criteria:**
+- [ ] `GET /api/contacts` filters by `company_id`
+- [ ] Provider contact list/detail includes only contacts linked to currently visible assigned jobs
+- [ ] Phone lookup helpers no longer search globally across tenants
+- [ ] `GET/PATCH /api/contacts/:id` return `404` for foreign-company or non-visible contacts
+- [ ] Related lead queries remain company-scoped
+
+---
+
+### TASK-RBAC-007: Pulse timeline access — own clients only
+**Phase:** 2
+**Status:** pending
+**Dependencies:** TASK-RBAC-004, TASK-RBAC-006
+**Files to modify:**
+- `backend/src/routes/pulse.js` — enforce tenant-safe timeline/contact lookup and provider client scope
+- `backend/src/db/queries.js` — add tenant-safe timeline/contact helpers as needed
+- `backend/src/db/conversationsQueries.js` — ensure conversation/message lookups respect tenant context
+**Files NOT to modify:**
+- `src/server.js` (protected)
+- `frontend/src/pages/PulsePage.tsx` — frontend gating comes later
+**Acceptance criteria:**
+- [ ] `/api/pulse/timeline/:contactId` and `/timeline-by-id/:timelineId` only resolve entities inside the current tenant
+- [ ] Providers can open Pulse only for contacts reachable from their visible assigned jobs
+- [ ] SMS conversation lookup cannot pull another tenant's data by phone match
+- [ ] Financial events are omitted unless the user has `financial_data.view`
+- [ ] Foreign-company or non-visible contact/timeline ids return `404`
+
+---
+
+## Phase 3: Backend RBAC Hardening
+
+### TASK-RBAC-008: Route permissions — Jobs and Schedule
+**Phase:** 3
+**Status:** pending
+**Dependencies:** TASK-RBAC-004, TASK-RBAC-005
+**Files to modify:**
+- `backend/src/routes/jobs.js` — add granular permission guards per read/write action
+- `backend/src/routes/schedule.js` — separate `schedule.view` from `schedule.dispatch`
+**Files NOT to modify:**
+- `src/server.js` (protected)
+- `backend/src/middleware/authorization.js` — reuse existing middleware, do not redesign it here
+**Acceptance criteria:**
+- [ ] Jobs read routes require `jobs.view`
+- [ ] Jobs mutations require the matching permissions (`jobs.edit`, `jobs.assign`, `jobs.close`, `jobs.done_pending_approval`) by action
+- [ ] Schedule read routes require `schedule.view`
+- [ ] Schedule dispatch/settings/mutation routes require `schedule.dispatch`
+- [ ] Hidden UI is no longer a security boundary for jobs/schedule APIs
+
+---
+
+### TASK-RBAC-009: Route permissions — Contacts and Pulse
+**Phase:** 3
+**Status:** pending
+**Dependencies:** TASK-RBAC-006, TASK-RBAC-007
+**Files to modify:**
+- `backend/src/routes/contacts.js` — require `contacts.view` / `contacts.edit`
+- `backend/src/routes/pulse.js` — require `pulse.view`
+**Files NOT to modify:**
+- `src/server.js` (protected)
+- `backend/src/middleware/keycloakAuth.js` — no auth-model redesign in this task
+**Acceptance criteria:**
+- [ ] Contact read routes require `contacts.view`
+- [ ] Contact update routes require `contacts.edit`
+- [ ] Pulse timeline routes require `pulse.view`
+- [ ] Permission denial returns `403` before data access; entity non-visibility still returns `404`
+
+---
+
+### TASK-RBAC-010: Finance routes — tenant context fix and granular permission checks
+**Phase:** 3
+**Status:** pending
+**Dependencies:** none
+**Files to modify:**
+- `backend/src/routes/estimates.js` — replace `req.companyId` and add per-action permission guards
+- `backend/src/routes/invoices.js` — replace `req.companyId` and add per-action permission guards
+- `backend/src/routes/payments.js` — replace `req.companyId` and add per-action permission guards
+**Files NOT to modify:**
+- `src/server.js` (protected)
+- DB query files for finance modules — keep this task focused on route/context hardening
+**Acceptance criteria:**
+- [ ] All finance routes use `req.companyFilter?.company_id` and never read `req.companyId`
+- [ ] Read/create/send/collect/refund routes require the matching permission keys
+- [ ] Users without finance permissions cannot read totals or invoke payment collection endpoints
+- [ ] Entity-by-id routes stay tenant-scoped and return `404` for foreign ids
+- [ ] No route falls back to global or undefined company context
+
+---
+
+### TASK-RBAC-011: FSM backend — server-side action filtering and apply authorization
+**Phase:** 3
+**Status:** pending
+**Dependencies:** none
+**Files to modify:**
+- `backend/src/routes/fsm.js` — stop trusting client-supplied `roles`, enforce server authz on `/actions` and `/apply`
+**Files NOT to modify:**
+- `backend/src/services/fsmService.js` — reuse existing graph helpers and contracts
+- `src/server.js` (protected)
+**Acceptance criteria:**
+- [ ] `/api/fsm/:machineKey/actions` filters actions using `req.authz`, not query-string role hints
+- [ ] `/api/fsm/:machineKey/apply` enforces permission checks before mutating entity state
+- [ ] Platform-only `super_admin` cannot access tenant FSM routes
+- [ ] Fallback behavior when no published graph exists does not widen permissions
+
+---
+
+### TASK-RBAC-012: Tenant access middleware cleanup — remove remaining platform bypass assumptions
+**Phase:** 3
+**Status:** pending
+**Dependencies:** none
+**Files to modify:**
+- `backend/src/middleware/keycloakAuth.js` — stop leaking legacy `is_super_admin` assumptions into tenant access
+- `backend/src/middleware/authorization.js` — keep tenant/platform denial behavior consistent
+- `backend/src/services/authorizationService.js` — keep compatibility mapping without bypassing tenant RBAC
+**Files NOT to modify:**
+- `src/server.js` (protected)
+- frontend auth files — frontend alignment comes later
+**Acceptance criteria:**
+- [ ] Tenant access is derived from `req.authz`, not from ad-hoc `req.user.is_super_admin` checks
+- [ ] Platform-only users consistently receive tenant denial on tenant routes
+- [ ] Legacy `company_admin/company_member` mapping remains compatibility-only and does not create new bypass paths
+- [ ] Access-denied audit context includes platform role and target route for tenant denials
+
+---
+
+## Phase 4: Frontend Capability Gating
+
+### TASK-RBAC-013: Navigation and route alignment by permissions
+**Phase:** 4
+**Status:** pending
+**Dependencies:** TASK-RBAC-008, TASK-RBAC-009, TASK-RBAC-012
+**Files to modify:**
+- `frontend/src/components/layout/appLayoutNavigation.tsx` — build top nav and settings menu from effective permissions
+- `frontend/src/App.tsx` — align route guards with canonical permission keys
+- `frontend/src/auth/ProtectedRoute.tsx` — remove blanket tenant bypass for legacy `super_admin`
+**Files NOT to modify:**
+- `frontend/src/lib/authedFetch.ts` (protected)
+- `frontend/src/auth/AuthProvider.tsx` — no auth-context contract change in this task
+**Acceptance criteria:**
+- [ ] Navigation only shows workspaces and settings backed by current permissions
+- [ ] `/schedule` is guarded by `schedule.view`, not `jobs.view`
+- [ ] ProtectedRoute does not grant tenant access only because the token contains legacy `super_admin`
+- [ ] Platform-only routes remain available only to platform super admin
+- [ ] Direct navigation to hidden pages is blocked by route guards
+
+---
+
+### TASK-RBAC-014: Jobs UI — stop loading forbidden finance and admin data
+**Phase:** 4
+**Status:** pending
+**Dependencies:** TASK-RBAC-008, TASK-RBAC-010, TASK-RBAC-013
+**Files to modify:**
+- `frontend/src/hooks/useJobsData.ts` — gate tag/settings preloads by permission
+- `frontend/src/components/jobs/JobDetailPanel.tsx` — hide finance surface when not allowed
+- `frontend/src/hooks/useJobFinancials.ts` — skip finance fetches without finance visibility
+**Files NOT to modify:**
+- `frontend/src/lib/authedFetch.ts` (protected)
+- `frontend/src/pages/JobsPage.tsx` — keep page composition stable in this task
+**Acceptance criteria:**
+- [ ] Job tags and list-field settings are not fetched for users lacking the required management permissions
+- [ ] Finance tab/section renders only when the user has finance visibility
+- [ ] Financial hooks do not call estimates/invoices endpoints for unauthorized users
+- [ ] Provider job detail shows only actions allowed by effective permissions
+
+---
+
+### TASK-RBAC-015: Schedule UI — provider-safe loading and controls
+**Phase:** 4
+**Status:** pending
+**Dependencies:** TASK-RBAC-005, TASK-RBAC-013
+**Files to modify:**
+- `frontend/src/hooks/useScheduleData.ts` — gate provider roster and dispatch settings fetches by permission
+- `frontend/src/pages/SchedulePage.tsx` — hide dispatch-only actions for provider users
+- `frontend/src/components/schedule/CalendarControls.tsx` — hide or disable dispatch-only controls
+**Files NOT to modify:**
+- `frontend/src/hooks/useRealtimeEvents.ts` (protected)
+- `frontend/src/lib/authedFetch.ts` (protected)
+**Acceptance criteria:**
+- [ ] Provider users load only the schedule data returned by the scoped backend API
+- [ ] Dispatch settings and full provider roster are not fetched without `schedule.dispatch`
+- [ ] Reassign, create-from-slot, and other dispatch-only controls are hidden or disabled for provider users
+- [ ] Dispatcher and tenant-admin workflows keep current functionality
+
+---
+
+## Phase 5: Verification
+
+### TASK-RBAC-016: Backend automated tests — provider scope and tenant isolation
+**Phase:** 5
+**Status:** pending
+**Dependencies:** TASK-RBAC-004, TASK-RBAC-005, TASK-RBAC-006, TASK-RBAC-007, TASK-RBAC-008, TASK-RBAC-009
+**Files to modify:**
+- `tests/jobsProviderScope.test.js` — **NEW**
+- `tests/scheduleProviderScope.test.js` — **NEW**
+- `tests/contactsPulseTenantIsolation.test.js` — **NEW**
+**Files NOT to modify:**
+- unrelated Twilio and email tests
+**Acceptance criteria:**
+- [ ] Tests cover provider assigned-only jobs list/detail/history behavior
+- [ ] Tests cover provider schedule visibility, no-leads behavior, and forbidden dispatch mutations
+- [ ] Tests cover contacts/pulse own-client-only visibility and `404` for foreign or non-visible ids
+- [ ] Tests explicitly verify `company_id` tenant isolation across companies
+- [ ] Jest suite passes with the new RBAC hardening tests included
+
+---
+
+### TASK-RBAC-017: Regression verification — finance, FSM, and frontend gating
+**Phase:** 5
+**Status:** pending
+**Dependencies:** TASK-RBAC-010, TASK-RBAC-011, TASK-RBAC-013, TASK-RBAC-014, TASK-RBAC-015
+**Files to modify:**
+- `tests/paymentsRoute.test.js` — extend for tenant context and finance permission denials
+- `tests/routes/fsm.test.js` — extend for server-side action filtering and unauthorized apply
+- `docs/test-cases/PF007-rbac-hardening.md` — **NEW**: manual verification checklist for nav hiding and forbidden preloads
+**Files NOT to modify:**
+- unrelated schedule layout and telephony tests
+**Acceptance criteria:**
+- [ ] Finance route tests cover `req.companyFilter?.company_id` usage and permission denials
+- [ ] FSM tests cover server-side action filtering and unauthorized transition rejection
+- [ ] Manual checklist covers nav hiding, forbidden prefetch prevention, and provider access only to own client timelines
+- [ ] Remaining rollout risks and any uncovered automation gaps are explicitly documented
+
+---
+
+## Execution Order
+
+**Wave 1:** TASK-RBAC-001
+**Wave 2:** TASK-RBAC-002, TASK-RBAC-003 (serial preferred because sync depends on the new profile mapping)
+**Wave 3:** TASK-RBAC-004, TASK-RBAC-005 (parallel once internal assignee mirror exists)
+**Wave 4:** TASK-RBAC-006, TASK-RBAC-007
+**Wave 5:** TASK-RBAC-008, TASK-RBAC-009, TASK-RBAC-010, TASK-RBAC-011, TASK-RBAC-012
+**Wave 6:** TASK-RBAC-013
+**Wave 7:** TASK-RBAC-014, TASK-RBAC-015 (parallel once route guards are stable)
+**Wave 8:** TASK-RBAC-016, TASK-RBAC-017

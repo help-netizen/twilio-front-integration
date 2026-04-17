@@ -6,10 +6,9 @@
  */
 import { useState, useEffect } from 'react';
 import {
-    Loader2, FileText, ChevronDown, ChevronLeft, ChevronRight as ChevronRightIcon,
-    ExternalLink, RotateCcw, Receipt,
+    Loader2, FileText, ChevronDown, Receipt,
 } from 'lucide-react';
-import { FullscreenImageViewer, RotatableImage } from '../shared/FullscreenImageViewer';
+import { AttachmentsSection } from '../shared/AttachmentsSection';
 import { useNavigate } from 'react-router-dom';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import type { PaymentDetail } from './paymentTypes';
@@ -87,13 +86,8 @@ export function PaymentDetailPanel({
 }) {
     const navigate = useNavigate();
     const [showMetadata, setShowMetadata] = useState(false);
-    const [galleryIndex, setGalleryIndex] = useState(0);
-    const [rotation, setRotation] = useState(0);
-    const [showLargePreview, setShowLargePreview] = useState(false);
 
     useEffect(() => {
-        setGalleryIndex(0);
-        setShowLargePreview(false);
         setShowMetadata(false);
     }, [detail?.transaction_id]);
 
@@ -257,117 +251,13 @@ export function PaymentDetailPanel({
 
             {/* ═══ BOTTOM: Attachments (full width) ═══ */}
             <div className="px-4 pb-4">
-                <AttachmentsSection
-                    attachments={allAttachments}
-                    galleryIndex={galleryIndex} setGalleryIndex={setGalleryIndex}
-                    rotation={rotation} setRotation={setRotation}
-                    showLargePreview={showLargePreview} setShowLargePreview={setShowLargePreview}
-                />
+                <AttachmentsSection attachments={allAttachments} />
             </div>
         </div>
     );
 }
 
-// ─── Attachments Section ─────────────────────────────────────────────────────
-
-function AttachmentsSection({ attachments, galleryIndex, setGalleryIndex, rotation, setRotation, showLargePreview, setShowLargePreview }: {
-    attachments: PaymentDetail['attachments'];
-    galleryIndex: number; setGalleryIndex: (v: number | ((n: number) => number)) => void;
-    rotation: number; setRotation: (v: number | ((n: number) => number)) => void;
-    showLargePreview: boolean; setShowLargePreview: (v: boolean) => void;
-}) {
-    const [fullscreen, setFullscreen] = useState(false);
-
-    // Pre-compute image-only list and index mapping for fullscreen viewer
-    const imageOnly = attachments.filter(a => a.kind === 'image').map(a => ({ url: a.url, filename: a.filename }));
-    const galleryToImageIndex = (() => {
-        let count = 0;
-        for (let j = 0; j < galleryIndex; j++) {
-            if (attachments[j]?.kind === 'image') count++;
-        }
-        return attachments[galleryIndex]?.kind === 'image' ? count : 0;
-    })();
-
-    if (attachments.length === 0) return null;
-
-    return (
-        <div>
-            <p style={eyebrow}>Attachments ({attachments.length})</p>
-            <div className="flex gap-2 overflow-x-auto pb-1">
-                {attachments.map((att, i) => (
-                    <button
-                        key={i}
-                        onClick={() => { setGalleryIndex(i); setShowLargePreview(true); setRotation(0); }}
-                        className="shrink-0 overflow-hidden transition-all"
-                        style={{
-                            width: 56, height: 56, borderRadius: 10,
-                            border: galleryIndex === i && showLargePreview ? '2px solid var(--blanc-info)' : '1px solid var(--blanc-line)',
-                            background: 'rgba(117,106,89,0.04)',
-                        }}
-                    >
-                        {att.kind === 'image' ? (
-                            <img src={att.url} alt={att.filename} className="w-full h-full object-cover" />
-                        ) : (
-                            <div className="flex flex-col items-center justify-center h-full text-[9px] font-semibold" style={{ color: 'var(--blanc-ink-3)' }}>
-                                <FileText className="size-4 mb-0.5" />
-                                {att.filename.split('.').pop()?.toUpperCase()}
-                            </div>
-                        )}
-                    </button>
-                ))}
-            </div>
-            {showLargePreview && attachments[galleryIndex] && (
-                <div className="mt-2 rounded-xl overflow-hidden" style={{ border: '1px solid var(--blanc-line)' }}>
-                    <div className="flex items-center gap-2 px-3 py-2" style={{ borderBottom: '1px solid var(--blanc-line)', background: 'var(--blanc-surface-strong)' }}>
-                        <button disabled={galleryIndex === 0} onClick={() => { setGalleryIndex(i => i - 1); setRotation(0); }} className="p-1 disabled:opacity-30"><ChevronLeft className="size-4" /></button>
-                        <span className="text-[12px] font-medium" style={{ color: 'var(--blanc-ink-2)' }}>{galleryIndex + 1} / {attachments.length}</span>
-                        <button disabled={galleryIndex >= attachments.length - 1} onClick={() => { setGalleryIndex(i => i + 1); setRotation(0); }} className="p-1 disabled:opacity-30"><ChevronRightIcon className="size-4" /></button>
-                        <button onClick={() => setRotation(r => r - 90)} className="p-1 ml-auto" style={{ color: 'var(--blanc-ink-3)' }}><RotateCcw className="size-3.5" /></button>
-                        <a href={attachments[galleryIndex].url} target="_blank" rel="noopener noreferrer" className="p-1" style={{ color: 'var(--blanc-info)' }}><ExternalLink className="size-3.5" /></a>
-                    </div>
-                    <div
-                        className="flex items-center justify-center p-3"
-                        style={{ background: 'rgba(30,30,30,0.95)', minHeight: 200, overflow: 'hidden', cursor: attachments[galleryIndex].kind === 'image' ? 'zoom-in' : undefined }}
-                        onClick={() => { if (attachments[galleryIndex].kind === 'image') setFullscreen(true); }}
-                    >
-                        {attachments[galleryIndex].kind === 'image' ? (
-                            <RotatableImage
-                                src={attachments[galleryIndex].url}
-                                alt={attachments[galleryIndex].filename}
-                                rotation={rotation}
-                            />
-                        ) : (
-                            <div className="flex flex-col items-center gap-2 text-white/60">
-                                <FileText className="size-10" />
-                                <span className="text-sm">{attachments[galleryIndex].filename}</span>
-                                <a href={attachments[galleryIndex].url} target="_blank" rel="noopener noreferrer" className="text-xs px-3 py-1.5 rounded-lg" style={{ background: 'var(--blanc-info)', color: '#fff' }}>Open File</a>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
-            {fullscreen && imageOnly.length > 0 && (
-                <FullscreenImageViewer
-                    images={imageOnly}
-                    initialIndex={galleryToImageIndex}
-                    initialRotation={rotation}
-                    onClose={() => setFullscreen(false)}
-                    onIndexChange={(imgIdx) => {
-                        // Map image-only index back to full attachments array index
-                        let count = 0;
-                        for (let j = 0; j < attachments.length; j++) {
-                            if (attachments[j].kind === 'image') {
-                                if (count === imgIdx) { setGalleryIndex(j); break; }
-                                count++;
-                            }
-                        }
-                    }}
-                    onRotationChange={setRotation}
-                />
-            )}
-        </div>
-    );
-}
+// AttachmentsSection extracted to ../shared/AttachmentsSection.tsx
 
 // ─── Metadata Section ────────────────────────────────────────────────────────
 

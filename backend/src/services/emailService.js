@@ -5,6 +5,7 @@
  * sent-message hydration, attachment streaming/download.
  */
 const { google } = require('googleapis');
+const db = require('../db/connection');
 const emailQueries = require('../db/emailQueries');
 const emailMailboxService = require('./emailMailboxService');
 const { importGmailThread } = require('./emailSyncService');
@@ -95,9 +96,17 @@ async function sendEmail(companyId, { to, cc, subject, body, files, userId, user
     const sentMessageId = sendRes.data.id;
     const sentThreadId = sendRes.data.threadId;
 
-    // Hydrate the sent message locally
+    // Hydrate the sent message locally and tag with sender identity
     try {
         await importGmailThread(gmail, sentThreadId, companyId, mailboxData.id, mailboxData.email_address);
+        // Update sent_by fields on the hydrated message
+        if (userId || userEmail) {
+            await db.query(
+                `UPDATE email_messages SET sent_by_user_id = $1, sent_by_user_email = $2, updated_at = now()
+                 WHERE provider_message_id = $3 AND company_id = $4`,
+                [userId || null, userEmail || null, sentMessageId, companyId]
+            );
+        }
     } catch (err) {
         console.error('[EmailService] Failed to hydrate sent thread:', err.message);
     }
@@ -151,9 +160,16 @@ async function replyToThread(companyId, threadId, { to, cc, subject, body, files
 
     const sentMessageId = sendRes.data.id;
 
-    // Hydrate
+    // Hydrate and tag with sender identity
     try {
         await importGmailThread(gmail, thread.provider_thread_id, companyId, mailboxData.id, mailboxData.email_address);
+        if (userId || userEmail) {
+            await db.query(
+                `UPDATE email_messages SET sent_by_user_id = $1, sent_by_user_email = $2, updated_at = now()
+                 WHERE provider_message_id = $3 AND company_id = $4`,
+                [userId || null, userEmail || null, sentMessageId, companyId]
+            );
+        }
     } catch (err) {
         console.error('[EmailService] Failed to hydrate reply thread:', err.message);
     }
