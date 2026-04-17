@@ -665,8 +665,8 @@ router.post('/:uuid/convert', async (req, res) => {
     const reqId = requestId();
     try {
         const result = await leadsService.convertLead(req.params.uuid, req.body || {}, req.companyFilter?.company_id);
-        eventService.logEvent(req.companyFilter?.company_id, 'lead', result.lead?.SerialId || result.lead?.ClientId, 'converted',
-            { job_id: result.job?.id, actor_name: eventService.actorName(req) }, 'user', req.user?.sub);
+        eventService.logEvent(req.companyFilter?.company_id, 'lead', result.ClientId, 'converted',
+            { job_id: result.job_id, actor_name: eventService.actorName(req) }, 'user', req.user?.sub);
         res.json(successResponse(result, reqId));
     } catch (err) {
         handleError(err, reqId, res);
