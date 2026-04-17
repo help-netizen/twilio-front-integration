@@ -12,7 +12,8 @@ import { useAuth } from '../auth/AuthProvider';
 export function EmailPage() {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
-    const { hasPermission } = useAuth();
+    const auth = useAuth();
+    const hasPermission = (auth as any).hasPermission as ((p: string) => boolean) | undefined;
 
     const [activeView, setActiveView] = useState('inbox');
     const [searchQuery, setSearchQuery] = useState('');
@@ -133,6 +134,7 @@ export function EmailPage() {
             />
             <EmailThreadPane
                 threadId={selectedThreadId}
+                mailboxStatus={mailbox?.status || null}
                 onThreadUpdated={handleThreadUpdated}
             />
         </div>
