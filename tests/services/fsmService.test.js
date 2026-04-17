@@ -398,6 +398,37 @@ describe('resolveTransition', () => {
     expect(result.valid).toBe(true);
     expect(result.targetState).toBe('Submitted');
   });
+
+  // Same-state transition should be a no-op success, not an error
+  test('treats same-state transition as no-op success (by statusName)', async () => {
+    const result = await resolveTransition(COMPANY, MACHINE, 'Follow Up with Client', 'Follow Up with Client');
+    expect(result.valid).toBe(true);
+    expect(result.event).toBe('__NOOP__');
+    expect(result.targetState).toBe('Follow Up with Client');
+  });
+
+  test('treats same-state transition as no-op success (id vs statusName)', async () => {
+    const result = await resolveTransition(COMPANY, MACHINE, 'Follow Up with Client', 'Follow_Up_with_Client');
+    expect(result.valid).toBe(true);
+    expect(result.event).toBe('__NOOP__');
+  });
+
+  // Reset to initial state must work from ANY state — even when no explicit
+  // transition is defined in the schema.
+  test('allows reset to initial state from any state via statusName', async () => {
+    const result = await resolveTransition(COMPANY, MACHINE, 'Follow Up with Client', 'Submitted');
+    expect(result.valid).toBe(true);
+    expect(result.targetState).toBe('Submitted');
+  });
+
+  test('allows reset to initial state from terminal state', async () => {
+    // Canceled is a final state with no outgoing transitions in the seed schema.
+    // Reset back to initial should still be allowed.
+    const result = await resolveTransition(COMPANY, MACHINE, 'Canceled', 'Submitted');
+    expect(result.valid).toBe(true);
+    expect(result.event).toBe('__RESET__');
+    expect(result.targetState).toBe('Submitted');
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -622,20 +622,44 @@ async function resolveTransition(companyId, machineKey, currentState, eventOrTar
     return { valid: false, error: `State '${currentState}' not found in published workflow` };
   }
 
-  // Block self-loops at runtime
-  if (currentState === eventOrTarget) {
-    return { valid: false, error: 'Self-loop transitions are not allowed' };
+  // Resolve target state node once (handles id vs statusName mismatches)
+  const targetNode = findState(graph.states, eventOrTarget);
+  const initialNode = graph.states.get(graph.initialState);
+  const initialStatusName = initialNode ? initialNode.statusName : graph.initialState;
+
+  // a. Same state — treat as no-op success (idempotent), not an error
+  if (targetNode && targetNode.id === state.id) {
+    return {
+      valid: true,
+      targetState: state.statusName,
+      event: '__NOOP__',
+    };
   }
 
-  // a. Try matching by event
+  // b. Reset to initial state — always allowed from any state
+  // (Checked before explicit transitions so reset works even if schema lacks
+  // an explicit edge back to the initial state.)
+  const targetIsInitial =
+    eventOrTarget === initialStatusName ||
+    eventOrTarget === graph.initialState ||
+    (targetNode && targetNode.id === graph.initialState);
+  if (targetIsInitial) {
+    return {
+      valid: true,
+      targetState: initialStatusName,
+      event: '__RESET__',
+    };
+  }
+
+  // c. Try matching by event
   let transition = state.transitions.find(tr => tr.event && tr.event === eventOrTarget);
 
-  // b. Try matching by targetStatusName (backward compat — callers may pass target name)
+  // d. Try matching by targetStatusName (callers may pass target status name)
   if (!transition) {
     transition = state.transitions.find(tr => tr.targetStatusName === eventOrTarget);
   }
 
-  // c. Try matching by target state id
+  // e. Try matching by target state id
   if (!transition) {
     transition = state.transitions.find(tr => tr.target === eventOrTarget);
   }
@@ -645,17 +669,6 @@ async function resolveTransition(companyId, machineKey, currentState, eventOrTar
       valid: true,
       targetState: transition.targetStatusName || transition.target,
       event: transition.event,
-    };
-  }
-
-  // d. Allow reset to initial state from any state
-  const initialNode = graph.states.get(graph.initialState);
-  const initialStatusName = initialNode ? initialNode.statusName : graph.initialState;
-  if (eventOrTarget === initialStatusName || eventOrTarget === graph.initialState) {
-    return {
-      valid: true,
-      targetState: initialStatusName,
-      event: '__RESET__',
     };
   }
 
