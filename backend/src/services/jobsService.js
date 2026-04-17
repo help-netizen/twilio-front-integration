@@ -13,6 +13,7 @@
 const db = require('../db/connection');
 const zenbookerClient = require('./zenbookerClient');
 const fsmService = require('./fsmService');
+const eventService = require('./eventService');
 
 // =============================================================================
 // Constants
@@ -512,7 +513,7 @@ async function updateBlancStatus(jobId, newStatus, companyId) {
         }
     }
 
-    return { ...job, blanc_status: newStatus };
+    return { ...job, blanc_status: newStatus, _prev_status: job.blanc_status };
 }
 
 // =============================================================================
@@ -625,11 +626,12 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
 // Notes
 // =============================================================================
 
-async function addNote(jobId, text, attachments = []) {
+async function addNote(jobId, text, attachments = [], author = null) {
     const job = await getJobById(jobId);
     if (!job) throw new Error(`Job #${jobId} not found`);
 
     const note = { text, created: new Date().toISOString() };
+    if (author) note.author = author;
     if (attachments.length > 0) {
         note.attachments = attachments.map(a => ({
             id: a.id,

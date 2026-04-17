@@ -59,8 +59,8 @@ export function JobNotesList({ job }: { job: LocalJob }) {
     return (
         <div>
             <div className="space-y-3">
-                {job.notes && job.notes.length > 0 ? job.notes.map((note: any, i: number) => (
-                    <div key={note.id || i} className="p-3 bg-muted rounded-lg space-y-2">
+                {job.notes && job.notes.length > 0 ? [...job.notes].reverse().map((note: any, i: number) => (
+                    <div key={note.id || i} className="p-3 rounded-lg space-y-2" style={{ background: '#fef9e7' }}>
                         {note.text && <p className="text-sm whitespace-pre-wrap">{note.text}</p>}
                         {note.attachments && note.attachments.length > 0 && (
                             <NoteAttachmentDisplay attachments={note.attachments} />
@@ -116,12 +116,7 @@ export function JobAddNote({ job, noteJobId, noteText, setNoteText, setNoteJobId
     const canSubmit = text.trim() || files.length > 0;
 
     return (
-        <div ref={containerRef} style={{
-            padding: '10px 14px',
-            background: 'rgba(117,106,89,0.03)',
-            borderTop: '1px solid rgba(117,106,89,0.08)',
-            borderRadius: '0 0 var(--blanc-radius-xl) 0',
-        }}>
+        <div ref={containerRef}>
             {expanded ? (
                 <div className="space-y-2">
                     <textarea

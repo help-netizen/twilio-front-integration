@@ -10,7 +10,7 @@ import { ChevronDown, Users, RotateCcw } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import type { Lead } from '../../types/lead';
 import { LEAD_STATUSES } from '../../types/lead';
-import { StructuredNotesSection } from '../shared/StructuredNotesSection';
+import { NotesHistoryTabs } from '../shared/NotesHistoryTabs';
 import { useFsmStates, useFsmActions } from '../../hooks/useFsmActions';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
@@ -98,7 +98,7 @@ export function LeadDetailPanel({ lead, onClose: _onClose, onEdit, onMarkLost, o
                     <div>
                         <LeadHeader lead={lead} contactName={contactName} statusColor={statusColor} onUpdateStatus={onUpdateStatus} onUpdateSource={onUpdateSource} />
                     </div>
-                    <StructuredNotesSection entityType="lead" entityId={lead.UUID} legacyText={lead.Comments || undefined} />
+                    <NotesHistoryTabs entityType="lead" entityId={lead.UUID} />
                 </div>
 
                 {/* Tiles */}
@@ -138,7 +138,7 @@ export function LeadDetailPanel({ lead, onClose: _onClose, onEdit, onMarkLost, o
 
                     {/* Mobile-only: right column content inline */}
                     <div className="md:hidden px-5 pb-6 space-y-5">
-                        <StructuredNotesSection entityType="lead" entityId={lead.UUID} legacyText={lead.Comments || undefined} />
+                        <NotesHistoryTabs entityType="lead" entityId={lead.UUID} />
                         <JobDetailsSection lead={lead} />
                         <MetadataSection lead={lead} />
                         {lead.SerialId && (
@@ -165,7 +165,7 @@ export function LeadDetailPanel({ lead, onClose: _onClose, onEdit, onMarkLost, o
 
                         <TabsContent value="details" className="flex-1 flex flex-col mt-0 min-h-0 data-[state=inactive]:hidden">
                             <div className="flex-1 overflow-y-auto p-4 space-y-5">
-                                <StructuredNotesSection entityType="lead" entityId={lead.UUID} legacyText={lead.Comments || undefined} />
+                                <NotesHistoryTabs entityType="lead" entityId={lead.UUID} />
                                 <JobDetailsSection lead={lead} />
                                 <MetadataSection lead={lead} />
                             </div>

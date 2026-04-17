@@ -75,7 +75,7 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!formData.FirstName || !formData.LastName || !formData.Phone) { toast.error('Please fill in required fields'); return; }
+        if (!formData.FirstName || !formData.LastName || !formData.Phone || !formData.JobType) { toast.error('Please fill in required fields (including Job Type)'); return; }
         if (selectedContactId && contactSnapshot) {
             const current = snapshotFromForm(formData);
             if (hasFieldChanges(current, contactSnapshot)) { setPendingSubmitData(formData); setShowConfirmModal(true); return; }
@@ -188,7 +188,7 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                             <div className="cld-eyebrow">Job</div>
                             <div className="cld-row">
                                 <div className="cld-field">
-                                    <label className="cld-label">Type</label>
+                                    <label className="cld-label">Type <span style={{ color: 'var(--blanc-danger, #e53e3e)' }}>*</span></label>
                                     <Select value={formData.JobType} onValueChange={(v) => setFormData({ ...formData, JobType: v })}>
                                         <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
                                         <SelectContent>{jobTypes.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>

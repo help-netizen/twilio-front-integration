@@ -10,6 +10,7 @@ const router = express.Router();
 const jobsService = require('../services/jobsService');
 const zenbookerClient = require('../services/zenbookerClient');
 const noteAttachmentsService = require('../services/noteAttachmentsService');
+const eventService = require('../services/eventService');
 
 const upload = multer({
     storage: multer.memoryStorage(),
@@ -157,11 +158,60 @@ router.patch('/:id/status', async (req, res) => {
         const { blanc_status } = req.body;
         if (!blanc_status) return res.status(400).json({ ok: false, error: 'blanc_status required' });
         const result = await jobsService.updateBlancStatus(parseInt(req.params.id, 10), blanc_status, companyId);
+        eventService.logEvent(companyId, 'job', req.params.id, 'status_changed',
+            { from: existing.blanc_status, to: blanc_status, actor_name: eventService.actorName(req) }, 'user', req.user?.sub);
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Jobs API] Status update error:', err.message);
         const status = err.message.includes('not allowed') || err.message.includes('Invalid') ? 400 : 500;
         res.status(status).json({ ok: false, error: err.message });
+    }
+});
+
+// ─── Get History ─────────────────────────────────────────────────────────────
+
+router.get('/:id/history', async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
+        const jobId = parseInt(req.params.id, 10);
+        const job = await jobsService.getJobById(jobId, companyId);
+        if (!job) return res.status(404).json({ ok: false, error: 'Job not found' });
+
+        const history = await eventService.getEntityHistory(companyId, 'job', jobId, job.notes || []);
+        res.json({ ok: true, data: history });
+    } catch (err) {
+        console.error('[Jobs API] History error:', err.message);
+        res.status(500).json({ ok: false, error: err.message });
+    }
+});
+
+// ─── Get Notes ───────────────────────────────────────────────────────────────
+
+router.get('/:id/notes', async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
+        const jobId = parseInt(req.params.id, 10);
+        const job = await jobsService.getJobById(jobId, companyId);
+        if (!job) return res.status(404).json({ ok: false, error: 'Job not found' });
+
+        const notes = job.notes || [];
+        // Enrich with attachment presigned URLs
+        const attachments = await noteAttachmentsService.getAttachmentsForEntity(companyId, 'job', jobId);
+        const attachmentsByNote = {};
+        for (const a of attachments) {
+            if (!attachmentsByNote[a.noteIndex]) attachmentsByNote[a.noteIndex] = [];
+            attachmentsByNote[a.noteIndex].push(a);
+        }
+
+        const enriched = notes.map((n, i) => ({
+            ...n,
+            attachments: (n.attachments || []).length > 0 ? n.attachments : (attachmentsByNote[i] || []),
+        }));
+
+        res.json({ ok: true, data: enriched });
+    } catch (err) {
+        console.error('[Jobs API] Get notes error:', err.message);
+        res.status(500).json({ ok: false, error: err.message });
     }
 });
 
@@ -188,7 +238,8 @@ router.post('/:id/notes', upload.array('attachments', noteAttachmentsService.MAX
             );
         }
 
-        const result = await jobsService.addNote(jobId, text, attachments);
+        const author = req.user?.name?.split(' ')[0] || req.user?.email || null;
+        const result = await jobsService.addNote(jobId, text, attachments, author);
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Jobs API] Add note error:', err.message);
@@ -205,6 +256,8 @@ router.post('/:id/cancel', async (req, res) => {
         const existing = await jobsService.getJobById(req.params.id, companyId);
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
         const result = await jobsService.cancelJob(parseInt(req.params.id, 10));
+        eventService.logEvent(companyId, 'job', req.params.id, 'canceled',
+            { actor_name: eventService.actorName(req) }, 'user', req.user?.sub);
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Jobs API] Cancel error:', err.message);

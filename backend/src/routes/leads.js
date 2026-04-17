@@ -20,6 +20,7 @@ const upload = multer({
 });
 const contactDedupeService = require('../services/contactDedupeService');
 const contactAddressService = require('../services/contactAddressService');
+const eventService = require('../services/eventService');
 
 // =============================================================================
 // Helpers
@@ -348,6 +349,8 @@ router.post('/', async (req, res) => {
         }
 
         const result = await leadsService.createLead(body, companyId);
+        eventService.logEvent(companyId, 'lead', result.SerialId || result.ClientId, 'created',
+            { actor_name: eventService.actorName(req), description: `Lead created: ${body.FirstName || ''} ${body.LastName || ''}`.trim() }, 'user', req.user?.sub);
 
         // Link lead to contact if not already done by createLead
         if (contactResolution.contact_id && result.ClientId) {
@@ -446,6 +449,12 @@ router.patch('/:uuid', async (req, res) => {
         }
 
         const result = await leadsService.updateLead(uuid, fields, req.companyFilter?.company_id);
+
+        // Log status change event
+        if (fields.Status) {
+            eventService.logEvent(req.companyFilter?.company_id, 'lead', result.SerialId || result.ClientId, 'status_changed',
+                { from: body._prevStatus || '?', to: fields.Status, actor_name: eventService.actorName(req) }, 'user', req.user?.sub);
+        }
 
         // Sync contact if lead has contact_id and contact-relevant fields changed
         const contactFields = ['FirstName', 'LastName', 'Phone', 'Email', 'SecondPhone', 'SecondPhoneName', 'Company'];
@@ -588,6 +597,8 @@ router.post('/:uuid/mark-lost', async (req, res) => {
     const reqId = requestId();
     try {
         const result = await leadsService.markLost(req.params.uuid, req.companyFilter?.company_id);
+        eventService.logEvent(req.companyFilter?.company_id, 'lead', result.SerialId || result.ClientId, 'marked_lost',
+            { actor_name: eventService.actorName(req) }, 'user', req.user?.sub);
         res.json(successResponse(result, reqId));
     } catch (err) {
         handleError(err, reqId, res);
@@ -601,6 +612,8 @@ router.post('/:uuid/activate', async (req, res) => {
     const reqId = requestId();
     try {
         const result = await leadsService.activateLead(req.params.uuid, req.companyFilter?.company_id);
+        eventService.logEvent(req.companyFilter?.company_id, 'lead', result.SerialId || result.ClientId, 'reactivated',
+            { actor_name: eventService.actorName(req) }, 'user', req.user?.sub);
         res.json(successResponse(result, reqId));
     } catch (err) {
         handleError(err, reqId, res);
@@ -618,6 +631,8 @@ router.post('/:uuid/assign', async (req, res) => {
             return res.status(400).json(errorResponse('VALIDATION_ERROR', 'User is required', reqId));
         }
         const result = await leadsService.assignUser(req.params.uuid, User);
+        eventService.logEvent(req.companyFilter?.company_id, 'lead', result.SerialId || result.ClientId, 'team_assigned',
+            { user_name: User, actor_name: eventService.actorName(req) }, 'user', req.user?.sub);
         res.json(successResponse(result, reqId));
     } catch (err) {
         handleError(err, reqId, res);
@@ -635,6 +650,8 @@ router.post('/:uuid/unassign', async (req, res) => {
             return res.status(400).json(errorResponse('VALIDATION_ERROR', 'User is required', reqId));
         }
         const result = await leadsService.unassignUser(req.params.uuid, User, req.companyFilter?.company_id);
+        eventService.logEvent(req.companyFilter?.company_id, 'lead', result.SerialId || result.ClientId, 'team_unassigned',
+            { user_name: User, actor_name: eventService.actorName(req) }, 'user', req.user?.sub);
         res.json(successResponse(result, reqId));
     } catch (err) {
         handleError(err, reqId, res);
@@ -648,6 +665,8 @@ router.post('/:uuid/convert', async (req, res) => {
     const reqId = requestId();
     try {
         const result = await leadsService.convertLead(req.params.uuid, req.body || {}, req.companyFilter?.company_id);
+        eventService.logEvent(req.companyFilter?.company_id, 'lead', result.lead?.SerialId || result.lead?.ClientId, 'converted',
+            { job_id: result.job?.id, actor_name: eventService.actorName(req) }, 'user', req.user?.sub);
         res.json(successResponse(result, reqId));
     } catch (err) {
         handleError(err, reqId, res);
@@ -670,15 +689,29 @@ function handleError(err, reqId, res) {
 // Structured Notes (with file attachments)
 // =============================================================================
 
+router.get('/:uuid/history', async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const lead = await leadsService.getLeadByUUID(req.params.uuid, companyId);
+        if (!lead) return res.status(404).json({ ok: false, error: 'Lead not found' });
+
+        const history = await eventService.getEntityHistory(companyId, 'lead', lead.SerialId || lead.ClientId, lead.structured_notes || []);
+        res.json({ ok: true, data: history });
+    } catch (err) {
+        console.error('[Leads] History error:', err.message);
+        res.status(500).json({ ok: false, error: err.message });
+    }
+});
+
 router.get('/:uuid/notes', async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
-        const lead = await leadsService.getLeadByUuid(req.params.uuid, companyId);
+        const lead = await leadsService.getLeadByUUID(req.params.uuid, companyId);
         if (!lead) return res.status(404).json({ ok: false, error: 'Lead not found' });
 
         const notes = lead.structured_notes || [];
         // Enrich with presigned URLs for attachments
-        const leadId = lead.serial_id || lead.id;
+        const leadId = lead.SerialId || lead.ClientId;
         const attachments = await noteAttachmentsService.getAttachmentsForEntity(companyId, 'lead', leadId);
         const attachmentsByNote = {};
         for (const a of attachments) {
@@ -702,19 +735,19 @@ router.post('/:uuid/notes', upload.array('attachments', noteAttachmentsService.M
     try {
         const companyId = req.companyFilter?.company_id;
         const userId = req.user?.sub || null;
-        const lead = await leadsService.getLeadByUuid(req.params.uuid, companyId);
+        const lead = await leadsService.getLeadByUUID(req.params.uuid, companyId);
         if (!lead) return res.status(404).json({ ok: false, error: 'Lead not found' });
 
         const text = (req.body.text || '').trim();
         const files = req.files || [];
         if (!text && files.length === 0) return res.status(400).json({ ok: false, error: 'text or attachments required' });
 
-        const leadId = lead.serial_id || lead.id;
+        const leadId = lead.SerialId || lead.ClientId;
         const existingNotes = lead.structured_notes || [];
 
         // Migrate legacy comments on first structured note if needed
-        if (existingNotes.length === 0 && lead.comments?.trim()) {
-            existingNotes.push({ text: lead.comments.trim(), created: lead.created_at || new Date().toISOString(), migrated: true });
+        if (existingNotes.length === 0 && lead.Comments?.trim()) {
+            existingNotes.push({ text: lead.Comments.trim(), created: lead.CreatedDate || new Date().toISOString(), migrated: true });
         }
 
         const noteIndex = existingNotes.length;
@@ -725,7 +758,8 @@ router.post('/:uuid/notes', upload.array('attachments', noteAttachmentsService.M
             );
         }
 
-        const note = { text, created: new Date().toISOString() };
+        const author = req.user?.name?.split(' ')[0] || req.user?.email || null;
+        const note = { text, created: new Date().toISOString(), ...(author && { author }) };
         if (attachmentsMeta.length > 0) {
             note.attachments = attachmentsMeta.map(a => ({
                 id: a.id, fileName: a.file_name, contentType: a.content_type, fileSize: a.file_size,

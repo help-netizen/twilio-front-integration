@@ -198,7 +198,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall: _hasActiveCall, time
     };
 
     const canProceedStep1 = !!(postalCode.trim() && zipExists);
-    const canProceedStep2 = !!(Number(duration) > 0);
+    const canProceedStep2 = !!(jobType.trim() && Number(duration) > 0);
     const canProceedStep3 = !!selectedTimeslot || timeslotSkipped;
 
     const ws = {

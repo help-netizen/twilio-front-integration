@@ -7,10 +7,8 @@ import { JobOpsSection } from './JobStatusTags';
 import { JobInfoSections } from './JobInfoSections';
 import { JobMetadataSection } from './JobMetadataSection';
 import { JobFinancialsTab } from './JobFinancialsTab';
-import {
-    JobDescription, JobComments, JobNotesList,
-    JobAddNote, JobMobileAddNote,
-} from './JobNotesSection';
+import { JobDescription } from './JobNotesSection';
+import { NotesHistoryTabs } from '../shared/NotesHistoryTabs';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -18,13 +16,13 @@ export interface JobDetailPanelProps {
     job: LocalJob;
     contactInfo: { id: number; name: string; phone?: string; email?: string } | null;
     detailLoading: boolean;
-    noteJobId: number | null;
-    noteText: string;
-    setNoteText: (v: string) => void;
-    setNoteJobId: (v: number | null) => void;
+    noteJobId?: number | null;
+    noteText?: string;
+    setNoteText?: (v: string) => void;
+    setNoteJobId?: (v: number | null) => void;
     onClose: () => void;
     onBlancStatusChange: (id: number, s: string) => void;
-    onAddNote: (files?: File[]) => void;
+    onAddNote?: (files?: File[]) => void;
     onMarkEnroute: (id: number) => void;
     onMarkInProgress: (id: number) => void;
     onMarkComplete: (id: number) => void;
@@ -39,8 +37,7 @@ export interface JobDetailPanelProps {
 
 export function JobDetailPanel({
     job, contactInfo, detailLoading,
-    noteJobId, noteText, setNoteText, setNoteJobId,
-    onClose: _onClose, onBlancStatusChange, onAddNote,
+    onClose: _onClose, onBlancStatusChange,
     onMarkEnroute, onMarkInProgress, onMarkComplete, onCancel,
     navigate, allTags, onTagsChange, onJobUpdated,
 }: JobDetailPanelProps) {
@@ -50,7 +47,6 @@ export function JobDetailPanel({
         setRightTab('notes');
     }, [job.id]);
 
-    const noteProps = { job, noteJobId, noteText, setNoteText, setNoteJobId, onAddNote };
     const opsProps = { job, allTags, onTagsChange, onMarkEnroute, onMarkInProgress, onMarkComplete, onCancel };
 
     return (
@@ -77,13 +73,11 @@ export function JobDetailPanel({
                     <>
                         <JobInfoSections job={job} contactInfo={contactInfo} onJobUpdated={onJobUpdated} />
 
-                        {/* Mobile-only: comments, description, notes, metadata, financials */}
+                        {/* Mobile-only: description, notes, metadata, financials */}
                         <div className="md:hidden px-5 pb-6 space-y-5">
                             <JobDescription job={job} />
-                            <JobComments job={job} />
-                            <JobNotesList job={job} />
+                            <NotesHistoryTabs entityType="job" entityId={job.id} onNoteAdded={onJobUpdated ? () => onJobUpdated(job) : undefined} />
                             <JobMetadataSection job={job} />
-                            <JobMobileAddNote {...noteProps} />
                             <p className="blanc-eyebrow pt-2">Estimates &amp; Invoices</p>
                             <JobFinancialsTab jobId={job.id} />
                         </div>
@@ -107,11 +101,9 @@ export function JobDetailPanel({
                     <TabsContent value="notes" className="flex-1 flex flex-col mt-0 min-h-0 data-[state=inactive]:hidden">
                         <div className="flex-1 overflow-y-auto p-4 space-y-5">
                             <JobDescription job={job} />
-                            <JobComments job={job} />
-                            <JobNotesList job={job} />
+                            <NotesHistoryTabs entityType="job" entityId={job.id} onNoteAdded={onJobUpdated ? () => onJobUpdated(job) : undefined} />
                             <JobMetadataSection job={job} />
                         </div>
-                        <JobAddNote {...noteProps} />
                     </TabsContent>
 
                     <TabsContent value="financials" className="flex-1 flex flex-col mt-0 data-[state=inactive]:hidden">

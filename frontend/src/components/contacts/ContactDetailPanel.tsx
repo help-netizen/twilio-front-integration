@@ -7,7 +7,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Pencil, RefreshCw, Activity, CloudUpload, Loader2, ChevronRight } from 'lucide-react';
-import { StructuredNotesSection } from '../shared/StructuredNotesSection';
+import { NotesHistoryTabs } from '../shared/NotesHistoryTabs';
 import { toast } from 'sonner';
 import { Skeleton } from '../ui/skeleton';
 import { Switch } from '../ui/switch';
@@ -137,7 +137,7 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
 
                     {/* Mobile-only: right column content inline */}
                     <div className="md:hidden px-5 pb-6 space-y-5">
-                        <StructuredNotesSection entityType="contact" entityId={contact.id} legacyText={contact.notes || undefined} />
+                        <NotesHistoryTabs entityType="contact" entityId={contact.id} />
                         <ActivitySection leads={filteredLeads} contactId={contact.id} onlyOpen={onlyOpen} onOnlyOpenChange={setOnlyOpen} />
                     </div>
                 </div>
@@ -148,7 +148,7 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
                     style={{ borderLeft: '1px solid rgba(117, 106, 89, 0.07)' }}
                 >
                     <div className="p-4 space-y-5">
-                        <StructuredNotesSection entityType="contact" entityId={contact.id} legacyText={contact.notes || undefined} />
+                        <NotesHistoryTabs entityType="contact" entityId={contact.id} />
                         <ActivitySection leads={filteredLeads} contactId={contact.id} onlyOpen={onlyOpen} onOnlyOpenChange={setOnlyOpen} />
                         {/* Timestamps */}
                         <div className="flex gap-6 text-[11px]" style={{ color: 'var(--blanc-ink-3)' }}>

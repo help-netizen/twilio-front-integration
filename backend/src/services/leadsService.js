@@ -87,6 +87,7 @@ function rowToLead(row) {
         Description: row.lead_notes || null,
         Comments: row.comments || null,
 
+        structured_notes: row.structured_notes || [],
         Tags: row.tags || null,
         Team: row.team || null, // populated via JOIN
         WorkizLink: null, // no external link for self-hosted

@@ -7,7 +7,7 @@
 - текущего продуктового scope в `docs/project-spec.md`
 - фактически реализованных модулей и последних изменений в `docs/changelog.md`
 - текущего пользовательского функционала в `docs/current_functionality.md`
-- актуальных разделов справки Workiz (`help.workiz.com`) по состоянию на 2026-03-24
+- актуальных разделов справки Workiz (`help.workiz.com`) по состоянию на 2026-04-16
 
 Это не попытка 1:1 скопировать Workiz. Приоритеты выставлены так, чтобы:
 
@@ -22,9 +22,13 @@
 - Pulse / SMS / call timeline / AI summary
 - Softphone
 - Contacts / Leads / Jobs
-- Payments page как sync/reporting слой
+- Schedule route и календарный dispatch surface (`/schedule`) — уже в активной разработке
+- Estimates / Invoices pages — уже в активной разработке
+- Payments + Transactions pages с canonical payment transactions / receipts
+- Portal backend/API foundation
 - Messages page
-- Users / settings / telephony admin
+- Company users / super admin / service territories / telephony admin
+- Workflow editor / FSM builder для lead/job statuses
 - базовая multi-tenant схема `companies + company_memberships`, но пока только с ролями `admin/member`
 
 Из-за этого главный gap сейчас не в "ещё одном CRM-экране", а в отсутствии полноценных слоёв:
@@ -43,6 +47,42 @@
 - `P1` — высокий приоритет, резко повышает completeness продукта
 - `P2` — важное расширение после закрытия ядра
 - `P3` — низкий приоритет / точечные add-ons
+
+## Легенда статусов
+
+- `✅` — реализовано как отдельный product slice
+- `🔧` — частично реализовано / активно в разработке
+- `📋` — ещё не начато или только на уровне требований
+
+## Актуальный статус на 2026-04-16
+
+| Эпик | Приоритет | Статус | Что есть сейчас |
+|---|---|---:|---|
+| Multi-tenant company model + super admin + RBAC | P0 | `🔧` | Базовый `companies + company_memberships`, `CompanyUsersPage`, `SuperAdminPage`; полноценный tenant-safe RBAC ещё не завершён |
+| Pulse client timeline core + realtime governance | P0 | `🔧` | `Pulse` уже основной workspace: calls, SMS, voicemail, Action Required, snooze, tasks, AI summary/transcript; generalized event timeline ещё не доведён полностью |
+| Schedule / Dispatcher workspace | P0 | `🔧` | Route `/schedule`, multiple views, active implementation and UX hardening |
+| Schedule dispatch actions | P1 | `🔧` | Schedule активно дорабатывается; часть dispatch UX уже есть, часть ещё в rollout |
+| Estimates | P0 | `🔧` | Route `/estimates`, lead/job financial tabs, ongoing MVP completion |
+| Invoices | P0 | `🔧` | Route `/invoices`, invoice detail flow, ongoing MVP completion |
+| Payment collection | P0 | `🔧` | `/payments`, `/transactions`, record payment dialog, receipts; полный MVP ещё не закрыт |
+| Client Portal | P0 | `🔧` | Backend/API foundation реализованы, но full product surface ещё не доведён |
+| AI communication layer | P0 | `🔧` | Уже есть AI summary, transcript, AI polish; richer AI-in-Pulse слой ещё не завершён |
+| Price Book / items catalog | P1 | `📋` | Явного product slice пока нет |
+| Estimate / Invoice dashboard layer | P1 | `📋` | Явного dashboard layer пока нет |
+| Online / self-serve payment expansion | P1 | `🔧` | Есть backend/payment traces и portal payment foundation, но product-ready self-serve flow ещё не готов |
+| Email in Pulse | P1 | `📋` | SMS есть, email thread model внутри `Pulse` пока не реализован |
+| Dashboard & reports | P1 | `🔧` | Есть telephony operations dashboard, но общего business dashboard/reporting stack пока нет |
+| QuickBooks integration | P1 | `📋` | В коде отдельный integration slice пока не найден |
+| Automation engine | P2 | `🔧` | Есть `Action Required`, thread-level tasks, settings page и workers; общего rules engine пока нет |
+| Automation templates | P2 | `🔧` | Есть special-case automations/settings, но не как unified template layer |
+| Task center | P2 | `🔧` | Thread-level tasks уже есть, отдельного task center ещё нет |
+| Phone ops for field workflows | P2 | `🔧` | Softphone и telephony stack уже есть, но field-specific phone ops backlog не закрыт |
+| Call tracking & attribution | P2 | `📋` | Явного attribution slice пока нет |
+| Voicemail workflow completion | P2 | `🔧` | Voicemail уже в `Pulse` timeline с transcript/audio; workflow hardening ещё впереди |
+| Service Plans | P2 | `📋` | Отдельного product slice пока нет |
+| Mobile-first field flows | P2 | `📋` | Специального mobile workflow слоя пока нет |
+| Group/team messages | P3 | `📋` | Отдельной реализации пока нет |
+| Online Booking portal | P3 | `📋` | Отдельной реализации пока нет |
 
 ## 0. Identity, Tenancy, Permissions
 
@@ -114,7 +154,7 @@
 
 ### P0. Полноценный модуль Invoices
 - Invoice list/dashboard
-- Standalone invoice и invoice-from-job
+- Job-connected и estimate-derived invoices
 - Due / overdue / paid статусы
 - PDF snapshot invoice
 - Постоянный preview при просмотре invoice в системе
@@ -198,20 +238,21 @@
 ## 4. Pulse: Messaging, Phone, Communication Ops
 
 Принцип раздела:
-- все communication- и phone-related улучшения должны встраиваться в `Pulse`
-- операторский UX для этих направлений должен жить в client timelines, left queue и middle-card controls внутри `Pulse`
-- нельзя проектировать отдельный parallel message center, phone ops center или communication feed, если тот же client context уже существует в `Pulse`
+- phone / SMS / voicemail продолжают жить в `Pulse`
+- email v1 допускается как отдельный workspace, если нужен shared-mailbox UX в стиле Front с list/thread/composer поверх одного company mailbox
+- новые communication surfaces должны переиспользовать общие tenant/auth/settings/search patterns и по возможности давать deep-link обратно в `Pulse`, Contacts, Leads, Jobs
 
-### P1. Email in Pulse / omnichannel expansion
-- Email должен быть встроен в текущий `Pulse`, а не в отдельный parallel inbox
-- Общий client timeline: calls + SMS + email в одном thread/timeline
-- Queue/state semantics для email: unread, `Action Required`, snooze, owner, realtime updates
-- Базовые email actions и thread association по клиенту
-- Детальный scope вынести в отдельную спецификацию после продуктового описания
+### P1. Gmail shared mailbox + `/email` workspace
+- Отдельный route `/email` с Front-like UX: mailbox rail, thread list, thread pane, composer
+- Отдельная settings page для подключения и управления одним shared Gmail mailbox на компанию
+- Базовый scope первой итерации: send / receive / thread / search / attachments
+- Без personal mailbox, delegated access, comments, shared drafts, assignment, snooze/later/done
+- `Pulse` и `/email` остаются отдельными operator surfaces, но могут связываться deep-links на contact / lead / job / pulse timeline
 
 Почему это P1:
-- SMS и thread-centric workflow уже реализованы в `Pulse`, поэтому главный реальный gap здесь не новый message center, а добавление email в существующий Pulse-контур
-- `Pulse` уже умеет создавать `lead/job` из thread context и уже даёт быстрый переход в связанные сущности, поэтому greenfield messaging shell не нужен
+- у продукта уже есть phone/SMS-centric `Pulse`, но желаемый email UX здесь другой: shared mailbox, inbox/list/thread flow, ближе к Front
+- в текущем коде уже есть полезные кирпичи (`company_settings`, authz, settings pages, messaging patterns, deep-link routes), поэтому отдельный `/email` можно строить без greenfield CRM-shell
+- это позволяет закрыть email-коммуникацию быстро, не дожидаясь полной унификации всех communication channels внутри `Pulse`
 
 ### P2. Voicemail workflow completion
 - Voicemail остаётся частью текущего `Pulse` timeline, а не отдельным inbox

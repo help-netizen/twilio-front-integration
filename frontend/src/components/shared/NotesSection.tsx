@@ -1,3 +1,9 @@
+/**
+ * NotesSection — unified notes component for any entity (job, lead, contact).
+ *
+ * Self-contained: fetches and posts notes via API.
+ * Usage: <NotesSection entityType="job" entityId={123} />
+ */
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Plus } from 'lucide-react';
 import { Button } from '../ui/button';
@@ -7,9 +13,10 @@ import { authedFetch } from '../../services/apiClient';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-interface StructuredNote {
+interface Note {
     text: string;
     created: string;
+    author?: string;
     migrated?: boolean;
     attachments?: Array<{
         id: number;
@@ -19,18 +26,16 @@ interface StructuredNote {
     }>;
 }
 
-interface StructuredNotesSectionProps {
-    /** 'lead' or 'contact' */
-    entityType: 'lead' | 'contact';
-    /** UUID for leads, numeric ID for contacts */
+interface NotesSectionProps {
+    entityType: 'job' | 'lead' | 'contact';
     entityId: string | number;
-    /** Legacy plain text notes/comments (for display if structured is empty) */
-    legacyText?: string;
-    /** Optional external callback after note is added */
+    /** Optional callback after note is added (e.g. to refresh parent) */
     onNoteAdded?: () => void;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+const NOTE_BG = '#fef9e7';
 
 function formatDate(iso: string): string {
     try {
@@ -43,12 +48,19 @@ function formatDate(iso: string): string {
     }
 }
 
+function apiPath(entityType: string, entityId: string | number): string {
+    switch (entityType) {
+        case 'job': return `/api/jobs/${entityId}/notes`;
+        case 'lead': return `/api/leads/${entityId}/notes`;
+        case 'contact': return `/api/contacts/${entityId}/notes`;
+        default: return `/api/${entityType}s/${entityId}/notes`;
+    }
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export function StructuredNotesSection({
-    entityType, entityId, legacyText, onNoteAdded,
-}: StructuredNotesSectionProps) {
-    const [notes, setNotes] = useState<StructuredNote[]>([]);
+export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSectionProps) {
+    const [notes, setNotes] = useState<Note[]>([]);
     const [text, setText] = useState('');
     const [files, setFiles] = useState<File[]>([]);
     const [expanded, setExpanded] = useState(false);
@@ -56,16 +68,14 @@ export function StructuredNotesSection({
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
-    const basePath = entityType === 'lead'
-        ? `/api/leads/${entityId}/notes`
-        : `/api/contacts/${entityId}/notes`;
+    const basePath = apiPath(entityType, entityId);
 
     const fetchNotes = useCallback(async () => {
         try {
             const res = await authedFetch(basePath);
             const data = await res.json();
             if (data.ok || data.data) setNotes(data.data || []);
-        } catch { }
+        } catch { /* silent — notes are non-critical */ }
     }, [basePath]);
 
     useEffect(() => { fetchNotes(); }, [fetchNotes]);
@@ -85,18 +95,18 @@ export function StructuredNotesSection({
             fetchNotes();
             onNoteAdded?.();
         } catch (err) {
-            console.error('[StructuredNotes] Failed to add note:', err);
+            console.error('[NotesSection] Failed to add note:', err);
         } finally {
             setSubmitting(false);
         }
-    }, [text, files, basePath, onNoteAdded]);
+    }, [text, files, basePath, fetchNotes, onNoteAdded]);
 
     const expand = () => {
         setExpanded(true);
         setTimeout(() => textareaRef.current?.focus(), 0);
     };
 
-    // Click-outside to collapse (replaces blur which breaks with file dialogs)
+    // Click-outside to collapse
     const handleClickOutside = useCallback((e: MouseEvent) => {
         if (!containerRef.current?.contains(e.target as Node) && !text.trim() && files.length === 0) {
             setExpanded(false);
@@ -111,15 +121,13 @@ export function StructuredNotesSection({
     }, [expanded, handleClickOutside]);
 
     const canSubmit = (text.trim() || files.length > 0) && !submitting;
-    const displayNotes = notes.length > 0 ? notes : [];
-    const showLegacy = displayNotes.length === 0 && legacyText?.trim();
 
     // Newest first
-    const sortedNotes = [...displayNotes].reverse();
+    const sortedNotes = [...notes].reverse();
 
     return (
         <div ref={containerRef} className="space-y-3">
-            {/* Add note — before the list */}
+            {/* Add note input — always at top */}
             {expanded ? (
                 <div className="space-y-2">
                     <textarea
@@ -178,27 +186,20 @@ export function StructuredNotesSection({
                 </button>
             )}
 
-            {/* Existing notes — newest first */}
+            {/* Notes list — newest first */}
             {sortedNotes.map((note, i) => (
-                <div key={i} className="p-3 rounded-xl space-y-2" style={{ background: 'rgba(117,106,89,0.04)' }}>
+                <div key={i} className="p-3 rounded-xl space-y-2" style={{ background: NOTE_BG }}>
                     {note.text && <p className="text-sm whitespace-pre-wrap" style={{ color: 'var(--blanc-ink-1)' }}>{note.text}</p>}
                     {note.attachments && note.attachments.length > 0 && (
                         <NoteAttachmentDisplay attachments={note.attachments} />
                     )}
                     <p className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>
+                        {note.author && <span className="font-medium">{note.author} · </span>}
                         {formatDate(note.created)}
                         {note.migrated && ' (migrated)'}
                     </p>
                 </div>
             ))}
-
-            {/* Legacy text fallback */}
-            {showLegacy && (
-                <div className="p-3 rounded-xl" style={{ background: 'rgba(117,106,89,0.04)' }}>
-                    <p className="text-sm whitespace-pre-wrap" style={{ color: 'var(--blanc-ink-2)' }}>{legacyText}</p>
-                    <p className="text-xs mt-1" style={{ color: 'var(--blanc-ink-3)' }}>Legacy note</p>
-                </div>
-            )}
         </div>
     );
 }

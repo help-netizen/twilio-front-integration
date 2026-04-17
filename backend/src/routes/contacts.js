@@ -6,6 +6,7 @@ const contactDedupeService = require('../services/contactDedupeService');
 const zenbookerSyncService = require('../services/zenbookerSyncService');
 const noteAttachmentsService = require('../services/noteAttachmentsService');
 const { toE164 } = require('../utils/phoneUtils');
+const eventService = require('../services/eventService');
 
 const upload = multer({
     storage: multer.memoryStorage(),
@@ -348,6 +349,21 @@ router.put('/:id/addresses/:addressId/default', async (req, res) => {
 // Structured Notes (with file attachments)
 // =============================================================================
 
+router.get('/:id/history', async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const contactId = parseInt(req.params.id, 10);
+        const contact = await contactsService.getById(contactId, companyId);
+        if (!contact) return res.status(404).json({ ok: false, error: 'Contact not found' });
+
+        const history = await eventService.getEntityHistory(companyId, 'contact', contactId, contact.structured_notes || []);
+        res.json({ ok: true, data: history });
+    } catch (err) {
+        console.error('[Contacts] History error:', err.message);
+        res.status(500).json({ ok: false, error: err.message });
+    }
+});
+
 router.get('/:id/notes', async (req, res) => {
     const reqId = requestId();
     try {
@@ -400,7 +416,8 @@ router.post('/:id/notes', upload.array('attachments', noteAttachmentsService.MAX
             );
         }
 
-        const note = { text, created: new Date().toISOString() };
+        const author = req.user?.name?.split(' ')[0] || req.user?.email || null;
+        const note = { text, created: new Date().toISOString(), ...(author && { author }) };
         if (attachmentsMeta.length > 0) {
             note.attachments = attachmentsMeta.map(a => ({
                 id: a.id, fileName: a.file_name, contentType: a.content_type, fileSize: a.file_size,

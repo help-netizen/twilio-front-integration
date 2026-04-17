@@ -1,6 +1,6 @@
 # Текущий функционал — Blanc Contact Center
 
-Подробное описание текущей реализации разделов **Pulse**, **Softphone**, **Contacts**, **Leads** и **Jobs**.
+Подробное описание текущей реализации разделов **Pulse**, **Softphone**, **Contacts**, **Leads**, **Jobs** и краткий статус более новых модулей, уже появившихся в коде.
 
 ---
 
@@ -260,3 +260,49 @@ Master list — двухколоночный layout: список контакт
 | **Иконки** | Lucide React |
 | **Timezone** | Всё нормализуется к `America/New_York` |
 | **Data fetching** | React Query (`useQuery`, `useInfiniteQuery`) для Pulse; прямые fetch-вызовы для остальных разделов |
+
+---
+
+## 6. Новые модули поверх исходного core
+
+Этот раздел фиксирует более новые product slices, которые уже присутствуют в коде, но пока не полностью отражены в исходных разделах 1–5.
+
+### 6.1 Schedule (`/schedule`)
+- Отдельный route уже существует: `frontend/src/pages/SchedulePage.tsx`
+- В продукте уже есть calendar-based dispatch surface поверх jobs/leads/tasks
+- В changelog и requirements зафиксированы несколько завершённых schedule slices, включая list view и часть UX hardening
+- Модуль ещё считается `in progress`, а не полностью завершённым dispatcher suite
+
+### 6.2 Estimates / Invoices / Transactions
+- Routes `/estimates`, `/invoices`, `/transactions` уже существуют
+- `EstimatesPage` и `InvoicesPage` уже доступны в приложении
+- Финансовые tabs интегрированы в lead/job context
+- `TransactionsPage` и `RecordPaymentDialog` уже дают canonical payment transaction flow
+- Receipts уже поддерживаются на backend и частично в UI
+- Весь finance-doc stack всё ещё считается `partial / in development`, а не полностью закрытым
+
+### 6.3 Client Portal foundation
+- На backend уже есть `portal.js`, `portalService.js`, `portalQueries.js`
+- Уже поддерживаются:
+  - portal access tokens / sessions
+  - document viewing
+  - estimate accept / decline
+  - payment history
+  - bookings lookup
+  - profile update
+- При этом полноценный polished client-facing portal surface ещё не описан как finished module внутри основного frontend-app shell
+
+### 6.4 Company / Admin / Territory management
+- Уже существуют:
+  - `CompanyUsersPage`
+  - `SuperAdminPage`
+  - `AdminCompanyDetailPage`
+  - `ServiceTerritoriesPage`
+- Это означает, что admin/platform foundation уже частично есть, но backlog-задача про полноценный tenant-safe RBAC и permission matrix остаётся открытой
+
+### 6.5 Workflow editor / FSM builder
+- В системе уже есть:
+  - full-screen visual workflow builder
+  - SCXML-based workflow editor
+  - route `/settings/workflows/:machineKey`
+- Это не было частью исходного Workiz-gap backlog, но уже является реальной частью продукта и влияет на current platform foundation
