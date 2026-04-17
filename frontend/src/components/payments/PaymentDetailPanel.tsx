@@ -6,7 +6,7 @@
  */
 import { useState, useEffect } from 'react';
 import {
-    Loader2, FileText, ChevronDown, Receipt,
+    Loader2, ChevronDown, Receipt,
 } from 'lucide-react';
 import { AttachmentsSection } from '../shared/AttachmentsSection';
 import { useNavigate } from 'react-router-dom';
