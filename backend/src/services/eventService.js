@@ -91,14 +91,16 @@ async function getEntityHistory(companyId, aggregateType, aggregateId, entityNot
         author: note.author || (note.migrated ? 'Blanc' : null),
         attachments: note.attachments || [],
         actor: note.author || (note.migrated ? 'Blanc' : ''),
-        created_at: note.created || new Date().toISOString(),
+        created_at: note.created || null,
         data: {},
     }));
 
-    // 4. Merge and sort by created_at DESC
-    const merged = [...historyItems, ...noteItems].sort(
-        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
+    // 4. Merge and sort by created_at DESC; items without timestamp go last
+    const merged = [...historyItems, ...noteItems].sort((a, b) => {
+        const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return bTime - aTime;
+    });
 
     return merged;
 }
