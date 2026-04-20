@@ -570,6 +570,8 @@ router.get('/:callSid/media', async (req, res) => {
                     gemini_summary: payload.gemini_summary || null,
                     gemini_entities: payload.gemini_entities || [],
                     gemini_generated_at: payload.gemini_generated_at || null,
+                    gemini_error: payload.gemini_error || null,
+                    gemini_error_at: payload.gemini_error_at || null,
                 };
             })() : null,
         });
@@ -640,11 +642,7 @@ router.post('/:callSid/summarize', async (req, res) => {
             callTime: req.body?.callTime || null,
         });
 
-        if (summaryResult.error) {
-            return res.status(502).json({ error: `Summary generation failed: ${summaryResult.error}` });
-        }
-
-        // 3. Update raw_payload in existing transcript
+        // Load existing payload (needed for both success and failure paths)
         let existingPayload = {};
         try {
             existingPayload = typeof transcript.raw_payload === 'string'
@@ -652,9 +650,47 @@ router.post('/:callSid/summarize', async (req, res) => {
                 : (transcript.raw_payload || {});
         } catch { existingPayload = {}; }
 
+        if (summaryResult.error) {
+            // Persist error to raw_payload for diagnostics, then return 502
+            existingPayload.gemini_error = {
+                code: summaryResult.error_code || 'unknown',
+                detail: summaryResult.error_detail || summaryResult.error || null,
+                attempts: summaryResult.attempts ?? null,
+                message: summaryResult.error || null,
+            };
+            existingPayload.gemini_error_at = new Date().toISOString();
+
+            try {
+                await queries.upsertTranscript({
+                    transcriptionSid: transcript.transcription_sid,
+                    callSid,
+                    recordingSid: transcript.recording_sid,
+                    mode: transcript.mode || 'post-call',
+                    status: transcript.status,
+                    languageCode: transcript.language_code,
+                    confidence: transcript.confidence,
+                    text: transcript.text,
+                    isFinal: true,
+                    rawPayload: existingPayload,
+                });
+            } catch (persistErr) {
+                console.error(`Failed to persist gemini_error for ${callSid}:`, persistErr.message);
+            }
+
+            return res.status(502).json({
+                error: `Summary generation failed: ${summaryResult.error}`,
+                error_code: summaryResult.error_code,
+                error_detail: summaryResult.error_detail,
+                attempts: summaryResult.attempts,
+            });
+        }
+
+        // 3. Update raw_payload in existing transcript (success path — reset error fields)
         existingPayload.gemini_summary = summaryResult.summary;
         existingPayload.gemini_entities = summaryResult.entities;
         existingPayload.gemini_generated_at = new Date().toISOString();
+        existingPayload.gemini_error = null;
+        existingPayload.gemini_error_at = null;
 
         await queries.upsertTranscript({
             transcriptionSid: transcript.transcription_sid,

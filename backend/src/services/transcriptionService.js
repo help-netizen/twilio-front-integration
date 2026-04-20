@@ -134,6 +134,8 @@ async function transcribeCall(callSid, recordingSid, traceId = `auto-${callSid}`
     let geminiSummary = null;
     let geminiEntities = [];
     let geminiGeneratedAt = null;
+    let geminiError = null;
+    let geminiErrorAt = null;
     try {
         console.log(`[${traceId}] Generating Gemini summary...`);
         const summaryResult = await generateCallSummary(dialogText);
@@ -144,9 +146,23 @@ async function transcribeCall(callSid, recordingSid, traceId = `auto-${callSid}`
             console.log(`[${traceId}] Gemini summary OK: ${geminiSummary?.length} chars, ${geminiEntities.length} entities`);
         } else {
             console.warn(`[${traceId}] Gemini summary skipped: ${summaryResult?.error}`);
+            geminiError = {
+                code: summaryResult?.error_code || 'unknown',
+                detail: summaryResult?.error_detail || summaryResult?.error || null,
+                attempts: summaryResult?.attempts ?? null,
+                message: summaryResult?.error || null,
+            };
+            geminiErrorAt = new Date().toISOString();
         }
     } catch (geminiErr) {
         console.error(`[${traceId}] Gemini summary failed (non-fatal):`, geminiErr.message);
+        geminiError = {
+            code: 'exception',
+            detail: geminiErr.message?.slice(0, 300) || null,
+            attempts: null,
+            message: geminiErr.message || 'exception',
+        };
+        geminiErrorAt = new Date().toISOString();
     }
 
     // 8. Save to transcripts table
@@ -168,6 +184,8 @@ async function transcribeCall(callSid, recordingSid, traceId = `auto-${callSid}`
             gemini_summary: geminiSummary,
             gemini_entities: geminiEntities,
             gemini_generated_at: geminiGeneratedAt,
+            gemini_error: geminiError,
+            gemini_error_at: geminiErrorAt,
         },
     });
 

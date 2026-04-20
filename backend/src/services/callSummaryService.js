@@ -72,12 +72,12 @@ async function generateCallSummary(dialogText, callMeta = {}) {
 
     if (!dialogText || typeof dialogText !== 'string' || dialogText.trim().length === 0) {
         console.warn(`[CallSummary:${traceId}] Empty dialog text — skipping`);
-        return { summary: '', entities: [], error: 'empty_transcript' };
+        return { summary: '', entities: [], error: 'empty_transcript', error_code: 'empty_transcript', error_detail: 'Dialog text is empty or missing', attempts: 0 };
     }
 
     if (!GEMINI_API_KEY) {
         console.warn(`[CallSummary:${traceId}] GEMINI_SUMMARY_API_KEY not set — skipping`);
-        return { summary: '', entities: [], error: 'api_key_not_configured' };
+        return { summary: '', entities: [], error: 'api_key_not_configured', error_code: 'api_key_not_configured', error_detail: 'GEMINI_SUMMARY_API_KEY env var not set', attempts: 0 };
     }
 
     // Build user prompt
@@ -104,8 +104,12 @@ async function generateCallSummary(dialogText, callMeta = {}) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
     let lastError = null;
+    let lastErrorCode = null;
+    let lastErrorDetail = null;
+    let attemptsMade = 0;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        attemptsMade = attempt + 1;
         if (attempt > 0) {
             const delay = BACKOFF_MS[attempt - 1] || 1500;
             const jitter = Math.floor(Math.random() * delay * 0.3);
@@ -130,6 +134,9 @@ async function generateCallSummary(dialogText, callMeta = {}) {
                 const body = await response.text().catch(() => '');
                 console.warn(`[CallSummary:${traceId}] Gemini HTTP ${status} (attempt ${attempt + 1}): ${body.slice(0, 300)}`);
 
+                lastErrorCode = status === 429 ? 'http_429' : status >= 500 ? 'http_5xx' : 'http_4xx';
+                lastErrorDetail = `HTTP ${status}: ${body.slice(0, 300)}`;
+
                 if ([429, 500, 502, 503, 504].includes(status) && attempt < MAX_RETRIES) {
                     lastError = new Error(`Gemini HTTP ${status}`);
                     continue;
@@ -152,7 +159,7 @@ async function generateCallSummary(dialogText, callMeta = {}) {
             }
             if (!rawOutput) {
                 console.warn(`[CallSummary:${traceId}] Empty response from Gemini (finishReason: ${finishReason})`);
-                return { summary: '', entities: [], error: 'empty_provider_response' };
+                return { summary: '', entities: [], error: 'empty_provider_response', error_code: 'empty_response', error_detail: `finishReason=${finishReason || 'unknown'}`, attempts: attemptsMade };
             }
 
             // Parse JSON
@@ -164,17 +171,28 @@ async function generateCallSummary(dialogText, callMeta = {}) {
             if (err.name === 'AbortError') {
                 console.warn(`[CallSummary:${traceId}] Timeout (attempt ${attempt + 1})`);
                 lastError = new Error('Provider timeout');
+                lastErrorCode = 'timeout';
+                lastErrorDetail = `Aborted after ${PROVIDER_TIMEOUT_MS}ms`;
                 if (attempt < MAX_RETRIES) continue;
             } else {
                 console.error(`[CallSummary:${traceId}] Fetch error (attempt ${attempt + 1}):`, err.message);
                 lastError = err;
+                lastErrorCode = 'network_error';
+                lastErrorDetail = err.message?.slice(0, 300) || 'fetch failed';
                 if (attempt < MAX_RETRIES) continue;
             }
         }
     }
 
     console.error(`[CallSummary:${traceId}] All retries exhausted:`, lastError?.message);
-    return { summary: '', entities: [], error: lastError?.message || 'provider_unavailable' };
+    return {
+        summary: '',
+        entities: [],
+        error: lastError?.message || 'provider_unavailable',
+        error_code: lastErrorCode || 'provider_unavailable',
+        error_detail: lastErrorDetail || lastError?.message || 'All retries exhausted',
+        attempts: attemptsMade,
+    };
 }
 
 /**
