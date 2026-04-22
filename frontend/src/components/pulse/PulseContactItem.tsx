@@ -104,6 +104,11 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
             : call.direction === 'internal' ? 'internal' : 'outbound';
     const callColor = STATUS_ICON_COLORS[call.status?.toLowerCase() || ''] || '#16a34a';
 
+    // Missed incoming call — last interaction is a call, direction is inbound, status is not answered
+    const isMissedIncoming = interactionType === 'call'
+        && callDirection === 'inbound'
+        && ['no-answer', 'busy', 'failed', 'canceled', 'voicemail_left', 'voicemail_recording'].includes((call.status || '').toLowerCase());
+
     // Neutral icon container — same for all contacts, no visual noise
 
     useEffect(() => {
@@ -126,8 +131,12 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                         .catch((err) => { console.error('[Pulse] Failed to mark timeline read:', tlId, err); });
                 }
             }}
-            className={`w-full text-left px-3 py-2.5 transition-colors border-b relative group ${isActive ? 'pulse-contact-item-active' : 'hover:bg-muted/40'}`}
-            style={{ outline: 'none', borderBottomColor: 'var(--blanc-line)' }}
+            className={`w-full text-left px-3 py-2.5 transition-colors border-b relative group ${isActive ? 'pulse-contact-item-active' : (isMissedIncoming ? 'hover:brightness-95' : 'hover:bg-muted/40')}`}
+            style={{
+                outline: 'none',
+                borderBottomColor: 'var(--blanc-line)',
+                ...(isMissedIncoming && !isActive ? { background: 'rgba(244, 63, 94, 0.08)' } : {}),
+            }}
         >
             {/* Unread indicator */}
             {hasUnread && (
