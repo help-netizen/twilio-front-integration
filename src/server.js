@@ -14,6 +14,7 @@ const leadsRouter = require('../backend/src/routes/leads');
 const contactsRouter = require('../backend/src/routes/contacts');
 const zenbookerRouter = require('../backend/src/routes/zenbooker');
 const integrationsLeadsRouter = require('../backend/src/routes/integrations-leads');
+const integrationsAnalyticsRouter = require('../backend/src/routes/integrations-analytics');
 const integrationsAdminRouter = require('../backend/src/routes/integrations-admin');
 const leadFormSettingsRouter = require('../backend/src/routes/lead-form-settings');
 const jobTagsSettingsRouter = require('../backend/src/routes/job-tags-settings');
@@ -167,6 +168,7 @@ app.use('/api/note-attachments', authenticate, requireCompanyAccess, noteAttachm
 
 // BLANC Integrations API (secured header-based auth)
 app.use('/api/v1/integrations', integrationsLeadsRouter);
+app.use('/api/v1/integrations', integrationsAnalyticsRouter);
 // Zenbooker integrations (webhook = unauthenticated w/ secret; create-customer/sync = Keycloak auth inside route)
 const integrationsZenbookerRouter = require('../backend/src/routes/integrations-zenbooker');
 app.use('/api/integrations/zenbooker', integrationsZenbookerRouter);
@@ -209,7 +211,7 @@ const adminCompanyUsersRouter = require('../backend/src/routes/admin-company-use
 app.use('/api/admin/sessions', authenticate, requireRole('super_admin'), sessionsRouter);
 app.use('/api/admin/companies', authenticate, requireRole('super_admin'), adminCompaniesRouter);
 app.use('/api/admin/companies/:companyId/users', authenticate, requireRole('super_admin'), adminCompanyUsersRouter);
-console.log('🔐 BLANC Integrations API enabled at /api/v1/integrations/leads');
+console.log('🔐 BLANC Integrations API enabled at /api/v1/integrations/{leads, analytics/*}');
 
 
 // Serve static files from React app (production only)

@@ -4,6 +4,54 @@
 
 ---
 
+## 2026-04-22 — F014: Ads Analytics Microservice
+
+### New Feature
+- **External read-only analytics API** for Google Ads / ABC Homes weekly reporting
+- 4 token-authenticated endpoints under `/api/v1/integrations/analytics/*`:
+  - `GET /summary` — aggregated funnel metrics (calls → leads → jobs → revenue)
+  - `GET /calls`, `GET /leads`, `GET /jobs` — paged raw rows for drill-down
+- New scope `analytics:read` — keeps Ads reporting key isolated from `leads:create`
+- Period in `America/New_York` (ABC Homes TZ); hard cap 92 days
+- Default tracking DID `+16176444408`; overridable via `tracking_number` query param
+
+### Database
+- Migration 080: `COMMENT ON COLUMN api_integrations.scopes` — no-op DDL marker documenting the canonical scope list (`leads:create`, `analytics:read`)
+
+### Backend
+- `backend/src/services/analyticsService.js` — `getSummary`/`listCalls`/`listLeads`/`listJobs` with shared CTE trio `tracked_calls → period_leads → attributed_leads`
+- `backend/src/routes/integrations-analytics.js` — 4 GET endpoints mirroring `integrations-leads` middleware chain (`rejectLegacyAuth → validateHeaders → authenticateIntegration → rateLimiter`) + `requireScope('analytics:read')` guard
+- `src/server.js` — 3-point patch (require, mount at `/api/v1/integrations`, boot log)
+- `backend/scripts/issue-analytics-key.js` — CLI to generate and persist `analytics:read` API keys (peppered SHA-256 hash, secret printed once)
+
+### Tests
+- `tests/routes/integrations-analytics.test.js` — 11 tests (happy path, 403 scope, 400 validation pass-through, 500 on unexpected, paged list endpoints)
+- `tests/services/analyticsService.test.js` — 4 tests for pure helpers (`parsePeriod` cases, `normalizePhone` cases)
+- Full Jest run: **15 / 15 passing**
+
+### Docs
+- Added F014 entry to `docs/requirements.md`
+- Added F014 slice to `docs/architecture.md`
+- Added `docs/test-cases/F014-ads-analytics-microservice.md`
+- Added F014 task breakdown (8 tasks) to `docs/tasks.md`
+
+---
+
+## 2026-04-17 — F013 Schedule Finalization Sprint Scope
+
+### Documentation
+- Создан consolidated closing spec: `docs/specs/F013-schedule-finalization-sprint.md`
+- Создан test-cases пакет: `docs/test-cases/F013-schedule-finalization-sprint.md`
+- В `docs/feature-backlog.md` schedule gap больше не размазан по старым `F013` sprint-итерациям
+- В `docs/current_functionality.md` schedule updated как implemented core + one remaining finalization sprint
+
+### Product Planning Decision
+- Все оставшиеся недоработки `F013 Schedule` сведены в один sprint scope
+- После завершения этого scope `F013` должен считаться закрытым
+- Дальнейшие schedule-улучшения должны идти уже отдельными enhancement-пакетами
+
+---
+
 ## 2026-04-17 — EMAIL-001 Implementation (Full Stack)
 
 ### Backend

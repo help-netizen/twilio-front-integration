@@ -1476,3 +1476,130 @@ TASK-021 + TASK-017 ──► TASK-030 (component tests) │
 **Wave 6:** TASK-RBAC-013
 **Wave 7:** TASK-RBAC-014, TASK-RBAC-015 (parallel once route guards are stable)
 **Wave 8:** TASK-RBAC-016, TASK-RBAC-017
+
+---
+
+# F014 — Ads Analytics Microservice
+
+Spec: `docs/specs/F014-ads-analytics-microservice.md`
+Test cases: `docs/test-cases/F014-ads-analytics-microservice.md`
+
+### TASK-F014-001: Migration — `analytics:read` scope marker
+**Phase:** 1
+**Status:** done
+**Files to modify:**
+- `backend/db/migrations/080_seed_analytics_scope.sql` — **NEW** (no-op DDL, `COMMENT ON COLUMN api_integrations.scopes`)
+**Files NOT to modify:**
+- any existing migration
+**Acceptance criteria:**
+- [x] File created under `backend/db/migrations/`
+- [x] Only a `COMMENT ON COLUMN` statement (no schema changes)
+- [x] Documents both `leads:create` and `analytics:read` as canonical scopes
+
+### TASK-F014-002: `analyticsService.js`
+**Phase:** 2
+**Status:** done
+**Dependencies:** TASK-F014-001
+**Files to modify:**
+- `backend/src/services/analyticsService.js` — **NEW**
+**Files NOT to modify:**
+- `backend/src/services/leadsService.js`, `backend/src/services/jobsService.js`, `backend/src/services/callsService.js`
+**Acceptance criteria:**
+- [x] Exports `getSummary`, `listCalls`, `listLeads`, `listJobs`, `AnalyticsServiceError`
+- [x] Shared CTE `tracked_calls → period_leads → attributed_leads`
+- [x] TZ pinned to `America/New_York`
+- [x] `parsePeriod` enforces max 92-day window
+- [x] `normalizePhone` handles 10/11-digit + formatted input
+- [x] `companyId` filter applied when non-null
+- [x] Pure helpers exported for unit tests as `_normalizePhone`, `_parsePeriod`
+
+### TASK-F014-003: `integrations-analytics.js` router
+**Phase:** 2
+**Status:** done
+**Dependencies:** TASK-F014-002
+**Files to modify:**
+- `backend/src/routes/integrations-analytics.js` — **NEW**
+**Files NOT to modify:**
+- `backend/src/routes/integrations-leads.js`, `backend/src/middleware/integrationsAuth.js`, `backend/src/middleware/rateLimiter.js`
+**Acceptance criteria:**
+- [x] Mirrors `integrations-leads` middleware chain
+- [x] `requireScope` guard checks `analytics:read`
+- [x] 4 GET endpoints: `/summary`, `/calls`, `/leads`, `/jobs`
+- [x] Service errors mapped to HTTP via `err.httpStatus` + `err.code`
+- [x] Uncaught errors → 500 `INTERNAL_ERROR` with no secret leak
+
+### TASK-F014-004: Mount router in `src/server.js`
+**Phase:** 3
+**Status:** done
+**Dependencies:** TASK-F014-003
+**Files to modify:**
+- `src/server.js` — 3 point changes (require, `app.use`, boot log)
+**Files NOT to modify:**
+- any routing logic not in the mount block
+**Acceptance criteria:**
+- [x] `require('../backend/src/routes/integrations-analytics')` present
+- [x] `app.use('/api/v1/integrations', integrationsAnalyticsRouter)` present, same base as leads router
+- [x] Startup log mentions `{leads, analytics/*}`
+
+### TASK-F014-005: Key issuance script
+**Phase:** 4
+**Status:** done
+**Dependencies:** TASK-F014-001
+**Files to modify:**
+- `backend/scripts/issue-analytics-key.js` — **NEW**
+**Files NOT to modify:**
+- any production auth path
+**Acceptance criteria:**
+- [x] `--client` required, `--company-id` and `--expires-days` optional
+- [x] Requires `BLANC_SERVER_PEPPER` env var (exits if missing)
+- [x] Generates key_id + 32-byte base64url secret
+- [x] Hashes with SHA-256 using pepper, matches `integrationsAuth.hashSecret` algorithm
+- [x] Inserts row with `scopes=['analytics:read']`
+- [x] Prints secret exactly once to stdout
+
+### TASK-F014-006: Router tests
+**Phase:** 5
+**Status:** done
+**Dependencies:** TASK-F014-003
+**Files to modify:**
+- `tests/routes/integrations-analytics.test.js` — **NEW**
+**Files NOT to modify:**
+- any other test file
+**Acceptance criteria:**
+- [x] Mocks `analyticsService`, `integrationsAuth`, `rateLimiter`
+- [x] 200 happy path for `/summary`
+- [x] 403 on missing scope
+- [x] 400 pass-through for `AnalyticsServiceError`
+- [x] 500 on unexpected error
+- [x] `test.each` covers `/calls`, `/leads`, `/jobs` happy paths with cursor
+
+### TASK-F014-007: Service unit tests
+**Phase:** 5
+**Status:** done
+**Dependencies:** TASK-F014-002
+**Files to modify:**
+- `tests/services/analyticsService.test.js` — **NEW**
+**Files NOT to modify:**
+- any other test file
+**Acceptance criteria:**
+- [x] `parsePeriod` cases: missing, reversed, too-large, 7-day happy
+- [x] `normalizePhone` cases: null, 10-digit, 11-digit, formatted
+- [x] DB connection mocked
+
+### TASK-F014-008: Green test run
+**Phase:** 6
+**Status:** done
+**Dependencies:** TASK-F014-006, TASK-F014-007
+**Files to modify:** none (verification only)
+**Acceptance criteria:**
+- [x] `npx jest tests/routes/integrations-analytics.test.js tests/services/analyticsService.test.js` exits 0
+- [x] No unhandled promise warnings
+
+## Execution Order (F014)
+
+**Wave 1:** TASK-F014-001
+**Wave 2:** TASK-F014-002 (service), TASK-F014-005 (key script) — can run in parallel after migration marker exists
+**Wave 3:** TASK-F014-003 (router)
+**Wave 4:** TASK-F014-004 (server mount)
+**Wave 5:** TASK-F014-006, TASK-F014-007 (tests in parallel)
+**Wave 6:** TASK-F014-008 (green run)

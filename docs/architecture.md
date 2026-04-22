@@ -1156,3 +1156,94 @@ V1 assumptions:
 | `backend/src/routes/messaging.js` + `conversationsService.js` | Twilio Conversations SMS domain; wrong provider, wrong schema, wrong threading model |
 | `frontend/src/pages/MessagesPage.tsx` | Two-pane SMS UI; not suitable for Front-like shared email workspace |
 | `backend/src/routes/pulse.js` / `frontend/src/pages/PulsePage.tsx` | `Pulse` remains call/SMS timeline-first; email is a separate workspace in v1 |
+
+---
+
+## F014 — Ads Analytics Microservice
+
+### 1. Goals
+
+Provide a read-only, token-authenticated HTTP surface that returns Blanc funnel data (calls → leads → jobs → revenue) for a requested period. First consumer is the ABC Homes Google Ads weekly report script. No new auth mechanism, no new tables, no mutations — the feature is a thin SQL aggregation layer over existing data.
+
+### 2. Route Registration (`src/server.js`)
+
+`src/server.js` is the canonical mount point for integration routes. One `require`, one `app.use(...)` on the existing `/api/v1/integrations` base path, plus a one-line log update. Middleware chain inside the router mirrors `integrations-leads` (`rejectLegacyAuth → validateHeaders → authenticateIntegration → rateLimiter`).
+
+### 3. Service Layer (`backend/src/services/analyticsService.js`)
+
+Single service module, four public functions:
+
+| Function | Endpoint | Purpose |
+|----------|----------|---------|
+| `getSummary` | `GET /summary` | Aggregated funnel metrics |
+| `listCalls` | `GET /calls` | Paged inbound calls to tracking DID |
+| `listLeads` | `GET /leads` | Paged leads in period with `tracking_call_sid` attribution |
+| `listJobs` | `GET /jobs` | Paged jobs whose lead was created in the period |
+
+All four share one canonical CTE trio:
+
+```
+tracked_calls      — inbound calls to tracking DID, TZ-adjusted period
+period_leads       — leads with created_at in the period
+attributed_leads   — leads joined to tracked_calls by last-10-digit phone match within 24h
+```
+
+This guarantees a single source of truth — numbers in `/summary` cannot diverge from the rows returned by `/calls|/leads|/jobs`.
+
+### 4. Auth & Scopes (`backend/src/middleware/integrationsAuth.js`)
+
+Reused unchanged. Scopes remain a JSONB array in `api_integrations.scopes`. Migration 080 is a **no-op DDL** whose only purpose is to add a `COMMENT ON COLUMN` that documents the known scopes (`leads:create`, `analytics:read`). Onboarding tooling can scan the migrations directory for the canonical scope list.
+
+### 5. Key Issuance (`backend/scripts/issue-analytics-key.js`)
+
+One-off CLI: generates a random key_id + 32-byte URL-safe secret, hashes secret with the server pepper using SHA-256, inserts into `api_integrations` with `scopes=['analytics:read']`, prints the secret **once**. Matches the existing peppered-hash pattern in `integrationsAuth.js`.
+
+### 6. Error Model
+
+Same envelope as `integrations-leads`: `{ success, code, message, request_id }`.
+
+| HTTP | `code` | Trigger |
+|------|--------|---------|
+| 400 | `PERIOD_REQUIRED` | `from` / `to` missing or malformed |
+| 400 | `PERIOD_TOO_LARGE` | `to - from > 92 days` |
+| 401 | `AUTH_*` | from `integrationsAuth` |
+| 403 | `SCOPE_INSUFFICIENT` | `analytics:read` missing from scopes |
+| 429 | `RATE_LIMITED` | from `rateLimiter` |
+| 500 | `INTERNAL_ERROR` | uncaught service/DB failure |
+
+### 7. Timezone & Period Semantics
+
+- All date math is pinned to `America/New_York` (ABC Homes operating TZ).
+- `from` and `to` are inclusive calendar days; converted to a half-open UTC range in SQL via `($to::date + interval '1 day') AT TIME ZONE 'America/New_York'`.
+- JS-side validation caps the range at 92 days and rejects reversed ranges with `PERIOD_REQUIRED` / `PERIOD_TOO_LARGE`.
+
+### 8. Extend vs. Do Not Duplicate
+
+#### Extend (modify in place)
+
+| File | Why |
+|------|-----|
+| `src/server.js` | Canonical integration route mount point. |
+
+#### Reuse
+
+| Existing module | Reuse strategy |
+|----------------|----------------|
+| `backend/src/middleware/integrationsAuth.js` | Auth chain identical to `integrations-leads` — no fork. |
+| `backend/src/middleware/rateLimiter.js` | Same per-key/IP budget. |
+| `backend/src/db/connection.js` | Pool singleton used by every service. |
+
+#### Do NOT duplicate
+
+| Existing module | Why not reuse directly |
+|----------------|------------------------|
+| `backend/src/routes/calls.js` / `backend/src/services/callsService.js` | Internal Pulse routes with Keycloak auth; wrong auth context. |
+| `backend/src/routes/leads.js` | Internal leads CRUD with Keycloak auth and write ops; wrong surface for external reporting. |
+| `backend/src/routes/integrations-leads.js` | Lead-creation semantics, not read aggregation. Mirror the chain but keep router separate. |
+
+### 9. Risks & Watch-outs (post-deploy)
+
+- **Attribution gap** — leads where the join window misses the call (> 24h, wrong DID, contact-based lead without a tracking call). If `tracking_call_sid IS NULL` ratio > 20 %, revisit the join rule.
+- **Invoice format** — `jobs.invoice_total` is TEXT (`"$1,234.00"`); current regex strips non-`[0-9.]`, which breaks on locales using `,` as decimal separator. Single-tenant US-only today, but flag if multi-locale comes in.
+- **TZ drift** — hardcoded `America/New_York`. If a second tenant joins with a different TZ, move to `companies.timezone`.
+- **Rate limit** — default 60 req/min per key is fine for a weekly cron; widen via `RATE_LIMIT_MAX_PER_KEY` when dashboards start polling.

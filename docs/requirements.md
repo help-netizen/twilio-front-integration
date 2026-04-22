@@ -522,3 +522,84 @@ This slice is intentionally **not** an omnichannel expansion of `Pulse`. In v1, 
    - route-level permission guards in `App.tsx`,
    - lazy-loaded detail panes and server-side search patterns.
 7. `Pulse` remains the phone/SMS workspace in this phase; do not expand its current combined timeline contract to include email as part of this requirement.
+
+---
+
+## F014: Ads Analytics Microservice
+
+**Status:** Requirements
+**Priority:** High
+**Owner:** Backend / Integrations
+**Consumer:** external reporting scripts (first: ABC Homes Google Ads weekly report)
+
+### 1. Description
+
+Read-only HTTP surface that returns Blanc funnel data (inbound tracking calls → leads → jobs → revenue) for a requested period. Authenticated via the existing `integrationsAuth` middleware (`X-BLANC-API-KEY` + `X-BLANC-API-SECRET`) with a new scope `analytics:read` that is distinct from `leads:create`. No mutations, no PII enrichment — just aggregated funnel numbers plus raw rows for spot-checking.
+
+### 2. User Scenarios
+
+#### SC-01: Weekly summary for Google Ads script
+**Actor:** external cron / Google Ads script holding an `analytics:read` API key
+**Flow:**
+1. Script calls `GET /api/v1/integrations/analytics/summary?from=2026-04-16&to=2026-04-22`.
+2. Backend authenticates via `X-BLANC-API-KEY` + `X-BLANC-API-SECRET`, verifies `analytics:read` scope, applies rate limiter.
+3. Backend aggregates calls for the tracking DID, leads created in the period, and jobs linked to those leads; returns a single summary object.
+4. Script posts the numbers into the weekly ad-performance dashboard.
+
+#### SC-02: Drill-down into raw rows
+**Actor:** analyst investigating a discrepancy
+**Flow:**
+1. Analyst calls `/analytics/calls`, `/analytics/leads`, or `/analytics/jobs` for the same period with `limit`/`cursor` pagination.
+2. Backend returns the underlying rows that back the summary (one call per `call_sid`, one lead per `serial_id`, one job per `zenbooker_job_id`).
+3. Analyst reconciles numbers against the summary endpoint.
+
+#### SC-03: Multi-DID scenario
+**Actor:** script with a non-default tracking number
+**Flow:** Script passes `tracking_number=+16175551234`; backend normalizes the phone and scopes the CTE to that DID. Default tracking number is `+16176444408` (ABC Homes main ad line).
+
+#### SC-04: Reject oversized period
+**Actor:** misbehaving client requesting 12 months of data at once
+**Flow:** Backend rejects the request with `400 PERIOD_TOO_LARGE` when `to - from > 92 days`.
+
+### 3. Non-Functional Requirements
+
+#### NFR-01: Security
+- All endpoints require `integrationsAuth` middleware chain (`rejectLegacyAuth → validateHeaders → authenticateIntegration → rateLimiter`).
+- Per-request scope guard: `req.integrationScopes` must include `analytics:read`.
+- Per-company isolation: all aggregations filter by `req.integrationCompanyId` when that column is non-null on the integration row.
+- No secrets in logs; keys follow the existing peppered SHA-256 storage pattern.
+
+#### NFR-02: Time semantics
+- All dates in query params are interpreted in `America/New_York` (ABC Homes operating TZ).
+- `from` and `to` are inclusive on the calendar day; server math converts them to a half-open UTC range.
+- Hard cap: `to - from <= 92 days` → `PERIOD_TOO_LARGE`.
+
+#### NFR-03: Stability of contract
+- Response shape mirrors the spec at `docs/specs/F014-ads-analytics-microservice.md`; numeric fields default to 0 when empty, not missing.
+- Error envelope identical to `integrations-leads`: `{ success, code, message, request_id }`.
+- Cursor pagination is opaque base64url of the last row's timestamp.
+
+### 4. Affected Modules
+
+| Module | Change |
+|--------|--------|
+| **New:** `backend/db/migrations/080_seed_analytics_scope.sql` | No-op DDL; marker file documenting `analytics:read` scope in column comment. |
+| **New:** `backend/src/services/analyticsService.js` | `getSummary`, `listCalls`, `listLeads`, `listJobs`; shared CTE `tracked_calls → period_leads → attributed_leads`. |
+| **New:** `backend/src/routes/integrations-analytics.js` | 4 GET endpoints; mirrors middleware chain of `integrations-leads`. |
+| **New:** `backend/scripts/issue-analytics-key.js` | CLI to generate and persist an `analytics:read` API key. |
+| `src/server.js` | Add `require`, mount router at `/api/v1/integrations`, update boot log. |
+
+### 5. Affected Integrations
+
+- **Google Ads reporting script** — first consumer. Weekly cron reads `/summary`.
+- **ABC Homes tracking DID** — default `+16176444408`; overridable via `tracking_number` param.
+- **Zenbooker / Front / Twilio** — no integration changes; the service only reads existing Blanc tables (`calls`, `leads`, `jobs`).
+
+### 6. Constraints
+
+1. Reuse `integrationsAuth` middleware — no new authentication mechanism.
+2. Scopes live in `api_integrations.scopes` JSONB; no schema change required.
+3. CommonJS backend; SQL-heavy service with a single canonical CTE for funnel attribution.
+4. No caching layer in v1; each request hits Postgres. Rate limit is the safety net.
+5. Attribution window: leads created within 24h of a tracking call are attributed to that call.
+6. Revenue stored in `jobs.invoice_total` as TEXT; strip `[^0-9.]` regex for numeric aggregation.
