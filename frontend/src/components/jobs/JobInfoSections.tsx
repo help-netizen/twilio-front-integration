@@ -78,7 +78,11 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
         }
     };
 
-    const canReschedule = !job.zb_canceled && job.zb_status !== 'complete';
+    // Reschedule is always available when a schedule exists — Zenbooker's reschedule
+    // endpoint accepts calls regardless of ZB status (complete/canceled), and Blanc may
+    // legitimately be in an open operational state while ZB is still terminal
+    // (operator-reopen scenario, see jobsService.js syncFromZenbooker override).
+    const canReschedule = !!job.start_date;
     const phone = contactInfo?.phone || job.customer_phone;
     const email = contactInfo?.email || job.customer_email;
     const customerName = contactInfo?.name || job.customer_name;
