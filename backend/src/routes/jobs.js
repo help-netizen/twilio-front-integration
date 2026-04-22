@@ -187,6 +187,66 @@ router.get('/:id/history', async (req, res) => {
 
 // ─── Get Notes ───────────────────────────────────────────────────────────────
 
+// Zenbooker ids look like "<unix-ms>x<hash>" — the prefix is the creation timestamp in ms.
+const ZB_ID_RE = /^(\d{13,})x[\w-]+$/;
+
+function guessContentTypeFromUrl(url) {
+    const clean = String(url).split('?')[0].split('#')[0];
+    const ext = clean.includes('.') ? clean.slice(clean.lastIndexOf('.') + 1).toLowerCase() : '';
+    const map = {
+        jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif',
+        webp: 'image/webp', heic: 'image/heic', bmp: 'image/bmp', svg: 'image/svg+xml',
+        pdf: 'application/pdf', mp4: 'video/mp4', mov: 'video/quicktime',
+        doc: 'application/msword',
+        docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    };
+    return map[ext] || null;
+}
+
+function zbUrlToAttachment(id, url, isImage) {
+    let fileName = '';
+    try { fileName = decodeURIComponent(String(url).split('?')[0].split('/').pop() || ''); } catch { fileName = ''; }
+    if (!fileName) fileName = isImage ? 'image' : 'file';
+    const contentType = guessContentTypeFromUrl(url) || (isImage ? 'image/jpeg' : 'application/octet-stream');
+    return { id, fileName, contentType, fileSize: 0, url, source: 'zenbooker' };
+}
+
+function normalizeJobNote(n, index, localAttachments = []) {
+    const zbMatch = typeof n.id === 'string' ? n.id.match(ZB_ID_RE) : null;
+
+    // created: prefer existing; else derive from Zenbooker id; else null (frontend handles absent date)
+    let created = n.created || null;
+    if (!created && zbMatch) {
+        const ms = Number(zbMatch[1]);
+        if (Number.isFinite(ms) && ms > 1e12) created = new Date(ms).toISOString();
+    }
+
+    // attachments: prefer already-normalized; else map ZB images/files to our shape; else local uploads
+    let attachments = [];
+    if (Array.isArray(n.attachments) && n.attachments.length > 0) {
+        attachments = n.attachments;
+    } else if ((Array.isArray(n.images) && n.images.length) || (Array.isArray(n.files) && n.files.length)) {
+        const noteKey = n.id || `note-${index}`;
+        (n.images || []).forEach((url, i) => attachments.push(zbUrlToAttachment(`${noteKey}-img-${i}`, url, true)));
+        (n.files || []).forEach((url, i) => attachments.push(zbUrlToAttachment(`${noteKey}-file-${i}`, url, false)));
+    } else if (localAttachments.length) {
+        attachments = localAttachments;
+    }
+
+    // author: preserve explicit; else label ZB-sourced notes as "Zenbooker"
+    let author = n.author || null;
+    if (!author && zbMatch) author = 'Zenbooker';
+
+    return {
+        id: n.id || null,
+        text: n.text || null,
+        attachments,
+        created,
+        author,
+        source: zbMatch ? 'zenbooker' : (n.source || null),
+    };
+}
+
 router.get('/:id/notes', async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
@@ -195,7 +255,7 @@ router.get('/:id/notes', async (req, res) => {
         if (!job) return res.status(404).json({ ok: false, error: 'Job not found' });
 
         const notes = job.notes || [];
-        // Enrich with attachment presigned URLs
+        // Enrich with attachment presigned URLs (for locally-uploaded files)
         const attachments = await noteAttachmentsService.getAttachmentsForEntity(companyId, 'job', jobId);
         const attachmentsByNote = {};
         for (const a of attachments) {
@@ -203,10 +263,14 @@ router.get('/:id/notes', async (req, res) => {
             attachmentsByNote[a.noteIndex].push(a);
         }
 
-        const enriched = notes.map((n, i) => ({
-            ...n,
-            attachments: (n.attachments || []).length > 0 ? n.attachments : (attachmentsByNote[i] || []),
-        }));
+        // Fallback date for notes with no id-derived timestamp: use job.updated_at
+        // (closest signal we have to when Zenbooker delivered the note).
+        const fallbackCreated = job.updated_at || new Date().toISOString();
+        const enriched = notes.map((n, i) => {
+            const normalized = normalizeJobNote(n, i, attachmentsByNote[i] || []);
+            if (!normalized.created) normalized.created = fallbackCreated;
+            return normalized;
+        });
 
         res.json({ ok: true, data: enriched });
     } catch (err) {

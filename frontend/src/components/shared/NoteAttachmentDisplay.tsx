@@ -3,10 +3,14 @@ import { FileText, ExternalLink } from 'lucide-react';
 import { authedFetch } from '../../services/apiClient';
 
 interface Attachment {
-    id: number;
+    id: number | string;
     fileName: string;
     contentType: string;
     fileSize: number;
+    // When present (e.g. Zenbooker CDN links), use the URL directly and skip the
+    // /api/note-attachments/:id/url presigned-URL roundtrip.
+    url?: string;
+    source?: string;
 }
 
 interface NoteAttachmentDisplayProps {
@@ -28,6 +32,8 @@ function AttachmentItem({ attachment }: { attachment: Attachment }) {
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
     const fetchUrl = useCallback(async () => {
+        // Direct URL (e.g. Zenbooker CDN) — no presign roundtrip needed.
+        if (attachment.url) return attachment.url;
         setLoading(true);
         try {
             const res = await authedFetch(`/api/note-attachments/${attachment.id}/url`);
@@ -39,7 +45,7 @@ function AttachmentItem({ attachment }: { attachment: Attachment }) {
             setLoading(false);
         }
         return null;
-    }, [attachment.id]);
+    }, [attachment.id, attachment.url]);
 
     const handleClick = async () => {
         const url = await fetchUrl();

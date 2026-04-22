@@ -14,15 +14,18 @@ import { authedFetch } from '../../services/apiClient';
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface Note {
-    text: string;
+    text: string | null;
     created: string;
     author?: string;
     migrated?: boolean;
+    source?: string;
     attachments?: Array<{
-        id: number;
+        id: number | string;
         fileName: string;
         contentType: string;
         fileSize: number;
+        url?: string;
+        source?: string;
     }>;
 }
 

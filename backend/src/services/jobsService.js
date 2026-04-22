@@ -524,6 +524,59 @@ async function updateBlancStatus(jobId, newStatus, companyId) {
  * Sync a Zenbooker job event into the local jobs table.
  * Creates or updates the local job, recalculates blanc_status.
  */
+/**
+ * Merge incoming Zenbooker notes with existing local notes, preserving Blanc-side
+ * metadata (author, created, attachments) when a match is found.
+ *
+ * Match priority:
+ *   1. by zb_note_id captured from previous addNote response
+ *   2. by raw ZB id (for idempotent re-sync after a merge has already happened)
+ *   3. by text match against a local note that has an `author` but no ZB id yet
+ *      (covers the transition period / existing data predating id capture)
+ */
+function mergeNotes(localNotes, zbNotes) {
+    const byZbId = new Map();          // zb id → local note
+    const unmatchedLocalByText = [];   // [{ note, used }]
+    for (const ln of (localNotes || [])) {
+        const lid = ln.zb_note_id || ln.id;
+        if (lid) byZbId.set(String(lid), ln);
+        if (!ln.zb_note_id && !ln.id && ln.author && ln.text) {
+            unmatchedLocalByText.push({ note: ln, used: false });
+        }
+    }
+
+    return (zbNotes || []).map(zn => {
+        const znId = zn.id ? String(zn.id) : null;
+        if (znId && byZbId.has(znId)) {
+            const ln = byZbId.get(znId);
+            return {
+                ...zn,
+                // Preserve Blanc metadata
+                ...(ln.author ? { author: ln.author } : {}),
+                ...(ln.created ? { created: ln.created } : {}),
+                ...(ln.attachments && ln.attachments.length ? { attachments: ln.attachments } : {}),
+                zb_note_id: znId,
+            };
+        }
+        if (zn.text) {
+            const znText = String(zn.text).trim();
+            for (const entry of unmatchedLocalByText) {
+                if (!entry.used && String(entry.note.text || '').trim() === znText) {
+                    entry.used = true;
+                    return {
+                        ...zn,
+                        author: entry.note.author,
+                        ...(entry.note.created ? { created: entry.note.created } : {}),
+                        ...(entry.note.attachments && entry.note.attachments.length ? { attachments: entry.note.attachments } : {}),
+                        ...(znId ? { zb_note_id: znId } : {}),
+                    };
+                }
+            }
+        }
+        return zn;
+    });
+}
+
 async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = '') {
     const cols = zbJobToColumns(zbData);
     const newBlancStatus = computeBlancStatusFromZb(cols.zb_status, cols.zb_canceled, cols.zb_rescheduled, eventType);
@@ -552,6 +605,12 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
         const autoStatuses = ['Submitted', 'Visit completed', 'Rescheduled', 'Canceled'];
         const shouldUpdateBlancStatus = autoStatuses.includes(existing.blanc_status);
         const effectiveBlancStatus = shouldUpdateBlancStatus ? newBlancStatus : existing.blanc_status;
+
+        // Merge notes: keep Blanc-side metadata (author, created, attachments) for notes
+        // that originated in Blanc and were echoed back by Zenbooker.
+        const incomingZbNotes = JSON.parse(cols.notes || '[]');
+        const mergedNotes = mergeNotes(existing.notes || [], incomingZbNotes);
+        cols.notes = JSON.stringify(mergedNotes);
 
         // Update existing job + link contact if not already linked
         await db.query(`
@@ -641,14 +700,26 @@ async function addNote(jobId, text, attachments = [], author = null) {
         }));
     }
 
-    const notes = [...(job.notes || []), note];
+    let notes = [...(job.notes || []), note];
     await db.query('UPDATE jobs SET notes = $1::jsonb, updated_at = NOW() WHERE id = $2',
         [JSON.stringify(notes), jobId]);
 
-    // Also push text to Zenbooker if linked (attachments are local-only)
+    // Also push text to Zenbooker if linked (attachments are local-only).
+    // Capture the resulting ZB note id so that when Zenbooker echoes this note back
+    // via job.note_added webhook, syncFromZenbooker can merge by id and preserve author.
     if (job.zenbooker_job_id && text) {
         try {
-            await zenbookerClient.addJobNote(job.zenbooker_job_id, { text });
+            const resp = await zenbookerClient.addJobNote(job.zenbooker_job_id, { text });
+            // ZB response shape isn't documented in our codebase; try common layouts.
+            const zbId = resp?.id
+                || resp?.note?.id
+                || (Array.isArray(resp?.job_notes) ? resp.job_notes[resp.job_notes.length - 1]?.id : null);
+            if (zbId) {
+                note.zb_note_id = String(zbId);
+                notes = [...(job.notes || []), note];
+                await db.query('UPDATE jobs SET notes = $1::jsonb, updated_at = NOW() WHERE id = $2',
+                    [JSON.stringify(notes), jobId]);
+            }
         } catch (err) {
             console.error(`[JobsService] Note sync error:`, err.response?.data || err.message);
         }
