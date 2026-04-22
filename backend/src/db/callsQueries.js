@@ -79,7 +79,7 @@ async function getCallByCallSid(callSid, companyId = null) {
     return result.rows[0];
 }
 
-async function getCalls({ cursor, limit = 50, status, hasRecording, hasTranscript, contactId, companyId } = {}) {
+async function getCalls({ cursor, limit = 50, status, hasRecording, hasTranscript, contactId, companyId, dateFrom, dateTo, rootOnly } = {}) {
     const conditions = [];
     const params = [];
     let paramIdx = 1;
@@ -90,6 +90,16 @@ async function getCalls({ cursor, limit = 50, status, hasRecording, hasTranscrip
     if (contactId) { conditions.push(`c.contact_id = $${paramIdx++}`); params.push(contactId); }
     if (hasRecording === true) { conditions.push(`EXISTS (SELECT 1 FROM recordings r WHERE r.call_sid = c.call_sid AND r.status = 'completed')`); }
     if (hasTranscript === true) { conditions.push(`EXISTS (SELECT 1 FROM transcripts t WHERE t.call_sid = c.call_sid AND t.status = 'completed')`); }
+    if (rootOnly === true) { conditions.push(`c.parent_call_sid IS NULL`); }
+    if (dateFrom) {
+        conditions.push(`COALESCE(c.started_at, c.created_at) >= $${paramIdx++}`);
+        params.push(`${dateFrom} 00:00:00`);
+    }
+    if (dateTo) {
+        // Half-open upper bound: include all of dateTo by using dateTo + 1 day.
+        conditions.push(`COALESCE(c.started_at, c.created_at) < ($${paramIdx++}::timestamp + INTERVAL '1 day')`);
+        params.push(`${dateTo} 00:00:00`);
+    }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     params.push(limit);

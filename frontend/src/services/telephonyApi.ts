@@ -115,10 +115,16 @@ export const telephonyApi = {
     listAudio: async (): Promise<AudioAsset[]> => { await delay(); return MOCK_AUDIO; },
 
     // Logs — real API (calls table)
-    listLogs: async (limit = 200): Promise<RoutingLogEntry[]> => {
+    listLogs: async (params: { dateFrom?: string; dateTo?: string; limit?: number } = {}): Promise<RoutingLogEntry[]> => {
+        const { dateFrom, dateTo, limit = 200 } = params;
         try {
+            const qs = new URLSearchParams();
+            qs.set('limit', String(limit));
+            qs.set('root_only', 'true');
+            if (dateFrom) qs.set('date_from', dateFrom);
+            if (dateTo) qs.set('date_to', dateTo);
             const data = await apiFetch<{ calls: any[]; next_cursor: number | null; count: number }>(
-                `/calls?limit=${limit}`,
+                `/calls?${qs.toString()}`,
             );
             const calls = (data.calls || []).filter((c: any) => !c.parent_call_sid);
             return calls.map((c: any) => {

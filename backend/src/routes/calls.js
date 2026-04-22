@@ -16,7 +16,14 @@ router.get('/', async (req, res) => {
             has_recording,
             has_transcript,
             contact_id,
+            date_from,
+            date_to,
+            root_only,
         } = req.query;
+
+        const isoDate = /^\d{4}-\d{2}-\d{2}$/;
+        const dateFrom = typeof date_from === 'string' && isoDate.test(date_from) ? date_from : undefined;
+        const dateTo = typeof date_to === 'string' && isoDate.test(date_to) ? date_to : undefined;
 
         const companyId = req.companyFilter?.company_id;
         const result = await queries.getCalls({
@@ -27,6 +34,9 @@ router.get('/', async (req, res) => {
             hasTranscript: has_transcript === 'true' ? true : undefined,
             contactId: contact_id ? parseInt(contact_id) : undefined,
             companyId,
+            dateFrom,
+            dateTo,
+            rootOnly: root_only === 'true' ? true : undefined,
         });
 
         res.json({

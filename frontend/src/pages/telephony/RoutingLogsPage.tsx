@@ -199,8 +199,15 @@ export default function RoutingLogsPage() {
     const [dateTo, setDateTo] = useState<string>(() => format(new Date(), 'yyyy-MM-dd'));
 
     useEffect(() => {
-        telephonyApi.listLogs().then(l => { setLogs(l); setLoading(false); });
-    }, []);
+        let cancelled = false;
+        setLoading(true);
+        telephonyApi.listLogs({ dateFrom, dateTo }).then(l => {
+            if (cancelled) return;
+            setLogs(l);
+            setLoading(false);
+        });
+        return () => { cancelled = true; };
+    }, [dateFrom, dateTo]);
 
     const filtered = useMemo(() => {
         if (!dateFrom && !dateTo) return logs;
