@@ -123,10 +123,15 @@ async function getSummary({ from, to, trackingNumber, companyId }) {
       call_metrics AS (
         SELECT
           COUNT(*)::int                                              AS total,
-          COUNT(*) FILTER (WHERE answered_at IS NOT NULL)::int       AS answered,
+          -- "answered" = human actually talked: completed AND non-zero duration.
+          -- Rules out (a) voicemail_left, (b) no-answer rows where Twilio set
+          -- answered_at from agent ACK but caller dropped before any talk.
           COUNT(*) FILTER (
-            WHERE answered_at IS NULL
-              AND status IN ('no-answer','busy','failed','canceled','missed')
+            WHERE status = 'completed' AND duration_sec > 0
+          )::int                                                      AS answered,
+          -- Everything that is NOT answered counts as missed.
+          COUNT(*) FILTER (
+            WHERE NOT (status = 'completed' AND duration_sec > 0)
           )::int                                                      AS missed,
           COALESCE(ROUND(AVG(duration_sec) FILTER (WHERE duration_sec > 0))::int, 0)
                                                                       AS avg_duration_sec,
@@ -266,7 +271,8 @@ async function listCalls({ from, to, trackingNumber, companyId, limit, cursor })
       SELECT
         call_sid, from_number, to_number, started_at, answered_at, ended_at,
         duration_sec, status, contact_id,
-        (answered_at IS NOT NULL) AS answered
+        -- Same strict "answered = talked" rule as /summary.
+        (status = 'completed' AND duration_sec > 0) AS answered
       FROM tracked_calls
       WHERE true ${cursorClause}
       ORDER BY started_at DESC

@@ -57,8 +57,8 @@ All four endpoints share the same query params. Base path: `/api/v1/integrations
 
   "calls": {
     "total": 42,                // all inbound calls to tracking DID in period
-    "answered": 31,             // answered_at IS NOT NULL
-    "missed": 11,               // no-answer / busy / failed / canceled / missed
+    "answered": 31,             // status='completed' AND duration_sec > 0 (actually talked)
+    "missed": 11,               // everything else: no-answer, voicemail, failed, busy, etc.
     "answer_rate": 0.738,       // answered / total
     "avg_duration_sec": 184,    // average talk time (duration_sec > 0)
     "after_hours": 4,           // calls before 8am or after 7pm ET
@@ -272,6 +272,8 @@ function fetchWeeklyFunnel(fromDate, toDate) {
 | Field | Source | Notes |
 |---|---|---|
 | `calls.*` | `calls` table, `direction='inbound'`, `to_number = tracking_number` | TZ-adjusted to ET |
+| `calls.answered` | `status='completed' AND duration_sec > 0` | Human actually talked. Excludes voicemail, agent-ACK-but-dropped no-answers, and other non-talk outcomes |
+| `calls.missed` | `total - answered` | Voicemail, no-answer, busy, failed, canceled — anything that didn't result in a conversation |
 | `leads.created` | `leads.created_at` in period | All leads, regardless of source |
 | `leads.from_tracking_calls` | `leads` joined to tracked calls by last-10-digit phone match within 24h | Attribution window is hard-coded |
 | `jobs.from_period_leads` | `jobs` whose `lead_id` is in period's leads | Not jobs started in the period — jobs *from period leads* |
