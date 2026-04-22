@@ -40,8 +40,6 @@ export function JobsPage() {
                         onStartDateChange={page.setStartDate}
                         endDate={page.endDate}
                         onEndDateChange={page.setEndDate}
-                        onlyOpen={page.onlyOpen}
-                        onOnlyOpenChange={page.setOnlyOpen}
                         tagFilter={page.tagFilter}
                         onTagFilterChange={page.setTagFilter}
                         allTags={page.allTags}

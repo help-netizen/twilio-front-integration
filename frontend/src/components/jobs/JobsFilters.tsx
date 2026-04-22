@@ -1,4 +1,3 @@
-import { Switch } from '../ui/switch';
 import type { JobTag } from '../../services/jobsApi';
 import { Badge } from '../ui/badge';
 import { SlidersHorizontal, X } from 'lucide-react';
@@ -18,12 +17,11 @@ interface JobsFiltersProps {
     jobTypeFilter: string[]; onJobTypeFilterChange: (v: string[]) => void;
     startDate?: string; onStartDateChange: (d: string | undefined) => void;
     endDate?: string; onEndDateChange: (d: string | undefined) => void;
-    onlyOpen: boolean; onOnlyOpenChange: (v: boolean) => void;
     tagFilter: number[]; onTagFilterChange: (v: number[]) => void; allTags: JobTag[];
     jobs: LocalJob[];
 }
 
-export function JobsFilters({ statusFilter, onStatusFilterChange, providerFilter, onProviderFilterChange, sourceFilter, onSourceFilterChange, jobTypeFilter, onJobTypeFilterChange, startDate, onStartDateChange, endDate, onEndDateChange, onlyOpen, onOnlyOpenChange, tagFilter, onTagFilterChange, allTags, jobs }: JobsFiltersProps) {
+export function JobsFilters({ statusFilter, onStatusFilterChange, providerFilter, onProviderFilterChange, sourceFilter, onSourceFilterChange, jobTypeFilter, onJobTypeFilterChange, startDate, onStartDateChange, endDate, onEndDateChange, tagFilter, onTagFilterChange, allTags, jobs }: JobsFiltersProps) {
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
     const [dynamicJobTypes, setDynamicJobTypes] = useState<string[]>([]);
@@ -45,15 +43,6 @@ export function JobsFilters({ statusFilter, onStatusFilterChange, providerFilter
         <>
             {/* Date Range Picker */}
             <DateRangePickerPopover dateFrom={startDate} dateTo={endDate} onDateFromChange={d => onStartDateChange(d)} onDateToChange={d => onEndDateChange(d)} />
-
-            {/* Only Open Toggle */}
-            <div
-                className="flex items-center gap-2.5 px-4 shrink-0"
-                style={{ minHeight: 42, borderRadius: 14, border: '1px solid rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
-            >
-                <Switch id="only-open-jobs" checked={onlyOpen} onCheckedChange={onOnlyOpenChange} />
-                <label htmlFor="only-open-jobs" className="cursor-pointer text-sm font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>Only Open</label>
-            </div>
 
             {/* Filters button + dropdown */}
             <div className="relative" ref={containerRef}>
