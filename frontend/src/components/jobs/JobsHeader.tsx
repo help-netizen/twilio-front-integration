@@ -4,7 +4,7 @@ import { Button } from '../ui/button';
 import { Separator } from '../ui/separator';
 import {
     Loader2, ArrowUp, ArrowDown,
-    SlidersHorizontal, Download, X,
+    SlidersHorizontal, Columns3, Download, X,
 } from 'lucide-react';
 import {
     Popover, PopoverContent, PopoverTrigger,
@@ -138,9 +138,8 @@ export function JobsFieldsButton({
     if (isMobile) {
         return (
             <>
-                <Button variant="outline" size="sm" onClick={handleOpen}>
-                    <SlidersHorizontal className="size-4 mr-1" />
-                    Fields
+                <Button variant="outline" size="icon" className="size-8" onClick={handleOpen} aria-label="Fields">
+                    <Columns3 className="size-4" />
                 </Button>
                 {fieldsOpen && (
                     <>
@@ -164,9 +163,8 @@ export function JobsFieldsButton({
             if (open) setPendingFields([...visibleFields]);
         }}>
             <PopoverTrigger asChild>
-                <Button variant="outline" size="sm">
-                    <SlidersHorizontal className="size-4 mr-1" />
-                    Fields
+                <Button variant="outline" size="icon" className="size-8" aria-label="Fields">
+                    <Columns3 className="size-4" />
                 </Button>
             </PopoverTrigger>
             <PopoverContent className="w-72 p-0" align="end">
