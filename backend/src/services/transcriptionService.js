@@ -136,6 +136,8 @@ async function transcribeCall(callSid, recordingSid, traceId = `auto-${callSid}`
     let geminiGeneratedAt = null;
     let geminiError = null;
     let geminiErrorAt = null;
+    let geminiUsedFallbackModel = null;
+    let geminiPrimaryError = null;
     try {
         console.log(`[${traceId}] Generating Gemini summary...`);
         const summaryResult = await generateCallSummary(dialogText);
@@ -143,7 +145,13 @@ async function transcribeCall(callSid, recordingSid, traceId = `auto-${callSid}`
             geminiSummary = summaryResult.summary;
             geminiEntities = summaryResult.entities;
             geminiGeneratedAt = new Date().toISOString();
-            console.log(`[${traceId}] Gemini summary OK: ${geminiSummary?.length} chars, ${geminiEntities.length} entities`);
+            geminiUsedFallbackModel = summaryResult.used_fallback_model || null;
+            geminiPrimaryError = summaryResult.primary_error || null;
+            if (geminiUsedFallbackModel) {
+                console.warn(`[${traceId}] Gemini summary OK via fallback ${geminiUsedFallbackModel} (primary failed: ${geminiPrimaryError?.code})`);
+            } else {
+                console.log(`[${traceId}] Gemini summary OK: ${geminiSummary?.length} chars, ${geminiEntities.length} entities`);
+            }
         } else {
             console.warn(`[${traceId}] Gemini summary skipped: ${summaryResult?.error}`);
             geminiError = {
@@ -151,6 +159,9 @@ async function transcribeCall(callSid, recordingSid, traceId = `auto-${callSid}`
                 detail: summaryResult?.error_detail || summaryResult?.error || null,
                 attempts: summaryResult?.attempts ?? null,
                 message: summaryResult?.error || null,
+                fallback_attempted: summaryResult?.fallback_attempted || false,
+                fallback_model: summaryResult?.fallback_model || null,
+                fallback_error_code: summaryResult?.fallback_error_code || null,
             };
             geminiErrorAt = new Date().toISOString();
         }
@@ -186,6 +197,8 @@ async function transcribeCall(callSid, recordingSid, traceId = `auto-${callSid}`
             gemini_generated_at: geminiGeneratedAt,
             gemini_error: geminiError,
             gemini_error_at: geminiErrorAt,
+            gemini_used_fallback_model: geminiUsedFallbackModel,
+            gemini_primary_error: geminiPrimaryError,
         },
     });
 

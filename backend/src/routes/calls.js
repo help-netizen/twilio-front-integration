@@ -582,6 +582,8 @@ router.get('/:callSid/media', async (req, res) => {
                     gemini_generated_at: payload.gemini_generated_at || null,
                     gemini_error: payload.gemini_error || null,
                     gemini_error_at: payload.gemini_error_at || null,
+                    gemini_used_fallback_model: payload.gemini_used_fallback_model || null,
+                    gemini_primary_error: payload.gemini_primary_error || null,
                 };
             })() : null,
         });
@@ -667,6 +669,9 @@ router.post('/:callSid/summarize', async (req, res) => {
                 detail: summaryResult.error_detail || summaryResult.error || null,
                 attempts: summaryResult.attempts ?? null,
                 message: summaryResult.error || null,
+                fallback_attempted: summaryResult.fallback_attempted || false,
+                fallback_model: summaryResult.fallback_model || null,
+                fallback_error_code: summaryResult.fallback_error_code || null,
             };
             existingPayload.gemini_error_at = new Date().toISOString();
 
@@ -701,6 +706,8 @@ router.post('/:callSid/summarize', async (req, res) => {
         existingPayload.gemini_generated_at = new Date().toISOString();
         existingPayload.gemini_error = null;
         existingPayload.gemini_error_at = null;
+        existingPayload.gemini_used_fallback_model = summaryResult.used_fallback_model || null;
+        existingPayload.gemini_primary_error = summaryResult.primary_error || null;
 
         await queries.upsertTranscript({
             transcriptionSid: transcript.transcription_sid,
@@ -715,11 +722,13 @@ router.post('/:callSid/summarize', async (req, res) => {
             rawPayload: existingPayload,
         });
 
-        console.log(`✅ Gemini summary (re-)generated for ${callSid}: ${summaryResult.summary?.length} chars, ${summaryResult.entities.length} entities`);
+        console.log(`✅ Gemini summary (re-)generated for ${callSid}: ${summaryResult.summary?.length} chars, ${summaryResult.entities.length} entities${summaryResult.used_fallback_model ? ` (via fallback ${summaryResult.used_fallback_model})` : ''}`);
         res.json({
             status: 'completed',
             gemini_summary: summaryResult.summary,
             gemini_entities: summaryResult.entities,
+            used_fallback_model: summaryResult.used_fallback_model || null,
+            primary_error: summaryResult.primary_error || null,
         });
     } catch (error) {
         console.error(`Error generating summary for ${callSid}:`, error);

@@ -9,6 +9,7 @@ const fetch = require('node-fetch');
 
 const GEMINI_API_KEY = process.env.GEMINI_SUMMARY_API_KEY || process.env.GEMINI_API_KEY;
 const GEMINI_MODEL = process.env.GEMINI_SUMMARY_MODEL || 'gemini-2.5-pro';
+const GEMINI_FALLBACK_MODEL = process.env.GEMINI_SUMMARY_FALLBACK_MODEL || 'gemini-2.5-flash';
 const PROVIDER_TIMEOUT_MS = parseInt(process.env.SUMMARY_PROVIDER_TIMEOUT_MS || '30000', 10);
 const MAX_RETRIES = 2;
 const BACKOFF_MS = [500, 1500];
@@ -62,13 +63,15 @@ Omit any entity whose value is not found in the transcript.`;
 
 /**
  * Generate a call summary + structured entities from a transcript dialog.
+ * Tries primary model (GEMINI_MODEL) first; on any error falls back once to
+ * GEMINI_FALLBACK_MODEL (default gemini-2.5-flash). The fallback is per-call only —
+ * the next invocation starts fresh with the primary model.
  * @param {string} dialogText - The full transcript (Speaker A: ... Speaker B: ...)
  * @param {object} [callMeta] - Optional metadata: { callerPhone, callTime }
- * @returns {Promise<{ summary: string, entities: Array<{label:string,value:string,start_ms:number|null}>, error?: string }>}
+ * @returns {Promise<{ summary: string, entities: Array<{label:string,value:string,start_ms:number|null}>, error?: string, used_fallback_model?: string }>}
  */
 async function generateCallSummary(dialogText, callMeta = {}) {
     const traceId = `sum_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-    const startTime = Date.now();
 
     if (!dialogText || typeof dialogText !== 'string' || dialogText.trim().length === 0) {
         console.warn(`[CallSummary:${traceId}] Empty dialog text — skipping`);
@@ -79,6 +82,55 @@ async function generateCallSummary(dialogText, callMeta = {}) {
         console.warn(`[CallSummary:${traceId}] GEMINI_SUMMARY_API_KEY not set — skipping`);
         return { summary: '', entities: [], error: 'api_key_not_configured', error_code: 'api_key_not_configured', error_detail: 'GEMINI_SUMMARY_API_KEY env var not set', attempts: 0 };
     }
+
+    // Primary attempt
+    const primary = await runGeminiCall(GEMINI_MODEL, dialogText, callMeta, traceId);
+    if (!primary.error) {
+        return primary;
+    }
+
+    // Fallback — only if a different model is configured
+    if (!GEMINI_FALLBACK_MODEL || GEMINI_FALLBACK_MODEL === GEMINI_MODEL) {
+        return primary;
+    }
+
+    console.warn(`[CallSummary:${traceId}] Primary ${GEMINI_MODEL} failed (${primary.error_code}) — falling back to ${GEMINI_FALLBACK_MODEL}`);
+    const fallback = await runGeminiCall(GEMINI_FALLBACK_MODEL, dialogText, callMeta, `${traceId}_fb`);
+    if (!fallback.error) {
+        console.log(`[CallSummary:${traceId}] Fallback ${GEMINI_FALLBACK_MODEL} succeeded after primary ${primary.error_code}`);
+        return {
+            summary: fallback.summary,
+            entities: fallback.entities,
+            used_fallback_model: GEMINI_FALLBACK_MODEL,
+            primary_error: {
+                code: primary.error_code,
+                detail: primary.error_detail,
+                attempts: primary.attempts,
+            },
+        };
+    }
+
+    // Both failed — report primary error but annotate that fallback also failed
+    console.error(`[CallSummary:${traceId}] Both primary (${primary.error_code}) and fallback (${fallback.error_code}) failed`);
+    return {
+        summary: '',
+        entities: [],
+        error: primary.error,
+        error_code: primary.error_code,
+        error_detail: `primary ${GEMINI_MODEL}: ${primary.error_code} (${(primary.error_detail || '').slice(0, 120)}); fallback ${GEMINI_FALLBACK_MODEL}: ${fallback.error_code} (${(fallback.error_detail || '').slice(0, 120)})`,
+        attempts: primary.attempts,
+        fallback_attempted: true,
+        fallback_model: GEMINI_FALLBACK_MODEL,
+        fallback_error_code: fallback.error_code,
+    };
+}
+
+/**
+ * Single-model Gemini call with retry loop. Returns same shape as generateCallSummary
+ * (including the enriched error fields on failure).
+ */
+async function runGeminiCall(model, dialogText, callMeta, traceId) {
+    const startTime = Date.now();
 
     // Build user prompt
     let userPrompt = `Transcript:\n"""\n${dialogText.trim()}\n"""`;
@@ -101,7 +153,7 @@ async function generateCallSummary(dialogText, callMeta = {}) {
         },
     };
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
 
     let lastError = null;
     let lastErrorCode = null;
@@ -164,7 +216,7 @@ async function generateCallSummary(dialogText, callMeta = {}) {
 
             // Parse JSON
             const parsed = parseGeminiOutput(rawOutput);
-            console.log(`[CallSummary:${traceId}] Summary generated in ${latencyMs}ms: ${parsed.summary?.length || 0} chars, ${parsed.entities?.length || 0} entities`);
+            console.log(`[CallSummary:${traceId}] Summary generated via ${model} in ${latencyMs}ms: ${parsed.summary?.length || 0} chars, ${parsed.entities?.length || 0} entities`);
             return parsed;
 
         } catch (err) {
