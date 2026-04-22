@@ -4,7 +4,7 @@ import { Button } from '../ui/button';
 import { Separator } from '../ui/separator';
 import {
     Loader2, ArrowUp, ArrowDown,
-    SlidersHorizontal, Columns3, Download, X,
+    Columns3, Download, X,
 } from 'lucide-react';
 import {
     Popover, PopoverContent, PopoverTrigger,
