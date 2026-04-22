@@ -40,12 +40,21 @@ const ALLOWED_TRANSITIONS = {
     'Canceled': [],  // terminal
 };
 
-/** Blanc → Zenbooker outbound mapping (§6) */
-const OUTBOUND_MAP = {
-    'Submitted': 'scheduled',    // → set zb_status to scheduled
-    'Waiting for parts': 'complete',     // → set zb_status to complete
-    'Job is Done': 'complete',     // → set zb_status to complete
-};
+/**
+ * Blanc → Zenbooker outbound sync matrix (§6).
+ * Handled inline in updateBlancStatus. Documented here for reference:
+ *
+ *   Submitted             → rescheduleJob(start_date=job.start_date)   (reopen if ZB is complete/canceled)
+ *   Waiting for parts     → markJobComplete                             (Blanc-side waiting, ZB visit done)
+ *   Visit completed       → markJobComplete                             (visit done)
+ *   Job is Done           → markJobComplete                             (finalized)
+ *   Canceled              → cancelJob
+ *   Follow Up with Client → no ZB action (Blanc-only operational state)
+ *   Rescheduled           → no ZB action (reschedule happens via dedicated endpoint)
+ *
+ * All ZB calls are skipped if the ZB job is already in the target state, to
+ * avoid 4xx "already X" errors that previously blocked the local DB update.
+ */
 
 // =============================================================================
 // Helpers
@@ -485,31 +494,35 @@ async function updateBlancStatus(jobId, newStatus, companyId) {
         [newStatus, jobId]
     );
 
-    // Outbound sync to Zenbooker (§6)
-    if (job.zenbooker_job_id && OUTBOUND_MAP[newStatus]) {
+    // Outbound sync to Zenbooker — full mapping with no-op guards (§6).
+    // Errors are logged but NOT thrown — local DB is source of truth and must not
+    // be rolled back if ZB sync fails.
+    if (job.zenbooker_job_id) {
         try {
-            const targetZbStatus = OUTBOUND_MAP[newStatus];
-            if (targetZbStatus === 'complete') {
-                await zenbookerClient.markJobComplete(job.zenbooker_job_id);
-            } else if (targetZbStatus === 'scheduled') {
-                // No API to set back to scheduled — skip
+            if (newStatus === 'Submitted') {
+                // Reopen ZB side if it's in a terminal state (complete/canceled).
+                // Reschedule endpoint is Zenbooker's only mechanism to reset to 'scheduled'.
+                const needsReopen = job.zb_canceled || job.zb_status === 'complete';
+                if (needsReopen && job.start_date) {
+                    await zenbookerClient.rescheduleJob(job.zenbooker_job_id, {
+                        start_date: new Date(job.start_date).toISOString(),
+                    });
+                    console.log(`[JobsService] Outbound: job ${jobId} → Submitted (reopened via reschedule to ${job.start_date})`);
+                }
+            } else if (['Waiting for parts', 'Visit completed', 'Job is Done'].includes(newStatus)) {
+                if (job.zb_status !== 'complete') {
+                    await zenbookerClient.markJobComplete(job.zenbooker_job_id);
+                    console.log(`[JobsService] Outbound: job ${jobId} → ${newStatus} (ZB markComplete)`);
+                }
+            } else if (newStatus === 'Canceled') {
+                if (!job.zb_canceled) {
+                    await zenbookerClient.cancelJob(job.zenbooker_job_id);
+                    console.log(`[JobsService] Outbound: job ${jobId} → Canceled (ZB cancel)`);
+                }
             }
-            // Also sync canceled
-            if (newStatus === 'Canceled') {
-                await zenbookerClient.cancelJob(job.zenbooker_job_id);
-            }
-            console.log(`[JobsService] Outbound sync: job ${jobId} → ${newStatus} (zb: ${targetZbStatus})`);
+            // Follow Up with Client, Rescheduled — no ZB action
         } catch (err) {
-            console.error(`[JobsService] Outbound sync error:`, err.response?.data || err.message);
-        }
-    }
-
-    // Handle Cancel separately (not in OUTBOUND_MAP but still needs API call)
-    if (newStatus === 'Canceled' && job.zenbooker_job_id && !OUTBOUND_MAP['Canceled']) {
-        try {
-            await zenbookerClient.cancelJob(job.zenbooker_job_id);
-        } catch (err) {
-            console.error(`[JobsService] Cancel sync error:`, err.response?.data || err.message);
+            console.error(`[JobsService] Outbound sync error for ${newStatus}:`, err.response?.data || err.message);
         }
     }
 
@@ -757,7 +770,8 @@ async function cancelJob(jobId) {
     const job = await getJobById(jobId);
     if (!job) throw new Error(`Job #${jobId} not found`);
 
-    if (job.zenbooker_job_id) {
+    // Pre-check: skip ZB call if already canceled to avoid 4xx → forceSync → 409
+    if (job.zenbooker_job_id && !job.zb_canceled) {
         try {
             await zenbookerClient.cancelJob(job.zenbooker_job_id);
         } catch (e) {
@@ -775,7 +789,8 @@ async function markEnroute(jobId) {
     const job = await getJobById(jobId);
     if (!job) throw new Error(`Job #${jobId} not found`);
 
-    if (job.zenbooker_job_id) {
+    // Pre-check: skip ZB call if already en-route
+    if (job.zenbooker_job_id && job.zb_status !== 'en-route') {
         try {
             await zenbookerClient.markJobEnroute(job.zenbooker_job_id);
         } catch (e) {
@@ -793,7 +808,8 @@ async function markInProgress(jobId) {
     const job = await getJobById(jobId);
     if (!job) throw new Error(`Job #${jobId} not found`);
 
-    if (job.zenbooker_job_id) {
+    // Pre-check: skip ZB call if already in-progress
+    if (job.zenbooker_job_id && job.zb_status !== 'in-progress') {
         try {
             await zenbookerClient.markJobInProgress(job.zenbooker_job_id);
         } catch (e) {
@@ -811,7 +827,8 @@ async function markComplete(jobId) {
     const job = await getJobById(jobId);
     if (!job) throw new Error(`Job #${jobId} not found`);
 
-    if (job.zenbooker_job_id) {
+    // Pre-check: skip ZB call if already complete
+    if (job.zenbooker_job_id && job.zb_status !== 'complete') {
         try {
             await zenbookerClient.markJobComplete(job.zenbooker_job_id);
         } catch (e) {
