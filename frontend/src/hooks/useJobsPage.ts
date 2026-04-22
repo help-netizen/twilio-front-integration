@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { LocalJob } from '../services/jobsApi';
 import { useJobsData, LIMIT } from './useJobsData';
@@ -12,8 +12,10 @@ export function useJobsPage() {
     const navigate = useNavigate();
     const { jobId: urlJobId } = useParams<{ jobId?: string }>();
 
-    // Selection state — just the ID; useJobDetail handles fetching
-    const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
+    // Selection is derived from URL (single source of truth).
+    // This avoids a race where closing the panel set local state to null
+    // while URL still held the ID, causing a useEffect to reopen it.
+    const selectedJobId = urlJobId ? parseInt(urlJobId, 10) : null;
 
     // Compose sub-hooks
     const data = useJobsData();
@@ -41,21 +43,12 @@ export function useJobsPage() {
     // ─── Selection / Navigation ──────────────────────────────────────
 
     const handleSelectJob = useCallback((job: LocalJob) => {
-        setSelectedJobId(job.id);
         navigate(`/jobs/${job.id}`, { replace: true });
     }, [navigate]);
 
     const handleCloseDetail = useCallback(() => {
-        setSelectedJobId(null);
         navigate('/jobs', { replace: true });
     }, [navigate]);
-
-    // Auto-select job from URL /jobs/:jobId
-    useEffect(() => {
-        if (urlJobId && !selectedJobId && !data.loading) {
-            setSelectedJobId(parseInt(urlJobId, 10));
-        }
-    }, [urlJobId, selectedJobId, data.loading]);
 
     // ─── SSE: update list in-place when backend syncs ────────────────
     // (useJobDetail handles SSE for the selected job internally)
