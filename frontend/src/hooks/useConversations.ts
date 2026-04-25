@@ -34,9 +34,15 @@ export const useCallsByContact = (search?: string) => {
     const conversations = query.data?.pages?.flatMap(p => p.conversations || []) || [];
     const total = query.data?.pages?.[0]?.total || 0;
 
+    // Merge leads_map from all pages (server-side enrichment)
+    const leads_map = query.data?.pages?.reduce((acc, p) => {
+        if (p.leads_map) Object.assign(acc, p.leads_map);
+        return acc;
+    }, {} as Record<string, any>) || {};
+
     return {
         ...query,
-        data: { conversations, total },
+        data: { conversations, total, leads_map },
         refetch,
     };
 };

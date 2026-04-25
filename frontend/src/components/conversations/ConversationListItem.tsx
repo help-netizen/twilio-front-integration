@@ -7,6 +7,7 @@ import { useLeadByPhone } from '../../hooks/useLeadByPhone';
 
 interface ConversationListItemProps {
     call: Call;
+    prefetchedLead?: import('../../types/lead').Lead | null;
 }
 
 const STATUS_ICON_COLORS: Record<string, string> = {
@@ -56,7 +57,7 @@ function getFullDateTime(date: Date): string {
     });
 }
 
-export const ConversationListItem: React.FC<ConversationListItemProps> = ({ call }) => {
+export const ConversationListItem: React.FC<ConversationListItemProps> = ({ call, prefetchedLead }) => {
     const navigate = useNavigate();
     const location = useLocation();
 
@@ -82,7 +83,8 @@ export const ConversationListItem: React.FC<ConversationListItemProps> = ({ call
         || call.call_sid;
 
     // Fetch lead by phone for name / company
-    const { lead } = useLeadByPhone(rawPhone);
+    const { lead: hookLead } = useLeadByPhone(prefetchedLead !== undefined ? undefined : rawPhone);
+    const lead = prefetchedLead !== undefined ? prefetchedLead : hookLead;
     const leadName = lead
         ? [lead.FirstName, lead.LastName].filter(Boolean).join(' ')
         : null;

@@ -866,6 +866,69 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
 }
 
 // =============================================================================
+// Get Leads by Phone — BATCH (resolves N phones in 1 query)
+// =============================================================================
+async function getLeadsByPhones(phones, companyId = null) {
+    if (!phones || phones.length === 0) return {};
+
+    // Normalize all phones to last-10-digits
+    const normalized = phones
+        .map(p => (p || '').replace(/\D/g, ''))
+        .map(d => d.length >= 10 ? d.slice(-10) : d)
+        .filter(d => d.length > 0);
+    if (normalized.length === 0) return {};
+
+    const unique = [...new Set(normalized)];
+
+    const conditions = [
+        `RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10) = ANY($1::text[])`,
+        `l.status NOT IN ('Lost', 'Converted')`,
+    ];
+    const params = [unique];
+    if (companyId) {
+        conditions.push(`l.company_id = $2`);
+        params.push(companyId);
+    }
+
+    // Fetch all matching leads, pick newest per phone (DISTINCT ON)
+    const sql = `
+        SELECT DISTINCT ON (RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10))
+            l.*,
+            RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10) AS _phone_key,
+            COALESCE(
+                json_agg(json_build_object('id', lta.id, 'name', lta.user_name))
+                FILTER (WHERE lta.id IS NOT NULL), '[]'
+            ) AS team
+        FROM leads l
+        LEFT JOIN lead_team_assignments lta ON lta.lead_id = l.id
+        WHERE ${conditions.join(' AND ')}
+        GROUP BY l.id
+        ORDER BY RIGHT(REGEXP_REPLACE(l.phone, '[^0-9]', '', 'g'), 10), l.id DESC
+    `;
+
+    const { rows } = await db.query(sql, params);
+
+    // Filter out leads whose contact already has a job (same logic as getLeadByPhone)
+    const contactIds = rows.map(r => r.contact_id).filter(Boolean);
+    let contactsWithJobs = new Set();
+    if (contactIds.length > 0) {
+        const { rows: jobRows } = await db.query(
+            `SELECT DISTINCT contact_id FROM jobs WHERE contact_id = ANY($1::int[])`,
+            [contactIds]
+        );
+        contactsWithJobs = new Set(jobRows.map(r => r.contact_id));
+    }
+
+    const result = {};
+    for (const row of rows) {
+        if (row.contact_id && contactsWithJobs.has(row.contact_id)) continue;
+        result[row._phone_key] = rowToLead(row);
+    }
+
+    return result;
+}
+
+// =============================================================================
 // Get Lead by Phone (newest match)
 // =============================================================================
 async function getLeadByPhone(phone, companyId = null) {
@@ -935,6 +998,7 @@ module.exports = {
     getLeadByUUID,
     getLeadById,
     getLeadByPhone,
+    getLeadsByPhones,
     createLead,
     updateLead,
     markLost,

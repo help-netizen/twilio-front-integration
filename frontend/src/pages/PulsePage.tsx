@@ -129,6 +129,9 @@ export const PulsePage: React.FC = () => {
                                         key={tlId ?? call.id ?? `c-${call.contact?.id ?? (call.from_number || idx)}`}
                                         call={call}
                                         isActive={isActive}
+                                        prefetchedLead={p.getLeadForPhone(
+                                            (call as any).tl_phone || call.contact?.phone_e164 || call.from_number || call.to_number
+                                        )}
                                         onMarkUnread={async (timelineId) => {
                                             try { await callsApi.markTimelineUnread(timelineId); p.refetchContacts(); toast.success('Marked as unread'); }
                                             catch { toast.error('Failed to mark as unread'); }

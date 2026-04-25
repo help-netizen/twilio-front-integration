@@ -344,8 +344,23 @@ router.get('/by-contact', async (req, res) => {
             return tb - ta;
         });
 
+        // Enrich: batch-resolve leads for all phone numbers (1 query instead of N)
+        let leads_map = {};
+        try {
+            const leadsService = require('../services/leadsService');
+            const phones = conversations.map(c =>
+                c.tl_phone || c.contact?.phone_e164 || c.from_number || c.to_number || ''
+            ).filter(Boolean);
+            if (phones.length > 0) {
+                leads_map = await leadsService.getLeadsByPhones(phones, companyId);
+            }
+        } catch (leadsErr) {
+            console.warn('[by-contact] Leads enrichment failed (non-blocking):', leadsErr.message);
+        }
+
         res.json({
             conversations,
+            leads_map,
             total,
             limit: parseInt(limit),
             offset: parseInt(offset),

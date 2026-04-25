@@ -114,6 +114,27 @@ router.get('/by-phone/:phone', async (req, res) => {
 });
 
 // =============================================================================
+// POST /api/leads/by-phones — Batch lookup leads by phone numbers
+// =============================================================================
+router.post('/by-phones', async (req, res) => {
+    const reqId = requestId();
+    try {
+        const { phones } = req.body;
+        if (!Array.isArray(phones) || phones.length === 0) {
+            return res.status(400).json(errorResponse('INVALID_INPUT', 'phones must be a non-empty array', reqId));
+        }
+        if (phones.length > 200) {
+            return res.status(400).json(errorResponse('INVALID_INPUT', 'Maximum 200 phones per request', reqId));
+        }
+
+        const leads = await leadsService.getLeadsByPhones(phones, req.companyFilter?.company_id);
+        res.json(successResponse({ leads }, reqId));
+    } catch (err) {
+        handleError(err, reqId, res);
+    }
+});
+
+// =============================================================================
 // GET /api/leads/by-id/:id — Get lead by numeric ID
 // =============================================================================
 router.get('/by-id/:id', async (req, res) => {

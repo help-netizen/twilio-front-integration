@@ -156,3 +156,16 @@ export async function convertLead(uuid: string, body: Record<string, unknown> = 
 export async function getLeadByPhone(phone: string): Promise<LeadDetailResponse> {
     return request<LeadDetailResponse>(`${API_BASE}/by-phone/${encodeURIComponent(phone)}`);
 }
+
+/**
+ * Batch lookup leads by phone numbers (1 request instead of N)
+ * Returns a map of normalized-phone → Lead
+ */
+export async function getLeadsByPhones(phones: string[]): Promise<Record<string, Lead | null>> {
+    if (phones.length === 0) return {};
+    const res = await request<{ ok: boolean; data: { leads: Record<string, any> } }>(
+        `${API_BASE}/by-phones`,
+        { method: 'POST', body: JSON.stringify({ phones }) }
+    );
+    return (res as any).data.leads;
+}

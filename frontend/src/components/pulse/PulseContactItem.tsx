@@ -8,6 +8,7 @@ import { callsApi } from '../../services/api';
 import { formatPhoneDisplay as formatPhoneNumber } from '../../utils/phoneUtils';
 import { useLeadByPhone } from '../../hooks/useLeadByPhone';
 import { useAuth } from '../../auth/AuthProvider';
+import type { Lead } from '../../types/lead';
 import {
     PhoneIncoming, PhoneOutgoing, ArrowLeftRight,
     MessageSquare, MessageSquareReply, MoreVertical,
@@ -60,13 +61,14 @@ function getTimeAgo(date: Date): string {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, onSnooze, onSetActionRequired, onRead }: {
+export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, onSnooze, onSetActionRequired, onRead, prefetchedLead }: {
     call: Call; isActive: boolean;
     onMarkUnread?: (timelineId: number) => void;
     onMarkHandled?: (timelineId: number) => void;
     onSnooze?: (timelineId: number, until: string) => void;
     onSetActionRequired?: (timelineId: number) => void;
     onRead?: () => void;
+    prefetchedLead?: Lead | null;
 }) {
     const navigate = useNavigate();
     const { company: authCompany } = useAuth();
@@ -79,7 +81,9 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
     const rawPhone = (call as any).tl_phone || call.contact?.phone_e164 || call.from_number || call.to_number || call.call_sid;
     const displayPhone = (call as any).last_interaction_phone || rawPhone;
 
-    const { lead } = useLeadByPhone(rawPhone);
+    // Use prefetched lead if available, otherwise fall back to per-item hook
+    const { lead: hookLead } = useLeadByPhone(prefetchedLead !== undefined ? undefined : rawPhone);
+    const lead = prefetchedLead !== undefined ? prefetchedLead : hookLead;
     const leadName = lead ? [lead.FirstName, lead.LastName].filter(Boolean).join(' ') : null;
     const company = lead?.Company || null;
     const contactName = call.contact?.full_name && call.contact.full_name !== call.contact.phone_e164

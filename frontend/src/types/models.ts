@@ -98,6 +98,7 @@ export interface ActiveCallsResponse {
 
 export interface ByContactResponse {
     conversations: Call[];
+    leads_map?: Record<string, any>;
     total: number;
     limit: number;
     offset: number;

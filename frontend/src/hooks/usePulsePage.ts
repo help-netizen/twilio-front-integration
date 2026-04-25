@@ -125,6 +125,15 @@ export function usePulsePage() {
         catch (err: any) { toast.error(err?.response?.status === 504 || err?.code === 'ECONNABORTED' ? 'AI polish timed out — try again' : 'AI polish failed — try again'); return message; }
     };
 
+    // Leads map from server-side enrichment (phone last-10-digits → Lead)
+    const leadsMap = contactData?.leads_map || {};
+    const getLeadForPhone = (rawPhone: string | undefined) => {
+        if (!rawPhone) return null;
+        const d = (rawPhone || '').replace(/\D/g, '');
+        const key = d.length >= 10 ? d.slice(-10) : d;
+        return leadsMap[key] ?? null;
+    };
+
     return {
         location, contactId, timelineId, searchQuery, setSearchQuery,
         contactsLoading, filteredCalls, loadMoreRef, isFetchingNextPage,
@@ -136,6 +145,7 @@ export function usePulsePage() {
         handleUpdateComments: actions.handleUpdateComments, handleMarkLost: actions.handleMarkLost,
         handleActivate: actions.handleActivate, handleConvert, handleConvertSuccess, handleDelete, handleUpdateLead,
         handleSendMessage, handleAiFormat, refetchContacts, refetchTimeline,
+        getLeadForPhone,
         refreshContactDetail: () => { if (contact?.id) contactsApi.getContact(contact.id).then(res => setContactDetail({ contact: res.data.contact, leads: res.data.leads })).catch(() => { }); },
     };
 }

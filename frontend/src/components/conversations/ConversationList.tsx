@@ -77,6 +77,15 @@ export const ConversationList: React.FC = () => {
         });
     }, [calls, searchQuery]);
 
+    // Use server-provided leads_map (enrichment done server-side)
+    const leadsMap = data?.leads_map || {};
+    const getLeadForPhone = (rawPhone: string | undefined) => {
+        if (!rawPhone) return null;
+        const d = (rawPhone || '').replace(/\D/g, '');
+        const key = d.length >= 10 ? d.slice(-10) : d;
+        return leadsMap[key] ?? null;
+    };
+
     if (isLoading) {
         return (
             <div className="h-full flex flex-col">
@@ -134,7 +143,13 @@ export const ConversationList: React.FC = () => {
                     </div>
                 ) : (
                     filteredCalls.map((call) => (
-                        <ConversationListItem key={call.id} call={call} />
+                        <ConversationListItem
+                            key={call.id}
+                            call={call}
+                            prefetchedLead={getLeadForPhone(
+                                (call as any).tl_phone || call.contact?.phone_e164 || call.from_number || call.to_number
+                            )}
+                        />
                     ))
                 )}
             </div>
