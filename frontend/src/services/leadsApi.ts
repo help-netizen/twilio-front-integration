@@ -4,6 +4,7 @@
  */
 
 import type {
+    Lead,
     LeadsListParams,
     LeadsListResponse,
     LeadDetailResponse,
