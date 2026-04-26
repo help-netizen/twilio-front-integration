@@ -5,10 +5,10 @@
  * Supports DnD reschedule (vertical, within column) + reassign (between columns).
  */
 
-import React, { useMemo, useState, useCallback, useRef } from 'react';
+import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { format } from 'date-fns';
+import { Briefcase } from 'lucide-react';
 import { ScheduleItemCard } from './ScheduleItemCard';
-import { SlotContextMenu } from './SlotContextMenu';
 import type { ScheduleItem, DispatchSettings } from '../../services/scheduleApi';
 import type { ProviderInfo } from '../../hooks/useScheduleData';
 import {
@@ -18,8 +18,10 @@ import {
 import { serverDate } from '../../utils/serverClock';
 import { setDragData, getDragData, hasDragData } from '../../hooks/useScheduleDnD';
 import { getProviderColor } from '../../utils/providerColors';
+import { assignLanes, type LayoutItem } from '../../utils/scheduleLayout';
 
 const HOUR_HEIGHT = 86;
+const NEW_JOB_DEFAULT_DURATION_MIN = 120; // 2-hour arrival timeframe
 
 interface TimelineViewProps {
     currentDate: Date;
@@ -43,6 +45,52 @@ interface ProviderGroup {
     items: ScheduleItem[];
 }
 
+interface PositionedItem {
+    item: ScheduleItem;
+    topPx: number;
+    heightPx: number;
+    durationMin: number;
+    lane: number;       // 0-indexed lane within its overlap cluster
+    laneCount: number;  // total lanes in that cluster (== max parallel overlap)
+}
+
+/** Compute top/height + lane assignment for items in a single provider column,
+ *  using the shared `assignLanes` utility so layout matches Day/Week views. */
+function layoutItems(items: ScheduleItem[], tz: string, startHour: number): PositionedItem[] {
+    const layoutInput: (LayoutItem & { item: ScheduleItem; topPx: number; heightPx: number; durationMin: number })[] = [];
+    for (const item of items) {
+        if (!item.start_at) continue;
+        const startMin = minutesSinceMidnight(new Date(item.start_at), tz);
+        let durationMin = 60;
+        if (item.end_at) {
+            const endMin = minutesSinceMidnight(new Date(item.end_at), tz);
+            durationMin = endMin - startMin;
+            if (durationMin <= 0) durationMin = 60;
+        }
+        layoutInput.push({
+            key: `${item.entity_type}-${item.entity_id}`,
+            startMin,
+            endMin: startMin + durationMin,
+            item,
+            durationMin,
+            topPx: (startMin - startHour * 60) / 60 * HOUR_HEIGHT,
+            heightPx: Math.max(durationMin / 60 * HOUR_HEIGHT, HOUR_HEIGHT * 0.6),
+        });
+    }
+    const lanes = assignLanes(layoutInput);
+    return layoutInput.map(li => {
+        const r = lanes.get(li.key);
+        return {
+            item: li.item,
+            topPx: li.topPx,
+            heightPx: li.heightPx,
+            durationMin: li.durationMin,
+            lane: r?.lane ?? 0,
+            laneCount: r?.totalLanes ?? 1,
+        };
+    });
+}
+
 export const TimelineView: React.FC<TimelineViewProps> = ({
     currentDate, items, settings, allProviders = [], onSelectItem, onReschedule, onReassign, onCreateFromSlot,
 }) => {
@@ -53,8 +101,34 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     const totalHours = endHour - startHour;
 
     const [dropHighlight, setDropHighlight] = useState<{ providerId: string; topPct: number } | null>(null);
-    const [slotMenu, setSlotMenu] = useState<{ top: number; left: number; startAt: string; endAt: string; providerId?: string; providerName?: string } | null>(null);
+    const [slotPlaceholder, setSlotPlaceholder] = useState<{
+        groupId: string;
+        startMin: number;
+        endMin: number;
+        startAt: string;
+        endAt: string;
+        providerId?: string;
+        providerName?: string;
+    } | null>(null);
     const colRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+    const placeholderRef = useRef<HTMLDivElement>(null);
+
+    // Close inline placeholder on outside click / Esc
+    useEffect(() => {
+        if (!slotPlaceholder) return;
+        const onMouseDown = (e: MouseEvent) => {
+            if (placeholderRef.current && !placeholderRef.current.contains(e.target as Node)) {
+                setSlotPlaceholder(null);
+            }
+        };
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSlotPlaceholder(null); };
+        document.addEventListener('mousedown', onMouseDown);
+        document.addEventListener('keydown', onKey);
+        return () => {
+            document.removeEventListener('mousedown', onMouseDown);
+            document.removeEventListener('keydown', onKey);
+        };
+    }, [slotPlaceholder]);
 
     const hours = useMemo(() => {
         const result: number[] = [];
@@ -155,21 +229,27 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
 
     const handleSlotClick = useCallback((group: ProviderGroup, e: React.MouseEvent) => {
         if (!onCreateFromSlot) return;
+        // Don't trigger when clicking an existing item or the placeholder itself
         if ((e.target as HTMLElement).closest('[data-schedule-item]')) return;
+        if ((e.target as HTMLElement).closest('[data-slot-placeholder]')) return;
         const col = colRefs.current.get(group.id);
         if (!col) return;
         const rect = col.getBoundingClientRect();
         const pct = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
         const clickMin = pctToMinutes(pct);
-        const endMin = clickMin + slotDuration;
+        const endMin = clickMin + NEW_JOB_DEFAULT_DURATION_MIN;
         const startAt = dateInTZ(refY, refM, refD, Math.floor(clickMin / 60), clickMin % 60, tz).toISOString();
         const endAt = dateInTZ(refY, refM, refD, Math.floor(endMin / 60), endMin % 60, tz).toISOString();
-        setSlotMenu({
-            top: e.clientY, left: e.clientX, startAt, endAt,
+        setSlotPlaceholder({
+            groupId: group.id,
+            startMin: clickMin,
+            endMin,
+            startAt,
+            endAt,
             providerId: group.id === '__unassigned' ? undefined : group.id,
             providerName: group.id === '__unassigned' ? undefined : group.label,
         });
-    }, [onCreateFromSlot, pctToMinutes, slotDuration, refY, refM, refD, tz]);
+    }, [onCreateFromSlot, pctToMinutes, refY, refM, refD, tz]);
 
     return (
         <div
@@ -318,26 +398,17 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                 />
                             )}
 
-                            {/* Items */}
-                            {group.items.map(item => {
-                                if (!item.start_at) return null;
-                                const itemMin = minutesSinceMidnight(new Date(item.start_at), tz);
-                                const topPx = (itemMin - startHour * 60) / 60 * HOUR_HEIGHT;
-
-                                let durationMin = 60;
-                                if (item.end_at) {
-                                    const endMin = minutesSinceMidnight(new Date(item.end_at), tz);
-                                    durationMin = endMin - itemMin;
-                                    if (durationMin <= 0) durationMin = 60;
-                                }
-                                const heightPx = Math.max(durationMin / 60 * HOUR_HEIGHT, HOUR_HEIGHT * 0.6);
+                            {/* Items — laid out into lanes so overlapping events split width instead of stacking */}
+                            {layoutItems(group.items, tz, startHour).map(({ item, topPx, heightPx, durationMin, lane, laneCount }) => {
                                 const isDraggable = item.entity_type !== 'lead';
+                                const widthPct = 100 / laneCount;
+                                const leftPct = lane * widthPct;
 
                                 return (
                                     <div
                                         key={`${item.entity_type}-${item.entity_id}`}
                                         data-schedule-item
-                                        className={`absolute left-1 right-1 z-10 ${isDraggable ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                                        className={`absolute z-10 ${isDraggable ? 'cursor-grab active:cursor-grabbing' : ''}`}
                                         draggable={isDraggable}
                                         onDragStart={isDraggable ? (e) => {
                                             setDragData(e, item, durationMin);
@@ -350,30 +421,124 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                         style={{
                                             top: topPx + 2,
                                             height: heightPx - 4,
+                                            left: `calc(${leftPct}% + 2px)`,
+                                            width: `calc(${widthPct}% - 4px)`,
                                         }}
                                     >
                                         <ScheduleItemCard item={item} compact onClick={onSelectItem} timezone={tz} />
                                     </div>
                                 );
                             })}
+
+                            {/* New-job placeholder — inline, dashed border, sized to default arrival window */}
+                            {slotPlaceholder && slotPlaceholder.groupId === group.id && onCreateFromSlot && (
+                                <NewJobPlaceholder
+                                    ref={placeholderRef}
+                                    topPx={((slotPlaceholder.startMin - startHour * 60) / 60) * HOUR_HEIGHT}
+                                    heightPx={((slotPlaceholder.endMin - slotPlaceholder.startMin) / 60) * HOUR_HEIGHT}
+                                    startAt={slotPlaceholder.startAt}
+                                    endAt={slotPlaceholder.endAt}
+                                    providerName={slotPlaceholder.providerName}
+                                    timezone={tz}
+                                    onCreate={(title) => {
+                                        onCreateFromSlot(title, slotPlaceholder.startAt, slotPlaceholder.endAt);
+                                        setSlotPlaceholder(null);
+                                    }}
+                                    onClose={() => setSlotPlaceholder(null)}
+                                />
+                            )}
                         </div>
                     ))}
                 </div>
             </div>
-
-            {/* Slot context menu */}
-            {slotMenu && onCreateFromSlot && (
-                <SlotContextMenu
-                    anchorRect={{ top: slotMenu.top, left: slotMenu.left }}
-                    startAt={slotMenu.startAt}
-                    endAt={slotMenu.endAt}
-                    timezone={tz}
-                    providerId={slotMenu.providerId}
-                    providerName={slotMenu.providerName}
-                    onCreateJob={(title) => onCreateFromSlot(title, slotMenu.startAt, slotMenu.endAt)}
-                    onClose={() => setSlotMenu(null)}
-                />
-            )}
         </div>
     );
 };
+
+// ── Inline new-job placeholder ───────────────────────────────────────────────
+
+interface NewJobPlaceholderProps {
+    topPx: number;
+    heightPx: number;
+    startAt: string;
+    endAt: string;
+    providerName?: string;
+    timezone: string;
+    onCreate: (title: string) => void;
+    onClose: () => void;
+}
+
+const NewJobPlaceholder = React.forwardRef<HTMLDivElement, NewJobPlaceholderProps>(function NewJobPlaceholder(
+    { topPx, heightPx, startAt, endAt, timezone, onCreate, onClose },
+    ref,
+) {
+    const [title, setTitle] = useState('');
+    const inputRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => { inputRef.current?.focus(); }, []);
+
+    const submit = () => {
+        const t = title.trim();
+        if (!t) return;
+        onCreate(t);
+    };
+
+    const timeLabel = `${formatTimeInTZ(new Date(startAt), timezone)} – ${formatTimeInTZ(new Date(endAt), timezone)}`;
+
+    return (
+        <div
+            ref={ref}
+            data-slot-placeholder
+            className="absolute z-20 flex flex-col gap-1.5 p-2.5"
+            style={{
+                top: topPx + 2,
+                height: Math.max(heightPx - 4, 96),
+                left: 'calc(0% + 2px)',
+                right: 2,
+                border: '2px dashed var(--sched-job)',
+                background: 'rgba(47, 99, 216, 0.08)',
+                borderRadius: '14px',
+            }}
+            onClick={(e) => e.stopPropagation()}
+        >
+            <div className="flex items-center justify-between gap-2 min-w-0">
+                <span className="text-[10px] font-bold uppercase shrink-0" style={{ color: 'var(--sched-job)', letterSpacing: '0.12em' }}>
+                    New
+                </span>
+                <span className="text-[10px] truncate" style={{ color: 'var(--sched-ink-3)' }}>
+                    {timeLabel}
+                </span>
+            </div>
+            <input
+                ref={inputRef}
+                type="text"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Job title…"
+                className="w-full text-[12px] px-2 py-1.5 rounded-md outline-none"
+                style={{
+                    background: 'rgba(255,255,255,0.85)',
+                    border: '1px solid rgba(118,106,89,0.25)',
+                    color: 'var(--sched-ink-1)',
+                }}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter') submit();
+                    if (e.key === 'Escape') onClose();
+                }}
+            />
+            <button
+                type="button"
+                onClick={submit}
+                disabled={!title.trim()}
+                className="mt-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-bold text-white shadow transition-transform active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{
+                    background: 'linear-gradient(180deg, var(--sched-job), #1e4fbb)',
+                    boxShadow: '0 4px 10px -2px rgba(47,99,216,0.45)',
+                }}
+            >
+                <Briefcase className="size-3.5" />
+                Create Job
+            </button>
+        </div>
+    );
+});

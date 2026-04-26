@@ -44,16 +44,28 @@ export const REASON_LABELS: Record<string, string> = {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function getTimeAgo(date: Date): string {
-    const diff = Date.now() - date.getTime();
-    const mins = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
-    const days = Math.floor(diff / 86400000);
-    if (mins < 2) return 'just now';
-    if (mins < 60) return `${mins}m ago`;
-    if (hours < 24) return `${hours}h ago`;
-    if (days < 7) return `${days}d ago`;
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+function formatExactTime(date: Date, tz: string): string {
+    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: tz });
+}
+
+/** YYYY-MM-DD key in given timezone. */
+function tzDateKey(date: Date, tz: string): string {
+    return date.toLocaleDateString('en-CA', { timeZone: tz });
+}
+
+/** If same calendar day in company tz → relative ("just now" / "15m ago" / "3h ago");
+ *  otherwise → "Mon, Apr 22" rendered in company tz. */
+function formatRelativeOrDate(date: Date, tz: string): string {
+    const now = new Date();
+    if (tzDateKey(date, tz) === tzDateKey(now, tz)) {
+        const diff = now.getTime() - date.getTime();
+        const mins = Math.floor(diff / 60000);
+        const hours = Math.floor(diff / 3600000);
+        if (mins < 2) return 'just now';
+        if (mins < 60) return `${mins}m ago`;
+        return `${hours}h ago`;
+    }
+    return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: tz });
 }
 
 /** Get initials from a name or phone */
@@ -162,16 +174,21 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                 {/* Main content */}
                 <div className="min-w-0 flex-1">
                     {/* Name + time */}
-                    <div className="flex items-baseline justify-between gap-1 mb-0.5">
+                    <div className="flex items-start justify-between gap-1 mb-0.5">
                         <span
                             className={`text-sm truncate leading-tight ${hasUnread ? 'font-semibold' : 'font-medium'}`}
                             style={{ color: 'var(--blanc-ink-1)' }}
                         >
                             {primaryText}
                         </span>
-                        <span className="text-[11px] shrink-0" style={{ color: 'var(--blanc-ink-3)' }}>
-                            {getTimeAgo(displayDate)}
-                        </span>
+                        <div className="flex flex-col items-end shrink-0 leading-tight">
+                            <span className="text-[11px] tabular-nums" style={{ color: 'var(--blanc-ink-2)' }}>
+                                {formatExactTime(displayDate, companyTz)}
+                            </span>
+                            <span className="text-[10px]" style={{ color: 'var(--blanc-ink-3)' }}>
+                                {formatRelativeOrDate(displayDate, companyTz)}
+                            </span>
+                        </div>
                     </div>
 
                     {/* Phone (secondary) */}

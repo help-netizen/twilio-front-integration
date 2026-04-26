@@ -7,7 +7,6 @@
 import React, { useMemo, useState, useCallback, useRef } from 'react';
 import { format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
-import { OverflowPopover } from './OverflowPopover';
 import { SlotContextMenu } from './SlotContextMenu';
 import type { ScheduleItem, DispatchSettings } from '../../services/scheduleApi';
 import {
@@ -18,8 +17,6 @@ import { serverDate } from '../../utils/serverClock';
 import { assignLanes } from '../../utils/scheduleLayout';
 import type { LayoutItem } from '../../utils/scheduleLayout';
 import { setDragData, getDragData, hasDragData } from '../../hooks/useScheduleDnD';
-
-const MAX_VISIBLE_LANES = 2;
 
 interface DayViewProps {
     currentDate: Date;
@@ -48,7 +45,6 @@ const HOUR_HEIGHT = 86; // px per hour — Sprint 7 design refresh
 export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, onSelectItem, onReschedule, onCreateFromSlot }) => {
     const tz = settings.timezone || 'America/New_York';
     const slotDuration = settings.slot_duration || 60;
-    const [overflowAnchor, setOverflowAnchor] = useState<{ items: ScheduleItem[]; rect: DOMRect } | null>(null);
     const [dropHighlightMin, setDropHighlightMin] = useState<number | null>(null);
     const [slotMenu, setSlotMenu] = useState<{ top: number; left: number; startAt: string; endAt: string } | null>(null);
     const gridRef = useRef<HTMLDivElement>(null);
@@ -259,7 +255,7 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                         />
                     )}
 
-                    {/* Positioned items with collision lanes */}
+                    {/* Positioned items — each overlap cluster splits column width across all lanes (no hidden "+N") */}
                     {(() => {
                         const layoutItems: (LayoutItem & { item: ScheduleItem; itemMin: number; durationMin: number })[] = [];
                         for (const item of dayItems) {
@@ -282,81 +278,41 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                         }
                         const lanes = assignLanes(layoutItems);
 
-                        const visible: typeof layoutItems = [];
-                        const overflowByCluster = new Map<string, { items: ScheduleItem[]; topPx: number }>();
-
-                        for (const li of layoutItems) {
-                            const layout = lanes.get(li.key);
+                        return layoutItems.map(({ key, item, itemMin, durationMin }) => {
+                            const topPx = ((itemMin - startHour * 60) / 60) * HOUR_HEIGHT;
+                            const heightPx = (durationMin / 60) * HOUR_HEIGHT;
+                            const layout = lanes.get(key);
                             const lane = layout?.lane ?? 0;
                             const totalLanes = layout?.totalLanes ?? 1;
-                            if (totalLanes <= MAX_VISIBLE_LANES || lane < MAX_VISIBLE_LANES) {
-                                visible.push(li);
-                            } else {
-                                const clusterKey = `${Math.floor(li.itemMin / 60)}`;
-                                const topPx = ((li.itemMin - startHour * 60) / 60) * HOUR_HEIGHT;
-                                const existing = overflowByCluster.get(clusterKey);
-                                if (existing) {
-                                    existing.items.push(li.item);
-                                    existing.topPx = Math.min(existing.topPx, topPx);
-                                } else {
-                                    overflowByCluster.set(clusterKey, { items: [li.item], topPx });
-                                }
-                            }
-                        }
+                            const widthPct = 100 / totalLanes;
+                            const leftPct = lane * widthPct;
+                            const isDraggable = item.entity_type !== 'lead';
 
-                        return (
-                            <>
-                                {visible.map(({ key, item, itemMin, durationMin }) => {
-                                    const topPx = ((itemMin - startHour * 60) / 60) * HOUR_HEIGHT;
-                                    const heightPx = (durationMin / 60) * HOUR_HEIGHT;
-                                    const layout = lanes.get(key);
-                                    const lane = layout?.lane ?? 0;
-                                    const totalLanes = Math.min(layout?.totalLanes ?? 1, MAX_VISIBLE_LANES);
-                                    const widthPct = 100 / totalLanes;
-                                    const leftPct = lane * widthPct;
-                                    const isDraggable = item.entity_type !== 'lead';
-
-                                    return (
-                                        <div
-                                            key={key}
-                                            data-schedule-item
-                                            className={`absolute z-10 ${isDraggable ? 'cursor-grab active:cursor-grabbing' : ''}`}
-                                            draggable={isDraggable}
-                                            onDragStart={isDraggable ? (e) => {
-                                                setDragData(e, item, durationMin);
-                                                (e.target as HTMLElement).style.opacity = '0.5';
-                                            } : undefined}
-                                            onDragEnd={(e) => {
-                                                (e.target as HTMLElement).style.opacity = '1';
-                                                setDropHighlightMin(null);
-                                            }}
-                                            style={{
-                                                top: topPx,
-                                                height: Math.max(heightPx, 32),
-                                                left: `calc(${leftPct}% + 4px)`,
-                                                width: `calc(${widthPct}% - 8px)`,
-                                            }}
-                                        >
-                                            <ScheduleItemCard item={item} onClick={onSelectItem} timezone={tz} />
-                                        </div>
-                                    );
-                                })}
-                                {Array.from(overflowByCluster.entries()).map(([clusterKey, cluster]) => (
-                                    <button
-                                        key={`overflow-${clusterKey}`}
-                                        type="button"
-                                        className="absolute z-20 bg-gray-600 text-white text-[10px] rounded-full px-1.5 py-0.5 hover:bg-gray-700 cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-500 outline-none"
-                                        style={{ top: cluster.topPx + 2, right: 8 }}
-                                        onClick={(e) => {
-                                            const rect = (e.target as HTMLElement).getBoundingClientRect();
-                                            setOverflowAnchor({ items: cluster.items, rect });
-                                        }}
-                                    >
-                                        +{cluster.items.length}
-                                    </button>
-                                ))}
-                            </>
-                        );
+                            return (
+                                <div
+                                    key={key}
+                                    data-schedule-item
+                                    className={`absolute z-10 ${isDraggable ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                                    draggable={isDraggable}
+                                    onDragStart={isDraggable ? (e) => {
+                                        setDragData(e, item, durationMin);
+                                        (e.target as HTMLElement).style.opacity = '0.5';
+                                    } : undefined}
+                                    onDragEnd={(e) => {
+                                        (e.target as HTMLElement).style.opacity = '1';
+                                        setDropHighlightMin(null);
+                                    }}
+                                    style={{
+                                        top: topPx,
+                                        height: Math.max(heightPx, 32),
+                                        left: `calc(${leftPct}% + 4px)`,
+                                        width: `calc(${widthPct}% - 8px)`,
+                                    }}
+                                >
+                                    <ScheduleItemCard item={item} onClick={onSelectItem} timezone={tz} />
+                                </div>
+                            );
+                        });
                     })()}
                 </div>
             </div>

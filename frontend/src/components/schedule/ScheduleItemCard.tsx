@@ -78,31 +78,21 @@ export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({ item, compac
             }}
         >
             <div className="p-3.5 pb-3 h-full flex flex-col" style={{ paddingLeft: '14px' }}>
-                {/* Header: entity badge + status badge */}
-                <div className="flex items-center justify-between gap-2 mb-1.5">
+                {/* Header: entity number on top, status on its own line below */}
+                <span
+                    className="text-[11px] font-semibold tabular-nums truncate"
+                    style={{ color: 'var(--sched-ink-3)', letterSpacing: '0.02em' }}
+                >
+                    {String(item.entity_id).padStart(6, '0')}
+                </span>
+                {item.status && (
                     <span
-                        className="inline-flex items-center justify-center min-h-[22px] px-2 rounded-full text-[10px] font-bold tracking-wider uppercase"
-                        style={{
-                            background: 'rgba(255, 255, 255, 0.54)',
-                            border: '1px solid rgba(118, 106, 89, 0.14)',
-                            color: 'var(--sched-ink-2)',
-                        }}
+                        className="text-[10px] font-bold tracking-wide uppercase truncate mb-1"
+                        style={{ color: statusColor }}
                     >
-                        {item.entity_type} #{String(item.entity_id).padStart(6, '0')}
+                        {item.status}
                     </span>
-                    {item.status && (
-                        <span
-                            className="inline-flex items-center justify-center min-h-[22px] px-2 rounded-full text-[10px] font-bold tracking-wide uppercase"
-                            style={{
-                                background: 'rgba(255, 255, 255, 0.72)',
-                                border: '1px solid rgba(118, 106, 89, 0.14)',
-                                color: statusColor,
-                            }}
-                        >
-                            {item.status}
-                        </span>
-                    )}
-                </div>
+                )}
 
                 {/* Title */}
                 <h3
