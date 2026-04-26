@@ -317,17 +317,6 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                 </div>
             </div>
 
-            {/* Overflow popover */}
-            {overflowAnchor && (
-                <OverflowPopover
-                    items={overflowAnchor.items}
-                    anchorRect={overflowAnchor.rect}
-                    onSelectItem={(item) => { setOverflowAnchor(null); onSelectItem(item); }}
-                    onClose={() => setOverflowAnchor(null)}
-                    timezone={tz}
-                />
-            )}
-
             {/* Slot context menu */}
             {slotMenu && onCreateFromSlot && (
                 <SlotContextMenu
