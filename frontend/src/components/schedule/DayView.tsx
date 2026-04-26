@@ -4,10 +4,10 @@
  * Supports DnD reschedule and create-from-slot.
  */
 
-import React, { useMemo, useState, useCallback, useRef } from 'react';
+import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
-import { SlotContextMenu } from './SlotContextMenu';
+import { NewJobPlaceholder, NEW_JOB_DEFAULT_DURATION_MIN } from './NewJobPlaceholder';
 import type { ScheduleItem, DispatchSettings } from '../../services/scheduleApi';
 import {
     todayInTZ, dateInTZ, minutesSinceMidnight,
@@ -46,8 +46,30 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
     const tz = settings.timezone || 'America/New_York';
     const slotDuration = settings.slot_duration || 60;
     const [dropHighlightMin, setDropHighlightMin] = useState<number | null>(null);
-    const [slotMenu, setSlotMenu] = useState<{ top: number; left: number; startAt: string; endAt: string } | null>(null);
+    const [slotPlaceholder, setSlotPlaceholder] = useState<{
+        startMin: number; endMin: number; startAt: string; endAt: string;
+    } | null>(null);
     const gridRef = useRef<HTMLDivElement>(null);
+    const placeholderRef = useRef<HTMLDivElement>(null);
+
+    // Close placeholder on outside click / Esc
+    useEffect(() => {
+        if (!slotPlaceholder) return;
+        const onMouseDown = (e: MouseEvent) => {
+            if (placeholderRef.current && !placeholderRef.current.contains(e.target as Node)) {
+                // Allow another empty-grid click to relocate the placeholder
+                // (handleSlotClick will run after this and create the new one).
+                setSlotPlaceholder(null);
+            }
+        };
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSlotPlaceholder(null); };
+        document.addEventListener('mousedown', onMouseDown);
+        document.addEventListener('keydown', onKey);
+        return () => {
+            document.removeEventListener('mousedown', onMouseDown);
+            document.removeEventListener('keydown', onKey);
+        };
+    }, [slotPlaceholder]);
     const startHour = parseTime(settings.work_start_time);
     const endHour = parseTime(settings.work_end_time);
     const totalHours = endHour - startHour;
@@ -118,21 +140,18 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
 
     const handleSlotClick = useCallback((e: React.MouseEvent) => {
         if (!onCreateFromSlot) return;
-        // Only trigger if clicking directly on the grid background, not on items
+        // Only trigger if clicking directly on the grid background, not on items / placeholder
         if ((e.target as HTMLElement).closest('[data-schedule-item]')) return;
+        if ((e.target as HTMLElement).closest('[data-slot-placeholder]')) return;
         const rect = gridRef.current?.getBoundingClientRect();
         if (!rect) return;
         const offsetY = e.clientY - rect.top;
         const clickMin = pxToMinutes(offsetY);
-        const endMin = clickMin + slotDuration;
-        const startHr = Math.floor(clickMin / 60);
-        const startMn = clickMin % 60;
-        const endHr = Math.floor(endMin / 60);
-        const endMn = endMin % 60;
-        const startAt = dateInTZ(dy, dm, dd, startHr, startMn, tz).toISOString();
-        const endAt = dateInTZ(dy, dm, dd, endHr, endMn, tz).toISOString();
-        setSlotMenu({ top: e.clientY, left: e.clientX, startAt, endAt });
-    }, [onCreateFromSlot, pxToMinutes, slotDuration, dy, dm, dd, tz]);
+        const endMin = clickMin + NEW_JOB_DEFAULT_DURATION_MIN;
+        const startAt = dateInTZ(dy, dm, dd, Math.floor(clickMin / 60), clickMin % 60, tz).toISOString();
+        const endAt = dateInTZ(dy, dm, dd, Math.floor(endMin / 60), endMin % 60, tz).toISOString();
+        setSlotPlaceholder({ startMin: clickMin, endMin, startAt, endAt });
+    }, [onCreateFromSlot, pxToMinutes, dy, dm, dd, tz]);
 
     return (
         <div
@@ -314,20 +333,45 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                             );
                         });
                     })()}
+
+                    {/* New-job placeholder — inline, dashed border, draggable vertically */}
+                    {slotPlaceholder && onCreateFromSlot && (
+                        <NewJobPlaceholder
+                            ref={placeholderRef}
+                            topPx={((slotPlaceholder.startMin - startHour * 60) / 60) * HOUR_HEIGHT}
+                            heightPx={((slotPlaceholder.endMin - slotPlaceholder.startMin) / 60) * HOUR_HEIGHT}
+                            startAt={slotPlaceholder.startAt}
+                            endAt={slotPlaceholder.endAt}
+                            timezone={tz}
+                            leftCss="4px"
+                            rightCss="4px"
+                            onCreate={() => {
+                                onCreateFromSlot('', slotPlaceholder.startAt, slotPlaceholder.endAt);
+                                setSlotPlaceholder(null);
+                            }}
+                            onClose={() => setSlotPlaceholder(null)}
+                            onDragMove={(newTopPx) => {
+                                const duration = slotPlaceholder.endMin - slotPlaceholder.startMin;
+                                const rawMin = startHour * 60 + (newTopPx / HOUR_HEIGHT) * 60;
+                                const snapped = Math.round(rawMin / slotDuration) * slotDuration;
+                                const minStart = Math.floor(startHour * 60);
+                                const maxStart = Math.floor(endHour * 60 - duration);
+                                const newStart = Math.max(minStart, Math.min(maxStart, snapped));
+                                const newEnd = newStart + duration;
+                                const newStartAt = dateInTZ(dy, dm, dd, Math.floor(newStart / 60), newStart % 60, tz).toISOString();
+                                const newEndAt = dateInTZ(dy, dm, dd, Math.floor(newEnd / 60), newEnd % 60, tz).toISOString();
+                                setSlotPlaceholder(prev => prev && {
+                                    ...prev,
+                                    startMin: newStart,
+                                    endMin: newEnd,
+                                    startAt: newStartAt,
+                                    endAt: newEndAt,
+                                });
+                            }}
+                        />
+                    )}
                 </div>
             </div>
-
-            {/* Slot context menu */}
-            {slotMenu && onCreateFromSlot && (
-                <SlotContextMenu
-                    anchorRect={{ top: slotMenu.top, left: slotMenu.left }}
-                    startAt={slotMenu.startAt}
-                    endAt={slotMenu.endAt}
-                    timezone={tz}
-                    onCreateJob={(title) => onCreateFromSlot(title, slotMenu.startAt, slotMenu.endAt)}
-                    onClose={() => setSlotMenu(null)}
-                />
-            )}
         </div>
     );
 };

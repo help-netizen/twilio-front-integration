@@ -7,8 +7,8 @@
 
 import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { format } from 'date-fns';
-import { Briefcase } from 'lucide-react';
 import { ScheduleItemCard } from './ScheduleItemCard';
+import { NewJobPlaceholder, NEW_JOB_DEFAULT_DURATION_MIN } from './NewJobPlaceholder';
 import type { ScheduleItem, DispatchSettings } from '../../services/scheduleApi';
 import type { ProviderInfo } from '../../hooks/useScheduleData';
 import {
@@ -21,7 +21,6 @@ import { getProviderColor } from '../../utils/providerColors';
 import { assignLanes, type LayoutItem } from '../../utils/scheduleLayout';
 
 const HOUR_HEIGHT = 86;
-const NEW_JOB_DEFAULT_DURATION_MIN = 120; // 2-hour arrival timeframe
 
 interface TimelineViewProps {
     currentDate: Date;
@@ -430,7 +429,8 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                 );
                             })}
 
-                            {/* New-job placeholder — inline, dashed border, sized to default arrival window */}
+                            {/* New-job placeholder — inline, dashed border, sized to default arrival window.
+                                Vertically draggable within this column to fine-tune the time. */}
                             {slotPlaceholder && slotPlaceholder.groupId === group.id && onCreateFromSlot && (
                                 <NewJobPlaceholder
                                     ref={placeholderRef}
@@ -440,11 +440,29 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                     endAt={slotPlaceholder.endAt}
                                     providerName={slotPlaceholder.providerName}
                                     timezone={tz}
-                                    onCreate={(title) => {
-                                        onCreateFromSlot(title, slotPlaceholder.startAt, slotPlaceholder.endAt);
+                                    onCreate={() => {
+                                        onCreateFromSlot('', slotPlaceholder.startAt, slotPlaceholder.endAt);
                                         setSlotPlaceholder(null);
                                     }}
                                     onClose={() => setSlotPlaceholder(null)}
+                                    onDragMove={(newTopPx) => {
+                                        const duration = slotPlaceholder.endMin - slotPlaceholder.startMin;
+                                        const rawMin = startHour * 60 + (newTopPx / HOUR_HEIGHT) * 60;
+                                        const snapped = Math.round(rawMin / slotDuration) * slotDuration;
+                                        const minStart = Math.floor(startHour * 60);
+                                        const maxStart = Math.floor(endHour * 60 - duration);
+                                        const newStart = Math.max(minStart, Math.min(maxStart, snapped));
+                                        const newEnd = newStart + duration;
+                                        const newStartAt = dateInTZ(refY, refM, refD, Math.floor(newStart / 60), newStart % 60, tz).toISOString();
+                                        const newEndAt = dateInTZ(refY, refM, refD, Math.floor(newEnd / 60), newEnd % 60, tz).toISOString();
+                                        setSlotPlaceholder(prev => prev && {
+                                            ...prev,
+                                            startMin: newStart,
+                                            endMin: newEnd,
+                                            startAt: newStartAt,
+                                            endAt: newEndAt,
+                                        });
+                                    }}
                                 />
                             )}
                         </div>
@@ -455,90 +473,3 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     );
 };
 
-// ── Inline new-job placeholder ───────────────────────────────────────────────
-
-interface NewJobPlaceholderProps {
-    topPx: number;
-    heightPx: number;
-    startAt: string;
-    endAt: string;
-    providerName?: string;
-    timezone: string;
-    onCreate: (title: string) => void;
-    onClose: () => void;
-}
-
-const NewJobPlaceholder = React.forwardRef<HTMLDivElement, NewJobPlaceholderProps>(function NewJobPlaceholder(
-    { topPx, heightPx, startAt, endAt, timezone, onCreate, onClose },
-    ref,
-) {
-    const [title, setTitle] = useState('');
-    const inputRef = useRef<HTMLInputElement>(null);
-
-    useEffect(() => { inputRef.current?.focus(); }, []);
-
-    const submit = () => {
-        const t = title.trim();
-        if (!t) return;
-        onCreate(t);
-    };
-
-    const timeLabel = `${formatTimeInTZ(new Date(startAt), timezone)} – ${formatTimeInTZ(new Date(endAt), timezone)}`;
-
-    return (
-        <div
-            ref={ref}
-            data-slot-placeholder
-            className="absolute z-20 flex flex-col gap-1.5 p-2.5"
-            style={{
-                top: topPx + 2,
-                height: Math.max(heightPx - 4, 96),
-                left: 'calc(0% + 2px)',
-                right: 2,
-                border: '2px dashed var(--sched-job)',
-                background: 'rgba(47, 99, 216, 0.08)',
-                borderRadius: '14px',
-            }}
-            onClick={(e) => e.stopPropagation()}
-        >
-            <div className="flex items-center justify-between gap-2 min-w-0">
-                <span className="text-[10px] font-bold uppercase shrink-0" style={{ color: 'var(--sched-job)', letterSpacing: '0.12em' }}>
-                    New
-                </span>
-                <span className="text-[10px] truncate" style={{ color: 'var(--sched-ink-3)' }}>
-                    {timeLabel}
-                </span>
-            </div>
-            <input
-                ref={inputRef}
-                type="text"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="Job title…"
-                className="w-full text-[12px] px-2 py-1.5 rounded-md outline-none"
-                style={{
-                    background: 'rgba(255,255,255,0.85)',
-                    border: '1px solid rgba(118,106,89,0.25)',
-                    color: 'var(--sched-ink-1)',
-                }}
-                onKeyDown={(e) => {
-                    if (e.key === 'Enter') submit();
-                    if (e.key === 'Escape') onClose();
-                }}
-            />
-            <button
-                type="button"
-                onClick={submit}
-                disabled={!title.trim()}
-                className="mt-auto inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-bold text-white shadow transition-transform active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{
-                    background: 'linear-gradient(180deg, var(--sched-job), #1e4fbb)',
-                    boxShadow: '0 4px 10px -2px rgba(47,99,216,0.45)',
-                }}
-            >
-                <Briefcase className="size-3.5" />
-                Create Job
-            </button>
-        </div>
-    );
-});

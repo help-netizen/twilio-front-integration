@@ -5,10 +5,10 @@
  * Supports DnD reassign between provider columns.
  */
 
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { startOfWeek, addDays, format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
-import { SlotContextMenu } from './SlotContextMenu';
+import { NewJobPlaceholder, NEW_JOB_DEFAULT_DURATION_MIN } from './NewJobPlaceholder';
 import type { ScheduleItem, DispatchSettings } from '../../services/scheduleApi';
 import type { ProviderInfo } from '../../hooks/useScheduleData';
 import { todayInTZ, dateKeyInTZ, dateInTZ } from '../../utils/companyTime';
@@ -40,14 +40,37 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
     currentDate, items, settings, allProviders = [], onSelectItem, onReassign, onCreateFromSlot,
 }) => {
     const tz = settings.timezone || 'America/New_York';
-    const slotDuration = settings.slot_duration || 60;
     const workStartHour = parseTime(settings.work_start_time);
     const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
     const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
     const dayKeys = useMemo(() => days.map(d => format(d, 'yyyy-MM-dd')), [days]);
 
     const [dropHighlightCol, setDropHighlightCol] = useState<string | null>(null);
-    const [slotMenu, setSlotMenu] = useState<{ top: number; left: number; startAt: string; endAt: string; providerId?: string; providerName?: string } | null>(null);
+    const [slotPlaceholder, setSlotPlaceholder] = useState<{
+        cellKey: string;       // `${dayKey}|${groupId}`
+        startAt: string;
+        endAt: string;
+        providerId?: string;
+        providerName?: string;
+    } | null>(null);
+    const placeholderRef = useRef<HTMLDivElement>(null);
+
+    // Close placeholder on outside click / Esc
+    useEffect(() => {
+        if (!slotPlaceholder) return;
+        const onMouseDown = (e: MouseEvent) => {
+            if (placeholderRef.current && !placeholderRef.current.contains(e.target as Node)) {
+                setSlotPlaceholder(null);
+            }
+        };
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSlotPlaceholder(null); };
+        document.addEventListener('mousedown', onMouseDown);
+        document.addEventListener('keydown', onKey);
+        return () => {
+            document.removeEventListener('mousedown', onMouseDown);
+            document.removeEventListener('keydown', onKey);
+        };
+    }, [slotPlaceholder]);
 
     const providerGroups: ProviderGroup[] = useMemo(() => {
         const map = new Map<string, ProviderGroup>();
@@ -105,18 +128,21 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
     const handleSlotClick = useCallback((dayKey: string, group: ProviderGroup, e: React.MouseEvent) => {
         if (!onCreateFromSlot) return;
         if ((e.target as HTMLElement).closest('[data-schedule-item]')) return;
+        if ((e.target as HTMLElement).closest('[data-slot-placeholder]')) return;
         const [y, m, d] = dayKey.split('-').map(Number);
         const startHr = Math.floor(workStartHour);
         const startMn = Math.round((workStartHour - startHr) * 60);
-        const endMin = startHr * 60 + startMn + slotDuration;
+        const endMin = startHr * 60 + startMn + NEW_JOB_DEFAULT_DURATION_MIN;
         const startAt = dateInTZ(y, m, d, startHr, startMn, tz).toISOString();
         const endAt = dateInTZ(y, m, d, Math.floor(endMin / 60), endMin % 60, tz).toISOString();
-        setSlotMenu({
-            top: e.clientY, left: e.clientX, startAt, endAt,
+        setSlotPlaceholder({
+            cellKey: `${dayKey}|${group.id}`,
+            startAt,
+            endAt,
             providerId: group.id === '__unassigned' ? undefined : group.id,
             providerName: group.id === '__unassigned' ? undefined : group.label,
         });
-    }, [onCreateFromSlot, workStartHour, slotDuration, tz]);
+    }, [onCreateFromSlot, workStartHour, tz]);
 
     // Grid: 1 day-label column + N provider columns
     const gridCols = `140px repeat(${colCount}, minmax(140px, 1fr))`;
@@ -271,26 +297,33 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
                                             </div>
                                         );
                                     })}
+
+                                    {/* New-job placeholder — renders inline at the bottom of this cell.
+                                        TimelineWeekView has no time-grid inside the cell, so the placeholder
+                                        is a stack item rather than absolutely positioned. */}
+                                    {slotPlaceholder && slotPlaceholder.cellKey === `${dayKey}|${group.id}` && onCreateFromSlot && (
+                                        <NewJobPlaceholder
+                                            ref={placeholderRef}
+                                            inline
+                                            topPx={0}
+                                            heightPx={0}
+                                            startAt={slotPlaceholder.startAt}
+                                            endAt={slotPlaceholder.endAt}
+                                            providerName={slotPlaceholder.providerName}
+                                            timezone={tz}
+                                            onCreate={() => {
+                                                onCreateFromSlot('', slotPlaceholder.startAt, slotPlaceholder.endAt);
+                                                setSlotPlaceholder(null);
+                                            }}
+                                            onClose={() => setSlotPlaceholder(null)}
+                                        />
+                                    )}
                                 </div>
                             );
                         })}
                     </div>
                 );
             })}
-
-            {/* Slot context menu */}
-            {slotMenu && onCreateFromSlot && (
-                <SlotContextMenu
-                    anchorRect={{ top: slotMenu.top, left: slotMenu.left }}
-                    startAt={slotMenu.startAt}
-                    endAt={slotMenu.endAt}
-                    timezone={tz}
-                    providerId={slotMenu.providerId}
-                    providerName={slotMenu.providerName}
-                    onCreateJob={(title) => onCreateFromSlot(title, slotMenu.startAt, slotMenu.endAt)}
-                    onClose={() => setSlotMenu(null)}
-                />
-            )}
         </div>
     );
 };

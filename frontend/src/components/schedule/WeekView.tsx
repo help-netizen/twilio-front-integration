@@ -4,10 +4,10 @@
  * Supports DnD reschedule (including cross-day) and create-from-slot.
  */
 
-import React, { useMemo, useState, useCallback, useRef } from 'react';
+import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { startOfWeek, addDays, format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
-import { SlotContextMenu } from './SlotContextMenu';
+import { NewJobPlaceholder, NEW_JOB_DEFAULT_DURATION_MIN } from './NewJobPlaceholder';
 import type { ScheduleItem, DispatchSettings } from '../../services/scheduleApi';
 import {
     todayInTZ, dateInTZ, minutesSinceMidnight,
@@ -46,8 +46,28 @@ export const WeekView: React.FC<WeekViewProps> = ({ currentDate, items, settings
     const tz = settings.timezone || 'America/New_York';
     const slotDuration = settings.slot_duration || 60;
     const [dropHighlight, setDropHighlight] = useState<{ dayIdx: number; min: number } | null>(null);
-    const [slotMenu, setSlotMenu] = useState<{ top: number; left: number; startAt: string; endAt: string } | null>(null);
+    const [slotPlaceholder, setSlotPlaceholder] = useState<{
+        dayIdx: number; startMin: number; endMin: number; startAt: string; endAt: string;
+    } | null>(null);
     const colRefs = useRef<(HTMLDivElement | null)[]>([]);
+    const placeholderRef = useRef<HTMLDivElement>(null);
+
+    // Close placeholder on outside click / Esc
+    useEffect(() => {
+        if (!slotPlaceholder) return;
+        const onMouseDown = (e: MouseEvent) => {
+            if (placeholderRef.current && !placeholderRef.current.contains(e.target as Node)) {
+                setSlotPlaceholder(null);
+            }
+        };
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSlotPlaceholder(null); };
+        document.addEventListener('mousedown', onMouseDown);
+        document.addEventListener('keydown', onKey);
+        return () => {
+            document.removeEventListener('mousedown', onMouseDown);
+            document.removeEventListener('keydown', onKey);
+        };
+    }, [slotPlaceholder]);
 
     const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
     const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
@@ -118,16 +138,17 @@ export const WeekView: React.FC<WeekViewProps> = ({ currentDate, items, settings
     const handleSlotClick = useCallback((dayIdx: number, e: React.MouseEvent) => {
         if (!onCreateFromSlot) return;
         if ((e.target as HTMLElement).closest('[data-schedule-item]')) return;
+        if ((e.target as HTMLElement).closest('[data-slot-placeholder]')) return;
         const col = colRefs.current[dayIdx];
         if (!col) return;
         const rect = col.getBoundingClientRect();
         const clickMin = pxToMinutes(e.clientY - rect.top);
-        const endMin = clickMin + slotDuration;
+        const endMin = clickMin + NEW_JOB_DEFAULT_DURATION_MIN;
         const [y, m, d] = dayKeys[dayIdx].split('-').map(Number);
         const startAt = dateInTZ(y, m, d, Math.floor(clickMin / 60), clickMin % 60, tz).toISOString();
         const endAt = dateInTZ(y, m, d, Math.floor(endMin / 60), endMin % 60, tz).toISOString();
-        setSlotMenu({ top: e.clientY, left: e.clientX, startAt, endAt });
-    }, [onCreateFromSlot, pxToMinutes, slotDuration, dayKeys, tz]);
+        setSlotPlaceholder({ dayIdx, startMin: clickMin, endMin, startAt, endAt });
+    }, [onCreateFromSlot, pxToMinutes, dayKeys, tz]);
 
     return (
         <div
@@ -313,23 +334,49 @@ export const WeekView: React.FC<WeekViewProps> = ({ currentDate, items, settings
                                     );
                                 });
                             })()}
+
+                            {/* New-job placeholder for this day column */}
+                            {slotPlaceholder && slotPlaceholder.dayIdx === i && onCreateFromSlot && (
+                                <NewJobPlaceholder
+                                    ref={placeholderRef}
+                                    topPx={((slotPlaceholder.startMin - startHour * 60) / 60) * HOUR_HEIGHT}
+                                    heightPx={((slotPlaceholder.endMin - slotPlaceholder.startMin) / 60) * HOUR_HEIGHT}
+                                    startAt={slotPlaceholder.startAt}
+                                    endAt={slotPlaceholder.endAt}
+                                    timezone={tz}
+                                    leftCss="2px"
+                                    rightCss="2px"
+                                    onCreate={() => {
+                                        onCreateFromSlot('', slotPlaceholder.startAt, slotPlaceholder.endAt);
+                                        setSlotPlaceholder(null);
+                                    }}
+                                    onClose={() => setSlotPlaceholder(null)}
+                                    onDragMove={(newTopPx) => {
+                                        const duration = slotPlaceholder.endMin - slotPlaceholder.startMin;
+                                        const rawMin = startHour * 60 + (newTopPx / HOUR_HEIGHT) * 60;
+                                        const snapped = Math.round(rawMin / slotDuration) * slotDuration;
+                                        const minStart = Math.floor(startHour * 60);
+                                        const maxStart = Math.floor(endHour * 60 - duration);
+                                        const newStart = Math.max(minStart, Math.min(maxStart, snapped));
+                                        const newEnd = newStart + duration;
+                                        const [y, m, d] = dayKeys[slotPlaceholder.dayIdx].split('-').map(Number);
+                                        const newStartAt = dateInTZ(y, m, d, Math.floor(newStart / 60), newStart % 60, tz).toISOString();
+                                        const newEndAt = dateInTZ(y, m, d, Math.floor(newEnd / 60), newEnd % 60, tz).toISOString();
+                                        setSlotPlaceholder(prev => prev && {
+                                            ...prev,
+                                            startMin: newStart,
+                                            endMin: newEnd,
+                                            startAt: newStartAt,
+                                            endAt: newEndAt,
+                                        });
+                                    }}
+                                />
+                            )}
                         </div>
                     );
                 })}
             </div>
             </div>{/* end calendar frame min-width wrapper */}
-
-            {/* Slot context menu */}
-            {slotMenu && onCreateFromSlot && (
-                <SlotContextMenu
-                    anchorRect={{ top: slotMenu.top, left: slotMenu.left }}
-                    startAt={slotMenu.startAt}
-                    endAt={slotMenu.endAt}
-                    timezone={tz}
-                    onCreateJob={(title) => onCreateFromSlot(title, slotMenu.startAt, slotMenu.endAt)}
-                    onClose={() => setSlotMenu(null)}
-                />
-            )}
         </div>
     );
 };
