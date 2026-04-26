@@ -320,6 +320,34 @@ async function listJobs({ from, to, trackingNumber, companyId, limit, cursor }) 
     let cursorClause = '';
     if (cursorTs) { params.push(cursorTs); cursorClause = `AND j.created_at < $${params.length}`; }
 
+    // Net "Paid" per job — supports partial payments.
+    // Prefer the canonical payment_transactions ledger when any row links to this job;
+    // otherwise fall back to the legacy zb_payments cache (Zenbooker sync) so historical
+    // jobs still report their paid totals. Refunds / voids / failures are excluded.
+    const paidExpr = `
+      CASE
+        WHEN EXISTS (SELECT 1 FROM payment_transactions pt WHERE pt.job_id = j.id) THEN
+          COALESCE((
+            SELECT SUM(
+              CASE
+                WHEN pt.transaction_type = 'payment' AND pt.status = 'completed' THEN pt.amount
+                WHEN pt.transaction_type = 'refund'  AND pt.status = 'completed' THEN -ABS(pt.amount)
+                ELSE 0
+              END
+            )
+            FROM payment_transactions pt
+            WHERE pt.job_id = j.id
+          ), 0)
+        ELSE
+          COALESCE((
+            SELECT SUM(zp.amount_paid)
+            FROM zb_payments zp
+            WHERE zp.job_id = j.zenbooker_job_id
+              AND zp.transaction_status = 'succeeded'
+          ), 0)
+      END
+    `;
+
     const sql = `
       WITH ${TRACKING_CTE}
       SELECT
@@ -328,7 +356,8 @@ async function listJobs({ from, to, trackingNumber, companyId, limit, cursor }) 
         j.start_date, j.end_date, j.territory,
         j.invoice_total, j.invoice_status,
         j.lead_id, j.created_at,
-        l.phone AS lead_phone
+        l.phone AS lead_phone,
+        (${paidExpr})::numeric(12, 2) AS paid
       FROM jobs j
       LEFT JOIN leads l ON l.id = j.lead_id
       WHERE j.lead_id IN (SELECT id FROM period_leads)
