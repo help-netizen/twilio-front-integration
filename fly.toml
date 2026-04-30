@@ -7,6 +7,10 @@ primary_region = 'ewr'
 [build]
   [build.args]
     VITE_GOOGLE_MAPS_API_KEY = "AIzaSyD0cGFXDhTVk81gx2UqyWeZUREcKn0uaVI"
+    VITE_FEATURE_AUTH_ENABLED = "true"
+    VITE_KEYCLOAK_URL = "https://abc-keycloak.fly.dev"
+    VITE_KEYCLOAK_REALM = "crm-prod"
+    VITE_KEYCLOAK_CLIENT_ID = "crm-web"
 
 [http_service]
   internal_port = 3000
