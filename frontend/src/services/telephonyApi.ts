@@ -147,8 +147,8 @@ export const telephonyApi = {
                 return {
                     id: String(c.id),
                     session_id: c.call_sid || '',
-                    caller: c.direction === 'inbound' ? (c.from_number || '') : (c.to_number || ''),
-                    number_called: c.direction === 'inbound' ? (c.to_number || '') : (c.from_number || ''),
+                    caller: c.from_number || '',
+                    number_called: c.to_number || '',
                     result,
                     duration_sec: c.duration_sec || 0,
                     timestamp: startedAt || '',
