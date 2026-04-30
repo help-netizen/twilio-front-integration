@@ -4,6 +4,231 @@
 
 ---
 
+## PF002-R2: Estimates Composer Refresh
+
+**Status:** Requirements
+**Priority:** P0
+**Owner:** Finance/CRM
+**Related existing specs:** `docs/specs/PF002-estimates.md`, `docs/specs/PF002-technical-design.md`
+
+### 1. Description
+
+Refresh the existing Estimates module into a fast estimate composer for appliance/service repair workflows. Estimates are created only from an existing Lead or Job context, edited as a client-facing document with a concise item list, previewed as a client document, and approved/declined by the company or later by the customer portal. The implementation must fix the current DB/API/UI contract drift in estimates and keep the item model compatible with future Price Book presets without exposing item type/category in the estimate UI.
+
+This is an update to existing PF002, not a parallel feature. Existing `estimates`, `estimate_items`, `estimate_events`, estimate page/detail/editor components, and Lead/Job financial tabs must be extended rather than duplicated.
+
+### 2. User Scenarios
+
+#### SC-01: Create estimate from Lead or Job
+**Actor:** Manager / dispatcher / estimator
+**Precondition:** User is viewing a Lead or Job with company access and estimates permissions.
+**Flow:**
+1. User clicks `New` in the Lead/Job financial surface.
+2. The estimate editor opens locally without creating a database draft yet.
+3. User adds at least one custom item or adds a Summary.
+4. User saves; backend creates the estimate linked to the source Lead or Job and resolved Contact.
+5. Estimate number is displayed as `ESTIMATE L-{leadNumber}-1`; the sequence is scoped to the current Job when the estimate is created from a Job.
+
+#### SC-02: Add and edit custom items quickly
+**Actor:** Manager / estimator
+**Flow:**
+1. User clicks `Add item` at the end of the current item list.
+2. `Add custom item` dialog opens with all editable fields visible.
+3. Required field is `Title`; `Unit price` may be `0`.
+4. Defaults are `Qty = 1` and `Service is taxable = false`.
+5. User saves; item appears in the estimate list.
+6. Clicking the row or pencil icon opens the same dialog for editing.
+7. Trash icon removes the item.
+
+#### SC-03: Add service report summary
+**Actor:** Manager / estimator
+**Flow:**
+1. Empty estimates show `+ Add Summary`.
+2. User opens a Summary input and adds client-facing diagnostic/report text.
+3. After saving, editor shows a collapsed `Summary` section with expand/edit controls and no inline preview text.
+4. Preview/PDF show Summary above items only when Summary is non-empty.
+
+#### SC-04: Preview client-facing document
+**Actor:** Internal user
+**Flow:**
+1. User clicks `Preview` from estimate detail/editor.
+2. A modal/drawer opens with client-facing document layout.
+3. Preview shows Summary if present, items, totals, and Terms & Warranty.
+4. Preview does not show internal-only controls or per-item taxable badges.
+
+#### SC-05: Approve or decline estimate internally
+**Actor:** Manager acting on behalf of client
+**Flow:**
+1. User opens a non-archived estimate with at least one item.
+2. User clicks `Approved`; backend sets status to `approved`, saves an approved snapshot/history record, and records actor/source.
+3. User can click `Decline`; a dialog requires a decline reason/comment.
+4. Declined estimates can later be edited; edit save resets status to `draft`.
+
+#### SC-06: Archive and restore
+**Actor:** Internal user
+**Flow:**
+1. User archives an estimate from any status.
+2. Backend sets `archived_at` and `archived_by` while preserving the existing status.
+3. Archived estimate is visible only internally, visually greyed out, read-only, and unavailable through public links.
+4. In `/estimates`, filter `Only Open / All` controls whether archived estimates are visible.
+5. Restoring an archived estimate clears archive fields and sets status to `draft`.
+
+### 3. Functional Requirements
+
+#### 3.1 Entry points and listing
+- Estimate creation is allowed only from Lead or Job context.
+- Global `New Estimate` on `/estimates` must be removed.
+- `/estimates` remains a searchable/listing page for existing estimates.
+- `/estimates` detail supports view/edit/approve/decline/archive/restore according to state.
+- Archived estimates are excluded from `Only Open`, included in `All`, greyed out, and marked with an `Archived` badge.
+
+#### 3.2 Numbering
+- Estimate has a stable database identifier/UUID/id that never changes.
+- Display number may change when job context appears.
+- Job estimate display number format: `ESTIMATE L-{leadNumber}-{sequence}`.
+- Lead-only estimate display number format: `ESTIMATE L-{leadNumber}-{sequence}`.
+- P0 supports only one estimate per work/lead in UI, but sequence must be modeled for future multiple estimates.
+- When a lead-only estimate becomes linked to a job, display number changes to job format.
+
+#### 3.3 Item model and UI
+- Users must not see item type/category in the estimate UI.
+- Data model may store future-facing `item_type`, `category_id`, `price_book_item_id`, or metadata for Price Book defaults and analytics.
+- Manual item defaults:
+  - `quantity = 1`
+  - `taxable = false`
+  - no unit field in UI
+- Required item validation:
+  - `title/name` is required
+  - `quantity > 0`
+  - `unit_price >= 0`
+- Item row in app:
+  - prominent title
+  - full description underneath
+  - muted metadata row: `Qty x Unit price` plus `Taxable`/`Non-taxable`
+  - right side: line total, pencil edit icon, trash icon
+- Reorder and duplicate item are out of P0.
+
+#### 3.4 Summary and Terms
+- `Summary` is client-facing and appears before items in preview/PDF only if added.
+- Empty Summary is represented by `+ Add Summary`, not by an empty collapsed section.
+- `Terms & Warranty` is always present and read-only in the estimate editor.
+- `Terms & Warranty` uses a hardcoded Blanc default template in P0.
+- Estimate-specific Terms editor and document-template editor are out of P0.
+- `Terms & Warranty` always appears in client-facing preview/PDF.
+
+Default `Terms & Warranty` text:
+
+```text
+TERMS: Estimates are an approximation of charges to you, and they are based on the anticipated details of the work to be done. It is possible for unexpected complications to cause some deviation from the estimate. If additional parts or labor are required you will be contacted immediately.
+
+WARRANTY:
+- 90-day labor warranty covering workmanship and the completed repair, starting from the date the repair is finished.
+- OEM parts warranty is extended to a minimum of 90 days, even if the manufacturer's standard warranty is shorter.
+- A service visit during the warranty period is provided at no additional charge if the issue is related to the repaired component or workmanship.
+- Warranty does not cover misuse, physical damage, power issues, water damage, improper installation, or failures unrelated to the replaced component.
+```
+
+#### 3.5 Totals and tax
+- Totals block includes `Subtotal`, `Add Discount`, `Tax`, `Total`.
+- Fee is out of P0.
+- Tip is out of estimate scope and belongs to invoice/payment.
+- Discount supports fixed amount and percentage.
+- Discount cannot exceed subtotal; percentage discount cannot exceed 100%.
+- There is one `tax_rate` per estimate.
+- Tax applies only to taxable item subtotal after discount:
+  - `taxableBase = max(taxableItemsSubtotal - discountAmount, 0)`
+  - `taxAmount = taxableBase * taxRate`
+  - `total = subtotal - discountAmount + taxAmount`
+
+#### 3.6 Preview/PDF
+- App detail panel is operational/internal; it is not the client preview.
+- A separate `Preview` action opens a client-facing modal/drawer.
+- Client-facing item rows do not show taxable badges.
+- In preview/PDF, quantity can be omitted when `Qty = 1`; app detail still shows `Qty x Unit price`.
+- Preview/PDF order: Summary, Items, Totals, Terms & Warranty.
+- PDF generation should regenerate from the current estimate after edits.
+- PDF includes the Blanc company/payment block:
+  - `ABC Homes`
+  - `2502 Village Rd W, Norwood, MA 02062, USA`
+  - `help@bostonmasters.com`
+  - `(508) 290-4442`
+  - ACH: Bank Of America, routing `011000138`, account `466020155621`
+
+#### 3.7 Status lifecycle
+- Canonical statuses: `draft`, `sent`, `viewed`, `approved`, `declined`.
+- Use `approved`; do not use `accepted` in new contracts.
+- `expired` / `valid_until` are out of P0.
+- Invoice conversion does not change estimate status; approved estimate remains `approved`.
+- When an invoice exists, estimate detail shows `Invoice #...`.
+- Editing `sent`, `viewed`, `approved`, or `declined` estimates resets status to `draft`.
+- Editing `sent` or `approved` estimates shows a warning that the updated version should be sent to the client again.
+- Approved versions must be preserved in history/snapshot before later edits reset the live estimate to draft.
+
+#### 3.8 Approval, signature, and decline
+- Internal manager can approve on behalf of client.
+- Portal/customer approval can be added later using the same service contract.
+- Approval is blocked when estimate has no items with error: `В эстимейте нет items`.
+- `Require signature` toggle exists in editor and defaults off.
+- If signature is not required, client flow is `Approve`.
+- If signature is required, client flow is `Sign & Approve`.
+- P0 signature is typed electronic signature: full name + consent checkbox; no drawing canvas.
+- If estimate is approved without signature, signature is not requested later.
+- Decline requires a non-empty reason/comment and stores it in events/history.
+
+#### 3.9 Deposit and send
+- Deposit logic is not implemented in P0.
+- Editor may show read-only/disabled `Deposit required: No`.
+- Deposit is not shown in preview/PDF.
+- Send is a workflow stub in P0:
+  - dialog asks for channel `Email` or `Text`
+  - no real delivery occurs
+  - status remains `draft`
+  - no manual `Mark as sent` in UI
+
+### 4. Constraints and Non-Functional Requirements
+
+- Do not store estimates as XML. Canonical storage is relational PostgreSQL tables plus JSONB snapshots for approved history/render data.
+- XML may only be used for future external export/integration, not primary persistence.
+- Maintain tenant isolation with `company_id` in all estimate queries.
+- Routes must use the project's auth and tenant middleware and must not depend on `req.companyId` if middleware does not provide it.
+- Do not duplicate estimate/invoice item logic where shared helpers can be introduced safely.
+- Price Book UI is out of P0; no disabled Price Book search should be shown.
+- Future Price Book must be able to add preset item groups/categories without changing estimate item display.
+
+### 5. Potentially Involved Modules
+
+- Backend:
+  - `backend/src/routes/estimates.js`
+  - `backend/src/services/estimatesService.js`
+  - `backend/src/db/estimatesQueries.js`
+  - estimate-related migrations in `backend/db/migrations/`
+  - invoice conversion code that reads estimate status/items
+- Frontend:
+  - `frontend/src/pages/EstimatesPage.tsx`
+  - `frontend/src/components/estimates/EstimateEditorDialog.tsx`
+  - `frontend/src/components/estimates/EstimateDetailPanel.tsx`
+  - `frontend/src/components/estimates/EstimateSendDialog.tsx`
+  - new estimate preview/item/decline/archive components if needed
+  - `frontend/src/hooks/useEstimates.ts`
+  - `frontend/src/hooks/useLeadFinancials.ts`
+  - `frontend/src/hooks/useJobFinancials.ts`
+  - `frontend/src/services/estimatesApi.ts`
+
+### 6. Affected Integrations
+
+- Direct external delivery integrations are not active in P0.
+- Future SMS/email delivery must integrate with existing Twilio/email infrastructure, but P0 send is a non-mutating workflow stub.
+- Future portal approval/signature should reuse client portal infrastructure rather than introducing a separate client domain model.
+
+### 7. Protected Code
+
+- `src/server.js` core middleware and SSE infrastructure should not be changed unless a later architecture task explicitly scopes a minimal route-mount change.
+- `frontend/src/lib/authedFetch.ts` / `frontend/src/services/apiClient.ts` auth fetch behavior must not be rewritten.
+- Shared auth/RBAC middleware must not be bypassed.
+- Existing Lead -> Job conversion flow remains canonical and must not be replaced by estimate lifecycle.
+
+---
+
 ## FSM-001: FSM/SCXML Workflow Editor
 
 **Status:** Requirements

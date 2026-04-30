@@ -234,10 +234,10 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
 }
 
 async function getJobById(id, companyId = null) {
-    const conditions = ['id = $1'];
+    const conditions = ['j.id = $1'];
     const params = [id];
     if (companyId) {
-        conditions.push('company_id = $2');
+        conditions.push('j.company_id = $2');
         params.push(companyId);
     }
     const { rows } = await db.query(

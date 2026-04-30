@@ -174,7 +174,7 @@ async function getContactDocuments(companyId, contactId, scope, documentType = n
             const { rows } = await db.query(
                 `SELECT 'estimate' AS type, id, estimate_number AS number, status, total, created_at
                  FROM estimates
-                 WHERE id = $1 AND company_id = $2 AND contact_id = $3`,
+                 WHERE id = $1 AND company_id = $2 AND contact_id = $3 AND archived_at IS NULL`,
                 [documentId, companyId, contactId]
             );
             return rows;
@@ -195,7 +195,7 @@ async function getContactDocuments(companyId, contactId, scope, documentType = n
     const { rows } = await db.query(
         `SELECT 'estimate' AS type, id, estimate_number AS number, status, total, created_at
          FROM estimates
-         WHERE company_id = $1 AND contact_id = $2
+         WHERE company_id = $1 AND contact_id = $2 AND archived_at IS NULL
          UNION ALL
          SELECT 'invoice' AS type, id, invoice_number AS number, status, total, created_at
          FROM invoices

@@ -6,6 +6,17 @@ const express = require('express');
 const router = express.Router();
 const estimatesService = require('../services/estimatesService');
 
+function getCompanyId(req) {
+    return req.companyFilter?.company_id || req.user?.company_id || req.companyId;
+}
+
+function getUserId(req) {
+    const userId = req.user?.sub || req.user?.id || req.userId || null;
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(userId || '')
+        ? userId
+        : null;
+}
+
 // =============================================================================
 // Estimate CRUD
 // =============================================================================
@@ -13,7 +24,7 @@ const estimatesService = require('../services/estimatesService');
 // GET /api/estimates — List estimates with filters
 router.get('/', async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = getCompanyId(req);
         const {
             status,
             contact_id,
@@ -34,6 +45,7 @@ router.get('/', async (req, res) => {
         if (search)     filters.search = search;
         if (start_date) filters.startDate = start_date;
         if (end_date)   filters.endDate = end_date;
+        if (req.query.include_archived === 'true') filters.includeArchived = true;
         if (limit)      filters.limit = parseInt(limit, 10);
         if (offset)     filters.offset = parseInt(offset, 10);
 
@@ -49,8 +61,8 @@ router.get('/', async (req, res) => {
 // POST /api/estimates — Create estimate
 router.post('/', async (req, res) => {
     try {
-        const companyId = req.companyId;
-        const userId = req.user?.sub || req.userId;
+        const companyId = getCompanyId(req);
+        const userId = getUserId(req);
         const data = req.body;
 
         const result = await estimatesService.createEstimate(companyId, userId, data);
@@ -65,7 +77,7 @@ router.post('/', async (req, res) => {
 // GET /api/estimates/:id — Get estimate by ID
 router.get('/:id', async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = getCompanyId(req);
         const { id } = req.params;
 
         const result = await estimatesService.getEstimate(companyId, id);
@@ -80,8 +92,8 @@ router.get('/:id', async (req, res) => {
 // PUT /api/estimates/:id — Update estimate
 router.put('/:id', async (req, res) => {
     try {
-        const companyId = req.companyId;
-        const userId = req.user?.sub || req.userId;
+        const companyId = getCompanyId(req);
+        const userId = getUserId(req);
         const { id } = req.params;
         const data = req.body;
 
@@ -94,13 +106,46 @@ router.put('/:id', async (req, res) => {
     }
 });
 
-// DELETE /api/estimates/:id — Delete/archive estimate
-router.delete('/:id', async (req, res) => {
+// POST /api/estimates/:id/archive — Archive estimate
+router.post('/:id/archive', async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = getCompanyId(req);
+        const userId = getUserId(req);
         const { id } = req.params;
 
-        const result = await estimatesService.deleteEstimate(companyId, id);
+        const result = await estimatesService.archiveEstimate(companyId, userId, id);
+        res.json({ ok: true, data: result });
+    } catch (err) {
+        console.error('[Estimates] POST /:id/archive error:', err.message);
+        const status = err.httpStatus || 500;
+        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+    }
+});
+
+// POST /api/estimates/:id/restore — Restore archived estimate to draft
+router.post('/:id/restore', async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        const userId = getUserId(req);
+        const { id } = req.params;
+
+        const result = await estimatesService.restoreEstimate(companyId, userId, id);
+        res.json({ ok: true, data: result });
+    } catch (err) {
+        console.error('[Estimates] POST /:id/restore error:', err.message);
+        const status = err.httpStatus || 500;
+        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+    }
+});
+
+// DELETE kept as a compatibility alias for old callers; it archives, never hard-deletes.
+router.delete('/:id', async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        const userId = getUserId(req);
+        const { id } = req.params;
+
+        const result = await estimatesService.archiveEstimate(companyId, userId, id);
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Estimates] DELETE /:id error:', err.message);
@@ -116,8 +161,8 @@ router.delete('/:id', async (req, res) => {
 // POST /api/estimates/:id/send — Send estimate to client
 router.post('/:id/send', async (req, res) => {
     try {
-        const companyId = req.companyId;
-        const userId = req.user?.sub || req.userId;
+        const companyId = getCompanyId(req);
+        const userId = getUserId(req);
         const { id } = req.params;
         const { channel, recipient, message } = req.body;
 
@@ -133,13 +178,16 @@ router.post('/:id/send', async (req, res) => {
 // POST /api/estimates/:id/approve — Mark estimate approved
 router.post('/:id/approve', async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = getCompanyId(req);
         const { id } = req.params;
-        const { actor_type, actor_id } = req.body || {};
+        const { actor_type, actor_id, signature_name, signature_consent } = req.body || {};
         const actorType = actor_type || 'user';
-        const actorId = actor_id || req.user?.sub || req.userId;
+        const actorId = actor_id || getUserId(req);
 
-        const result = await estimatesService.approveEstimate(companyId, id, actorType, actorId);
+        const result = await estimatesService.approveEstimate(companyId, id, actorType, actorId, {
+            signature_name,
+            signature_consent,
+        });
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Estimates] POST /:id/approve error:', err.message);
@@ -151,13 +199,13 @@ router.post('/:id/approve', async (req, res) => {
 // POST /api/estimates/:id/decline — Mark estimate declined
 router.post('/:id/decline', async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = getCompanyId(req);
         const { id } = req.params;
-        const { actor_type, actor_id } = req.body || {};
+        const { actor_type, actor_id, reason } = req.body || {};
         const actorType = actor_type || 'user';
-        const actorId = actor_id || req.user?.sub || req.userId;
+        const actorId = actor_id || getUserId(req);
 
-        const result = await estimatesService.declineEstimate(companyId, id, actorType, actorId);
+        const result = await estimatesService.declineEstimate(companyId, id, actorType, actorId, { reason });
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Estimates] POST /:id/decline error:', err.message);
@@ -166,11 +214,11 @@ router.post('/:id/decline', async (req, res) => {
     }
 });
 
-// POST /api/estimates/:id/convert — Convert accepted estimate to invoice
+// POST /api/estimates/:id/convert — Convert approved estimate to invoice
 router.post('/:id/convert', async (req, res) => {
     try {
-        const companyId = req.companyId;
-        const userId = req.user?.sub || req.userId;
+        const companyId = getCompanyId(req);
+        const userId = getUserId(req);
         const { id } = req.params;
 
         const result = await estimatesService.convertToInvoice(companyId, userId, id);
@@ -185,7 +233,8 @@ router.post('/:id/convert', async (req, res) => {
 // POST /api/estimates/:id/link-job — Link estimate to job
 router.post('/:id/link-job', async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = getCompanyId(req);
+        const userId = getUserId(req);
         const { id } = req.params;
         const { job_id } = req.body;
 
@@ -193,7 +242,7 @@ router.post('/:id/link-job', async (req, res) => {
             return res.status(400).json({ ok: false, error: { code: 'MISSING_FIELD', message: 'job_id is required' } });
         }
 
-        const result = await estimatesService.linkJob(companyId, id, job_id);
+        const result = await estimatesService.linkJob(companyId, userId, id, job_id);
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Estimates] POST /:id/link-job error:', err.message);
@@ -214,7 +263,7 @@ router.post('/:id/copy-to-invoice', (req, res) => {
 // GET /api/estimates/:id/revisions — List estimate revisions
 router.get('/:id/revisions', async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = getCompanyId(req);
         const { id } = req.params;
 
         const result = await estimatesService.getRevisions(companyId, id);
@@ -229,7 +278,7 @@ router.get('/:id/revisions', async (req, res) => {
 // GET /api/estimates/:id/events — List estimate events
 router.get('/:id/events', async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = getCompanyId(req);
         const { id } = req.params;
 
         const result = await estimatesService.getEvents(companyId, id);
@@ -253,8 +302,8 @@ router.get('/:id/payments', (req, res) => {
 // POST /api/estimates/:id/items — Add line item
 router.post('/:id/items', async (req, res) => {
     try {
-        const companyId = req.companyId;
-        const userId = req.user?.sub || req.userId;
+        const companyId = getCompanyId(req);
+        const userId = getUserId(req);
         const { id } = req.params;
         const item = req.body;
 
@@ -270,8 +319,8 @@ router.post('/:id/items', async (req, res) => {
 // PUT /api/estimates/:id/items/:itemId — Update line item
 router.put('/:id/items/:itemId', async (req, res) => {
     try {
-        const companyId = req.companyId;
-        const userId = req.user?.sub || req.userId;
+        const companyId = getCompanyId(req);
+        const userId = getUserId(req);
         const { id, itemId } = req.params;
         const data = req.body;
 
@@ -287,8 +336,8 @@ router.put('/:id/items/:itemId', async (req, res) => {
 // DELETE /api/estimates/:id/items/:itemId — Remove line item
 router.delete('/:id/items/:itemId', async (req, res) => {
     try {
-        const companyId = req.companyId;
-        const userId = req.user?.sub || req.userId;
+        const companyId = getCompanyId(req);
+        const userId = getUserId(req);
         const { id, itemId } = req.params;
 
         const result = await estimatesService.removeItem(companyId, id, userId, itemId);
@@ -301,7 +350,7 @@ router.delete('/:id/items/:itemId', async (req, res) => {
 });
 
 // =============================================================================
-// Attachments & PDF (stubs — not in MVP scope)
+// Attachments & PDF
 // =============================================================================
 
 router.get('/:id/attachments', (req, res) => {
@@ -312,8 +361,22 @@ router.post('/:id/attachments', (req, res) => {
     res.status(501).json({ ok: false, error: { code: 'NOT_IMPLEMENTED', message: 'Attachments are planned for a future sprint' } });
 });
 
-router.get('/:id/pdf', (req, res) => {
-    res.status(501).json({ ok: false, error: { code: 'NOT_IMPLEMENTED', message: 'PDF generation is planned for a future sprint' } });
+router.get('/:id/pdf', async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        const { id } = req.params;
+        const { estimate, buffer } = await estimatesService.generatePdf(companyId, id);
+        const safeNumber = String(estimate.estimate_number || `estimate-${id}`).replace(/[^a-z0-9_-]+/gi, '_');
+
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Length', buffer.length);
+        res.setHeader('Content-Disposition', `inline; filename="${safeNumber}.pdf"`);
+        res.send(buffer);
+    } catch (err) {
+        console.error('[Estimates] GET /:id/pdf error:', err.message);
+        const status = err.httpStatus || 500;
+        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+    }
 });
 
 module.exports = router;

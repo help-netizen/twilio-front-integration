@@ -7,7 +7,7 @@ import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
-import { Plus, MoreHorizontal, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { MoreHorizontal, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { Estimate, EstimateCreateData } from '../services/estimatesApi';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 
@@ -18,20 +18,16 @@ const STATUS_OPTIONS = [
     { value: 'draft', label: 'Draft' },
     { value: 'sent', label: 'Sent' },
     { value: 'viewed', label: 'Viewed' },
-    { value: 'accepted', label: 'Accepted' },
+    { value: 'approved', label: 'Approved' },
     { value: 'declined', label: 'Declined' },
-    { value: 'expired', label: 'Expired' },
-    { value: 'converted', label: 'Converted' },
 ];
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
     draft: 'secondary',
     sent: 'outline',
     viewed: 'outline',
-    accepted: 'default',
+    approved: 'default',
     declined: 'destructive',
-    expired: 'secondary',
-    converted: 'default',
 };
 
 function formatMoney(value: string | number): string {
@@ -52,11 +48,6 @@ export function EstimatesPage() {
     const [sendDialogOpen, setSendDialogOpen] = useState(false);
     const [sendEstimateId, setSendEstimateId] = useState<number | null>(null);
 
-    const handleCreate = () => {
-        setEditingEstimate(null);
-        setEditorOpen(true);
-    };
-
     const handleEdit = (estimate: Estimate) => {
         setEditingEstimate(estimate);
         setEditorOpen(true);
@@ -65,8 +56,6 @@ export function EstimatesPage() {
     const handleEditorSave = async (data: EstimateCreateData) => {
         if (editingEstimate) {
             await page.handleUpdateEstimate(editingEstimate.id, data);
-        } else {
-            await page.handleCreateEstimate(data);
         }
         setEditorOpen(false);
         setEditingEstimate(null);
@@ -94,6 +83,20 @@ export function EstimatesPage() {
                 </div>
 
                 <div className="blanc-controls-group">
+                    <div className="inline-flex rounded-md border bg-background p-0.5">
+                        <button
+                            className={`px-3 py-1 text-sm ${!page.filters.includeArchived ? 'rounded bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
+                            onClick={() => page.setIncludeArchived(false)}
+                        >
+                            Only Open
+                        </button>
+                        <button
+                            className={`px-3 py-1 text-sm ${page.filters.includeArchived ? 'rounded bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
+                            onClick={() => page.setIncludeArchived(true)}
+                        >
+                            All
+                        </button>
+                    </div>
                     <Select
                         value={page.filters.status || '_all'}
                         onValueChange={v => page.setStatus(v === '_all' ? '' : v)}
@@ -107,9 +110,6 @@ export function EstimatesPage() {
                             ))}
                         </SelectContent>
                     </Select>
-                    <button onClick={handleCreate} className="blanc-control-chip-primary">
-                        <Plus className="size-4" />New Estimate
-                    </button>
                 </div>
             </div>
 
@@ -144,7 +144,7 @@ export function EstimatesPage() {
                                 {page.estimates.map(est => (
                                     <tr
                                         key={est.id}
-                                        className={`border-b cursor-pointer hover:bg-muted/50 transition-colors ${page.selectedEstimate?.id === est.id ? 'bg-muted' : ''}`}
+                                        className={`border-b cursor-pointer hover:bg-muted/50 transition-colors ${page.selectedEstimate?.id === est.id ? 'bg-muted' : ''} ${est.archived_at ? 'grayscale opacity-60' : ''}`}
                                         onClick={() => page.selectEstimate(est.id)}
                                     >
                                         <td className="px-4 py-2 font-mono text-xs">{est.estimate_number}</td>
@@ -153,6 +153,7 @@ export function EstimatesPage() {
                                             <Badge variant={STATUS_VARIANT[est.status] || 'secondary'} className="capitalize">
                                                 {est.status}
                                             </Badge>
+                                            {est.archived_at && <Badge variant="outline" className="ml-1">Archived</Badge>}
                                         </td>
                                         <td className="px-4 py-2 text-right font-mono">${formatMoney(est.total)}</td>
                                         <td className="px-4 py-2 text-muted-foreground">{formatDate(est.created_at)}</td>
@@ -164,11 +165,15 @@ export function EstimatesPage() {
                                                     </Button>
                                                 </DropdownMenuTrigger>
                                                 <DropdownMenuContent align="end" onClick={e => e.stopPropagation()}>
-                                                    <DropdownMenuItem onClick={() => handleEdit(est)}>Edit</DropdownMenuItem>
-                                                    {est.status === 'draft' && (
+                                                    {!est.archived_at && <DropdownMenuItem onClick={() => handleEdit(est)}>Edit</DropdownMenuItem>}
+                                                    {!est.archived_at && (
                                                         <DropdownMenuItem onClick={() => handleSend(est.id)}>Send</DropdownMenuItem>
                                                     )}
-                                                    <DropdownMenuItem className="text-red-600" onClick={() => page.handleDeleteEstimate(est.id)}>Delete</DropdownMenuItem>
+                                                    {est.archived_at ? (
+                                                        <DropdownMenuItem onClick={() => page.handleRestoreEstimate(est.id)}>Restore to draft</DropdownMenuItem>
+                                                    ) : (
+                                                        <DropdownMenuItem onClick={() => page.handleArchiveEstimate(est.id)}>Archive</DropdownMenuItem>
+                                                    )}
                                                 </DropdownMenuContent>
                                             </DropdownMenu>
                                         </td>
@@ -219,7 +224,7 @@ export function EstimatesPage() {
                     open={sendDialogOpen}
                     onOpenChange={open => { setSendDialogOpen(open); if (!open) setSendEstimateId(null); }}
                     estimateId={sendEstimateId}
-                    contactEmail={page.selectedEstimate?.contact_name || ''}
+                    contactEmail={page.selectedEstimate?.contact_email || ''}
                     onSend={data => page.handleSendEstimate(sendEstimateId, data)}
                 />
             )}
@@ -233,10 +238,11 @@ export function EstimatesPage() {
                         loading={page.detailLoading}
                         onClose={page.closeDetail}
                         onEdit={() => handleEdit(page.selectedEstimate!)}
-                        onSend={() => handleSend(page.selectedEstimate!.id)}
+                        onSend={data => page.handleSendEstimate(page.selectedEstimate!.id, data)}
                         onApprove={() => page.handleApproveEstimate(page.selectedEstimate!.id)}
-                        onDecline={() => page.handleDeclineEstimate(page.selectedEstimate!.id)}
-                        onDelete={() => page.handleDeleteEstimate(page.selectedEstimate!.id)}
+                        onDecline={(reason: string) => page.handleDeclineEstimate(page.selectedEstimate!.id, reason)}
+                        onArchive={() => page.handleArchiveEstimate(page.selectedEstimate!.id)}
+                        onRestore={() => page.handleRestoreEstimate(page.selectedEstimate!.id)}
                         onLinkJob={(jobId: number) => page.handleLinkJob(page.selectedEstimate!.id, jobId)}
                     />
                 )}

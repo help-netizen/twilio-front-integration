@@ -9,7 +9,7 @@ import { EstimateEditorDialog } from '../estimates/EstimateEditorDialog';
 import { InvoiceEditorDialog } from '../invoices/InvoiceEditorDialog';
 import { EstimateDetailPanel } from '../estimates/EstimateDetailPanel';
 import { InvoiceDetailPanel } from '../invoices/InvoiceDetailPanel';
-import { fetchEstimateEvents, approveEstimate, declineEstimate, sendEstimate, deleteEstimate, linkJobToEstimate } from '../../services/estimatesApi';
+import { archiveEstimate, fetchEstimate, fetchEstimateEvents, approveEstimate, declineEstimate, sendEstimate, restoreEstimate, linkJobToEstimate, updateEstimate } from '../../services/estimatesApi';
 import { fetchInvoiceEvents, recordPayment, voidInvoice, deleteInvoice } from '../../services/invoicesApi';
 import type { EstimateEvent } from '../../services/estimatesApi';
 import type { InvoiceEvent, RecordPaymentData } from '../../services/invoicesApi';
@@ -19,7 +19,7 @@ import { toast } from 'sonner';
 
 const ESTIMATE_STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
     draft: 'secondary', sent: 'outline', viewed: 'outline',
-    accepted: 'default', declined: 'destructive', expired: 'secondary', converted: 'default',
+    approved: 'default', declined: 'destructive',
 };
 const INVOICE_STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
     draft: 'secondary', sent: 'outline', viewed: 'outline',
@@ -46,6 +46,7 @@ export function LeadFinancialsTab({ leadId }: Props) {
     } = useLeadFinancials(leadId);
 
     const [showEstimateEditor, setShowEstimateEditor] = useState(false);
+    const [editingEstimate, setEditingEstimate] = useState<typeof selectedEstimate>(null);
     const [showInvoiceEditor, setShowInvoiceEditor] = useState(false);
     const [estimateEvents, setEstimateEvents] = useState<EstimateEvent[]>([]);
     const [invoiceEvents, setInvoiceEvents] = useState<InvoiceEvent[]>([]);
@@ -54,9 +55,12 @@ export function LeadFinancialsTab({ leadId }: Props) {
     const openEstimate = async (e: (typeof estimates)[0]) => {
         setDetailLoading(true);
         try {
-            const evts = await fetchEstimateEvents(e.id);
+            const [fullEstimate, evts] = await Promise.all([
+                fetchEstimate(e.id),
+                fetchEstimateEvents(e.id),
+            ]);
             setEstimateEvents(evts);
-            setSelectedEstimate(e);
+            setSelectedEstimate(fullEstimate);
             setSelectedInvoice(null);
         } finally {
             setDetailLoading(false);
@@ -107,9 +111,11 @@ export function LeadFinancialsTab({ leadId }: Props) {
             <div>
                 <div className="flex items-center justify-between mb-2">
                     <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Estimates</p>
-                    <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setShowEstimateEditor(true)}>
-                        <Plus className="size-3 mr-1" />New
-                    </Button>
+                    {estimates.length === 0 && (
+                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setEditingEstimate(null); setShowEstimateEditor(true); }}>
+                            <Plus className="size-3 mr-1" />New
+                        </Button>
+                    )}
                 </div>
                 {estimates.length === 0 && !loading && (
                     <p className="text-xs text-muted-foreground">No estimates</p>
@@ -122,7 +128,7 @@ export function LeadFinancialsTab({ leadId }: Props) {
                             onClick={() => openEstimate(e)}
                         >
                             <span className="font-mono text-xs text-muted-foreground mr-2">{e.estimate_number}</span>
-                            <span className="flex-1 truncate">{e.title || 'Estimate'}</span>
+                            <span className="flex-1 truncate">{e.summary || e.contact_name || 'Estimate'}</span>
                             <Badge variant={ESTIMATE_STATUS_VARIANT[e.status] || 'secondary'} className="capitalize text-xs ml-2 shrink-0">
                                 {e.status}
                             </Badge>
@@ -166,12 +172,19 @@ export function LeadFinancialsTab({ leadId }: Props) {
             {/* Estimate editor dialog */}
             <EstimateEditorDialog
                 open={showEstimateEditor}
-                onOpenChange={setShowEstimateEditor}
-                estimate={null}
+                onOpenChange={(open) => { setShowEstimateEditor(open); if (!open) setEditingEstimate(null); }}
+                estimate={editingEstimate}
                 defaultLeadId={leadId}
                 onSave={async (data) => {
-                    await handleCreateEstimate(data);
+                    if (editingEstimate) {
+                        const updated = await updateEstimate(editingEstimate.id, data);
+                        setSelectedEstimate(updated);
+                    } else {
+                        await handleCreateEstimate(data);
+                    }
+                    refresh();
                     setShowEstimateEditor(false);
+                    setEditingEstimate(null);
                 }}
             />
 
@@ -196,11 +209,14 @@ export function LeadFinancialsTab({ leadId }: Props) {
                             events={estimateEvents}
                             loading={detailLoading}
                             onClose={() => setSelectedEstimate(null)}
-                            onEdit={() => {}}
-                            onSend={async () => {
+                            onEdit={() => {
+                                setEditingEstimate(selectedEstimate);
+                                setShowEstimateEditor(true);
+                            }}
+                            onSend={async (data) => {
                                 try {
-                                    await sendEstimate(selectedEstimate.id, { channel: 'email', recipient: '' });
-                                    toast.success('Estimate sent');
+                                    await sendEstimate(selectedEstimate.id, data);
+                                    toast.success('Send workflow opened');
                                     refresh();
                                 } catch (err: any) { toast.error(err.message); }
                             }}
@@ -212,20 +228,28 @@ export function LeadFinancialsTab({ leadId }: Props) {
                                     setSelectedEstimate(null);
                                 } catch (err: any) { toast.error(err.message); }
                             }}
-                            onDecline={async () => {
+                            onDecline={async (reason: string) => {
                                 try {
-                                    await declineEstimate(selectedEstimate.id);
+                                    await declineEstimate(selectedEstimate.id, reason);
                                     toast.success('Estimate declined');
                                     refresh();
                                     setSelectedEstimate(null);
                                 } catch (err: any) { toast.error(err.message); }
                             }}
-                            onDelete={async () => {
+                            onArchive={async () => {
                                 try {
-                                    await deleteEstimate(selectedEstimate.id);
-                                    toast.success('Estimate deleted');
+                                    const updated = await archiveEstimate(selectedEstimate.id);
+                                    toast.success('Estimate archived');
                                     refresh();
-                                    setSelectedEstimate(null);
+                                    setSelectedEstimate(updated);
+                                } catch (err: any) { toast.error(err.message); }
+                            }}
+                            onRestore={async () => {
+                                try {
+                                    const updated = await restoreEstimate(selectedEstimate.id);
+                                    toast.success('Estimate restored to draft');
+                                    refresh();
+                                    setSelectedEstimate(updated);
                                 } catch (err: any) { toast.error(err.message); }
                             }}
                             onLinkJob={async (jId) => {

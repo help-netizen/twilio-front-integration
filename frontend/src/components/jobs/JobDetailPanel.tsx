@@ -79,7 +79,7 @@ export function JobDetailPanel({
                             <NotesHistoryTabs entityType="job" entityId={job.id} onNoteAdded={onJobUpdated ? () => onJobUpdated(job) : undefined} />
                             <JobMetadataSection job={job} />
                             <p className="blanc-eyebrow pt-2">Estimates &amp; Invoices</p>
-                            <JobFinancialsTab jobId={job.id} />
+                            <JobFinancialsTab jobId={job.id} leadSerialId={job.lead_serial_id} />
                         </div>
                     </>
                 )}
@@ -107,7 +107,7 @@ export function JobDetailPanel({
                     </TabsContent>
 
                     <TabsContent value="financials" className="flex-1 flex flex-col mt-0 data-[state=inactive]:hidden">
-                        <JobFinancialsTab jobId={job.id} />
+                        <JobFinancialsTab jobId={job.id} leadSerialId={job.lead_serial_id} />
                     </TabsContent>
                 </Tabs>
             </div>

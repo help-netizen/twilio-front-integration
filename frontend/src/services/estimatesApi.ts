@@ -21,23 +21,32 @@ export interface EstimateItem {
     amount: string;
     taxable: boolean;
     metadata: any;
+    item_type?: string | null;
+    category_id?: number | null;
+    price_book_item_id?: number | null;
 }
+
+export type EstimateStatus = 'draft' | 'sent' | 'viewed' | 'approved' | 'declined';
+export type EstimateDiscountType = 'fixed' | 'percentage' | null;
 
 export interface Estimate {
     id: number;
     company_id: string;
     estimate_number: string;
-    status: 'draft' | 'sent' | 'viewed' | 'accepted' | 'declined' | 'expired' | 'converted';
+    status: EstimateStatus;
     contact_id: number | null;
     lead_id: number | null;
     job_id: number | null;
     title: string | null;
+    summary: string | null;
     notes: string | null;
     internal_note: string | null;
     subtotal: string;
     tax_rate: string;
     tax_amount: string;
     discount_amount: string;
+    discount_type: EstimateDiscountType;
+    discount_value: string;
     total: string;
     currency: string;
     deposit_required: boolean;
@@ -45,6 +54,9 @@ export interface Estimate {
     deposit_value: string | null;
     deposit_paid: string;
     signature_required: boolean;
+    signature_name?: string | null;
+    signature_consented_at?: string | null;
+    approved_snapshot?: any;
     signed_at: string | null;
     valid_until: string | null;
     sent_at: string | null;
@@ -54,8 +66,16 @@ export interface Estimate {
     updated_by: string | null;
     created_at: string;
     updated_at: string;
+    archived_at?: string | null;
+    archived_by?: string | null;
+    estimate_sequence?: number;
     items?: EstimateItem[];
     contact_name?: string;
+    contact_email?: string | null;
+    contact_phone?: string | null;
+    job_number?: string | null;
+    invoice_id?: number | null;
+    invoice_number?: string | null;
 }
 
 export interface EstimateEvent {
@@ -83,6 +103,7 @@ export interface EstimatesListParams {
     lead_id?: number;
     job_id?: number;
     search?: string;
+    include_archived?: boolean;
     page?: number;
     limit?: number;
 }
@@ -99,10 +120,12 @@ export interface EstimateCreateData {
     lead_id?: number | null;
     job_id?: number | null;
     title?: string;
+    summary?: string | null;
     notes?: string;
     internal_note?: string;
     tax_rate?: string;
-    discount_amount?: string;
+    discount_type?: EstimateDiscountType;
+    discount_value?: string;
     currency?: string;
     deposit_required?: boolean;
     deposit_type?: string | null;
@@ -113,8 +136,8 @@ export interface EstimateCreateData {
 }
 
 export interface EstimateSendData {
-    channel: 'email' | 'sms';
-    recipient: string;
+    channel: 'email' | 'text' | 'sms';
+    recipient?: string;
     message?: string;
 }
 
@@ -155,8 +178,11 @@ export async function fetchEstimates(filters: EstimatesListParams = {}): Promise
     if (filters.lead_id) params.set('lead_id', String(filters.lead_id));
     if (filters.job_id) params.set('job_id', String(filters.job_id));
     if (filters.search) params.set('search', filters.search);
-    if (filters.page != null) params.set('page', String(filters.page));
+    if (filters.include_archived) params.set('include_archived', 'true');
     if (filters.limit != null) params.set('limit', String(filters.limit));
+    if (filters.page != null && filters.limit != null) {
+        params.set('offset', String(Math.max(filters.page - 1, 0) * filters.limit));
+    }
     const qs = params.toString();
     const raw = await estimatesRequest<any>(`${ESTIMATES_BASE}${qs ? `?${qs}` : ''}`);
     return {
@@ -189,6 +215,14 @@ export async function deleteEstimate(id: number): Promise<void> {
     await estimatesRequest<void>(`${ESTIMATES_BASE}/${id}`, { method: 'DELETE' });
 }
 
+export async function archiveEstimate(id: number): Promise<Estimate> {
+    return estimatesRequest<Estimate>(`${ESTIMATES_BASE}/${id}/archive`, { method: 'POST' });
+}
+
+export async function restoreEstimate(id: number): Promise<Estimate> {
+    return estimatesRequest<Estimate>(`${ESTIMATES_BASE}/${id}/restore`, { method: 'POST' });
+}
+
 export async function sendEstimate(id: number, data: EstimateSendData): Promise<Estimate> {
     return estimatesRequest<Estimate>(`${ESTIMATES_BASE}/${id}/send`, {
         method: 'POST',
@@ -196,12 +230,18 @@ export async function sendEstimate(id: number, data: EstimateSendData): Promise<
     });
 }
 
-export async function approveEstimate(id: number): Promise<Estimate> {
-    return estimatesRequest<Estimate>(`${ESTIMATES_BASE}/${id}/approve`, { method: 'POST' });
+export async function approveEstimate(id: number, data: { actor_type?: string; signature_name?: string; signature_consent?: boolean } = {}): Promise<Estimate> {
+    return estimatesRequest<Estimate>(`${ESTIMATES_BASE}/${id}/approve`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+    });
 }
 
-export async function declineEstimate(id: number): Promise<Estimate> {
-    return estimatesRequest<Estimate>(`${ESTIMATES_BASE}/${id}/decline`, { method: 'POST' });
+export async function declineEstimate(id: number, reason: string): Promise<Estimate> {
+    return estimatesRequest<Estimate>(`${ESTIMATES_BASE}/${id}/decline`, {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+    });
 }
 
 export async function linkJobToEstimate(id: number, jobId: number): Promise<Estimate> {

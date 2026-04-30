@@ -144,6 +144,9 @@ async function getDocument(sessionId, documentType, documentId) {
         if (!estimate || estimate.contact_id !== session.contact_id) {
             throw new PortalServiceError('NOT_FOUND', 'Document not found', 404);
         }
+        if (estimate.archived_at) {
+            throw new PortalServiceError('NOT_FOUND', 'Document not found', 404);
+        }
         const items = await estimatesQueries.getEstimateItems(documentId);
         document = { ...estimate, items };
     } else if (documentType === 'invoice') {
@@ -170,7 +173,7 @@ async function getDocument(sessionId, documentType, documentId) {
  * Accept (approve) an estimate via the portal.
  * Must be an estimate with status sent or viewed.
  */
-async function acceptDocument(sessionId, documentType, documentId) {
+async function acceptDocument(sessionId, documentType, documentId, options = {}) {
     if (documentType !== 'estimate') {
         throw new PortalServiceError('VALIDATION', 'Only estimates can be accepted', 400);
     }
@@ -189,12 +192,19 @@ async function acceptDocument(sessionId, documentType, documentId) {
     if (!estimate || estimate.contact_id !== session.contact_id) {
         throw new PortalServiceError('NOT_FOUND', 'Estimate not found', 404);
     }
+    if (estimate.archived_at) {
+        throw new PortalServiceError('NOT_FOUND', 'Estimate not found', 404);
+    }
 
     const updated = await estimatesService.approveEstimate(
         session.company_id,
         documentId,
         'client',
-        session.contact_id
+        session.contact_id,
+        {
+            signature_name: options.signature_name,
+            signature_consent: options.signature_consent === true,
+        }
     );
 
     await portalQueries.logEvent(session.id, session.contact_id, 'document_accepted', 'estimate', documentId);
@@ -205,7 +215,7 @@ async function acceptDocument(sessionId, documentType, documentId) {
 /**
  * Decline an estimate via the portal.
  */
-async function declineDocument(sessionId, documentType, documentId) {
+async function declineDocument(sessionId, documentType, documentId, options = {}) {
     if (documentType !== 'estimate') {
         throw new PortalServiceError('VALIDATION', 'Only estimates can be declined', 400);
     }
@@ -224,12 +234,16 @@ async function declineDocument(sessionId, documentType, documentId) {
     if (!estimate || estimate.contact_id !== session.contact_id) {
         throw new PortalServiceError('NOT_FOUND', 'Estimate not found', 404);
     }
+    if (estimate.archived_at) {
+        throw new PortalServiceError('NOT_FOUND', 'Estimate not found', 404);
+    }
 
     const updated = await estimatesService.declineEstimate(
         session.company_id,
         documentId,
         'client',
-        session.contact_id
+        session.contact_id,
+        { reason: options.reason }
     );
 
     await portalQueries.logEvent(session.id, session.contact_id, 'document_declined', 'estimate', documentId);

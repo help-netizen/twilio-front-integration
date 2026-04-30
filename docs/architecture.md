@@ -4,6 +4,159 @@
 
 ---
 
+## PF002-R2: Estimates Composer Refresh
+
+**Status:** Architecture
+**Feature:** Repair-focused estimate composer and lifecycle correction
+**Related requirements:** `PF002-R2` in `docs/requirements.md`
+
+### 1. System Overview
+
+PF002-R2 extends the existing estimates domain rather than creating a new estimate subsystem. The current route/service/query stack remains canonical:
+
+```
+LeadFinancialsTab / JobFinancialsTab / EstimatesPage
+        │
+        ▼
+EstimateEditorDialog ──► estimatesApi.ts ──► /api/estimates
+        │                                      │
+        ▼                                      ▼
+EstimatePreviewDialog                  estimatesService.js
+                                               │
+                                               ▼
+                                      estimatesQueries.js
+                                               │
+                                               ▼
+                          estimates / estimate_items / estimate_events
+                          estimate_revisions (approved snapshots only)
+```
+
+The app detail panel is an operational view. Client-facing document rendering is a separate preview modal/drawer that reads the same estimate payload and default Terms & Warranty template.
+
+### 2. Existing Functionality to Extend
+
+| Existing module | Decision |
+|-----------------|----------|
+| `backend/src/routes/estimates.js` | Extend. Fix tenant context to `req.companyFilter?.company_id`; add archive/restore/decline reason endpoints; keep route mounted under existing authenticated `/api/estimates`. |
+| `backend/src/services/estimatesService.js` | Extend. Own validation, status reset rules, approved snapshots, archive/restore, non-mutating send stub, and conversion to invoice. |
+| `backend/src/db/estimatesQueries.js` | Extend. Align SQL with real schema/migration; add item upsert/replace, taxable totals, archive fields, summary, signature, display number support. |
+| `frontend/src/components/estimates/EstimateEditorDialog.tsx` | Refactor. Keep as canonical editor, but switch from inline cards to item-list + add/edit item dialog. |
+| `frontend/src/components/estimates/EstimateDetailPanel.tsx` | Extend. Add Preview, Archive/Restore, decline reason, approved status, invoice badge. Disable actions when archived. |
+| `frontend/src/pages/EstimatesPage.tsx` | Extend. Remove global create, add `Only Open / All` archive filter. |
+| `frontend/src/hooks/useLeadFinancials.ts`, `useJobFinancials.ts` | Extend. Continue as Lead/Job entry points for creation. |
+| `frontend/src/services/estimatesApi.ts` | Extend typed API contract. |
+
+No new parallel estimate store or XML document model is introduced.
+
+### 3. Database Changes
+
+Add a new migration after the current highest migration number.
+
+#### `estimates`
+
+Add/align:
+
+- `summary TEXT`
+- `discount_type VARCHAR(20) CHECK (discount_type IN ('fixed','percentage'))`
+- `discount_value NUMERIC(12,2) NOT NULL DEFAULT 0`
+- keep `discount_amount NUMERIC(12,2)` as calculated amount
+- `estimate_sequence INTEGER NOT NULL DEFAULT 1`
+- `archived_at TIMESTAMPTZ`
+- `archived_by UUID REFERENCES crm_users(id) ON DELETE SET NULL`
+- `approved_snapshot JSONB`
+- `signature_name TEXT`
+- `signature_consented_at TIMESTAMPTZ`
+- status check must use `approved`, not `accepted`
+
+Remove from P0 behavior, but columns may remain for compatibility:
+
+- `valid_until`
+- deposit columns
+
+#### `estimate_items`
+
+Add future-compatible optional fields:
+
+- `item_type TEXT`
+- `category_id BIGINT`
+- `price_book_item_id BIGINT`
+
+Existing `name`, `description`, `quantity`, `unit_price`, `taxable`, `metadata` remain canonical. `unit` stays nullable for future imports but is not shown in the P0 UI.
+
+### 4. Backend Service Contracts
+
+Core service methods:
+
+- `listEstimates(companyId, filters)` supports `includeArchived`.
+- `getEstimate(companyId, id)` returns estimate with items and invoice reference if available.
+- `createEstimate(companyId, userId, data)` validates Lead/Job context, resolves contact from job/lead, computes display number, creates items in one operation, recalculates totals.
+- `updateEstimate(companyId, userId, id, data)` replaces editable document fields/items, validates discount/qty/title, resets status to `draft` when editing `sent`, `viewed`, `approved`, or `declined`.
+- `approveEstimate(companyId, id, actorType, actorId, signatureData)` requires at least one item, sets `approved`, writes `approved_snapshot`, creates event.
+- `declineEstimate(companyId, id, actorType, actorId, reason)` requires non-empty reason, sets `declined`, creates event.
+- `archiveEstimate(companyId, id, userId)` sets `archived_at`, `archived_by`, creates event.
+- `restoreEstimate(companyId, id, userId)` clears archive fields, sets status `draft`, creates event.
+- `sendEstimate(...)` is P0 non-mutating stub: validates payload/channel, creates optional event if needed, but does not change status.
+
+Totals are recalculated server-side from item rows:
+
+```
+subtotal = sum(item.amount)
+discount_amount = fixed amount or subtotal * percentage / 100
+taxable_base = max(sum(taxable item.amount) - discount_amount, 0)
+tax_amount = taxable_base * tax_rate / 100
+total = subtotal - discount_amount + tax_amount
+```
+
+### 5. API Endpoints
+
+Existing endpoint names remain unless noted:
+
+- `GET /api/estimates?include_archived=true|false`
+- `POST /api/estimates`
+- `GET /api/estimates/:id`
+- `PUT /api/estimates/:id`
+- `POST /api/estimates/:id/send` — P0 workflow stub, no status mutation
+- `POST /api/estimates/:id/approve`
+- `POST /api/estimates/:id/decline` — requires `{ reason }`
+- `POST /api/estimates/:id/archive`
+- `POST /api/estimates/:id/restore`
+- `POST /api/estimates/:id/convert`
+- `GET /api/estimates/:id/events`
+- `GET /api/estimates/:id/revisions`
+
+Route handlers must derive company id from:
+
+```js
+const companyId = req.companyFilter?.company_id || req.user?.company_id;
+```
+
+All query-layer access by id must include `company_id` checks through the parent estimate row. Foreign ids return 404.
+
+### 6. Frontend Components
+
+New or refactored components:
+
+- `EstimateEditorDialog` — document-level editor with Summary, item list, discount/tax, signature toggle, read-only deposit.
+- `EstimateItemDialog` — add/edit custom item; title required, qty > 0, taxable default false.
+- `EstimatePreviewDialog` — client-facing preview modal/drawer.
+- `EstimateDeclineDialog` — reason required.
+
+Listing and detail:
+
+- `EstimatesPage` removes global create and adds `Only Open / All`.
+- Archived rows are greyed and show `Archived`.
+- `EstimateDetailPanel` disables edit/approve/decline/archive actions when archived and exposes restore.
+
+### 7. Security and Isolation
+
+- No new route mount is required; `/api/estimates` is already mounted with `authenticate, requireCompanyAccess`.
+- Existing `req.companyId` usage in estimates route is an architecture violation and must be fixed.
+- All DB operations must scope by `company_id`.
+- No XML primary persistence.
+- No real email/SMS delivery in P0.
+
+---
+
 ## FSM-001: FSM/SCXML Workflow Editor
 
 **Status:** Architecture

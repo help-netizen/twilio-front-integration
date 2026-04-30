@@ -21,6 +21,7 @@ export interface JobTag {
 export interface LocalJob {
     id: number;
     lead_id: number | null;
+    lead_serial_id?: number | null;
     contact_id: number | null;
     zenbooker_job_id: string | null;
 

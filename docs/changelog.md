@@ -4,6 +4,34 @@
 
 ---
 
+## 2026-04-27 — PF002-R2 Estimates Composer Refresh
+
+### PDF Generation
+- Implemented `GET /api/estimates/:id/pdf` for client-facing estimate PDFs.
+- PDF output includes ABC Homes company details, customer/job context, Summary, items, totals, default Terms & Warranty, and ACH payment details.
+- Added `PDF` action to estimate detail and `tests/estimatePdfService.test.js`.
+
+### Product / UX
+- Reworked estimates around Lead/Job-context creation rather than global creation.
+- Added Summary-before-items flow, Add custom item dialog, client-facing Preview, read-only default Terms & Warranty, discount controls, signature toggle, and disabled `Deposit required: No`.
+- `/estimates` is now a searchable list/detail workspace with `Only Open / All` archive visibility, not a global create surface.
+
+### Backend
+- Added migration `082_pf002_r2_estimates_refresh.sql` for `summary`, discount type/value, archive fields, approved snapshots, signature fields, estimate sequence, and future Price Book item references.
+- Rebuilt estimate queries/service/routes around `approved`, archive/restore, non-mutating send stub, decline reason, company-scoped Lead/Job numbering, and draft reset after edits.
+- Portal document access now rejects archived estimates.
+
+### Frontend
+- Updated `estimatesApi` types/actions for `approved`, archive/restore, Summary, discount type/value, and signature fields.
+- Rebuilt editor/detail/send/preview components and integrated them into Lead/Job Financials plus `/estimates`.
+
+### Tests
+- Added `tests/estimatesLifecycleR2.test.js`.
+- Updated `tests/estimatesConvert.test.js` from `accepted` to `approved`.
+- Targeted estimate tests pass; frontend production build passes. Full Jest still has pre-existing unrelated failures in payments/Twilio worker/webhook/state-machine suites.
+
+---
+
 ## 2026-04-22 — F014: Ads Analytics Microservice
 
 ### New Feature

@@ -138,6 +138,7 @@ async function createInvoice(companyId, data) {
         notes,
         internal_note,
         tax_rate,
+        discount_amount,
         payment_terms,
         due_date,
         currency,
@@ -161,9 +162,9 @@ async function createInvoice(companyId, data) {
                     1
                 ))::text, 3, '0'),
             $6, $7, $8, 'draft',
-            COALESCE($9, 0), $10, $11, COALESCE($12, 'USD'),
-            0, 0, 0, 0, 0, 0,
-            $13
+            COALESCE($9::numeric, 0), $10, $11, COALESCE($12, 'USD'),
+            0, 0, COALESCE($13::numeric, 0), 0, 0, 0,
+            $14
         )
         RETURNING *`,
         [
@@ -179,6 +180,7 @@ async function createInvoice(companyId, data) {
             payment_terms || null,
             due_date || null,
             currency || 'USD',
+            discount_amount != null ? discount_amount : 0,
             created_by || null,
         ]
     );

@@ -48,8 +48,10 @@ const { convertToInvoice, EstimatesServiceError } = require('../backend/src/serv
 function makeEstimate(overrides = {}) {
     return {
         id: EST_ID,
-        status: 'accepted',
+        estimate_number: 'ESTIMATE 519-1',
+        status: 'approved',
         invoice_id: null,
+        archived_at: null,
         contact_id: 7,
         lead_id: null,
         job_id: null,
@@ -89,7 +91,7 @@ describe('estimatesService.convertToInvoice', () => {
         mockGetInvoice.mockResolvedValue({ id: 99, status: 'draft' });
     });
 
-    it('TC-S4T1-01: creates invoice and copies line items from accepted estimate', async () => {
+    it('TC-S4T1-01: creates invoice and copies line items from approved estimate', async () => {
         mockGetEstimateById.mockResolvedValue(makeEstimate());
         mockGetEstimateItems.mockResolvedValue([makeItem(1), makeItem(2)]);
 
@@ -98,7 +100,7 @@ describe('estimatesService.convertToInvoice', () => {
         expect(mockCreateInvoice).toHaveBeenCalledWith(COMPANY_ID, expect.objectContaining({
             contact_id: 7,
             estimate_id: EST_ID,
-            title: 'Roof Repair',
+            title: 'ESTIMATE 519-1',
         }));
         expect(mockAddInvoiceItem).toHaveBeenCalledTimes(2);
         expect(mockRecalculateTotals).toHaveBeenCalledWith(99);
@@ -122,7 +124,7 @@ describe('estimatesService.convertToInvoice', () => {
             .rejects.toMatchObject({ code: 'NOT_FOUND', httpStatus: 404 });
     });
 
-    it('TC-S4T1-04: returns 400 when estimate is not accepted (status=draft)', async () => {
+    it('TC-S4T1-04: returns 400 when estimate is not approved (status=draft)', async () => {
         mockGetEstimateById.mockResolvedValue(makeEstimate({ status: 'draft' }));
 
         await expect(convertToInvoice(COMPANY_ID, USER_ID, EST_ID))

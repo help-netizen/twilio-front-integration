@@ -2,6 +2,132 @@
 
 > FSM-001: FSM/SCXML Workflow Editor — Task Breakdown
 
+---
+
+## PF002-R2: Estimates Composer Refresh
+
+**Feature:** Repair-focused estimate composer and lifecycle correction
+**Status:** implemented
+**Related docs:** `docs/requirements.md#PF002-R2`, `docs/architecture.md#PF002-R2`, `docs/specs/PF002-R2-estimates-composer-refresh.md`
+
+### TASK-EST-R2-001: Migration — estimates schema alignment
+**Status:** done
+**Files to modify:**
+- `backend/db/migrations/082_pf002_r2_estimates_refresh.sql`
+**Expected result:**
+- Add `summary`, discount type/value, archive fields, approved snapshot, signature fields, estimate sequence, item future fields.
+- Status constraint supports `approved` and migrates existing `accepted` rows.
+- Existing estimates/items remain readable.
+
+### TASK-EST-R2-002: Backend queries — schema-correct CRUD/totals/archive
+**Status:** done
+**Dependencies:** TASK-EST-R2-001
+**Files to modify:**
+- `backend/src/db/estimatesQueries.js`
+**Expected result:**
+- No writes to missing columns.
+- Items write `name` and `taxable`.
+- List supports `includeArchived`.
+- Totals use taxable subtotal minus discount.
+- Archive/restore and item replace helpers exist.
+- All estimate access remains company-scoped.
+
+### TASK-EST-R2-003: Backend service — lifecycle validation and numbering
+**Status:** done
+**Dependencies:** TASK-EST-R2-002
+**Files to modify:**
+- `backend/src/services/estimatesService.js`
+**Expected result:**
+- Create/update resolve Lead/Job context, validate items/discounts, reset editable non-draft statuses to `draft`.
+- Approve requires items and stores approved snapshot.
+- Decline reason required.
+- Archive/restore implemented.
+- Send is a non-mutating stub.
+- Convert requires `approved` and keeps estimate approved.
+
+### TASK-EST-R2-004: Backend route — tenant context and new actions
+**Status:** done
+**Dependencies:** TASK-EST-R2-003
+**Files to modify:**
+- `backend/src/routes/estimates.js`
+**Files not to modify:**
+- `src/server.js` — route is already mounted with auth + tenant middleware.
+**Expected result:**
+- Route uses `req.companyFilter?.company_id || req.user?.company_id`, not `req.companyId`.
+- Adds archive/restore and decline reason contracts.
+- Send endpoint does not mutate status.
+
+### TASK-EST-R2-005: Backend tests
+**Status:** done
+**Dependencies:** TASK-EST-R2-004
+**Files to modify:**
+- `tests/estimatesLifecycleR2.test.js`
+- `tests/estimatesConvert.test.js`
+**Expected result:**
+- Service tests cover item schema, totals, approve snapshot, decline reason, archive/restore, send stub.
+- Existing convert tests updated from `accepted` to `approved`.
+
+### TASK-EST-R2-006: Frontend API contract
+**Status:** done
+**Dependencies:** TASK-EST-R2-004
+**Files to modify:**
+- `frontend/src/services/estimatesApi.ts`
+**Expected result:**
+- Types include `approved`, archive fields, summary, discount type/value, signature fields.
+- API exposes archive/restore and decline reason.
+
+### TASK-EST-R2-007: Frontend editor and preview
+**Status:** done
+**Dependencies:** TASK-EST-R2-006
+**Files to modify:**
+- `frontend/src/components/estimates/EstimateEditorDialog.tsx`
+- `frontend/src/components/estimates/EstimatePreviewDialog.tsx`
+**Expected result:**
+- Editor uses Add custom item dialog, Summary flow, read-only Terms & Warranty, discount, signature toggle, disabled deposit.
+- Preview modal renders client-facing document.
+
+### TASK-EST-R2-008: Frontend detail/list/send integration
+**Status:** done
+**Dependencies:** TASK-EST-R2-007
+**Files to modify:**
+- `frontend/src/components/estimates/EstimateDetailPanel.tsx`
+- `frontend/src/components/estimates/EstimateSendDialog.tsx`
+- `frontend/src/pages/EstimatesPage.tsx`
+- `frontend/src/hooks/useEstimates.ts`
+- `frontend/src/components/leads/LeadFinancialsTab.tsx`
+- `frontend/src/components/jobs/JobFinancialsTab.tsx`
+**Expected result:**
+- No global create on `/estimates`.
+- Only Open / All filter controls archived visibility.
+- Detail supports Preview, Decline reason, Archive/Restore, approved status.
+- Send dialog is workflow-only and keeps status draft.
+
+### TASK-EST-R2-009: Final documentation and verification
+**Status:** done
+**Dependencies:** TASK-EST-R2-008
+**Files to modify:**
+- `docs/changelog.md`
+- `docs/project-spec.md`
+**Expected result:**
+- Changelog/project spec updated.
+- Relevant Jest/frontend build checks run and results recorded.
+
+### TASK-EST-R2-010: Backend PDF generation
+**Status:** done
+**Dependencies:** TASK-EST-R2-003
+**Files modified:**
+- `backend/src/services/estimatePdfService.js`
+- `backend/src/services/estimatesService.js`
+- `backend/src/routes/estimates.js`
+- `frontend/src/components/estimates/EstimateDetailPanel.tsx`
+- `tests/estimatePdfService.test.js`
+**Expected result:**
+- `GET /api/estimates/:id/pdf` returns `application/pdf` generated from the current estimate.
+- PDF includes company header, customer/job context, Summary, items, totals, Terms & Warranty, and ACH payment details.
+- Estimate detail includes a PDF action.
+
+---
+
 **Feature:** Database-driven FSM replacing hardcoded status constants
 **Migration range:** 072–074
 **Total tasks:** 30

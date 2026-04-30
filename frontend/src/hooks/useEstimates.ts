@@ -17,6 +17,7 @@ import type {
 export interface EstimateFilters {
     status: string;
     search: string;
+    includeArchived: boolean;
     page: number;
     limit: number;
 }
@@ -24,6 +25,7 @@ export interface EstimateFilters {
 const DEFAULT_FILTERS: EstimateFilters = {
     status: '',
     search: '',
+    includeArchived: false,
     page: 1,
     limit: 50,
 };
@@ -50,6 +52,7 @@ export function useEstimates() {
             };
             if (f.status) params.status = f.status;
             if (f.search) params.search = f.search;
+            if (f.includeArchived) params.include_archived = true;
 
             const result: EstimatesListResult = await estimatesApi.fetchEstimates(params);
             setEstimates(result.estimates);
@@ -65,7 +68,7 @@ export function useEstimates() {
 
     useEffect(() => {
         loadEstimates();
-    }, [filters.status, filters.search, filters.page, filters.limit]);
+    }, [filters.status, filters.search, filters.includeArchived, filters.page, filters.limit]);
 
     // ── Select / detail ──────────────────────────────────────────────────────
     const selectEstimate = useCallback(async (id: number) => {
@@ -106,20 +109,28 @@ export function useEstimates() {
         return estimate;
     }, [loadEstimates, selectedEstimate]);
 
-    const handleDeleteEstimate = useCallback(async (id: number) => {
-        await estimatesApi.deleteEstimate(id);
-        toast.success('Estimate deleted');
+    const handleArchiveEstimate = useCallback(async (id: number) => {
+        const estimate = await estimatesApi.archiveEstimate(id);
+        toast.success('Estimate archived');
         if (selectedEstimate?.id === id) {
-            setSelectedEstimate(null);
-            setEvents([]);
+            setSelectedEstimate(estimate);
         }
         await loadEstimates();
+    }, [loadEstimates, selectedEstimate]);
+
+    const handleRestoreEstimate = useCallback(async (id: number) => {
+        const estimate = await estimatesApi.restoreEstimate(id);
+        toast.success('Estimate restored to draft');
+        await loadEstimates();
+        if (selectedEstimate?.id === id) {
+            setSelectedEstimate(estimate);
+        }
     }, [loadEstimates, selectedEstimate]);
 
     // ── Actions ──────────────────────────────────────────────────────────────
     const handleSendEstimate = useCallback(async (id: number, data: EstimateSendData) => {
         const estimate = await estimatesApi.sendEstimate(id, data);
-        toast.success('Estimate sent');
+        toast.success('Send workflow opened');
         await loadEstimates();
         if (selectedEstimate?.id === id) {
             setSelectedEstimate(estimate);
@@ -136,8 +147,8 @@ export function useEstimates() {
         }
     }, [loadEstimates, selectedEstimate]);
 
-    const handleDeclineEstimate = useCallback(async (id: number) => {
-        const estimate = await estimatesApi.declineEstimate(id);
+    const handleDeclineEstimate = useCallback(async (id: number, reason: string) => {
+        const estimate = await estimatesApi.declineEstimate(id, reason);
         toast.success('Estimate declined');
         await loadEstimates();
         if (selectedEstimate?.id === id) {
@@ -163,6 +174,10 @@ export function useEstimates() {
         setFilters(f => ({ ...f, search, page: 1 }));
     }, []);
 
+    const setIncludeArchived = useCallback((includeArchived: boolean) => {
+        setFilters(f => ({ ...f, includeArchived, page: 1 }));
+    }, []);
+
     const setPage = useCallback((page: number) => {
         setFilters(f => ({ ...f, page }));
     }, []);
@@ -185,13 +200,15 @@ export function useEstimates() {
         closeDetail,
         handleCreateEstimate,
         handleUpdateEstimate,
-        handleDeleteEstimate,
+        handleArchiveEstimate,
+        handleRestoreEstimate,
         handleSendEstimate,
         handleApproveEstimate,
         handleDeclineEstimate,
         handleLinkJob,
         setStatus,
         setSearch,
+        setIncludeArchived,
         setPage,
     };
 }

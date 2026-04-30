@@ -1,45 +1,25 @@
-/**
- * EstimateEditorDialog — clean form for creating/editing estimates.
- *
- * When opened from a Job context (defaultJobId), hides ID fields and shows context.
- * Backend auto-resolves contact_id/lead_id from job_id.
- */
-import { useState, useEffect, useCallback } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog';
+import { useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, ChevronDown, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Textarea } from '../ui/textarea';
 import { Checkbox } from '../ui/checkbox';
+import { Badge } from '../ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
-import { Plus, Trash2, ChevronDown } from 'lucide-react';
-import type { Estimate, EstimateCreateData } from '../../services/estimatesApi';
-
-// ── Line item type ───────────────────────────────────────────────────────────
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible';
+import { DEFAULT_TERMS_AND_WARRANTY, EstimatePreviewDialog } from './EstimatePreviewDialog';
+import type { Estimate, EstimateCreateData, EstimateDiscountType } from '../../services/estimatesApi';
 
 interface LineItem {
     key: string;
     name: string;
     description: string;
     quantity: string;
-    unit: string;
     unit_price: string;
     taxable: boolean;
 }
-
-function emptyItem(): LineItem {
-    return { key: crypto.randomUUID(), name: '', description: '', quantity: '1', unit: '', unit_price: '0', taxable: true };
-}
-
-function calcAmount(item: LineItem): number {
-    return (parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0);
-}
-
-function money(v: number): string {
-    return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-// ── Props ────────────────────────────────────────────────────────────────────
 
 interface Props {
     open: boolean;
@@ -47,344 +27,407 @@ interface Props {
     estimate: Estimate | null;
     defaultJobId?: number;
     defaultLeadId?: number;
+    defaultEstimateNumber?: string;
     defaultContext?: string;
     onSave: (data: EstimateCreateData) => Promise<void>;
 }
 
-// ── Component ────────────────────────────────────────────────────────────────
+const newKey = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+const emptyItem = (): LineItem => ({ key: newKey(), name: '', description: '', quantity: '1', unit_price: '0', taxable: false });
 
-export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobId, defaultLeadId, defaultContext, onSave }: Props) {
+function money(value: number | string | null | undefined): string {
+    return '$' + Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function amount(item: LineItem): number {
+    return (Number(item.quantity) || 0) * (Number(item.unit_price) || 0);
+}
+
+function itemMeta(item: LineItem): string {
+    return `${Number(item.quantity) || 0} x ${money(item.unit_price)}`;
+}
+
+export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobId, defaultLeadId, defaultEstimateNumber, defaultContext, onSave }: Props) {
     const isEdit = !!estimate;
-    const hasJobContext = !!defaultJobId && !isEdit;
-
-    // Form state
-    const [contactId, setContactId] = useState('');
-    const [leadId, setLeadId] = useState('');
-    const [jobId, setJobId] = useState('');
-    const [title, setTitle] = useState('');
-    const [notes, setNotes] = useState('');
-    const [internalNote, setInternalNote] = useState('');
-    const [items, setItems] = useState<LineItem[]>([emptyItem()]);
+    const [summary, setSummary] = useState('');
+    const [summaryOpen, setSummaryOpen] = useState(false);
+    const [summaryDialogOpen, setSummaryDialogOpen] = useState(false);
+    const [summaryDraft, setSummaryDraft] = useState('');
+    const [items, setItems] = useState<LineItem[]>([]);
+    const [itemDialogOpen, setItemDialogOpen] = useState(false);
+    const [editingItemKey, setEditingItemKey] = useState<string | null>(null);
+    const [itemDraft, setItemDraft] = useState<LineItem>(emptyItem());
     const [taxRate, setTaxRate] = useState('0');
-    const [discountAmount, setDiscountAmount] = useState('0');
-    const [depositRequired, setDepositRequired] = useState(false);
-    const [depositType, setDepositType] = useState<string>('fixed');
-    const [depositValue, setDepositValue] = useState('0');
-    const [validUntil, setValidUntil] = useState('');
+    const [discountType, setDiscountType] = useState<EstimateDiscountType>(null);
+    const [discountValue, setDiscountValue] = useState('0');
     const [signatureRequired, setSignatureRequired] = useState(false);
-    const [showOptions, setShowOptions] = useState(false);
+    const [termsOpen, setTermsOpen] = useState(false);
+    const [previewOpen, setPreviewOpen] = useState(false);
     const [saving, setSaving] = useState(false);
 
-    // Populate on open
     useEffect(() => {
         if (!open) return;
-        if (estimate) {
-            setContactId(estimate.contact_id ? String(estimate.contact_id) : '');
-            setLeadId(estimate.lead_id ? String(estimate.lead_id) : '');
-            setJobId(estimate.job_id ? String(estimate.job_id) : '');
-            setTitle(estimate.title || '');
-            setNotes(estimate.notes || '');
-            setInternalNote(estimate.internal_note || '');
-            setTaxRate(estimate.tax_rate || '0');
-            setDiscountAmount(estimate.discount_amount || '0');
-            setDepositRequired(estimate.deposit_required);
-            setDepositType(estimate.deposit_type || 'fixed');
-            setDepositValue(estimate.deposit_value || '0');
-            setValidUntil(estimate.valid_until ? estimate.valid_until.split('T')[0] : '');
-            setSignatureRequired(estimate.signature_required);
-            setShowOptions(estimate.deposit_required || estimate.signature_required || !!estimate.valid_until);
-            if (estimate.items?.length) {
-                setItems(estimate.items.map(it => ({ key: crypto.randomUUID(), name: it.name, description: it.description || '', quantity: it.quantity, unit: it.unit || '', unit_price: it.unit_price, taxable: it.taxable })));
-            } else { setItems([emptyItem()]); }
-        } else {
-            setContactId('');
-            setLeadId(defaultLeadId ? String(defaultLeadId) : '');
-            setJobId(defaultJobId ? String(defaultJobId) : '');
-            setTitle('');
-            setNotes('');
-            setInternalNote('');
-            setItems([emptyItem()]);
-            setTaxRate('0');
-            setDiscountAmount('0');
-            setDepositRequired(false);
-            setDepositType('fixed');
-            setDepositValue('0');
-            setValidUntil('');
-            setSignatureRequired(false);
-            setShowOptions(false);
-        }
-    }, [open, estimate]); // eslint-disable-line react-hooks/exhaustive-deps
+        setSummary(estimate?.summary || '');
+        setSummaryOpen(false);
+        setTaxRate(estimate?.tax_rate || '0');
+        setDiscountType(estimate?.discount_type || (Number(estimate?.discount_amount || 0) > 0 ? 'fixed' : null));
+        setDiscountValue(estimate?.discount_value || estimate?.discount_amount || '0');
+        setSignatureRequired(estimate?.signature_required || false);
+        setTermsOpen(false);
+        setItems((estimate?.items || []).map(item => ({
+            key: newKey(),
+            name: item.name,
+            description: item.description || '',
+            quantity: item.quantity || '1',
+            unit_price: item.unit_price || '0',
+            taxable: !!item.taxable,
+        })));
+    }, [open, estimate]);
 
-    // Calculations
-    const subtotal = items.reduce((sum, it) => sum + calcAmount(it), 0);
-    const discount = parseFloat(discountAmount) || 0;
-    const taxableSubtotal = items.filter(it => it.taxable).reduce((sum, it) => sum + calcAmount(it), 0);
-    const taxAmt = Math.max((taxableSubtotal - discount) * ((parseFloat(taxRate) || 0) / 100), 0);
-    const total = subtotal - discount + taxAmt;
+    const subtotal = useMemo(() => items.reduce((sum, item) => sum + amount(item), 0), [items]);
+    const rawDiscountValue = Number(discountValue) || 0;
+    const discountAmount = discountType === 'percentage'
+        ? subtotal * Math.min(Math.max(rawDiscountValue, 0), 100) / 100
+        : discountType === 'fixed'
+            ? rawDiscountValue
+            : 0;
+    const taxableSubtotal = items.filter(item => item.taxable).reduce((sum, item) => sum + amount(item), 0);
+    const taxAmount = Math.max(taxableSubtotal - discountAmount, 0) * ((Number(taxRate) || 0) / 100);
+    const total = subtotal - discountAmount + taxAmount;
+    const discountError = discountType === 'fixed' && discountAmount > subtotal
+        ? 'Discount cannot exceed subtotal'
+        : discountType === 'percentage' && rawDiscountValue > 100
+            ? 'Discount percentage cannot exceed 100'
+            : '';
+    const canSave = (items.length > 0 || summary.trim().length > 0) && !discountError;
+    const previewEstimate: Estimate = {
+        id: estimate?.id || 0,
+        company_id: estimate?.company_id || '',
+        estimate_number: estimate?.estimate_number || defaultEstimateNumber || (defaultLeadId ? `ESTIMATE L-${defaultLeadId}-1` : 'ESTIMATE'),
+        status: estimate?.status || 'draft',
+        contact_id: estimate?.contact_id || null,
+        lead_id: estimate?.lead_id ?? defaultLeadId ?? null,
+        job_id: estimate?.job_id ?? defaultJobId ?? null,
+        title: null,
+        summary: summary.trim() || null,
+        notes: null,
+        internal_note: null,
+        subtotal: subtotal.toFixed(2),
+        tax_rate: taxRate || '0',
+        tax_amount: taxAmount.toFixed(2),
+        discount_amount: discountAmount.toFixed(2),
+        discount_type: discountType,
+        discount_value: discountType ? String(rawDiscountValue) : '0',
+        total: total.toFixed(2),
+        currency: estimate?.currency || 'USD',
+        deposit_required: false,
+        deposit_type: null,
+        deposit_value: null,
+        deposit_paid: '0',
+        signature_required: signatureRequired,
+        signed_at: null,
+        valid_until: null,
+        sent_at: null,
+        accepted_at: null,
+        declined_at: null,
+        created_by: null,
+        updated_by: null,
+        created_at: estimate?.created_at || new Date().toISOString(),
+        updated_at: estimate?.updated_at || new Date().toISOString(),
+        contact_name: estimate?.contact_name,
+        items: items.map((item, index) => ({
+            id: index + 1,
+            estimate_id: estimate?.id || 0,
+            sort_order: index,
+            name: item.name || 'Untitled item',
+            description: item.description || null,
+            quantity: item.quantity || '1',
+            unit: null,
+            unit_price: item.unit_price || '0',
+            amount: amount(item).toFixed(2),
+            taxable: item.taxable,
+            metadata: {},
+        })),
+    };
 
-    // Item mutations
-    const updateItem = useCallback((key: string, field: keyof LineItem, value: string | boolean) => {
-        setItems(prev => prev.map(it => it.key === key ? { ...it, [field]: value } : it));
-    }, []);
-    const addItem = useCallback(() => setItems(prev => [...prev, emptyItem()]), []);
-    const removeItem = useCallback((key: string) => setItems(prev => prev.length > 1 ? prev.filter(it => it.key !== key) : prev), []);
+    const openSummaryDialog = () => {
+        setSummaryDraft(summary);
+        setSummaryDialogOpen(true);
+    };
 
-    // Save
+    const saveSummary = () => {
+        setSummary(summaryDraft.trim());
+        setSummaryOpen(false);
+        setSummaryDialogOpen(false);
+    };
+
+    const openNewItemDialog = () => {
+        setEditingItemKey(null);
+        setItemDraft(emptyItem());
+        setItemDialogOpen(true);
+    };
+
+    const openEditItemDialog = (item: LineItem) => {
+        setEditingItemKey(item.key);
+        setItemDraft({ ...item });
+        setItemDialogOpen(true);
+    };
+
+    const saveItem = () => {
+        if (!itemDraft.name.trim() || Number(itemDraft.quantity) <= 0 || Number(itemDraft.unit_price) < 0) return;
+        const nextItem = { ...itemDraft, name: itemDraft.name.trim() };
+        setItems(prev => editingItemKey
+            ? prev.map(item => item.key === editingItemKey ? nextItem : item)
+            : [...prev, { ...nextItem, key: newKey() }]
+        );
+        setItemDialogOpen(false);
+    };
+
+    const removeItem = (key: string) => {
+        setItems(prev => prev.filter(item => item.key !== key));
+    };
+
     const handleSave = async () => {
+        if (!canSave) return;
         setSaving(true);
         try {
             const data: EstimateCreateData = {
-                contact_id: contactId ? Number(contactId) : null,
-                lead_id: leadId ? Number(leadId) : null,
-                job_id: jobId ? Number(jobId) : null,
-                title: title || undefined,
-                notes: notes || undefined,
-                internal_note: internalNote || undefined,
-                tax_rate: taxRate,
-                discount_amount: String(discount),
-                deposit_required: depositRequired,
-                deposit_type: depositRequired ? depositType : null,
-                deposit_value: depositRequired ? depositValue : null,
+                lead_id: estimate?.lead_id ?? defaultLeadId ?? null,
+                job_id: estimate?.job_id ?? defaultJobId ?? null,
+                summary: summary.trim() || null,
+                tax_rate: taxRate || '0',
+                discount_type: discountType,
+                discount_value: discountType ? String(rawDiscountValue) : '0',
                 signature_required: signatureRequired,
-                valid_until: validUntil || null,
-                items: items.filter(it => it.name.trim()).map((it, idx) => ({
-                    sort_order: idx, name: it.name, description: it.description || null,
-                    quantity: it.quantity, unit: it.unit || null, unit_price: it.unit_price,
-                    amount: String(calcAmount(it)), taxable: it.taxable, metadata: null,
+                items: items.map((item, index) => ({
+                    sort_order: index,
+                    name: item.name,
+                    description: item.description.trim() || null,
+                    quantity: item.quantity || '1',
+                    unit: null,
+                    unit_price: item.unit_price || '0',
+                    amount: String(amount(item)),
+                    taxable: item.taxable,
+                    metadata: {},
                 })),
             };
             await onSave(data);
-        } finally { setSaving(false); }
+        } finally {
+            setSaving(false);
+        }
     };
 
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" style={{ background: 'var(--blanc-surface-strong)' }}>
-                <DialogHeader>
-                    <DialogTitle style={{ fontFamily: 'var(--blanc-font-heading)', fontSize: 20, fontWeight: 700, color: 'var(--blanc-ink-1)' }}>
-                        {isEdit ? 'Edit Estimate' : 'New Estimate'}
-                    </DialogTitle>
-                </DialogHeader>
+        <>
+            <Dialog open={open} onOpenChange={onOpenChange}>
+                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" style={{ background: 'var(--blanc-surface-strong)' }}>
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center justify-between gap-3">
+                            <span>{isEdit ? estimate?.estimate_number : 'New Estimate'}</span>
+                            {estimate?.archived_at && <Badge variant="outline">Archived</Badge>}
+                        </DialogTitle>
+                    </DialogHeader>
 
-                <div className="space-y-5 py-2">
-                    {/* Context banner (when from Job) */}
-                    {hasJobContext && defaultContext && (
-                        <div className="text-[12px] font-medium" style={{ color: 'var(--blanc-ink-3)' }}>
-                            {defaultContext}
-                        </div>
-                    )}
+                    <div className="space-y-5 py-2">
+                        {defaultContext && !isEdit && (
+                            <div className="text-xs font-medium text-muted-foreground">{defaultContext}</div>
+                        )}
 
-                    {/* IDs — only show when NOT from job context */}
-                    {!hasJobContext && (
-                        <div className="grid grid-cols-3 gap-3">
-                            <div>
-                                <Label className="text-xs" style={{ color: 'var(--blanc-ink-2)' }}>Contact ID</Label>
-                                <Input value={contactId} onChange={e => setContactId(e.target.value)} placeholder="Contact ID" />
-                            </div>
-                            <div>
-                                <Label className="text-xs" style={{ color: 'var(--blanc-ink-2)' }}>Lead ID</Label>
-                                <Input value={leadId} onChange={e => setLeadId(e.target.value)} placeholder="Optional" />
-                            </div>
-                            <div>
-                                <Label className="text-xs" style={{ color: 'var(--blanc-ink-2)' }}>Job ID</Label>
-                                <Input value={jobId} onChange={e => setJobId(e.target.value)} placeholder="Optional" />
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Title */}
-                    <div>
-                        <Label className="text-xs" style={{ color: 'var(--blanc-ink-2)' }}>Title</Label>
-                        <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Estimate title" style={{ fontSize: 15, fontWeight: 500 }} />
-                    </div>
-
-                    {/* ── Line Items ── */}
-                    <div>
-                        <div className="flex items-center justify-between mb-3">
-                            <span className="text-[11px] font-semibold uppercase tracking-widest" style={{ color: 'var(--blanc-ink-3)', letterSpacing: '0.14em' }}>Line Items</span>
-                            <button onClick={addItem} className="inline-flex items-center gap-1 text-[12px] font-medium transition-opacity hover:opacity-70" style={{ color: 'var(--blanc-info)', background: 'none', border: 'none', cursor: 'pointer' }}>
-                                <Plus className="size-3.5" /> Add Item
-                            </button>
-                        </div>
-                        <div className="space-y-2">
-                            {items.map(item => {
-                                const amt = calcAmount(item);
-                                return (
-                                    <div
-                                        key={item.key}
-                                        className="rounded-xl p-3"
-                                        style={{ border: '1px solid var(--blanc-line)', background: 'rgba(255,255,255,0.5)' }}
-                                    >
-                                        {/* Row 1: Name + Amount */}
-                                        <div className="flex items-center gap-2 mb-2">
-                                            <Input
-                                                value={item.name}
-                                                onChange={e => updateItem(item.key, 'name', e.target.value)}
-                                                placeholder="Item name"
-                                                className="flex-1"
-                                                style={{ fontSize: 14, fontWeight: 500 }}
-                                            />
-                                            <span className="text-sm font-semibold font-mono shrink-0 w-20 text-right" style={{ color: 'var(--blanc-ink-1)' }}>
-                                                ${money(amt)}
-                                            </span>
-                                        </div>
-                                        {/* Row 2: Qty × Price + controls */}
-                                        <div className="flex items-center gap-2">
-                                            <div className="flex items-center gap-1.5">
-                                                <Input
-                                                    type="number"
-                                                    value={item.quantity}
-                                                    onChange={e => updateItem(item.key, 'quantity', e.target.value)}
-                                                    min="0" step="any"
-                                                    className="w-16 text-center"
-                                                    style={{ fontSize: 13 }}
-                                                />
-                                                <span className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>×</span>
-                                                <div className="relative">
-                                                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs" style={{ color: 'var(--blanc-ink-3)' }}>$</span>
-                                                    <Input
-                                                        type="number"
-                                                        value={item.unit_price}
-                                                        onChange={e => updateItem(item.key, 'unit_price', e.target.value)}
-                                                        min="0" step="0.01"
-                                                        className="w-24 pl-5"
-                                                        style={{ fontSize: 13 }}
-                                                    />
-                                                </div>
-                                            </div>
-                                            <div className="flex items-center gap-2 ml-auto">
-                                                <div className="flex items-center gap-1.5">
-                                                    <Checkbox
-                                                        checked={item.taxable}
-                                                        onCheckedChange={checked => updateItem(item.key, 'taxable', !!checked)}
-                                                    />
-                                                    <span className="text-[11px]" style={{ color: 'var(--blanc-ink-3)' }}>Tax</span>
-                                                </div>
-                                                <button
-                                                    onClick={() => removeItem(item.key)}
-                                                    className="p-1 transition-opacity hover:opacity-70"
-                                                    style={{ color: 'var(--blanc-ink-3)' }}
-                                                >
-                                                    <Trash2 className="size-3.5" />
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </div>
-
-                    {/* ── Financials ── */}
-                    <div className="flex items-start gap-4">
-                        <div className="flex items-center gap-3">
-                            <div>
-                                <Label className="text-[11px]" style={{ color: 'var(--blanc-ink-3)' }}>Tax %</Label>
-                                <Input type="number" value={taxRate} onChange={e => setTaxRate(e.target.value)} min="0" step="0.01" className="w-20" style={{ fontSize: 13 }} />
-                            </div>
-                            <div>
-                                <Label className="text-[11px]" style={{ color: 'var(--blanc-ink-3)' }}>Discount $</Label>
-                                <Input type="number" value={discountAmount} onChange={e => setDiscountAmount(e.target.value)} min="0" step="0.01" className="w-24" style={{ fontSize: 13 }} />
-                            </div>
-                        </div>
-                        <div className="ml-auto text-right space-y-1">
-                            <div className="flex justify-between gap-6 text-[13px]" style={{ color: 'var(--blanc-ink-2)' }}>
-                                <span>Subtotal</span>
-                                <span className="font-mono">${money(subtotal)}</span>
-                            </div>
-                            {discount > 0 && (
-                                <div className="flex justify-between gap-6 text-[13px]" style={{ color: '#EF4444' }}>
-                                    <span>Discount</span>
-                                    <span className="font-mono">-${money(discount)}</span>
-                                </div>
-                            )}
-                            {taxAmt > 0 && (
-                                <div className="flex justify-between gap-6 text-[13px]" style={{ color: 'var(--blanc-ink-2)' }}>
-                                    <span>Tax ({taxRate}%)</span>
-                                    <span className="font-mono">${money(taxAmt)}</span>
-                                </div>
-                            )}
-                            <div className="flex justify-between gap-6 text-[15px] font-semibold pt-1" style={{ borderTop: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-1)' }}>
-                                <span>Total</span>
-                                <span className="font-mono">${money(total)}</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* ── Options (collapsed) ── */}
-                    <div>
-                        <button
-                            onClick={() => setShowOptions(!showOptions)}
-                            className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest transition-opacity hover:opacity-70"
-                            style={{ color: 'var(--blanc-ink-3)', letterSpacing: '0.14em', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
-                        >
-                            <ChevronDown className="size-3" style={{ transform: showOptions ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s' }} />
-                            Options
-                        </button>
-                        {showOptions && (
-                            <div className="mt-3 space-y-3">
-                                {/* Deposit */}
-                                <div className="flex items-center gap-2">
-                                    <Checkbox id="est-deposit" checked={depositRequired} onCheckedChange={checked => setDepositRequired(!!checked)} />
-                                    <Label htmlFor="est-deposit" className="text-sm cursor-pointer" style={{ color: 'var(--blanc-ink-1)' }}>Deposit required</Label>
-                                </div>
-                                {depositRequired && (
-                                    <div className="grid grid-cols-2 gap-3 pl-6">
-                                        <div>
-                                            <Label className="text-[11px]" style={{ color: 'var(--blanc-ink-3)' }}>Type</Label>
-                                            <Select value={depositType} onValueChange={setDepositType}>
-                                                <SelectTrigger><SelectValue /></SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="fixed">Fixed Amount</SelectItem>
-                                                    <SelectItem value="percentage">Percentage</SelectItem>
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-                                        <div>
-                                            <Label className="text-[11px]" style={{ color: 'var(--blanc-ink-3)' }}>Value</Label>
-                                            <Input type="number" value={depositValue} onChange={e => setDepositValue(e.target.value)} min="0" step="0.01" />
-                                        </div>
-                                    </div>
-                                )}
-                                {/* Valid until + signature */}
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div>
-                                        <Label className="text-[11px]" style={{ color: 'var(--blanc-ink-3)' }}>Valid Until</Label>
-                                        <Input type="date" value={validUntil} onChange={e => setValidUntil(e.target.value)} />
-                                    </div>
-                                    <div className="flex items-end pb-2">
-                                        <div className="flex items-center gap-2">
-                                            <Checkbox id="est-sig" checked={signatureRequired} onCheckedChange={checked => setSignatureRequired(!!checked)} />
-                                            <Label htmlFor="est-sig" className="text-sm cursor-pointer" style={{ color: 'var(--blanc-ink-1)' }}>Signature required</Label>
-                                        </div>
-                                    </div>
-                                </div>
+                        {estimate && estimate.status !== 'draft' && !estimate.archived_at && (
+                            <div className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                                <span>This estimate is {estimate.status}. Editing will move it back to draft; send the updated version to the client after saving.</span>
                             </div>
                         )}
+
+                        {summary ? (
+                            <Collapsible open={summaryOpen} onOpenChange={setSummaryOpen}>
+                                <div className="rounded-md border bg-white/60">
+                                    <div className="flex items-center justify-between px-3 py-2">
+                                        <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium">
+                                            <ChevronDown className={`size-4 transition-transform ${summaryOpen ? 'rotate-180' : ''}`} />
+                                            Summary
+                                        </CollapsibleTrigger>
+                                        <Button type="button" size="sm" variant="ghost" onClick={openSummaryDialog}>
+                                            <Pencil className="size-4" />
+                                        </Button>
+                                    </div>
+                                    <CollapsibleContent>
+                                        <div className="border-t px-3 py-3 text-sm whitespace-pre-wrap text-muted-foreground">{summary}</div>
+                                    </CollapsibleContent>
+                                </div>
+                            </Collapsible>
+                        ) : (
+                            <Button type="button" variant="outline" size="sm" onClick={openSummaryDialog}>
+                                <Plus className="mr-1 size-4" /> Add Summary
+                            </Button>
+                        )}
+
+                        <section className="space-y-3">
+                            <div className="flex items-center justify-between">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Items</p>
+                            </div>
+
+                            <div className="space-y-2">
+                                {items.map(item => (
+                                    <div
+                                        key={item.key}
+                                        className="grid cursor-pointer grid-cols-[1fr_auto_auto_auto] items-start gap-3 rounded-md border bg-white/70 p-3 transition-colors hover:bg-white"
+                                        onClick={() => openEditItemDialog(item)}
+                                    >
+                                        <div className="min-w-0">
+                                            <p className="font-medium">{item.name}</p>
+                                            {item.description && <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">{item.description}</p>}
+                                            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                                <span>{itemMeta(item)}</span>
+                                                <Badge variant="outline" className="text-[10px]">{item.taxable ? 'Taxable' : 'Non-taxable'}</Badge>
+                                            </div>
+                                        </div>
+                                        <p className="pt-0.5 font-mono text-sm font-semibold">{money(amount(item))}</p>
+                                        <Button type="button" size="sm" variant="ghost" className="size-7 p-0" onClick={(event) => { event.stopPropagation(); openEditItemDialog(item); }}>
+                                            <Pencil className="size-4" />
+                                        </Button>
+                                        <Button type="button" size="sm" variant="ghost" className="size-7 p-0 text-red-600" onClick={(event) => { event.stopPropagation(); removeItem(item.key); }}>
+                                            <Trash2 className="size-4" />
+                                        </Button>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <Button type="button" variant="outline" size="sm" onClick={openNewItemDialog}>
+                                <Plus className="mr-1 size-4" /> Add custom item
+                            </Button>
+                        </section>
+
+                        <section className="space-y-2 rounded-md border bg-white/60 p-3">
+                            <div className="flex justify-between text-sm">
+                                <span className="text-muted-foreground">Subtotal</span>
+                                <span className="font-mono">{money(subtotal)}</span>
+                            </div>
+                            {discountType ? (
+                                <div className="space-y-2">
+                                    <div className="grid grid-cols-[140px_1fr_auto] items-center gap-2">
+                                        <Select value={discountType} onValueChange={value => setDiscountType(value as EstimateDiscountType)}>
+                                            <SelectTrigger><SelectValue /></SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="fixed">Discount $</SelectItem>
+                                                <SelectItem value="percentage">Discount %</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                        <Input type="number" min="0" step="0.01" value={discountValue} onChange={event => setDiscountValue(event.target.value)} />
+                                        <Button type="button" variant="ghost" size="sm" onClick={() => { setDiscountType(null); setDiscountValue('0'); }}>
+                                            <Trash2 className="size-4" />
+                                        </Button>
+                                    </div>
+                                    {discountError && <p className="text-xs text-red-600">{discountError}</p>}
+                                    <div className="flex justify-between text-sm">
+                                        <span className="text-muted-foreground">Discount</span>
+                                        <span className="font-mono text-red-600">-{money(discountAmount)}</span>
+                                    </div>
+                                </div>
+                            ) : (
+                                <button type="button" className="text-sm text-blue-600" onClick={() => { setDiscountType('fixed'); setDiscountValue('0'); }}>
+                                    Add Discount
+                                </button>
+                            )}
+                            <div className="grid grid-cols-[1fr_auto] items-center gap-3">
+                                <Label className="text-sm text-muted-foreground">Tax rate</Label>
+                                <Input className="w-28 text-right" type="number" min="0" step="0.01" value={taxRate} onChange={event => setTaxRate(event.target.value)} />
+                            </div>
+                            <div className="flex justify-between text-sm">
+                                <span className="text-muted-foreground">Tax</span>
+                                <span className="font-mono">{money(taxAmount)}</span>
+                            </div>
+                            <div className="flex justify-between border-t pt-2 text-base font-semibold">
+                                <span>Total</span>
+                                <span className="font-mono">{money(total)}</span>
+                            </div>
+                        </section>
+
+                        <section className="grid gap-3 rounded-md border bg-white/60 p-3">
+                            <div className="flex items-center justify-between">
+                                <span className="text-sm text-muted-foreground">Require signature</span>
+                                <Checkbox checked={signatureRequired} onCheckedChange={checked => setSignatureRequired(!!checked)} />
+                            </div>
+                            <div className="flex items-center justify-between text-sm">
+                                <span className="text-muted-foreground">Deposit required</span>
+                                <span className="font-medium">No</span>
+                            </div>
+                        </section>
+
+                        <Collapsible open={termsOpen} onOpenChange={setTermsOpen}>
+                            <div className="rounded-md border bg-white/60">
+                                <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium">
+                                    <ChevronDown className={`size-4 transition-transform ${termsOpen ? 'rotate-180' : ''}`} />
+                                    Terms & Warranty
+                                </CollapsibleTrigger>
+                                <CollapsibleContent>
+                                    <div className="border-t px-3 py-3 text-sm whitespace-pre-wrap text-muted-foreground">{DEFAULT_TERMS_AND_WARRANTY}</div>
+                                </CollapsibleContent>
+                            </div>
+                        </Collapsible>
                     </div>
 
-                    {/* ── Notes ── */}
-                    <div className="space-y-3">
+                    <DialogFooter>
+                        <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
+                        <Button type="button" variant="outline" onClick={() => setPreviewOpen(true)} disabled={!canSave}>
+                            Preview
+                        </Button>
+                        <Button type="button" onClick={handleSave} disabled={saving || !canSave || !!estimate?.archived_at}>
+                            {saving ? 'Saving...' : 'Save Estimate'}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={summaryDialogOpen} onOpenChange={setSummaryDialogOpen}>
+                <DialogContent className="max-w-xl">
+                    <DialogHeader><DialogTitle>Summary</DialogTitle></DialogHeader>
+                    <Textarea value={summaryDraft} onChange={event => setSummaryDraft(event.target.value)} rows={10} placeholder="Make, model, serial, failure issue, findings, needs, cause..." />
+                    <DialogFooter>
+                        <Button type="button" variant="outline" onClick={() => setSummaryDialogOpen(false)}>Cancel</Button>
+                        <Button type="button" onClick={saveSummary}>Save Summary</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={itemDialogOpen} onOpenChange={setItemDialogOpen}>
+                <DialogContent className="max-w-lg">
+                    <DialogHeader><DialogTitle>{editingItemKey ? 'Edit custom item' : 'Add custom item'}</DialogTitle></DialogHeader>
+                    <div className="space-y-4">
                         <div>
-                            <Label className="text-[11px]" style={{ color: 'var(--blanc-ink-3)' }}>Notes (visible to customer)</Label>
-                            <Textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Notes for the customer..." rows={2} />
+                            <Label>Title <span className="text-red-600">*</span></Label>
+                            <Input value={itemDraft.name} onChange={event => setItemDraft(prev => ({ ...prev, name: event.target.value }))} autoFocus />
                         </div>
                         <div>
-                            <Label className="text-[11px]" style={{ color: 'var(--blanc-ink-3)' }}>Internal Note</Label>
-                            <Textarea value={internalNote} onChange={e => setInternalNote(e.target.value)} placeholder="Internal notes (not visible)..." rows={2} />
+                            <Label>Description</Label>
+                            <Textarea value={itemDraft.description} onChange={event => setItemDraft(prev => ({ ...prev, description: event.target.value }))} rows={4} />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <Label>Qty</Label>
+                                <Input type="number" min="0.01" step="any" value={itemDraft.quantity} onChange={event => setItemDraft(prev => ({ ...prev, quantity: event.target.value }))} />
+                            </div>
+                            <div>
+                                <Label>Unit price <span className="text-red-600">*</span></Label>
+                                <Input type="number" min="0" step="0.01" value={itemDraft.unit_price} onChange={event => setItemDraft(prev => ({ ...prev, unit_price: event.target.value }))} />
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <Checkbox checked={itemDraft.taxable} onCheckedChange={checked => setItemDraft(prev => ({ ...prev, taxable: !!checked }))} />
+                            <Label>Service is taxable</Label>
                         </div>
                     </div>
-                </div>
+                    <DialogFooter>
+                        <Button type="button" variant="outline" onClick={() => setItemDialogOpen(false)}>Cancel</Button>
+                        <Button type="button" onClick={saveItem} disabled={!itemDraft.name.trim() || Number(itemDraft.quantity) <= 0 || Number(itemDraft.unit_price) < 0}>
+                            Save Item
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
-                <DialogFooter>
-                    <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
-                        Cancel
-                    </Button>
-                    <Button type="button" onClick={handleSave} disabled={saving} style={{ background: 'var(--blanc-info)', color: '#fff' }}>
-                        {saving ? 'Saving...' : isEdit ? 'Update Estimate' : 'Save Estimate'}
-                    </Button>
-                </DialogFooter>
-            </DialogContent>
-        </Dialog>
+            <EstimatePreviewDialog open={previewOpen} onOpenChange={setPreviewOpen} estimate={previewEstimate} />
+        </>
     );
 }

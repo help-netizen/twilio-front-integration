@@ -202,7 +202,7 @@ router.get('/documents/:type/:id', portalAuth, async (req, res) => {
 router.post('/documents/:type/:id/accept', portalAuth, async (req, res) => {
     try {
         const { type, id } = req.params;
-        const result = await portalService.acceptDocument(req.portalSession.id, type, id);
+        const result = await portalService.acceptDocument(req.portalSession.id, type, id, req.body || {});
         res.json({ ok: true, data: result });
     } catch (err) {
         handleError(res, err, 'POST /documents/:type/:id/accept');
@@ -213,7 +213,7 @@ router.post('/documents/:type/:id/accept', portalAuth, async (req, res) => {
 router.post('/documents/:type/:id/decline', portalAuth, async (req, res) => {
     try {
         const { type, id } = req.params;
-        const result = await portalService.declineDocument(req.portalSession.id, type, id);
+        const result = await portalService.declineDocument(req.portalSession.id, type, id, req.body || {});
         res.json({ ok: true, data: result });
     } catch (err) {
         handleError(res, err, 'POST /documents/:type/:id/decline');
