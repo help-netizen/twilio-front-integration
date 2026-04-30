@@ -18,7 +18,8 @@
  * ─── Outbound (Blanc → Zenbooker) ───────────────────────────────────────────
  *   When Blanc sub_status changes via PATCH /api/leads/:uuid:
  *     - "Submitted"         → no Zenbooker API call (already scheduled)
- *     - "Waiting for parts" → markJobComplete
+ *     - "Waiting for parts" → no Zenbooker API call (Blanc-only operational state)
+ *     - "Visit completed"   → no Zenbooker API call (Blanc-only operational state)
  *     - "Job is Done"       → markJobComplete
  *     - "Canceled"          → cancelJob
  *     - others              → no automatic Zenbooker action
@@ -170,9 +171,10 @@ async function syncBlancStatusToZenbooker(leadUuid, newSubStatus) {
     // 2. Map Blanc sub_status → Zenbooker API call
     try {
         switch (newSubStatus) {
-            case 'Waiting for parts':
             case 'Job is Done':
-                // §6: Both map to Zenbooker "complete"
+                // §6: Only the final "Job is Done" maps to Zenbooker "complete".
+                // "Waiting for parts" and "Visit completed" are Blanc-only operational
+                // states and do NOT trigger ZB markComplete.
                 await zenbookerClient.markJobComplete(jobId);
                 console.log(`[JobSync] Outbound: lead ${leadUuid} → markJobComplete (job=${jobId})`);
                 return { synced: true, action: 'mark_complete' };

@@ -45,8 +45,8 @@ const ALLOWED_TRANSITIONS = {
  * Handled inline in updateBlancStatus. Documented here for reference:
  *
  *   Submitted             → no ZB action (operator-driven reopen; see note below)
- *   Waiting for parts     → markJobComplete                             (Blanc-side waiting, ZB visit done)
- *   Visit completed       → markJobComplete                             (visit done)
+ *   Waiting for parts     → no ZB action (Blanc-only operational state)
+ *   Visit completed       → no ZB action (Blanc-only operational state)
  *   Job is Done           → markJobComplete                             (finalized)
  *   Canceled              → cancelJob
  *   Follow Up with Client → no ZB action (Blanc-only operational state)
@@ -71,6 +71,7 @@ function rowToJob(row) {
     return {
         id: row.id,
         lead_id: row.lead_id,
+        lead_serial_id: row.lead_serial_id || null,
         contact_id: row.contact_id,
         zenbooker_job_id: row.zenbooker_job_id,
 
@@ -239,7 +240,13 @@ async function getJobById(id, companyId = null) {
         conditions.push('company_id = $2');
         params.push(companyId);
     }
-    const { rows } = await db.query(`SELECT * FROM jobs WHERE ${conditions.join(' AND ')}`, params);
+    const { rows } = await db.query(
+        `SELECT j.*, l.serial_id AS lead_serial_id
+         FROM jobs j
+         LEFT JOIN leads l ON l.id = j.lead_id AND l.company_id = j.company_id
+         WHERE ${conditions.join(' AND ')}`,
+        params
+    );
     if (rows.length === 0) return null;
     const job = rowToJob(rows[0]);
     job.tags = await getTagsForJob(id);
@@ -512,7 +519,7 @@ async function updateBlancStatus(jobId, newStatus, companyId) {
     // override (see syncFromZenbooker "operator reopen override").
     if (job.zenbooker_job_id) {
         try {
-            if (['Waiting for parts', 'Visit completed', 'Job is Done'].includes(newStatus)) {
+            if (newStatus === 'Job is Done') {
                 if (job.zb_status !== 'complete') {
                     await zenbookerClient.markJobComplete(job.zenbooker_job_id);
                     console.log(`[JobsService] Outbound: job ${jobId} → ${newStatus} (ZB markComplete)`);
