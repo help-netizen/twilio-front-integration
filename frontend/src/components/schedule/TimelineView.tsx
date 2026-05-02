@@ -252,7 +252,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
 
     return (
         <div
-            className="flex flex-col overflow-auto"
+            className="flex flex-col overflow-x-auto"
             style={{
                 background: 'var(--sched-surface)',
                 border: '1px solid rgba(255, 255, 255, 0.55)',

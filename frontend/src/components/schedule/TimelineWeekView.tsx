@@ -149,7 +149,7 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
 
     return (
         <div
-            className="flex flex-col flex-1 overflow-auto"
+            className="flex flex-col flex-1 overflow-x-auto"
             style={{
                 background: 'var(--sched-surface)',
                 border: '1px solid rgba(255, 255, 255, 0.55)',
