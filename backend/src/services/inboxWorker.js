@@ -168,20 +168,40 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
         timelineId = timeline.id;
         contactId = timeline.contact_id || null;
 
-        // Mark timeline + contact unread for MISSED inbound calls only (not completed/answered)
+        // Mark timeline + contact unread for MISSED inbound calls only.
+        // For ANSWERED inbound calls, actively CLEAR unread — an operator (any
+        // operator, not necessarily the current user) already talked with the
+        // customer, so the timeline shouldn't be flagged unread anymore. This
+        // also covers the case where the unread flag was set by an earlier
+        // ringing/initiated event before the call got answered.
         const answeredStatuses = ['completed', 'in-progress'];
-        if (timelineId && processed.direction === 'inbound' && !normalized.parentCallSid
-            && !answeredStatuses.includes(normalized.eventStatus)) {
-            try {
-                await queries.markTimelineUnread(timelineId);
-            } catch (e) {
-                console.warn(`[${traceId}] Failed to mark timeline unread:`, e.message);
-            }
-            if (contactId) {
+        if (timelineId && processed.direction === 'inbound' && !normalized.parentCallSid) {
+            const isAnswered = answeredStatuses.includes(normalized.eventStatus);
+            if (isAnswered) {
                 try {
-                    await queries.markContactUnread(contactId, new Date());
+                    await queries.markTimelineRead(timelineId);
                 } catch (e) {
-                    console.warn(`[${traceId}] Failed to mark contact unread:`, e.message);
+                    console.warn(`[${traceId}] Failed to mark timeline read:`, e.message);
+                }
+                if (contactId) {
+                    try {
+                        await queries.markContactRead(contactId);
+                    } catch (e) {
+                        console.warn(`[${traceId}] Failed to mark contact read:`, e.message);
+                    }
+                }
+            } else {
+                try {
+                    await queries.markTimelineUnread(timelineId);
+                } catch (e) {
+                    console.warn(`[${traceId}] Failed to mark timeline unread:`, e.message);
+                }
+                if (contactId) {
+                    try {
+                        await queries.markContactUnread(contactId, new Date());
+                    } catch (e) {
+                        console.warn(`[${traceId}] Failed to mark contact unread:`, e.message);
+                    }
                 }
             }
         }
