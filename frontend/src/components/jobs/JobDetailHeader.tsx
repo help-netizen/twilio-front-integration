@@ -48,27 +48,12 @@ export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChang
             {/* Eyebrow: JOB · #629656 · Dryer */}
             <div className="mb-2">
                 <span
-                    className="text-[10px] font-semibold uppercase tracking-widest inline-flex items-center gap-1.5"
-                    style={{ color: 'var(--blanc-info)', letterSpacing: '0.12em' }}
+                    className="text-[10px] font-semibold uppercase tracking-widest inline-flex items-center gap-1.5 select-text"
+                    style={{ color: 'var(--blanc-ink-3)', letterSpacing: '0.12em' }}
                 >
                     Job
                     {(job.job_number || job.id) && (
-                        <>
-                            {job.zenbooker_job_id ? (
-                                <a
-                                    href={`https://zenbooker.com/app?view=jobs&view-job=${job.zenbooker_job_id}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1 font-mono transition-opacity hover:opacity-70"
-                                    onClick={e => e.stopPropagation()}
-                                >
-                                    #{job.job_number || job.id}
-                                    <ExternalLink className="size-2.5" />
-                                </a>
-                            ) : (
-                                <span className="font-mono">#{job.job_number || job.id}</span>
-                            )}
-                        </>
+                        <span className="font-mono">#{job.job_number || job.id}</span>
                     )}
                     {showServiceInEyebrow && (
                         <span style={{
@@ -79,6 +64,23 @@ export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChang
                                 fontSize: 11,
                             }}>
                                 {job.service_name}
+                        </span>
+                    )}
+                    {job.zenbooker_job_id && (
+                        <span className="inline-flex items-center gap-0.5">
+                            <span>ZB</span>
+                            <a
+                                href={`https://zenbooker.com/app?view=jobs&view-job=${job.zenbooker_job_id}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                aria-label={`Open job #${job.job_number || job.id} in Zenbooker`}
+                                title="Open in Zenbooker"
+                                className="inline-flex items-center transition-opacity hover:opacity-70"
+                                style={{ color: 'var(--blanc-info)' }}
+                                onClick={e => e.stopPropagation()}
+                            >
+                                <ExternalLink className="size-2.5" />
+                            </a>
                         </span>
                     )}
                 </span>
