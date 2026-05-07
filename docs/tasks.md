@@ -1729,3 +1729,139 @@ Test cases: `docs/test-cases/F014-ads-analytics-microservice.md`
 **Wave 4:** TASK-F014-004 (server mount)
 **Wave 5:** TASK-F014-006, TASK-F014-007 (tests in parallel)
 **Wave 6:** TASK-F014-008 (green run)
+
+---
+
+## TWC-001: Twilio API Client Singleton
+
+**Feature:** Eliminate per-function Twilio SDK instantiation; share one REST client per process.
+**Status:** in progress
+**Spec:** `docs/specs/TWC-001-twilio-client-singleton.md`
+**Test cases:** `docs/test-cases/TWC-001-twilio-client-singleton.md`
+
+### TASK-TWC-001-001: New module `twilioClient.js` with lazy singleton
+**Phase:** 1
+**Status:** done
+**Files to modify:**
+- `backend/src/services/twilioClient.js` — new file
+**Files NOT to modify:**
+- Any other Twilio-using module yet
+- `backend/src/webhooks/twilioWebhooks.js`, `backend/src/webhooks/conversationsWebhooks.js`, `src/routes/webhooks.js` (only use static `twilio.validateRequest`)
+- `backend/src/services/voiceService.js` (only uses `twilio.jwt.AccessToken` factory)
+**Acceptance criteria:**
+- [x] Exports `getTwilioClient()`
+- [x] Lazy: `_client = null` until first call
+- [x] Reads `process.env.TWILIO_ACCOUNT_SID` and `process.env.TWILIO_AUTH_TOKEN` on first call
+- [x] Throws `Error('TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN are required')` if either is missing
+- [x] Memoises after successful init
+- [x] On failure, `_client` stays null so a later call after env is set succeeds
+- [x] Module-load (require) does NOT throw when env is missing
+
+### TASK-TWC-001-002: Fix per-call leak in `reconcileStale.js`
+**Phase:** 2
+**Status:** done
+**Dependencies:** TASK-TWC-001-001
+**Files to modify:**
+- `backend/src/services/reconcileStale.js`
+**Acceptance criteria:**
+- [x] Add `const { getTwilioClient } = require('./twilioClient')` at top of file
+- [x] Remove `const twilio = require('twilio')` and `const client = twilio(...)` from inside `fetchAndUpdateFromTwilio`
+- [x] Replace with `const client = getTwilioClient()` inside the function
+- [x] All other logic (404 handling, status mapping, SSE publish) unchanged
+- [x] No behavior change in success path
+
+### TASK-TWC-001-003: Fix per-call leak in `callAvailability.js`
+**Phase:** 2
+**Status:** done
+**Dependencies:** TASK-TWC-001-001
+**Files to modify:**
+- `backend/src/services/callAvailability.js`
+**Acceptance criteria:**
+- [x] Replace per-call `twilio(sid, token)` with `getTwilioClient()`
+- [x] No behavior change
+
+### TASK-TWC-001-004: Fix per-event leak in `inboxWorker.js`
+**Phase:** 2
+**Status:** done
+**Dependencies:** TASK-TWC-001-001
+**Files to modify:**
+- `backend/src/services/inboxWorker.js`
+**Acceptance criteria:**
+- [x] Replace per-event `twilio(sid, token)` (line ~772) with `getTwilioClient()`
+- [x] Worker main loop unchanged
+- [x] No behavior change
+
+### TASK-TWC-001-005: Fix per-request leak in `routes/phoneSettings.js`
+**Phase:** 2
+**Status:** done
+**Dependencies:** TASK-TWC-001-001
+**Files to modify:**
+- `backend/src/routes/phoneSettings.js`
+**Acceptance criteria:**
+- [x] Replace per-request `twilio(sid, token)` with `getTwilioClient()`
+- [x] Auth middleware chain untouched
+- [x] Response shape untouched
+
+### TASK-TWC-001-006: Migrate already-singleton modules to use shared getter
+**Phase:** 3
+**Status:** done
+**Dependencies:** TASK-TWC-001-001
+**Files to modify:**
+- `backend/src/services/conversationsService.js`
+- `backend/src/services/twilioSync.js`
+- `backend/src/services/reconcileService.js`
+**Acceptance criteria:**
+- [x] Replace module-level `const client = twilio(sid, token)` with lazy access via `getTwilioClient()` (either inline at call sites or via a `getClient()` local that delegates)
+- [x] Public exports (function names, signatures) unchanged
+- [x] At module-load time without env, no throw
+- [x] Existing tests for these services pass
+
+### TASK-TWC-001-007: Unit tests for `twilioClient.js`
+**Phase:** 4
+**Status:** done
+**Dependencies:** TASK-TWC-001-001
+**Files to modify:**
+- `tests/services/twilioClient.test.js` — new
+**Acceptance criteria:**
+- [x] TC-TWC-001-001: identity check (`getTwilioClient() === getTwilioClient()`)
+- [x] TC-TWC-001-002: missing SID throws
+- [x] TC-TWC-001-003: missing AUTH_TOKEN throws
+- [x] TC-TWC-001-004: require without env does not throw
+- [x] TC-TWC-001-005: re-init after env becomes available works
+- [x] Uses `jest.resetModules()` and mocked `twilio` package
+
+### TASK-TWC-001-008: Regression guard test
+**Phase:** 4
+**Status:** done
+**Dependencies:** TASK-TWC-001-002 ... TASK-TWC-001-005
+**Files to modify:**
+- `tests/services/twilioClient.regression.test.js` — new
+**Acceptance criteria:**
+- [x] Reads each of the 4 hot-spot files via `fs.readFileSync`
+- [x] Asserts none contain `twilio(process.env.TWILIO_ACCOUNT_SID`
+- [x] Asserts each contains `getTwilioClient`
+
+### TASK-TWC-001-009: Bootstrap smoke test
+**Phase:** 4
+**Status:** done
+**Dependencies:** TASK-TWC-001-001 ... TASK-TWC-001-006
+**Files to modify:**
+- `tests/services/twilioClient.bootstrap.test.js` — new
+**Acceptance criteria:**
+- [x] Without TWILIO_* env, requiring `conversationsService`, `twilioSync`, `reconcileService`, `reconcileStale`, `callAvailability`, `inboxWorker`, and `routes/phoneSettings` does not throw
+
+### TASK-TWC-001-010: Green test run
+**Phase:** 5
+**Status:** done
+**Dependencies:** TASK-TWC-001-007 ... TASK-TWC-001-009
+**Files to modify:** none (verification only)
+**Acceptance criteria:**
+- [x] `npx jest tests/services/twilioClient.test.js tests/services/twilioClient.regression.test.js tests/services/twilioClient.bootstrap.test.js` exits 0
+- [x] No regressions in existing related test suites: `tests/zenbookerSyncService.test.js`, `tests/routes/integrations-analytics.test.js`, `tests/middleware/integrationScopes.test.js`
+
+## Execution Order (TWC-001)
+
+**Wave 1:** TASK-TWC-001-001
+**Wave 2:** TASK-TWC-001-002, 003, 004, 005, 006 (in parallel — independent files)
+**Wave 3:** TASK-TWC-001-007, 008, 009 (tests in parallel)
+**Wave 4:** TASK-TWC-001-010 (green run)

@@ -1,6 +1,7 @@
 const db = require('../db/connection');
 const queries = require('../db/queries');
 const { isFinalStatus } = require('./stateMachine');
+const { getTwilioClient } = require('./twilioClient');
 
 /**
  * Reconcile stale calls — safety net for calls stuck in transient statuses.
@@ -112,8 +113,7 @@ async function reconcileOneCall(call, traceId) {
 
 async function fetchAndUpdateFromTwilio(callSid, traceId) {
     try {
-        const twilio = require('twilio');
-        const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+        const client = getTwilioClient();
         const details = await client.calls(callSid).fetch();
 
         const apiStatus = details.status?.toLowerCase();

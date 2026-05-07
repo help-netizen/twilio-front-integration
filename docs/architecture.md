@@ -1400,3 +1400,69 @@ Same envelope as `integrations-leads`: `{ success, code, message, request_id }`.
 - **Invoice format** — `jobs.invoice_total` is TEXT (`"$1,234.00"`); current regex strips non-`[0-9.]`, which breaks on locales using `,` as decimal separator. Single-tenant US-only today, but flag if multi-locale comes in.
 - **TZ drift** — hardcoded `America/New_York`. If a second tenant joins with a different TZ, move to `companies.timezone`.
 - **Rate limit** — default 60 req/min per key is fine for a weekly cron; widen via `RATE_LIMIT_MAX_PER_KEY` when dashboards start polling.
+
+---
+
+## TWC-001 — Twilio API Client Singleton
+
+### 1. Goal
+Eliminate per-function instantiation of the Twilio Node SDK. A single REST client per process owns the only `https.Agent` keep-alive pool toward `api.twilio.com`. This collapses the ~199 idle ESTABLISHED outbound sockets observed in production to a small bounded set, and removes a class of CLOSE_WAIT leaks where short-lived clients abandoned their sockets.
+
+### 2. Module map (after change)
+
+```
+                   ┌────────────────────────────────────────────┐
+                   │ backend/src/services/twilioClient.js  (NEW)│
+                   │   getTwilioClient() — lazy, memoised       │
+                   │   Single twilio(sid, token) per process    │
+                   └────────────────────────────────────────────┘
+                              │ used by
+   ┌──────────────────────────┼──────────────────────────────┐
+   │                          │                              │
+reconcileStale.js     callAvailability.js        inboxWorker.js
+phoneSettings.js      conversationsService.js    twilioSync.js
+                                                  reconcileService.js
+```
+
+### 3. Components
+
+| Component | Status | Responsibility |
+|---|---|---|
+| `backend/src/services/twilioClient.js` | NEW | Sole owner of `twilio(sid, token)`. Exports `getTwilioClient()` that lazily constructs and memoises the client. Throws `Error('TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN are required')` on first access if env is missing. Internal `let _client = null`; idempotent. |
+| `backend/src/services/reconcileStale.js` | CHANGED | `fetchAndUpdateFromTwilio` no longer constructs a fresh client; calls `getTwilioClient()` instead. |
+| `backend/src/services/callAvailability.js` | CHANGED | Per-call `twilio()` removed; uses `getTwilioClient()`. |
+| `backend/src/services/inboxWorker.js` | CHANGED | Per-event `twilio()` removed; uses `getTwilioClient()`. |
+| `backend/src/routes/phoneSettings.js` | CHANGED | Per-request `twilio()` removed; uses `getTwilioClient()`. |
+| `backend/src/services/conversationsService.js` | CHANGED | Existing module-level `client` switched to `getTwilioClient()` (preserves API). |
+| `backend/src/services/twilioSync.js` | CHANGED | Same. |
+| `backend/src/services/reconcileService.js` | CHANGED | Same. |
+| `backend/src/webhooks/twilioWebhooks.js` | UNTOUCHED | Uses `twilio.validateRequest()` static helper, no REST client. |
+| `backend/src/webhooks/conversationsWebhooks.js` | UNTOUCHED | Same. |
+| `src/routes/webhooks.js` | UNTOUCHED | Same. |
+| `backend/src/services/voiceService.js` | UNTOUCHED | Uses `twilio.jwt.AccessToken` factory, no REST client. |
+
+### 4. API contract
+
+`getTwilioClient()` returns the Twilio REST client whose surface (`client.calls`, `client.lookups`, `client.conversations`, `client.messages`, `client.api`) is identical to what `twilio(sid, token)` returns today. No call-site changes beyond import + assignment.
+
+### 5. Failure mode
+
+| Scenario | Behavior |
+|---|---|
+| Missing `TWILIO_ACCOUNT_SID` or `TWILIO_AUTH_TOKEN` on first call | `Error('TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN are required')` thrown synchronously by `getTwilioClient()`. |
+| Subsequent calls when env present | Return the memoised instance (object identity stable). |
+| Tests / CLI without env | Module-load does not throw; only call-sites that actually use Twilio fail at call time, which preserves existing behavior of the migrated modules. |
+
+### 6. Acceptance check (operational)
+
+Steady-state on prod:
+```
+fly ssh console -a abc-metrics -C "grep ' 01 ' /proc/net/tcp" | awk '$3 ~ /:01BB$/' | wc -l
+```
+should report ≤ ~20 (was ≥ 199). CLOSE_WAIT count should be 0–2 (was 28).
+
+### 7. Out of scope
+
+- Per-tenant Twilio credentials (analogue of `getClientForCompany` in `zenbookerClient.js`) — left as future work; current Blanc deployment uses a single Twilio account.
+- Custom `https.Agent` tuning (maxSockets, freeSocketTimeout) — Twilio SDK defaults are sufficient once a single agent is shared.
+- Untangling Twilio webhook signature validation — orthogonal.

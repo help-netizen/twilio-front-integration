@@ -8,6 +8,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db/connection');
+const { getTwilioClient } = require('../services/twilioClient');
 
 // ─── Ensure table exists (auto-migration) ────────────────────────────────────
 const ENSURE_TABLE_SQL = `
@@ -67,10 +68,7 @@ router.get('/', async (req, res) => {
         await ensureTable();
 
         // Fetch from Twilio API to get current phone numbers
-        const twilioClient = require('twilio')(
-            process.env.TWILIO_ACCOUNT_SID,
-            process.env.TWILIO_AUTH_TOKEN
-        );
+        const twilioClient = getTwilioClient();
 
         let twilioNumbers = [];
         try {

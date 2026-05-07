@@ -1,4 +1,4 @@
-const twilio = require('twilio');
+const { getTwilioClient } = require('./twilioClient');
 const queries = require('../db/queries');
 const { normalizeVoiceEvent } = require('./inboxWorker');
 const CallProcessor = require('./callProcessor');
@@ -6,16 +6,19 @@ const { extractPhoneFromSIP } = require('./callProcessor');
 
 /**
  * Reconciliation Service (v3)
- * 
+ *
  * Polls Twilio API to reconcile call states and catch missed webhooks.
  * - Hot:  Active (non-final) calls — poll every 1min
  * - Warm: Recent final calls (last 6h) — poll every 15min
  * - Cold: Historical backfill — on demand
  */
 
-const accountSid = process.env.TWILIO_ACCOUNT_SID;
-const authToken = process.env.TWILIO_AUTH_TOKEN;
-const twilioClient = twilio(accountSid, authToken);
+// Lazy proxy resolves the shared singleton on each property access.
+const twilioClient = new Proxy({}, {
+    get(_t, prop) {
+        return getTwilioClient()[prop];
+    },
+});
 
 const RECONCILE_CONFIG = {
     HOT: {

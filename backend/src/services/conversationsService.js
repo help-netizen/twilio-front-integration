@@ -2,14 +2,19 @@
  * Conversations Service
  * Business logic for Twilio Conversations SMS.
  */
-const twilio = require('twilio');
+const { getTwilioClient } = require('./twilioClient');
 const convQueries = require('../db/conversationsQueries');
 const queries = require('../db/queries');
 const realtimeService = require('./realtimeService');
 const db = require('../db/connection');
 const { toE164 } = require('../utils/phoneUtils');
 
-const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+// Lazy proxy: every `client.x.y` access first resolves the shared singleton.
+const client = new Proxy({}, {
+    get(_t, prop) {
+        return getTwilioClient()[prop];
+    },
+});
 const SERVICE_SID = process.env.TWILIO_CONVERSATIONS_SERVICE_SID;
 
 /**

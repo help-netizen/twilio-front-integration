@@ -11,6 +11,7 @@
  */
 
 const db = require('../db/connection');
+const { getTwilioClient } = require('./twilioClient');
 
 const FINAL_STATUSES = ['completed', 'busy', 'no-answer', 'canceled', 'failed'];
 
@@ -43,8 +44,7 @@ async function verifyAndFixStaleCalls(callSids, traceId) {
     if (!callSids || callSids.length === 0) return resolved;
 
     try {
-        const twilio = require('twilio');
-        const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+        const client = getTwilioClient();
 
         for (const sid of callSids) {
             try {

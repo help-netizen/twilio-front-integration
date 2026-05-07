@@ -4,6 +4,38 @@
 
 ---
 
+## 2026-05-07 — TWC-001 Twilio API Client Singleton
+
+### Backend
+- Added `backend/src/services/twilioClient.js` — process-wide lazy singleton via `getTwilioClient()`. One `twilio(sid, token)` instance per process; one `https.Agent` keep-alive pool toward `api.twilio.com`.
+- Removed per-call `twilio(sid, token)` instantiation in `backend/src/services/reconcileStale.js`, `backend/src/services/callAvailability.js`, `backend/src/services/inboxWorker.js`, and `backend/src/routes/phoneSettings.js` — all now resolve the client lazily via `getTwilioClient()`.
+- Migrated existing module-level singletons in `backend/src/services/conversationsService.js`, `backend/src/services/twilioSync.js`, and `backend/src/services/reconcileService.js` to thin lazy `Proxy` wrappers around `getTwilioClient()`. Public surface (`client.calls`, `client.conversations`, etc.) unchanged at every call site.
+- Webhook signature validation (`backend/src/webhooks/twilioWebhooks.js`, `backend/src/webhooks/conversationsWebhooks.js`, `src/routes/webhooks.js`) and JWT minting (`backend/src/services/voiceService.js`) untouched — they use static `twilio.validateRequest` / `twilio.jwt.AccessToken` factories, not REST clients.
+
+### Documentation
+- Added requirement TWC-001 to `docs/requirements.md` (resource NFRs, multi-tenant scope guard).
+- Added architecture section TWC-001 to `docs/architecture.md` (module map, failure modes, operational acceptance check).
+- Added spec `docs/specs/TWC-001-twilio-client-singleton.md`.
+- Added test cases `docs/test-cases/TWC-001-twilio-client-singleton.md` (9 cases, 5 P0 / 3 P1 / 1 P2).
+- Added task plan to `docs/tasks.md`.
+
+### Tests / Verification
+- Added `tests/services/twilioClient.test.js` — 5 unit tests (singleton identity, lazy init, missing-env errors, recovery after env becomes available).
+- Added `tests/services/twilioClient.regression.test.js` — guard against re-introducing per-request `twilio(process.env...)` in the four hot-spot files.
+- Added `tests/services/twilioClient.bootstrap.test.js` — confirms requiring Twilio-using modules without `TWILIO_*` env does not throw.
+- All 16 new tests pass. Adjacent suites verified green: `tests/zenbookerSyncService.test.js`, `tests/routes/integrations-analytics.test.js`, `tests/middleware/integrationScopes.test.js`.
+
+### Decisions
+- Singleton is process-global only. Per-tenant Twilio credentials (analogue of `getClientForCompany` in `zenbookerClient.js`) are out of scope for TWC-001.
+- Deferred: custom `https.Agent` tuning. Twilio SDK defaults are sufficient once a single agent is shared across the process.
+
+### Operational acceptance (post-deploy on `abc-metrics`)
+- Steady-state outbound HTTPS connections to Twilio CloudFront should drop from ~199 to ≤20.
+- CLOSE_WAIT count should drop from ~28 to ≤5.
+- No expected change in node memory footprint or in Twilio API behavior at call sites.
+
+---
+
 ## 2026-04-27 — PF002-R2 Estimates Composer Refresh
 
 ### PDF Generation

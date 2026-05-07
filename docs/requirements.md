@@ -828,3 +828,40 @@ Read-only HTTP surface that returns Blanc funnel data (inbound tracking calls �
 4. No caching layer in v1; each request hits Postgres. Rate limit is the safety net.
 5. Attribution window: leads created within 24h of a tracking call are attributed to that call.
 6. Revenue stored in `jobs.invoice_total` as TEXT; strip `[^0-9.]` regex for numeric aggregation.
+
+---
+
+## TWC-001: Twilio API Client Singleton
+
+### 1. Description
+All backend modules must share a single Twilio Node SDK client instance per process rather than instantiating a new client per function call. This eliminates per-instance `https.Agent` keep-alive pools that currently accumulate ~199 idle outbound TCP sockets to Twilio CloudFront endpoints in production, and removes a class of CLOSE_WAIT socket leaks.
+
+### 2. User scenarios
+1. Stale-call reconciliation: the inbox worker fetches Twilio call status for dozens of stale calls in succession — all requests route through one shared HTTPS connection pool, no fresh TLS handshakes per call.
+2. inboxWorker processes a batch of webhook events — Twilio API calls inside one iteration reuse the same pool.
+3. Operator availability checks (`callAvailability`) on every inbound call use the shared client — no new TLS setup per request.
+4. Phone-settings endpoint calls Twilio Numbers API — zero connection-setup overhead.
+5. Production VM (1 vCPU / 1 GB on Fly) sustains 5–10 ESTABLISHED outbound HTTPS sockets to Twilio CloudFront in steady state instead of 199+, with no CLOSE_WAIT sockets caused by abandoned agents.
+
+### 3. Non-functional requirements
+- **NFR-01 (Resource):** Process must not accumulate more than ~20 concurrent ESTABLISHED HTTPS connections to Twilio API in steady state.
+- **NFR-02 (Compatibility):** Public Twilio SDK surface (`client.calls`, `client.lookups`, `client.conversations`, `client.messages`, `client.api.accounts(...).incomingPhoneNumbers`, etc.) is unchanged — migration is mechanical at call-sites with no behavior change.
+- **NFR-03 (Configuration):** Credentials are read from `process.env.TWILIO_ACCOUNT_SID` and `process.env.TWILIO_AUTH_TOKEN`. No new environment variables.
+- **NFR-04 (Lazy init):** The shared client is initialized lazily on first access so that test runners and CLI commands without TWILIO_* env do not fail at module-load time.
+- **NFR-05 (Failure mode):** If credentials are missing, the first call to the client throws a clear error rather than silently constructing a broken client.
+- **NFR-06 (Multi-tenant readiness):** TWC-001 introduces only a global singleton. A future per-company credential cache (analogous to `getClientForCompany` in `zenbookerClient.js`) is allowed but out of scope here.
+
+### 4. Affected modules
+- `backend/src/services/reconcileStale.js` — currently constructs `twilio()` inside `fetchAndUpdateFromTwilio`.
+- `backend/src/services/callAvailability.js` — currently constructs `twilio()` inside availability check.
+- `backend/src/services/inboxWorker.js` — constructs `twilio()` per webhook event.
+- `backend/src/routes/phoneSettings.js` — constructs `twilio()` per request.
+- `backend/src/services/conversationsService.js`, `backend/src/services/twilioSync.js`, `backend/src/services/reconcileService.js` — already use module-level singletons; they may be refactored to use the new shared getter for uniformity.
+- New module: `backend/src/services/twilioClient.js` — central lazy getter.
+
+### 5. Affected integrations
+- **Twilio** (Voice REST API, Lookups, Numbers, Conversations) — no API or behavior change; only HTTP-client lifecycle.
+
+### 6. Protected
+- `src/server.js`, TwiML routing, voice/recording behavior, webhook handling logic, reconcile semantics — unchanged.
+- Existing per-module exports of services that already cache a singleton must keep their public API.

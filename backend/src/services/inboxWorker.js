@@ -4,6 +4,7 @@ const { isFinalStatus } = require('./stateMachine');
 const CallProcessor = require('./callProcessor');
 const { extractPhoneFromSIP } = require('./callProcessor');
 const { reconcileStaleCalls } = require('./reconcileStale');
+const { getTwilioClient } = require('./twilioClient');
 
 /**
  * Configuration
@@ -768,8 +769,7 @@ async function processTranscriptionEvent(payload, traceId, source = 'webhook') {
 
 async function enrichFromTwilioApi(callSid, existingCall, traceId) {
     try {
-        const twilio = require('twilio');
-        const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+        const client = getTwilioClient();
         const details = await client.calls(callSid).fetch();
         const db = require('../db/connection');
 

@@ -1,17 +1,19 @@
-const twilio = require('twilio');
+const { getTwilioClient } = require('./twilioClient');
 const { reconcileCall, RECONCILE_CONFIG } = require('./reconcileService');
 
 /**
  * Twilio Sync Service (v3)
- * 
+ *
  * Delegates to reconcileService for actual call processing.
  * This file provides the sync trigger endpoints used by /api/sync routes.
  */
 
-const client = twilio(
-    process.env.TWILIO_ACCOUNT_SID,
-    process.env.TWILIO_AUTH_TOKEN
-);
+// Lazy proxy resolves the shared singleton on each property access.
+const client = new Proxy({}, {
+    get(_t, prop) {
+        return getTwilioClient()[prop];
+    },
+});
 
 /**
  * Sync historical calls from Twilio

@@ -38,3 +38,11 @@ Keys are generated via:
 - the admin UI (`/api/admin/integrations`) for `leads:create`
 
 Secrets are stored as `SHA-256(secret + BLANC_SERVER_PEPPER)` and never logged. Per-company isolation is enforced via `api_integrations.company_id` → `req.integrationCompanyId`.
+
+---
+
+## Twilio API Client (TWC-001)
+
+All backend code obtains the Twilio Node SDK REST client via a single shared accessor: `getTwilioClient()` from `backend/src/services/twilioClient.js`. The first call reads `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` and constructs one `twilio(sid, token)` instance for the lifetime of the process; every subsequent caller reuses that instance and its underlying `https.Agent` keep-alive pool toward `api.twilio.com`.
+
+Direct construction of a Twilio REST client (`twilio(sid, token)`) inside service or route functions is forbidden — a regression test enforces this for the four historical hot-spots (`reconcileStale`, `callAvailability`, `inboxWorker`, `phoneSettings`). Static helpers (`twilio.validateRequest`, `twilio.jwt.AccessToken`) are unaffected and continue to be used directly by webhook signature validators and the voice token route.
