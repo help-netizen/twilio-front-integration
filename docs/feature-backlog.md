@@ -60,8 +60,8 @@
 |---|---|---:|---|
 | Multi-tenant company model + super admin + RBAC | P0 | `🔧` | Базовый `companies + company_memberships`, `CompanyUsersPage`, `SuperAdminPage`; полноценный tenant-safe RBAC ещё не завершён |
 | Pulse client timeline core + realtime governance | P0 | `🔧` | `Pulse` уже основной workspace: calls, SMS, voicemail, Action Required, snooze, tasks, AI summary/transcript; generalized event timeline ещё не доведён полностью |
-| Schedule / Dispatcher workspace | P0 | `🔧` | Route `/schedule`, multiple views, active implementation and UX hardening |
-| Schedule dispatch actions | P1 | `🔧` | Schedule активно дорабатывается; часть dispatch UX уже есть, часть ещё в rollout |
+| Schedule / Dispatcher workspace | P0 | `🔧` | Route `/schedule`, multiple views, implemented core + remaining F013 gaps consolidated into one finalization sprint |
+| Schedule dispatch actions | P1 | `🔧` | Remaining dispatch gaps are no longer split across old F013 sprints; they are collected in one closing scope |
 | Estimates | P0 | `🔧` | Route `/estimates`, lead/job financial tabs, ongoing MVP completion |
 | Invoices | P0 | `🔧` | Route `/invoices`, invoice detail flow, ongoing MVP completion |
 | Payment collection | P0 | `🔧` | `/payments`, `/transactions`, record payment dialog, receipts; полный MVP ещё не закрыт |
@@ -122,6 +122,8 @@
 - Drag-and-drop reschedule / reassignment
 - Quick view sidebar с ключевыми данными клиента, адреса, статуса и быстрыми действиями
 - Фильтры по статусам, provider/tech, tags, source, job type
+- оставшиеся хвосты `F013 Schedule` сведены в один closing sprint:
+  `docs/specs/F013-schedule-finalization-sprint.md`
 
 Почему высокий приоритет:
 - у вас уже есть leads/jobs и telephony, но нет сильного planning/dispatch surface для назначения, переноса и балансировки работы
@@ -134,6 +136,10 @@
 - Быстрый перенос на другой слот
 - Business hours / capacity / slot duration
 - ETA / route-aware hints как минимум на базовом уровне
+
+Примечание:
+- это больше не размазанный roadmap по старым `Sprint 3 / 5 / 7`;
+- оставшийся объём закрывается одним consolidated sprint scope для `F013`.
 
 ## 2. Finance: Estimates, Invoices, Collection
 
@@ -351,10 +357,18 @@
 - A2P 10DLC registration/status
 - SMS compliance guardrails
 
-### P2. Feature center / integration marketplace
-- Управление add-ons
-- Feature flags per company
-- Каталог интеграций
+### P0/P2. Feature center / integration marketplace
+- `APP-MKT-001` moves the controlled integration marketplace foundation into P0:
+  - tenant app storefront
+  - vetted app catalog
+  - connect/disconnect lifecycle
+  - tenant-scoped API credential issuance/revoke
+  - developer submission and API documentation
+- Still P2 / out of P0:
+  - billing, revenue share, and paid add-ons
+  - public developer self-service publishing
+  - feature flags unrelated to external app access
+  - broad “marketplace for marketplace” packaging without concrete API consumers
 
 ## 8. Service Plans & Recurring Revenue
 
@@ -385,7 +399,7 @@
 
 - Expense card / финансовые add-ons вокруг корпоративных расходов
 - Сложные financing сценарии до запуска базовых estimates/invoices/payments
-- Marketplace ради marketplace
+- Marketplace ради marketplace; `APP-MKT-001` is allowed because it is scoped to controlled third-party API access and concrete app consumers, not paid add-on packaging
 - Multi-location / franchise toolkit, если это не текущий ICP
 - `Lead intake automation`, если intake уже обрабатывается внешним сервисом через API и не требует переноса внутрь FSM прямо сейчас
 - Ограничения и странности шаблонов Workiz как есть

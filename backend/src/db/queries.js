@@ -28,6 +28,8 @@ module.exports = {
     markTimelineUnread: timelinesQueries.markTimelineUnread,
     markTimelineRead: timelinesQueries.markTimelineRead,
     findOrCreateTimeline: timelinesQueries.findOrCreateTimeline,
+    findOrCreateAnonymousTimeline: timelinesQueries.findOrCreateAnonymousTimeline,
+    ANONYMOUS_PHONE_SENTINEL: timelinesQueries.ANONYMOUS_PHONE_SENTINEL,
     getCallsByTimeline: timelinesQueries.getCallsByTimeline,
     getTimelinesWithCallsCount: timelinesQueries.getTimelinesWithCallsCount,
 

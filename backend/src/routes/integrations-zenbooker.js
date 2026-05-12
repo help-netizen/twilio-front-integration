@@ -85,7 +85,10 @@ async function processWebhookPayload(reqId, payload, headers, companyId = null) 
                 // and often missing assigned_providers, invoice, etc.
                 let fullJobData = payload.data;
                 try {
-                    const zbJob = await zenbookerClient.getJob(zbJobId);
+                    const zbClient = companyId ? await zenbookerClient.getClientForCompany(companyId) : null;
+                    const zbJob = zbClient
+                        ? (await zbClient.get(`/jobs/${zbJobId}`)).data
+                        : await zenbookerClient.getJob(zbJobId);
                     if (zbJob) {
                         fullJobData = zbJob;
                         console.log(`[ZbWebhook][${reqId}] Fetched full ZB job ${zbJobId} (providers: ${(zbJob.assigned_providers || []).length})`);

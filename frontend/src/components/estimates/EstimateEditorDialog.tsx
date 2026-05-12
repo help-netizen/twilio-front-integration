@@ -1,15 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, ChevronDown, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
+import { FloatingDetailPanel } from '../ui/FloatingDetailPanel';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Textarea } from '../ui/textarea';
 import { Checkbox } from '../ui/checkbox';
 import { Badge } from '../ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible';
 import { DEFAULT_TERMS_AND_WARRANTY, EstimatePreviewDialog } from './EstimatePreviewDialog';
+import { useDocumentTemplate, findSection } from '../../hooks/useDocumentTemplate';
+import { ItemPresetSearchCombobox } from './ItemPresetSearchCombobox';
+import {
+    createEstimateItemPreset,
+    recordEstimateItemPresetUsage,
+    type EstimateItemPreset,
+} from '../../services/estimateItemPresetsApi';
 import type { Estimate, EstimateCreateData, EstimateDiscountType } from '../../services/estimatesApi';
 
 interface LineItem {
@@ -43,12 +50,10 @@ function amount(item: LineItem): number {
     return (Number(item.quantity) || 0) * (Number(item.unit_price) || 0);
 }
 
-function itemMeta(item: LineItem): string {
-    return `${Number(item.quantity) || 0} x ${money(item.unit_price)}`;
-}
-
 export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobId, defaultLeadId, defaultEstimateNumber, defaultContext, onSave }: Props) {
     const isEdit = !!estimate;
+    const templateDescriptor = useDocumentTemplate('estimate', open);
+    const termsBody = findSection(templateDescriptor, 'terms')?.body_md ?? DEFAULT_TERMS_AND_WARRANTY;
     const [summary, setSummary] = useState('');
     const [summaryOpen, setSummaryOpen] = useState(false);
     const [summaryDialogOpen, setSummaryDialogOpen] = useState(false);
@@ -69,7 +74,7 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
         if (!open) return;
         setSummary(estimate?.summary || '');
         setSummaryOpen(false);
-        setTaxRate(estimate?.tax_rate || '0');
+        setTaxRate(estimate?.tax_rate ? Number(estimate.tax_rate).toFixed(2) : '0');
         setDiscountType(estimate?.discount_type || (Number(estimate?.discount_amount || 0) > 0 ? 'fixed' : null));
         setDiscountValue(estimate?.discount_value || estimate?.discount_amount || '0');
         setSignatureRequired(estimate?.signature_required || false);
@@ -161,18 +166,6 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
         setSummaryDialogOpen(false);
     };
 
-    const openNewItemDialog = () => {
-        setEditingItemKey(null);
-        setItemDraft(emptyItem());
-        setItemDialogOpen(true);
-    };
-
-    const openEditItemDialog = (item: LineItem) => {
-        setEditingItemKey(item.key);
-        setItemDraft({ ...item });
-        setItemDialogOpen(true);
-    };
-
     const saveItem = () => {
         if (!itemDraft.name.trim() || Number(itemDraft.quantity) <= 0 || Number(itemDraft.unit_price) < 0) return;
         const nextItem = { ...itemDraft, name: itemDraft.name.trim() };
@@ -180,11 +173,48 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
             ? prev.map(item => item.key === editingItemKey ? nextItem : item)
             : [...prev, { ...nextItem, key: newKey() }]
         );
+        // Combobox "Create new" path — also persist to the company catalog
+        // so the item is searchable on future estimates.
+        if (!editingItemKey && savePresetOnNextItem) {
+            createEstimateItemPreset({
+                name: nextItem.name,
+                description: nextItem.description || null,
+                default_quantity: Number(nextItem.quantity) || 1,
+                default_unit_price: Number(nextItem.unit_price) || 0,
+                default_taxable: !!nextItem.taxable,
+            })
+                .then(preset => recordEstimateItemPresetUsage(preset.id).catch(() => {}))
+                .catch(() => {});
+            setSavePresetOnNextItem(false);
+        }
         setItemDialogOpen(false);
     };
 
     const removeItem = (key: string) => {
         setItems(prev => prev.filter(item => item.key !== key));
+    };
+
+    /** Combobox: existing preset selected → add a line item with the preset's defaults. */
+    const pickPreset = (preset: EstimateItemPreset) => {
+        setItems(prev => [...prev, {
+            key: newKey(),
+            name: preset.name,
+            description: preset.description || '',
+            quantity: String(preset.default_quantity ?? 1),
+            unit_price: String(preset.default_unit_price ?? 0),
+            taxable: !!preset.default_taxable,
+        }]);
+        // Fire-and-forget usage bump (non-blocking).
+        recordEstimateItemPresetUsage(preset.id).catch(() => {});
+    };
+
+    /** Combobox: typed a name not in catalog → open the item dialog pre-filled; save also creates a preset. */
+    const [savePresetOnNextItem, setSavePresetOnNextItem] = useState(false);
+    const startCreateFromName = (name: string) => {
+        setEditingItemKey(null);
+        setItemDraft({ ...emptyItem(), name });
+        setSavePresetOnNextItem(true);
+        setItemDialogOpen(true);
     };
 
     const handleSave = async () => {
@@ -219,166 +249,248 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
 
     return (
         <>
-            <Dialog open={open} onOpenChange={onOpenChange}>
-                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" style={{ background: 'var(--blanc-surface-strong)' }}>
-                    <DialogHeader>
-                        <DialogTitle className="flex items-center justify-between gap-3">
-                            <span>{isEdit ? estimate?.estimate_number : 'New Estimate'}</span>
-                            {estimate?.archived_at && <Badge variant="outline">Archived</Badge>}
-                        </DialogTitle>
-                    </DialogHeader>
-
-                    <div className="space-y-5 py-2">
-                        {defaultContext && !isEdit && (
-                            <div className="text-xs font-medium text-muted-foreground">{defaultContext}</div>
-                        )}
-
-                        {estimate && estimate.status !== 'draft' && !estimate.archived_at && (
-                            <div className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-                                <span>This estimate is {estimate.status}. Editing will move it back to draft; send the updated version to the client after saving.</span>
+            <FloatingDetailPanel open={open} onClose={() => onOpenChange(false)} wide>
+                <div className="flex h-full min-h-0 flex-col bg-[#f3f6f9] text-[#172033]">
+                    <div className="shrink-0 border-b border-[#d8e0ea] bg-[#fbfcfe] px-5 py-4 pr-14">
+                        <div className="flex items-start justify-between gap-4">
+                            <div className="min-w-0">
+                                <p className="font-mono text-sm font-semibold">{isEdit ? estimate?.estimate_number : 'New Estimate'}</p>
+                                {defaultContext && !isEdit && (
+                                    <p className="mt-1 text-xs font-medium text-[#5f7085]">{defaultContext}</p>
+                                )}
                             </div>
-                        )}
+                            <div className="flex shrink-0 items-start gap-3">
+                                {estimate?.archived_at && <Badge variant="outline">Archived</Badge>}
+                                <div className="text-right">
+                                    <p className="text-[11px] font-semibold uppercase tracking-wide text-[#65758b]">Total</p>
+                                    <p className="font-mono text-xl font-semibold">{money(total)}</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
 
-                        {summary ? (
-                            <Collapsible open={summaryOpen} onOpenChange={setSummaryOpen}>
-                                <div className="rounded-md border bg-white/60">
-                                    <div className="flex items-center justify-between px-3 py-2">
-                                        <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium">
-                                            <ChevronDown className={`size-4 transition-transform ${summaryOpen ? 'rotate-180' : ''}`} />
-                                            Summary
-                                        </CollapsibleTrigger>
-                                        <Button type="button" size="sm" variant="ghost" onClick={openSummaryDialog}>
-                                            <Pencil className="size-4" />
-                                        </Button>
+                    <div className="grid min-h-0 flex-1 overflow-y-auto md:grid-cols-[minmax(0,1fr)_320px]">
+                        <main className="space-y-5 p-5">
+                            {estimate && estimate.status !== 'draft' && !estimate.archived_at && (
+                                <div className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                                    <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                                    <span>This estimate is {estimate.status}. Editing will move it back to draft; send the updated version to the client after saving.</span>
+                                </div>
+                            )}
+
+                            {summary ? (
+                                <Collapsible open={summaryOpen} onOpenChange={setSummaryOpen}>
+                                    <div className="rounded-md border border-[#d8e0ea] bg-[#fbfcfe]">
+                                        <div className="flex items-center justify-between px-4 py-3">
+                                            <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium">
+                                                <ChevronDown className={`size-4 transition-transform ${summaryOpen ? 'rotate-180' : ''}`} />
+                                                Summary
+                                            </CollapsibleTrigger>
+                                            <Button type="button" size="sm" variant="ghost" onClick={openSummaryDialog}>
+                                                <Pencil className="size-4" />
+                                            </Button>
+                                        </div>
+                                        <CollapsibleContent>
+                                            <div className="border-t border-[#d8e0ea] px-4 py-4 text-sm whitespace-pre-wrap text-[#4f6176]">{summary}</div>
+                                        </CollapsibleContent>
                                     </div>
+                                </Collapsible>
+                            ) : (
+                                <div className="rounded-md border border-dashed border-[#c4cfdd] bg-[#f8fafc] px-4 py-5">
+                                    <p className="text-sm font-medium">Summary</p>
+                                    <p className="mt-1 text-sm text-[#5f7085]">Add make, model, issue, findings, needs, and cause when the estimate needs client context.</p>
+                                    <Button type="button" variant="outline" size="sm" className="mt-3" onClick={openSummaryDialog}>
+                                        <Plus className="mr-1 size-4" /> Add Summary
+                                    </Button>
+                                </div>
+                            )}
+
+                            <section className="space-y-3">
+                                <div>
+                                    <p className="text-sm font-semibold">Items</p>
+                                    <p className="text-xs text-[#5f7085]">Title and unit price are required. Qty defaults to 1.</p>
+                                </div>
+
+                                <div className="flex flex-col divide-y divide-[#d8e0ea]">
+                                    {items.map(item => (
+                                        <div key={item.key} className="space-y-2 py-3 first:pt-0 last:pb-0">
+                                            <Input
+                                                placeholder="Item title"
+                                                value={item.name}
+                                                onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, name: e.target.value } : i))}
+                                                className="font-medium"
+                                            />
+                                            <Textarea
+                                                placeholder="Description (optional)"
+                                                value={item.description}
+                                                onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, description: e.target.value } : i))}
+                                                rows={2}
+                                                className="text-sm font-normal"
+                                            />
+                                            <div className="grid grid-cols-[80px_120px_1fr_auto_auto] items-center gap-3">
+                                                <div className="flex flex-col gap-0.5">
+                                                    <span className="text-[10px] uppercase tracking-wider text-[#5f7085]">Qty</span>
+                                                    <Input
+                                                        type="number"
+                                                        min="0"
+                                                        step="0.01"
+                                                        value={item.quantity}
+                                                        onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, quantity: e.target.value } : i))}
+                                                    />
+                                                </div>
+                                                <div className="flex flex-col gap-0.5">
+                                                    <span className="text-[10px] uppercase tracking-wider text-[#5f7085]">Unit price</span>
+                                                    <Input
+                                                        type="number"
+                                                        min="0"
+                                                        step="0.01"
+                                                        value={item.unit_price}
+                                                        onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, unit_price: e.target.value } : i))}
+                                                    />
+                                                </div>
+                                                <label className="flex items-center gap-2 text-xs text-[#5f7085] cursor-pointer">
+                                                    <Checkbox
+                                                        checked={item.taxable}
+                                                        onCheckedChange={checked => setItems(prev => prev.map(i => i.key === item.key ? { ...i, taxable: !!checked } : i))}
+                                                    />
+                                                    Taxable
+                                                </label>
+                                                <p className="font-mono text-sm font-semibold text-right whitespace-nowrap">{money(amount(item))}</p>
+                                                <Button type="button" size="sm" variant="ghost" className="size-8 p-0 text-red-600 shrink-0" onClick={() => removeItem(item.key)} title="Remove item">
+                                                    <Trash2 className="size-4" />
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <ItemPresetSearchCombobox
+                                    onPickPreset={pickPreset}
+                                    onCreateNew={startCreateFromName}
+                                />
+                            </section>
+
+                            <section className="space-y-3 rounded-md border border-[#d8e0ea] bg-[#fbfcfe] p-4">
+                                <p className="text-sm font-semibold">Totals</p>
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-[#5f7085]">Subtotal</span>
+                                    <span className="font-mono">{money(subtotal)}</span>
+                                </div>
+                                {discountType ? (
+                                    <div className="space-y-1">
+                                        <div className="flex items-center gap-2 text-sm">
+                                            <span className="text-[#5f7085]">Discount</span>
+                                            <div className="inline-flex rounded-[10px] border border-[#d8e0ea] p-0.5 bg-white shrink-0">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setDiscountType('fixed')}
+                                                    className={`px-2.5 py-0.5 rounded-md text-sm transition-colors ${
+                                                        discountType === 'fixed'
+                                                            ? 'bg-[#172033] text-white'
+                                                            : 'text-[#5f7085] hover:text-[#172033]'
+                                                    }`}
+                                                >
+                                                    $
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setDiscountType('percentage')}
+                                                    className={`px-2.5 py-0.5 rounded-md text-sm transition-colors ${
+                                                        discountType === 'percentage'
+                                                            ? 'bg-[#172033] text-white'
+                                                            : 'text-[#5f7085] hover:text-[#172033]'
+                                                    }`}
+                                                >
+                                                    %
+                                                </button>
+                                            </div>
+                                            <Input
+                                                type="number"
+                                                min="0"
+                                                step="0.01"
+                                                value={discountValue}
+                                                onChange={event => setDiscountValue(event.target.value)}
+                                                maxLength={6}
+                                                className="w-24 h-8 text-right tabular-nums"
+                                            />
+                                            <Button type="button" variant="ghost" size="sm" className="size-8 p-0 shrink-0" onClick={() => { setDiscountType(null); setDiscountValue('0'); }}>
+                                                <Trash2 className="size-4" />
+                                            </Button>
+                                            <span className="font-mono text-red-600 ml-auto">-{money(discountAmount)}</span>
+                                        </div>
+                                        {discountError && <p className="text-xs text-red-600">{discountError}</p>}
+                                    </div>
+                                ) : (
+                                    <button type="button" className="w-fit text-sm text-blue-600" onClick={() => { setDiscountType('fixed'); setDiscountValue('0'); }}>
+                                        Add Discount
+                                    </button>
+                                )}
+                                <div className="grid grid-cols-[1fr_auto] items-center gap-3">
+                                    <Label className="text-sm text-[#5f7085]">Tax rate</Label>
+                                    <Input
+                                        className="w-24 text-right tabular-nums"
+                                        type="number"
+                                        min="0"
+                                        step="0.05"
+                                        value={taxRate}
+                                        onChange={event => setTaxRate(event.target.value)}
+                                        onBlur={() => {
+                                            const n = Number(taxRate);
+                                            if (Number.isFinite(n)) setTaxRate(n.toFixed(2));
+                                        }}
+                                    />
+                                </div>
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-[#5f7085]">Tax</span>
+                                    <span className="font-mono">{money(taxAmount)}</span>
+                                </div>
+                                <div className="flex justify-between border-t pt-2 text-base font-semibold">
+                                    <span>Total</span>
+                                    <span className="font-mono">{money(total)}</span>
+                                </div>
+                            </section>
+
+                            <Collapsible open={termsOpen} onOpenChange={setTermsOpen}>
+                                <div className="rounded-md border border-[#d8e0ea] bg-[#fbfcfe]">
+                                    <CollapsibleTrigger className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium">
+                                        <ChevronDown className={`size-4 transition-transform ${termsOpen ? 'rotate-180' : ''}`} />
+                                        Terms & Warranty
+                                    </CollapsibleTrigger>
                                     <CollapsibleContent>
-                                        <div className="border-t px-3 py-3 text-sm whitespace-pre-wrap text-muted-foreground">{summary}</div>
+                                        <div className="border-t border-[#d8e0ea] px-4 py-4 text-sm whitespace-pre-wrap text-[#4f6176]">{termsBody}</div>
                                     </CollapsibleContent>
                                 </div>
                             </Collapsible>
-                        ) : (
-                            <Button type="button" variant="outline" size="sm" onClick={openSummaryDialog}>
-                                <Plus className="mr-1 size-4" /> Add Summary
-                            </Button>
-                        )}
+                        </main>
 
-                        <section className="space-y-3">
-                            <div className="flex items-center justify-between">
-                                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Items</p>
-                            </div>
-
-                            <div className="space-y-2">
-                                {items.map(item => (
-                                    <div
-                                        key={item.key}
-                                        className="grid cursor-pointer grid-cols-[1fr_auto_auto_auto] items-start gap-3 rounded-md border bg-white/70 p-3 transition-colors hover:bg-white"
-                                        onClick={() => openEditItemDialog(item)}
-                                    >
-                                        <div className="min-w-0">
-                                            <p className="font-medium">{item.name}</p>
-                                            {item.description && <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">{item.description}</p>}
-                                            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                                                <span>{itemMeta(item)}</span>
-                                                <Badge variant="outline" className="text-[10px]">{item.taxable ? 'Taxable' : 'Non-taxable'}</Badge>
-                                            </div>
-                                        </div>
-                                        <p className="pt-0.5 font-mono text-sm font-semibold">{money(amount(item))}</p>
-                                        <Button type="button" size="sm" variant="ghost" className="size-7 p-0" onClick={(event) => { event.stopPropagation(); openEditItemDialog(item); }}>
-                                            <Pencil className="size-4" />
-                                        </Button>
-                                        <Button type="button" size="sm" variant="ghost" className="size-7 p-0 text-red-600" onClick={(event) => { event.stopPropagation(); removeItem(item.key); }}>
-                                            <Trash2 className="size-4" />
-                                        </Button>
-                                    </div>
-                                ))}
-                            </div>
-
-                            <Button type="button" variant="outline" size="sm" onClick={openNewItemDialog}>
-                                <Plus className="mr-1 size-4" /> Add custom item
-                            </Button>
-                        </section>
-
-                        <section className="space-y-2 rounded-md border bg-white/60 p-3">
-                            <div className="flex justify-between text-sm">
-                                <span className="text-muted-foreground">Subtotal</span>
-                                <span className="font-mono">{money(subtotal)}</span>
-                            </div>
-                            {discountType ? (
-                                <div className="space-y-2">
-                                    <div className="grid grid-cols-[140px_1fr_auto] items-center gap-2">
-                                        <Select value={discountType} onValueChange={value => setDiscountType(value as EstimateDiscountType)}>
-                                            <SelectTrigger><SelectValue /></SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="fixed">Discount $</SelectItem>
-                                                <SelectItem value="percentage">Discount %</SelectItem>
-                                            </SelectContent>
-                                        </Select>
-                                        <Input type="number" min="0" step="0.01" value={discountValue} onChange={event => setDiscountValue(event.target.value)} />
-                                        <Button type="button" variant="ghost" size="sm" onClick={() => { setDiscountType(null); setDiscountValue('0'); }}>
-                                            <Trash2 className="size-4" />
-                                        </Button>
-                                    </div>
-                                    {discountError && <p className="text-xs text-red-600">{discountError}</p>}
-                                    <div className="flex justify-between text-sm">
-                                        <span className="text-muted-foreground">Discount</span>
-                                        <span className="font-mono text-red-600">-{money(discountAmount)}</span>
-                                    </div>
+                        <aside className="space-y-5 border-t border-[#d8e0ea] bg-[#eef3f8] p-5 md:border-l md:border-t-0">
+                            <section className="grid gap-3 rounded-md border border-[#d8e0ea] bg-[#fbfcfe] p-4">
+                                <p className="text-sm font-semibold">Document settings</p>
+                                <div className="flex items-center justify-between">
+                                    <span className="text-sm text-[#5f7085]">Require signature</span>
+                                    <Checkbox checked={signatureRequired} onCheckedChange={checked => setSignatureRequired(!!checked)} />
                                 </div>
-                            ) : (
-                                <button type="button" className="text-sm text-blue-600" onClick={() => { setDiscountType('fixed'); setDiscountValue('0'); }}>
-                                    Add Discount
-                                </button>
-                            )}
-                            <div className="grid grid-cols-[1fr_auto] items-center gap-3">
-                                <Label className="text-sm text-muted-foreground">Tax rate</Label>
-                                <Input className="w-28 text-right" type="number" min="0" step="0.01" value={taxRate} onChange={event => setTaxRate(event.target.value)} />
-                            </div>
-                            <div className="flex justify-between text-sm">
-                                <span className="text-muted-foreground">Tax</span>
-                                <span className="font-mono">{money(taxAmount)}</span>
-                            </div>
-                            <div className="flex justify-between border-t pt-2 text-base font-semibold">
-                                <span>Total</span>
-                                <span className="font-mono">{money(total)}</span>
-                            </div>
-                        </section>
-
-                        <section className="grid gap-3 rounded-md border bg-white/60 p-3">
-                            <div className="flex items-center justify-between">
-                                <span className="text-sm text-muted-foreground">Require signature</span>
-                                <Checkbox checked={signatureRequired} onCheckedChange={checked => setSignatureRequired(!!checked)} />
-                            </div>
-                            <div className="flex items-center justify-between text-sm">
-                                <span className="text-muted-foreground">Deposit required</span>
-                                <span className="font-medium">No</span>
-                            </div>
-                        </section>
-
-                        <Collapsible open={termsOpen} onOpenChange={setTermsOpen}>
-                            <div className="rounded-md border bg-white/60">
-                                <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium">
-                                    <ChevronDown className={`size-4 transition-transform ${termsOpen ? 'rotate-180' : ''}`} />
-                                    Terms & Warranty
-                                </CollapsibleTrigger>
-                                <CollapsibleContent>
-                                    <div className="border-t px-3 py-3 text-sm whitespace-pre-wrap text-muted-foreground">{DEFAULT_TERMS_AND_WARRANTY}</div>
-                                </CollapsibleContent>
-                            </div>
-                        </Collapsible>
+                                <div className="flex items-center justify-between text-sm">
+                                    <span className="text-[#5f7085]">Deposit required</span>
+                                    <span className="font-medium">No</span>
+                                </div>
+                            </section>
+                        </aside>
                     </div>
 
-                    <DialogFooter>
-                        <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
-                        <Button type="button" variant="outline" onClick={() => setPreviewOpen(true)} disabled={!canSave}>
-                            Preview
-                        </Button>
-                        <Button type="button" onClick={handleSave} disabled={saving || !canSave || !!estimate?.archived_at}>
-                            {saving ? 'Saving...' : 'Save Estimate'}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
+                    <div className="shrink-0 border-t border-[#d8e0ea] bg-[#fbfcfe] px-5 py-3">
+                        <div className="flex flex-wrap items-center justify-end gap-2">
+                            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
+                            <Button type="button" variant="outline" onClick={() => setPreviewOpen(true)} disabled={!canSave}>
+                                Preview
+                            </Button>
+                            <Button type="button" onClick={handleSave} disabled={saving || !canSave || !!estimate?.archived_at}>
+                                {saving ? 'Saving...' : 'Save Estimate'}
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            </FloatingDetailPanel>
 
             <Dialog open={summaryDialogOpen} onOpenChange={setSummaryDialogOpen}>
                 <DialogContent className="max-w-xl">

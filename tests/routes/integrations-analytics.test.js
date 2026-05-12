@@ -74,6 +74,15 @@ describe('GET /api/v1/integrations/analytics/summary', () => {
         expect(res.body.code).toBe('SCOPE_INSUFFICIENT');
     });
 
+    test('full_access passes shared scope guard', async () => {
+        analytics.getSummary.mockResolvedValue({ period: {}, calls: {}, leads: {}, jobs: {}, funnel: {} });
+        const res = await request(app)
+            .get('/api/v1/integrations/analytics/summary?from=2026-04-16&to=2026-04-22')
+            .set('x-test-scopes', 'full_access');
+        expect(res.status).toBe(200);
+        expect(analytics.getSummary).toHaveBeenCalled();
+    });
+
     test('400 passes through service validation error', async () => {
         analytics.getSummary.mockRejectedValue(
             new analytics.AnalyticsServiceError('PERIOD_REQUIRED', 'bad', 400));

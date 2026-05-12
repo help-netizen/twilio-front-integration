@@ -123,6 +123,20 @@ async function getEstimateById(companyId, id) {
                 c.email AS contact_email,
                 c.phone_e164 AS contact_phone,
                 j.job_number AS job_number,
+                j.address AS service_address,
+                COALESCE(
+                    NULLIF(CONCAT_WS(', ',
+                        NULLIF(CONCAT_WS(', ', ca.street_line1, ca.street_line2), ''),
+                        NULLIF(CONCAT_WS(' ', ca.city, NULLIF(CONCAT_WS(' ', ca.state, ca.postal_code), '')), ''),
+                        ca.country
+                    ), ''),
+                    j.address,
+                    NULLIF(CONCAT_WS(', ',
+                        NULLIF(CONCAT_WS(', ', l.address, l.unit), ''),
+                        NULLIF(CONCAT_WS(' ', l.city, NULLIF(CONCAT_WS(' ', l.state, l.postal_code), '')), ''),
+                        l.country
+                    ), '')
+                ) AS billing_address,
                 l.serial_id AS lead_serial_id,
                 inv.id AS invoice_id,
                 inv.invoice_number AS invoice_number
@@ -130,6 +144,13 @@ async function getEstimateById(companyId, id) {
          LEFT JOIN contacts c ON c.id = e.contact_id
          LEFT JOIN jobs j ON j.id = e.job_id AND j.company_id = e.company_id
          LEFT JOIN leads l ON l.id = e.lead_id AND l.company_id = e.company_id
+         LEFT JOIN LATERAL (
+            SELECT street_line1, street_line2, city, state, postal_code, country
+            FROM contact_addresses
+            WHERE contact_id = e.contact_id
+            ORDER BY is_primary DESC, created_at ASC
+            LIMIT 1
+         ) ca ON true
          LEFT JOIN LATERAL (
             SELECT id, invoice_number
             FROM invoices

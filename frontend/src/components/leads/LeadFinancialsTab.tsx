@@ -3,6 +3,7 @@ import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Separator } from '../ui/separator';
 import { Dialog, DialogContent } from '../ui/dialog';
+import { FloatingDetailPanel } from '../ui/FloatingDetailPanel';
 import { Plus, Loader2 } from 'lucide-react';
 import { useLeadFinancials } from '../../hooks/useLeadFinancials';
 import { EstimateEditorDialog } from '../estimates/EstimateEditorDialog';
@@ -200,11 +201,10 @@ export function LeadFinancialsTab({ leadId }: Props) {
                 }}
             />
 
-            {/* Estimate detail dialog */}
+            {/* Estimate detail panel — right-side slide-in (same UX as Job/Lead detail) */}
             {selectedEstimate && (
-                <Dialog open={!!selectedEstimate} onOpenChange={(o) => { if (!o) setSelectedEstimate(null); }}>
-                    <DialogContent className="p-0 max-w-96 overflow-hidden">
-                        <EstimateDetailPanel
+                <FloatingDetailPanel open={!!selectedEstimate} onClose={() => setSelectedEstimate(null)} wide>
+                    <EstimateDetailPanel
                             estimate={selectedEstimate}
                             events={estimateEvents}
                             loading={detailLoading}
@@ -261,8 +261,7 @@ export function LeadFinancialsTab({ leadId }: Props) {
                             }}
                             onInvoiceCreated={() => { refresh(); setSelectedEstimate(null); }}
                         />
-                    </DialogContent>
-                </Dialog>
+                </FloatingDetailPanel>
             )}
 
             {/* Invoice detail dialog */}

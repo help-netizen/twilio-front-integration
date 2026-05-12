@@ -59,6 +59,7 @@ function rowToLead(row) {
         SubStatus: row.sub_status || null,
         LeadLost: row.lead_lost,
         PaymentDueDate: row.payment_due_date ? row.payment_due_date.toISOString() : null,
+        gclid: row.gclid || null,
 
         Phone: row.phone || null,
         PhoneExt: row.phone_ext || null,
@@ -158,6 +159,7 @@ const FIELD_MAP = {
     SubStatus: 'sub_status',
     PaymentDueDate: 'payment_due_date',
     contact_id: 'contact_id',
+    gclid: 'gclid',
 };
 
 function mapFieldsToColumns(fields) {

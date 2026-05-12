@@ -13,6 +13,11 @@ const db = require('../db/connection');
 const TZ = 'America/New_York';
 const MAX_PERIOD_DAYS = 92;
 
+// Lead.job_source values that count as "website submission" for Ads funnel.
+// Tweak via env `BLANC_WEBSITE_SOURCES` (comma-separated) without redeploy.
+const WEBSITE_SOURCES = (process.env.BLANC_WEBSITE_SOURCES || 'Web site order')
+    .split(',').map(s => s.trim()).filter(Boolean);
+
 class AnalyticsServiceError extends Error {
     constructor(code, message, httpStatus = 400) {
         super(message);
@@ -105,6 +110,24 @@ const TRACKING_CTE = `
        = right(regexp_replace(tc.from_number,'\\D', '', 'g'), 10)
      AND l.created_at BETWEEN tc.started_at AND tc.started_at + interval '24 hours'
     ORDER BY l.id, tc.started_at DESC
+  ),
+  website_new_contact_leads AS (
+    -- Lead is "website new contact" when:
+    --   (a) job_source is in the website list (default: 'Web site order'),
+    --   (b) the contact has no earlier leads anywhere in the DB (true first-time).
+    --   Leads without contact_id are treated as new (best-effort).
+    SELECT l.id
+    FROM period_leads l
+    WHERE l.job_source = ANY($5::text[])
+      AND (
+        l.contact_id IS NULL
+        OR NOT EXISTS (
+          SELECT 1 FROM leads prev
+          WHERE prev.contact_id = l.contact_id
+            AND prev.id <> l.id
+            AND prev.created_at < l.created_at
+        )
+      )
   )
 `;
 
@@ -116,7 +139,7 @@ async function getSummary({ from, to, trackingNumber, companyId }) {
     const period = parsePeriod(from, to);
     const phone = normalizePhone(trackingNumber) || '+16176444408';
 
-    const params = [phone, period.fromStr, period.toStr, companyId || null];
+    const params = [phone, period.fromStr, period.toStr, companyId || null, WEBSITE_SOURCES];
 
     const sql = `
       WITH ${TRACKING_CTE},
@@ -148,6 +171,7 @@ async function getSummary({ from, to, trackingNumber, companyId }) {
         SELECT
           COUNT(*)::int                                                                AS created,
           (SELECT COUNT(*)::int FROM attributed_leads)                                 AS from_tracking_calls,
+          (SELECT COUNT(*)::int FROM website_new_contact_leads)                        AS from_website_new_contact,
           COUNT(*) FILTER (WHERE lead_lost)::int                                       AS lead_lost,
           COUNT(*) FILTER (WHERE converted_to_job)::int                                AS converted_to_job,
           jsonb_object_agg(
@@ -210,6 +234,7 @@ async function getSummary({ from, to, trackingNumber, companyId }) {
         ? calls.distinct_contacts / calls.with_contact : null;
     const callToLead = answered ? (leads.from_tracking_calls || 0) / answered : 0;
     const leadToJob  = leads.created ? (jobs.from_period_leads || 0) / leads.created : 0;
+    const adsAttributable = (leads.from_tracking_calls || 0) + (leads.from_website_new_contact || 0);
 
     return {
         period: { from: period.fromStr, to: period.toStr, tz: TZ },
@@ -225,12 +250,14 @@ async function getSummary({ from, to, trackingNumber, companyId }) {
             repeat_caller_rate: newContactRate !== null ? round3(1 - newContactRate) : null,
         },
         leads: {
-            created:             leads.created || 0,
-            from_tracking_calls: leads.from_tracking_calls || 0,
-            call_to_lead_rate:   round3(callToLead),
-            lead_lost:           leads.lead_lost || 0,
-            converted_to_job:    leads.converted_to_job || 0,
-            by_job_type:         leads.by_job_type || {},
+            created:                  leads.created || 0,
+            from_tracking_calls:      leads.from_tracking_calls || 0,
+            from_website_new_contact: leads.from_website_new_contact || 0,
+            ads_attributable:         adsAttributable,
+            call_to_lead_rate:        round3(callToLead),
+            lead_lost:                leads.lead_lost || 0,
+            converted_to_job:         leads.converted_to_job || 0,
+            by_job_type:              leads.by_job_type || {},
         },
         jobs: {
             from_period_leads:         jobs.from_period_leads || 0,
@@ -262,7 +289,8 @@ async function listCalls({ from, to, trackingNumber, companyId, limit, cursor })
     const pageSize = clampLimit(limit);
     const cursorTs = parseCursor(cursor);
 
-    const params = [phone, period.fromStr, period.toStr, companyId || null, pageSize];
+    // $5 = WEBSITE_SOURCES (unused here, but CTE requires it), $6 = pageSize
+    const params = [phone, period.fromStr, period.toStr, companyId || null, WEBSITE_SOURCES, pageSize];
     let cursorClause = '';
     if (cursorTs) { params.push(cursorTs); cursorClause = `AND started_at < $${params.length}`; }
 
@@ -276,21 +304,26 @@ async function listCalls({ from, to, trackingNumber, companyId, limit, cursor })
       FROM tracked_calls
       WHERE true ${cursorClause}
       ORDER BY started_at DESC
-      LIMIT $5;
+      LIMIT $6;
     `;
     const { rows } = await db.query(sql, params);
     return pagedResponse(rows, pageSize, (r) => r.started_at);
 }
 
-async function listLeads({ from, to, trackingNumber, companyId, limit, cursor }) {
+async function listLeads({ from, to, trackingNumber, companyId, limit, cursor, hasGclid }) {
     const period = parsePeriod(from, to);
     const phone = normalizePhone(trackingNumber) || '+16176444408';
     const pageSize = clampLimit(limit);
     const cursorTs = parseCursor(cursor);
 
-    const params = [phone, period.fromStr, period.toStr, companyId || null, pageSize];
+    // $5 = WEBSITE_SOURCES, $6 = pageSize
+    const params = [phone, period.fromStr, period.toStr, companyId || null, WEBSITE_SOURCES, pageSize];
     let cursorClause = '';
     if (cursorTs) { params.push(cursorTs); cursorClause = `AND l.created_at < $${params.length}`; }
+
+    let gclidClause = '';
+    if (hasGclid === true)  gclidClause = `AND l.gclid IS NOT NULL AND l.gclid <> ''`;
+    if (hasGclid === false) gclidClause = `AND (l.gclid IS NULL OR l.gclid = '')`;
 
     const sql = `
       WITH ${TRACKING_CTE}
@@ -299,12 +332,15 @@ async function listLeads({ from, to, trackingNumber, companyId, limit, cursor })
         l.first_name, l.last_name, l.phone, l.email,
         l.city, l.state, l.postal_code,
         l.job_type, l.job_source, l.created_at, l.converted_to_job,
-        al.call_sid AS tracking_call_sid
+        l.gclid,
+        al.call_sid                                 AS tracking_call_sid,
+        (wnc.id IS NOT NULL)                         AS is_website_new_contact
       FROM period_leads l
-      LEFT JOIN attributed_leads al ON al.id = l.id
-      WHERE true ${cursorClause}
+      LEFT JOIN attributed_leads al          ON al.id  = l.id
+      LEFT JOIN website_new_contact_leads wnc ON wnc.id = l.id
+      WHERE true ${cursorClause} ${gclidClause}
       ORDER BY l.created_at DESC
-      LIMIT $5;
+      LIMIT $6;
     `;
     const { rows } = await db.query(sql, params);
     return pagedResponse(rows, pageSize, (r) => r.created_at);
@@ -316,7 +352,8 @@ async function listJobs({ from, to, trackingNumber, companyId, limit, cursor }) 
     const pageSize = clampLimit(limit);
     const cursorTs = parseCursor(cursor);
 
-    const params = [phone, period.fromStr, period.toStr, companyId || null, pageSize];
+    // $5 = WEBSITE_SOURCES, $6 = pageSize
+    const params = [phone, period.fromStr, period.toStr, companyId || null, WEBSITE_SOURCES, pageSize];
     let cursorClause = '';
     if (cursorTs) { params.push(cursorTs); cursorClause = `AND j.created_at < $${params.length}`; }
 
@@ -348,6 +385,21 @@ async function listJobs({ from, to, trackingNumber, companyId, limit, cursor }) 
       END
     `;
 
+    // amount_paid — per F014 offline-conversion spec:
+    //   invoice_status='paid'           → invoice_total
+    //   invoice_status='partially_paid' → ledger-computed received amount
+    //   invoice_status='draft'          → null
+    //   anything else                   → ledger-computed amount (best-effort)
+    const amountPaidExpr = `
+      CASE j.invoice_status
+        WHEN 'paid' THEN
+          NULLIF(regexp_replace(COALESCE(j.invoice_total, ''), '[^0-9.]', '', 'g'), '')::numeric
+        WHEN 'partially_paid' THEN (${paidExpr})
+        WHEN 'draft' THEN NULL
+        ELSE (${paidExpr})
+      END
+    `;
+
     const sql = `
       WITH ${TRACKING_CTE}
       SELECT
@@ -357,13 +409,14 @@ async function listJobs({ from, to, trackingNumber, companyId, limit, cursor }) 
         j.invoice_total, j.invoice_status,
         j.lead_id, j.created_at,
         l.phone AS lead_phone,
-        (${paidExpr})::numeric(12, 2) AS paid
+        (${paidExpr})::numeric(12, 2) AS paid,
+        (${amountPaidExpr})::numeric(12, 2) AS amount_paid
       FROM jobs j
       LEFT JOIN leads l ON l.id = j.lead_id
       WHERE j.lead_id IN (SELECT id FROM period_leads)
         ${cursorClause}
       ORDER BY j.created_at DESC
-      LIMIT $5;
+      LIMIT $6;
     `;
     const { rows } = await db.query(sql, params);
     return pagedResponse(rows, pageSize, (r) => r.created_at);

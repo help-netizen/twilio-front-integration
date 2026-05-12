@@ -1,0 +1,19 @@
+{
+  "app_key": "call-qa-agent",
+  "name": "Call QA Agent",
+  "provider_name": "Example AI",
+  "category": "ai",
+  "app_type": "external",
+  "short_description": "Reads call transcripts and scores dispatcher conversation quality.",
+  "long_description": "Call QA Agent analyzes completed call transcripts, applies a configurable quality rubric, and returns QA scores or coaching notes through Blanc APIs when those endpoints are enabled.",
+  "requested_scopes": [
+    "calls:read",
+    "calls.transcripts:read",
+    "notes:create"
+  ],
+  "provisioning_mode": "push_credentials",
+  "provisioning_url": "https://example-ai.com/blanc/provision",
+  "support_email": "support@example-ai.com",
+  "privacy_url": "https://example-ai.com/privacy",
+  "docs_url": "https://example-ai.com/docs/blanc-call-qa"
+}

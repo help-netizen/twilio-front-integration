@@ -24,6 +24,128 @@ function stripPhone(phone) {
     return digits;
 }
 
+const ZB_ID_RE = /^(\d{13,})x[\w-]+$/;
+
+function createdFromZbId(id) {
+    if (typeof id !== 'string') return null;
+    const match = id.match(ZB_ID_RE);
+    if (!match) return null;
+    const ms = Number(match[1]);
+    return Number.isFinite(ms) && ms > 1e12 ? new Date(ms).toISOString() : null;
+}
+
+function guessContentTypeFromUrl(url, isImage) {
+    const clean = String(url || '').split('?')[0].split('#')[0];
+    const ext = clean.includes('.') ? clean.slice(clean.lastIndexOf('.') + 1).toLowerCase() : '';
+    const map = {
+        jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif',
+        webp: 'image/webp', heic: 'image/heic', pdf: 'application/pdf',
+    };
+    return map[ext] || (isImage ? 'image/jpeg' : 'application/octet-stream');
+}
+
+function zbUrlToAttachment(noteId, url, isImage, index) {
+    let fileName = '';
+    try { fileName = decodeURIComponent(String(url).split('?')[0].split('/').pop() || ''); } catch { fileName = ''; }
+    if (!fileName) fileName = isImage ? 'image' : 'file';
+    return {
+        id: `${noteId || 'zb-note'}-${isImage ? 'img' : 'file'}-${index}`,
+        fileName,
+        contentType: guessContentTypeFromUrl(url, isImage),
+        fileSize: 0,
+        url,
+        source: 'zenbooker',
+    };
+}
+
+function normalizeZbCustomerNote(note) {
+    if (!note || typeof note !== 'object') return null;
+    const text = typeof note.text === 'string' ? note.text.trim() : '';
+    const id = note.id ? String(note.id) : null;
+    const images = Array.isArray(note.images) ? note.images : [];
+    const files = Array.isArray(note.files) ? note.files : [];
+    if (!text && images.length === 0 && files.length === 0) return null;
+
+    const attachments = [];
+    images.forEach((url, index) => attachments.push(zbUrlToAttachment(id, url, true, index)));
+    files.forEach((url, index) => attachments.push(zbUrlToAttachment(id, url, false, index)));
+
+    return {
+        ...(id ? { id, zb_note_id: id } : {}),
+        text: text || null,
+        created: note.created || createdFromZbId(id) || new Date().toISOString(),
+        author: note.author || 'Zenbooker',
+        source: 'zenbooker',
+        ...(attachments.length ? { attachments } : {}),
+    };
+}
+
+function normalizeZbCustomerNotes(notes) {
+    if (!Array.isArray(notes)) return [];
+    return notes.map(normalizeZbCustomerNote).filter(Boolean);
+}
+
+function mergeStructuredNotes(existingNotes, incomingNotes) {
+    const merged = Array.isArray(existingNotes) ? [...existingNotes] : [];
+    const seenIds = new Set();
+    const seenText = new Set();
+
+    for (const note of merged) {
+        const id = note?.zb_note_id || note?.id;
+        if (id) seenIds.add(String(id));
+        if (note?.text) seenText.add(String(note.text).trim());
+    }
+
+    for (const note of incomingNotes) {
+        const id = note.zb_note_id || note.id;
+        const textKey = note.text ? String(note.text).trim() : '';
+        if ((id && seenIds.has(String(id))) || (textKey && seenText.has(textKey))) continue;
+        merged.push(note);
+        if (id) seenIds.add(String(id));
+        if (textKey) seenText.add(textKey);
+    }
+
+    return merged;
+}
+
+function legacyTextFromZbNotes(notes) {
+    const seen = new Set();
+    return normalizeZbCustomerNotes(notes)
+        .map(n => n.text)
+        .filter(Boolean)
+        .filter(text => {
+            const key = text.trim();
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        })
+        .join('\n');
+}
+
+async function syncContactNotesFromZenbooker(contactId, notes) {
+    if (!contactId) return;
+    const incomingNotes = normalizeZbCustomerNotes(notes);
+    if (incomingNotes.length === 0) return;
+
+    const { rows } = await db.query(
+        'SELECT structured_notes FROM contacts WHERE id = $1',
+        [contactId]
+    );
+    const existingNotes = rows[0]?.structured_notes || [];
+    const mergedNotes = mergeStructuredNotes(existingNotes, incomingNotes);
+    if (mergedNotes.length === existingNotes.length) return;
+
+    const legacyText = legacyTextFromZbNotes(notes);
+    await db.query(
+        `UPDATE contacts
+         SET structured_notes = $1::jsonb,
+             notes = COALESCE(NULLIF(notes, ''), NULLIF($2, '')),
+             updated_at = NOW()
+         WHERE id = $3`,
+        [JSON.stringify(mergedNotes), legacyText, contactId]
+    );
+}
+
 // =============================================================================
 // Feature flag guard
 // =============================================================================
@@ -345,22 +467,30 @@ async function handleWebhookPayload(payload, companyId = null) {
     }
 
     // 4. No match — create new Blanc contact
+    const structuredNotes = normalizeZbCustomerNotes(data.notes);
+    const legacyNotes = legacyTextFromZbNotes(data.notes);
     const { rows: newRows } = await db.query(
         `INSERT INTO contacts (full_name, first_name, last_name, phone_e164, email,
                                zenbooker_customer_id, zenbooker_account_id,
                                zenbooker_sync_status, zenbooker_synced_at, zenbooker_data,
-                               company_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'linked', NOW(), $8::jsonb, $9)
+                               notes, structured_notes, company_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'linked', NOW(), $8::jsonb, $9, $10::jsonb, $11)
          ON CONFLICT (zenbooker_customer_id) DO UPDATE SET
              zenbooker_data = EXCLUDED.zenbooker_data,
+             structured_notes = CASE
+                 WHEN contacts.structured_notes IS NULL OR contacts.structured_notes = '[]'::jsonb
+                 THEN EXCLUDED.structured_notes
+                 ELSE contacts.structured_notes
+             END,
              zenbooker_synced_at = NOW()
          RETURNING id`,
         [fullName, firstName, lastName,
             phone || null, data.email || null,
             customerId, account || null,
-            JSON.stringify(data), companyId]
+            JSON.stringify(data), legacyNotes || null, JSON.stringify(structuredNotes), companyId]
     );
     console.log(`[ZbSync] Created new contact ${newRows[0]?.id} from Zenbooker customer ${customerId}`);
+    await syncContactNotesFromZenbooker(newRows[0]?.id, data.notes);
 
     // Import addresses
     if (newRows[0]?.id && data.addresses?.length) {
@@ -385,6 +515,7 @@ async function linkAndUpdate(contactId, zbCustomerId, data, account) {
         [zbCustomerId, account || null, JSON.stringify(data), contactId]
     );
     console.log(`[ZbSync] Linked contact ${contactId} to Zenbooker customer ${zbCustomerId}`);
+    await syncContactNotesFromZenbooker(contactId, data.notes);
 
     if (data.addresses?.length) {
         await importAddresses(contactId, zbCustomerId, data.addresses);
@@ -428,6 +559,7 @@ async function updateContactFromZenbooker(contactId, data, account) {
             contactId]
     );
     console.log(`[ZbSync] Updated contact ${contactId} from Zenbooker (name=${fullName}, phone=${phone}, email=${email})`);
+    await syncContactNotesFromZenbooker(contactId, data.notes);
 
     if (data.addresses?.length) {
         await importAddresses(contactId, data.id ? String(data.id) : null, data.addresses);

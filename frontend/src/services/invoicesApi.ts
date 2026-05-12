@@ -54,6 +54,10 @@ export interface Invoice {
     updated_at: string;
     items?: InvoiceItem[];
     contact_name?: string;
+    contact_email?: string | null;
+    contact_phone?: string | null;
+    lead_serial_id?: number | string | null;
+    job_number?: string | null;
 }
 
 export interface InvoiceEvent {
@@ -204,15 +208,21 @@ export async function voidInvoice(id: number): Promise<Invoice> {
     return invoicesRequest<Invoice>(`${INVOICES_BASE}/${id}/void`, { method: 'POST' });
 }
 
+export async function ensureInvoicePublicLink(id: number): Promise<{ token: string; url: string }> {
+    return invoicesRequest<{ token: string; url: string }>(`${INVOICES_BASE}/${id}/public-link`, {
+        method: 'POST',
+    });
+}
+
 export async function recordPayment(id: number, data: RecordPaymentData): Promise<Invoice> {
-    return invoicesRequest<Invoice>(`${INVOICES_BASE}/${id}/payments`, {
+    return invoicesRequest<Invoice>(`${INVOICES_BASE}/${id}/record-payment`, {
         method: 'POST',
         body: JSON.stringify(data),
     });
 }
 
 export async function syncItemsFromEstimate(id: number): Promise<Invoice> {
-    return invoicesRequest<Invoice>(`${INVOICES_BASE}/${id}/sync-estimate`, { method: 'POST' });
+    return invoicesRequest<Invoice>(`${INVOICES_BASE}/${id}/sync-items`, { method: 'POST' });
 }
 
 export async function addInvoiceItem(invoiceId: number, item: InvoiceItemCreateData): Promise<InvoiceItem> {

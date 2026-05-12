@@ -1,7 +1,12 @@
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
-import { Separator } from '../ui/separator';
+import { FloatingDetailPanel } from '../ui/FloatingDetailPanel';
 import type { Estimate, EstimateItem } from '../../services/estimatesApi';
+import { useDocumentTemplate } from '../../hooks/useDocumentTemplate';
+import { TemplateLivePreview, type PreviewEstimate } from '../documents/TemplateLivePreview';
 
+/**
+ * Last-resort fallback used only when the document templates API is unreachable.
+ * The canonical text lives in the company's `document_templates` row (F015).
+ */
 export const DEFAULT_TERMS_AND_WARRANTY = `TERMS: Estimates are an approximation of charges to you, and they are based on the anticipated details of the work to be done. It is possible for unexpected complications to cause some deviation from the estimate. If additional parts or labor are required you will be contacted immediately.
 
 WARRANTY:
@@ -10,14 +15,31 @@ WARRANTY:
 - A service visit during the warranty period is provided at no additional charge if the issue is related to the repaired component or workmanship.
 - Warranty does not cover misuse, physical damage, power issues, water damage, improper installation, or failures unrelated to the replaced component.`;
 
-function money(value: string | number | null | undefined): string {
-    return '$' + Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function itemMeta(item: EstimateItem): string {
-    const qty = Number(item.quantity || 1);
-    if (qty === 1) return money(item.unit_price);
-    return `${qty} x ${money(item.unit_price)}`;
+function mapEstimateForPreview(estimate: Estimate): PreviewEstimate {
+    return {
+        estimate_number: estimate.estimate_number || 'ESTIMATE',
+        status: estimate.status || 'draft',
+        contact_name: estimate.contact_name || 'Customer',
+        contact_email: estimate.contact_email || '',
+        contact_phone: estimate.contact_phone || '',
+        billing_address: estimate.billing_address || estimate.service_address || '',
+        service_address: estimate.service_address || estimate.billing_address || '',
+        summary: estimate.summary || '',
+        subtotal: Number(estimate.subtotal || 0),
+        discount_amount: Number(estimate.discount_amount || 0),
+        tax_amount: Number(estimate.tax_amount || 0),
+        total: Number(estimate.total || 0),
+        items: (estimate.items || []).map((it: EstimateItem) => ({
+            id: it.id,
+            name: it.name || 'Item',
+            description: it.description ?? null,
+            quantity: Number(it.quantity || 1),
+            unit_price: Number(it.unit_price || 0),
+            amount: Number(it.amount || 0),
+        })),
+        created_at: estimate.created_at || new Date().toISOString(),
+        updated_at: estimate.updated_at || estimate.created_at || new Date().toISOString(),
+    };
 }
 
 interface Props {
@@ -27,78 +49,23 @@ interface Props {
 }
 
 export function EstimatePreviewDialog({ open, onOpenChange, estimate }: Props) {
+    const descriptor = useDocumentTemplate('estimate', open);
+    const data = mapEstimateForPreview(estimate);
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto bg-white">
-                <DialogHeader>
-                    <DialogTitle className="font-mono text-base">{estimate.estimate_number}</DialogTitle>
-                </DialogHeader>
-
-                <div className="space-y-6 text-sm text-neutral-900">
-                    <div className="flex items-start justify-between gap-4">
-                        <div>
-                            <p className="text-xs uppercase tracking-wide text-neutral-500">Prepared for</p>
-                            <p className="font-medium">{estimate.contact_name || 'Customer'}</p>
-                        </div>
-                        <div className="text-right">
-                            <p className="text-xs uppercase tracking-wide text-neutral-500">Total</p>
-                            <p className="font-mono text-xl font-semibold">{money(estimate.total)}</p>
-                        </div>
-                    </div>
-
-                    {estimate.summary && (
-                        <section>
-                            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">Summary</h3>
-                            <p className="whitespace-pre-wrap leading-6">{estimate.summary}</p>
-                        </section>
-                    )}
-
-                    <section>
-                        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">Items</h3>
-                        <div className="divide-y border-y">
-                            {(estimate.items || []).map(item => (
-                                <div key={item.id} className="grid grid-cols-[1fr_auto] gap-4 py-3">
-                                    <div>
-                                        <p className="font-medium">{item.name}</p>
-                                        {item.description && <p className="mt-1 whitespace-pre-wrap text-neutral-600">{item.description}</p>}
-                                        <p className="mt-1 text-xs text-neutral-500">{itemMeta(item)}</p>
-                                    </div>
-                                    <p className="font-mono font-medium">{money(item.amount)}</p>
-                                </div>
-                            ))}
-                        </div>
-                    </section>
-
-                    <section className="ml-auto max-w-xs space-y-2">
-                        <div className="flex justify-between">
-                            <span className="text-neutral-500">Subtotal</span>
-                            <span className="font-mono">{money(estimate.subtotal)}</span>
-                        </div>
-                        {Number(estimate.discount_amount || 0) > 0 && (
-                            <div className="flex justify-between">
-                                <span className="text-neutral-500">Discount</span>
-                                <span className="font-mono">-{money(estimate.discount_amount)}</span>
-                            </div>
-                        )}
-                        {Number(estimate.tax_amount || 0) > 0 && (
-                            <div className="flex justify-between">
-                                <span className="text-neutral-500">Tax</span>
-                                <span className="font-mono">{money(estimate.tax_amount)}</span>
-                            </div>
-                        )}
-                        <Separator />
-                        <div className="flex justify-between font-semibold">
-                            <span>Total</span>
-                            <span className="font-mono">{money(estimate.total)}</span>
-                        </div>
-                    </section>
-
-                    <section>
-                        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">Terms & Warranty</h3>
-                        <p className="whitespace-pre-wrap leading-6 text-neutral-700">{DEFAULT_TERMS_AND_WARRANTY}</p>
-                    </section>
+        <FloatingDetailPanel open={open} onClose={() => onOpenChange(false)} wide>
+            <div className="flex h-full min-h-0 flex-col bg-white text-[#172033]">
+                <div className="shrink-0 border-b border-[#d8e0ea] bg-[#fbfcfe] px-5 py-4 pr-14">
+                    <p className="font-mono text-sm font-semibold">{estimate.estimate_number}</p>
+                    <p className="text-xs text-[#5f7085] mt-0.5">Preview</p>
                 </div>
-            </DialogContent>
-        </Dialog>
+                <div className="min-h-0 flex-1 overflow-y-auto p-5">
+                    {descriptor ? (
+                        <TemplateLivePreview descriptor={descriptor} estimate={data} />
+                    ) : (
+                        <div className="py-12 text-center text-sm text-neutral-500">Loading template…</div>
+                    )}
+                </div>
+            </div>
+        </FloatingDetailPanel>
     );
 }

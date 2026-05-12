@@ -1865,3 +1865,114 @@ Test cases: `docs/test-cases/F014-ads-analytics-microservice.md`
 **Wave 2:** TASK-TWC-001-002, 003, 004, 005, 006 (in parallel — independent files)
 **Wave 3:** TASK-TWC-001-007, 008, 009 (tests in parallel)
 **Wave 4:** TASK-TWC-001-010 (green run)
+
+
+---
+
+## F015: Document Templates Customization
+
+**Feature:** Per-company document templates (estimates first, extensible to invoice/work_order)
+**Status:** in_progress
+**Related docs:** `docs/requirements.md#F015`, `docs/architecture.md#F015`, `docs/specs/F015-document-templates.md`, `docs/test-cases/F015-document-templates.md`
+
+### TASK-F015-001: Migration — `document_templates` table + factory seed
+**Status:** done
+**Files to create:**
+- `backend/db/migrations/084_create_document_templates.sql`
+**Files to modify:** none.
+**Expected result:**
+- Table exists with `document_type` CHECK currently `('estimate')`, unique partial index for one default per (company, type), trigger for `updated_at`.
+- Seed step inserts one factory descriptor row per existing company.
+- Idempotent (`IF NOT EXISTS`, `WHERE NOT EXISTS`).
+**Acceptance:** TC-F015-040, TC-F015-041, TC-F015-042.
+
+### TASK-F015-002: Schema + factory + renderer registry (no DB yet)
+**Status:** done
+**Files to create:**
+- `backend/src/services/documentTemplates/schema/v1.json`
+- `backend/src/services/documentTemplates/factory.js`
+- `backend/src/services/documentTemplates/rendererRegistry.js`
+- `backend/src/services/documentTemplates/estimateAdapter.js`
+**Acceptance:** TC-F015-001..008 pass via Ajv.
+
+### TASK-F015-003: Refactor `estimatePdfService.js` to accept descriptor
+**Status:** done
+**Files to modify:**
+- `backend/src/services/estimatePdfService.js`
+**Constraints:** legacy exports `COMPANY_PROFILE`, `DEFAULT_TERMS_AND_WARRANTY` preserved (re-derived from factory) so existing imports keep working.
+**Acceptance:** TC-F015-030, TC-F015-031, TC-F015-032, TC-F015-033, TC-F015-060.
+
+### TASK-F015-004: DB queries
+**Status:** done
+**Files to create:**
+- `backend/src/db/documentTemplatesQueries.js`
+**Expected result:** parameterized SQL with `company_id` filter on every read/write.
+
+### TASK-F015-005: Service layer (resolve + CRUD orchestration)
+**Status:** done
+**Dependencies:** TASK-F015-002, TASK-F015-004
+**Files to create:**
+- `backend/src/services/documentTemplatesService.js`
+**Acceptance:** TC-F015-010..016.
+
+### TASK-F015-006: Routes
+**Status:** done
+**Dependencies:** TASK-F015-005
+**Files to create:**
+- `backend/src/routes/document-templates.js`
+**Files to modify:**
+- `src/server.js` — mount only (single line) — protected file: change is mount-only, otherwise no-op.
+**Acceptance:** TC-F015-020..028.
+
+### TASK-F015-007: Wire renderer in estimates flow
+**Status:** done
+**Dependencies:** TASK-F015-003, TASK-F015-005
+**Files to modify:**
+- `backend/src/services/estimatesService.js` (only `generatePdf` path)
+**Expected result:** PDF endpoint resolves the company's default template via `documentTemplatesService.resolveTemplate` and passes it to the renderer.
+
+### TASK-F015-008: Frontend API client + types
+**Status:** done
+**Files to create:**
+- `frontend/src/services/documentTemplatesApi.ts`
+- `frontend/src/types/documentTemplates.ts`
+
+### TASK-F015-009: Frontend Settings page (list)
+**Status:** done
+**Dependencies:** TASK-F015-008
+**Files to create:**
+- `frontend/src/pages/DocumentTemplatesPage.tsx`
+**Files to modify:**
+- `frontend/src/App.tsx` (route registration only)
+- existing settings nav (link entry)
+
+### TASK-F015-010: Frontend Editor page
+**Status:** done
+**Dependencies:** TASK-F015-009
+**Files to create:**
+- `frontend/src/pages/DocumentTemplateEditorPage.tsx`
+- `frontend/src/components/documents/TemplateEditorForm.tsx`
+- `frontend/src/components/documents/TemplatePreview.tsx`
+**Acceptance:** TC-F015-050..057.
+
+### TASK-F015-011: Backend tests
+**Status:** done
+**Dependencies:** TASK-F015-005, TASK-F015-006
+**Files to create:**
+- `tests/services/documentTemplatesService.test.js`
+- `tests/routes/document-templates.test.js`
+- `tests/services/estimatePdfRendererGolden.test.js`
+
+### TASK-F015-012: Documentation + changelog
+**Status:** done
+**Files to modify:**
+- `docs/changelog.md`
+- `docs/project-spec.md`
+- `docs/feature-backlog.md` (mark F015 P0 done)
+
+**Wave 1:** TASK-F015-001, TASK-F015-002 (parallel)
+**Wave 2:** TASK-F015-003, TASK-F015-004 (parallel)
+**Wave 3:** TASK-F015-005, TASK-F015-007 (sequential)
+**Wave 4:** TASK-F015-006 (depends on 005)
+**Wave 5:** TASK-F015-008, TASK-F015-009, TASK-F015-010 (frontend, sequential)
+**Wave 6:** TASK-F015-011, TASK-F015-012 (tests + docs)

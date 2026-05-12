@@ -16,6 +16,7 @@ const zenbookerRouter = require('../backend/src/routes/zenbooker');
 const integrationsLeadsRouter = require('../backend/src/routes/integrations-leads');
 const integrationsAnalyticsRouter = require('../backend/src/routes/integrations-analytics');
 const integrationsAdminRouter = require('../backend/src/routes/integrations-admin');
+const marketplaceRouter = require('../backend/src/routes/marketplace');
 const leadFormSettingsRouter = require('../backend/src/routes/lead-form-settings');
 const jobTagsSettingsRouter = require('../backend/src/routes/job-tags-settings');
 const jobsListFieldsRouter = require('../backend/src/routes/jobs-list-fields-settings');
@@ -50,8 +51,10 @@ app.use((req, res, next) => {
 });
 
 // Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// 2mb limit covers document-template descriptors that may embed a base64 logo
+// (logo_url.maxLength = 500_000 chars ≈ 370KB + descriptor JSON overhead).
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 app.use(requestId);
 
 // Disable ETag + prevent caching on API routes
@@ -160,6 +163,15 @@ const portalRouter = require('../backend/src/routes/portal');
 
 app.use('/api/schedule', authenticate, requireCompanyAccess, scheduleRouter);
 app.use('/api/estimates', authenticate, requireCompanyAccess, estimatesRouter);
+const estimateItemPresetsRouter = require('../backend/src/routes/estimate-item-presets');
+app.use('/api/estimate-item-presets', authenticate, requireCompanyAccess, estimateItemPresetsRouter);
+// Public, un-authenticated invoice routes (tokenized PDF for "send" links).
+// Must be mounted BEFORE the authenticated /api/invoices route so the auth
+// middleware doesn't intercept /api/public/* requests.
+const publicInvoicesRouter = require('../backend/src/routes/public-invoices');
+app.use('/api/public', publicInvoicesRouter);
+// Top-level short-link redirect (e.g. /i/abc123 → /api/public/invoices/abc123/pdf).
+app.use('/', publicInvoicesRouter.shortRouter);
 app.use('/api/invoices', authenticate, requireCompanyAccess, invoicesRouter);
 app.use('/api/payments', authenticate, requireCompanyAccess, paymentsCanonicalRouter);
 app.use('/api/portal', portalRouter); // public auth + portal-session auth inside router
@@ -174,6 +186,12 @@ const integrationsZenbookerRouter = require('../backend/src/routes/integrations-
 app.use('/api/integrations/zenbooker', integrationsZenbookerRouter);
 // Integration settings API (§15)
 app.use('/api/admin/integrations', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess, integrationsAdminRouter);
+app.use('/api/marketplace', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess, marketplaceRouter);
+// F015: Document templates customization (estimates first; designed to extend to invoice/work_order)
+require('../backend/src/services/documentTemplates'); // bootstrap renderer registry
+const documentTemplatesRouter = require('../backend/src/routes/document-templates');
+// P0 reuses tenant.integrations.manage (admin-only) until a dedicated tenant.documents.manage permission is seeded.
+app.use('/api/document-templates', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess, documentTemplatesRouter);
 app.use('/api/settings/lead-form', authenticate, requirePermission('tenant.company.manage'), requireCompanyAccess, leadFormSettingsRouter);
 app.use('/api/settings/job-tags', authenticate, requirePermission('tenant.company.manage'), requireCompanyAccess, jobTagsSettingsRouter);
 app.use('/api/settings/jobs-list-fields', authenticate, requirePermission('tenant.company.manage'), requireCompanyAccess, jobsListFieldsRouter);

@@ -4,6 +4,42 @@
 
 ---
 
+## 2026-05-10 — INV-001 Invoices MVP (with manual payment recording)
+
+### Goal
+Allow users to create invoices from approved estimates with full UX parity to the new estimate detail panel (inline edit, auto-save, item search combobox, document-templates PDF). Manual payment recording reflects directly in invoice status and balance.
+
+### Backend
+- Migration `backend/db/migrations/086_document_templates_invoice.sql`: extends `document_templates.document_type` CHECK to `('estimate','invoice')` and seeds a default invoice template per company.
+- `backend/src/services/documentTemplates/factory.js`: added `INVOICE_FACTORY` with the teal accent (`#0f766e`) to visually distinguish invoices from estimates. **Terms & Warranty body is now shared with estimates** (`DEFAULT_INVOICE_TERMS = DEFAULT_TERMS_AND_WARRANTY`) per product spec.
+- `backend/src/services/documentTemplates/invoiceAdapter.js`: renderer adapter for `document_type='invoice'`, registered alongside the estimate adapter in `documentTemplates/index.js`.
+- `backend/src/services/documentTemplates/invoicePdfDocument.js`: react-pdf Document mirroring estimate layout. Section headings: "Summary", "Items", "Totals", "Terms & Warranty". Totals additionally show Amount paid (green), Balance Due with status badge (PAID / PARTIALLY PAID / OVERDUE / AMOUNT DUE / VOID).
+- `backend/src/services/invoicesService.js`: added `generatePdf(companyId, id)`; `updateInvoice` now recalculates totals when `tax_rate` or `discount_amount` change.
+- `backend/src/db/invoicesQueries.js`: `updateInvoice` allowedFields now includes `discount_amount`.
+- `backend/src/routes/invoices.js`: replaced 501 PDF stub with working `GET /:id/pdf`. Added `getCompanyId(req)` helper and applied to every route (fix for a latent bug — old code read `req.companyId` which was never set by middleware). `POST /:id/sync-items` falls back to the invoice's linked `estimate_id` when body is empty.
+
+### Frontend
+- Rewrote `frontend/src/components/invoices/InvoiceDetailPanel.tsx` for full UX parity with `EstimateDetailPanel`:
+    - Two-column layout (main + aside); header shows invoice number (linked to Job when present), status, Balance Due / Total.
+    - Inline auto-save (no separate editor dialog) via `updateInvoice` + optimistic state.
+    - Summary section (Notes field, labeled "Summary") with pencil-to-edit dialog (reuses `EstimateSummaryDialog`).
+    - Items list with pencil-edit + trash-delete; per-item dialog reuses `EstimateItemDialog`.
+    - `ItemPresetSearchCombobox` for adding items (shared catalog with estimates via `estimate_item_presets`).
+    - Inline editable Tax rate, Discount, Due date, Payment terms.
+    - **Manual payment recording** is behind a footer button → opens a `Popover` with Amount + Full-balance shortcut + Method (Card / Cash / Check / ACH / Other) + Submit. Recording immediately refreshes invoice totals, balance, and status.
+    - "Preview PDF" button opens `/api/invoices/:id/pdf` in a new tab.
+- `frontend/src/pages/InvoicesPage.tsx`: switched `FloatingDetailPanel` to `wide`; passes `onChanged` to refresh the list; added `?openId=<id>` URL param handler that auto-opens an invoice on arrival.
+- `frontend/src/components/estimates/EstimateDetailPanel.tsx`: fixed missing `FileText` icon import; `Create Invoice` button now navigates to `/invoices?openId=<id>` so the new invoice opens automatically.
+- `frontend/src/services/invoicesApi.ts`: corrected endpoint paths (`record-payment`, `sync-items`) to match backend routes.
+
+### Decisions
+- **PDF via F015 document templates**, not the legacy hardcoded builder. One adapter per document type; per-tenant customization is through stored descriptors.
+- **Shared item catalog** between estimates and invoices via `estimate_item_presets` (table name kept to avoid migration churn; data is genuinely per-company shared).
+- **Manual payment recording only** — no payment-gateway integration in this iteration. Recorded payments are stored as `invoice_events` of type `payment_recorded` plus immediate `amount_paid` / `balance_due` / `status` updates.
+- Invoices share Terms & Warranty text with estimates — companies want one canonical warranty disclosure across both documents.
+
+---
+
 ## 2026-05-07 — TWC-001 Twilio API Client Singleton
 
 ### Backend
@@ -349,3 +385,26 @@
 ### Dependencies
 - Backend: `fast-xml-parser`
 - Frontend: `@monaco-editor/react`, `state-machine-cat`
+
+
+## 2026-05-09 — F015: Document Templates Customization (estimates)
+
+**Added**
+- New backend module `backend/src/services/documentTemplates/` with factory descriptor (estimate), inline JSON-Schema validator (no Ajv dep), renderer registry, and estimate adapter.
+- DB layer `backend/src/db/documentTemplatesQueries.js`; service `backend/src/services/documentTemplatesService.js` with `resolveTemplate`, list/get/update/reset.
+- REST API at `/api/document-templates` (list, get, update, reset, factory, preview), mounted in `src/server.js` behind `tenant.integrations.manage` (P0; dedicated `tenant.documents.manage` to follow).
+- Migration `backend/db/migrations/084_create_document_templates.sql` — table + unique partial index for one default per (company, document_type) + idempotent factory seed per existing company.
+- Frontend Settings: `pages/DocumentTemplatesPage.tsx` (list grouped by document type), `pages/DocumentTemplateEditorPage.tsx` (form-based editor: brand / theme / sections visibility / Terms & Warranty Markdown / reset). Routes `/settings/document-templates[/:id]`. Typed API client in `services/documentTemplatesApi.ts`; types in `types/documentTemplates.ts`.
+
+**Changed**
+- `backend/src/services/estimatePdfService.js` now accepts an optional `descriptor` parameter (DocumentTemplateDescriptor v1); falls back to factory when omitted; legacy exports `COMPANY_PROFILE` and `DEFAULT_TERMS_AND_WARRANTY` preserved (now derived from factory). Section rendering iterates `descriptor.sections` honoring per-section `visible` flag.
+- `backend/src/services/estimatesService.js#generatePdf` resolves the company's default template via `documentTemplatesService.resolveTemplate('estimate')` and passes it to the renderer.
+
+**Tests**
+- `tests/services/documentTemplatesService.test.js` — validator + service unit tests (12 cases).
+- `tests/services/estimatePdfRendererTemplate.test.js` — renderer integration: factory fallback, descriptor parity, section toggling, brand override (5 cases).
+- Existing `tests/estimatePdfService.test.js` continues to pass.
+
+**Notes**
+- No new runtime dependencies (validator is hand-rolled, ~80 lines).
+- Designed for `invoice` and `work_order`: extending `document_type` CHECK + adding a factory + registering an adapter is sufficient; the Settings page already lists by registered type label.

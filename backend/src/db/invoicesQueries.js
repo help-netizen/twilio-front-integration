@@ -97,8 +97,13 @@ async function listInvoices(companyId, filters = {}) {
     params.push(offset);
 
     const sql = `
-        SELECT i.*, COUNT(*) OVER() AS _total
+        SELECT i.*,
+               c.full_name AS contact_name,
+               l.serial_id AS lead_serial_id,
+               COUNT(*) OVER() AS _total
         FROM invoices i
+        LEFT JOIN contacts c ON c.id = i.contact_id
+        LEFT JOIN leads l ON l.id = i.lead_id AND l.company_id = i.company_id
         WHERE ${where}
         ORDER BY i.created_at DESC
         LIMIT $${limitIdx} OFFSET $${offsetIdx}
@@ -115,18 +120,68 @@ async function listInvoices(companyId, filters = {}) {
 
 /**
  * Get a single invoice by ID (scoped to company).
+ * Joins contact (for display name / email / phone), job, and lead
+ * (so callers can reference `lead_serial_id` etc.).
  */
 async function getInvoiceById(companyId, id) {
     const { rows } = await db.query(
-        `SELECT * FROM invoices WHERE id = $1 AND company_id = $2`,
+        `SELECT i.*,
+                c.full_name AS contact_name,
+                c.email AS contact_email,
+                c.phone_e164 AS contact_phone,
+                j.job_number AS job_number,
+                j.address AS service_address,
+                l.serial_id AS lead_serial_id
+         FROM invoices i
+         LEFT JOIN contacts c ON c.id = i.contact_id
+         LEFT JOIN jobs j ON j.id = i.job_id AND j.company_id = i.company_id
+         LEFT JOIN leads l ON l.id = i.lead_id AND l.company_id = i.company_id
+         WHERE i.id = $1 AND i.company_id = $2`,
         [id, companyId]
     );
     return rows[0] || null;
 }
 
 /**
- * Create a new invoice with auto-generated invoice_number.
- * Format: INV-YYYYMMDD-NNN
+ * Compute the next per-(job|lead) invoice sequence number.
+ * Mirrors `nextEstimateSequence` from estimatesQueries.
+ */
+async function nextInvoiceSequence(companyId, { jobId, leadId }) {
+    const params = [companyId];
+    let clause = '';
+    if (jobId) {
+        params.push(jobId);
+        clause = 'job_id = $2';
+    } else if (leadId) {
+        params.push(leadId);
+        clause = 'lead_id = $2 AND job_id IS NULL';
+    } else {
+        // Fallback — global sequence per company when no job/lead linkage.
+        clause = 'TRUE';
+    }
+    // Count existing invoices for the same job/lead bucket; sequence = count + 1.
+    const { rows } = await db.query(
+        `SELECT COUNT(*)::int + 1 AS next_sequence
+         FROM invoices
+         WHERE company_id = $1 AND ${clause}`,
+        params
+    );
+    return parseInt(rows[0]?.next_sequence || '1', 10);
+}
+
+/**
+ * Format an invoice number that mirrors the estimate scheme (`INVOICE L-{leadSerialId}-{seq}`).
+ * Falls back to a job-id-based label when no lead serial is available.
+ */
+function buildInvoiceNumber({ leadSerialId, jobId, sequence }) {
+    if (leadSerialId) return `INVOICE L-${leadSerialId}-${sequence}`;
+    if (jobId) return `INVOICE J-${jobId}-${sequence}`;
+    return `INVOICE ${sequence}`;
+}
+
+/**
+ * Create a new invoice. If `invoice_number` is provided, it is used as-is;
+ * otherwise we fall back to a per-day INV-YYYYMMDD-NNN sequence (legacy format).
  */
 async function createInvoice(companyId, data) {
     const {
@@ -134,6 +189,7 @@ async function createInvoice(companyId, data) {
         lead_id,
         job_id,
         estimate_id,
+        invoice_number,
         title,
         notes,
         internal_note,
@@ -145,6 +201,34 @@ async function createInvoice(companyId, data) {
         created_by,
     } = data;
 
+    // Default invoice_number expression — used when the caller doesn't supply one.
+    const fallbackNumberExpr = `'INV-' || TO_CHAR(NOW(), 'YYYYMMDD') || '-' || LPAD(
+        (COALESCE(
+            (SELECT MAX(NULLIF(regexp_replace(invoice_number, '^INV-\\d{8}-', ''), '')::int) + 1
+             FROM invoices
+             WHERE company_id = $1 AND invoice_number ~ ('^INV-' || TO_CHAR(NOW(), 'YYYYMMDD') || '-\\d+$')),
+            1
+        ))::text, 3, '0')`;
+    const numberExpr = invoice_number ? '$15' : fallbackNumberExpr;
+
+    const params = [
+        companyId,
+        contact_id,
+        lead_id || null,
+        job_id || null,
+        estimate_id || null,
+        title || null,
+        notes || null,
+        internal_note || null,
+        tax_rate != null ? tax_rate : 0,
+        payment_terms || null,
+        due_date || null,
+        currency || 'USD',
+        discount_amount != null ? discount_amount : 0,
+        created_by || null,
+    ];
+    if (invoice_number) params.push(invoice_number);
+
     const { rows } = await db.query(
         `INSERT INTO invoices (
             company_id, contact_id, lead_id, job_id, estimate_id,
@@ -155,34 +239,14 @@ async function createInvoice(companyId, data) {
         )
         VALUES (
             $1, $2, $3, $4, $5,
-            'INV-' || TO_CHAR(NOW(), 'YYYYMMDD') || '-' || LPAD(
-                (COALESCE(
-                    (SELECT COUNT(*)::int + 1 FROM invoices
-                     WHERE company_id = $1 AND invoice_number LIKE 'INV-' || TO_CHAR(NOW(), 'YYYYMMDD') || '-%'),
-                    1
-                ))::text, 3, '0'),
+            ${numberExpr},
             $6, $7, $8, 'draft',
             COALESCE($9::numeric, 0), $10, $11, COALESCE($12, 'USD'),
             0, 0, COALESCE($13::numeric, 0), 0, 0, 0,
             $14
         )
         RETURNING *`,
-        [
-            companyId,
-            contact_id,
-            lead_id || null,
-            job_id || null,
-            estimate_id || null,
-            title || null,
-            notes || null,
-            internal_note || null,
-            tax_rate != null ? tax_rate : 0,
-            payment_terms || null,
-            due_date || null,
-            currency || 'USD',
-            discount_amount != null ? discount_amount : 0,
-            created_by || null,
-        ]
+        params
     );
     return rows[0];
 }
@@ -194,7 +258,7 @@ async function updateInvoice(id, companyId, data) {
     const allowedFields = [
         'contact_id', 'lead_id', 'job_id', 'estimate_id',
         'title', 'notes', 'internal_note',
-        'tax_rate', 'payment_terms', 'due_date', 'status',
+        'tax_rate', 'discount_amount', 'payment_terms', 'due_date', 'status',
     ];
 
     const sets = [];
@@ -301,7 +365,8 @@ async function addInvoiceItem(invoiceId, item) {
             unit || null,
             amount,
             taxable != null ? taxable : true,
-            metadata ? JSON.stringify(metadata) : null,
+            // metadata column is NOT NULL; default to empty JSON object when not provided.
+            JSON.stringify(metadata ?? {}),
             sort_order != null ? sort_order : null,
         ]
     );
@@ -452,7 +517,8 @@ async function createEvent(invoiceId, eventType, actorType, actorId, metadata) {
         `INSERT INTO invoice_events (invoice_id, event_type, actor_type, actor_id, metadata)
          VALUES ($1, $2, $3, $4, $5)
          RETURNING *`,
-        [invoiceId, eventType, actorType || 'user', actorId || null, metadata ? JSON.stringify(metadata) : null]
+        // metadata column is NOT NULL; default to empty JSON object when none provided.
+        [invoiceId, eventType, actorType || 'user', actorId || null, JSON.stringify(metadata ?? {})]
     );
     return rows[0];
 }
@@ -494,10 +560,46 @@ async function recordPayment(id, companyId, amount) {
 // Exports
 // =============================================================================
 
+/** Look up an invoice strictly by its public_token (no company scoping — the token IS the auth). */
+async function getInvoiceByPublicToken(publicToken) {
+    if (!publicToken) return null;
+    const { rows } = await db.query(
+        `SELECT i.*,
+                c.full_name AS contact_name,
+                c.email AS contact_email,
+                c.phone_e164 AS contact_phone,
+                j.job_number AS job_number,
+                l.serial_id AS lead_serial_id
+         FROM invoices i
+         LEFT JOIN contacts c ON c.id = i.contact_id
+         LEFT JOIN jobs j ON j.id = i.job_id AND j.company_id = i.company_id
+         LEFT JOIN leads l ON l.id = i.lead_id AND l.company_id = i.company_id
+         WHERE i.public_token = $1
+         LIMIT 1`,
+        [publicToken]
+    );
+    return rows[0] || null;
+}
+
+/** Persist a public_token on the invoice (idempotent — caller checks if one already exists first). */
+async function setPublicToken(invoiceId, companyId, token) {
+    const { rows } = await db.query(
+        `UPDATE invoices SET public_token = $3, updated_at = NOW()
+         WHERE id = $1 AND company_id = $2
+         RETURNING *`,
+        [invoiceId, companyId, token]
+    );
+    return rows[0] || null;
+}
+
 module.exports = {
     listInvoices,
     getInvoiceById,
+    getInvoiceByPublicToken,
+    setPublicToken,
     createInvoice,
+    nextInvoiceSequence,
+    buildInvoiceNumber,
     updateInvoice,
     deleteInvoice,
     updateInvoiceStatus,

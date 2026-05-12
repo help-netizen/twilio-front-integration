@@ -42,10 +42,11 @@ function generateSecret() {
  * @param {string|null} expiresAt  ISO date or null
  * @returns {{ key_id, secret, client_name, scopes, created_at, expires_at }}
  */
-async function createIntegration(clientName, scopes = ['leads:create'], expiresAt = null, companyId = null) {
+async function createIntegration(clientName, scopes = ['leads:create'], expiresAt = null, companyId = null, options = {}) {
     const keyId = generateKeyId();
     const secret = generateSecret();
     const secretHash = hashSecret(secret);
+    const query = options.client?.query ? options.client.query.bind(options.client) : db.query;
 
     const cols = ['client_name', 'key_id', 'secret_hash', 'scopes', 'expires_at'];
     const vals = [clientName, keyId, secretHash, JSON.stringify(scopes), expiresAt];
@@ -53,12 +54,20 @@ async function createIntegration(clientName, scopes = ['leads:create'], expiresA
         cols.push('company_id');
         vals.push(companyId);
     }
+    if (options.marketplaceAppId) {
+        cols.push('marketplace_app_id');
+        vals.push(options.marketplaceAppId);
+    }
+    if (options.marketplaceInstallationId) {
+        cols.push('marketplace_installation_id');
+        vals.push(options.marketplaceInstallationId);
+    }
     const placeholders = vals.map((_, i) => `$${i + 1}`);
 
-    const result = await db.query(
+    const result = await query(
         `INSERT INTO api_integrations (${cols.join(', ')})
          VALUES (${placeholders.join(', ')})
-         RETURNING id, client_name, key_id, scopes, created_at, expires_at`,
+         RETURNING id, client_name, key_id, scopes, created_at, expires_at, revoked_at, last_used_at, marketplace_app_id, marketplace_installation_id`,
         vals
     );
 
@@ -72,6 +81,10 @@ async function createIntegration(clientName, scopes = ['leads:create'], expiresA
         scopes: row.scopes,
         created_at: row.created_at,
         expires_at: row.expires_at,
+        revoked_at: row.revoked_at,
+        last_used_at: row.last_used_at,
+        marketplace_app_id: row.marketplace_app_id,
+        marketplace_installation_id: row.marketplace_installation_id,
     };
 }
 
@@ -80,10 +93,15 @@ async function createIntegration(clientName, scopes = ['leads:create'], expiresA
 // =============================================================================
 
 async function listIntegrations(companyId = null) {
-    const where = companyId ? `WHERE company_id = $1` : '';
+    const conditions = ['marketplace_installation_id IS NULL'];
     const params = companyId ? [companyId] : [];
+    if (companyId) {
+        conditions.push('company_id = $1');
+    }
+    const where = `WHERE ${conditions.join(' AND ')}`;
     const result = await db.query(
-        `SELECT id, client_name, key_id, scopes, created_at, expires_at, revoked_at, last_used_at, updated_at
+        `SELECT id, client_name, key_id, scopes, created_at, expires_at, revoked_at, last_used_at, updated_at,
+                marketplace_app_id, marketplace_installation_id
          FROM api_integrations
          ${where}
          ORDER BY created_at DESC`,
@@ -100,14 +118,15 @@ async function listIntegrations(companyId = null) {
  * Revoke an integration by setting revoked_at.
  * @param {string} keyId
  */
-async function revokeIntegration(keyId, companyId = null) {
+async function revokeIntegration(keyId, companyId = null, options = {}) {
+    const query = options.client?.query ? options.client.query.bind(options.client) : db.query;
     const conditions = ['key_id = $1', 'revoked_at IS NULL'];
     const params = [keyId];
     if (companyId) {
         conditions.push(`company_id = $2`);
         params.push(companyId);
     }
-    const result = await db.query(
+    const result = await query(
         `UPDATE api_integrations SET revoked_at = now() WHERE ${conditions.join(' AND ')}
          RETURNING id, key_id, revoked_at`,
         params
@@ -128,7 +147,8 @@ async function revokeIntegration(keyId, companyId = null) {
 
 async function getIntegrationByKeyId(keyId) {
     const result = await db.query(
-        `SELECT id, client_name, key_id, secret_hash, scopes, created_at, expires_at, revoked_at, last_used_at
+        `SELECT id, client_name, key_id, secret_hash, scopes, created_at, expires_at, revoked_at, last_used_at,
+                marketplace_app_id, marketplace_installation_id
          FROM api_integrations WHERE key_id = $1`,
         [keyId]
     );

@@ -865,3 +865,149 @@ All backend modules must share a single Twilio Node SDK client instance per proc
 ### 6. Protected
 - `src/server.js`, TwiML routing, voice/recording behavior, webhook handling logic, reconcile semantics — unchanged.
 - Existing per-module exports of services that already cache a singleton must keep their public API.
+
+
+---
+
+## F015: Document Templates Customization (Estimates first)
+
+**Status:** Requirements
+**Priority:** P0
+**Owner:** CRM / Customization
+**Related existing specs:** `docs/specs/PF002-R2-estimates-composer-refresh.md`, `docs/api/F015-document-templates-api.md` (TBD)
+
+### 1. Description
+
+Introduce a self-contained, extensible **Document Templates** module that lets a company customize the layout, branding, and free-text content of client-facing documents. The first document type is **Estimate**; the same model is designed to absorb **Invoice** and **Work Order** later by adding new `document_type` values without schema or renderer rewrites.
+
+The current PDF renderer and the in-app HTML preview both rely on hardcoded constants in `backend/src/services/estimatePdfService.js` (`COMPANY_PROFILE`, `DEFAULT_TERMS_AND_WARRANTY`, `COLORS`) and a duplicated copy of the warranty text in `frontend/src/components/estimates/EstimatePreviewDialog.tsx`. F015 moves these values into a **versioned, JSON-encoded template descriptor** stored per company, makes them editable through a Settings page, and removes the duplication so PDF and HTML preview render from one source of truth.
+
+This is an **additive** feature — no behavior change for tenants who do not edit their template. The first migration seeds one default template per existing company, byte-for-byte equivalent to the current hardcoded output.
+
+### 2. User Scenarios
+
+#### SC-01: View and edit the default Estimate template
+**Actor:** Tenant admin (`tenant.integrations.manage` or new `tenant.documents.manage`)
+**Flow:**
+1. User opens **Settings → Document Templates**.
+2. Sees a list grouped by document type with `Estimate` populated by one row labeled `Default` (the seeded template).
+3. Clicks the row; an editor opens with the current template descriptor split into form fields (Brand, Sections, Terms, Footer).
+4. User edits company name, accent color, ACH details, terms & warranty text.
+5. Clicks **Save**; backend validates and persists; user returns to the list.
+6. Next PDF/preview rendered for an estimate uses the updated template.
+
+#### SC-02: Live preview while editing
+**Actor:** Tenant admin
+**Flow:**
+1. In the editor, user toggles a section visibility (e.g., hide ACH).
+2. The right-hand pane re-renders the in-app HTML preview using the in-progress descriptor against a fixture estimate.
+3. Save commits the change; reload preserves the new state.
+
+#### SC-03: Reset to factory default
+**Actor:** Tenant admin
+**Flow:**
+1. User clicks **Reset to default** on a template.
+2. Confirmation dialog appears.
+3. On confirm, the descriptor is overwritten with the seeded factory descriptor; previous content is discarded (versioned but not user-recoverable in P0).
+
+#### SC-04: Render uses the company's template
+**Actor:** End user generating an estimate PDF
+**Flow:**
+1. User opens an estimate and clicks **PDF**.
+2. Backend resolves `default` template for `(company_id, 'estimate')`; if none, falls back to the factory descriptor.
+3. PDF is rendered using the descriptor; result is identical to the legacy hardcoded output for an unedited template.
+
+#### SC-05: Future document types (forward-compatibility)
+**Actor:** Product / engineering
+**Flow:**
+1. A new document type (`invoice`) is added by extending the `document_type` enum check, seeding a factory descriptor, and adding a renderer entry that knows the section semantics for invoices.
+2. The Settings page automatically lists the new type because it reads document types from a registry, not a hardcoded array.
+
+### 3. Functional Requirements
+
+#### 3.1 Storage
+- New table `document_templates`: `id, company_id, document_type, name, slug, is_default, schema_version, content (JSONB), created_at, updated_at, archived_at, created_by, updated_by`.
+- Unique partial index on `(company_id, document_type)` where `is_default = true AND archived_at IS NULL` — enforces exactly one active default per `(company, type)`.
+- All access scoped by `company_id` via `req.companyFilter?.company_id`.
+- `document_type` constrained to `('estimate')` initially; designed to accept `'invoice', 'work_order'` later.
+- `schema_version` is an integer (start at `1`); used by the renderer to dispatch to a version-specific reader.
+
+#### 3.2 Template descriptor (JSON, schema_version=1)
+The descriptor is the canonical document model, equivalent to the current hardcoded output:
+```jsonc
+{
+  "schema_version": 1,
+  "brand": {
+    "name": "ABC Homes",
+    "address": "...",
+    "email": "...",
+    "phone": "...",
+    "logo_url": null,
+    "ach": { "bank": "...", "routing_number": "...", "account_number": "..." }
+  },
+  "theme": {
+    "ink": "#172033", "muted": "#5f7085", "faint": "#eef3f8",
+    "surface": "#fbfcfe", "border": "#d8e0ea",
+    "accent": "#2563eb", "danger": "#be123c"
+  },
+  "sections": [
+    { "key": "header", "visible": true },
+    { "key": "ach", "visible": true },
+    { "key": "client_addresses", "visible": true },
+    { "key": "summary", "visible": true },
+    { "key": "items", "visible": true },
+    { "key": "totals", "visible": true },
+    { "key": "terms", "visible": true, "body_md": "TERMS: ...\n\nWARRANTY:\n- ..." }
+  ],
+  "footer": { "show_page_number": true, "text_md": null }
+}
+```
+- Section `key`s are a fixed registry per `document_type`; renderer rejects unknown keys.
+- Section order is the array order; the editor exposes a drag-and-drop reorder in P1 (P0 = fixed order, visibility toggles only).
+- Free text fields (`terms.body_md`, `footer.text_md`, future block content) are **Markdown** (CommonMark subset: bold, lists, line breaks, no raw HTML, no images).
+
+#### 3.3 Backend API (mounted under `/api/document-templates`)
+- `GET /api/document-templates?document_type=estimate` — list templates for the company.
+- `GET /api/document-templates/:id` — fetch by id (404 if cross-company).
+- `POST /api/document-templates` — create (P0: only system seeds; user-create available via clone in P1).
+- `PUT /api/document-templates/:id` — update name and content; validates against schema.
+- `POST /api/document-templates/:id/reset` — overwrite content with the factory descriptor for the document type.
+- `POST /api/document-templates/:id/preview` — server-side render of the descriptor against a fixture estimate; returns HTML descriptor JSON consumed by the frontend preview.
+- `GET /api/document-templates/factory/:document_type` — returns the read-only factory descriptor.
+- All endpoints require `authenticate, requireCompanyAccess`, and the new permission `tenant.documents.manage`.
+
+#### 3.4 Renderer integration
+- `estimatePdfService.renderEstimatePdf(estimate, descriptor)` accepts a descriptor parameter; when omitted, resolves the default for the company.
+- A new module `documentTemplatesService.resolveTemplate(companyId, document_type)` returns the active default or, if none, the factory descriptor.
+- `EstimatePreviewDialog.tsx` reads the same descriptor (via a new `/api/estimates/:id/render` JSON endpoint or via the template API + estimate data) so that PDF and preview never diverge.
+
+#### 3.5 Settings UI
+- New page at `/settings/document-templates` (linked from the Settings nav).
+- List page: groups by document type; each row shows name, default badge, last updated, and an `Edit` action.
+- Editor page: form-based with sections — **Brand**, **Theme** (color pickers), **Sections** (visibility toggles), **Terms & Warranty** (Markdown textarea), **Footer**. Right pane shows a live preview rendered from the in-progress descriptor.
+- Reset, Save, Discard actions; unsaved-changes guard on navigation.
+
+#### 3.6 Validation
+- Server-side: JSON-schema validation (Ajv) of the descriptor; reject unknown section keys, malformed colors, body_md exceeding 8000 chars.
+- Client-side: identical schema enforced by a TypeScript type derived from the same JSON Schema (single source of truth in `backend/src/services/documentTemplates/schema/v1.json`).
+
+### 4. Non-Functional Requirements
+- **Backwards compatibility:** an estimate rendered with no template change must be byte-identical to the pre-feature output (golden test).
+- **Migration:** factory descriptor seeded per existing company in the same migration that creates the table.
+- **Performance:** template fetch must add ≤10ms to the PDF endpoint (single indexed lookup, cached per request).
+- **Security:** Markdown is rendered to PDF text (no HTML escape hatch); on the HTML preview, the Markdown is rendered with a sanitizer (allowlist).
+
+### 5. Out of scope (P0)
+- WYSIWYG / drag-drop block editor (P1).
+- Multiple templates per `(company, document_type)` with switching at render time (P1).
+- Invoice and Work Order document types (data-only follow-up).
+- Logo upload (only `logo_url` string; upload pipeline TBD).
+- Template versioning UI / restore previous version (P2).
+
+### 6. Acceptance criteria
+- AC-1: A fresh tenant has exactly one row in `document_templates` for `document_type='estimate'`, `is_default=true`, with content equal to the factory descriptor.
+- AC-2: Rendering an estimate with the seeded template produces a PDF byte-equivalent to the legacy renderer (golden test).
+- AC-3: Editing the company name in the template and re-rendering the same estimate reflects the new name in the PDF and HTML preview.
+- AC-4: A non-admin user (`tenant.documents.manage` denied) gets `403` on all `/api/document-templates` endpoints; cross-company `:id` returns `404`.
+- AC-5: Removing the `terms` section's visibility hides the section in PDF and HTML preview.
+- AC-6: Adding a new `document_type` only requires (a) extending the CHECK constraint, (b) registering a factory descriptor, (c) registering a renderer adapter — no UI code change to list types.

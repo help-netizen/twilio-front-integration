@@ -1,12 +1,54 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import {
+    Ban,
+    Check,
+    ChevronDown,
+    Clock,
+    CreditCard,
+    Eye,
+    Loader2,
+    MoreHorizontal,
+    Pencil,
+    Send,
+    Trash2,
+    X,
+} from 'lucide-react';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
-import { Separator } from '../ui/separator';
-import { X, Send, Pencil, Trash2, Loader2, Clock, Ban, CreditCard, RefreshCw } from 'lucide-react';
-import type { Invoice, InvoiceEvent, RecordPaymentData } from '../../services/invoicesApi';
-import { fetchInvoicePayments } from '../../services/invoicesApi';
-import { RecordPaymentDialog } from '../transactions/RecordPaymentDialog';
-import type { CreateTransactionData } from '../../services/paymentsCanonicalApi';
+import { Input } from '../ui/input';
+import { Label } from '../ui/label';
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from '../ui/dropdown-menu';
+import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
+import { EstimateItemDialog, type ItemDraft } from '../estimates/EstimateItemDialog';
+import { EstimateSummaryDialog } from '../estimates/EstimateSummaryDialog';
+import { ItemPresetSearchCombobox } from '../estimates/ItemPresetSearchCombobox';
+import {
+    createEstimateItemPreset,
+    recordEstimateItemPresetUsage,
+    type EstimateItemPreset,
+} from '../../services/estimateItemPresetsApi';
+import type {
+    Invoice,
+    InvoiceEvent,
+    InvoiceItem,
+    RecordPaymentData,
+} from '../../services/invoicesApi';
+import {
+    addInvoiceItem,
+    deleteInvoiceItem,
+    fetchInvoice,
+    fetchInvoicePayments,
+    updateInvoice,
+    updateInvoiceItem,
+} from '../../services/invoicesApi';
+import { toast } from 'sonner';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -22,18 +64,25 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | '
 };
 
 function money(value: string | number | null | undefined): string {
-    if (value == null) return '$0.00';
-    return '$' + Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return '$' + Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function fmtDate(value: string | null): string {
+function fmtDate(value: string | null | undefined): string {
     if (!value) return '-';
     return new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function fmtDateTime(value: string | null): string {
+function fmtDateTime(value: string | null | undefined): string {
     if (!value) return '-';
     return new Date(value).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function toDateInput(value: string | null | undefined): string {
+    if (!value) return '';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return '';
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 // ── Props ────────────────────────────────────────────────────────────────────
@@ -43,320 +92,627 @@ interface Props {
     events: InvoiceEvent[];
     loading: boolean;
     onClose: () => void;
-    onEdit: () => void;
+    /** @deprecated Edit happens inline; kept for backward compat with older callers. */
+    onEdit?: () => void;
     onSend: () => void;
     onVoid: () => void;
-    onRecordPayment: (data: RecordPaymentData) => void;
-    onSyncEstimate: () => void;
+    onRecordPayment: (data: RecordPaymentData) => Promise<any> | void;
+    /** @deprecated Sync-from-estimate was removed; prop kept temporarily for caller compatibility. */
+    onSyncEstimate?: () => void;
     onDelete: () => void;
+    /** Called after the panel mutates the invoice so the parent can refetch / update its own state. */
+    onChanged?: (invoice: Invoice) => void;
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export function InvoiceDetailPanel({ invoice, events, loading, onClose, onEdit, onSend, onVoid, onRecordPayment, onSyncEstimate, onDelete }: Props) {
-    const [showRecordPayment, setShowRecordPayment] = useState(false);
-    const [transactions, setTransactions] = useState<any[]>([]);
+export function InvoiceDetailPanel({
+    invoice: initialInvoice,
+    events,
+    loading,
+    onClose,
+    onSend,
+    onVoid,
+    onRecordPayment,
+    onDelete,
+    onChanged,
+}: Props) {
+    // Local copy so we can apply optimistic updates while saving.
+    const [invoice, setInvoice] = useState<Invoice>(initialInvoice);
+    useEffect(() => { setInvoice(initialInvoice); }, [initialInvoice]);
 
+    // Default to expanded whenever the invoice has summary/notes content — saves a click
+    // for the common "open invoice to read it" path.
+    const [notesOpen, setNotesOpen] = useState<boolean>(!!initialInvoice.notes);
+    useEffect(() => {
+        setNotesOpen(!!initialInvoice.notes);
+    }, [initialInvoice.id, initialInvoice.notes]);
+    const [notesDialogOpen, setNotesDialogOpen] = useState(false);
+
+    // Inline-edit modals (Items)
+    const [itemDialogOpen, setItemDialogOpen] = useState(false);
+    const [itemEditingId, setItemEditingId] = useState<number | null>(null);
+    const [itemDraft, setItemDraft] = useState<ItemDraft>({ name: '', description: '', quantity: '1', unit_price: '0', taxable: false });
+
+    // Local mirrors for debounced auto-save.
+    const [taxRate, setTaxRate] = useState<string>(invoice.tax_rate ? Number(invoice.tax_rate).toFixed(2) : '0');
+    const [discountAmount, setDiscountAmount] = useState<string>(invoice.discount_amount ? String(invoice.discount_amount) : '0');
+    const [hasDiscount, setHasDiscount] = useState<boolean>(Number(invoice.discount_amount) > 0);
+    const [dueDate, setDueDate] = useState<string>(toDateInput(invoice.due_date));
+    useEffect(() => {
+        setTaxRate(invoice.tax_rate ? Number(invoice.tax_rate).toFixed(2) : '0');
+        setDiscountAmount(invoice.discount_amount ? String(invoice.discount_amount) : '0');
+        setHasDiscount(Number(invoice.discount_amount) > 0);
+        setDueDate(toDateInput(invoice.due_date));
+    }, [invoice.tax_rate, invoice.discount_amount, invoice.due_date]);
+
+    // Payments list
+    const [payments, setPayments] = useState<any[]>([]);
     useEffect(() => {
         if (!invoice?.id) return;
-        fetchInvoicePayments(invoice.id)
-            .then(setTransactions)
-            .catch(() => {});
+        fetchInvoicePayments(invoice.id).then(setPayments).catch(() => {});
     }, [invoice?.id]);
 
-    const handleRecordPaymentSave = async (data: CreateTransactionData) => {
-        const rpData: RecordPaymentData = {
-            amount: String(data.amount),
-            payment_method: data.payment_method || undefined,
-            reference: data.reference_number || undefined,
-        };
-        onRecordPayment(rpData);
-        setShowRecordPayment(false);
+    // Payment form (shown inside a popover triggered by the "Record payment" button)
+    const [paymentOpen, setPaymentOpen] = useState(false);
+    const [paymentAmount, setPaymentAmount] = useState<string>('');
+    const [paymentMethod, setPaymentMethod] = useState<string>('card');
+    const [recording, setRecording] = useState(false);
+
+    // Pre-fill the amount with the remaining balance whenever the popover opens
+    // (or when the underlying balance changes while it's open).
+    useEffect(() => {
+        if (paymentOpen) {
+            const balance = Number(invoice.balance_due) || 0;
+            setPaymentAmount(balance > 0 ? balance.toFixed(2) : '');
+        }
+    }, [paymentOpen, invoice.balance_due]);
+
+    const isVoid = invoice.status === 'void' || invoice.status === 'refunded';
+    const readOnly = isVoid;
+    const isDraft = invoice.status === 'draft';
+    // Send is always available for non-void invoices (re-sends are a normal workflow).
+    const canSend = !invoice.status || (invoice.status !== 'void' && invoice.status !== 'refunded');
+    const canVoid = !isVoid;
+    const canRecordPayment = !isVoid && Number(invoice.balance_due) > 0;
+
+    // ── Item-edit handlers ───────────────────────────────────────────────────
+
+    const refreshAfterItemChange = async () => {
+        try {
+            const fresh = await fetchInvoice(invoice.id);
+            setInvoice(fresh);
+            onChanged?.(fresh);
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Refresh failed');
+        }
     };
+
+    /** True when the next saveItemDraft should also create a preset (combobox "Create new" flow). */
+    const [savePresetOnNextItem, setSavePresetOnNextItem] = useState(false);
+
+    const openNewItem = (prefill?: Partial<ItemDraft>, opts?: { savePreset?: boolean }) => {
+        setItemEditingId(null);
+        setItemDraft({
+            name: prefill?.name ?? '',
+            description: prefill?.description ?? '',
+            quantity: prefill?.quantity ?? '1',
+            unit_price: prefill?.unit_price ?? '0',
+            taxable: prefill?.taxable ?? false,
+        });
+        setSavePresetOnNextItem(!!opts?.savePreset);
+        setItemDialogOpen(true);
+    };
+
+    /** Combobox: existing preset selected → add to invoice immediately with defaults. */
+    const pickPreset = async (preset: EstimateItemPreset) => {
+        try {
+            await addInvoiceItem(invoice.id, {
+                name: preset.name,
+                description: preset.description || '',
+                quantity: String(preset.default_quantity ?? 1),
+                unit_price: String(preset.default_unit_price ?? 0),
+                taxable: !!preset.default_taxable,
+            } as any);
+            recordEstimateItemPresetUsage(preset.id).catch(() => {});
+            await refreshAfterItemChange();
+            toast.success(`Added "${preset.name}"`);
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Add failed');
+        }
+    };
+
+    const startCreateFromName = (name: string) => {
+        openNewItem({ name }, { savePreset: true });
+    };
+    const openEditItem = (item: InvoiceItem) => {
+        setItemEditingId(item.id);
+        setItemDraft({
+            name: item.name || '',
+            description: item.description || '',
+            quantity: String(item.quantity ?? '1'),
+            unit_price: String(item.unit_price ?? '0'),
+            taxable: !!item.taxable,
+        });
+        setItemDialogOpen(true);
+    };
+    const saveItemDraft = async (draft: ItemDraft) => {
+        try {
+            const payload = {
+                name: draft.name.trim(),
+                description: draft.description,
+                quantity: draft.quantity,
+                unit_price: draft.unit_price,
+                taxable: draft.taxable,
+            };
+            if (itemEditingId == null) {
+                await addInvoiceItem(invoice.id, payload as any);
+                if (savePresetOnNextItem) {
+                    try {
+                        const preset = await createEstimateItemPreset({
+                            name: payload.name,
+                            description: payload.description || null,
+                            default_quantity: Number(payload.quantity) || 1,
+                            default_unit_price: Number(payload.unit_price) || 0,
+                            default_taxable: !!payload.taxable,
+                        });
+                        recordEstimateItemPresetUsage(preset.id).catch(() => {});
+                        toast.success(`Created "${preset.name}" and added to invoice`);
+                    } catch (err) {
+                        toast.error(`Item added, but failed to save preset: ${err instanceof Error ? err.message : String(err)}`);
+                    } finally {
+                        setSavePresetOnNextItem(false);
+                    }
+                }
+            } else {
+                await updateInvoiceItem(invoice.id, itemEditingId, payload as any);
+            }
+            await refreshAfterItemChange();
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Save failed');
+        }
+    };
+    const handleRemoveItem = async (id: number) => {
+        try {
+            await deleteInvoiceItem(invoice.id, id);
+            await refreshAfterItemChange();
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Remove failed');
+        }
+    };
+
+    // ── Auto-save ────────────────────────────────────────────────────────────
+
+    const saving = useRef(false);
+    const persist = async (patch: Partial<Invoice>) => {
+        if (readOnly) return;
+        if (saving.current) return;
+        saving.current = true;
+        try {
+            const updated = await updateInvoice(invoice.id, patch as any);
+            setInvoice(updated);
+            onChanged?.(updated);
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Save failed');
+        } finally {
+            saving.current = false;
+        }
+    };
+    const saveNotes = async (text: string) => {
+        await persist({ notes: text } as any);
+    };
+
+    // ── Inline payment recording ─────────────────────────────────────────────
+
+    const handleInlineRecord = async () => {
+        const amt = Number(paymentAmount);
+        if (!amt || amt <= 0) {
+            toast.error('Enter a payment amount greater than 0');
+            return;
+        }
+        setRecording(true);
+        try {
+            await onRecordPayment({ amount: String(amt), payment_method: paymentMethod });
+            // refresh
+            const fresh = await fetchInvoice(invoice.id);
+            setInvoice(fresh);
+            onChanged?.(fresh);
+            const ps = await fetchInvoicePayments(invoice.id);
+            setPayments(ps);
+            setPaymentAmount('');
+            setPaymentOpen(false);
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Payment failed');
+        } finally {
+            setRecording(false);
+        }
+    };
+
+    /** Reusable payment-recording form body. */
+    const paymentFormBody = (
+        <div className="space-y-2">
+            <Input
+                type="number"
+                min="0.01"
+                step="0.01"
+                placeholder="Amount"
+                value={paymentAmount}
+                onChange={e => setPaymentAmount(e.target.value)}
+                className="h-8 tabular-nums"
+                autoFocus
+            />
+            <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                <SelectTrigger className="h-8 text-sm">
+                    <SelectValue placeholder="Method" />
+                </SelectTrigger>
+                <SelectContent>
+                    <SelectItem value="card">Card</SelectItem>
+                    <SelectItem value="cash">Cash</SelectItem>
+                    <SelectItem value="check">Check</SelectItem>
+                    <SelectItem value="ach">ACH / Bank</SelectItem>
+                    <SelectItem value="other">Other</SelectItem>
+                </SelectContent>
+            </Select>
+            <Button
+                type="button"
+                size="sm"
+                className="w-full"
+                onClick={handleInlineRecord}
+                disabled={recording || !paymentAmount}
+            >
+                {recording ? (
+                    <><Loader2 className="mr-1 size-3.5 animate-spin" />Recording…</>
+                ) : (
+                    <><CreditCard className="mr-1 size-3.5" />Record payment</>
+                )}
+            </Button>
+        </div>
+    );
 
     if (loading) {
         return (
-            <div className="h-full flex items-center justify-center">
+            <div className="flex h-full items-center justify-center">
                 <Loader2 className="size-6 animate-spin text-muted-foreground" />
             </div>
         );
     }
 
-    const isDraft = invoice.status === 'draft';
-    const canRecordPayment = invoice.status === 'sent' || invoice.status === 'partial' || invoice.status === 'overdue';
-    const canVoid = invoice.status !== 'void' && invoice.status !== 'refunded';
+    const hasItems = !!invoice.items?.length;
     const totalNum = Number(invoice.total) || 0;
     const paidNum = Number(invoice.amount_paid) || 0;
     const paymentProgress = totalNum > 0 ? Math.min((paidNum / totalNum) * 100, 100) : 0;
+    const balanceDueNum = Number(invoice.balance_due) || 0;
 
     return (
-        <div className="flex flex-col h-full overflow-y-auto">
-            {/* Header */}
-            <div className="flex items-center justify-between p-4 border-b">
-                <div className="flex items-center gap-2">
-                    <span className="font-semibold font-mono text-sm">{invoice.invoice_number}</span>
-                    <Badge variant={STATUS_VARIANT[invoice.status] || 'secondary'} className="capitalize">
-                        {invoice.status}
-                    </Badge>
+        <div className={`flex h-full min-h-0 flex-col bg-[#f3f6f9] text-[#172033] ${isVoid ? 'grayscale opacity-60' : ''}`}>
+            <div className="shrink-0 border-b border-[#d8e0ea] bg-[#fbfcfe] px-5 py-4 pr-14">
+                <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                            {invoice.job_id ? (
+                                <a
+                                    href={`/jobs/${invoice.job_id}`}
+                                    onClick={e => { e.preventDefault(); window.open(`/jobs/${invoice.job_id}`, '_blank', 'noopener,noreferrer'); }}
+                                    className="font-mono text-sm font-semibold text-blue-600 hover:underline"
+                                    title={`Open Job #${invoice.job_id}`}
+                                >
+                                    {invoice.invoice_number}
+                                </a>
+                            ) : (
+                                <span className="font-mono text-sm font-semibold">{invoice.invoice_number}</span>
+                            )}
+                            <Badge variant={STATUS_VARIANT[invoice.status] || 'secondary'} className="capitalize">{invoice.status}</Badge>
+                            {invoice.estimate_id && (
+                                <Badge variant="outline" title={`From estimate #${invoice.estimate_id}`}>Estimate #{invoice.estimate_id}</Badge>
+                            )}
+                        </div>
+                        <p className="mt-1 text-sm text-[#5f7085]">{invoice.contact_name || 'No customer linked'}</p>
+                    </div>
+                    <div className="flex items-start gap-3">
+                        <div className="text-right">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-[#65758b]">Balance Due</p>
+                            <p className={`font-mono text-xl font-semibold ${balanceDueNum > 0 ? '' : 'text-emerald-700'}`}>
+                                {money(invoice.balance_due)}
+                            </p>
+                            <p className="text-[11px] text-[#65758b]">of {money(invoice.total)}</p>
+                        </div>
+                        <Button variant="ghost" size="sm" className="size-7 p-0 md:hidden" onClick={onClose}>
+                            <X className="size-4" />
+                        </Button>
+                    </div>
                 </div>
-                <Button variant="ghost" size="sm" className="size-7 p-0 md:hidden" onClick={onClose}>
-                    <X className="size-4" />
-                </Button>
             </div>
 
-            <div>
-                <div className="p-4 space-y-4">
-                    {/* Title */}
-                    {invoice.title && (
-                        <div>
-                            <h3 className="font-medium">{invoice.title}</h3>
+            <div className="grid min-h-0 flex-1 overflow-hidden md:grid-cols-[minmax(0,1fr)_310px]">
+                <main className="min-h-0 space-y-6 overflow-y-auto p-5">
+                    {/* Summary (stored in `notes` field; labeled "Summary" to match estimates) */}
+                    <section className="rounded-md border border-[#d8e0ea] bg-[#fbfcfe]">
+                        <div className="flex items-center justify-between px-4 py-3">
+                            <button
+                                type="button"
+                                onClick={() => setNotesOpen(o => !o)}
+                                className="flex flex-1 items-center gap-2 text-left text-sm font-medium"
+                            >
+                                <ChevronDown className={`size-4 text-[#65758b] transition-transform ${notesOpen ? 'rotate-180' : ''}`} />
+                                Summary
+                                {!invoice.notes && <span className="text-xs font-normal text-[#5f7085]">— add notes</span>}
+                            </button>
+                            {!readOnly && (
+                                <Button type="button" size="sm" variant="ghost" className="size-7 p-0" onClick={() => setNotesDialogOpen(true)} title="Edit summary">
+                                    <Pencil className="size-4" />
+                                </Button>
+                            )}
                         </div>
-                    )}
-
-                    {/* Customer */}
-                    <div>
-                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Customer</p>
-                        <p className="text-sm">{invoice.contact_name || 'No customer linked'}</p>
-                    </div>
-
-                    {/* Linked estimate */}
-                    {invoice.estimate_id && (
-                        <div>
-                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Linked Estimate</p>
-                            <p className="text-sm">Estimate #{invoice.estimate_id}</p>
-                        </div>
-                    )}
-
-                    {/* Linked job / lead */}
-                    {invoice.job_id && (
-                        <div>
-                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Linked Job</p>
-                            <p className="text-sm">Job #{invoice.job_id}</p>
-                        </div>
-                    )}
-                    {invoice.lead_id && (
-                        <div>
-                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Linked Lead</p>
-                            <p className="text-sm">Lead #{invoice.lead_id}</p>
-                        </div>
-                    )}
-
-                    <Separator />
+                        {notesOpen && invoice.notes && (
+                            <div className="border-t border-[#d8e0ea] px-4 py-4 text-sm whitespace-pre-wrap text-[#4f6176]">{invoice.notes}</div>
+                        )}
+                    </section>
 
                     {/* Items */}
-                    {invoice.items && invoice.items.length > 0 && (
-                        <div>
-                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Line Items</p>
-                            <div className="space-y-1">
-                                {invoice.items.map(item => (
-                                    <div key={item.id} className="flex items-start justify-between text-sm py-1">
-                                        <div className="flex-1 min-w-0">
-                                            <p className="font-medium truncate">{item.name}</p>
-                                            {item.description && (
-                                                <p className="text-xs text-muted-foreground truncate">{item.description}</p>
-                                            )}
-                                            <p className="text-xs text-muted-foreground">
-                                                {Number(item.quantity)} {item.unit || ''} x {money(item.unit_price)}
-                                            </p>
-                                        </div>
-                                        <span className="font-mono text-sm ml-2 shrink-0">{money(item.amount)}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    <Separator />
-
-                    {/* Totals */}
-                    <div className="space-y-1 text-sm">
-                        <div className="flex justify-between">
-                            <span className="text-muted-foreground">Subtotal</span>
-                            <span className="font-mono">{money(invoice.subtotal)}</span>
-                        </div>
-                        {Number(invoice.discount_amount) > 0 && (
-                            <div className="flex justify-between">
-                                <span className="text-muted-foreground">Discount</span>
-                                <span className="font-mono text-red-600">-{money(invoice.discount_amount)}</span>
-                            </div>
-                        )}
-                        {Number(invoice.tax_amount) > 0 && (
-                            <div className="flex justify-between">
-                                <span className="text-muted-foreground">Tax ({Number(invoice.tax_rate)}%)</span>
-                                <span className="font-mono">{money(invoice.tax_amount)}</span>
-                            </div>
-                        )}
-                        <div className="flex justify-between font-semibold pt-1 border-t">
-                            <span>Total</span>
-                            <span className="font-mono">{money(invoice.total)}</span>
-                        </div>
-                    </div>
-
-                    <Separator />
-
-                    {/* Payment info */}
-                    <div>
-                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Payment</p>
-                        <div className="space-y-2">
-                            <div className="flex justify-between text-sm">
-                                <span className="text-muted-foreground">Amount Paid</span>
-                                <span className="font-mono text-green-600">{money(invoice.amount_paid)}</span>
-                            </div>
-                            <div className="flex justify-between text-sm font-semibold">
-                                <span>Balance Due</span>
-                                <span className="font-mono">{money(invoice.balance_due)}</span>
-                            </div>
-                            {/* Progress bar */}
-                            <div className="w-full bg-muted rounded-full h-2">
-                                <div
-                                    className="bg-green-500 h-2 rounded-full transition-all"
-                                    style={{ width: `${paymentProgress}%` }}
-                                />
-                            </div>
-                            <p className="text-xs text-muted-foreground text-center">
-                                {paymentProgress.toFixed(0)}% paid
-                            </p>
-                        </div>
-                    </div>
-
-                    {/* Notes */}
-                    {invoice.notes && (
-                        <>
-                            <Separator />
+                    <section>
+                        <div className="mb-3 flex items-end justify-between gap-3">
                             <div>
-                                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Notes</p>
-                                <p className="text-sm whitespace-pre-wrap">{invoice.notes}</p>
+                                <p className="text-sm font-semibold">Items</p>
+                                <p className="text-xs text-[#5f7085]">Line items billed on the invoice.</p>
                             </div>
-                        </>
-                    )}
-
-                    {invoice.internal_note && (
-                        <div>
-                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Internal Note</p>
-                            <p className="text-sm whitespace-pre-wrap text-muted-foreground">{invoice.internal_note}</p>
                         </div>
-                    )}
-
-                    <Separator />
-
-                    {/* Dates */}
-                    <div>
-                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Dates</p>
-                        <div className="space-y-1 text-sm">
-                            <div className="flex justify-between">
-                                <span className="text-muted-foreground">Created</span>
-                                <span>{fmtDate(invoice.created_at)}</span>
-                            </div>
-                            {invoice.sent_at && (
-                                <div className="flex justify-between">
-                                    <span className="text-muted-foreground">Sent</span>
-                                    <span>{fmtDateTime(invoice.sent_at)}</span>
-                                </div>
-                            )}
-                            {invoice.due_date && (
-                                <div className="flex justify-between">
-                                    <span className="text-muted-foreground">Due Date</span>
-                                    <span>{fmtDate(invoice.due_date)}</span>
-                                </div>
-                            )}
-                            {invoice.paid_at && (
-                                <div className="flex justify-between">
-                                    <span className="text-muted-foreground">Paid</span>
-                                    <span>{fmtDateTime(invoice.paid_at)}</span>
-                                </div>
-                            )}
-                            {invoice.voided_at && (
-                                <div className="flex justify-between">
-                                    <span className="text-muted-foreground">Voided</span>
-                                    <span>{fmtDateTime(invoice.voided_at)}</span>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-
-                    <Separator />
-
-                    {/* Action buttons */}
-                    <div className="flex flex-wrap gap-2">
-                        <Button variant="outline" size="sm" onClick={onEdit}>
-                            <Pencil className="size-3.5 mr-1" />Edit
-                        </Button>
-                        {isDraft && (
-                            <Button variant="outline" size="sm" onClick={onSend}>
-                                <Send className="size-3.5 mr-1" />Send
-                            </Button>
-                        )}
-                        {canVoid && (
-                            <Button variant="outline" size="sm" onClick={onVoid}>
-                                <Ban className="size-3.5 mr-1" />Void
-                            </Button>
-                        )}
-                        {canRecordPayment && (
-                            <Button variant="outline" size="sm" onClick={() => setShowRecordPayment(true)}>
-                                <CreditCard className="size-3.5 mr-1" />Record Payment
-                            </Button>
-                        )}
-                        {invoice.estimate_id && (
-                            <Button variant="outline" size="sm" onClick={onSyncEstimate}>
-                                <RefreshCw className="size-3.5 mr-1" />Sync from Estimate
-                            </Button>
-                        )}
-                        <Button variant="outline" size="sm" className="text-red-600 hover:text-red-700" onClick={onDelete}>
-                            <Trash2 className="size-3.5 mr-1" />Delete
-                        </Button>
-                    </div>
-
-                    {/* Payments / Transactions */}
-                    <Separator />
-                    <div>
-                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Payments</p>
-                        {transactions.length === 0 ? (
-                            <p className="text-sm text-muted-foreground">No payments recorded</p>
-                        ) : (
-                            <div className="space-y-1">
-                                {transactions.map((tx: any) => (
-                                    <div key={tx.id} className="flex justify-between text-sm">
-                                        <span className="text-muted-foreground capitalize">
-                                            {fmtDate(tx.transaction_date || tx.created_at)}
-                                            {tx.payment_method && ` · ${tx.payment_method}`}
-                                        </span>
-                                        <span className="font-mono text-green-600">{money(tx.amount)}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Events / History */}
-                    {events.length > 0 && (
-                        <>
-                            <Separator />
-                            <div>
-                                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">History</p>
-                                <div className="space-y-2">
-                                    {events.map(evt => (
-                                        <div key={evt.id} className="flex items-start gap-2 text-xs">
-                                            <Clock className="size-3 mt-0.5 text-muted-foreground shrink-0" />
-                                            <div>
-                                                <span className="font-medium capitalize">{evt.event_type.replace(/_/g, ' ')}</span>
-                                                {evt.actor_id && <span className="text-muted-foreground"> by {evt.actor_id}</span>}
-                                                <p className="text-muted-foreground">{fmtDateTime(evt.created_at)}</p>
+                        {hasItems ? (
+                            <div className="space-y-2">
+                                {invoice.items!.map(item => (
+                                    <div
+                                        key={item.id}
+                                        className={`grid grid-cols-[1fr_auto_auto_auto] gap-3 rounded-md border border-[#d8e0ea] bg-[#fbfcfe] p-4 text-sm transition-colors ${readOnly ? '' : 'cursor-pointer hover:bg-white'}`}
+                                        onClick={() => { if (!readOnly) openEditItem(item); }}
+                                    >
+                                        <div className="min-w-0">
+                                            <p className="font-medium">{item.name}</p>
+                                            {item.description && <p className="mt-1 whitespace-pre-wrap text-[#4f6176]">{item.description}</p>}
+                                            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#5f7085]">
+                                                <span>{Number(item.quantity)} x {money(item.unit_price)}</span>
+                                                {item.taxable && <Badge variant="outline" className="text-[10px]">Taxable</Badge>}
                                             </div>
                                         </div>
-                                    ))}
+                                        <p className="font-mono font-semibold whitespace-nowrap">{money((item as any).amount ?? Number(item.quantity) * Number(item.unit_price))}</p>
+                                        {!readOnly && (
+                                            <>
+                                                <Button type="button" size="sm" variant="ghost" className="size-7 p-0" onClick={(e) => { e.stopPropagation(); openEditItem(item); }} title="Edit item">
+                                                    <Pencil className="size-4" />
+                                                </Button>
+                                                <Button type="button" size="sm" variant="ghost" className="size-7 p-0 text-red-600" onClick={(e) => { e.stopPropagation(); handleRemoveItem(item.id); }} title="Remove item">
+                                                    <Trash2 className="size-4" />
+                                                </Button>
+                                            </>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                                This invoice has no items. Add at least one priced item before sending.
+                            </div>
+                        )}
+                        {!readOnly && (
+                            <div className="mt-3">
+                                <ItemPresetSearchCombobox
+                                    onPickPreset={pickPreset}
+                                    onCreateNew={startCreateFromName}
+                                />
+                            </div>
+                        )}
+                    </section>
+
+                    {/* Totals */}
+                    <section className="rounded-md border border-[#d8e0ea] bg-[#fbfcfe] p-4">
+                        <div className="space-y-2 text-sm">
+                            <div className="flex justify-between">
+                                <span className="text-[#5f7085]">Subtotal</span>
+                                <span className="font-mono">{money(invoice.subtotal)}</span>
+                            </div>
+                            {hasDiscount ? (
+                                <div className="flex items-center gap-2 text-sm">
+                                    <span className="text-[#5f7085]">Discount</span>
+                                    <span className="text-[#65758b]">$</span>
+                                    <Input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        value={discountAmount}
+                                        onChange={e => setDiscountAmount(e.target.value)}
+                                        onBlur={() => persist({ discount_amount: discountAmount || '0' } as any)}
+                                        disabled={readOnly}
+                                        className="w-24 h-8 text-right tabular-nums"
+                                    />
+                                    <Button type="button" variant="ghost" size="sm" className="size-8 p-0 shrink-0" disabled={readOnly} onClick={() => { setHasDiscount(false); setDiscountAmount('0'); persist({ discount_amount: '0' } as any); }} title="Remove discount">
+                                        <Trash2 className="size-4" />
+                                    </Button>
+                                    <span className="font-mono text-red-600 ml-auto">-{money(invoice.discount_amount)}</span>
+                                </div>
+                            ) : !readOnly && (
+                                <button type="button" className="text-sm text-blue-600" onClick={() => { setHasDiscount(true); setDiscountAmount('0'); }}>
+                                    Add Discount
+                                </button>
+                            )}
+                            <div className="grid grid-cols-[1fr_auto] items-center gap-3">
+                                <Label className="text-sm text-[#5f7085]">Tax rate</Label>
+                                <Input
+                                    type="number"
+                                    min="0"
+                                    step="0.05"
+                                    value={taxRate}
+                                    onChange={e => setTaxRate(e.target.value)}
+                                    onBlur={() => {
+                                        const n = Number(taxRate);
+                                        const formatted = Number.isFinite(n) ? n.toFixed(2) : '0';
+                                        setTaxRate(formatted);
+                                        persist({ tax_rate: formatted } as any);
+                                    }}
+                                    disabled={readOnly}
+                                    className="w-24 h-8 text-right tabular-nums"
+                                />
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-[#5f7085]">Tax</span>
+                                <span className="font-mono">{money(invoice.tax_amount)}</span>
+                            </div>
+                            <div className="flex justify-between border-t pt-2 text-base font-semibold">
+                                <span>Total</span>
+                                <span className="font-mono">{money(invoice.total)}</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                                <span className="text-[#5f7085]">Amount paid</span>
+                                <span className="font-mono text-emerald-700">{money(invoice.amount_paid)}</span>
+                            </div>
+                            <div className="flex justify-between border-t pt-2 text-base font-semibold">
+                                <span>Balance Due</span>
+                                <span className={`font-mono ${balanceDueNum <= 0 ? 'text-emerald-700' : ''}`}>{money(invoice.balance_due)}</span>
+                            </div>
+                            {totalNum > 0 && (
+                                <div>
+                                    <div className="w-full bg-[#eef3f8] rounded-full h-1.5">
+                                        <div
+                                            className="bg-emerald-600 h-1.5 rounded-full transition-all"
+                                            style={{ width: `${paymentProgress}%` }}
+                                        />
+                                    </div>
+                                    <p className="text-[11px] text-[#65758b] mt-1 text-right">{paymentProgress.toFixed(0)}% paid</p>
+                                </div>
+                            )}
+                        </div>
+                    </section>
+                </main>
+
+                <aside className="min-h-0 space-y-5 overflow-y-auto border-t border-[#d8e0ea] bg-[#eef3f8] p-5 md:border-l md:border-t-0">
+                    {/* Document settings */}
+                    <section className="space-y-2 text-sm">
+                        <p className="text-sm font-semibold">Document settings</p>
+                        <div className="grid grid-cols-[auto_1fr] items-center gap-2">
+                            <Label className="text-[#5f7085]">Due date</Label>
+                            <Input
+                                type="date"
+                                value={dueDate}
+                                onChange={e => setDueDate(e.target.value)}
+                                onBlur={() => persist({ due_date: dueDate || null } as any)}
+                                disabled={readOnly}
+                                className="h-8"
+                            />
+                        </div>
+                    </section>
+
+                    {/* Fully-paid banner */}
+                    {!readOnly && balanceDueNum <= 0 && (
+                        <section className="space-y-2 text-sm">
+                            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                                <div className="flex items-center gap-2 font-medium">
+                                    <Check className="size-3.5" />
+                                    Invoice is fully paid
                                 </div>
                             </div>
-                        </>
+                        </section>
                     )}
+
+                    {/* Payments list */}
+                    {payments.length > 0 && (
+                        <section className="space-y-2 text-sm">
+                            <p className="text-sm font-semibold">Payments</p>
+                            <div className="space-y-1">
+                                {payments.map((tx: any) => (
+                                    <div key={tx.id} className="flex justify-between text-xs">
+                                        <span className="text-[#5f7085] capitalize">
+                                            {fmtDate(tx.transaction_date || tx.created_at)}
+                                            {(tx.payment_method || tx.metadata?.payment_method) && ` · ${tx.payment_method || tx.metadata?.payment_method}`}
+                                        </span>
+                                        <span className="font-mono text-emerald-700">{money(tx.amount ?? tx.metadata?.amount)}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </section>
+                    )}
+
+                    {events.length > 0 && (
+                        <section className="space-y-2 text-sm">
+                            <p className="text-sm font-semibold">History</p>
+                            <div className="space-y-2">
+                                {events.map(evt => (
+                                    <div key={evt.id} className="flex items-start gap-2 text-xs">
+                                        <Clock className="mt-0.5 size-3 shrink-0 text-[#65758b]" />
+                                        <div>
+                                            <span className="font-medium capitalize">{evt.event_type.replace(/_/g, ' ')}</span>
+                                            <p className="text-[#5f7085]">{fmtDateTime(evt.created_at)}</p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </section>
+                    )}
+                </aside>
+            </div>
+
+            <div className="shrink-0 border-t border-[#d8e0ea] bg-[#fbfcfe] px-5 py-3">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <div className="grid grid-cols-2 gap-2 md:flex">
+                        <Button variant="outline" size="sm" onClick={() => window.open(`/api/invoices/${invoice.id}/pdf`, '_blank', 'noopener,noreferrer')}>
+                            <Eye className="mr-1 size-3.5" />Preview PDF
+                        </Button>
+                    </div>
+                    <div className="flex flex-wrap gap-2 md:justify-end">
+                        {!isVoid ? (
+                            <>
+                                {canSend && (
+                                    <Button variant="default" size="sm" onClick={onSend}>
+                                        <Send className="mr-1 size-3.5" />Send
+                                    </Button>
+                                )}
+                                {canRecordPayment && (
+                                    <Popover open={paymentOpen} onOpenChange={setPaymentOpen}>
+                                        <PopoverTrigger asChild>
+                                            <Button variant={isDraft ? 'outline' : 'default'} size="sm">
+                                                <CreditCard className="mr-1 size-3.5" />Record payment
+                                            </Button>
+                                        </PopoverTrigger>
+                                        <PopoverContent align="end" className="w-72">
+                                            <p className="mb-2 text-sm font-semibold">Record payment</p>
+                                            {paymentFormBody}
+                                        </PopoverContent>
+                                    </Popover>
+                                )}
+                                <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                        <Button variant="outline" size="sm">
+                                            <MoreHorizontal className="mr-1 size-3.5" />More
+                                        </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end" className="w-44">
+                                        {canVoid && (
+                                            <DropdownMenuItem onSelect={onVoid}>
+                                                <Ban className="size-4" />Void
+                                            </DropdownMenuItem>
+                                        )}
+                                        <DropdownMenuSeparator />
+                                        <DropdownMenuItem className="text-red-600 focus:text-red-700" onSelect={onDelete}>
+                                            <Trash2 className="size-4" />Delete
+                                        </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                </DropdownMenu>
+                            </>
+                        ) : (
+                            <Badge variant="secondary" className="capitalize">{invoice.status}</Badge>
+                        )}
+                    </div>
                 </div>
             </div>
 
-            <RecordPaymentDialog
-                open={showRecordPayment}
-                onOpenChange={setShowRecordPayment}
-                defaultInvoiceId={invoice.id}
-                defaultContactId={invoice.contact_id ?? undefined}
-                onSave={handleRecordPaymentSave}
+            <EstimateSummaryDialog
+                open={notesDialogOpen}
+                onOpenChange={setNotesDialogOpen}
+                initial={invoice.notes || ''}
+                onSave={saveNotes}
+            />
+            <EstimateItemDialog
+                open={itemDialogOpen}
+                onOpenChange={setItemDialogOpen}
+                isEdit={itemEditingId != null}
+                initial={itemDraft}
+                onSave={saveItemDraft}
             />
         </div>
     );

@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Dialog, DialogContent } from '../ui/dialog';
-import { Plus, Loader2 } from 'lucide-react';
+import { FloatingDetailPanel } from '../ui/FloatingDetailPanel';
+import { Archive, ChevronRight, FileText, Loader2, Plus, Receipt } from 'lucide-react';
 import { useJobFinancials } from '../../hooks/useJobFinancials';
 import { EstimateEditorDialog } from '../estimates/EstimateEditorDialog';
 import { InvoiceEditorDialog } from '../invoices/InvoiceEditorDialog';
@@ -31,6 +32,16 @@ const INVOICE_STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destruct
 function money(v: string | number | null | undefined): string {
     if (v == null) return '$0.00';
     return '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function MetricCell({ label, value, tone = 'default' }: { label: string; value: string; tone?: 'default' | 'warning' }) {
+    const valueClass = tone === 'warning' ? 'text-[#9a5b00]' : 'text-[#172033]';
+    return (
+        <div className="min-w-0 bg-[#fbfcfe] px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-[#65758b]">{label}</p>
+            <p className={`mt-1 truncate font-mono text-lg font-semibold ${valueClass}`}>{value}</p>
+        </div>
+    );
 }
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -87,91 +98,141 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
     const totalEstimated = estimates.reduce((s, e) => s + Number(e.total || 0), 0);
     const totalInvoiced = invoices.reduce((s, i) => s + Number(i.total || 0), 0);
     const totalPaid = invoices.reduce((s, i) => s + Number(i.amount_paid || 0), 0);
+    const totalDue = Math.max(totalInvoiced - totalPaid, 0);
 
     return (
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {/* Summary cards */}
-            <div className="grid grid-cols-3 gap-2">
-                <div className="bg-muted/50 rounded-md p-2 text-center">
-                    <p className="text-xs text-muted-foreground">Estimated</p>
-                    <p className="font-mono font-semibold text-sm">{money(totalEstimated)}</p>
+        <div className="flex-1 overflow-y-auto bg-[#f3f6f9] p-5 text-[#172033]">
+            <div className="mx-auto max-w-5xl space-y-5">
+                <div className="overflow-hidden rounded-md border border-[#d8e0ea] bg-[#d8e0ea]">
+                    <div className="grid grid-cols-3 gap-px">
+                        <MetricCell label="Estimated" value={money(totalEstimated)} />
+                        <MetricCell label="Invoiced" value={money(totalInvoiced)} />
+                        <MetricCell label="Due" value={money(totalDue)} tone={totalDue > 0 ? 'warning' : 'default'} />
+                    </div>
                 </div>
-                <div className="bg-muted/50 rounded-md p-2 text-center">
-                    <p className="text-xs text-muted-foreground">Invoiced</p>
-                    <p className="font-mono font-semibold text-sm">{money(totalInvoiced)}</p>
-                </div>
-                <div className="bg-muted/50 rounded-md p-2 text-center">
-                    <p className="text-xs text-muted-foreground">Paid</p>
-                    <p className="font-mono font-semibold text-sm text-green-600">{money(totalPaid)}</p>
-                </div>
-            </div>
 
 
-            {loading && (
-                <div className="flex items-center justify-center py-4 text-muted-foreground">
-                    <Loader2 className="size-4 animate-spin mr-2" />Loading...
-                </div>
-            )}
+                {loading && (
+                    <div className="flex items-center justify-center rounded-md border border-[#d8e0ea] bg-[#fbfcfe] py-6 text-sm text-[#5f7085]">
+                        <Loader2 className="mr-2 size-4 animate-spin" />Loading financials...
+                    </div>
+                )}
 
-            {/* Estimates */}
-            <div>
-                <div className="flex items-center justify-between mb-2">
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Estimates</p>
-                    {estimates.length === 0 && (
-                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setEditingEstimate(null); setShowEstimateEditor(true); }}>
-                            <Plus className="size-3 mr-1" />New
-                        </Button>
+                <section className="rounded-md border border-[#d8e0ea] bg-[#fbfcfe]">
+                    <div className="flex items-start justify-between gap-3 border-b border-[#d8e0ea] px-4 py-3">
+                        <div>
+                            <h3 className="text-sm font-semibold">Estimate</h3>
+                            <p className="mt-0.5 text-xs text-[#5f7085]">Customer-facing repair proposal for this job.</p>
+                        </div>
+                    </div>
+                    {estimates.length === 0 && !loading ? (
+                        <div className="px-4 py-8">
+                            <div className="rounded-md border border-dashed border-[#c4cfdd] bg-[#f8fafc] px-4 py-6 text-center">
+                                <FileText className="mx-auto size-8 text-[#65758b]" />
+                                <p className="mt-3 text-sm font-medium">No estimate yet</p>
+                                <p className="mx-auto mt-1 max-w-md text-sm text-[#5f7085]">
+                                    Start with one custom item or Summary. The estimate is saved only after useful content is added.
+                                </p>
+                                <Button className="mt-4" size="sm" onClick={() => { setEditingEstimate(null); setShowEstimateEditor(true); }}>
+                                    <Plus className="mr-1 size-4" />Create estimate
+                                </Button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="divide-y">
+                            {estimates.map(e => {
+                                const archived = !!e.archived_at;
+                                return (
+                                    <button
+                                        key={e.id}
+                                        className={`group grid w-full grid-cols-[1fr_auto] items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[#eef3f8] ${archived ? 'grayscale opacity-60' : ''}`}
+                                        onClick={() => openEstimate(e)}
+                                    >
+                                        <div className="flex min-w-0 items-start gap-3">
+                                            <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md bg-[#eef3f8]">
+                                                <FileText className="size-4 text-[#65758b]" />
+                                            </div>
+                                            <div className="min-w-0">
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <span className="font-mono text-xs font-semibold">{e.estimate_number}</span>
+                                                    <Badge variant={ESTIMATE_STATUS_VARIANT[e.status] || 'secondary'} className="capitalize">
+                                                        {e.status}
+                                                    </Badge>
+                                                    {archived && <Badge variant="outline"><Archive className="mr-1 size-3" />Archived</Badge>}
+                                                </div>
+                                                <p className="mt-1 truncate text-sm text-[#5f7085]">
+                                                    {e.summary || e.contact_name || 'Estimate'}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-3">
+                                            <span className="font-mono text-sm font-semibold">{money(e.total)}</span>
+                                            <ChevronRight className="size-4 text-[#65758b] transition-transform group-hover:translate-x-0.5" />
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                        </div>
                     )}
-                </div>
-                {estimates.length === 0 && !loading && (
-                    <p className="text-xs text-muted-foreground">No estimates</p>
-                )}
-                <div className="space-y-1">
-                    {estimates.map(e => (
-                        <button
-                            key={e.id}
-                            className="w-full flex items-center justify-between text-sm py-1.5 px-2 rounded hover:bg-muted/50 text-left"
-                            onClick={() => openEstimate(e)}
-                        >
-                            <span className="font-mono text-xs text-muted-foreground mr-2">{e.estimate_number}</span>
-                            <span className="flex-1 truncate">{e.summary || e.contact_name || 'Estimate'}</span>
-                            <Badge variant={ESTIMATE_STATUS_VARIANT[e.status] || 'secondary'} className="capitalize text-xs ml-2 shrink-0">
-                                {e.status}
-                            </Badge>
-                            <span className="font-mono text-xs ml-2 shrink-0">{money(e.total)}</span>
-                        </button>
-                    ))}
-                </div>
-            </div>
+                </section>
 
 
-            {/* Invoices */}
-            <div>
-                <div className="flex items-center justify-between mb-2">
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Invoices</p>
-                    <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setShowInvoiceEditor(true)}>
-                        <Plus className="size-3 mr-1" />New
-                    </Button>
-                </div>
-                {invoices.length === 0 && !loading && (
-                    <p className="text-xs text-muted-foreground">No invoices</p>
-                )}
-                <div className="space-y-1">
-                    {invoices.map(i => (
-                        <button
-                            key={i.id}
-                            className="w-full flex items-center justify-between text-sm py-1.5 px-2 rounded hover:bg-muted/50 text-left"
-                            onClick={() => openInvoice(i)}
-                        >
-                            <span className="font-mono text-xs text-muted-foreground mr-2">{i.invoice_number}</span>
-                            <span className="flex-1 truncate">{i.title || 'Invoice'}</span>
-                            <Badge variant={INVOICE_STATUS_VARIANT[i.status] || 'secondary'} className="capitalize text-xs ml-2 shrink-0">
-                                {i.status}
-                            </Badge>
-                            <span className="font-mono text-xs ml-2 shrink-0">{money(i.total)}</span>
-                        </button>
-                    ))}
-                </div>
+                <section className="rounded-md border border-[#d8e0ea] bg-[#fbfcfe]">
+                    <div className="flex items-start justify-between gap-3 border-b border-[#d8e0ea] px-4 py-3">
+                        <div>
+                            <h3 className="text-sm font-semibold">Invoices & payments</h3>
+                            <p className="mt-0.5 text-xs text-[#5f7085]">Billing documents created after approval.</p>
+                        </div>
+                        {invoices.length > 0 && (
+                            <Button variant="outline" size="sm" onClick={() => setShowInvoiceEditor(true)}>
+                                <Plus className="mr-1 size-4" />New invoice
+                            </Button>
+                        )}
+                    </div>
+                    {invoices.length === 0 && !loading ? (
+                        <div className="px-4 py-8">
+                            <div className="rounded-md border border-dashed border-[#c4cfdd] bg-[#f8fafc] px-4 py-6 text-center">
+                                <Receipt className="mx-auto size-8 text-[#65758b]" />
+                                <p className="mt-3 text-sm font-medium">No invoices yet</p>
+                                <p className="mx-auto mt-1 max-w-md text-sm text-[#5f7085]">
+                                    Create an invoice once the work is ready to bill, or convert an approved estimate.
+                                </p>
+                                <Button className="mt-4" size="sm" onClick={() => setShowInvoiceEditor(true)}>
+                                    <Plus className="mr-1 size-4" />Create invoice
+                                </Button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="divide-y">
+                            {invoices.map(i => (
+                                <button
+                                    key={i.id}
+                                    className="group grid w-full grid-cols-[1fr_auto] items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[#eef3f8]"
+                                    onClick={() => openInvoice(i)}
+                                >
+                                    <div className="flex min-w-0 items-start gap-3">
+                                        <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md bg-[#eef3f8]">
+                                            <Receipt className="size-4 text-[#65758b]" />
+                                        </div>
+                                        <div className="min-w-0">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <span className="font-mono text-xs font-semibold">{i.invoice_number}</span>
+                                                <Badge variant={INVOICE_STATUS_VARIANT[i.status] || 'secondary'} className="capitalize">
+                                                    {i.status}
+                                                </Badge>
+                                            </div>
+                                            <p className="mt-1 truncate text-sm text-[#5f7085]">{i.title || 'Invoice'}</p>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        <span className="font-mono text-sm font-semibold">{money(i.total)}</span>
+                                        <ChevronRight className="size-4 text-[#65758b] transition-transform group-hover:translate-x-0.5" />
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </section>
             </div>
 
             {/* Estimate editor dialog */}
@@ -206,11 +267,10 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                 }}
             />
 
-            {/* Estimate detail dialog */}
+            {/* Estimate detail panel — right-side slide-in (same UX as Job/Lead detail) */}
             {selectedEstimate && (
-                <Dialog open={!!selectedEstimate} onOpenChange={(o) => { if (!o) setSelectedEstimate(null); }}>
-                    <DialogContent className="p-0 max-w-96 overflow-hidden">
-                        <EstimateDetailPanel
+                <FloatingDetailPanel open={!!selectedEstimate} onClose={() => setSelectedEstimate(null)} wide>
+                    <EstimateDetailPanel
                             estimate={selectedEstimate}
                             events={estimateEvents}
                             loading={detailLoading}
@@ -267,14 +327,13 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                             }}
                             onInvoiceCreated={() => { refresh(); setSelectedEstimate(null); }}
                         />
-                    </DialogContent>
-                </Dialog>
+                </FloatingDetailPanel>
             )}
 
             {/* Invoice detail dialog */}
             {selectedInvoice && (
                 <Dialog open={!!selectedInvoice} onOpenChange={(o) => { if (!o) setSelectedInvoice(null); }}>
-                    <DialogContent className="p-0 max-w-96 overflow-hidden">
+                    <DialogContent className="max-h-[90vh] max-w-3xl overflow-hidden p-0 md:max-w-3xl">
                         <InvoiceDetailPanel
                             invoice={selectedInvoice}
                             events={invoiceEvents}

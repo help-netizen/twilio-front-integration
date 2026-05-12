@@ -5,7 +5,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { callsApi } from '../../services/api';
-import { formatPhoneDisplay as formatPhoneNumber } from '../../utils/phoneUtils';
+import { formatPhoneDisplay as formatPhoneNumber, isAnonymousPhone } from '../../utils/phoneUtils';
 import { useLeadByPhone } from '../../hooks/useLeadByPhone';
 import { useAuth } from '../../auth/AuthProvider';
 import type { Lead } from '../../types/lead';
@@ -93,15 +93,25 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
     const rawPhone = (call as any).tl_phone || call.contact?.phone_e164 || call.from_number || call.to_number || call.call_sid;
     const displayPhone = (call as any).last_interaction_phone || rawPhone;
 
-    // Use prefetched lead if available, otherwise fall back to per-item hook
-    const { lead: hookLead } = useLeadByPhone(prefetchedLead !== undefined ? undefined : rawPhone);
-    const lead = prefetchedLead !== undefined ? prefetchedLead : hookLead;
+    // Anonymous timeline: no contact / lead lookup, render fixed "Anonymous" label.
+    const isAnon = isAnonymousPhone((call as any).tl_phone)
+        || isAnonymousPhone(call.from_number)
+        || isAnonymousPhone(displayPhone);
+
+    // Use prefetched lead if available, otherwise fall back to per-item hook.
+    // Skip lead lookup entirely for anonymous (sentinel isn't a real number).
+    const { lead: hookLead } = useLeadByPhone(
+        isAnon ? undefined : (prefetchedLead !== undefined ? undefined : rawPhone)
+    );
+    const lead = isAnon ? null : (prefetchedLead !== undefined ? prefetchedLead : hookLead);
     const leadName = lead ? [lead.FirstName, lead.LastName].filter(Boolean).join(' ') : null;
     const company = lead?.Company || null;
-    const contactName = call.contact?.full_name && call.contact.full_name !== call.contact.phone_e164
+    const contactName = !isAnon && call.contact?.full_name && call.contact.full_name !== call.contact.phone_e164
         ? call.contact.full_name : null;
-    const primaryText = company || leadName || contactName || formatPhoneNumber(displayPhone);
-    const showSecondaryPhone = !!(company || leadName || contactName);
+    const primaryText = isAnon
+        ? 'Anonymous'
+        : (company || leadName || contactName || formatPhoneNumber(displayPhone));
+    const showSecondaryPhone = !isAnon && !!(company || leadName || contactName);
 
     const displayDate = new Date(call.last_interaction_at || call.started_at || call.created_at);
     const interactionType = call.last_interaction_type || 'call';

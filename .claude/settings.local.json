@@ -13,7 +13,31 @@
       "Bash(find /Users/rgareev91/contact_center/twilio-front-integration -name .env* -o -name *.env*)",
       "Bash(find /Users/rgareev91/contact_center/twilio-front-integration -path *routes/zenbooker* -type f)",
       "Bash(grep -r \"ZipCheckResult\\\\|ServiceAreaResult\" /Users/rgareev91/contact_center/twilio-front-integration/frontend/src --include=*.ts --include=*.tsx)",
-      "Bash(find /Users/rgareev91/NoteStream -type f \\\\\\(-name *zip* -o -name *zipcode* \\\\\\))"
+      "Bash(find /Users/rgareev91/NoteStream -type f \\\\\\(-name *zip* -o -name *zipcode* \\\\\\))",
+      "Bash(grep -E \"\\\\.\\(tsx|ts|jsx|js\\)$\")",
+      "Bash(npm ls:*)",
+      "Bash(lsof -ti:3001)",
+      "Bash(xargs kill:*)",
+      "Bash(grep -E \"\\\\.\\(sql|js\\)$\")",
+      "Bash(node --check backend/src/services/callSummaryService.js)",
+      "Bash(node --check backend/src/services/transcriptionService.js)",
+      "Bash(node --check backend/src/routes/calls.js)",
+      "Bash(ps -p 10160 -o command=)",
+      "Bash(grep -r \"webhook_inbox\\\\|logging\\\\|logger\\\\|console.error\\\\|console.log\" /Users/rgareev91/contact_center/twilio-front-integration/backend/src/db/*.sql)",
+      "Bash(git checkout:*)",
+      "Bash(npm run:*)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" \"https://abc-metrics.fly.dev/\")",
+      "Bash(curl -s \"https://abc-metrics.fly.dev/api/calls?limit=3&root_only=true&date_from=2026-04-15&date_to=2026-04-22\" -H \"Accept: application/json\")",
+      "Bash(fly secrets:*)",
+      "WebSearch",
+      "WebFetch(domain:help.zenbooker.com)",
+      "Bash(fly logs:*)",
+      "WebFetch(domain:developers.zenbooker.com)",
+      "Bash(npx jest:*)",
+      "Bash(node -e \"require\\(''''./backend/src/services/jobsService''''\\)\")",
+      "Bash(./scripts/prod-deploy.sh)",
+      "Bash(lsof -i :3019 -sTCP:LISTEN -P)",
+      "Bash(ps -p 70862 -o command=)"
     ]
   }
 }

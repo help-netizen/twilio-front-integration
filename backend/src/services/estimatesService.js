@@ -437,17 +437,56 @@ async function convertToInvoice(companyId, userId, id) {
     }
 
     const invoicesQueries = require('../db/invoicesQueries');
+
+    // Auto-populate due_date from the invoice template's default_due_days (Net X policy).
+    let dueDate = null;
+    try {
+        const documentTemplatesService = require('./documentTemplatesService');
+        const descriptor = await documentTemplatesService.resolveTemplate(companyId, 'invoice');
+        const days = Number(descriptor?.invoice_settings?.default_due_days);
+        const effectiveDays = Number.isFinite(days) && days >= 0 ? days : 14;
+        const d = new Date();
+        d.setDate(d.getDate() + effectiveDays);
+        dueDate = d.toISOString().slice(0, 10);
+    } catch { /* fall back to NULL */ }
+
+    // Build an estimate-style invoice number — `INVOICE L-{leadSerialId}-{seq}`.
+    let invoiceNumber = null;
+    try {
+        let leadSerialId = null;
+        let jobIdForNum = estimate.job_id || null;
+        if (estimate.job_id) {
+            const job = await estimatesQueries.getJobContext(companyId, estimate.job_id);
+            leadSerialId = job?.lead_serial_id || job?.lead_id || estimate.lead_id || null;
+            jobIdForNum = job?.id || jobIdForNum;
+        } else if (estimate.lead_id) {
+            const lead = await estimatesQueries.getLeadContext(companyId, estimate.lead_id);
+            leadSerialId = lead?.serial_id || lead?.id || null;
+        }
+        const sequence = await invoicesQueries.nextInvoiceSequence(companyId, {
+            jobId: estimate.job_id,
+            leadId: estimate.lead_id,
+        });
+        invoiceNumber = invoicesQueries.buildInvoiceNumber({
+            leadSerialId,
+            jobId: jobIdForNum,
+            sequence,
+        });
+    } catch { /* leave null → createInvoice falls back to the legacy date scheme */ }
+
     const invoice = await invoicesQueries.createInvoice(companyId, {
         contact_id: estimate.contact_id,
         lead_id: estimate.lead_id,
         job_id: estimate.job_id,
         estimate_id: estimate.id,
+        invoice_number: invoiceNumber,
         title: estimate.estimate_number,
         notes: estimate.summary || estimate.notes,
         internal_note: estimate.internal_note,
         tax_rate: estimate.tax_rate,
         discount_amount: estimate.discount_amount,
         currency: estimate.currency,
+        due_date: dueDate,
         created_by: userId,
     });
 
@@ -491,9 +530,12 @@ async function getEvents(companyId, id) {
 
 async function generatePdf(companyId, id) {
     const estimate = await getEstimate(companyId, id);
+    // F015: resolve company-specific document template; falls back to factory descriptor.
+    const documentTemplatesService = require('./documentTemplatesService');
+    const descriptor = await documentTemplatesService.resolveTemplate(companyId, 'estimate');
     return {
         estimate,
-        buffer: renderEstimatePdf(estimate),
+        buffer: await renderEstimatePdf(estimate, descriptor),
     };
 }
 

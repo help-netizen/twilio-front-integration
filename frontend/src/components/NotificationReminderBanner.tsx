@@ -12,6 +12,17 @@ export default function NotificationReminderBanner() {
     const location = useLocation();
     const [visible, setVisible] = useState(false);
     const [permState, setPermState] = useState(getPermissionState());
+    const [isMobile, setIsMobile] = useState(() =>
+        typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches
+    );
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const mq = window.matchMedia('(max-width: 767px)');
+        const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+        mq.addEventListener('change', onChange);
+        return () => mq.removeEventListener('change', onChange);
+    }, []);
 
     const evaluateVisibility = useCallback(() => {
         if (!isSupported()) return;
@@ -66,6 +77,10 @@ export default function NotificationReminderBanner() {
     };
 
     if (!visible || permState === 'granted' || permState === 'unsupported' || location.pathname.startsWith('/schedule')) return null;
+
+    // Hide on mobile viewports — push permissions are typically managed at the OS /
+    // browser level on phones, and the inline "click the lock icon" hint doesn't apply.
+    if (isMobile) return null;
 
     return (
         <div className="bg-orange-50 border-b border-orange-100 px-4 py-2.5 flex items-center justify-between gap-4">

@@ -73,6 +73,8 @@ export interface Estimate {
     contact_name?: string;
     contact_email?: string | null;
     contact_phone?: string | null;
+    billing_address?: string | null;
+    service_address?: string | null;
     job_number?: string | null;
     invoice_id?: number | null;
     invoice_number?: string | null;

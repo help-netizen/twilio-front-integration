@@ -1,0 +1,17 @@
+{
+  "app_key": "lead-generator",
+  "name": "Lead Generator",
+  "provider_name": "Example Growth",
+  "category": "lead_generation",
+  "app_type": "external",
+  "short_description": "Creates qualified inbound leads in Blanc from external campaigns.",
+  "long_description": "Lead Generator posts validated lead payloads into Blanc with source attribution and optional campaign metadata.",
+  "requested_scopes": [
+    "leads:create"
+  ],
+  "provisioning_mode": "push_credentials",
+  "provisioning_url": "https://example-growth.com/blanc/provision",
+  "support_email": "support@example-growth.com",
+  "privacy_url": "https://example-growth.com/privacy",
+  "docs_url": "https://example-growth.com/docs/blanc-leads"
+}

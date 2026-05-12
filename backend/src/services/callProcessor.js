@@ -66,9 +66,36 @@ function extractPhoneFromSIP(number) {
 }
 
 /**
+ * Detect anonymous / privacy-blocked caller IDs.
+ * Twilio sends From="anonymous" (or empty / "Anonymous"-like sentinel) when
+ * the caller's CLI is blocked. Such calls have no usable phone number for
+ * contact lookup or callback — they need to be routed to the shared
+ * "Anonymous" timeline rather than being dropped.
+ *
+ * @param {string|null|undefined} number
+ * @returns {boolean}
+ */
+function isAnonymousNumber(number) {
+    if (!number) return true;
+    const lower = String(number).toLowerCase().trim();
+    if (!lower) return true;
+    return lower === 'anonymous'
+        || lower === 'unknown'
+        || lower === 'restricted'
+        || lower === 'private'
+        || lower.startsWith('sip:anonymous@')
+        || lower === 'anonymous@anonymous.invalid';
+}
+
+/**
+ * Sentinel phone_e164 value for the shared anonymous timeline.
+ */
+const ANONYMOUS_PHONE_SENTINEL = 'ANONYMOUS';
+
+/**
  * Format phone number for display
  * Extracts number from SIP URI if needed and formats as E.164
- * 
+ *
  * @param {string} number - Phone number or SIP URI
  * @returns {string} Formatted phone number
  */
@@ -212,6 +239,17 @@ class CallProcessor {
             }
         }
 
+        // Privacy-blocked / anonymous caller — route to the shared anonymous
+        // timeline. Without this branch formatPhone() returns "" and the
+        // downstream guard in inboxWorker drops the call entirely.
+        if (isAnonymousNumber(externalNumber)) {
+            return {
+                number: 'anonymous',
+                formatted: ANONYMOUS_PHONE_SENTINEL,
+                isAnonymous: true
+            };
+        }
+
         return {
             number: externalNumber,
             formatted: formatPhone(externalNumber)
@@ -303,3 +341,5 @@ class CallProcessor {
 
 module.exports = CallProcessor;
 module.exports.extractPhoneFromSIP = extractPhoneFromSIP;
+module.exports.isAnonymousNumber = isAnonymousNumber;
+module.exports.ANONYMOUS_PHONE_SENTINEL = ANONYMOUS_PHONE_SENTINEL;

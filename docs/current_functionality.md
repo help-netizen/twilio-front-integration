@@ -270,8 +270,10 @@ Master list — двухколоночный layout: список контакт
 ### 6.1 Schedule (`/schedule`)
 - Отдельный route уже существует: `frontend/src/pages/SchedulePage.tsx`
 - В продукте уже есть calendar-based dispatch surface поверх jobs/leads/tasks
-- В changelog и requirements зафиксированы несколько завершённых schedule slices, включая list view и часть UX hardening
-- Модуль ещё считается `in progress`, а не полностью завершённым dispatcher suite
+- В changelog и requirements зафиксированы несколько завершённых schedule slices, включая list view, collision lanes и visual refresh foundation
+- Оставшиеся незакрытые пункты `F013` сведены в один consolidated closing scope:
+  `docs/specs/F013-schedule-finalization-sprint.md`
+- После этого пакета любые новые schedule-улучшения должны трактоваться уже как отдельные enhancements, а не как хвосты старого `F013`
 
 ### 6.2 Estimates / Invoices / Transactions
 - Routes `/estimates`, `/invoices`, `/transactions` уже существуют

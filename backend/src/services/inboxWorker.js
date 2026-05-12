@@ -157,15 +157,15 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
     };
     const processed = CallProcessor.processCall(callData);
     const externalParty = processed.externalParty;
+    const isAnonymous = !!externalParty?.isAnonymous;
 
     // Resolve timeline (NOT contact — contacts are only created from leads/import/manual)
     let timelineId = null;
     let contactId = null;
-    if (externalParty?.formatted && processed.direction !== 'internal') {
-        const timeline = await queries.findOrCreateTimeline(
-            externalParty.formatted,
-            null
-        );
+    if (processed.direction !== 'internal' && (externalParty?.formatted || isAnonymous)) {
+        const timeline = isAnonymous
+            ? await queries.findOrCreateAnonymousTimeline(null)
+            : await queries.findOrCreateTimeline(externalParty.formatted, null);
         timelineId = timeline.id;
         contactId = timeline.contact_id || null;
 

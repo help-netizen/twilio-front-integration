@@ -5,6 +5,7 @@
  * Business logic for invoices, line items, revisions, events, and payments.
  */
 
+const crypto = require('crypto');
 const invoicesQueries = require('../db/invoicesQueries');
 const estimatesQueries = require('../db/estimatesQueries');
 
@@ -46,14 +47,90 @@ async function getInvoice(companyId, id) {
 
 /**
  * Create a new invoice with optional line items.
+ * Resolves contact_id from the linked job/lead/estimate when not explicitly provided.
  */
 async function createInvoice(companyId, userId, data) {
-    if (!data.contact_id) {
-        throw new InvoicesServiceError('VALIDATION', 'contact_id is required', 400);
+    const resolved = { ...data };
+
+    if (!resolved.contact_id) {
+        // Try the linked estimate first (most precise — invoice was converted from one).
+        if (resolved.estimate_id) {
+            try {
+                const est = await estimatesQueries.getEstimateById(companyId, resolved.estimate_id);
+                if (est?.contact_id) resolved.contact_id = est.contact_id;
+                if (!resolved.lead_id && est?.lead_id) resolved.lead_id = est.lead_id;
+                if (!resolved.job_id && est?.job_id) resolved.job_id = est.job_id;
+            } catch { /* fall through */ }
+        }
+
+        // Then try the linked job's contact.
+        if (!resolved.contact_id && resolved.job_id) {
+            try {
+                const job = await estimatesQueries.getJobContext(companyId, resolved.job_id);
+                if (job?.contact_id) resolved.contact_id = job.contact_id;
+                if (!resolved.lead_id && job?.lead_id) resolved.lead_id = job.lead_id;
+            } catch { /* fall through */ }
+        }
+
+        // Finally try the linked lead's contact.
+        if (!resolved.contact_id && resolved.lead_id) {
+            try {
+                const lead = await estimatesQueries.getLeadContext(companyId, resolved.lead_id);
+                if (lead?.contact_id) resolved.contact_id = lead.contact_id;
+            } catch { /* fall through */ }
+        }
+    }
+
+    if (!resolved.contact_id) {
+        throw new InvoicesServiceError(
+            'VALIDATION',
+            'contact_id is required (and could not be resolved from job_id/lead_id/estimate_id)',
+            400
+        );
+    }
+
+    // Auto-populate due_date from the invoice template's default_due_days when caller
+    // didn't specify one. Falls back to today + 14 days if the template lacks the setting.
+    if (!resolved.due_date) {
+        try {
+            const documentTemplatesService = require('./documentTemplatesService');
+            const descriptor = await documentTemplatesService.resolveTemplate(companyId, 'invoice');
+            const days = Number(descriptor?.invoice_settings?.default_due_days);
+            const effectiveDays = Number.isFinite(days) && days >= 0 ? days : 14;
+            const d = new Date();
+            d.setDate(d.getDate() + effectiveDays);
+            resolved.due_date = d.toISOString().slice(0, 10);
+        } catch { /* swallow — fall back to NULL due_date */ }
+    }
+
+    // Generate an estimate-style invoice number (`INVOICE L-{leadSerialId}-{seq}`)
+    // when the caller didn't supply one. Sequence is per (job_id|lead_id).
+    if (!resolved.invoice_number) {
+        try {
+            let leadSerialId = null;
+            let jobIdForNum = resolved.job_id || null;
+            if (resolved.job_id) {
+                const job = await estimatesQueries.getJobContext(companyId, resolved.job_id);
+                leadSerialId = job?.lead_serial_id || job?.lead_id || null;
+                jobIdForNum = job?.id || jobIdForNum;
+            } else if (resolved.lead_id) {
+                const lead = await estimatesQueries.getLeadContext(companyId, resolved.lead_id);
+                leadSerialId = lead?.serial_id || lead?.id || null;
+            }
+            const sequence = await invoicesQueries.nextInvoiceSequence(companyId, {
+                jobId: resolved.job_id,
+                leadId: resolved.lead_id,
+            });
+            resolved.invoice_number = invoicesQueries.buildInvoiceNumber({
+                leadSerialId,
+                jobId: jobIdForNum,
+                sequence,
+            });
+        } catch { /* fall through — let createInvoice pick the legacy date-based number */ }
     }
 
     const invoice = await invoicesQueries.createInvoice(companyId, {
-        ...data,
+        ...resolved,
         created_by: userId,
     });
 
@@ -91,6 +168,12 @@ async function updateInvoice(companyId, userId, id, data) {
     const updated = await invoicesQueries.updateInvoice(id, companyId, data);
     if (!updated) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
+    }
+
+    // Recalculate totals when totals-affecting fields change.
+    const TOTALS_AFFECTING = new Set(['tax_rate', 'discount_amount']);
+    if (Object.keys(data).some(k => TOTALS_AFFECTING.has(k))) {
+        await invoicesQueries.recalculateInvoiceTotals(id);
     }
 
     // Log update event
@@ -345,6 +428,23 @@ async function getEvents(companyId, id) {
 }
 
 /**
+ * Generate a PDF buffer for an invoice using the F015 document-templates pipeline.
+ * Returns { invoice, buffer } in parallel with estimatesService.generatePdf.
+ */
+async function generatePdf(companyId, id) {
+    const invoice = await getInvoice(companyId, id);
+    const documentTemplatesService = require('./documentTemplatesService');
+    const rendererRegistry = require('./documentTemplates');
+    const descriptor = await documentTemplatesService.resolveTemplate(companyId, 'invoice');
+    const adapter = rendererRegistry.get('invoice');
+    if (!adapter) {
+        throw new InvoicesServiceError('INTERNAL', 'Invoice renderer adapter not registered', 500);
+    }
+    const buffer = await adapter.render(invoice, descriptor);
+    return { invoice, buffer };
+}
+
+/**
  * Get payments for an invoice (from invoice_events with payment_recorded type).
  */
 async function getPayments(companyId, id) {
@@ -384,5 +484,50 @@ module.exports = {
     getRevisions,
     getEvents,
     getPayments,
+    generatePdf,
+    ensurePublicLink,
+    generatePdfByPublicToken,
     InvoicesServiceError,
 };
+
+/**
+ * Return (creating if necessary) a public link for the invoice. Idempotent —
+ * subsequent calls return the same token + URL.
+ */
+async function ensurePublicLink(companyId, id) {
+    const invoice = await invoicesQueries.getInvoiceById(companyId, id);
+    if (!invoice) throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
+
+    let token = invoice.public_token;
+    if (!token) {
+        // 8 bytes of entropy → 11 url-safe chars. 2^64 keyspace is plenty for unguessability.
+        token = crypto.randomBytes(8).toString('base64url');
+        await invoicesQueries.setPublicToken(invoice.id, companyId, token);
+    }
+
+    const base = (process.env.PUBLIC_APP_URL || process.env.APP_URL || '').replace(/\/+$/, '');
+    // Short, friendly path: GET /i/:token redirects to the full PDF route.
+    const path = `/i/${token}`;
+    return { token, url: base ? `${base}${path}` : path };
+}
+
+/**
+ * Render the PDF for an invoice resolved by its `public_token`.
+ * No auth/scoping — the token is the credential.
+ */
+async function generatePdfByPublicToken(publicToken) {
+    const invoice = await invoicesQueries.getInvoiceByPublicToken(publicToken);
+    if (!invoice) throw new InvoicesServiceError('NOT_FOUND', 'Invoice not found', 404);
+    const items = await invoicesQueries.getInvoiceItems(invoice.id);
+    const fullInvoice = { ...invoice, items };
+
+    const documentTemplatesService = require('./documentTemplatesService');
+    const rendererRegistry = require('./documentTemplates');
+    const descriptor = await documentTemplatesService.resolveTemplate(invoice.company_id, 'invoice');
+    const adapter = rendererRegistry.get('invoice');
+    if (!adapter) {
+        throw new InvoicesServiceError('INTERNAL', 'Invoice renderer adapter not registered', 500);
+    }
+    const buffer = await adapter.render(fullInvoice, descriptor);
+    return { invoice: fullInvoice, buffer };
+}

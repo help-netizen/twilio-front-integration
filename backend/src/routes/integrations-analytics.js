@@ -19,6 +19,7 @@ const {
     validateHeaders,
     authenticateIntegration,
 } = require('../middleware/integrationsAuth');
+const { requireIntegrationScope } = require('../middleware/integrationScopes');
 const rateLimiter = require('../middleware/rateLimiter');
 
 // Middleware chain (mirrors integrations-leads)
@@ -27,18 +28,7 @@ router.use(validateHeaders);
 router.use(authenticateIntegration);
 router.use(rateLimiter);
 
-function requireScope(req, res, next) {
-    const scopes = req.integrationScopes || [];
-    if (!scopes.includes('analytics:read')) {
-        return res.status(403).json({
-            success: false,
-            code: 'SCOPE_INSUFFICIENT',
-            message: 'This integration does not have analytics:read scope.',
-            request_id: req.requestId,
-        });
-    }
-    next();
-}
+const requireAnalyticsRead = requireIntegrationScope('analytics:read');
 
 function handleError(err, req, res) {
     if (err instanceof analyticsService.AnalyticsServiceError) {
@@ -58,7 +48,7 @@ function handleError(err, req, res) {
     });
 }
 
-router.get('/analytics/summary', requireScope, async (req, res) => {
+router.get('/analytics/summary', requireAnalyticsRead, async (req, res) => {
     try {
         const data = await analyticsService.getSummary({
             from: req.query.from,
@@ -70,7 +60,7 @@ router.get('/analytics/summary', requireScope, async (req, res) => {
     } catch (err) { handleError(err, req, res); }
 });
 
-router.get('/analytics/calls', requireScope, async (req, res) => {
+router.get('/analytics/calls', requireAnalyticsRead, async (req, res) => {
     try {
         const data = await analyticsService.listCalls({
             from: req.query.from,
@@ -84,8 +74,14 @@ router.get('/analytics/calls', requireScope, async (req, res) => {
     } catch (err) { handleError(err, req, res); }
 });
 
-router.get('/analytics/leads', requireScope, async (req, res) => {
+router.get('/analytics/leads', requireAnalyticsRead, async (req, res) => {
     try {
+        let hasGclid;
+        if (req.query.has_gclid !== undefined) {
+            const v = String(req.query.has_gclid).toLowerCase();
+            if (v === 'true' || v === '1')  hasGclid = true;
+            if (v === 'false' || v === '0') hasGclid = false;
+        }
         const data = await analyticsService.listLeads({
             from: req.query.from,
             to: req.query.to,
@@ -93,12 +89,13 @@ router.get('/analytics/leads', requireScope, async (req, res) => {
             companyId: req.integrationCompanyId,
             limit: req.query.limit,
             cursor: req.query.cursor,
+            hasGclid,
         });
         res.json({ success: true, request_id: req.requestId, ...data });
     } catch (err) { handleError(err, req, res); }
 });
 
-router.get('/analytics/jobs', requireScope, async (req, res) => {
+router.get('/analytics/jobs', requireAnalyticsRead, async (req, res) => {
     try {
         const data = await analyticsService.listJobs({
             from: req.query.from,

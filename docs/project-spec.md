@@ -46,3 +46,19 @@ Secrets are stored as `SHA-256(secret + BLANC_SERVER_PEPPER)` and never logged. 
 All backend code obtains the Twilio Node SDK REST client via a single shared accessor: `getTwilioClient()` from `backend/src/services/twilioClient.js`. The first call reads `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` and constructs one `twilio(sid, token)` instance for the lifetime of the process; every subsequent caller reuses that instance and its underlying `https.Agent` keep-alive pool toward `api.twilio.com`.
 
 Direct construction of a Twilio REST client (`twilio(sid, token)`) inside service or route functions is forbidden — a regression test enforces this for the four historical hot-spots (`reconcileStale`, `callAvailability`, `inboxWorker`, `phoneSettings`). Static helpers (`twilio.validateRequest`, `twilio.jwt.AccessToken`) are unaffected and continue to be used directly by webhook signature validators and the voice token route.
+
+---
+
+## Document Templates (F015)
+
+Per-company, versioned, JSON-encoded descriptors that drive client-facing document rendering. P0 covers `document_type='estimate'`; the registry, factory, and Settings UI are designed so adding `invoice` and `work_order` is a data-only follow-up.
+
+**Storage:** `document_templates(id, company_id, document_type, name, slug, is_default, schema_version, content JSONB, archived_at, created_*, updated_*)`. Unique partial index ensures exactly one active default per `(company_id, document_type)`. Migration `084_create_document_templates.sql` seeds the factory descriptor for every existing company.
+
+**Descriptor (v1):** `{ schema_version, brand, theme, sections[], footer }`. Free-text fields (`terms.body_md`, `footer.text_md`) use a CommonMark Markdown subset. Validation is enforced by an inline JSON-Schema validator (`backend/src/services/documentTemplates/validator.js`) — no new runtime dependency.
+
+**Renderer wiring:** `estimatePdfService.renderEstimatePdf(estimate, descriptor)` reads brand/theme/sections from the descriptor, falling back to the frozen factory in `services/documentTemplates/factory.js` when none is supplied. `estimatesService.generatePdf` calls `documentTemplatesService.resolveTemplate(companyId, 'estimate')` for every PDF request. Renderer adapters are pluggable via `services/documentTemplates/rendererRegistry.js` (`register(documentType, adapter)`).
+
+**API:** `/api/document-templates` (list, get `:id`, PUT `:id`, POST `:id/reset`, POST `:id/preview`, GET `factory/:document_type`). Mounted with `authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess` (P0 reuses the integrations permission until a dedicated `tenant.documents.manage` is seeded).
+
+**Settings UI:** `/settings/document-templates` (list grouped by `document_type`) and `/settings/document-templates/:id` (form editor: Brand, ACH, Theme color pickers, Section visibility toggles, Terms & Warranty Markdown textarea, Reset to default).

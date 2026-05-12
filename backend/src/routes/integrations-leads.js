@@ -16,6 +16,7 @@ const {
     validateHeaders,
     authenticateIntegration,
 } = require('../middleware/integrationsAuth');
+const { requireIntegrationScope } = require('../middleware/integrationScopes');
 const rateLimiter = require('../middleware/rateLimiter');
 
 // =============================================================================
@@ -29,19 +30,8 @@ router.use(rateLimiter);
 // =============================================================================
 // POST /api/v1/integrations/leads — Create a lead
 // =============================================================================
-router.post('/leads', async (req, res) => {
+router.post('/leads', requireIntegrationScope('leads:create'), async (req, res) => {
     try {
-        // Check scope
-        const scopes = req.integrationScopes || [];
-        if (!scopes.includes('leads:create')) {
-            return res.status(403).json({
-                success: false,
-                code: 'SCOPE_INSUFFICIENT',
-                message: 'This integration does not have leads:create scope.',
-                request_id: req.requestId,
-            });
-        }
-
         // Validate required fields
         const payload = req.body || {};
         if (!payload.FirstName && !payload.LastName && !payload.Phone && !payload.Email) {

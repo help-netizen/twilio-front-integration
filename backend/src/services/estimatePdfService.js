@@ -1,32 +1,101 @@
 /**
- * Lightweight PDF renderer for client-facing estimates.
+ * Client-facing estimate PDF renderer.
  *
- * Uses built-in PDF standard fonts so the backend does not need a binary
- * rendering dependency for the first PDF implementation.
+ * This intentionally avoids external binary/rendering dependencies. It writes a
+ * compact PDF with standard Helvetica fonts, predictable page breaks, and a
+ * document layout close to the in-app client preview.
+ *
+ * Customization: accepts an optional `descriptor` (DocumentTemplateDescriptor v1).
+ * When omitted, falls back to the factory descriptor for `document_type='estimate'`.
+ * See `services/documentTemplates/factory.js`.
  */
 
-const COMPANY_PROFILE = {
-    name: 'ABC Homes',
-    address: '2502 Village Rd W, Norwood, MA 02062, USA',
-    email: 'help@bostonmasters.com',
-    phone: '(508) 290-4442',
-    ach: {
-        bank: 'Bank Of America',
-        routingNumber: '011000138',
-        accountNumber: '466020155621',
+const { getFactory, DEFAULT_TERMS_AND_WARRANTY: FACTORY_TERMS } = require('./documentTemplates/factory');
+
+// Backwards-compatible exports for any pre-F015 importer.
+const COMPANY_PROFILE = (() => {
+    const f = getFactory('estimate').brand;
+    return {
+        name: f.name,
+        address: f.address,
+        email: f.email,
+        phone: f.phone,
+        ach: {
+            bank: f.ach?.bank,
+            routingNumber: f.ach?.routing_number,
+            accountNumber: f.ach?.account_number,
+        },
+    };
+})();
+const DEFAULT_TERMS_AND_WARRANTY = FACTORY_TERMS;
+
+const PAGE = { width: 612, height: 792, margin: 42 };
+const CONTENT_WIDTH = PAGE.width - PAGE.margin * 2;
+const SECTION_GAP = 12;
+
+/**
+ * Layout preset tokens for the PDF renderer. Mirrors the Light/Bold/Minimal
+ * presets in TemplateLivePreview (HTML), adjusted for PDF point units.
+ *
+ * Multi-column layouts (`width`, `glue_with_next`) and `text_align` are
+ * NOT honored by the PDF renderer (it remains a sequential single-column
+ * builder). Those features are reflected in the in-app HTML preview only.
+ */
+const PRESETS = {
+    light: {
+        brandName: 19, brandSub: 9,
+        estimateNumber: 15, estimateMeta: 9,
+        sectionLabel: 9, sectionGapTop: 14, sectionGapBottom: 14,
+        body: 10, bodyLine: 14,
+        item: 10.5, itemDesc: 9,
+        totalsLabel: 10, totalLabel: 12, totalValue: 12,
+        terms: 7.8, termsLine: 9.8,
+        ach: { bank: 9, label: 8, value: 8.8 },
+    },
+    bold: {
+        brandName: 24, brandSub: 10,
+        estimateNumber: 22, estimateMeta: 10,
+        sectionLabel: 11, sectionGapTop: 16, sectionGapBottom: 16,
+        body: 11, bodyLine: 15,
+        item: 12, itemDesc: 10,
+        totalsLabel: 11, totalLabel: 14, totalValue: 16,
+        terms: 8.5, termsLine: 11,
+        ach: { bank: 10, label: 9, value: 9.8 },
+    },
+    minimal: {
+        brandName: 16, brandSub: 8,
+        estimateNumber: 14, estimateMeta: 8.5,
+        sectionLabel: 8, sectionGapTop: 12, sectionGapBottom: 12,
+        body: 9, bodyLine: 12.5,
+        item: 9.5, itemDesc: 8.5,
+        totalsLabel: 9, totalLabel: 10, totalValue: 11,
+        terms: 7.2, termsLine: 9.2,
+        ach: { bank: 8, label: 7.5, value: 8 },
     },
 };
 
-const DEFAULT_TERMS_AND_WARRANTY = `TERMS: Estimates are an approximation of charges to you, and they are based on the anticipated details of the work to be done. It is possible for unexpected complications to cause some deviation from the estimate. If additional parts or labor are required you will be contacted immediately.
+function getPresetTokens(descriptor) {
+    const name = descriptor.layout_preset || 'light';
+    const base = PRESETS[name] || PRESETS.light;
+    const scale = Number(descriptor.font_scale) || 1;
+    if (scale === 1) return base;
+    // Scale every numeric leaf proportionally.
+    const scaleObj = obj => Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, typeof v === 'number' ? v * scale : (typeof v === 'object' ? scaleObj(v) : v)]));
+    return scaleObj(base);
+}
 
-WARRANTY:
-- 90-day labor warranty covering workmanship and the completed repair, starting from the date the repair is finished.
-- OEM parts warranty is extended to a minimum of 90 days, even if the manufacturer's standard warranty is shorter.
-- A service visit during the warranty period is provided at no additional charge if the issue is related to the repaired component or workmanship.
-- Warranty does not cover misuse, physical damage, power issues, water damage, improper installation, or failures unrelated to the replaced component.`;
+function descriptorOrFactory(descriptor) {
+    return descriptor && descriptor.schema_version === 1 ? descriptor : getFactory('estimate');
+}
 
-const PAGE = { width: 612, height: 792, margin: 44 };
-const CONTENT_WIDTH = PAGE.width - PAGE.margin * 2;
+function findSection(descriptor, key) {
+    return descriptor.sections.find(s => s.key === key) || null;
+}
+
+function isVisible(descriptor, key) {
+    const s = findSection(descriptor, key);
+    return Boolean(s && s.visible);
+}
 
 function normalizeText(value) {
     return String(value ?? '')
@@ -43,6 +112,20 @@ function escapePdfText(value) {
     return normalizeText(value).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
 }
 
+function hexToRgb(hex) {
+    const value = String(hex || '#000000').replace('#', '');
+    const int = parseInt(value, 16);
+    return [
+        ((int >> 16) & 255) / 255,
+        ((int >> 8) & 255) / 255,
+        (int & 255) / 255,
+    ];
+}
+
+function rgb(hex) {
+    return hexToRgb(hex).map(n => n.toFixed(4)).join(' ');
+}
+
 function money(value) {
     return '$' + Number(value || 0).toLocaleString('en-US', {
         minimumFractionDigits: 2,
@@ -56,29 +139,25 @@ function formatDate(value) {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function itemMeta(item) {
-    const qty = Number(item.quantity || 1);
-    const unitPrice = money(item.unit_price);
-    return qty === 1 ? unitPrice : `${qty} x ${unitPrice}`;
-}
-
 function textWidth(value, size) {
-    return normalizeText(value).length * size * 0.52;
+    return normalizeText(value).length * size * 0.51;
 }
 
-function wrapParagraph(text, size, maxWidth) {
+function wrapText(text, size, maxWidth) {
     const paragraphs = normalizeText(text).split('\n');
     const lines = [];
+
     for (const paragraph of paragraphs) {
         const words = paragraph.trim().split(/\s+/).filter(Boolean);
         if (words.length === 0) {
             lines.push('');
             continue;
         }
+
         let line = '';
         for (const word of words) {
             const candidate = line ? `${line} ${word}` : word;
-            if (textWidth(candidate, size) <= maxWidth || !line) {
+            if (!line || textWidth(candidate, size) <= maxWidth) {
                 line = candidate;
             } else {
                 lines.push(line);
@@ -87,13 +166,26 @@ function wrapParagraph(text, size, maxWidth) {
         }
         if (line) lines.push(line);
     }
+
     return lines;
 }
 
+function textBlockHeight(text, width, { size = 10, lineHeight = 14 } = {}) {
+    return wrapText(text, size, width).length * lineHeight;
+}
+
+function itemRate(item) {
+    const qty = Number(item.quantity || 1);
+    const unitPrice = money(item.unit_price);
+    return qty === 1 ? unitPrice : `${qty} x ${unitPrice}`;
+}
+
 class PdfCanvas {
-    constructor() {
+    constructor(theme, tokens) {
         this.pages = [[]];
         this.y = PAGE.margin;
+        this.theme = theme;
+        this.tokens = tokens;
     }
 
     get ops() {
@@ -104,18 +196,21 @@ class PdfCanvas {
         return PAGE.height - topY;
     }
 
-    ensure(height) {
-        if (this.y + height <= PAGE.height - PAGE.margin) return;
+    addPage() {
         this.pages.push([]);
         this.y = PAGE.margin;
     }
 
-    setColor(gray = 0) {
-        this.ops.push(`${gray} ${gray} ${gray} rg`);
+    ensure(height) {
+        if (this.y + height <= PAGE.height - PAGE.margin) return;
+        this.addPage();
     }
 
-    text(value, x, y, { size = 10, font = 'F1', gray = 0 } = {}) {
-        this.ops.push(`BT /${font} ${size} Tf ${gray} ${gray} ${gray} rg ${x.toFixed(2)} ${this.pdfY(y).toFixed(2)} Td (${escapePdfText(value)}) Tj ET`);
+    text(value, x, y, opts = {}) {
+        const size = opts.size || 10;
+        const font = opts.font || 'F1';
+        const color = opts.color || this.theme.ink;
+        this.ops.push(`BT /${font} ${size} Tf ${rgb(color)} rg ${x.toFixed(2)} ${this.pdfY(y).toFixed(2)} Td (${escapePdfText(value)}) Tj ET`);
     }
 
     rightText(value, rightX, y, options = {}) {
@@ -123,142 +218,312 @@ class PdfCanvas {
         this.text(value, rightX - textWidth(value, size), y, options);
     }
 
-    line(x1, y1, x2, y2, gray = 0.82) {
-        this.ops.push(`${gray} ${gray} ${gray} RG ${x1.toFixed(2)} ${this.pdfY(y1).toFixed(2)} m ${x2.toFixed(2)} ${this.pdfY(y2).toFixed(2)} l S`);
+    line(x1, y1, x2, y2, opts = {}) {
+        const color = opts.color || this.theme.border;
+        const width = opts.width || 1;
+        this.ops.push(`${width.toFixed(2)} w ${rgb(color)} RG ${x1.toFixed(2)} ${this.pdfY(y1).toFixed(2)} m ${x2.toFixed(2)} ${this.pdfY(y2).toFixed(2)} l S`);
     }
 
-    rect(x, y, width, height, gray = 0.96) {
-        this.ops.push(`${gray} ${gray} ${gray} rg ${x.toFixed(2)} ${(this.pdfY(y) - height).toFixed(2)} ${width.toFixed(2)} ${height.toFixed(2)} re f`);
+    rect(x, y, width, height, opts = {}) {
+        const fill = opts.fill || this.theme.surface;
+        const stroke = opts.stroke || null;
+        const strokeWidth = opts.strokeWidth || 1;
+        this.ops.push(`${rgb(fill)} rg ${x.toFixed(2)} ${(this.pdfY(y) - height).toFixed(2)} ${width.toFixed(2)} ${height.toFixed(2)} re f`);
+        if (stroke) {
+            this.ops.push(`${strokeWidth.toFixed(2)} w ${rgb(stroke)} RG ${x.toFixed(2)} ${(this.pdfY(y) - height).toFixed(2)} ${width.toFixed(2)} ${height.toFixed(2)} re S`);
+        }
     }
 
-    paragraph(text, x, y, width, { size = 10, lineHeight = 14, font = 'F1', gray = 0 } = {}) {
-        const lines = wrapParagraph(text, size, width);
+    paragraph(text, x, y, width, opts = {}) {
+        const size = opts.size || 10;
+        const lineHeight = opts.lineHeight || 14;
+        const font = opts.font || 'F1';
+        const color = opts.color || this.theme.ink;
+        const lines = wrapText(text, size, width);
         let cursor = y;
         for (const line of lines) {
             this.ensure(lineHeight + 4);
-            if (line) this.text(line, x, cursor, { size, font, gray });
+            if (line) this.text(line, x, cursor, { size, lineHeight, font, color });
             cursor += lineHeight;
         }
         return cursor;
     }
 
     heading(label) {
-        this.ensure(34);
-        this.text(label.toUpperCase(), PAGE.margin, this.y, { size: 9, font: 'F2', gray: 0.42 });
-        this.y += 14;
-        this.line(PAGE.margin, this.y, PAGE.width - PAGE.margin, this.y, 0.88);
-        this.y += 14;
+        const t = this.tokens;
+        this.ensure(t.sectionGapTop + t.sectionGapBottom + 6);
+        this.text(label.toUpperCase(), PAGE.margin, this.y, { size: t.sectionLabel, font: 'F2', color: this.theme.muted });
+        this.y += t.sectionGapTop;
+        this.line(PAGE.margin, this.y, PAGE.width - PAGE.margin, this.y);
+        this.y += t.sectionGapBottom;
     }
 
     footer(pageIndex) {
         const pageNumber = pageIndex + 1;
-        this.pages[pageIndex].push(`BT /F1 8 Tf 0.55 0.55 0.55 rg ${(PAGE.width - PAGE.margin - 38).toFixed(2)} ${(PAGE.height - (PAGE.height - 28)).toFixed(2)} Td (Page ${pageNumber}) Tj ET`);
+        const label = `Page ${pageNumber}`;
+        this.pages[pageIndex].push(`BT /F1 8 Tf ${rgb(this.theme.muted)} rg ${(PAGE.width - PAGE.margin - textWidth(label, 8)).toFixed(2)} 26.00 Td (${label}) Tj ET`);
     }
 
-    finish() {
-        this.pages.forEach((_, idx) => this.footer(idx));
+    finish(showPageNumber) {
+        if (showPageNumber) {
+            this.pages.forEach((_, idx) => this.footer(idx));
+        }
     }
 }
 
-function renderHeader(pdf, estimate) {
+function renderLogo(pdf, _estimate, descriptor) {
+    // P0: PDF cannot embed raster images (renderer is text-only).
+    // Reserve a small block with the brand name as a textual fallback.
+    // Real image embedding is P1.
+    const left = PAGE.margin;
+    const brand = descriptor.brand;
+    pdf.text(brand.name, left, pdf.y, { size: 16, font: 'F2' });
+    pdf.y += 28;
+}
+
+function renderBrand(pdf, _estimate, descriptor) {
+    const left = PAGE.margin;
+    const brand = descriptor.brand;
+    const t = pdf.tokens;
+    pdf.text(brand.name, left, pdf.y, { size: t.brandName, font: 'F2' });
+    pdf.text(brand.address, left, pdf.y + t.brandName + 1, { size: t.brandSub, color: pdf.theme.muted });
+    pdf.text(`${brand.email}  |  ${brand.phone}`, left, pdf.y + t.brandName + t.brandSub + 6, { size: t.brandSub, color: pdf.theme.muted });
+    pdf.y += t.brandName + 2 * t.brandSub + 20;
+    pdf.line(left, pdf.y, PAGE.width - PAGE.margin, pdf.y);
+    pdf.y += 20;
+}
+
+function renderDocumentMeta(pdf, estimate) {
     const left = PAGE.margin;
     const right = PAGE.width - PAGE.margin;
-
-    pdf.text(COMPANY_PROFILE.name, left, pdf.y, { size: 18, font: 'F2' });
-    pdf.text(COMPANY_PROFILE.address, left, pdf.y + 18, { size: 9, gray: 0.35 });
-    pdf.text(`${COMPANY_PROFILE.email}  |  ${COMPANY_PROFILE.phone}`, left, pdf.y + 32, { size: 9, gray: 0.35 });
-
-    pdf.rightText(estimate.estimate_number || 'ESTIMATE', right, pdf.y, { size: 16, font: 'F2' });
-    pdf.rightText(`Date: ${formatDate(estimate.updated_at || estimate.created_at)}`, right, pdf.y + 20, { size: 9, gray: 0.35 });
-    pdf.rightText(`Status: ${estimate.status || 'draft'}`, right, pdf.y + 34, { size: 9, gray: 0.35 });
-    pdf.y += 58;
+    const t = pdf.tokens;
+    pdf.rightText(estimate.estimate_number || 'ESTIMATE', right, pdf.y, { size: t.estimateNumber, font: 'F2' });
+    pdf.rightText(`Date: ${formatDate(estimate.updated_at || estimate.created_at)}`, right, pdf.y + t.estimateNumber + 4, { size: t.estimateMeta, color: pdf.theme.muted });
+    pdf.rightText(`Status: ${estimate.status || 'draft'}`, right, pdf.y + t.estimateNumber + t.estimateMeta + 8, { size: t.estimateMeta, color: pdf.theme.muted });
+    pdf.y += t.estimateNumber + 2 * t.estimateMeta + 20;
     pdf.line(left, pdf.y, right, pdf.y);
-    pdf.y += 22;
+    pdf.y += 20;
 }
 
-function renderPreparedFor(pdf, estimate) {
+function renderHeader(pdf, estimate, descriptor) {
+    // Backwards-compat: if document_meta section is also visible, brand-only here;
+    // otherwise render combined header (logo+brand left, estimate meta right).
+    const hasMeta = descriptor.sections.some(s => s.key === 'document_meta' && s.visible);
+    if (hasMeta) {
+        renderBrand(pdf, estimate, descriptor);
+        return;
+    }
     const left = PAGE.margin;
-    const boxWidth = CONTENT_WIDTH / 2 - 8;
-    const rightBoxX = left + boxWidth + 16;
-    pdf.rect(left, pdf.y - 6, CONTENT_WIDTH, 76, 0.965);
-    pdf.text('PREPARED FOR', left + 12, pdf.y + 8, { size: 8, font: 'F2', gray: 0.45 });
-    pdf.text(estimate.contact_name || 'Customer', left + 12, pdf.y + 24, { size: 12, font: 'F2' });
-    if (estimate.contact_email) pdf.text(estimate.contact_email, left + 12, pdf.y + 40, { size: 9, gray: 0.35 });
-    if (estimate.contact_phone) pdf.text(estimate.contact_phone, left + 12, pdf.y + 54, { size: 9, gray: 0.35 });
+    const right = PAGE.width - PAGE.margin;
+    const brand = descriptor.brand;
+    const t = pdf.tokens;
 
-    pdf.text('JOB', rightBoxX, pdf.y + 8, { size: 8, font: 'F2', gray: 0.45 });
-    pdf.text(estimate.job_number ? `#${estimate.job_number}` : 'Not linked', rightBoxX, pdf.y + 24, { size: 11, font: 'F2' });
-    pdf.text(`Estimate total: ${money(estimate.total)}`, rightBoxX, pdf.y + 44, { size: 13, font: 'F2' });
-    pdf.y += 92;
+    pdf.text(brand.name, left, pdf.y, { size: t.brandName, font: 'F2' });
+    pdf.text(brand.address, left, pdf.y + t.brandName + 1, { size: t.brandSub, color: pdf.theme.muted });
+    pdf.text(`${brand.email}  |  ${brand.phone}`, left, pdf.y + t.brandName + t.brandSub + 6, { size: t.brandSub, color: pdf.theme.muted });
+
+    pdf.rightText(estimate.estimate_number || 'ESTIMATE', right, pdf.y, { size: t.estimateNumber, font: 'F2' });
+    pdf.rightText(`Date: ${formatDate(estimate.updated_at || estimate.created_at)}`, right, pdf.y + t.estimateNumber + 4, { size: t.estimateMeta, color: pdf.theme.muted });
+    pdf.rightText(`Status: ${estimate.status || 'draft'}`, right, pdf.y + t.estimateNumber + t.estimateMeta + 8, { size: t.estimateMeta, color: pdf.theme.muted });
+    pdf.y += t.brandName + 2 * t.brandSub + 20;
+    pdf.line(left, pdf.y, right, pdf.y);
+    pdf.y += 20;
+}
+
+function renderAch(pdf, descriptor) {
+    const ach = descriptor.brand.ach;
+    if (!ach) return;
+    const t = pdf.tokens.ach;
+    const achSection = descriptor.sections.find(s => s.key === 'ach');
+    const inline = Boolean(achSection && achSection.inline);
+    const boxTop = pdf.y;
+    const labelX = PAGE.margin + 12;
+    const valueX = PAGE.margin + 126;
+
+    if (inline) {
+        // Single-row layout: ACH PAYMENTS | Bank | Routing | Account
+        pdf.ensure(40);
+        pdf.rect(PAGE.margin, boxTop, CONTENT_WIDTH, 30, { fill: pdf.theme.faint, stroke: pdf.theme.border });
+        pdf.text('ACH PAYMENTS', labelX, boxTop + 19, { size: t.label, font: 'F2', color: pdf.theme.muted });
+        pdf.text(`Bank: ${ach.bank || ''}`, labelX + 90, boxTop + 19, { size: t.value });
+        pdf.text(`Routing: ${ach.routing_number || ''}`, labelX + 230, boxTop + 19, { size: t.value });
+        pdf.text(`Account: ${ach.account_number || ''}`, labelX + 360, boxTop + 19, { size: t.value });
+        pdf.y += 30 + SECTION_GAP;
+        return;
+    }
+
+    pdf.ensure(60);
+    pdf.rect(PAGE.margin, boxTop, CONTENT_WIDTH, 48, { fill: pdf.theme.faint, stroke: pdf.theme.border });
+    pdf.text('ACH PAYMENTS', labelX, boxTop + 16, { size: t.label, font: 'F2', color: pdf.theme.muted });
+    pdf.text(ach.bank || '', valueX, boxTop + 16, { size: t.bank, font: 'F2' });
+    pdf.text(`Routing Number: ${ach.routing_number || ''}`, labelX, boxTop + 32, { size: t.value });
+    pdf.text(`Account Number: ${ach.account_number || ''}`, valueX + 132, boxTop + 32, { size: t.value });
+    pdf.y += 48 + SECTION_GAP;
+}
+
+function writeBoxLines(pdf, x, y, width, label, lines, { titleSize = 10 } = {}) {
+    pdf.text(label, x + 10, y + 16, { size: 7.5, font: 'F2', color: pdf.theme.muted });
+    let cursor = y + 31;
+    const [firstLine, ...rest] = lines.filter(Boolean);
+    if (firstLine) {
+        for (const wrapped of wrapText(firstLine, titleSize, width - 20)) {
+            if (!wrapped) continue;
+            pdf.text(wrapped, x + 10, cursor, { size: titleSize, font: 'F2' });
+            cursor += titleSize + 4;
+        }
+    }
+    for (const line of rest) {
+        for (const wrapped of wrapText(line, 8.5, width - 20)) {
+            if (!wrapped) continue;
+            pdf.text(wrapped, x + 10, cursor, { size: 8.5, color: pdf.theme.muted });
+            cursor += 11;
+        }
+    }
+}
+
+function renderClientAndAddresses(pdf, estimate) {
+    const left = PAGE.margin;
+    const gap = 12;
+    const boxWidth = (CONTENT_WIDTH - gap) / 2;
+    const serviceX = left + boxWidth + gap;
+    const boxTop = pdf.y;
+    const boxHeight = 110;
+    const billingAddress = estimate.billing_address || estimate.service_address || '';
+    const serviceAddress = estimate.service_address || billingAddress || '';
+
+    pdf.ensure(boxHeight + SECTION_GAP);
+    pdf.rect(left, boxTop, boxWidth, boxHeight, { fill: pdf.theme.faint, stroke: pdf.theme.border });
+    pdf.rect(serviceX, boxTop, boxWidth, boxHeight, { fill: pdf.theme.surface, stroke: pdf.theme.border });
+
+    writeBoxLines(pdf, left, boxTop, boxWidth, 'PREPARED FOR', [
+        estimate.contact_name || 'Customer',
+        estimate.contact_email,
+        estimate.contact_phone,
+        billingAddress || null,
+    ], { titleSize: 10 });
+    writeBoxLines(pdf, serviceX, boxTop, boxWidth, 'SERVICE LOCATION', [
+        estimate.contact_name || 'Customer',
+        estimate.contact_email,
+        estimate.contact_phone,
+        serviceAddress || null,
+    ], { titleSize: 10 });
+
+    pdf.y += boxHeight + SECTION_GAP;
 }
 
 function renderSummary(pdf, estimate) {
     if (!estimate.summary) return;
+    const t = pdf.tokens;
     pdf.heading('Summary');
-    pdf.y = pdf.paragraph(estimate.summary, PAGE.margin, pdf.y, CONTENT_WIDTH, { size: 10, lineHeight: 15, gray: 0.08 }) + 10;
+    pdf.y = pdf.paragraph(estimate.summary, PAGE.margin, pdf.y, CONTENT_WIDTH, {
+        size: t.body,
+        lineHeight: t.bodyLine,
+        color: pdf.theme.ink,
+    }) + 10;
 }
 
 function renderItems(pdf, estimate) {
+    const items = estimate.items || [];
+    if (items.length === 0) return;
+
     pdf.heading('Items');
+
+    const nameX = PAGE.margin;
+    const rateX = PAGE.width - PAGE.margin - 165;
     const amountX = PAGE.width - PAGE.margin;
-    for (const item of estimate.items || []) {
-        const descLines = item.description ? wrapParagraph(item.description, 9, 350) : [];
-        const rowHeight = 38 + descLines.length * 12;
-        pdf.ensure(rowHeight + 8);
-        pdf.text(item.name || 'Item', PAGE.margin, pdf.y, { size: 11, font: 'F2' });
-        pdf.rightText(money(item.amount), amountX, pdf.y, { size: 11, font: 'F2' });
-        pdf.text(itemMeta(item), PAGE.margin, pdf.y + 15, { size: 9, gray: 0.45 });
-        let descY = pdf.y + 29;
+    const tableRight = PAGE.width - PAGE.margin;
+
+    pdf.ensure(30);
+    pdf.rect(PAGE.margin, pdf.y - 4, CONTENT_WIDTH, 24, { fill: pdf.theme.faint });
+    pdf.text('Item', nameX + 10, pdf.y + 11, { size: 8, font: 'F2', color: pdf.theme.muted });
+    pdf.text('Rate', rateX, pdf.y + 11, { size: 8, font: 'F2', color: pdf.theme.muted });
+    pdf.rightText('Amount', amountX - 10, pdf.y + 11, { size: 8, font: 'F2', color: pdf.theme.muted });
+    pdf.y += 31;
+
+    const tk = pdf.tokens;
+    for (const item of items) {
+        const descLines = item.description ? wrapText(item.description, tk.itemDesc, 335) : [];
+        const rowHeight = Math.max(48, 38 + descLines.length * 12);
+        pdf.ensure(rowHeight + 4);
+
+        const rowTop = pdf.y - 6;
+        pdf.rect(PAGE.margin, rowTop, CONTENT_WIDTH, rowHeight, { fill: pdf.theme.surface, stroke: pdf.theme.border });
+        pdf.text(item.name || 'Item', nameX + 10, pdf.y + 8, { size: tk.item, font: 'F2' });
+        pdf.text(itemRate(item), rateX, pdf.y + 8, { size: tk.itemDesc, color: pdf.theme.muted });
+        pdf.rightText(money(item.amount), amountX - 10, pdf.y + 8, { size: tk.item, font: 'F2' });
+
+        let descY = pdf.y + 24;
         for (const line of descLines) {
-            pdf.text(line, PAGE.margin, descY, { size: 9, gray: 0.35 });
+            pdf.text(line, nameX + 10, descY, { size: tk.itemDesc, color: pdf.theme.muted });
             descY += 12;
         }
-        pdf.y += rowHeight;
-        pdf.line(PAGE.margin, pdf.y - 8, PAGE.width - PAGE.margin, pdf.y - 8, 0.9);
+
+        pdf.line(rateX - 18, rowTop, rateX - 18, rowTop + rowHeight, { color: pdf.theme.border });
+        pdf.line(tableRight - 112, rowTop, tableRight - 112, rowTop + rowHeight, { color: pdf.theme.border });
+        pdf.y += rowHeight + 8;
     }
-    pdf.y += 8;
 }
 
 function renderTotals(pdf, estimate) {
-    const labelX = PAGE.width - PAGE.margin - 190;
-    const valueX = PAGE.width - PAGE.margin;
-    const rows = [
-        ['Subtotal', money(estimate.subtotal)],
-    ];
-    if (Number(estimate.discount_amount || 0) > 0) rows.push(['Discount', `-${money(estimate.discount_amount)}`]);
-    if (Number(estimate.tax_amount || 0) > 0) rows.push(['Tax', money(estimate.tax_amount)]);
+    const boxWidth = 225;
+    const boxX = PAGE.width - PAGE.margin - boxWidth;
+    const valueX = PAGE.width - PAGE.margin - 14;
+    const labelX = boxX + 14;
+    const rows = [['Subtotal', money(estimate.subtotal)]];
 
-    pdf.ensure(86);
+    if (Number(estimate.discount_amount || 0) > 0) {
+        rows.push(['Discount', `-${money(estimate.discount_amount)}`]);
+    }
+    if (Number(estimate.tax_amount || 0) > 0) {
+        rows.push(['Tax', money(estimate.tax_amount)]);
+    }
+
+    const tk = pdf.tokens;
+    const boxHeight = 44 + rows.length * 18;
+    pdf.ensure(boxHeight + 10);
+    pdf.rect(boxX, pdf.y, boxWidth, boxHeight, { fill: pdf.theme.faint, stroke: pdf.theme.border });
+    let y = pdf.y + 17;
+
     for (const [label, value] of rows) {
-        pdf.text(label, labelX, pdf.y, { size: 10, gray: 0.35 });
-        pdf.rightText(value, valueX, pdf.y, { size: 10 });
-        pdf.y += 17;
+        pdf.text(label, labelX, y, { size: tk.totalsLabel, color: pdf.theme.muted });
+        pdf.rightText(value, valueX, y, { size: tk.totalsLabel, color: label === 'Discount' ? pdf.theme.danger : pdf.theme.ink });
+        y += 18;
     }
-    pdf.line(labelX, pdf.y, valueX, pdf.y, 0.82);
-    pdf.y += 18;
-    pdf.text('Total', labelX, pdf.y, { size: 12, font: 'F2' });
-    pdf.rightText(money(estimate.total), valueX, pdf.y, { size: 12, font: 'F2' });
-    pdf.y += 32;
+
+    pdf.line(labelX, y - 3, valueX, y - 3);
+    y += 16;
+    pdf.text('Total', labelX, y, { size: tk.totalLabel, font: 'F2' });
+    pdf.rightText(money(estimate.total), valueX, y, { size: tk.totalValue, font: 'F2' });
+    pdf.y += boxHeight + 18;
 }
 
-function renderTerms(pdf) {
+function renderTerms(pdf, descriptor) {
+    const section = findSection(descriptor, 'terms');
+    const body = (section && section.body_md) || '';
+    if (!body) return;
+    const size = pdf.tokens.terms;
+    const lineHeight = pdf.tokens.termsLine;
+    const height = 34 + textBlockHeight(body, CONTENT_WIDTH, { size, lineHeight }) + 8;
+    pdf.ensure(height);
     pdf.heading('Terms & Warranty');
-    pdf.y = pdf.paragraph(DEFAULT_TERMS_AND_WARRANTY, PAGE.margin, pdf.y, CONTENT_WIDTH, { size: 8.5, lineHeight: 12, gray: 0.2 }) + 10;
+    pdf.y = pdf.paragraph(body, PAGE.margin, pdf.y, CONTENT_WIDTH, {
+        size,
+        lineHeight,
+        color: pdf.theme.muted,
+    }) + 8;
 }
 
-function renderAch(pdf) {
-    pdf.heading('ACH Payments');
-    const lines = [
-        `For ACH Payments: ${COMPANY_PROFILE.ach.bank}`,
-        `Routing Number: ${COMPANY_PROFILE.ach.routingNumber}`,
-        `Account Number: ${COMPANY_PROFILE.ach.accountNumber}`,
-    ];
-    for (const line of lines) {
-        pdf.ensure(16);
-        pdf.text(line, PAGE.margin, pdf.y, { size: 9.5, font: line.startsWith('For ACH') ? 'F2' : 'F1' });
-        pdf.y += 15;
-    }
-}
+const SECTION_RENDERERS = {
+    logo: (pdf, estimate, descriptor) => renderLogo(pdf, estimate, descriptor),
+    header: renderHeader,
+    document_meta: (pdf, estimate) => renderDocumentMeta(pdf, estimate),
+    ach: (pdf, _est, descriptor) => renderAch(pdf, descriptor),
+    client_addresses: (pdf, estimate) => renderClientAndAddresses(pdf, estimate),
+    summary: (pdf, estimate) => renderSummary(pdf, estimate),
+    items: (pdf, estimate) => renderItems(pdf, estimate),
+    totals: (pdf, estimate) => renderTotals(pdf, estimate),
+    terms: (pdf, _est, descriptor) => renderTerms(pdf, descriptor),
+};
 
 function buildPdfBuffer(pageStreams) {
     const objects = [];
@@ -292,18 +557,20 @@ function buildPdfBuffer(pageStreams) {
     return Buffer.from(body, 'utf8');
 }
 
-function renderEstimatePdf(estimate) {
-    const pdf = new PdfCanvas();
-    renderHeader(pdf, estimate);
-    renderPreparedFor(pdf, estimate);
-    renderSummary(pdf, estimate);
-    renderItems(pdf, estimate);
-    renderTotals(pdf, estimate);
-    renderTerms(pdf);
-    renderAch(pdf);
-    pdf.finish();
-
-    return buildPdfBuffer(pdf.pages.map(ops => ops.join('\n')));
+/**
+ * Renders an estimate to a PDF Buffer using @react-pdf/renderer driven by the
+ * stored document template descriptor. The output mirrors `TemplateLivePreview`
+ * (HTML preview) so PDF and preview stay visually consistent.
+ *
+ * Returns Buffer (sync, awaiting `renderToBuffer` resolved before return).
+ */
+async function renderEstimatePdf(estimate, descriptor) {
+    const desc = descriptorOrFactory(descriptor);
+    // @react-pdf/renderer ships ESM only — load via dynamic import.
+    const reactPdf = await import('@react-pdf/renderer');
+    const { buildEstimatePdfElement } = require('./documentTemplates/estimatePdfDocument');
+    const element = buildEstimatePdfElement({ estimate, descriptor: desc }, reactPdf);
+    return await reactPdf.renderToBuffer(element);
 }
 
 module.exports = {

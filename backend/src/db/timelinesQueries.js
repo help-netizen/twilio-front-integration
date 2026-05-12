@@ -9,6 +9,12 @@ const { toE164 } = require('../utils/phoneUtils');
 
 const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 
+/**
+ * Sentinel phone_e164 value for the single shared "Anonymous" timeline.
+ * All calls with privacy-blocked / unknown caller ID are aggregated here.
+ */
+const ANONYMOUS_PHONE_SENTINEL = 'ANONYMOUS';
+
 // =============================================================================
 // Timeline unread state
 // =============================================================================
@@ -33,7 +39,32 @@ async function markTimelineRead(timelineId) {
 // Timeline find/create
 // =============================================================================
 
+/**
+ * Find or create the single shared orphan timeline used for anonymous /
+ * privacy-blocked calls. There is no contact to associate, so we keep
+ * contact_id NULL and use a sentinel string in phone_e164.
+ *
+ * The orphan unique-index `uq_timelines_orphan_phone` (UNIQUE on phone_e164
+ * WHERE contact_id IS NULL) guarantees a single row.
+ */
+async function findOrCreateAnonymousTimeline(companyId = null) {
+    const result = await db.query(
+        `INSERT INTO timelines (phone_e164, company_id)
+         VALUES ($1, $2)
+         ON CONFLICT (phone_e164) WHERE phone_e164 IS NOT NULL AND contact_id IS NULL
+         DO UPDATE SET updated_at = now()
+         RETURNING *`,
+        [ANONYMOUS_PHONE_SENTINEL, companyId || DEFAULT_COMPANY_ID]
+    );
+    return result.rows[0];
+}
+
 async function findOrCreateTimeline(phoneE164, companyId = null) {
+    // Sentinel: route through the dedicated anonymous helper so we don't
+    // accidentally try to match contacts by the literal "ANONYMOUS" string.
+    if (phoneE164 === ANONYMOUS_PHONE_SENTINEL) {
+        return findOrCreateAnonymousTimeline(companyId);
+    }
     const digits = phoneE164.replace(/\D/g, '');
 
     const contactResult = await db.query(
@@ -334,6 +365,8 @@ module.exports = {
     markTimelineUnread,
     markTimelineRead,
     findOrCreateTimeline,
+    findOrCreateAnonymousTimeline,
+    ANONYMOUS_PHONE_SENTINEL,
     getCallsByTimeline,
     getTimelinesWithCallsCount,
     setActionRequired,

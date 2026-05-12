@@ -1466,3 +1466,136 @@ should report ≤ ~20 (was ≥ 199). CLOSE_WAIT count should be 0–2 (was 28).
 - Per-tenant Twilio credentials (analogue of `getClientForCompany` in `zenbookerClient.js`) — left as future work; current Blanc deployment uses a single Twilio account.
 - Custom `https.Agent` tuning (maxSockets, freeSocketTimeout) — Twilio SDK defaults are sufficient once a single agent is shared.
 - Untangling Twilio webhook signature validation — orthogonal.
+
+
+---
+
+## F015: Document Templates Customization
+
+**Related requirements:** `docs/requirements.md#F015`
+**Related spec:** `docs/specs/F015-document-templates.md`
+
+### 1. Goals
+1. Replace hardcoded constants in `backend/src/services/estimatePdfService.js` and `frontend/src/components/estimates/EstimatePreviewDialog.tsx` with a versioned, per-company **template descriptor** stored in PostgreSQL.
+2. Single source of truth shared between PDF renderer and HTML preview.
+3. Designed so adding `invoice` and `work_order` document types is data + small adapter, not a refactor.
+
+### 2. New components
+
+```
+[frontend]
+  pages/DocumentTemplatesPage.tsx       (list)
+  pages/DocumentTemplateEditorPage.tsx  (editor + live preview)
+  services/documentTemplatesApi.ts
+  components/documents/TemplateEditor/  (form-based editor blocks)
+[backend]
+  routes/document-templates.js
+  services/documentTemplatesService.js  (resolve, validate, CRUD orchestration)
+  services/documentTemplates/
+    factory.js                          (factory descriptors per type)
+    schema/v1.json                      (Ajv schema for descriptor v1)
+    rendererRegistry.js                 (document_type -> renderer adapter)
+    estimateAdapter.js                  (descriptor + estimate -> PDF buffer)
+  db/documentTemplatesQueries.js
+[shared]
+  backend/db/migrations/084_create_document_templates.sql
+```
+
+### 3. Data model
+
+```sql
+CREATE TABLE document_templates (
+    id              BIGSERIAL PRIMARY KEY,
+    company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    document_type   TEXT NOT NULL CHECK (document_type IN ('estimate')),
+    name            TEXT NOT NULL,
+    slug            TEXT NOT NULL,
+    is_default      BOOLEAN NOT NULL DEFAULT false,
+    schema_version  INTEGER NOT NULL DEFAULT 1,
+    content         JSONB NOT NULL,
+    archived_at     TIMESTAMPTZ,
+    created_by      UUID REFERENCES crm_users(id) ON DELETE SET NULL,
+    updated_by      UUID REFERENCES crm_users(id) ON DELETE SET NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (company_id, document_type, slug)
+);
+
+CREATE UNIQUE INDEX idx_doc_templates_one_default
+    ON document_templates(company_id, document_type)
+    WHERE is_default = true AND archived_at IS NULL;
+
+CREATE INDEX idx_doc_templates_lookup
+    ON document_templates(company_id, document_type, archived_at);
+```
+
+Seed step inside the same migration: `INSERT INTO document_templates (company_id, document_type, name, slug, is_default, schema_version, content) SELECT c.id, 'estimate', 'Default', 'default', true, 1, '<factory_descriptor_json>'::jsonb FROM companies c WHERE NOT EXISTS (SELECT 1 FROM document_templates dt WHERE dt.company_id = c.id AND dt.document_type='estimate');`
+
+### 4. Descriptor schema (v1)
+
+JSON Schema lives at `backend/src/services/documentTemplates/schema/v1.json`. Top-level keys: `schema_version` (const 1), `brand`, `theme`, `sections[]`, `footer`. Validated server-side with Ajv on every write; the same schema is consumed by the frontend (imported as JSON, used for typed form state via `json-schema-to-ts` or hand-mirrored TypeScript type).
+
+### 5. Renderer integration
+
+**Before (current):**
+```
+routes/estimates.js  -> estimatesService.generatePdf -> renderEstimatePdf(estimate)
+                                                       └ uses module constants
+```
+
+**After:**
+```
+routes/estimates.js -> estimatesService.generatePdf
+  -> documentTemplatesService.resolveTemplate(company_id, 'estimate')
+  -> rendererRegistry.get('estimate').render(estimate, descriptor)
+     └ same PdfCanvas internals, but reads brand/theme/sections from descriptor
+     └ falls back to `factory.estimate()` if descriptor missing
+```
+
+`estimatePdfService.js` is refactored so all references to `COMPANY_PROFILE`, `DEFAULT_TERMS_AND_WARRANTY`, `COLORS` are replaced with reads from a `descriptor` parameter. The legacy module exports remain (re-exporting `factory.estimate().brand` / `factory.estimate().sections.find('terms').body_md`) so any external consumers keep working until they migrate.
+
+### 6. Backend module layout (mirrors marketplace pattern)
+
+| File | Purpose |
+|---|---|
+| `backend/src/db/documentTemplatesQueries.js` | Parameterized SQL: `listByType`, `getByIdScoped`, `update`, `resetToFactory`, `getDefaultByType`. All filter by `company_id`. |
+| `backend/src/services/documentTemplatesService.js` | Orchestration, validation (Ajv), error class `DocumentTemplateServiceError`. Public `resolveTemplate(companyId, type)` used by renderer. |
+| `backend/src/services/documentTemplates/factory.js` | Pure: returns frozen factory descriptor for a given `document_type`. |
+| `backend/src/services/documentTemplates/rendererRegistry.js` | `register(type, adapter)` / `get(type)`. Adapter contract: `(estimate, descriptor) => Buffer`. |
+| `backend/src/services/documentTemplates/estimateAdapter.js` | Wraps `estimatePdfService.renderEstimatePdf` so the registry call is uniform. |
+| `backend/src/routes/document-templates.js` | Express router; `authenticate, requireCompanyAccess, requirePermission('tenant.documents.manage')` applied at mount. |
+
+Mount in `src/server.js` next to marketplace:
+```js
+app.use('/api/document-templates',
+    authenticate,
+    requirePermission('tenant.documents.manage'),
+    requireCompanyAccess,
+    documentTemplatesRouter);
+```
+
+### 7. Frontend
+
+- `frontend/src/services/documentTemplatesApi.ts` — typed wrapper over the new endpoints (uses `authedFetch`).
+- `frontend/src/pages/DocumentTemplatesPage.tsx` — list grouped by `document_type`. Reuses table primitives from `IntegrationsPage`.
+- `frontend/src/pages/DocumentTemplateEditorPage.tsx` — form editor with sections (Brand / Theme / Sections / Terms / Footer); right pane is a live preview component that takes the in-memory descriptor and renders an HTML approximation (same component used by `EstimatePreviewDialog` post-refactor).
+- `EstimatePreviewDialog.tsx` is refactored: `DEFAULT_TERMS_AND_WARRANTY` removed; the dialog fetches the resolved descriptor via the same render endpoint or accepts it as a prop from the parent.
+
+### 8. Permission
+
+A new permission key `tenant.documents.manage` is added. P0 maps it to the same role as `tenant.integrations.manage` (admin). Add it to the role bootstrap migration; the route enforces it directly.
+
+### 9. Backwards compatibility & rollback
+
+- Migration is idempotent (`IF NOT EXISTS`, `WHERE NOT EXISTS` for seed).
+- If the descriptor row is missing or fails Ajv validation, renderer falls back to `factory.estimate()` — never throws.
+- Reverting the migration drops the table; renderer continues to work because it always falls back to factory.
+
+### 10. Out of scope
+- Multiple templates per type (P1): UI/route already takes `id`, but P0 always resolves the `is_default = true` row.
+- Asset upload (logo): P0 stores `logo_url` string only.
+- Template versioning UI (history): table has `archived_at`; P0 only uses it for soft-delete future.
+
+### 11. Touched/protected files
+**Modified:** `backend/src/services/estimatePdfService.js`, `backend/src/services/estimatesService.js` (only the `generatePdf` path), `frontend/src/components/estimates/EstimatePreviewDialog.tsx`, `src/server.js` (mount only).
+**Protected (must not change):** `frontend/src/lib/authedFetch.ts`, `frontend/src/hooks/useRealtimeEvents.ts`, existing migration files 001-083.

@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useInvoices } from '../hooks/useInvoices';
 import { InvoiceDetailPanel } from '../components/invoices/InvoiceDetailPanel';
 import { InvoiceEditorDialog } from '../components/invoices/InvoiceEditorDialog';
@@ -53,6 +54,19 @@ export function InvoicesPage() {
     const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
     const [sendDialogOpen, setSendDialogOpen] = useState(false);
     const [sendInvoiceId, setSendInvoiceId] = useState<number | null>(null);
+    const [searchParams, setSearchParams] = useSearchParams();
+
+    // Auto-open invoice when navigated with ?openId=<id> (e.g. from estimate → invoice conversion).
+    useEffect(() => {
+        const openId = searchParams.get('openId');
+        if (!openId) return;
+        const idNum = Number(openId);
+        if (Number.isFinite(idNum)) page.selectInvoice(idNum);
+        // Clear the query param so refreshing doesn't keep re-opening it.
+        searchParams.delete('openId');
+        setSearchParams(searchParams, { replace: true });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [searchParams]);
 
     const handleCreate = () => {
         setEditingInvoice(null);
@@ -234,25 +248,31 @@ export function InvoicesPage() {
                     open={sendDialogOpen}
                     onOpenChange={open => { setSendDialogOpen(open); if (!open) setSendInvoiceId(null); }}
                     invoiceId={sendInvoiceId}
-                    contactEmail={page.selectedInvoice?.contact_name || ''}
+                    contactEmail={page.selectedInvoice?.contact_email || ''}
+                    contactPhone={page.selectedInvoice?.contact_phone || ''}
+                    contactName={page.selectedInvoice?.contact_name || ''}
+                    invoiceNumber={page.selectedInvoice?.invoice_number || ''}
+                    balanceDue={page.selectedInvoice?.balance_due}
+                    total={page.selectedInvoice?.total}
+                    dueDate={page.selectedInvoice?.due_date}
                     onSend={data => page.handleSendInvoice(sendInvoiceId, data)}
                 />
             )}
             </div>
 
-            <FloatingDetailPanel open={!!page.selectedInvoice} onClose={page.closeDetail}>
+            <FloatingDetailPanel open={!!page.selectedInvoice} onClose={page.closeDetail} wide>
                 {page.selectedInvoice && (
                     <InvoiceDetailPanel
                         invoice={page.selectedInvoice}
                         events={page.events}
                         loading={page.detailLoading}
                         onClose={page.closeDetail}
-                        onEdit={() => handleEdit(page.selectedInvoice!)}
                         onSend={() => handleSend(page.selectedInvoice!.id)}
                         onVoid={() => page.handleVoidInvoice(page.selectedInvoice!.id)}
                         onRecordPayment={(data) => page.handleRecordPayment(page.selectedInvoice!.id, data)}
                         onSyncEstimate={() => page.handleSyncItems(page.selectedInvoice!.id)}
                         onDelete={() => page.handleDeleteInvoice(page.selectedInvoice!.id)}
+                        onChanged={() => page.loadInvoices()}
                     />
                 )}
             </FloatingDetailPanel>

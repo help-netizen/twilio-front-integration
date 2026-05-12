@@ -21,6 +21,7 @@ import { callsApi } from '../services/api';
 import { pulseApi } from '../services/pulseApi';
 import { useAuth } from '../auth/AuthProvider';
 import { useNavigate } from 'react-router-dom';
+import { isAnonymousPhone } from '../utils/phoneUtils';
 import './PulsePage.css';
 
 export const PulsePage: React.FC = () => {
@@ -168,7 +169,9 @@ export const PulsePage: React.FC = () => {
                             <Activity className="size-12 mb-4" style={{ opacity: 0.15 }} />
                             <p className="text-muted-foreground">Select a contact to view their timeline</p>
                         </div>
-                    ) : (
+                    ) : (() => {
+                        const isAnonTimeline = isAnonymousPhone(p.phone) || isAnonymousPhone((p.selectedConv as any)?.tl_phone);
+                        return (
                         <>
                             {/* Action Required bar — its own floating card */}
                             {(() => {
@@ -226,8 +229,20 @@ export const PulsePage: React.FC = () => {
                                 );
                             })()}
 
+                            {/* Anonymous header card — replaces detail/wizard for the shared Anonymous timeline */}
+                            {isAnonTimeline && (
+                                <div className="pulse-card pulse-accent-top" style={{ '--card-accent': 'var(--blanc-ink-3)' } as React.CSSProperties}>
+                                    <div className="px-5 py-4">
+                                        <h2 className="text-2xl font-semibold" style={{ color: 'var(--blanc-ink-1)', fontFamily: 'var(--blanc-font-heading)' }}>Anonymous</h2>
+                                        <p className="text-sm mt-1" style={{ color: 'var(--blanc-ink-3)' }}>
+                                            Caller ID was blocked or unavailable. Callback and SMS are not available for these calls.
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
+
                             {/* Detail card: Lead / Contact / Wizard */}
-                            {(p.contactId || p.timelineId) && p.phone ? (
+                            {!isAnonTimeline && (p.contactId || p.timelineId) && p.phone ? (
                                 p.lead ? (
                                     <div className="pulse-card pulse-accent-top" style={{ '--card-accent': 'var(--blanc-info)', height: 560 } as React.CSSProperties}>
                                         <LeadDetailPanel
@@ -279,8 +294,8 @@ export const PulsePage: React.FC = () => {
                                 />
                             </div>
 
-                            {/* SMS form card */}
-                            {p.phone && (
+                            {/* SMS form card — hidden for anonymous timeline (no callback target) */}
+                            {p.phone && !isAnonTimeline && (
                                 <div className="pulse-card">
                                     <SmsForm
                                         onSend={p.handleSendMessage}
@@ -296,7 +311,8 @@ export const PulsePage: React.FC = () => {
                                 </div>
                             )}
                         </>
-                    )}
+                        );
+                    })()}
                 </div>
             </div>
 

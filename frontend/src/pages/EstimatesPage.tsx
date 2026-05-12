@@ -230,7 +230,7 @@ export function EstimatesPage() {
             )}
             </div>
 
-            <FloatingDetailPanel open={!!page.selectedEstimate} onClose={page.closeDetail}>
+            <FloatingDetailPanel open={!!page.selectedEstimate} onClose={page.closeDetail} wide>
                 {page.selectedEstimate && (
                     <EstimateDetailPanel
                         estimate={page.selectedEstimate}

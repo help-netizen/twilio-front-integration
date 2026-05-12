@@ -36,6 +36,24 @@ export function formatPhoneDisplay(e164: string | null | undefined): string {
 }
 
 /**
+ * Sentinel phone_e164 value used by the backend for the shared "Anonymous"
+ * timeline (privacy-blocked / unknown caller IDs). Mirrors
+ * backend/src/db/timelinesQueries.js → ANONYMOUS_PHONE_SENTINEL.
+ */
+export const ANONYMOUS_PHONE_SENTINEL = 'ANONYMOUS';
+
+/**
+ * True if the given phone value identifies the anonymous timeline.
+ * Accepts the sentinel itself or the raw "anonymous" string Twilio sends.
+ */
+export function isAnonymousPhone(value: string | null | undefined): boolean {
+    if (!value) return false;
+    const v = String(value).trim();
+    if (v === ANONYMOUS_PHONE_SENTINEL) return true;
+    return v.toLowerCase() === 'anonymous';
+}
+
+/**
  * Detect if input looks like a phone number (vs. name for search).
  * Returns true if input is predominantly digits/phone chars.
  */

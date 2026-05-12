@@ -39,6 +39,7 @@ All four endpoints share the same query params. Base path: `/api/v1/integrations
 | `tracking_number` | E.164 | no | `+16176444408` | ABC Homes main ad DID. Normalized server-side |
 | `limit` | int | no | 100 | `/calls`, `/leads`, `/jobs` only. Max 500 |
 | `cursor` | string | no | — | Opaque pagination token from previous response |
+| `has_gclid` | `true`/`false` | no | — | `/leads` only. Filter to leads with (or without) a stored Google Click ID |
 
 **Period rules:**
 - `to - from` ≤ 92 days, else `400 PERIOD_TOO_LARGE`
@@ -67,9 +68,11 @@ All four endpoints share the same query params. Base path: `/api/v1/integrations
   },
 
   "leads": {
-    "created": 7,               // leads with created_at in period
-    "from_tracking_calls": 6,   // leads attributed to a tracking call (24h window)
-    "call_to_lead_rate": 0.194, // from_tracking_calls / calls.answered
+    "created": 7,                     // leads with created_at in period
+    "from_tracking_calls": 6,         // leads attributed to a tracking call (24h window)
+    "from_website_new_contact": 1,    // leads with job_source in BLANC_WEBSITE_SOURCES and contact has no earlier leads
+    "ads_attributable": 7,            // from_tracking_calls + from_website_new_contact — the Ads funnel total
+    "call_to_lead_rate": 0.194,       // from_tracking_calls / calls.answered
     "lead_lost": 1,
     "converted_to_job": 4,
     "by_job_type": { "Refrigerator": 3, "Dryer": 2, "General": 2 }
@@ -98,11 +101,17 @@ All four endpoints share the same query params. Base path: `/api/v1/integrations
 
 ### Attribution logic
 
-A lead is counted in `leads.from_tracking_calls` when:
+**`from_tracking_calls`** — a lead is counted when:
 1. It has a phone number whose **last 10 digits** match the `from_number` of an inbound tracking call, AND
 2. The lead's `created_at` falls within **24 hours after** the call's `started_at`.
 
 If multiple tracking calls match, the most recent one wins.
+
+**`from_website_new_contact`** — a lead is counted when:
+1. `lead.job_source` is in the configured website-sources list (env `BLANC_WEBSITE_SOURCES`, default: `"Web site order"`, comma-separated), AND
+2. The lead is the **first-ever lead** for its `contact_id` — i.e. `NOT EXISTS (another lead with the same contact_id created earlier)`. Leads without `contact_id` are conservatively treated as new contacts.
+
+**`ads_attributable`** = `from_tracking_calls + from_website_new_contact`. This is the "funnel-worthy" lead count — everything we can point to an ads spend (call-tracking DID or site submission by a first-time visitor).
 
 ---
 
@@ -150,7 +159,9 @@ When `next_cursor` is `null`, you've reached the end.
   "city": "Boston", "state": "MA", "postal_code": "02115",
   "job_type": "Refrigerator", "job_source": "Google Ads",
   "created_at": "2026-04-22T14:45:00Z", "converted_to_job": true,
-  "tracking_call_sid": "CAxxxx"   // null if lead was not attributed to a tracking call
+  "gclid": "CjwKCAjw7p6aBhAlEiwAXbR8...",  // Google Click ID, null when not present
+  "tracking_call_sid": "CAxxxx",       // null if lead was not attributed to a tracking call
+  "is_website_new_contact": false       // true if the lead is a first-time website submission
 }
 ```
 
@@ -164,10 +175,23 @@ When `next_cursor` is `null`, you've reached the end.
   "start_date": "2026-04-25T13:00:00Z", "end_date": "2026-04-25T15:00:00Z",
   "territory": "Boston Metro",
   "invoice_total": "$460.00", "invoice_status": "paid",
+  "paid": "460.00",          // ledger-computed received amount (existing field)
+  "amount_paid": "460.00",   // F014 offline-conversion field; see logic below
   "lead_id": 98765, "created_at": "2026-04-23T09:00:00Z",
   "lead_phone": "+16171234567"
 }
 ```
+
+**`amount_paid` logic** (numeric, `12,2`):
+
+| `invoice_status` | `amount_paid` |
+|---|---|
+| `paid` | parsed `invoice_total` |
+| `partially_paid` | sum of completed `payment_transactions` (or legacy `zb_payments`) |
+| `draft` | `null` |
+| anything else | ledger-computed best-effort |
+
+This field exists for the offline-conversion pipeline that uploads paid jobs back to Google Ads. For everyday revenue reporting prefer the existing `paid` column or `/summary.jobs.revenue_invoiced`.
 
 ---
 
@@ -230,6 +254,16 @@ curl -sS "$HOST/api/v1/integrations/analytics/calls?from=2026-04-16&to=2026-04-2
 curl -sS "$HOST/api/v1/integrations/analytics/summary?from=2026-04-16&to=2026-04-22&tracking_number=%2B16175551234" \
   -H "X-BLANC-API-KEY: $KEY" \
   -H "X-BLANC-API-SECRET: $SECRET" | jq .
+
+# Leads with a stored Google Click ID (offline-conversion pipeline source data)
+curl -sS "$HOST/api/v1/integrations/analytics/leads?from=2026-04-16&to=2026-04-22&has_gclid=true&limit=100" \
+  -H "X-BLANC-API-KEY: $KEY" \
+  -H "X-BLANC-API-SECRET: $SECRET" | jq .
+
+# Jobs with amount_paid for ROAS reporting
+curl -sS "$HOST/api/v1/integrations/analytics/jobs?from=2026-04-16&to=2026-04-22&limit=100" \
+  -H "X-BLANC-API-KEY: $KEY" \
+  -H "X-BLANC-API-SECRET: $SECRET" | jq '.items[] | {id, job_number, invoice_status, invoice_total, amount_paid}'
 ```
 
 ---
@@ -276,9 +310,13 @@ function fetchWeeklyFunnel(fromDate, toDate) {
 | `calls.missed` | `total - answered` | Voicemail, no-answer, busy, failed, canceled — anything that didn't result in a conversation |
 | `leads.created` | `leads.created_at` in period | All leads, regardless of source |
 | `leads.from_tracking_calls` | `leads` joined to tracked calls by last-10-digit phone match within 24h | Attribution window is hard-coded |
+| `leads.from_website_new_contact` | `leads` with `job_source IN (BLANC_WEBSITE_SOURCES)` AND no earlier lead for the same `contact_id` | Env default: `"Web site order"` |
+| `leads.ads_attributable` | `from_tracking_calls + from_website_new_contact` | Funnel total for Ads reporting |
 | `jobs.from_period_leads` | `jobs` whose `lead_id` is in period's leads | Not jobs started in the period — jobs *from period leads* |
 | `jobs.revenue_invoiced` | `SUM(invoice_total)` with regex `[^0-9.]` stripped | Decimals assume `.` as separator |
 | `jobs.by_territory` | `jobs.territory` grouped count | `NULL` → `"Unknown"` |
+| `/leads.gclid` | `leads.gclid` (set on `POST /integrations/leads`) | Optional Google Click ID. Filter via `?has_gclid=true` |
+| `/jobs.amount_paid` | See logic table in §4 | Net paid per job — used by the offline-conversion pipeline |
 
 ---
 
