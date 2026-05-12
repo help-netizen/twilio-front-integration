@@ -1,10 +1,61 @@
+const fs = require('fs');
+const path = require('path');
 const db = require('./connection');
+
+let schemaReady = false;
+let schemaReadyPromise = null;
+
+function readMigration(filename) {
+    return fs.readFileSync(path.join(__dirname, '..', '..', 'db', 'migrations', filename), 'utf8');
+}
+
+async function ensureMarketplaceSchema(client = null) {
+    if (schemaReady) return;
+
+    if (client) {
+        const query = queryFor(client);
+        await query(`SELECT pg_advisory_xact_lock(hashtext('blanc_marketplace_schema'))`);
+        await query(`
+            CREATE OR REPLACE FUNCTION update_updated_at_column()
+            RETURNS TRIGGER AS $$
+            BEGIN
+                NEW.updated_at = NOW();
+                RETURN NEW;
+            END;
+            $$ language 'plpgsql';
+        `);
+        await query(readMigration('083_create_marketplace_apps.sql'));
+        await query(readMigration('087_seed_mail_secretary_marketplace_app.sql'));
+        return;
+    }
+
+    if (!schemaReadyPromise) {
+        schemaReadyPromise = (async () => {
+            const pooledClient = await db.pool.connect();
+            try {
+                await pooledClient.query('BEGIN');
+                await ensureMarketplaceSchema(pooledClient);
+                await pooledClient.query('COMMIT');
+                schemaReady = true;
+            } catch (err) {
+                await pooledClient.query('ROLLBACK');
+                schemaReadyPromise = null;
+                throw err;
+            } finally {
+                pooledClient.release();
+            }
+        })();
+    }
+
+    return schemaReadyPromise;
+}
 
 function queryFor(client) {
     return client?.query ? client.query.bind(client) : db.query;
 }
 
 async function reconcileRevokedInstallations(companyId, client = null) {
+    await ensureMarketplaceSchema(client);
     const query = queryFor(client);
     await query(
         `UPDATE marketplace_installations mi
@@ -21,6 +72,7 @@ async function reconcileRevokedInstallations(companyId, client = null) {
 }
 
 async function listPublishedAppsWithInstallation(companyId, client = null) {
+    await ensureMarketplaceSchema(client);
     const query = queryFor(client);
     await reconcileRevokedInstallations(companyId, client);
     const { rows } = await query(
@@ -65,6 +117,7 @@ async function listPublishedAppsWithInstallation(companyId, client = null) {
 }
 
 async function getPublishedAppByKey(appKey, client = null) {
+    await ensureMarketplaceSchema(client);
     const query = queryFor(client);
     const { rows } = await query(
         `SELECT *
@@ -78,6 +131,7 @@ async function getPublishedAppByKey(appKey, client = null) {
 }
 
 async function findActiveInstallation(companyId, appId, client = null) {
+    await ensureMarketplaceSchema(client);
     const query = queryFor(client);
     await reconcileRevokedInstallations(companyId, client);
     const { rows } = await query(
@@ -95,6 +149,7 @@ async function findActiveInstallation(companyId, appId, client = null) {
 }
 
 async function listInstallations(companyId, includeInactive = false, client = null) {
+    await ensureMarketplaceSchema(client);
     const query = queryFor(client);
     await reconcileRevokedInstallations(companyId, client);
     const inactiveWhere = includeInactive ? '' : `AND i.status IN ('connected', 'provisioning_failed')`;
@@ -129,6 +184,7 @@ async function listInstallations(companyId, includeInactive = false, client = nu
 }
 
 async function getInstallationById(companyId, installationId, client = null) {
+    await ensureMarketplaceSchema(client);
     const query = queryFor(client);
     await reconcileRevokedInstallations(companyId, client);
     const { rows } = await query(
@@ -154,6 +210,7 @@ async function getInstallationById(companyId, installationId, client = null) {
 }
 
 async function createInstallation({ companyId, appId, actorId, status = 'provisioning_failed' }, client = null) {
+    await ensureMarketplaceSchema(client);
     const query = queryFor(client);
     const { rows } = await query(
         `INSERT INTO marketplace_installations
@@ -166,6 +223,7 @@ async function createInstallation({ companyId, appId, actorId, status = 'provisi
 }
 
 async function updateInstallationCredential(companyId, installationId, apiIntegrationId, client = null) {
+    await ensureMarketplaceSchema(client);
     const query = queryFor(client);
     const { rows } = await query(
         `UPDATE marketplace_installations
@@ -181,6 +239,7 @@ async function updateInstallationCredential(companyId, installationId, apiIntegr
 
 async function revokeCredentialById(apiIntegrationId, companyId, client = null) {
     if (!apiIntegrationId) return null;
+    await ensureMarketplaceSchema(client);
     const query = queryFor(client);
     const { rows } = await query(
         `UPDATE api_integrations
@@ -195,6 +254,7 @@ async function revokeCredentialById(apiIntegrationId, companyId, client = null) 
 }
 
 async function markInstallationConnected({ companyId, installationId, externalInstallationId = null }, client = null) {
+    await ensureMarketplaceSchema(client);
     const query = queryFor(client);
     const { rows } = await query(
         `UPDATE marketplace_installations
@@ -213,6 +273,7 @@ async function markInstallationConnected({ companyId, installationId, externalIn
 }
 
 async function markProvisioningFailed({ companyId, installationId, error }, client = null) {
+    await ensureMarketplaceSchema(client);
     const query = queryFor(client);
     const { rows } = await query(
         `UPDATE marketplace_installations
@@ -229,6 +290,7 @@ async function markProvisioningFailed({ companyId, installationId, error }, clie
 }
 
 async function markDisconnected({ companyId, installationId, actorId, status = 'disconnected' }, client = null) {
+    await ensureMarketplaceSchema(client);
     const query = queryFor(client);
     const { rows } = await query(
         `UPDATE marketplace_installations
@@ -254,6 +316,7 @@ async function writeEvent({
     requestId = null,
     payload = {},
 }, client = null) {
+    await ensureMarketplaceSchema(client);
     const query = queryFor(client);
     const { rows } = await query(
         `INSERT INTO marketplace_installation_events
@@ -275,6 +338,7 @@ async function writeEvent({
 }
 
 module.exports = {
+    ensureMarketplaceSchema,
     reconcileRevokedInstallations,
     listPublishedAppsWithInstallation,
     getPublishedAppByKey,
