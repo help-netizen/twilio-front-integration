@@ -10,6 +10,7 @@ jest.mock('../../backend/src/db/connection', () => ({
 }));
 
 jest.mock('../../backend/src/db/marketplaceQueries', () => ({
+    ensureMarketplaceSchema: jest.fn(),
     reconcileRevokedInstallations: jest.fn(),
     listPublishedAppsWithInstallation: jest.fn(),
     getPublishedAppByKey: jest.fn(),

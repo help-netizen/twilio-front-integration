@@ -182,6 +182,8 @@ async function installApp(companyId, actorId, appKey, { requestId = null, req = 
     let installation;
     let credential;
 
+    await marketplaceQueries.ensureMarketplaceSchema();
+
     const client = await db.pool.connect();
     try {
         await client.query('BEGIN');
@@ -362,6 +364,8 @@ async function installApp(companyId, actorId, appKey, { requestId = null, req = 
 }
 
 async function disconnectInstallation(companyId, actorId, installationId, { requestId = null } = {}) {
+    await marketplaceQueries.ensureMarketplaceSchema();
+
     const client = await db.pool.connect();
     try {
         await client.query('BEGIN');
@@ -418,6 +422,8 @@ async function disconnectInstallation(companyId, actorId, installationId, { requ
 }
 
 async function retryProvisioning(companyId, actorId, installationId, { requestId = null, req = null } = {}) {
+    await marketplaceQueries.ensureMarketplaceSchema();
+
     const current = await marketplaceQueries.getInstallationById(companyId, installationId);
     if (!current) {
         throw new MarketplaceServiceError('Installation not found.', 'INSTALLATION_NOT_FOUND', 404);
