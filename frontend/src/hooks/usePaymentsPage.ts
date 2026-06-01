@@ -92,7 +92,10 @@ export function usePaymentsPage() {
     const pagedRows = sortedRows.slice(page * perPage, (page + 1) * perPage);
     const totalAmount = useMemo(() => rows.reduce((sum, r) => sum + (parseFloat(r.amount_paid) || 0), 0), [rows]);
 
-    const handleExportCSV = async () => { if (sortedRows.length === 0) return; setExporting(true); try { await exportPaymentsCSV(dateFrom, dateTo, methodFilter, searchQuery); } catch (err: any) { console.error('Export error:', err); } finally { setExporting(false); } };
+    // Export covers the entire selected date range — payment method / search
+    // / paid / provider / quick filters are intentionally NOT applied so the
+    // CSV is a complete picture for the period.
+    const handleExportCSV = async () => { setExporting(true); try { await exportPaymentsCSV(dateFrom, dateTo); } catch (err: any) { console.error('Export error:', err); } finally { setExporting(false); } };
 
     return {
         rows, loading, error, sortedRows, pagedRows, totalPages, page, setPage, perPage, totalAmount,

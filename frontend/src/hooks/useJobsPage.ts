@@ -25,19 +25,13 @@ export function useJobsPage() {
         onJobMutated: useCallback(() => data.loadJobs(data.offset), [data.loadJobs, data.offset]),
     });
 
+    // Export covers the entire selected date range, ignoring on-screen
+    // list filters — see useJobsExport for rationale.
     const exportHook = useJobsExport({
-        filteredJobs: data.filteredJobs,
-        searchQuery: data.searchQuery,
         sortBy: data.sortBy,
         sortOrder: data.sortOrder,
-        onlyOpen: data.onlyOpen,
         startDate: data.startDate,
         endDate: data.endDate,
-        statusFilter: data.statusFilter,
-        jobTypeFilter: data.jobTypeFilter,
-        providerFilter: data.providerFilter,
-        tagFilter: data.tagFilter,
-        sourceFilter: data.sourceFilter,
     });
 
     // ─── Selection / Navigation ──────────────────────────────────────

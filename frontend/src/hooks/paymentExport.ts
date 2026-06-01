@@ -7,10 +7,10 @@ function escapeCsv(val: string): string {
     return val;
 }
 
-export async function exportPaymentsCSV(dateFrom: string, dateTo: string, methodFilter: string, searchQuery: string): Promise<void> {
+export async function exportPaymentsCSV(dateFrom: string, dateTo: string): Promise<void> {
+    // Export the full date range with no method/search filter — CSV must
+    // reflect every payment in the period regardless of on-screen filters.
     const qs = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
-    if (methodFilter) qs.set('payment_method', methodFilter);
-    if (searchQuery) qs.set('search', searchQuery);
 
     const res = await authedFetch(`${API_BASE}/api/zenbooker/payments/export?${qs.toString()}`);
     const json = await res.json();

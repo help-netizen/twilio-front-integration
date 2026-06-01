@@ -6,44 +6,31 @@ import type { LocalJob } from '../services/jobsApi';
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface UseJobsExportParams {
-    filteredJobs: LocalJob[];
-    searchQuery: string;
     sortBy: string;
     sortOrder: 'asc' | 'desc';
-    onlyOpen: boolean;
     startDate?: string;
     endDate?: string;
-    statusFilter: string[];
-    jobTypeFilter: string[];
-    providerFilter: string[];
-    tagFilter: number[];
-    sourceFilter: string[];
 }
 
 // ─── Hook ────────────────────────────────────────────────────────────────────
 
 export function useJobsExport({
-    filteredJobs, searchQuery, sortBy, sortOrder,
-    onlyOpen, startDate, endDate,
-    statusFilter, jobTypeFilter, providerFilter, tagFilter, sourceFilter,
+    sortBy, sortOrder, startDate, endDate,
 }: UseJobsExportParams) {
     const [exporting, setExporting] = useState(false);
 
     const handleExportCSV = async () => {
-        if (filteredJobs.length === 0) return;
         setExporting(true);
         try {
+            // Export covers the entire selected date range — UI list filters
+            // (search, only_open, status, type, provider, tag, source) are
+            // intentionally NOT applied so the CSV is a complete picture for
+            // the period. Sort is preserved for ordering only.
             const qs = new URLSearchParams();
-            if (searchQuery.trim()) qs.set('search', searchQuery.trim());
             if (sortBy) qs.set('sort_by', sortBy);
             if (sortOrder) qs.set('sort_order', sortOrder);
-            if (onlyOpen) qs.set('only_open', 'true');
             if (startDate) qs.set('start_date', startDate);
             if (endDate) qs.set('end_date', endDate);
-            if (statusFilter.length > 0) qs.set('blanc_status', statusFilter.join(','));
-            if (jobTypeFilter.length > 0) qs.set('service_name', jobTypeFilter.join(','));
-            if (providerFilter.length > 0) qs.set('provider', providerFilter.join(','));
-            if (tagFilter.length > 0) qs.set('tag_ids', tagFilter.join(','));
             qs.set('limit', '10000');
             qs.set('offset', '0');
 
@@ -51,13 +38,7 @@ export function useJobsExport({
             const json = await res.json();
             console.log('[Export] Fetched from backend:', { url: `/api/jobs?${qs.toString()}`, ok: json.ok, count: json.data?.results?.length, total: json.data?.total });
             if (!json.ok) throw new Error(json.error || 'Export failed');
-            const allJobs: LocalJob[] = json.data.results || [];
-
-            // Apply client-side source filter
-            let exportJobs = allJobs;
-            if (sourceFilter.length > 0) {
-                exportJobs = exportJobs.filter(j => j.job_source && sourceFilter.includes(j.job_source));
-            }
+            const exportJobs: LocalJob[] = json.data.results || [];
 
             const headers = [
                 'Job #', 'Tags', 'Job Type', 'Job End',
