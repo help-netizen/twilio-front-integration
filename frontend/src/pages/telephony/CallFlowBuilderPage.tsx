@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, createContext, useContext } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     ReactFlow, Background, Controls, MiniMap,
@@ -136,10 +136,13 @@ function FlowNodeComponent({ data, selected }: { data: FlowNodeData; selected?: 
 const nodeTypes: NodeTypes = { flowNode: FlowNodeComponent };
 
 // ─── Custom Edge with + button ────────────────────────────────────────────────
-let _onEdgeInsert: ((edgeId: string, sourceX: number, sourceY: number, targetX: number, targetY: number) => void) | null = null;
+// Context lets InsertableEdge call setInsertTarget without a module-level variable
+// (module-level vars break after React Fast Refresh / HMR because useEffect([]) doesn't re-run)
+const EdgeInsertContext = createContext<((edgeId: string, midX: number, midY: number) => void) | null>(null);
 
 function InsertableEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, style, markerEnd, label, labelStyle }: any) {
     const [hovered, setHovered] = useState(false);
+    const onInsert = useContext(EdgeInsertContext);
     const [edgePath, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
     return (
         <>
@@ -153,7 +156,13 @@ function InsertableEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition
                 <foreignObject x={labelX - 14} y={labelY - 14} width={28} height={28}
                     style={{ overflow: 'visible', pointerEvents: 'none' }}>
                     <div style={{ pointerEvents: 'auto' }}>
-                        <button onClick={(e) => { e.stopPropagation(); _onEdgeInsert?.(id, sourceX, sourceY, targetX, targetY); }}
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                const midX = (sourceX + targetX) / 2;
+                                const midY = (sourceY + targetY) / 2;
+                                onInsert?.(id, midX, midY);
+                            }}
                             onMouseEnter={() => setHovered(true)}
                             style={{ width: 28, height: 28, borderRadius: '50%', border: '2px solid #6366f1', background: '#fff', color: '#6366f1', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.18)', fontSize: 0 }}>
                             <Plus size={16} />
@@ -422,14 +431,9 @@ export default function CallFlowBuilderPage() {
         pendingLayoutRef.current = true;
     }, [insertTarget, edges, pushSnap, setNodes, setEdges]);
 
-    // Wire global edge insert handler
-    useEffect(() => {
-        _onEdgeInsert = (edgeId, sourceX, sourceY, targetX, targetY) => {
-            const midX = (sourceX + targetX) / 2;
-            const midY = (sourceY + targetY) / 2;
-            setInsertTarget({ edgeId, midX, midY });
-        };
-        return () => { _onEdgeInsert = null; };
+    // Edge insert handler — stable callback passed via EdgeInsertContext
+    const handleEdgeInsert = useCallback((edgeId: string, midX: number, midY: number) => {
+        setInsertTarget({ edgeId, midX, midY });
     }, []);
 
     // ── Delete with edge healing ─────────────────────────────────────────────
@@ -534,14 +538,16 @@ export default function CallFlowBuilderPage() {
 
                 {/* Canvas */}
                 <div style={{ flex: 1 }}>
-                    <ReactFlow
-                        nodes={nodes} edges={edges}
-                        onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
-                        onConnect={onConnect} onNodeClick={onNodeClick} onEdgeClick={onEdgeClick} onPaneClick={onPaneClick}
-                        nodeTypes={nodeTypes} edgeTypes={edgeTypes} fitView fitViewOptions={{ padding: 0.3 }} deleteKeyCode={null}
-                    >
-                        <Background gap={20} size={1} /><Controls /><MiniMap style={{ width: 120, height: 90 }} />
-                    </ReactFlow>
+                    <EdgeInsertContext.Provider value={handleEdgeInsert}>
+                        <ReactFlow
+                            nodes={nodes} edges={edges}
+                            onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
+                            onConnect={onConnect} onNodeClick={onNodeClick} onEdgeClick={onEdgeClick} onPaneClick={onPaneClick}
+                            nodeTypes={nodeTypes} edgeTypes={edgeTypes} fitView fitViewOptions={{ padding: 0.3 }} deleteKeyCode={null}
+                        >
+                            <Background gap={20} size={1} /><Controls /><MiniMap style={{ width: 120, height: 90 }} />
+                        </ReactFlow>
+                    </EdgeInsertContext.Provider>
                 </div>
 
                 {/* Inspector */}
