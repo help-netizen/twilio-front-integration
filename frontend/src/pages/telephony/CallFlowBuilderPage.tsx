@@ -11,6 +11,7 @@ import { ArrowLeft, Save, AlertCircle, CheckCircle, Undo2, Redo2, LayoutGrid, Tr
 import { telephonyApi } from '../../services/telephonyApi';
 import { NODE_KIND_META, type CallFlowNodeKind, type CallFlow, type CallFlowNode as CFNode, type CallFlowTransition } from '../../types/telephony';
 import { layoutWithElkLayered } from '../../utils/elkLayout';
+import { createSkeletonFlow } from '../../utils/skeletonFlow';
 import { NodeKindInspector } from './nodeInspectors';
 import { NODE_DEFAULTS, TERMINAL_KINDS, DISABLED_KINDS, LOCKED_KINDS, PALETTE_ORDER } from './nodeDefaults';
 
@@ -217,11 +218,63 @@ function graphHiddenElements(states: CFNode[], transitions: CallFlowTransition[]
     return { nodes, edges };
 }
 
+function hasRenderableGraph(graph: CallFlow['graph'] | null | undefined) {
+    return Array.isArray(graph?.states) && graph.states.length > 0;
+}
+
+function reactFlowToGraph(
+    visibleNodes: Node<FlowNodeData>[],
+    visibleEdges: Edge[],
+    hiddenNodes: Node<FlowNodeData>[],
+    hiddenEdges: Edge[],
+): CallFlow['graph'] {
+    const allNodes = [...visibleNodes, ...hiddenNodes];
+    const allEdges = [...visibleEdges, ...hiddenEdges];
+
+    return {
+        states: allNodes.map((n) => ({
+            id: n.id,
+            name: String(n.data?.label || n.id),
+            kind: n.data?.kind as CallFlowNodeKind,
+            isInitial: n.data?.isInitial,
+            protected: n.data?.isProtected,
+            system: n.data?.system,
+            immutable: n.data?.immutable,
+            uiTerminal: n.data?.uiTerminal,
+            hidden: n.data?.hidden,
+            labelExpr: n.data?.labelExpr,
+            groupRef: n.data?.groupRef,
+            provider: n.data?.provider,
+            configRef: n.data?.configRef,
+            config: n.data?.config,
+        })),
+        transitions: allEdges.map((e) => {
+            const data = (e.data || {}) as any;
+            return {
+                id: e.id,
+                from_state_id: e.source,
+                to_state_id: e.target,
+                event_key: data.event_key,
+                label: typeof e.label === 'string' ? e.label : data.edgeLabel,
+                system: data.system,
+                immutable: data.immutable,
+                deletable: data.deletable,
+                hidden: data.hidden,
+                insertable: data.insertable,
+                insertMode: data.insertMode,
+                edgeLabel: data.edgeLabel,
+                branchKey: data.branchKey,
+                edgeRole: data.edgeRole,
+                transitionMode: data.transitionMode,
+                condExpr: data.condExpr,
+            };
+        }),
+    };
+}
+
 // ─── Builder ──────────────────────────────────────────────────────────────────
 export default function CallFlowBuilderPage() {
     const { groupId } = useParams<{ groupId: string }>();
-    // Each User Group has exactly one Call Flow — map groupId to flowId
-    const flowId = groupId ? `cf-${groupId.replace('ug-', '')}` : undefined;
     const navigate = useNavigate();
     const [flow, setFlow] = useState<CallFlow | null>(null);
     const [loading, setLoading] = useState(true);
@@ -240,24 +293,38 @@ export default function CallFlowBuilderPage() {
 
     // Load flow (no versioning — single graph per flow)
     useEffect(() => {
-        if (!flowId) return;
+        if (!groupId) return;
         (async () => {
-            const f = await telephonyApi.getFlow(flowId);
-            if (f) {
-                setFlow(f);
-                const graph = f.graph || { states: [], transitions: [] };
-                const sts = graph.states || [];
-                const trs = graph.transitions || [];
-                const { nodes: n, edges: e } = graphToReactFlow(sts, trs);
-                const hid = graphHiddenElements(sts, trs);
-                hiddenNodesRef.current = hid.nodes;
-                hiddenEdgesRef.current = hid.edges;
-                try { const laid = await layoutWithElkLayered(n as any, e as any); setNodes(laid.nodes as any); setEdges(laid.edges as any); }
-                catch { setNodes(n as any); setEdges(e as any); }
+            const group = await telephonyApi.getUserGroup(groupId);
+            let f = group?.flow;
+
+            if (!f || !hasRenderableGraph(f.graph)) {
+                const groupName = group?.name || groupId;
+                f = {
+                    id: f?.id || `cf-${groupId.replace(/^ug-/, '')}`,
+                    name: f?.name || 'Default Call Flow',
+                    description: f?.description || '',
+                    status: f?.status || 'draft',
+                    created_at: f?.created_at || new Date().toISOString(),
+                    updated_at: f?.updated_at || new Date().toISOString(),
+                    graph: createSkeletonFlow(groupName),
+                    validation: { valid: true, errors: [], warnings: [] },
+                };
             }
+
+            setFlow(f);
+            const graph = f.graph || { states: [], transitions: [] };
+            const sts = graph.states || [];
+            const trs = graph.transitions || [];
+            const { nodes: n, edges: e } = graphToReactFlow(sts, trs);
+            const hid = graphHiddenElements(sts, trs);
+            hiddenNodesRef.current = hid.nodes;
+            hiddenEdgesRef.current = hid.edges;
+            try { const laid = await layoutWithElkLayered(n as any, e as any); setNodes(laid.nodes as any); setEdges(laid.edges as any); }
+            catch { setNodes(n as any); setEdges(e as any); }
             setLoading(false);
         })();
-    }, [flowId]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [groupId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Keyboard shortcuts
     useEffect(() => {
@@ -279,11 +346,13 @@ export default function CallFlowBuilderPage() {
     const onPaneClick = useCallback(() => { setSelectedNode(null); setSelectedEdge(null); }, []);
 
     const handleSave = useCallback(async () => {
-        if (!flowId || !flow) return;
+        if (!flow) return;
+        const graph = reactFlowToGraph(nodes as Node<FlowNodeData>[], edges, hiddenNodesRef.current, hiddenEdgesRef.current);
         setSaving(true);
-        await telephonyApi.saveFlow(flowId, flow.graph);
+        await telephonyApi.saveFlow(flow.id, graph);
+        setFlow({ ...flow, graph, updated_at: new Date().toISOString() });
         setSaving(false);
-    }, [flowId, flow]);
+    }, [flow, nodes, edges]);
 
     // ── Add node (palette — kept for insert picker reuse) ────────────────────
     // addNode is no longer used directly (palette removed), but insertNodeOnEdge references paletteKinds

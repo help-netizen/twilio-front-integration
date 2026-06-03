@@ -90,6 +90,20 @@ export interface CallFlow {
     };
 }
 
+export interface UserGroup {
+    id: string;
+    name: string;
+    desc: string;
+    strategy: string;
+    members: { id: string; name: string; status: string }[];
+    numbers: { id: string; number: string; friendly_name: string }[];
+    schedule: {
+        timezone: string;
+        hours: { day: string; open: string; close: string }[];
+    };
+    flow: CallFlow | null;
+}
+
 // ─── Telephony domain types ───────────────────────────────────────────────────
 
 export interface PhoneNumber {
