@@ -408,3 +408,24 @@ Allow users to create invoices from approved estimates with full UX parity to th
 **Notes**
 - No new runtime dependencies (validator is hand-rolled, ~80 lines).
 - Designed for `invoice` and `work_order`: extending `document_type` CHECK + adding a factory + registering an adapter is sufficient; the Settings page already lists by registered type label.
+
+## 2026-06-03 — F016: VAPI AI Marketplace Integration + Call Flow Gating
+
+**Added**
+- New marketplace app `vapi-ai` registered via `backend/db/migrations/088_seed_vapi_ai_marketplace_app.sql` (provisioning_mode: none, category: telephony, status: published).
+- `backend/src/db/marketplaceQueries.js` — migration 088 added to `ensureMarketplaceSchema`, idempotent seed runs on startup.
+- `frontend/src/services/vapiApi.ts` — typed API client for `/api/vapi/*`: `getConnections`, `createConnection`, `getResources`, `createResource`.
+- `frontend/src/pages/VapiSettingsPage.tsx` — full settings page at `/settings/integrations/vapi-ai`: step 1 API key verify, step 2 SIP resource, Finish Setup → marketplace install. View mode when already connected. Disconnect with confirmation.
+- Route `/settings/integrations/vapi-ai` registered in `App.tsx` with `tenant.integrations.manage` permission.
+
+**Changed**
+- `frontend/src/pages/IntegrationsPage.tsx` — VAPI AI tile shows "Configure"/"Manage" button that navigates to `VapiSettingsPage` instead of opening the generic `MarketplaceConnectDialog`.
+- `frontend/src/pages/telephony/CallFlowBuilderPage.tsx` — `vapi_agent` node gated behind active VAPI connection: on mount fetches `GET /api/vapi/connections`, hides node from insert picker if no active connection found.
+
+**Tests**
+- `tests/routes/vapi.test.js` — 8 test cases covering: connections list, missing api_key (400), invalid key (400), network error (400), missing resource fields (400), API key not exposed in response, server mount middleware.
+- `tests/routes/marketplaceMount.test.js` — 2 new cases: migration 088 file content check, marketplaceQueries.js loads 088.
+
+**Architecture**
+- Connection flow: `POST /api/vapi/connections` → `POST /api/vapi/resources` → `POST /api/marketplace/apps/vapi-ai/install` (provisioning_mode: none → instant connected).
+- Disconnect: standard `POST /api/marketplace/installations/:id/disconnect`.

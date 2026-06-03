@@ -1976,3 +1976,146 @@ Test cases: `docs/test-cases/F014-ads-analytics-microservice.md`
 **Wave 4:** TASK-F015-006 (depends on 005)
 **Wave 5:** TASK-F015-008, TASK-F015-009, TASK-F015-010 (frontend, sequential)
 **Wave 6:** TASK-F015-011, TASK-F015-012 (tests + docs)
+
+---
+
+## Фича F016: VAPI AI Marketplace Integration + Call Flow Gating
+
+### TASK-F016-001: DB migration — seed vapi-ai marketplace app
+
+**Цель:** Зарегистрировать VAPI AI как published app в marketplace_apps и подключить миграцию к ensureMarketplaceSchema.
+
+**Файлы, которые можно менять:**
+- `backend/db/migrations/088_seed_vapi_ai_marketplace_app.sql` (новый)
+- `backend/src/db/marketplaceQueries.js`
+
+**Файлы, которые трогать нельзя:**
+- `backend/db/migrations/083_create_marketplace_apps.sql` — существующая схема
+- `backend/db/migrations/087_seed_mail_secretary_marketplace_app.sql` — существующий seed
+- `src/server.js`
+
+**Ожидаемый результат:** После `ensureMarketplaceSchema()` в marketplace_apps существует запись `app_key='vapi-ai'`, `provisioning_mode='none'`, `status='published'`, `category='telephony'`. Повторный запуск idempotent (ON CONFLICT DO UPDATE).
+
+**Зависимости:** нет
+
+**Статус:** done
+
+---
+
+### TASK-F016-002: Frontend — vapiApi.ts service
+
+**Цель:** Создать типизированный API клиент для `/api/vapi/*` эндпоинтов.
+
+**Файлы, которые можно менять:**
+- `frontend/src/services/vapiApi.ts` (новый)
+
+**Файлы, которые трогать нельзя:**
+- `frontend/src/lib/authedFetch.ts`
+- `frontend/src/services/telephonyApi.ts`
+
+**Ожидаемый результат:** Экспортирует `vapiApi` объект с методами: `getConnections(): Promise<VapiConnection[]>`, `createConnection(body): Promise<VapiConnection>`, `getResources(): Promise<VapiResource[]>`, `createResource(body): Promise<VapiResource>`. Все методы используют `authedFetch`. Типы `VapiConnection` и `VapiResource` экспортируются отдельно.
+
+**Зависимости:** нет
+
+**Статус:** done
+
+---
+
+### TASK-F016-003: Frontend — VapiSettingsPage
+
+**Цель:** Создать страницу настройки VAPI по адресу `/settings/integrations/vapi-ai`.
+
+**Файлы, которые можно менять:**
+- `frontend/src/pages/VapiSettingsPage.tsx` (новый)
+
+**Файлы, которые трогать нельзя:**
+- `frontend/src/lib/authedFetch.ts`
+- `frontend/src/pages/IntegrationsPage.tsx` (изменяется в следующей задаче)
+
+**Ожидаемый результат:**
+- При отсутствии connection: Секция "API Connection" с полями API Key (type=password), Display Name, Environment select. Кнопка "Verify & Connect" → `vapiApi.createConnection()`. Inline error при 400.
+- После успешного connection: Секция API Connection переходит в view-режим (masked key + display_name + status badge). Секция "SIP Resource" с полями SIP URI, Server URL. Кнопка "Save" → `vapiApi.createResource()`.
+- После обоих шагов: кнопка "Finish Setup" → `installMarketplaceApp('vapi-ai')` → `navigate('/settings/integrations')` + toast.success.
+- Если всё уже подключено (active installation + connection + resource): режим просмотра с кнопкой "Disconnect" → `disconnectMarketplaceInstallation(id)` + confirm dialog → navigate back.
+- Стиль: Blanc design system. Без <hr>. Без пустых полей.
+- Uses React Query: `useQuery(['vapi-connections'])`, `useQuery(['vapi-resources'])`, `useQuery(['marketplace-apps'])`.
+
+**Зависимости:** TASK-F016-001 (seed), TASK-F016-002 (vapiApi)
+
+**Статус:** done
+
+---
+
+### TASK-F016-004: Frontend — роут + интеграция с IntegrationsPage
+
+**Цель:** Зарегистрировать `/settings/integrations/vapi-ai` в App.tsx и поменять поведение плитки VAPI в IntegrationsPage (кнопка "Configure"/"Manage" вместо generic dialog).
+
+**Файлы, которые можно менять:**
+- `frontend/src/App.tsx`
+- `frontend/src/pages/IntegrationsPage.tsx`
+
+**Файлы, которые трогать нельзя:**
+- `frontend/src/lib/authedFetch.ts`
+- Существующие диалоги `MarketplaceConnectDialog` и `MarketplaceDisconnectDialog`
+
+**Ожидаемый результат:**
+- `App.tsx`: новый роут `<Route path="/settings/integrations/vapi-ai" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><VapiSettingsPage /></ProtectedRoute>} />`
+- `IntegrationsPage.tsx`: для `app.app_key === 'vapi-ai'` кнопка "Configure" (нет installation) или "Manage" (есть installation) → `navigate('/settings/integrations/vapi-ai')`. Generic `MarketplaceConnectDialog` и `MarketplaceDisconnectDialog` для этой плитки НЕ открываются.
+
+**Зависимости:** TASK-F016-003
+
+**Статус:** done
+
+---
+
+### TASK-F016-005: Frontend — гейтинг vapi_agent в CallFlowBuilderPage
+
+**Цель:** Скрывать ноду `vapi_agent` в insert picker Call Flow Builder если VAPI не подключён.
+
+**Файлы, которые можно менять:**
+- `frontend/src/pages/telephony/CallFlowBuilderPage.tsx`
+
+**Файлы, которые трогать нельзя:**
+- `frontend/src/types/telephony.ts`
+- `frontend/src/services/vapiApi.ts` (только читаем)
+
+**Ожидаемый результат:**
+- `useEffect` при монтировании: `vapiApi.getConnections()` → если хотя бы одна запись со `status === 'active'` → `setVapiConnected(true)`, иначе `false`.
+- Insert picker фильтрует NODE_KINDS: `vapi_agent` показывается только при `vapiConnected === true`.
+- Пока loading → `vapiConnected` равен `null`, нода скрыта.
+- Если нода уже добавлена в существующий flow — отображается нормально (фильтр только для вставки новых).
+
+**Зависимости:** TASK-F016-002 (vapiApi)
+
+**Статус:** done
+
+---
+
+### TASK-F016-006: Tests — vapi routes + marketplace seed
+
+**Цель:** Написать Jest-тесты для VAPI routes и проверки seed миграции.
+
+**Файлы, которые можно менять:**
+- `tests/routes/vapi.test.js` (новый или существующий)
+- `tests/routes/marketplaceMount.test.js` (расширить)
+
+**Файлы, которые трогать нельзя:**
+- `backend/src/routes/vapi.js`
+- `backend/src/routes/marketplace.js`
+
+**Ожидаемый результат:**
+- TC-F016-001 (happy path), TC-F016-002 (invalid key), TC-F016-003 (network error), TC-F016-004 (seed), TC-F016-005 (list includes vapi-ai), TC-F016-006 (install → connected), TC-F016-007 (duplicate install → 409), TC-F016-008 (disconnect), TC-F016-009 (401 unauth), TC-F016-010 (401 unauth POST), TC-F016-011 (missing api_key), TC-F016-012 (missing provider_connection_id), TC-F016-016 (idempotent seed).
+- Моки для `node-fetch` при вызове Vapi API.
+
+**Зависимости:** TASK-F016-001
+
+**Статус:** done
+
+---
+
+**Порядок волн:**
+- Волна 1: TASK-F016-001 (seed migration)
+- Волна 2: TASK-F016-002 (vapiApi.ts) — параллельно с Волной 1
+- Волна 3: TASK-F016-003 (VapiSettingsPage)
+- Волна 4: TASK-F016-004 (роут + IntegrationsPage), TASK-F016-005 (CallFlowBuilder) — параллельно
+- Волна 5: TASK-F016-006 (тесты)

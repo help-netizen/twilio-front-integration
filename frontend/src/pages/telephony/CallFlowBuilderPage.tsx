@@ -9,6 +9,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { ArrowLeft, Save, AlertCircle, CheckCircle, Undo2, Redo2, LayoutGrid, Trash2, X, Plus, Lock } from 'lucide-react';
 import { telephonyApi } from '../../services/telephonyApi';
+import { vapiApi } from '../../services/vapiApi';
 import { NODE_KIND_META, type CallFlowNodeKind, type CallFlow, type CallFlowNode as CFNode, type CallFlowTransition } from '../../types/telephony';
 import { layoutWithElkLayered } from '../../utils/elkLayout';
 import { NodeKindInspector } from './nodeInspectors';
@@ -225,6 +226,7 @@ export default function CallFlowBuilderPage() {
     const navigate = useNavigate();
     const [flow, setFlow] = useState<CallFlow | null>(null);
     const [loading, setLoading] = useState(true);
+    const [vapiConnected, setVapiConnected] = useState<boolean | null>(null);
     const [nodes, setNodes, onNodesChange] = useNodesState<Node<FlowNodeData>>([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
     const hiddenNodesRef = useRef<Node<FlowNodeData>[]>([]);
@@ -237,6 +239,13 @@ export default function CallFlowBuilderPage() {
     const pendingLayoutRef = useRef(false);
 
     const { push: pushSnap, undo, redo, canUndo, canRedo } = useUndoRedo(nodes as any, edges, setNodes as any, setEdges as any);
+
+    // Check VAPI connection for node gating
+    useEffect(() => {
+        vapiApi.getConnections()
+            .then(conns => setVapiConnected(conns.some(c => c.status === 'active')))
+            .catch(() => setVapiConnected(false));
+    }, []);
 
     // Load flow (no versioning — single graph per flow)
     useEffect(() => {
@@ -421,8 +430,10 @@ export default function CallFlowBuilderPage() {
     const getNodeLabel = (id: string) => (nodes as any[]).find((n: any) => n.id === id)?.data?.label || id;
 
 
-    // Palette: ordered, with disabled/locked states
-    const paletteKinds = PALETTE_ORDER.map(k => [k, NODE_KIND_META[k]] as [CallFlowNodeKind, (typeof NODE_KIND_META)['start']]);
+    // Palette: ordered, with disabled/locked states. vapi_agent gated behind active VAPI connection.
+    const paletteKinds = PALETTE_ORDER
+        .filter(k => k !== 'vapi_agent' || vapiConnected === true)
+        .map(k => [k, NODE_KIND_META[k]] as [CallFlowNodeKind, (typeof NODE_KIND_META)['start']]);
 
     if (loading) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}><div style={{ width: 32, height: 32, border: '3px solid #e5e7eb', borderTopColor: '#6366f1', borderRadius: '50%', animation: 'spin 1s linear infinite' }} /></div>;
 

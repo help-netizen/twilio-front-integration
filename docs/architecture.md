@@ -1599,3 +1599,67 @@ A new permission key `tenant.documents.manage` is added. P0 maps it to the same 
 ### 11. Touched/protected files
 **Modified:** `backend/src/services/estimatePdfService.js`, `backend/src/services/estimatesService.js` (only the `generatePdf` path), `frontend/src/components/estimates/EstimatePreviewDialog.tsx`, `src/server.js` (mount only).
 **Protected (must not change):** `frontend/src/lib/authedFetch.ts`, `frontend/src/hooks/useRealtimeEvents.ts`, existing migration files 001-083.
+
+## F016: VAPI AI — Marketplace + Call Flow Gating
+
+### Новые файлы
+
+| Файл | Назначение |
+|------|-----------|
+| `backend/db/migrations/088_seed_vapi_ai_marketplace_app.sql` | Регистрирует VAPI AI в marketplace_apps (provisioning_mode: none, category: telephony) |
+| `frontend/src/services/vapiApi.ts` | Типизированный API клиент: getConnections, createConnection, createResource |
+| `frontend/src/pages/VapiSettingsPage.tsx` | Полноценная страница настройки VAPI по адресу `/settings/integrations/vapi-ai` |
+
+### Изменяемые файлы
+
+| Файл | Изменение |
+|------|-----------|
+| `backend/src/db/marketplaceQueries.js` | Добавить `readMigration('088_seed_vapi_ai_marketplace_app.sql')` в ensureMarketplaceSchema |
+| `frontend/src/pages/IntegrationsPage.tsx` | На плитке VAPI (app_key === 'vapi-ai') кнопка "Configure"/"Manage" → navigate('/settings/integrations/vapi-ai') вместо generic dialog |
+| `frontend/src/App.tsx` | Добавить роут `/settings/integrations/vapi-ai` → `<VapiSettingsPage />` |
+| `frontend/src/pages/telephony/CallFlowBuilderPage.tsx` | useEffect: GET /api/vapi/connections; если нет active — исключить vapi_agent из insert picker |
+
+### Страница VapiSettingsPage
+
+Секции:
+1. **API Connection** — API Key (masked если уже сохранён), Display Name, Environment (prod/dev), кнопка "Verify & Connect" → POST /api/vapi/connections
+2. **SIP Resource** (появляется после успешного connection) — SIP URI, Server URL, кнопка "Save" → POST /api/vapi/resources
+3. **Finish Setup** — кнопка "Finish" → POST /api/marketplace/apps/vapi-ai/install → redirect обратно на /settings/integrations
+
+Если VAPI уже подключён (active installation + active connection): страница в режиме просмотра с кнопкой "Disconnect".
+
+### Поток подключения (frontend → backend)
+
+```
+navigate(/settings/integrations/vapi-ai)
+  ↓
+1. POST /api/vapi/connections   { api_key, display_name, environment }
+   → provider_connections record (status: active) + validate key vs Vapi API
+2. POST /api/vapi/resources     { provider_connection_id, sip_uri, server_url }
+   → vapi_tenant_resources record
+3. POST /api/marketplace/apps/vapi-ai/install  {}
+   → marketplace_installations record (status: connected, provisioning_mode: none)
+   → navigate(/settings/integrations)
+```
+
+### Поведение плитки VAPI в маркетплейсе
+
+| Статус installation | Кнопка | Действие |
+|---------------------|--------|---------|
+| нет / Available | "Configure" | navigate('/settings/integrations/vapi-ai') |
+| connected | "Manage" | navigate('/settings/integrations/vapi-ai') |
+| provisioning_failed | "Manage" | navigate('/settings/integrations/vapi-ai') |
+
+Generic `MarketplaceConnectDialog` и `MarketplaceDisconnectDialog` НЕ используются для VAPI.
+
+### Гейтинг ноды в Call Flow Builder
+
+```
+GET /api/vapi/connections
+  → [] или только non-active записи → vapi_agent скрыт из INSERT picker
+  → хотя бы одна status='active'   → vapi_agent доступен
+```
+
+### Middleware (унаследованы от существующих роутов)
+- `/api/vapi/*` — `authenticate + requireCompanyAccess`
+- `/api/marketplace/*` — `authenticate + requirePermission('tenant.integrations.manage') + requireCompanyAccess`

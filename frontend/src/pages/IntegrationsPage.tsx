@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { fetchIntegrations, createIntegration, revokeIntegration, fetchWebhookUrl, regenerateWebhookUrl, fetchZenbookerApiKey, saveZenbookerApiKey, type Integration } from '../services/integrationsApi';
 import { disconnectMarketplaceInstallation, fetchMarketplaceApps, installMarketplaceApp, retryMarketplaceProvisioning, type MarketplaceApp } from '../services/marketplaceApi';
@@ -143,6 +144,7 @@ function MarketplaceDisconnectDialog({
 }
 
 export function IntegrationsPage() {
+    const navigate = useNavigate();
     const queryClient = useQueryClient();
     const [createOpen, setCreateOpen] = useState(false);
     const [secretModalOpen, setSecretModalOpen] = useState(false);
@@ -254,19 +256,31 @@ export function IntegrationsPage() {
                                             {app.installation?.status === 'connected' ? `Last used ${formatDate(app.installation.last_used_at)}` : `Mode: ${app.provisioning_mode.replace(/_/g, ' ')}`}
                                         </div>
                                         <div className="flex items-center gap-2">
-                                            {app.installation?.status === 'provisioning_failed' && (
-                                                <Button variant="outline" size="sm" onClick={() => retryMutation.mutate(app.installation!.id)} disabled={retryMutation.isPending}>
-                                                    Retry
-                                                </Button>
-                                            )}
-                                            {app.installation?.status === 'connected' || app.installation?.status === 'provisioning_failed' ? (
-                                                <Button variant="outline" size="sm" onClick={() => setDisconnectTarget(app)}>
-                                                    Disconnect
+                                            {app.app_key === 'vapi-ai' ? (
+                                                <Button
+                                                    size="sm"
+                                                    variant={app.installation?.status === 'connected' ? 'outline' : 'default'}
+                                                    onClick={() => navigate('/settings/integrations/vapi-ai')}
+                                                >
+                                                    {app.installation?.status === 'connected' ? 'Manage' : 'Configure'}
                                                 </Button>
                                             ) : (
-                                                <Button size="sm" onClick={() => setConnectTarget(app)}>
-                                                    Enable
-                                                </Button>
+                                                <>
+                                                    {app.installation?.status === 'provisioning_failed' && (
+                                                        <Button variant="outline" size="sm" onClick={() => retryMutation.mutate(app.installation!.id)} disabled={retryMutation.isPending}>
+                                                            Retry
+                                                        </Button>
+                                                    )}
+                                                    {app.installation?.status === 'connected' || app.installation?.status === 'provisioning_failed' ? (
+                                                        <Button variant="outline" size="sm" onClick={() => setDisconnectTarget(app)}>
+                                                            Disconnect
+                                                        </Button>
+                                                    ) : (
+                                                        <Button size="sm" onClick={() => setConnectTarget(app)}>
+                                                            Enable
+                                                        </Button>
+                                                    )}
+                                                </>
                                             )}
                                         </div>
                                     </div>
