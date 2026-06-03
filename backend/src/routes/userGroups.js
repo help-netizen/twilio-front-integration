@@ -44,9 +44,47 @@ function genId(prefix = 'ug') {
     return `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
+function hasRenderableGraph(graph) {
+    return Array.isArray(graph?.states) && graph.states.length > 0;
+}
+
+async function ensureFlowForGroup(group, companyId) {
+    const flowRes = await db.query(`
+        SELECT id, status, updated_at, graph_json
+        FROM call_flows
+        WHERE group_id = $1 AND company_id = $2
+        ORDER BY updated_at DESC LIMIT 1
+    `, [group.id, companyId]);
+
+    const flow = flowRes.rows[0];
+    if (!flow) {
+        const flowId = genId('cf');
+        const inserted = await db.query(
+            `INSERT INTO call_flows (id, company_id, group_id, name, status, graph_json)
+             VALUES ($1, $2, $3, $4, 'draft', $5)
+             RETURNING id, status, updated_at, graph_json`,
+            [flowId, companyId, group.id, `${group.name} Flow`, createSkeletonJSON(group.name)]
+        );
+        return inserted.rows[0];
+    }
+
+    if (!hasRenderableGraph(safeParseJSON(flow.graph_json))) {
+        const updated = await db.query(
+            `UPDATE call_flows
+             SET graph_json = $1
+             WHERE id = $2 AND company_id = $3
+             RETURNING id, status, updated_at, graph_json`,
+            [createSkeletonJSON(group.name), flow.id, companyId]
+        );
+        return updated.rows[0];
+    }
+
+    return flow;
+}
+
 /** Build full group object from base row + related rows */
 async function buildGroupPayload(group, companyId) {
-    const [membersRes, numbersRes, hoursRes, flowRes] = await Promise.all([
+    const [membersRes, numbersRes, hoursRes, flow] = await Promise.all([
         db.query(`
             SELECT ugm.user_id AS id, cu.full_name AS name, 'available' AS status
             FROM user_group_members ugm
@@ -71,15 +109,9 @@ async function buildGroupPayload(group, companyId) {
                 WHEN 'Thu' THEN 4 WHEN 'Fri' THEN 5 WHEN 'Sat' THEN 6
                 WHEN 'Sun' THEN 7 END
         `, [group.id]),
-        db.query(`
-            SELECT id, status, updated_at, graph_json
-            FROM call_flows
-            WHERE group_id = $1
-            ORDER BY updated_at DESC LIMIT 1
-        `, [group.id]),
+        ensureFlowForGroup(group, companyId),
     ]);
 
-    const flow = flowRes.rows[0];
     return {
         id: group.id,
         name: group.name,

@@ -1,9 +1,7 @@
 import type {
     CallFlow, PhoneNumber, AudioAsset, RoutingLogEntry, AgentStatus,
-    QueuedCall, DashboardKPI, ProviderInfo, ActiveCallInfo,
+    QueuedCall, DashboardKPI, ProviderInfo, ActiveCallInfo, UserGroup,
 } from '../types/telephony';
-import { createSkeletonFlow as _createSkeletonFlow } from '../utils/skeletonFlow';
-void _createSkeletonFlow; // suppress unused — still needed for future mock fallback
 
 import { authedFetch } from './apiClient';
 
@@ -103,6 +101,11 @@ export const telephonyApi = {
                 body: JSON.stringify({ graph }),
             });
         } catch { /* silent fallback in dev */ }
+    },
+
+    getUserGroup: async (id: string): Promise<UserGroup | undefined> => {
+        try { return await apiFetch<UserGroup>(`/user-groups/${id}`); }
+        catch { await delay(); return undefined; }
     },
 
     // Phone Numbers — real API (reads from Twilio-synced phone_number_settings)

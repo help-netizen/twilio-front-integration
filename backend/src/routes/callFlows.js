@@ -15,6 +15,34 @@ function safeParseJSON(str) {
     try { return JSON.parse(str || '{}'); } catch { return {}; }
 }
 
+function createSkeletonJSON(groupName) {
+    return JSON.stringify({
+        states: [
+            { id: 'sk-start', name: 'Start', kind: 'start', isInitial: true, protected: true, system: true, immutable: true, deletable: false, renamable: false, draggable: false, hidden: true },
+            { id: 'sk-hours-check', name: 'Hours Check', kind: 'branch', protected: true, system: true, immutable: true, deletable: false, renamable: false, draggable: false },
+            { id: 'sk-current-group', name: groupName, kind: 'queue', protected: true, system: true, immutable: true, deletable: false, renamable: false, draggable: false, labelExpr: 'currentGroupName', groupRef: 'group.current', config: { queue_name: 'group_agents', timeout_sec: 120 } },
+            { id: 'sk-vm-business-hours', name: 'Voicemail', kind: 'voicemail', protected: true, system: true, immutable: true, deletable: false, renamable: false, draggable: false, uiTerminal: true, config: { greeting: 'missed_call', branchKey: 'business_hours' } },
+            { id: 'sk-vm-after-hours', name: 'Voicemail', kind: 'voicemail', protected: true, system: true, immutable: true, deletable: false, renamable: false, draggable: false, uiTerminal: true, config: { greeting: 'after_hours', branchKey: 'after_hours' } },
+            { id: 'sk-done-routed', name: 'Done', kind: 'final', protected: true, system: true, hidden: true },
+            { id: 'sk-done-voicemail-business-hours', name: 'Done', kind: 'final', protected: true, system: true, hidden: true },
+            { id: 'sk-done-voicemail-after-hours', name: 'Done', kind: 'final', protected: true, system: true, hidden: true },
+        ],
+        transitions: [
+            { id: 'skt-entry', from_state_id: 'sk-start', to_state_id: 'sk-hours-check', system: true, immutable: true, deletable: false, hidden: true, edgeRole: 'entry', transitionMode: 'eventless' },
+            { id: 'skt-bh', from_state_id: 'sk-hours-check', to_state_id: 'sk-current-group', label: 'Business Hours', system: true, immutable: true, deletable: false, edgeLabel: 'Business Hours', branchKey: 'business_hours', insertable: true, insertMode: 'between', transitionMode: 'conditional', condExpr: 'isBusinessHours === true' },
+            { id: 'skt-ah', from_state_id: 'sk-hours-check', to_state_id: 'sk-vm-after-hours', label: 'After Hours', system: true, immutable: true, deletable: false, edgeLabel: 'After Hours', branchKey: 'after_hours', insertable: true, insertMode: 'between', transitionMode: 'conditional', condExpr: 'isBusinessHours === false' },
+            { id: 'skt-fallback', from_state_id: 'sk-current-group', to_state_id: 'sk-vm-business-hours', label: 'Not answered / timeout', system: true, immutable: true, deletable: false, edgeLabel: 'Not answered / timeout', edgeRole: 'fallback', insertable: true, insertMode: 'between', transitionMode: 'event', event_key: 'queue.timeout queue.not_answered queue.failed' },
+            { id: 'skt-success', from_state_id: 'sk-current-group', to_state_id: 'sk-done-routed', system: true, immutable: true, hidden: true, edgeRole: 'success', transitionMode: 'event', event_key: 'queue.connected call.handoff' },
+            { id: 'skt-vm-bh-done', from_state_id: 'sk-vm-business-hours', to_state_id: 'sk-done-voicemail-business-hours', system: true, immutable: true, hidden: true, edgeRole: 'completion', transitionMode: 'event', event_key: 'voicemail.recorded voicemail.completed' },
+            { id: 'skt-vm-ah-done', from_state_id: 'sk-vm-after-hours', to_state_id: 'sk-done-voicemail-after-hours', system: true, immutable: true, hidden: true, edgeRole: 'completion', transitionMode: 'event', event_key: 'voicemail.recorded voicemail.completed' },
+        ],
+    });
+}
+
+function hasRenderableGraph(graph) {
+    return Array.isArray(graph?.states) && graph.states.length > 0;
+}
+
 // ─── LIST ─────────────────────────────────────────────────────────────────────
 
 router.get('/', async (req, res) => {
@@ -58,7 +86,10 @@ router.get('/:id', async (req, res) => {
         const { id } = req.params;
 
         const result = await db.query(
-            `SELECT * FROM call_flows WHERE id = $1 AND company_id = $2`,
+            `SELECT cf.*, ug.name AS group_name
+             FROM call_flows cf
+             LEFT JOIN user_groups ug ON ug.id = cf.group_id AND ug.company_id = cf.company_id
+             WHERE cf.id = $1 AND cf.company_id = $2`,
             [id, companyId]
         );
 
@@ -66,7 +97,20 @@ router.get('/:id', async (req, res) => {
             return res.status(404).json({ ok: false, error: 'Flow not found' });
         }
 
-        const r = result.rows[0];
+        let r = result.rows[0];
+        let graph = safeParseJSON(r.graph_json);
+        if (!hasRenderableGraph(graph)) {
+            const groupName = r.group_name || r.name.replace(/\s+Flow$/, '') || 'Current Group';
+            const updated = await db.query(
+                `UPDATE call_flows
+                 SET graph_json = $1
+                 WHERE id = $2 AND company_id = $3
+                 RETURNING *`,
+                [createSkeletonJSON(groupName), id, companyId]
+            );
+            r = { ...r, ...updated.rows[0] };
+            graph = safeParseJSON(r.graph_json);
+        }
         res.json({
             ok: true,
             data: {
@@ -77,8 +121,8 @@ router.get('/:id', async (req, res) => {
                 group_id: r.group_id,
                 created_at: r.created_at,
                 updated_at: r.updated_at,
-                graph: safeParseJSON(r.graph_json),
-                validation: validateGraph(safeParseJSON(r.graph_json)),
+                graph,
+                validation: validateGraph(graph),
             },
         });
     } catch (err) {
