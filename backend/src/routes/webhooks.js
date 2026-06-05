@@ -6,6 +6,7 @@ const {
     handleTranscriptionStatus,
     handleVoiceInbound,
     handleDialAction,
+    handleVoicemailComplete,
     handleVoiceFallback,
 } = require('../webhooks/twilioWebhooks');
 
@@ -23,6 +24,9 @@ router.post('/twilio/voice-inbound', handleVoiceInbound);
 
 // POST /webhooks/twilio/voice-dial-action — Dial result + voicemail
 router.post('/twilio/voice-dial-action', handleDialAction);
+
+// POST /webhooks/twilio/voicemail-complete — Record action target
+router.post('/twilio/voicemail-complete', handleVoicemailComplete);
 
 // POST /webhooks/twilio/dial-action — Legacy route (keep for compatibility)
 router.post('/twilio/dial-action', handleDialAction);

@@ -54,6 +54,13 @@ function generateTraceId() {
     return `trace_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
+function buildHangupTwiml() {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Hangup />
+</Response>`;
+}
+
 /**
  * Generic webhook handler that pushes to webhook_inbox
  */
@@ -218,6 +225,7 @@ async function handleVoiceInbound(req, res) {
         const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
         const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
         const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;
+        const voicemailCompleteUrl = `${baseUrl}/webhooks/twilio/voicemail-complete`;
 
         const dialActionUrl = `${baseUrl}/webhooks/twilio/voice-dial-action`;
 
@@ -325,6 +333,8 @@ async function handleVoiceInbound(req, res) {
 <Response>
     <Say language="${vmLanguage}">${vmGreeting}</Say>
     <Record maxLength="${vmMaxLen}"
+            action="${voicemailCompleteUrl}"
+            method="POST"
             timeout="${vmSilenceTimeout}"
             finishOnKey="${vmFinishOnKey}"
             playBeep="true"
@@ -425,6 +435,8 @@ async function handleVoiceInbound(req, res) {
 <Response>
     <Say language="${vmLanguage}">${vmGreeting}</Say>
     <Record maxLength="${vmMaxLen}"
+            action="${voicemailCompleteUrl}"
+            method="POST"
             timeout="${vmSilenceTimeout}"
             finishOnKey="${vmFinishOnKey}"
             playBeep="true"
@@ -511,6 +523,8 @@ ${clientEndpoints}
 <Response>
     <Say language="${vmLanguage}">${vmGreeting}</Say>
     <Record maxLength="${vmMaxLen}"
+            action="${voicemailCompleteUrl}"
+            method="POST"
             timeout="${vmSilenceTimeout}"
             finishOnKey="${vmFinishOnKey}"
             playBeep="true"
@@ -597,6 +611,21 @@ async function handleDialAction(req, res) {
             return res.status(400).send('<Response></Response>');
         }
 
+        // Defensive no-loop guard for already-issued TwiML that had <Record>
+        // without an action URL. Twilio posts Record completion back to the
+        // current URL; without this branch we would generate another voicemail
+        // prompt and create repeated 5-second recordings for the same call.
+        const isRecordActionCallback = !req.body.DialCallStatus &&
+            (req.body.RecordingSid || req.body.RecordingUrl || req.body.RecordingDuration);
+        if (isRecordActionCallback) {
+            console.log(`[${traceId}] Voicemail Record action callback on dial-action → hangup`, {
+                callSid: CallSid,
+                recordingSid: req.body.RecordingSid,
+            });
+            res.type('text/xml');
+            return res.send(buildHangupTwiml());
+        }
+
         // Enqueue dial event for async processing by inboxWorker (single-writer architecture).
         // All DB writes (child finalization, parent status, SSE) are handled by processDialEvent
         // in inboxWorker to eliminate race conditions with voice-status event processing.
@@ -623,6 +652,7 @@ async function handleDialAction(req, res) {
         if (toVoicemail) {
             const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
             const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;
+            const voicemailCompleteUrl = `${baseUrl}/webhooks/twilio/voicemail-complete`;
             const vmLanguage = process.env.VM_LANGUAGE || 'en-US';
             const vmGreeting = process.env.VM_GREETING || 'Hello! Our team is currently assisting other customers. Please leave your name and phone number, and we will call you back as soon as possible.';
             const vmMaxLen = Number(process.env.VM_MAXLEN || 180);
@@ -635,6 +665,8 @@ async function handleDialAction(req, res) {
 <Response>
     <Say language="${vmLanguage}">${vmGreeting}</Say>
     <Record maxLength="${vmMaxLen}"
+            action="${voicemailCompleteUrl}"
+            method="POST"
             timeout="${vmSilenceTimeout}"
             finishOnKey="${vmFinishOnKey}"
             playBeep="true"
@@ -645,10 +677,7 @@ async function handleDialAction(req, res) {
 </Response>`;
         } else {
             console.log(`[${traceId}] Call completed (${dialStatus}) → hangup TwiML`);
-            twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Hangup />
-</Response>`;
+            twiml = buildHangupTwiml();
         }
 
         res.type('text/xml');
@@ -657,6 +686,30 @@ async function handleDialAction(req, res) {
         console.error(`[${traceId}] Error:`, error);
         // Never return 500 from TwiML webhooks — Twilio plays "application error" to the caller
         res.type('text/xml').send('<?xml version="1.0" encoding="UTF-8"?><Response><Hangup /></Response>');
+    }
+}
+
+// =============================================================================
+// POST /webhooks/twilio/voicemail-complete
+// <Record action> target — recordingStatusCallback handles persistence.
+// =============================================================================
+async function handleVoicemailComplete(req, res) {
+    const traceId = generateTraceId();
+    console.log(`[${traceId}] Voicemail complete`, {
+        callSid: req.body.CallSid,
+        recordingSid: req.body.RecordingSid,
+    });
+
+    try {
+        if (process.env.NODE_ENV !== 'development' && !validateTwilioSignature(req)) {
+            return res.status(403).send('<Response></Response>');
+        }
+
+        res.type('text/xml');
+        res.send(buildHangupTwiml());
+    } catch (error) {
+        console.error(`[${traceId}] Error:`, error);
+        res.type('text/xml').send(buildHangupTwiml());
     }
 }
 
@@ -703,6 +756,7 @@ module.exports = {
     handleTranscriptionStatus,
     handleVoiceInbound,
     handleDialAction,
+    handleVoicemailComplete,
     handleVoiceFallback,
     validateTwilioSignature
 };

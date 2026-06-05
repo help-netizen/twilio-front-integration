@@ -68,7 +68,7 @@ function makeRes() {
 // Tests
 // ---------------------------------------------------------------------------
 
-const { handleDialAction } = require('../backend/src/webhooks/twilioWebhooks');
+const { handleDialAction, handleVoicemailComplete } = require('../backend/src/webhooks/twilioWebhooks');
 
 beforeEach(() => {
     jest.clearAllMocks();
@@ -87,6 +87,8 @@ describe('Bug #11 — handleDialAction voicemail and finalization', () => {
         const twiml = res.send.mock.calls[0][0];
         expect(twiml).toContain('<Say');
         expect(twiml).toContain('<Record');
+        expect(twiml).toContain('/webhooks/twilio/voicemail-complete');
+        expect(twiml).toContain('method="POST"');
         expect(twiml).not.toContain('<Redirect');
     });
 
@@ -99,6 +101,7 @@ describe('Bug #11 — handleDialAction voicemail and finalization', () => {
         const twiml = res.send.mock.calls[0][0];
         expect(twiml).toContain('<Say');
         expect(twiml).toContain('<Record');
+        expect(twiml).toContain('/webhooks/twilio/voicemail-complete');
     });
 
     test('completed → hangup (no voicemail)', async () => {
@@ -150,5 +153,41 @@ describe('Bug #11 — handleDialAction voicemail and finalization', () => {
             !c[0].includes('webhook_inbox')
         );
         expect(callsWrites).toHaveLength(0);
+    });
+
+    test('Record action callback on dial-action hangs up and does not enqueue another dial event', async () => {
+        const req = makeDialActionReq({
+            DialCallStatus: undefined,
+            RecordingSid: 'RE_voicemail_001',
+            RecordingUrl: 'https://api.twilio.com/recordings/RE_voicemail_001',
+            RecordingDuration: '5',
+        });
+        const res = makeRes();
+
+        await handleDialAction(req, res);
+
+        expect(mockInsertInboxEvent).not.toHaveBeenCalled();
+        const twiml = res.send.mock.calls[0][0];
+        expect(twiml).toContain('<Hangup');
+        expect(twiml).not.toContain('<Record');
+        expect(twiml).not.toContain('<Say');
+    });
+
+    test('voicemail-complete endpoint hangs up after Record finishes', async () => {
+        const req = makeDialActionReq({
+            DialCallStatus: undefined,
+            RecordingSid: 'RE_voicemail_002',
+            RecordingUrl: 'https://api.twilio.com/recordings/RE_voicemail_002',
+            RecordingDuration: '5',
+        });
+        req.originalUrl = '/webhooks/twilio/voicemail-complete';
+        const res = makeRes();
+
+        await handleVoicemailComplete(req, res);
+
+        const twiml = res.send.mock.calls[0][0];
+        expect(twiml).toContain('<Hangup');
+        expect(twiml).not.toContain('<Record');
+        expect(twiml).not.toContain('<Say');
     });
 });
