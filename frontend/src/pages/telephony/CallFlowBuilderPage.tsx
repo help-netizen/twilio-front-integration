@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, createContext, useContext } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     ReactFlow, Background, Controls, MiniMap,
@@ -9,6 +9,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { ArrowLeft, Save, AlertCircle, CheckCircle, Undo2, Redo2, LayoutGrid, Trash2, X, Plus, Lock } from 'lucide-react';
 import { telephonyApi } from '../../services/telephonyApi';
+import { vapiApi } from '../../services/vapiApi';
 import { NODE_KIND_META, type CallFlowNodeKind, type CallFlow, type CallFlowNode as CFNode, type CallFlowTransition } from '../../types/telephony';
 import { layoutWithElkLayered } from '../../utils/elkLayout';
 import { createSkeletonFlow } from '../../utils/skeletonFlow';
@@ -135,10 +136,13 @@ function FlowNodeComponent({ data, selected }: { data: FlowNodeData; selected?: 
 const nodeTypes: NodeTypes = { flowNode: FlowNodeComponent };
 
 // ─── Custom Edge with + button ────────────────────────────────────────────────
-let _onEdgeInsert: ((edgeId: string, sourceX: number, sourceY: number, targetX: number, targetY: number) => void) | null = null;
+// Context lets InsertableEdge call setInsertTarget without a module-level variable
+// (module-level vars break after React Fast Refresh / HMR because useEffect([]) doesn't re-run)
+const EdgeInsertContext = createContext<((edgeId: string, midX: number, midY: number) => void) | null>(null);
 
 function InsertableEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, style, markerEnd, label, labelStyle }: any) {
     const [hovered, setHovered] = useState(false);
+    const onInsert = useContext(EdgeInsertContext);
     const [edgePath, labelX, labelY] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
     return (
         <>
@@ -152,7 +156,13 @@ function InsertableEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition
                 <foreignObject x={labelX - 14} y={labelY - 14} width={28} height={28}
                     style={{ overflow: 'visible', pointerEvents: 'none' }}>
                     <div style={{ pointerEvents: 'auto' }}>
-                        <button onClick={(e) => { e.stopPropagation(); _onEdgeInsert?.(id, sourceX, sourceY, targetX, targetY); }}
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                const midX = (sourceX + targetX) / 2;
+                                const midY = (sourceY + targetY) / 2;
+                                onInsert?.(id, midX, midY);
+                            }}
                             onMouseEnter={() => setHovered(true)}
                             style={{ width: 28, height: 28, borderRadius: '50%', border: '2px solid #6366f1', background: '#fff', color: '#6366f1', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.18)', fontSize: 0 }}>
                             <Plus size={16} />
@@ -278,6 +288,7 @@ export default function CallFlowBuilderPage() {
     const navigate = useNavigate();
     const [flow, setFlow] = useState<CallFlow | null>(null);
     const [loading, setLoading] = useState(true);
+    const [vapiConnected, setVapiConnected] = useState<boolean | null>(null);
     const [nodes, setNodes, onNodesChange] = useNodesState<Node<FlowNodeData>>([]);
     const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
     const hiddenNodesRef = useRef<Node<FlowNodeData>[]>([]);
@@ -290,6 +301,13 @@ export default function CallFlowBuilderPage() {
     const pendingLayoutRef = useRef(false);
 
     const { push: pushSnap, undo, redo, canUndo, canRedo } = useUndoRedo(nodes as any, edges, setNodes as any, setEdges as any);
+
+    // Check VAPI connection for node gating
+    useEffect(() => {
+        vapiApi.getConnections()
+            .then(conns => setVapiConnected(conns.some(c => c.status === 'active')))
+            .catch(() => setVapiConnected(false));
+    }, []);
 
     // Load flow (no versioning — single graph per flow)
     useEffect(() => {
@@ -413,14 +431,9 @@ export default function CallFlowBuilderPage() {
         pendingLayoutRef.current = true;
     }, [insertTarget, edges, pushSnap, setNodes, setEdges]);
 
-    // Wire global edge insert handler
-    useEffect(() => {
-        _onEdgeInsert = (edgeId, sourceX, sourceY, targetX, targetY) => {
-            const midX = (sourceX + targetX) / 2;
-            const midY = (sourceY + targetY) / 2;
-            setInsertTarget({ edgeId, midX, midY });
-        };
-        return () => { _onEdgeInsert = null; };
+    // Edge insert handler — stable callback passed via EdgeInsertContext
+    const handleEdgeInsert = useCallback((edgeId: string, midX: number, midY: number) => {
+        setInsertTarget({ edgeId, midX, midY });
     }, []);
 
     // ── Delete with edge healing ─────────────────────────────────────────────
@@ -490,8 +503,10 @@ export default function CallFlowBuilderPage() {
     const getNodeLabel = (id: string) => (nodes as any[]).find((n: any) => n.id === id)?.data?.label || id;
 
 
-    // Palette: ordered, with disabled/locked states
-    const paletteKinds = PALETTE_ORDER.map(k => [k, NODE_KIND_META[k]] as [CallFlowNodeKind, (typeof NODE_KIND_META)['start']]);
+    // Palette: ordered, with disabled/locked states. vapi_agent gated behind active VAPI connection.
+    const paletteKinds = PALETTE_ORDER
+        .filter(k => k !== 'vapi_agent' || vapiConnected === true)
+        .map(k => [k, NODE_KIND_META[k]] as [CallFlowNodeKind, (typeof NODE_KIND_META)['start']]);
 
     if (loading) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}><div style={{ width: 32, height: 32, border: '3px solid #e5e7eb', borderTopColor: '#6366f1', borderRadius: '50%', animation: 'spin 1s linear infinite' }} /></div>;
 
@@ -523,14 +538,16 @@ export default function CallFlowBuilderPage() {
 
                 {/* Canvas */}
                 <div style={{ flex: 1 }}>
-                    <ReactFlow
-                        nodes={nodes} edges={edges}
-                        onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
-                        onConnect={onConnect} onNodeClick={onNodeClick} onEdgeClick={onEdgeClick} onPaneClick={onPaneClick}
-                        nodeTypes={nodeTypes} edgeTypes={edgeTypes} fitView fitViewOptions={{ padding: 0.3 }} deleteKeyCode={null}
-                    >
-                        <Background gap={20} size={1} /><Controls /><MiniMap style={{ width: 120, height: 90 }} />
-                    </ReactFlow>
+                    <EdgeInsertContext.Provider value={handleEdgeInsert}>
+                        <ReactFlow
+                            nodes={nodes} edges={edges}
+                            onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
+                            onConnect={onConnect} onNodeClick={onNodeClick} onEdgeClick={onEdgeClick} onPaneClick={onPaneClick}
+                            nodeTypes={nodeTypes} edgeTypes={edgeTypes} fitView fitViewOptions={{ padding: 0.3 }} deleteKeyCode={null}
+                        >
+                            <Background gap={20} size={1} /><Controls /><MiniMap style={{ width: 120, height: 90 }} />
+                        </ReactFlow>
+                    </EdgeInsertContext.Provider>
                 </div>
 
                 {/* Inspector */}

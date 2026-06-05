@@ -1011,3 +1011,90 @@ The descriptor is the canonical document model, equivalent to the current hardco
 - AC-4: A non-admin user (`tenant.documents.manage` denied) gets `403` on all `/api/document-templates` endpoints; cross-company `:id` returns `404`.
 - AC-5: Removing the `terms` section's visibility hides the section in PDF and HTML preview.
 - AC-6: Adding a new `document_type` only requires (a) extending the CHECK constraint, (b) registering a factory descriptor, (c) registering a renderer adapter — no UI code change to list types.
+
+## F016: VAPI AI — Marketplace Integration + Call Flow Gating
+
+**Краткое описание:** Добавить VAPI AI как приложение в маркетплейс (`/settings/integrations`).
+Кнопка "Enable" на плитке ведёт на **отдельную страницу настройки** `/settings/integrations/vapi-ai`,
+где пользователь вводит API key, верифицирует и настраивает SIP resource.
+После подключения нода `vapi_agent` становится доступной в редакторе Call Flow для групп
+(`/settings/telephony/user-groups/:id/flow`). Без подключения — нода скрыта.
+
+**Пользовательские сценарии:**
+1. Пользователь открывает `/settings/integrations` → вкладка Marketplace → видит плитку "VAPI AI" со статусом "Available".
+2. Нажимает "Configure" (или "Enable") → навигация на `/settings/integrations/vapi-ai` — полноценная страница настройки.
+3. На странице: секция "API Connection" — поля API Key, Display Name, Environment (prod/dev), кнопка "Verify & Connect" → POST /api/vapi/connections. При успехе поля маскируются, статус меняется на "Connected".
+4. После успешного подключения появляется секция "SIP Resource" — поля SIP URI, Server URL, кнопка "Save" → POST /api/vapi/resources. После сохранения показывает SIP URI в режиме просмотра.
+5. После заполнения обеих секций — кнопка "Finish Setup" → POST /api/marketplace/apps/vapi-ai/install → статус installation меняется на "Connected". Пользователь может вернуться на `/settings/integrations`.
+6. При ошибке верификации API key — inline error под полем, форма не очищается.
+7. Если VAPI уже подключён (есть active installation) — страница показывает текущий статус и SIP URI в режиме просмотра, кнопка "Disconnect" → POST /api/marketplace/installations/:id/disconnect.
+8. Пользователь открывает Call Flow Builder для группы → нода VAPI AI видна в insert picker (потому что VAPI connected). Без подключения — нода не появляется.
+
+**Ограничения и нефункциональные требования:**
+- API key никогда не показывается после сохранения (masked ••••••••).
+- Call Flow Builder проверяет наличие active VAPI connection при загрузке (`GET /api/vapi/connections`).
+- Стиль страницы: Blanc design system (--blanc-bg, --blanc-ink-1, --blanc-line, rounded-xl, IBM Plex Sans/Manrope). Без горизонтальных линий. Без пустых полей.
+- TypeScript строгая типизация во всех новых файлах.
+- Плитка VAPI в маркетплейсе: при наличии active installation кнопка меняется на "Manage" → переход на ту же страницу настройки.
+
+**Потенциально вовлечённые модули/части системы:**
+- `backend/db/migrations/088_seed_vapi_ai_marketplace_app.sql` — регистрация app в маркетплейсе
+- `backend/src/db/marketplaceQueries.js` — добавить 088 миграцию в ensureMarketplaceSchema
+- `frontend/src/services/vapiApi.ts` — новый типизированный API клиент
+- `frontend/src/pages/VapiSettingsPage.tsx` — новая страница настройки VAPI
+- `frontend/src/pages/IntegrationsPage.tsx` — кнопка "Configure"/"Manage" на плитке VAPI ведёт на страницу
+- `frontend/src/App.tsx` — зарегистрировать роут `/settings/integrations/vapi-ai`
+- `frontend/src/pages/telephony/CallFlowBuilderPage.tsx` — гейтинг vapi_agent ноды
+
+**Затронутые интеграции:** Vapi (через /api/vapi/* backend)
+
+**Защищённые части кода:**
+- `frontend/src/lib/authedFetch.ts`
+- `src/server.js` (только добавить роут для VapiSettingsPage если нужно — но это SPA, не нужно)
+- Существующий `MarketplaceConnectDialog` в IntegrationsPage.tsx (не изменять)
+- Существующая логика insert picker в CallFlowBuilderPage.tsx (расширить, не переписывать)
+
+## F017: Согласованность Softphone и User Groups — единая система управления звонками
+
+**Источник истины:** `docs/specs/F017-telephony-groups-softphone-consolidation.md` (полные функциональные требования, утверждены).
+
+**Краткое описание:** Связать две независимо работающие подсистемы — Softphone и User Groups — в единую систему маршрутизации звонков. Группа становится единицей маршрутизации: номер принадлежит ровно одной группе, у группы есть call flow и агенты; входящий звонок исполняет flow группы и рингует только её доступных агентов; Softphone видит только номера и звонки своих групп.
+
+**Ключевые продуктовые решения:**
+1. Агент может состоять в нескольких группах; получает звонки из всех своих групп.
+2. Доступность агента — только автоматическая: `on_call` = активный звонок, `available` = нет звонка, `offline` = Softphone закрыт.
+3. Исполнение call flow при входящем звонке — приоритет №1.
+4. Единственная стратегия дозвона — Simultaneous; Round Robin / Most Idle / Sequential / Weighted убираются из UI и логики.
+5. Без draft/published: одна актуальная версия flow на группу, сохранение = немедленное применение.
+
+**Проблемы текущего состояния:**
+- Softphone виден всем с `phone_calls_allowed=true`, без учёта групп.
+- Входящий звонок рингует ВСЕХ разрешённых, игнорируя группу/flow/расписание/стратегию.
+- Caller ID picker показывает все client-номера без фильтра по группам пользователя.
+- Flow Builder строит SCXML-граф, но он не исполняется при реальных звонках.
+- `UserGroupDetailPage` читает mock (`userGroupsMock.ts`), а не API.
+- Статус агента не синхронизирован с реальным звонком.
+- Ring Strategy хранится, но не исполняется.
+
+**Пользовательские сценарии (укрупнённо, детали в спецификации):**
+1. Входящий на номер группы в рабочие часы → flow: Hours Check → Queue → рингует только available-агентов группы → агент принимает.
+2. Все агенты заняты → по таймауту Queue → Voicemail.
+3. Пользователь не в группах → кнопка Softphone не отображается, Twilio Device не инициализируется.
+4. Пользователь в Sales и Support → Caller ID picker показывает номера обеих групп с подписями.
+5. Завершение звонка → статус агента авто → `available`, SSE обновляет страницу User Groups.
+6. Админ редактирует flow → Save → следующий звонок идёт по новой версии без шага публикации.
+7. Привязка занятого номера к другой группе → предупреждение "already assigned to [Group]. Move it?".
+
+**Затронутые модули:**
+- Backend: `userGroups.js`, `voice.js` (blanc-numbers), `twilioWebhooks.js` (handleVoiceInbound), новый сервис исполнения flow, миграции БД, `src/server.js` (mount-only).
+- Frontend: `useSoftPhoneWidget.ts`, `SoftPhoneHeaderButton.tsx`, `UserGroupsPage.tsx`, `UserGroupDetailPage.tsx` (убрать mock), `PhoneNumbersPage.tsx`, `CallFlowBuilderPage.tsx`, `OperationsDashboardPage.tsx`.
+
+**Затронутые интеграции:** Twilio Voice (inbound webhook, Dial, Record), VAPI (SIP transfer node — уже реализован).
+
+**Защищённые части кода (НЕЛЬЗЯ ломать):**
+- `frontend/src/lib/authedFetch.ts`
+- `frontend/src/hooks/useRealtimeEvents.ts`
+- `src/server.js` core middleware (изменения только mount-only)
+- `backend/db/` schema — менять только через задачи с явным планом миграций
+
+**Non-goals:** hold/swap/conference, многоуровневый IVR, биллинг, UI записей звонков, RBAC на уровне групп, версионирование flow.

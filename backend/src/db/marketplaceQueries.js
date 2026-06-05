@@ -26,6 +26,7 @@ async function ensureMarketplaceSchema(client = null) {
         `);
         await query(readMigration('083_create_marketplace_apps.sql'));
         await query(readMigration('087_seed_mail_secretary_marketplace_app.sql'));
+        await query(readMigration('088_seed_vapi_ai_marketplace_app.sql'));
         return;
     }
 

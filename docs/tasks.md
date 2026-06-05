@@ -1976,3 +1976,329 @@ Test cases: `docs/test-cases/F014-ads-analytics-microservice.md`
 **Wave 4:** TASK-F015-006 (depends on 005)
 **Wave 5:** TASK-F015-008, TASK-F015-009, TASK-F015-010 (frontend, sequential)
 **Wave 6:** TASK-F015-011, TASK-F015-012 (tests + docs)
+
+---
+
+## Фича F016: VAPI AI Marketplace Integration + Call Flow Gating
+
+### TASK-F016-001: DB migration — seed vapi-ai marketplace app
+
+**Цель:** Зарегистрировать VAPI AI как published app в marketplace_apps и подключить миграцию к ensureMarketplaceSchema.
+
+**Файлы, которые можно менять:**
+- `backend/db/migrations/088_seed_vapi_ai_marketplace_app.sql` (новый)
+- `backend/src/db/marketplaceQueries.js`
+
+**Файлы, которые трогать нельзя:**
+- `backend/db/migrations/083_create_marketplace_apps.sql` — существующая схема
+- `backend/db/migrations/087_seed_mail_secretary_marketplace_app.sql` — существующий seed
+- `src/server.js`
+
+**Ожидаемый результат:** После `ensureMarketplaceSchema()` в marketplace_apps существует запись `app_key='vapi-ai'`, `provisioning_mode='none'`, `status='published'`, `category='telephony'`. Повторный запуск idempotent (ON CONFLICT DO UPDATE).
+
+**Зависимости:** нет
+
+**Статус:** done
+
+---
+
+### TASK-F016-002: Frontend — vapiApi.ts service
+
+**Цель:** Создать типизированный API клиент для `/api/vapi/*` эндпоинтов.
+
+**Файлы, которые можно менять:**
+- `frontend/src/services/vapiApi.ts` (новый)
+
+**Файлы, которые трогать нельзя:**
+- `frontend/src/lib/authedFetch.ts`
+- `frontend/src/services/telephonyApi.ts`
+
+**Ожидаемый результат:** Экспортирует `vapiApi` объект с методами: `getConnections(): Promise<VapiConnection[]>`, `createConnection(body): Promise<VapiConnection>`, `getResources(): Promise<VapiResource[]>`, `createResource(body): Promise<VapiResource>`. Все методы используют `authedFetch`. Типы `VapiConnection` и `VapiResource` экспортируются отдельно.
+
+**Зависимости:** нет
+
+**Статус:** done
+
+---
+
+### TASK-F016-003: Frontend — VapiSettingsPage
+
+**Цель:** Создать страницу настройки VAPI по адресу `/settings/integrations/vapi-ai`.
+
+**Файлы, которые можно менять:**
+- `frontend/src/pages/VapiSettingsPage.tsx` (новый)
+
+**Файлы, которые трогать нельзя:**
+- `frontend/src/lib/authedFetch.ts`
+- `frontend/src/pages/IntegrationsPage.tsx` (изменяется в следующей задаче)
+
+**Ожидаемый результат:**
+- При отсутствии connection: Секция "API Connection" с полями API Key (type=password), Display Name, Environment select. Кнопка "Verify & Connect" → `vapiApi.createConnection()`. Inline error при 400.
+- После успешного connection: Секция API Connection переходит в view-режим (masked key + display_name + status badge). Секция "SIP Resource" с полями SIP URI, Server URL. Кнопка "Save" → `vapiApi.createResource()`.
+- После обоих шагов: кнопка "Finish Setup" → `installMarketplaceApp('vapi-ai')` → `navigate('/settings/integrations')` + toast.success.
+- Если всё уже подключено (active installation + connection + resource): режим просмотра с кнопкой "Disconnect" → `disconnectMarketplaceInstallation(id)` + confirm dialog → navigate back.
+- Стиль: Blanc design system. Без <hr>. Без пустых полей.
+- Uses React Query: `useQuery(['vapi-connections'])`, `useQuery(['vapi-resources'])`, `useQuery(['marketplace-apps'])`.
+
+**Зависимости:** TASK-F016-001 (seed), TASK-F016-002 (vapiApi)
+
+**Статус:** done
+
+---
+
+### TASK-F016-004: Frontend — роут + интеграция с IntegrationsPage
+
+**Цель:** Зарегистрировать `/settings/integrations/vapi-ai` в App.tsx и поменять поведение плитки VAPI в IntegrationsPage (кнопка "Configure"/"Manage" вместо generic dialog).
+
+**Файлы, которые можно менять:**
+- `frontend/src/App.tsx`
+- `frontend/src/pages/IntegrationsPage.tsx`
+
+**Файлы, которые трогать нельзя:**
+- `frontend/src/lib/authedFetch.ts`
+- Существующие диалоги `MarketplaceConnectDialog` и `MarketplaceDisconnectDialog`
+
+**Ожидаемый результат:**
+- `App.tsx`: новый роут `<Route path="/settings/integrations/vapi-ai" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><VapiSettingsPage /></ProtectedRoute>} />`
+- `IntegrationsPage.tsx`: для `app.app_key === 'vapi-ai'` кнопка "Configure" (нет installation) или "Manage" (есть installation) → `navigate('/settings/integrations/vapi-ai')`. Generic `MarketplaceConnectDialog` и `MarketplaceDisconnectDialog` для этой плитки НЕ открываются.
+
+**Зависимости:** TASK-F016-003
+
+**Статус:** done
+
+---
+
+### TASK-F016-005: Frontend — гейтинг vapi_agent в CallFlowBuilderPage
+
+**Цель:** Скрывать ноду `vapi_agent` в insert picker Call Flow Builder если VAPI не подключён.
+
+**Файлы, которые можно менять:**
+- `frontend/src/pages/telephony/CallFlowBuilderPage.tsx`
+
+**Файлы, которые трогать нельзя:**
+- `frontend/src/types/telephony.ts`
+- `frontend/src/services/vapiApi.ts` (только читаем)
+
+**Ожидаемый результат:**
+- `useEffect` при монтировании: `vapiApi.getConnections()` → если хотя бы одна запись со `status === 'active'` → `setVapiConnected(true)`, иначе `false`.
+- Insert picker фильтрует NODE_KINDS: `vapi_agent` показывается только при `vapiConnected === true`.
+- Пока loading → `vapiConnected` равен `null`, нода скрыта.
+- Если нода уже добавлена в существующий flow — отображается нормально (фильтр только для вставки новых).
+
+**Зависимости:** TASK-F016-002 (vapiApi)
+
+**Статус:** done
+
+---
+
+### TASK-F016-006: Tests — vapi routes + marketplace seed
+
+**Цель:** Написать Jest-тесты для VAPI routes и проверки seed миграции.
+
+**Файлы, которые можно менять:**
+- `tests/routes/vapi.test.js` (новый или существующий)
+- `tests/routes/marketplaceMount.test.js` (расширить)
+
+**Файлы, которые трогать нельзя:**
+- `backend/src/routes/vapi.js`
+- `backend/src/routes/marketplace.js`
+
+**Ожидаемый результат:**
+- TC-F016-001 (happy path), TC-F016-002 (invalid key), TC-F016-003 (network error), TC-F016-004 (seed), TC-F016-005 (list includes vapi-ai), TC-F016-006 (install → connected), TC-F016-007 (duplicate install → 409), TC-F016-008 (disconnect), TC-F016-009 (401 unauth), TC-F016-010 (401 unauth POST), TC-F016-011 (missing api_key), TC-F016-012 (missing provider_connection_id), TC-F016-016 (idempotent seed).
+- Моки для `node-fetch` при вызове Vapi API.
+
+**Зависимости:** TASK-F016-001
+
+**Статус:** done
+
+---
+
+**Порядок волн:**
+- Волна 1: TASK-F016-001 (seed migration)
+- Волна 2: TASK-F016-002 (vapiApi.ts) — параллельно с Волной 1
+- Волна 3: TASK-F016-003 (VapiSettingsPage)
+- Волна 4: TASK-F016-004 (роут + IntegrationsPage), TASK-F016-005 (CallFlowBuilder) — параллельно
+- Волна 5: TASK-F016-006 (тесты)
+
+---
+
+## Фича F017: Согласованность Softphone и User Groups
+
+**Спецификация:** `docs/specs/F017-telephony-groups-softphone-consolidation.md`
+**Тест-кейсы:** `docs/test-cases/F017-telephony-groups-softphone-consolidation.md`
+**Режим:** планирование (Steps 1–5). Реализация — отдельными прогонами по приоритетам.
+
+### TASK-F017-001: DB migration — routing foundation
+**Приоритет:** P0 · **Статус:** pending
+**Цель:** Заложить схему маршрутизации: привязка номер→группа, состояние исполнения flow, единственная стратегия.
+**Файлы (создать/менять):**
+- `backend/db/migrations/NNN_f017_telephony_routing.sql` (новый)
+- `backend/src/routes/phoneSettings.js` (добавить group_id в ensureTable)
+**Трогать нельзя:** существующие миграции 001–088 (только новая)
+**Результат:** `phone_number_settings.group_id` (FK user_groups), `call_flow_executions` (таблица), `user_groups.strategy` → DEFAULT 'Simultaneous' + UPDATE всех строк. Все запросы фильтруют company_id.
+**Acceptance:** TC-F017-001, TC-F017-023
+**Зависимости:** нет
+
+### TASK-F017-002: Backend — groupRouting service
+**Приоритет:** P0 · **Статус:** pending
+**Цель:** Резолв номер→группа→flow и список доступных агентов группы.
+**Файлы:** `backend/src/services/groupRouting.js` (новый)
+**Результат:** `resolveGroupForNumber(toNumber, companyId)`, `availableAgentsForGroup(groupId)` (фильтр по agentPresence). SQL по company_id.
+**Acceptance:** TC-F017-004, TC-F017-013
+**Зависимости:** TASK-F017-001
+
+### TASK-F017-003: Backend — agentPresence service
+**Приоритет:** P0 · **Статус:** pending
+**Цель:** Реестр статусов агентов (available/on_call/offline) + SSE broadcast.
+**Файлы:** `backend/src/services/agentPresence.js` (новый), `backend/src/services/realtimeService.js` (добавить событие agent.status.changed — расширение, не дублирование)
+**Результат:** статус по userId, событие `agent.status.changed { userId, groupIds[], status }`.
+**Acceptance:** TC-F017-040..043
+**Зависимости:** TASK-F017-001
+
+### TASK-F017-004: Backend — callFlowRuntime (SCXML execution engine)
+**Приоритет:** P0 · **Статус:** pending
+**Цель:** Исполнение flow-графа при звонке: ведение состояния, node→TwiML, advance по событиям.
+**Файлы:** `backend/src/services/callFlowRuntime.js` (новый)
+**Результат:** `startExecution(callSid, group, companyId)`, `advance(callSid, event)`, `nodeToTwiml(node, context)` для greeting/queue/voicemail/transfer/branch/hangup/vapi_agent. Состояние в call_flow_executions. Reuse buildVapiSipTwiml для vapi_agent.
+**Acceptance:** TC-F017-006, TC-F017-010..022, TC-F017-044, TC-F017-061
+**Зависимости:** TASK-F017-002, TASK-F017-003
+
+### TASK-F017-005: Backend route — GET /api/user-groups/my
+**Приоритет:** P0 · **Статус:** pending
+**Цель:** Группы текущего пользователя для гейтинга Softphone.
+**Файлы:** `backend/src/routes/userGroups.js`, `src/server.js` (mount-only если нужно)
+**Результат:** endpoint с authenticate+requireCompanyAccess, фильтр company_id + membership. Изоляция.
+**Acceptance:** TC-F017-030..032
+**Зависимости:** TASK-F017-001
+
+### TASK-F017-006: Backend route — PUT /api/phone-numbers/:id/group
+**Приоритет:** P1 · **Статус:** pending
+**Цель:** Привязка/отвязка номера к группе (1:1), 409 при занятом, синхронизация Twilio webhook.
+**Файлы:** `backend/src/routes/phoneNumbers.js` (reuse getTwilioClient из twilioClient service)
+**Результат:**
+- запись group_id + auto routing_mode='client' (F-INC-02, F-INC-03);
+- 409 с именем группы при конфликте (F-ROU-02); доступ к чужому номеру → 404;
+- **F-INC-01:** при привязке обновить Twilio incoming-phone-number webhook (voiceUrl) на `{baseUrl}/webhooks/twilio/voice-inbound`. Ошибка Twilio API не должна оставлять рассинхрон БД↔Twilio (откат записи group_id при сбое).
+**Acceptance:** TC-F017-001, TC-F017-002, TC-F017-003, TC-F017-038
+**Зависимости:** TASK-F017-001
+
+### TASK-F017-007: Backend — blanc-numbers фильтр по группам
+**Приоритет:** P1 · **Статус:** pending
+**Цель:** Caller ID picker отдаёт только номера групп пользователя + group_name.
+**Файлы:** `backend/src/routes/voice.js`
+**Результат:** blanc-numbers join по группам пользователя, добавлен group_name. Изоляция.
+**Acceptance:** TC-F017-035..037
+**Зависимости:** TASK-F017-001, TASK-F017-005
+
+### TASK-F017-008: Backend — handleVoiceInbound → flow execution
+**Приоритет:** P0 · **Статус:** pending
+**Цель:** Переписать ядро inbound: группа → flow → рингать агентов группы (вместо рассылки всем).
+**Файлы:** `backend/src/webhooks/twilioWebhooks.js` (handleVoiceInbound)
+**Трогать нельзя:** outbound-ветка (SIP), логика validateTwilioSignature
+**Результат:** resolveGroupForNumber → startExecution → первый node TwiML. Номер без группы → voicemail.
+**Acceptance:** TC-F017-004, TC-F017-005, TC-F017-013, TC-F017-044
+**Зависимости:** TASK-F017-002, TASK-F017-004
+
+### TASK-F017-009: Backend — handleDialAction → advance
+**Приоритет:** P0 · **Статус:** pending
+**Цель:** Resume flow на Twilio callback'ах.
+**Файлы:** `backend/src/webhooks/twilioWebhooks.js` (handleDialAction)
+**Результат:** advance(callSid, event) по DialCallStatus; voicemail при no-answer.
+**Acceptance:** TC-F017-006, TC-F017-014, TC-F017-016
+**Зависимости:** TASK-F017-004, TASK-F017-008
+
+### TASK-F017-010: Frontend — Softphone гейтинг по группам
+**Приоритет:** P0 · **Статус:** pending
+**Цель:** Кнопка Softphone и Twilio Device только для участников групп.
+**Файлы:** `frontend/src/components/layout/SoftPhoneHeaderButton.tsx` + точка инициализации Device (AppLayout/SoftPhoneContext)
+**Трогать нельзя:** `useTwilioDevice.ts` (оборачиваем, не переписываем), `authedFetch.ts`
+**Результат:** fetch /api/user-groups/my; нет групп → не рендерить, не инициализировать Device, заглушка.
+**Acceptance:** TC-F017-033, TC-F017-034
+**Зависимости:** TASK-F017-005
+
+### TASK-F017-011: Frontend — Caller ID picker по группам
+**Приоритет:** P1 · **Статус:** pending
+**Цель:** Picker показывает номера своих групп с подписью.
+**Файлы:** `frontend/src/components/softphone/useSoftPhoneWidget.ts`, `frontend/src/components/softphone/SoftPhoneWidget.tsx`
+**Результат:** blanc-numbers уже фильтруется бекендом; отобразить group_name; нет номеров → скрыть picker.
+**Acceptance:** TC-F017-035..037
+**Зависимости:** TASK-F017-007
+
+### TASK-F017-012: Frontend — UserGroupDetailPage на реальное API
+**Приоритет:** P0 · **Статус:** pending
+**Цель:** Убрать mock, читать GET /api/user-groups/:id.
+**Файлы:** `frontend/src/pages/telephony/UserGroupDetailPage.tsx`, удалить/перестать импортировать `frontend/src/data/userGroupsMock.ts`
+**Результат:** реальные данные, inline-edit имени, add/remove членов и номеров.
+**Acceptance:** TC-F017-050
+**Зависимости:** нет (API /api/user-groups/:id существует)
+
+### TASK-F017-013: Frontend — стратегия только Simultaneous
+**Приоритет:** P0 · **Статус:** pending
+**Цель:** Убрать Round Robin/Most Idle/Sequential/Weighted из UI.
+**Файлы:** `frontend/src/pages/telephony/UserGroupsPage.tsx`
+**Результат:** RING_STRATEGIES = только Simultaneous (или убрать выбор стратегии).
+**Acceptance:** TC-F017-023
+**Зависимости:** TASK-F017-001
+
+### TASK-F017-014: Frontend — Phone Numbers: группа + привязка
+**Приоритет:** P2 · **Статус:** pending
+**Цель:** Колонка группы и привязка/отвязка со страницы номеров.
+**Файлы:** `frontend/src/pages/telephony/PhoneNumbersPage.tsx`
+**Результат:** badge группы/Unassigned; привязка через PUT /api/phone-numbers/:id/group; диалог "Move it?" при конфликте.
+**Acceptance:** TC-F017-052, TC-F017-002
+**Зависимости:** TASK-F017-006
+
+### TASK-F017-015: Frontend — real-time статусы агентов в группах
+**Приоритет:** P1 · **Статус:** pending
+**Цель:** SSE-обновление статусов на странице групп.
+**Файлы:** `frontend/src/pages/telephony/UserGroupsPage.tsx`, `frontend/src/pages/telephony/UserGroupDetailPage.tsx`
+**Трогать нельзя:** `useRealtimeEvents.ts` (использовать, не менять)
+**Результат:** подписка на agent.status.changed; статусы обновляются без reload; индикатор достижимости группы.
+**Acceptance:** TC-F017-043, TC-F017-051
+**Зависимости:** TASK-F017-003, TASK-F017-012
+
+### TASK-F017-016: Frontend — состояние по расписанию + timezone
+**Приоритет:** P2 · **Статус:** pending
+**Цель:** "Open now / Closed — opens Mon 9:00" по timezone группы.
+**Файлы:** `frontend/src/pages/telephony/UserGroupDetailPage.tsx`, `frontend/src/pages/telephony/UserGroupsPage.tsx`
+**Результат:** расчёт по timezone; timezone-fallback на company.
+**Acceptance:** TC-F017-053
+**Зависимости:** TASK-F017-012
+
+### TASK-F017-017: Frontend — Operations Dashboard по группам
+**Приоритет:** P2 · **Статус:** pending
+**Цель:** Активные звонки по группам + Transfer.
+**Файлы:** `frontend/src/pages/telephony/OperationsDashboardPage.tsx`, backend transfer endpoint (если нужен)
+**Acceptance:** TC-F017-070, TC-F017-071
+**Зависимости:** TASK-F017-004
+
+### TASK-F017-018: Routing Logs — фильтр по группе + путь flow
+**Приоритет:** P3 · **Статус:** pending
+**Файлы:** `frontend/src/pages/telephony/RoutingLogsPage.tsx`, `backend/src/routes/*` (routing logs)
+**Acceptance:** TC-F017-072, TC-F017-073
+**Зависимости:** TASK-F017-004
+
+### TASK-F017-019: Backend tests
+**Приоритет:** P0 · **Статус:** pending
+**Файлы:** `tests/services/callFlowRuntime.test.js`, `tests/services/agentPresence.test.js`, `tests/routes/userGroups.test.js`, `tests/routes/phoneNumbers.test.js`, `tests/routes/voice.test.js`, `tests/webhooks/voiceInbound.test.js`
+**Результат:** покрытие middleware (401/403), изоляции company, всех P0/P1 кейсов.
+**Зависимости:** TASK-F017-001..009
+
+### TASK-F017-020: Frontend tests + changelog/docs
+**Приоритет:** P1 · **Статус:** pending
+**Файлы:** frontend unit-тесты, `docs/changelog.md`, `docs/project-spec.md`
+**Зависимости:** TASK-F017-010..016
+
+---
+
+**Волны исполнения F017:**
+- **Волна 0:** TASK-F017-001 (миграция — блокирует всё)
+- **Волна 1 (parallel):** 002 (groupRouting), 003 (agentPresence)
+- **Волна 2:** 004 (callFlowRuntime — зависит от 002,003)
+- **Волна 3 (parallel):** 005 (/my), 006 (assign), 007 (blanc-numbers), 013 (strategy UI), 012 (detail no-mock)
+- **Волна 4:** 008 (inbound), 009 (dial-action) — ядро маршрутизации
+- **Волна 5 (parallel):** 010 (gating), 011 (caller-id), 015 (sse status)
+- **Волна 6 (parallel, P2/P3):** 014, 016, 017, 018
+- **Волна 7:** 019 (backend tests), 020 (frontend tests + docs)
+
+**P0-срез (минимальный разблокирующий):** 001 → 002,003 → 004 → 005,012,013 → 008,009 → 010 → 019.

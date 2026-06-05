@@ -67,15 +67,15 @@ export const TERMINAL_KINDS = new Set<CallFlowNodeKind>(['voicemail', 'hangup'])
 /** Whether a node kind is disabled in the palette */
 export const DISABLED_KINDS = new Set<CallFlowNodeKind>(['collect_input', 'menu']);
 
-/** Locked/out-of-scope kinds */
-export const LOCKED_KINDS = new Set<CallFlowNodeKind>(['vapi_agent']);
+/** Locked/out-of-scope kinds — none currently (vapi_agent unlocked when VAPI is connected) */
+export const LOCKED_KINDS = new Set<CallFlowNodeKind>();
 
-/** Palette display order (enabled first, disabled last) */
+/** Palette display order (enabled first, disabled/conditional last) */
 export const PALETTE_ORDER: CallFlowNodeKind[] = [
     // Enabled
     'greeting', 'queue', 'branch', 'transfer', 'voicemail', 'hangup', 'play_audio',
-    // Disabled
+    // Disabled (not yet implemented)
     'collect_input', 'menu',
-    // Locked
+    // Conditional: shown only when VAPI is connected (filtered in CallFlowBuilderPage)
     'vapi_agent',
 ];
