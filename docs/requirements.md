@@ -1053,3 +1053,48 @@ The descriptor is the canonical document model, equivalent to the current hardco
 - `src/server.js` (только добавить роут для VapiSettingsPage если нужно — но это SPA, не нужно)
 - Существующий `MarketplaceConnectDialog` в IntegrationsPage.tsx (не изменять)
 - Существующая логика insert picker в CallFlowBuilderPage.tsx (расширить, не переписывать)
+
+## F017: Согласованность Softphone и User Groups — единая система управления звонками
+
+**Источник истины:** `docs/specs/F017-telephony-groups-softphone-consolidation.md` (полные функциональные требования, утверждены).
+
+**Краткое описание:** Связать две независимо работающие подсистемы — Softphone и User Groups — в единую систему маршрутизации звонков. Группа становится единицей маршрутизации: номер принадлежит ровно одной группе, у группы есть call flow и агенты; входящий звонок исполняет flow группы и рингует только её доступных агентов; Softphone видит только номера и звонки своих групп.
+
+**Ключевые продуктовые решения:**
+1. Агент может состоять в нескольких группах; получает звонки из всех своих групп.
+2. Доступность агента — только автоматическая: `on_call` = активный звонок, `available` = нет звонка, `offline` = Softphone закрыт.
+3. Исполнение call flow при входящем звонке — приоритет №1.
+4. Единственная стратегия дозвона — Simultaneous; Round Robin / Most Idle / Sequential / Weighted убираются из UI и логики.
+5. Без draft/published: одна актуальная версия flow на группу, сохранение = немедленное применение.
+
+**Проблемы текущего состояния:**
+- Softphone виден всем с `phone_calls_allowed=true`, без учёта групп.
+- Входящий звонок рингует ВСЕХ разрешённых, игнорируя группу/flow/расписание/стратегию.
+- Caller ID picker показывает все client-номера без фильтра по группам пользователя.
+- Flow Builder строит SCXML-граф, но он не исполняется при реальных звонках.
+- `UserGroupDetailPage` читает mock (`userGroupsMock.ts`), а не API.
+- Статус агента не синхронизирован с реальным звонком.
+- Ring Strategy хранится, но не исполняется.
+
+**Пользовательские сценарии (укрупнённо, детали в спецификации):**
+1. Входящий на номер группы в рабочие часы → flow: Hours Check → Queue → рингует только available-агентов группы → агент принимает.
+2. Все агенты заняты → по таймауту Queue → Voicemail.
+3. Пользователь не в группах → кнопка Softphone не отображается, Twilio Device не инициализируется.
+4. Пользователь в Sales и Support → Caller ID picker показывает номера обеих групп с подписями.
+5. Завершение звонка → статус агента авто → `available`, SSE обновляет страницу User Groups.
+6. Админ редактирует flow → Save → следующий звонок идёт по новой версии без шага публикации.
+7. Привязка занятого номера к другой группе → предупреждение "already assigned to [Group]. Move it?".
+
+**Затронутые модули:**
+- Backend: `userGroups.js`, `voice.js` (blanc-numbers), `twilioWebhooks.js` (handleVoiceInbound), новый сервис исполнения flow, миграции БД, `src/server.js` (mount-only).
+- Frontend: `useSoftPhoneWidget.ts`, `SoftPhoneHeaderButton.tsx`, `UserGroupsPage.tsx`, `UserGroupDetailPage.tsx` (убрать mock), `PhoneNumbersPage.tsx`, `CallFlowBuilderPage.tsx`, `OperationsDashboardPage.tsx`.
+
+**Затронутые интеграции:** Twilio Voice (inbound webhook, Dial, Record), VAPI (SIP transfer node — уже реализован).
+
+**Защищённые части кода (НЕЛЬЗЯ ломать):**
+- `frontend/src/lib/authedFetch.ts`
+- `frontend/src/hooks/useRealtimeEvents.ts`
+- `src/server.js` core middleware (изменения только mount-only)
+- `backend/db/` schema — менять только через задачи с явным планом миграций
+
+**Non-goals:** hold/swap/conference, многоуровневый IVR, биллинг, UI записей звонков, RBAC на уровне групп, версионирование flow.

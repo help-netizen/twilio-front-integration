@@ -1663,3 +1663,90 @@ GET /api/vapi/connections
 ### Middleware (унаследованы от существующих роутов)
 - `/api/vapi/*` — `authenticate + requireCompanyAccess`
 - `/api/marketplace/*` — `authenticate + requirePermission('tenant.integrations.manage') + requireCompanyAccess`
+
+## F017: Согласованность Softphone и User Groups
+
+**Спецификация:** `docs/specs/F017-telephony-groups-softphone-consolidation.md`
+
+### Ключевая архитектурная проблема: два источника правды о номерах
+
+| Таблица | Назначение сейчас | Решение F017 |
+|---|---|---|
+| `phone_number_settings` (phone_number UNIQUE, routing_mode, client_identity) | Используется webhook'ом для inbound-маршрутизации | **Авторитетная** таблица маршрутизации. Добавляется `group_id`. `routing_mode` становится производным от наличия `group_id` |
+| `user_group_numbers` (group_id, phone_number) | Привязка номеров к группе из формы UserGroups | Поверхность редактирования; запись сквозная в `phone_number_settings.group_id`. Остаётся как удобный per-group список, синхронизируется |
+
+**Решение:** единый источник привязки номер→группа — `phone_number_settings.group_id`. Форма группы и страница Phone Numbers пишут в него. `user_group_numbers` синхронизируется триггером/сервисом или становится представлением (decision на этапе Spec).
+
+### Изменения схемы БД (через явные миграции)
+
+```
+Migration NNN_f017_telephony_routing.sql:
+  ALTER TABLE phone_number_settings
+    ADD COLUMN group_id TEXT REFERENCES user_groups(id) ON DELETE SET NULL;
+  CREATE INDEX idx_pns_group ON phone_number_settings(group_id);
+
+  -- F-FLOW-10: единственная стратегия
+  ALTER TABLE user_groups ALTER COLUMN strategy SET DEFAULT 'Simultaneous';
+  UPDATE user_groups SET strategy = 'Simultaneous';
+
+  -- F-ROU-05: одна актуальная версия flow (status больше не управляет исполнением)
+  -- колонку status оставляем (обратная совместимость), но рантайм её игнорирует
+
+  -- F-INC-05: состояние исполнения flow
+  CREATE TABLE call_flow_executions (
+    id              TEXT PRIMARY KEY,
+    company_id      TEXT NOT NULL,
+    call_sid        TEXT NOT NULL,
+    group_id        TEXT REFERENCES user_groups(id) ON DELETE SET NULL,
+    flow_id         TEXT,
+    current_node_id TEXT,
+    context_json    TEXT NOT NULL DEFAULT '{}',
+    status          TEXT NOT NULL DEFAULT 'active',  -- active | completed | voicemail | failed
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE INDEX idx_cfe_call_sid ON call_flow_executions(call_sid);
+  CREATE INDEX idx_cfe_company ON call_flow_executions(company_id);
+```
+
+### Новые компоненты
+
+**Backend:**
+- `backend/src/services/callFlowRuntime.js` — исполнение SCXML-flow при звонке. Функции: `startExecution(callSid, groupId)`, `advance(callSid, event)`, `nodeToTwiml(node, context)`. Парсит `graph_json`, ведёт состояние в `call_flow_executions`, генерирует TwiML по типу ноды (greeting/queue/voicemail/transfer/branch/hangup/vapi_agent).
+- `backend/src/services/groupRouting.js` — резолв номер→группа→flow→доступные агенты. `resolveGroupForNumber(toNumber)`, `availableAgentsForGroup(groupId)` (фильтр по SSE-статусу available).
+- `backend/src/services/agentPresence.js` — реестр статусов агентов (available/on_call/offline) в памяти + SSE-broadcast. Источник: события Twilio Device + активные звонки.
+
+**Backend routes (расширение существующих):**
+- `GET /api/user-groups/my` (новый в `userGroups.js`) — группы текущего пользователя по `req.companyFilter.company_id` + членство.
+- `GET /api/voice/blanc-numbers` (изменение в `voice.js`) — фильтр по группам пользователя, добавить `group_name`.
+- `PUT /api/phone-numbers/:id/group` (новый в `phoneNumbers.js`) — привязка/отвязка, 409 при занятом номере.
+
+**Backend webhook (переписывание ядра):**
+- `handleVoiceInbound` в `twilioWebhooks.js` — вместо рассылки всем `phone_calls_allowed`: (1) `resolveGroupForNumber(To)`, (2) `startExecution`, (3) первый узел → TwiML. `handleDialAction` → `callFlowRuntime.advance` для resume.
+
+**Frontend (расширение):**
+- `useSoftPhoneWidget.ts` — Caller ID из `/api/voice/blanc-numbers` (уже фильтруется бекендом), группа рядом с номером.
+- `SoftPhoneHeaderButton.tsx` + точка инициализации Twilio Device — гейтинг по `/api/user-groups/my` (не в группах → не рендерить, не инициализировать Device).
+- `UserGroupDetailPage.tsx` — убрать `userGroupsMock.ts`, перейти на `GET /api/user-groups/:id`.
+- `UserGroupsPage.tsx` — `RING_STRATEGIES` → только Simultaneous (или убрать выбор стратегии целиком).
+- `PhoneNumbersPage.tsx` — колонка группы + привязка/отвязка.
+- SSE-подписка на `agent.status.changed` для real-time статусов в списке групп.
+
+### Middleware и изоляция (обязательно)
+
+- Все новые routes: `app.use(..., authenticate, requireCompanyAccess, router)` в `src/server.js` (mount-only).
+- `company_id` только через `req.companyFilter?.company_id`.
+- Все SQL по группам/номерам/flow фильтруют `company_id`. Доступ к чужой группе/номеру → 404.
+- Webhook'и (`/webhooks/twilio/*`) остаются unauthenticated с валидацией подписи Twilio; company_id резолвится по номеру (`phone_number_settings`).
+
+### SSE-события (новые)
+
+- `agent.status.changed` — `{ userId, groupIds[], status }`
+- `group.call.queued` / `group.call.accepted` / `group.call.ended` — синхронизация очереди группы между диспетчерами.
+
+### Что НЕ дублируется (расширяем существующее)
+
+- `ensureFlowForGroup` (в `userGroups.js`) — переиспользуется как есть; skeleton по умолчанию.
+- `buildVapiSipTwiml` / `flowResumeRouter` (voice-agent) — переиспользуются для ноды vapi_agent.
+- `realtimeService` — переиспользуется для новых SSE-событий, не создаётся параллельный.
+- Twilio Device hook (`useTwilioDevice`) — оборачивается гейтингом, не переписывается.
