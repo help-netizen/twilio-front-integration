@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const db = require('../db/connection');
 const realtimeService = require('./realtimeService');
 const groupRouting = require('./groupRouting');
+const { toE164 } = require('../utils/phoneUtils');
 
 function escapeXml(value) {
     return String(value ?? '')
@@ -77,6 +78,19 @@ function eventMatches(edge, event) {
     return keys.includes(event) || edge.edgeRole === event;
 }
 
+function branchKeyFromEdge(edge) {
+    const explicit = edge.branchKey || edge.edgeRole;
+    if (explicit) return String(explicit);
+    const text = `${edge.label || ''} ${edge.edgeLabel || ''}`.toLowerCase();
+    if (text.includes('after') || text.includes('closed')) return 'after_hours';
+    if (text.includes('business') || text.includes('open')) return 'business_hours';
+    return null;
+}
+
+function isConditionalCandidate(edge) {
+    return edge.transitionMode === 'conditional' || edge.condExpr || branchKeyFromEdge(edge);
+}
+
 function chooseConditionalEdge(edges, context) {
     for (const edge of edges) {
         if (!edge.condExpr) continue;
@@ -88,7 +102,19 @@ function chooseConditionalEdge(edges, context) {
             console.warn('[CallFlowRuntime] Bad condition ignored:', edge.condExpr, err.message);
         }
     }
-    return edges.find(e => e.branchKey === 'else') || edges[0] || null;
+
+    if (context.isBusinessHours === true) {
+        const businessEdge = edges.find(e => branchKeyFromEdge(e) === 'business_hours');
+        if (businessEdge) return businessEdge;
+    }
+    if (context.isBusinessHours === false) {
+        const afterHoursEdge = edges.find(e => branchKeyFromEdge(e) === 'after_hours');
+        if (afterHoursEdge) return afterHoursEdge;
+    }
+
+    return edges.find(e => branchKeyFromEdge(e) === 'else') ||
+        edges.find(e => !e.condExpr && e.transitionMode !== 'conditional') ||
+        null;
 }
 
 function nextNodeIdForEvent(graph, nodeId, event, context) {
@@ -100,7 +126,7 @@ function nextNodeIdForEvent(graph, nodeId, event, context) {
     const eventless = edges.find(e => eventMatches(e, null));
     if (eventless) return eventless.to_state_id;
 
-    const conditional = edges.filter(e => e.transitionMode === 'conditional' || e.condExpr);
+    const conditional = edges.filter(isConditionalCandidate);
     const selected = chooseConditionalEdge(conditional, context);
     return selected?.to_state_id || null;
 }
@@ -236,18 +262,28 @@ ${clients}
 
 async function renderTransferNode({ execution, node, context }) {
     const cfg = node.config || {};
-    const target = cfg.target_external_number || cfg.target_number || cfg.sip_uri || cfg.target_sip || cfg.target;
-    if (!target) return buildHangupTwiml('Transfer target is not configured.');
+    const rawTarget = cfg.target_external_number || cfg.target_number || cfg.sip_uri || cfg.target_sip || cfg.target;
+    if (!rawTarget) return buildHangupTwiml('Transfer target is not configured.');
 
     const baseUrl = context.baseUrl;
     const dialActionUrl = `${baseUrl}/webhooks/twilio/voice-dial-action`;
     const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;
-    const isSip = String(target).startsWith('sip:');
+    const isSip = String(rawTarget).startsWith('sip:');
+    const target = isSip ? String(rawTarget) : toE164(rawTarget);
+    if (!target) return buildHangupTwiml('Transfer target phone number is invalid.');
+
+    const callerId = (() => {
+        if (cfg.caller_id_policy === 'explicit_number') return toE164(cfg.explicit_caller_id_number);
+        if (cfg.caller_id_policy === 'preserve_caller') return toE164(context.callerNumber);
+        return toE164(context.calledNumber);
+    })();
+    const callerIdAttr = callerId ? ` callerId="${escapeXml(callerId)}"` : '';
     const child = isSip ? `<Sip>${escapeXml(target)}</Sip>` : `<Number>${escapeXml(target)}</Number>`;
     await saveExecutionState(execution.call_sid, execution.company_id, { currentNodeId: node.id, contextJson: context });
     return xmlResponse(`
     <Dial timeout="${Number(cfg.timeout_sec || process.env.DIAL_TIMEOUT || 25)}"
           answerOnBridge="true"
+          ${callerIdAttr}
           action="${dialActionUrl}"
           method="POST"
           record="record-from-answer-dual"

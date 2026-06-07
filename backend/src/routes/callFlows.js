@@ -251,6 +251,45 @@ function validateGraph(graph) {
     return { valid: errors.length === 0, errors, warnings };
 }
 
+function branchKeyFromEdge(edge) {
+    const explicit = edge.branchKey || edge.edgeRole;
+    if (explicit) return String(explicit);
+    const text = `${edge.label || ''} ${edge.edgeLabel || ''}`.toLowerCase();
+    if (text.includes('after') || text.includes('closed')) return 'after_hours';
+    if (text.includes('business') || text.includes('open')) return 'business_hours';
+    return null;
+}
+
+function normalizeGraphForRuntime(graph) {
+    if (!graph || !Array.isArray(graph.states) || !Array.isArray(graph.transitions)) return graph;
+    const nodeById = new Map(graph.states.map(node => [node.id, node]));
+    return {
+        ...graph,
+        transitions: graph.transitions.map(edge => {
+            const from = nodeById.get(edge.from_state_id);
+            if (from?.kind !== 'branch') return edge;
+            const branchKey = branchKeyFromEdge(edge);
+            if (branchKey === 'business_hours') {
+                return {
+                    ...edge,
+                    branchKey,
+                    transitionMode: edge.transitionMode || 'conditional',
+                    condExpr: edge.condExpr || 'isBusinessHours === true',
+                };
+            }
+            if (branchKey === 'after_hours') {
+                return {
+                    ...edge,
+                    branchKey,
+                    transitionMode: edge.transitionMode || 'conditional',
+                    condExpr: edge.condExpr || 'isBusinessHours === false',
+                };
+            }
+            return edge;
+        }),
+    };
+}
+
 // ─── SAVE GRAPH ───────────────────────────────────────────────────────────────
 
 router.put('/:id', async (req, res) => {
@@ -263,7 +302,8 @@ router.put('/:id', async (req, res) => {
         const vals = [];
         let idx = 1;
 
-        if (graph !== undefined) { sets.push(`graph_json = $${idx++}`); vals.push(JSON.stringify(graph)); }
+        const normalizedGraph = graph !== undefined ? normalizeGraphForRuntime(graph) : undefined;
+        if (normalizedGraph !== undefined) { sets.push(`graph_json = $${idx++}`); vals.push(JSON.stringify(normalizedGraph)); }
         if (name !== undefined) { sets.push(`name = $${idx++}`); vals.push(name); }
         if (description !== undefined) { sets.push(`description = $${idx++}`); vals.push(description); }
         sets.push(`status = 'active'`);
@@ -283,7 +323,7 @@ router.put('/:id', async (req, res) => {
         }
 
         // Validate graph and return result
-        const validation = graph ? validateGraph(graph) : { valid: true, errors: [], warnings: [] };
+        const validation = normalizedGraph ? validateGraph(normalizedGraph) : { valid: true, errors: [], warnings: [] };
         console.log('[CallFlows] Saved:', { id, fieldsUpdated: sets.length, valid: validation.valid, errors: validation.errors.length, warnings: validation.warnings.length });
         res.json({ ok: true, validation });
     } catch (err) {

@@ -48,4 +48,31 @@ describe('F017 call flows active-only API', () => {
         expect(res.status).toBe(404);
         expect(mockQuery).not.toHaveBeenCalled();
     });
+
+    test('saving repairs inserted after-hours branch edge metadata for runtime', async () => {
+        mockQuery.mockResolvedValueOnce({
+            rows: [{ id: 'cf-1', company_id: 'company-1', status: 'active' }],
+        });
+
+        const graph = {
+            states: [
+                { id: 'hours', kind: 'branch', name: 'Hours Check' },
+                { id: 'transfer', kind: 'transfer', name: 'Transfer', config: { target_type: 'external_number', target_external_number: '+17743831412' } },
+            ],
+            transitions: [
+                { id: 'after', from_state_id: 'hours', to_state_id: 'transfer', label: 'After Hours' },
+            ],
+        };
+        const res = await request(makeApp())
+            .put('/api/call-flows/cf-1')
+            .send({ graph });
+
+        expect(res.status).toBe(200);
+        const savedGraph = JSON.parse(mockQuery.mock.calls[0][1][0]);
+        expect(savedGraph.transitions[0]).toEqual(expect.objectContaining({
+            branchKey: 'after_hours',
+            transitionMode: 'conditional',
+            condExpr: 'isBusinessHours === false',
+        }));
+    });
 });

@@ -415,7 +415,7 @@ export default function CallFlowBuilderPage() {
                 id, type: 'flowNode', position: { x: insertTarget.midX - 90, y: insertTarget.midY },
                 data: { label: meta.label, kind, config: defaultConfig, uiTerminal: isTerminal || undefined },
             };
-            const newEdge1: Edge = { id: `e-${Date.now()}-a`, source: edge.source, target: id, type: 'insertable', label: edge.label, markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' } };
+            const newEdge1: Edge = { id: `e-${Date.now()}-a`, source: edge.source, target: id, type: 'insertable', label: edge.label, markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' }, data: edge.data };
             if (isTerminal) {
                 // Terminal nodes: only incoming edge, no outgoing
                 setNodes(nds => [...nds, newNode] as any);
