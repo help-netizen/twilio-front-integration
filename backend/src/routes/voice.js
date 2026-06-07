@@ -11,6 +11,83 @@ const express = require('express');
 const { generateToken } = require('../services/voiceService');
 const { toE164 } = require('../utils/phoneUtils');
 const { isContactBusy } = require('../services/callAvailability');
+const { groupsForUser } = require('../services/groupRouting');
+const agentPresence = require('../services/agentPresence');
+const { buildSoftphoneIdentity, parseSoftphoneIdentity } = require('../services/softphoneIdentity');
+
+function getCompanyId(req) {
+    return req.companyFilter?.company_id;
+}
+
+function getCurrentUserId(req) {
+    return req.user?.crmUser?.id || req.user?.sub || null;
+}
+
+function escapeXml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+}
+
+function buildMessageTwiml(message) {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say>${escapeXml(message)}</Say>
+    <Hangup />
+</Response>`;
+}
+
+async function validateOutboundCallerId({ callerId, from }) {
+    const normalizedCallerId = toE164(callerId);
+    if (!normalizedCallerId) {
+        return { ok: false, status: 400, message: 'Invalid caller ID.' };
+    }
+
+    const identity = parseSoftphoneIdentity(from);
+    if (!identity?.companyId || !identity?.userId) {
+        return { ok: false, status: 403, message: 'Caller ID is not available for this softphone identity.' };
+    }
+
+    const db = require('../db/connection');
+    const result = await db.query(
+        `SELECT pns.phone_number
+         FROM phone_number_settings pns
+         JOIN user_groups ug
+           ON ug.id = pns.group_id
+          AND ug.company_id = pns.company_id::text
+         JOIN user_group_members ugm
+           ON ugm.group_id = ug.id
+          AND ugm.user_id = $3
+          AND COALESCE(ugm.is_active, true) = true
+         JOIN company_memberships cm
+           ON cm.user_id::text = ugm.user_id
+          AND cm.company_id::text = ug.company_id
+         JOIN company_user_profiles cup
+           ON cup.membership_id = cm.id
+          AND COALESCE(cup.phone_calls_allowed, false) = true
+         WHERE pns.phone_number = $1
+           AND pns.company_id::text = $2
+           AND pns.routing_mode = 'client'
+           AND pns.group_id IS NOT NULL
+         LIMIT 1`,
+        [normalizedCallerId, String(identity.companyId), String(identity.userId)]
+    );
+    if (result.rows.length === 0) {
+        return { ok: false, status: 403, message: 'Caller ID is not assigned to this user group.' };
+    }
+
+    return { ok: true, callerId: normalizedCallerId, companyId: identity.companyId, userId: identity.userId };
+}
+
+async function getMyGroups(req) {
+    const companyId = getCompanyId(req);
+    const userId = getCurrentUserId(req);
+    if (!companyId || !userId) return [];
+    return groupsForUser(userId, companyId, { includeAllForDev: req.user?._devMode && !req.user?.crmUser?.id });
+}
 
 // ─── Authenticated router (token endpoint) ──────────────────────────────────
 const tokenRouter = express.Router();
@@ -22,27 +99,32 @@ const tokenRouter = express.Router();
  */
 tokenRouter.get('/token', async (req, res) => {
     try {
-        const userId = req.user?.crmUser?.id;
-        const companyId = req.user?.company_id;
-        if (!userId) {
+        const userId = getCurrentUserId(req);
+        const companyId = getCompanyId(req);
+        if (!userId || !companyId) {
             return res.status(401).json({ error: 'User not authenticated' });
         }
 
         // Check phone_calls_allowed
         const db = require('../db/connection');
-        const permResult = await db.query(
-            `SELECT COALESCE(p.phone_calls_allowed, false) as allowed
-             FROM company_memberships m
-             LEFT JOIN company_user_profiles p ON p.membership_id = m.id
-             WHERE m.user_id = $1 AND m.company_id = $2`,
-            [userId, companyId]
-        );
-        const allowed = permResult.rows[0]?.allowed === true;
+        let allowed = req.user?._devMode === true;
+        if (!allowed) {
+            const permResult = await db.query(
+                `SELECT COALESCE(p.phone_calls_allowed, false) as allowed
+                 FROM company_memberships m
+                 LEFT JOIN company_user_profiles p ON p.membership_id = m.id
+                 WHERE m.user_id = $1 AND m.company_id = $2`,
+                [userId, companyId]
+            );
+            allowed = permResult.rows[0]?.allowed === true;
+        }
+        const myGroups = await getMyGroups(req);
+        allowed = allowed && myGroups.length > 0;
         if (!allowed) {
             return res.json({ allowed: false });
         }
 
-        const identity = `user_${userId}`;
+        const identity = buildSoftphoneIdentity(companyId, userId);
         const result = generateToken(identity);
 
         res.json({ ...result, allowed: true });
@@ -58,22 +140,48 @@ tokenRouter.get('/token', async (req, res) => {
  */
 tokenRouter.get('/phone-access', async (req, res) => {
     try {
-        const userId = req.user?.crmUser?.id;
-        const companyId = req.user?.company_id;
+        const userId = getCurrentUserId(req);
+        const companyId = getCompanyId(req);
         if (!userId) return res.json({ allowed: false });
 
         const db = require('../db/connection');
-        const r = await db.query(
-            `SELECT COALESCE(p.phone_calls_allowed, false) as allowed
-             FROM company_memberships m
-             LEFT JOIN company_user_profiles p ON p.membership_id = m.id
-             WHERE m.user_id = $1 AND m.company_id = $2`,
-            [userId, companyId]
-        );
-        res.json({ allowed: r.rows[0]?.allowed === true });
+        let allowed = req.user?._devMode === true;
+        if (!allowed) {
+            const r = await db.query(
+                `SELECT COALESCE(p.phone_calls_allowed, false) as allowed
+                 FROM company_memberships m
+                 LEFT JOIN company_user_profiles p ON p.membership_id = m.id
+                 WHERE m.user_id = $1 AND m.company_id = $2`,
+                [userId, companyId]
+            );
+            allowed = r.rows[0]?.allowed === true;
+        }
+        const myGroups = await getMyGroups(req);
+        res.json({ allowed: allowed && myGroups.length > 0, groups_count: myGroups.length });
     } catch (err) {
         console.error('[Voice] Phone access check error:', err.message);
         res.json({ allowed: false });
+    }
+});
+
+/**
+ * POST /api/voice/presence
+ * Softphone lifecycle heartbeat: available | on_call | offline.
+ */
+tokenRouter.post('/presence', async (req, res) => {
+    try {
+        const userId = getCurrentUserId(req);
+        const companyId = getCompanyId(req);
+        const status = req.body?.status;
+        if (!userId || !companyId) return res.status(401).json({ ok: false, error: 'No user/company context' });
+        const myGroups = await getMyGroups(req);
+        if (myGroups.length === 0) return res.status(403).json({ ok: false, error: 'User is not assigned to any group' });
+
+        const presence = await agentPresence.setAgentStatus(userId, companyId, status, { source: 'voice.presence' });
+        res.json({ ok: true, data: presence });
+    } catch (err) {
+        console.error('[Voice] Presence update error:', err.message);
+        res.status(500).json({ ok: false, error: 'Failed to update presence' });
     }
 });
 
@@ -104,6 +212,48 @@ tokenRouter.get('/check-busy', async (req, res) => {
     }
 });
 
+/**
+ * GET /api/voice/blanc-numbers
+ * F017: caller ID picker only shows numbers assigned to the user's groups.
+ */
+tokenRouter.get('/blanc-numbers', async (req, res) => {
+    try {
+        const db = require('../db/connection');
+        const companyId = getCompanyId(req);
+        const userId = getCurrentUserId(req);
+        if (!companyId || !userId) return res.json({ ok: true, numbers: [] });
+
+        const defaultCallerId = process.env.SOFTPHONE_CALLER_ID || '';
+        const includeAllForDev = req.user?._devMode && !req.user?.crmUser?.id;
+        const params = [companyId, defaultCallerId];
+        const membershipJoin = includeAllForDev
+            ? ''
+            : 'JOIN user_group_members ugm ON ugm.group_id = ug.id AND ugm.user_id = $3 AND COALESCE(ugm.is_active, true) = true';
+        if (!includeAllForDev) params.push(String(userId));
+
+        const result = await db.query(
+            `SELECT
+                    pns.phone_number,
+                    pns.friendly_name,
+                    ug.id AS group_id,
+                    ug.name AS group_name
+             FROM phone_number_settings pns
+             JOIN user_groups ug
+               ON ug.id = pns.group_id
+              AND ug.company_id = pns.company_id::text
+             ${membershipJoin}
+             WHERE pns.company_id = $1
+               AND pns.routing_mode = 'client'
+             ORDER BY (pns.phone_number = $2) DESC, pns.phone_number`,
+            params
+        );
+        res.json({ ok: true, numbers: result.rows });
+    } catch (err) {
+        console.error('[Voice] Failed to fetch blanc numbers:', err.message);
+        res.json({ ok: true, numbers: [] });
+    }
+});
+
 // ─── TwiML router (Twilio-called, no auth) ──────────────────────────────────
 const twimlRouter = express.Router();
 
@@ -114,8 +264,7 @@ const twimlRouter = express.Router();
  */
 twimlRouter.post('/twiml/outbound', async (req, res) => {
     const to = req.body.To;
-    // Allow client to specify caller ID (from Blanc phone settings); fall back to env var
-    const callerId = req.body.CallerId || process.env.SOFTPHONE_CALLER_ID || process.env.TWILIO_PHONE_NUMBER;
+    const requestedCallerId = req.body.CallerId || process.env.SOFTPHONE_CALLER_ID || process.env.TWILIO_PHONE_NUMBER;
     const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
     const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
     const dialActionUrl = `${baseUrl}/webhooks/twilio/voice-dial-action`;
@@ -123,7 +272,7 @@ twimlRouter.post('/twiml/outbound', async (req, res) => {
 
     console.log('[Voice TwiML] Outbound request:', {
         to,
-        callerId,
+        callerId: requestedCallerId,
         from: req.body.From,
         callSid: req.body.CallSid,
     });
@@ -140,17 +289,31 @@ twimlRouter.post('/twiml/outbound', async (req, res) => {
     // Normalize and validate
     const normalized = toE164(to);
     if (!normalized) {
-        const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Say>Invalid phone number.</Say>
-</Response>`;
-        res.type('text/xml').send(twiml);
+        res.type('text/xml').send(buildMessageTwiml('Invalid phone number.'));
+        return;
+    }
+
+    let callerId;
+    let validatedCompanyId = null;
+    try {
+        const validation = await validateOutboundCallerId({ callerId: requestedCallerId, from: req.body.From });
+        if (!validation.ok) {
+            res.status(validation.status || 403);
+            res.type('text/xml').send(buildMessageTwiml(validation.message || 'Caller ID is not allowed.'));
+            return;
+        }
+        callerId = validation.callerId;
+        validatedCompanyId = validation.companyId;
+    } catch (err) {
+        console.error('[Voice TwiML] Caller ID validation error:', err.message);
+        res.status(500);
+        res.type('text/xml').send(buildMessageTwiml('Caller ID validation failed.'));
         return;
     }
 
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Dial callerId="${callerId}"
+    <Dial callerId="${escapeXml(callerId)}"
           timeout="25"
           action="${dialActionUrl}"
           method="POST"
@@ -159,7 +322,7 @@ twimlRouter.post('/twiml/outbound', async (req, res) => {
           recordingStatusCallbackMethod="POST">
         <Number statusCallback="${statusCallbackUrl}"
                 statusCallbackEvent="initiated ringing answered completed"
-                statusCallbackMethod="POST">${normalized}</Number>
+                statusCallbackMethod="POST">${escapeXml(normalized)}</Number>
     </Dial>
 </Response>`;
 
@@ -175,7 +338,7 @@ twimlRouter.post('/twiml/outbound', async (req, res) => {
             const realtimeService = require('../services/realtimeService');
 
             // Resolve timeline for the dialed number
-            const timeline = await queries.findOrCreateTimeline(normalized, null);
+            const timeline = await queries.findOrCreateTimeline(normalized, validatedCompanyId);
             const timelineId = timeline.id;
             const contactId = timeline.contact_id || null;
 
@@ -197,6 +360,7 @@ twimlRouter.post('/twiml/outbound', async (req, res) => {
                 priceUnit: null,
                 lastEventTime: new Date(),
                 rawLastPayload: req.body,
+                companyId: validatedCompanyId,
             });
 
             if (call) {
@@ -277,26 +441,6 @@ twimlRouter.post('/twiml/inbound', async (req, res) => {
 
     console.log('[Voice TwiML] Inbound TwiML generated, routing to:', defaultIdentity);
     res.type('text/xml').send(twiml);
-});
-
-/**
- * GET /api/voice/blanc-numbers
- * Returns phone numbers configured as Blanc (routing_mode='client') for caller ID picker.
- */
-twimlRouter.get('/blanc-numbers', async (req, res) => {
-    try {
-        const db = require('../db/connection');
-        const defaultCallerId = process.env.SOFTPHONE_CALLER_ID || '';
-        const result = await db.query(
-            `SELECT phone_number, friendly_name FROM phone_number_settings WHERE routing_mode = 'client' ORDER BY (phone_number = $1) DESC, phone_number`,
-            [defaultCallerId]
-        );
-        res.json({ ok: true, numbers: result.rows });
-    } catch (err) {
-        console.error('[Voice] Failed to fetch blanc numbers:', err.message);
-        // Fallback: return empty list so UI still works
-        res.json({ ok: true, numbers: [] });
-    }
 });
 
 module.exports = { tokenRouter, twimlRouter };

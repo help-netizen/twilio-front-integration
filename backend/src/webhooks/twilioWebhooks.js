@@ -1,6 +1,7 @@
 const twilio = require('twilio');
 const queries = require('../db/queries');
-const { getBusyClientIdentities, getBusySipUsers, verifyAndFixStaleCalls } = require('../services/callAvailability');
+const groupRouting = require('../services/groupRouting');
+const callFlowRuntime = require('../services/callFlowRuntime');
 
 /**
  * Validate Twilio webhook signature
@@ -272,313 +273,21 @@ async function handleVoiceInbound(req, res) {
     </Dial>
 </Response>`;
         } else {
-            // ── Determine routing mode for this phone number ──────────────
-            // Check phone_number_settings table for per-number config,
-            // fall back to SOFTPHONE_DEFAULT_IDENTITY env var.
-            let routingMode = 'sip';
-            let clientIdentity = null;
-            const dbConn = require('../db/connection');
-
-            try {
-                const routeResult = await dbConn.query(
-                    `SELECT routing_mode, client_identity FROM phone_number_settings WHERE phone_number = $1`,
-                    [To]
-                );
-                if (routeResult.rows.length > 0) {
-                    routingMode = routeResult.rows[0].routing_mode;
-                    clientIdentity = routeResult.rows[0].client_identity;
-                }
-            } catch (routeErr) {
-                console.warn(`[${traceId}] Failed to query phone_number_settings, using env fallback:`, routeErr.message);
-            }
-
-            // Env var fallback (global override)
-            if (routingMode === 'sip' && process.env.SOFTPHONE_DEFAULT_IDENTITY) {
-                routingMode = 'client';
-                clientIdentity = process.env.SOFTPHONE_DEFAULT_IDENTITY;
-            }
-
-            if (routingMode === 'client') {
-                // ── WebRTC SoftPhone routing ──────────────────────────────────
-                // Query all users with phone_calls_allowed = true
-                let allowedIdentities = [];
-                try {
-                    const allowedResult = await dbConn.query(
-                        `SELECT 'user_' || m.user_id AS identity
-                         FROM company_memberships m
-                         JOIN company_user_profiles p ON p.membership_id = m.id
-                         WHERE p.phone_calls_allowed = true`
-                    );
-                    allowedIdentities = allowedResult.rows.map(r => r.identity);
-                } catch (permErr) {
-                    console.warn(`[${traceId}] Failed to query allowed users, falling back to clientIdentity:`, permErr.message);
-                    if (clientIdentity) allowedIdentities = [clientIdentity];
-                }
-
-                // Fallback: if no DB result but env var set, use it
-                if (allowedIdentities.length === 0 && clientIdentity) {
-                    allowedIdentities = [clientIdentity];
-                }
-
-                if (allowedIdentities.length === 0) {
-                    // No allowed users → voicemail
-                    console.log(`[${traceId}] No allowed Client users → voicemail`);
-                    const vmLanguage = process.env.VM_LANGUAGE || 'en-US';
-                    const vmGreeting = process.env.VM_GREETING || 'Hello! Our team is currently assisting other customers. Please leave your name and phone number, and we will call you back as soon as possible.';
-                    const vmMaxLen = Number(process.env.VM_MAXLEN || 180);
-                    const vmSilenceTimeout = Number(process.env.VM_SILENCE_TIMEOUT || 5);
-                    const vmFinishOnKey = process.env.VM_FINISH_ON_KEY || '#';
-
-                    twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Say language="${vmLanguage}">${vmGreeting}</Say>
-    <Record maxLength="${vmMaxLen}"
-            action="${voicemailCompleteUrl}"
-            method="POST"
-            timeout="${vmSilenceTimeout}"
-            finishOnKey="${vmFinishOnKey}"
-            playBeep="true"
-            transcribe="false"
-            recordingStatusCallback="${recordingStatusUrl}"
-            recordingStatusCallbackMethod="POST" />
-    <Hangup />
-</Response>`;
-
-                    // Mark as voicemail_recording
-                    try {
-                        await dbConn.query(
-                            `UPDATE calls SET status = 'voicemail_recording', is_final = false WHERE call_sid = $1`,
-                            [CallSid]
-                        );
-                        const realtimeService = require('../services/realtimeService');
-                        const freshCall = await queries.getCallByCallSid(CallSid);
-                        if (freshCall) {
-                            realtimeService.publishCallUpdate({ eventType: 'call.updated', ...freshCall });
-                        }
-                    } catch (vmErr) {
-                        console.warn(`[${traceId}] Failed to set voicemail_recording:`, vmErr.message);
-                    }
-                } else {
-                    // ── Check if all Client users are busy ──────────────────
-                    // If ALL are on active calls, hold the caller with a
-                    // redirect loop instead of timing out after 25s.
-                    let allBusy = false;
-                    let busyIdentities = new Set();
-                    try {
-                        const busyCheck = await getBusyClientIdentities(traceId);
-                        busyIdentities = busyCheck.busyIdentities;
-                        allBusy = allowedIdentities.length > 0 &&
-                            allowedIdentities.every(id => busyIdentities.has(id));
-
-                        // Twilio API fallback: if all operators appear busy, verify via Twilio REST API
-                        if (allBusy) {
-                            console.log(`[${traceId}] All clients busy per DB — verifying via Twilio API`);
-                            const resolvedSids = await verifyAndFixStaleCalls(busyCheck.callSids, traceId);
-                            if (resolvedSids.size > 0) {
-                                // Recalculate after fixing stale records
-                                const freshCheck = await getBusyClientIdentities(traceId);
-                                busyIdentities = freshCheck.busyIdentities;
-                                allBusy = allowedIdentities.length > 0 &&
-                                    allowedIdentities.every(id => busyIdentities.has(id));
-                                console.log(`[${traceId}] After Twilio API check: allBusy=${allBusy}, resolved=${resolvedSids.size}`);
-                            }
-                        }
-                    } catch (busyErr) {
-                        console.warn(`[${traceId}] Failed to check busy clients:`, busyErr.message);
-                    }
-
-                    // Parse retry counter from query string (redirect loop)
-                    const holdRetry = parseInt(req.query.holdRetry || '0', 10);
-                    const maxHoldRetries = 120; // 120 × 2s = 4 minutes max hold
-
-                    if (allBusy && holdRetry < maxHoldRetries) {
-                        // All operators busy → hold loop
-                        const holdMsg = holdRetry === 0
-                            ? 'All representatives are currently assisting other customers. Please stay on the line.'
-                            : '';
-                        const holdLanguage = process.env.VM_LANGUAGE || 'en-US';
-                        const redirectUrl = `${baseUrl}/webhooks/twilio/voice-inbound?holdRetry=${holdRetry + 1}`;
-
-                        console.log(`[${traceId}] All clients busy — hold loop (retry ${holdRetry}/${maxHoldRetries})`);
-
-                        // Notify frontend via SSE on first retry so user sees the waiting call immediately
-                        if (holdRetry === 0) {
-                            try {
-                                const realtimeService = require('../services/realtimeService');
-                                realtimeService.broadcast('call.holding', {
-                                    call_sid: CallSid,
-                                    from_number: From,
-                                    to_number: To,
-                                    holdRetry: 0,
-                                });
-                            } catch (sseErr) {
-                                console.warn(`[${traceId}] SSE broadcast failed:`, sseErr.message);
-                            }
-                        }
-
-                        const sayXml = holdMsg ? `\n    <Say language="${holdLanguage}">${holdMsg}</Say>` : '';
-                        twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>${sayXml}
-    <Pause length="2"/>
-    <Redirect method="POST">${redirectUrl}</Redirect>
-</Response>`;
-                    } else if (allBusy && holdRetry >= maxHoldRetries) {
-                        // Max hold time exceeded → voicemail
-                        console.log(`[${traceId}] Max hold time exceeded → voicemail`);
-                        const vmLanguage = process.env.VM_LANGUAGE || 'en-US';
-                        const vmGreeting = process.env.VM_GREETING || 'Hello! Our team is currently assisting other customers. Please leave your name and phone number, and we will call you back as soon as possible.';
-                        const vmMaxLen = Number(process.env.VM_MAXLEN || 180);
-                        const vmSilenceTimeout = Number(process.env.VM_SILENCE_TIMEOUT || 5);
-                        const vmFinishOnKey = process.env.VM_FINISH_ON_KEY || '#';
-
-                        twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Say language="${vmLanguage}">${vmGreeting}</Say>
-    <Record maxLength="${vmMaxLen}"
-            action="${voicemailCompleteUrl}"
-            method="POST"
-            timeout="${vmSilenceTimeout}"
-            finishOnKey="${vmFinishOnKey}"
-            playBeep="true"
-            transcribe="false"
-            recordingStatusCallback="${recordingStatusUrl}"
-            recordingStatusCallbackMethod="POST" />
-    <Hangup />
-</Response>`;
-                    } else {
-                        // At least one user is free → dial only free users (exclude busy)
-                        const freeIdentities = allowedIdentities.filter(id => !busyIdentities.has(id));
-                        console.log(`[${traceId}] Inbound: ${From} → Client([${freeIdentities.join(',')}]) (busy: [${[...busyIdentities].join(',')}])`);
-
-                        const clientEndpoints = freeIdentities.map(id =>
-                            `        <Client statusCallback="${statusCallbackUrl}"
-                statusCallbackEvent="initiated ringing answered completed"
-                statusCallbackMethod="POST">${id}</Client>`
-                        ).join('\n');
-
-                        const inboundTimeout = Number(process.env.DIAL_TIMEOUT || 25);
-                        const inboundStreamXml = realtimeEnabled ? `
-    <Start>
-        <Stream name="realtime-transcript" url="${mediaStreamUrl}" track="both_tracks">
-            <Parameter name="callSid" value="${CallSid}" />
-            <Parameter name="direction" value="inbound" />
-        </Stream>
-    </Start>` : '';
-
-                        twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>${inboundStreamXml}
-    <Dial timeout="${inboundTimeout}"
-          answerOnBridge="true"
-          action="${dialActionUrl}"
-          method="POST"
-          record="record-from-answer-dual"
-          recordingStatusCallback="${recordingStatusUrl}"
-          recordingStatusCallbackMethod="POST">
-${clientEndpoints}
-    </Dial>
-</Response>`;
-                    }
-                }
+            const resolvedGroup = await groupRouting.resolveGroupForNumber(To);
+            if (resolvedGroup) {
+                console.log(`[${traceId}] F017 inbound: ${From} → group ${resolvedGroup.group.name} (${resolvedGroup.group.id})`);
+                twiml = await callFlowRuntime.startExecution({
+                    callSid: CallSid,
+                    fromNumber: From,
+                    toNumber: To,
+                    group: resolvedGroup.group,
+                    flow: resolvedGroup.flow,
+                    baseUrl,
+                    traceId,
+                });
             } else {
-                // ── SIP / Bria routing (original) ─────────────────────────────
-                console.log(`[${traceId}] Inbound: ${From} → SIP`);
-                const sipDomain = process.env.SIP_DOMAIN || 'abchomes.sip.us1.twilio.com';
-                // Support multiple SIP users (ring all simultaneously)
-                const allSipUsers = (process.env.SIP_USERS || process.env.SIP_USER || 'dispatcher').split(',').map(u => u.trim());
-
-                // ── Exclude busy operators ──────────────────────────────────────
-                // Query child SIP legs that are currently active (not yet final)
-                let availableUsers = allSipUsers;
-                try {
-                    const busyCheck = await getBusySipUsers(traceId);
-                    if (busyCheck.busySipUsers.size > 0) {
-                        availableUsers = allSipUsers.filter(u => !busyCheck.busySipUsers.has(u));
-                        console.log(`[${traceId}] Busy operators: [${[...busyCheck.busySipUsers].join(',')}], available: [${availableUsers.join(',')}]`);
-                    }
-
-                    // Twilio API fallback: if all operators appear busy, verify via Twilio REST API
-                    if (availableUsers.length === 0) {
-                        console.log(`[${traceId}] All SIP operators busy per DB — verifying via Twilio API`);
-                        const resolvedSids = await verifyAndFixStaleCalls(busyCheck.callSids, traceId);
-                        if (resolvedSids.size > 0) {
-                            const freshCheck = await getBusySipUsers(traceId);
-                            availableUsers = allSipUsers.filter(u => !freshCheck.busySipUsers.has(u));
-                            console.log(`[${traceId}] After Twilio API check: available=[${availableUsers.join(',')}]`);
-                        }
-                    }
-                } catch (busyErr) {
-                    console.warn(`[${traceId}] Failed to check busy operators, ringing all:`, busyErr.message);
-                }
-
-                // If all operators are busy → go straight to voicemail
-                if (availableUsers.length === 0) {
-                    console.log(`[${traceId}] All operators busy → voicemail`);
-                    const vmLanguage = process.env.VM_LANGUAGE || 'en-US';
-                    const vmGreeting = process.env.VM_GREETING || 'Hello! Our team is currently assisting other customers. Please leave your name and phone number, and we will call you back as soon as possible.';
-                    const vmMaxLen = Number(process.env.VM_MAXLEN || 180);
-                    const vmSilenceTimeout = Number(process.env.VM_SILENCE_TIMEOUT || 5);
-                    const vmFinishOnKey = process.env.VM_FINISH_ON_KEY || '#';
-
-                    twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Say language="${vmLanguage}">${vmGreeting}</Say>
-    <Record maxLength="${vmMaxLen}"
-            action="${voicemailCompleteUrl}"
-            method="POST"
-            timeout="${vmSilenceTimeout}"
-            finishOnKey="${vmFinishOnKey}"
-            playBeep="true"
-            transcribe="false"
-            recordingStatusCallback="${recordingStatusUrl}"
-            recordingStatusCallbackMethod="POST" />
-    <Hangup />
-</Response>`;
-
-                    // Mark as voicemail_recording
-                    try {
-                        const db = require('../db/connection');
-                        await db.query(
-                            `UPDATE calls SET status = 'voicemail_recording', is_final = false WHERE call_sid = $1`,
-                            [CallSid]
-                        );
-                        const realtimeService = require('../services/realtimeService');
-                        const freshCall = await queries.getCallByCallSid(CallSid);
-                        if (freshCall) {
-                            realtimeService.publishCallUpdate({ eventType: 'call.updated', ...freshCall });
-                        }
-                    } catch (vmErr) {
-                        console.warn(`[${traceId}] Failed to set voicemail_recording:`, vmErr.message);
-                    }
-                } else {
-                    const sipEndpoints = availableUsers.map(user =>
-                        `        <Sip statusCallback="${statusCallbackUrl}"
-             statusCallbackEvent="initiated ringing answered completed"
-             statusCallbackMethod="POST">sip:${user}@${sipDomain}</Sip>`
-                    ).join('\n');
-
-                    const inboundTimeout = Number(process.env.DIAL_TIMEOUT || 25);
-                    // Skip realtime stream on re-dial to avoid duplicate media streams
-                    const inboundStreamXml = realtimeEnabled ? `
-    <Start>
-        <Stream name="realtime-transcript" url="${mediaStreamUrl}" track="both_tracks">
-            <Parameter name="callSid" value="${CallSid}" />
-            <Parameter name="direction" value="inbound" />
-        </Stream>
-    </Start>` : '';
-
-                    twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>${inboundStreamXml}
-    <Dial timeout="${inboundTimeout}"
-          answerOnBridge="true"
-          action="${dialActionUrl}"
-          method="POST"
-          record="record-from-answer-dual"
-          recordingStatusCallback="${recordingStatusUrl}"
-          recordingStatusCallbackMethod="POST">
-${sipEndpoints}
-    </Dial>
-</Response>`;
-                }
+                console.log(`[${traceId}] F017 inbound: ${To} has no assigned group → voicemail`);
+                twiml = callFlowRuntime.buildVoicemailTwiml({ baseUrl });
             }
         }
 
@@ -640,6 +349,16 @@ async function handleDialAction(req, res) {
             });
         } catch (ingestErr) {
             console.error(`[${traceId}] Inbox ingestion failed (non-blocking):`, ingestErr.message);
+        }
+
+        const execution = await callFlowRuntime.getExecution(CallSid);
+        if (execution && execution.status === 'active') {
+            const flowEvent = req.query.flowEvent || callFlowRuntime.eventFromDialStatus(dialStatus);
+            const flowTwiml = await callFlowRuntime.advance(CallSid, flowEvent, traceId);
+            if (flowTwiml) {
+                res.type('text/xml');
+                return res.send(flowTwiml);
+            }
         }
 
         // Decide TwiML response based on DialCallStatus (no DB reads needed)
@@ -705,8 +424,14 @@ async function handleVoicemailComplete(req, res) {
             return res.status(403).send('<Response></Response>');
         }
 
+        const callSid = req.body.CallSid;
+        const flowEvent = req.query.flowEvent || 'voicemail.recorded';
+        const flowTwiml = callSid
+            ? await callFlowRuntime.advance(callSid, flowEvent, traceId)
+            : null;
+
         res.type('text/xml');
-        res.send(buildHangupTwiml());
+        res.send(flowTwiml || buildHangupTwiml());
     } catch (error) {
         console.error(`[${traceId}] Error:`, error);
         res.type('text/xml').send(buildHangupTwiml());

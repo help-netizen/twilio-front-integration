@@ -322,7 +322,7 @@ export default function CallFlowBuilderPage() {
                     id: f?.id || `cf-${groupId.replace(/^ug-/, '')}`,
                     name: f?.name || 'Default Call Flow',
                     description: f?.description || '',
-                    status: f?.status || 'draft',
+                    status: f?.status || 'active',
                     created_at: f?.created_at || new Date().toISOString(),
                     updated_at: f?.updated_at || new Date().toISOString(),
                     graph: createSkeletonFlow(groupName),
@@ -558,7 +558,6 @@ export default function CallFlowBuilderPage() {
                             <div style={{ fontSize: 13, color: '#374151', display: 'flex', flexDirection: 'column', gap: 6 }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#6b7280' }}>Nodes</span><strong>{nodes.length}</strong></div>
                                 <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#6b7280' }}>Edges</span><strong>{edges.length}</strong></div>
-                                <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#6b7280' }}>Status</span><strong>{flow?.status}</strong></div>
                             </div>
                             {validation && (validation.errors.length > 0 || validation.warnings.length > 0) && (
                                 <div style={{ marginTop: 16 }}>

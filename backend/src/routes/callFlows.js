@@ -3,8 +3,7 @@
  *
  * GET  /api/call-flows          — List all call flows
  * GET  /api/call-flows/:id      — Get flow with graph
- * PUT  /api/call-flows/:id      — Save graph (draft)
- * PUT  /api/call-flows/:id/publish — Publish flow
+ * PUT  /api/call-flows/:id      — Save the group's active graph immediately
  */
 
 const express = require('express');
@@ -13,6 +12,10 @@ const db = require('../db/connection');
 
 function safeParseJSON(str) {
     try { return JSON.parse(str || '{}'); } catch { return {}; }
+}
+
+function getCompanyId(req) {
+    return req.companyFilter?.company_id;
 }
 
 function createSkeletonJSON(groupName) {
@@ -47,11 +50,11 @@ function hasRenderableGraph(graph) {
 
 router.get('/', async (req, res) => {
     try {
-        const companyId = req.user?.company_id;
+        const companyId = getCompanyId(req);
         if (!companyId) return res.status(401).json({ ok: false, error: 'No company context' });
 
         const result = await db.query(`
-            SELECT cf.id, cf.name, cf.description, cf.status, cf.group_id,
+            SELECT cf.id, cf.name, cf.description, 'active' AS status, cf.group_id,
                    cf.created_at, cf.updated_at,
                    ug.name AS group_name
             FROM call_flows cf
@@ -64,7 +67,7 @@ router.get('/', async (req, res) => {
             id: r.id,
             name: r.name,
             description: r.description || '',
-            status: r.status,
+            status: 'active',
             group_id: r.group_id,
             group_name: r.group_name || null,
             created_at: r.created_at,
@@ -82,7 +85,7 @@ router.get('/', async (req, res) => {
 
 router.get('/:id', async (req, res) => {
     try {
-        const companyId = req.user?.company_id;
+        const companyId = getCompanyId(req);
         const { id } = req.params;
 
         const result = await db.query(
@@ -103,7 +106,7 @@ router.get('/:id', async (req, res) => {
             const groupName = r.group_name || r.name.replace(/\s+Flow$/, '') || 'Current Group';
             const updated = await db.query(
                 `UPDATE call_flows
-                 SET graph_json = $1
+                 SET graph_json = $1, status = 'active'
                  WHERE id = $2 AND company_id = $3
                  RETURNING *`,
                 [createSkeletonJSON(groupName), id, companyId]
@@ -117,7 +120,7 @@ router.get('/:id', async (req, res) => {
                 id: r.id,
                 name: r.name,
                 description: r.description || '',
-                status: r.status,
+                status: 'active',
                 group_id: r.group_id,
                 created_at: r.created_at,
                 updated_at: r.updated_at,
@@ -252,7 +255,7 @@ function validateGraph(graph) {
 
 router.put('/:id', async (req, res) => {
     try {
-        const companyId = req.user?.company_id;
+        const companyId = getCompanyId(req);
         const { id } = req.params;
         const { graph, name, description } = req.body;
 
@@ -263,6 +266,7 @@ router.put('/:id', async (req, res) => {
         if (graph !== undefined) { sets.push(`graph_json = $${idx++}`); vals.push(JSON.stringify(graph)); }
         if (name !== undefined) { sets.push(`name = $${idx++}`); vals.push(name); }
         if (description !== undefined) { sets.push(`description = $${idx++}`); vals.push(description); }
+        sets.push(`status = 'active'`);
 
         if (sets.length === 0) {
             return res.status(400).json({ ok: false, error: 'Nothing to update' });
@@ -285,42 +289,6 @@ router.put('/:id', async (req, res) => {
     } catch (err) {
         console.error('[CallFlows] PUT error:', err.message);
         res.status(500).json({ ok: false, error: 'Failed to save call flow' });
-    }
-});
-
-// ─── PUBLISH ──────────────────────────────────────────────────────────────────
-
-router.put('/:id/publish', async (req, res) => {
-    try {
-        const companyId = req.user?.company_id;
-        const { id } = req.params;
-
-        const result = await db.query(
-            `SELECT * FROM call_flows WHERE id = $1 AND company_id = $2`,
-            [id, companyId]
-        );
-
-        if (result.rows.length === 0) {
-            return res.status(404).json({ ok: false, error: 'Flow not found' });
-        }
-
-        // Validate before publish — block on errors
-        const graph = safeParseJSON(result.rows[0].graph_json);
-        const validation = validateGraph(graph);
-        if (!validation.valid) {
-            return res.status(400).json({ ok: false, error: 'Flow has validation errors', validation });
-        }
-
-        await db.query(
-            `UPDATE call_flows SET status = 'published' WHERE id = $1 AND company_id = $2`,
-            [id, companyId]
-        );
-
-        console.log('[CallFlows] Published:', id);
-        res.json({ ok: true, data: { id, status: 'published' }, validation });
-    } catch (err) {
-        console.error('[CallFlows] Publish error:', err.message);
-        res.status(500).json({ ok: false, error: 'Failed to publish flow' });
     }
 });
 

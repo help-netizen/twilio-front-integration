@@ -547,6 +547,154 @@ async function unassignUser(uuid, userName, companyId = null) {
 // =============================================================================
 // Convert Lead to Job
 // =============================================================================
+async function claimLocalJobForConversion({ leadRow, contactId, zenbookerJobId, localJobFields, companyId }) {
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+        await client.query('SELECT pg_advisory_xact_lock($1::bigint)', [leadRow.id]);
+
+        const jobConditions = ['lead_id = $1'];
+        const jobParams = [leadRow.id];
+        if (companyId) {
+            jobParams.push(companyId);
+            jobConditions.push(`company_id = $${jobParams.length}`);
+        }
+
+        const { rows: existingJobs } = await client.query(
+            `SELECT id, contact_id, zenbooker_job_id
+             FROM jobs
+             WHERE ${jobConditions.join(' AND ')}
+             ORDER BY id ASC
+             LIMIT 1`,
+            jobParams
+        );
+
+        let localJobId;
+        let localJobCreated = false;
+        let existingZenbookerJobId = null;
+        let activeZenbookerJobId = zenbookerJobId || null;
+
+        if (existingJobs.length > 0) {
+            const existingJob = existingJobs[0];
+            localJobId = existingJob.id;
+            existingZenbookerJobId = existingJob.zenbooker_job_id || null;
+            activeZenbookerJobId = existingZenbookerJobId || activeZenbookerJobId;
+
+            const updates = [];
+            const updateParams = [];
+            let idx = 0;
+
+            if (!existingJob.contact_id && contactId) {
+                idx++;
+                updates.push(`contact_id = $${idx}`);
+                updateParams.push(contactId);
+            }
+
+            if (!existingJob.zenbooker_job_id && zenbookerJobId) {
+                idx++;
+                updates.push(`zenbooker_job_id = $${idx}`);
+                updateParams.push(zenbookerJobId);
+            }
+
+            if (updates.length > 0) {
+                idx++;
+                updateParams.push(localJobId);
+                await client.query(
+                    `UPDATE jobs SET ${updates.join(', ')}, updated_at = NOW() WHERE id = $${idx}`,
+                    updateParams
+                );
+            }
+        } else {
+            const { rows: [jobRow] } = await client.query(`
+                INSERT INTO jobs (
+                    lead_id, contact_id, zenbooker_job_id, blanc_status, service_name, address,
+                    customer_name, customer_phone, customer_email, company_id,
+                    job_type, job_source, description, metadata, comments,
+                    start_date, end_date, assigned_techs
+                ) VALUES ($1, $2, $3, 'Submitted', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb)
+                RETURNING id
+            `, [
+                leadRow.id,
+                contactId,
+                activeZenbookerJobId,
+                localJobFields.serviceName,
+                localJobFields.address,
+                localJobFields.customerName,
+                localJobFields.customerPhone,
+                localJobFields.customerEmail,
+                leadRow.company_id || null,
+                leadRow.job_type || localJobFields.serviceName,
+                leadRow.job_source || null,
+                localJobFields.description,
+                leadRow.metadata || '{}',
+                leadRow.comments || null,
+                localJobFields.initialStartDate,
+                localJobFields.initialEndDate,
+                localJobFields.initialAssignedTechs,
+            ]);
+            localJobId = jobRow.id;
+            localJobCreated = true;
+        }
+
+        const leadUpdateConditions = ['id = $1'];
+        const leadUpdateParams = [leadRow.id, contactId, activeZenbookerJobId];
+        if (companyId) {
+            leadUpdateParams.push(companyId);
+            leadUpdateConditions.push(`company_id = $${leadUpdateParams.length}`);
+        }
+
+        await client.query(
+            `UPDATE leads SET
+                converted_to_job = true,
+                status = 'Converted',
+                contact_id = COALESCE(contact_id, $2),
+                zenbooker_job_id = COALESCE($3, zenbooker_job_id)
+             WHERE ${leadUpdateConditions.join(' AND ')}`,
+            leadUpdateParams
+        );
+
+        await client.query('COMMIT');
+
+        return {
+            localJobId,
+            localJobCreated,
+            zenbookerJobId: activeZenbookerJobId,
+            existingZenbookerJobId,
+        };
+    } catch (err) {
+        try { await client.query('ROLLBACK'); } catch (_) {}
+        throw err;
+    } finally {
+        client.release();
+    }
+}
+
+async function persistZenbookerJobLink(localJobId, leadId, zenbookerJobId, companyId = null) {
+    const jobParams = [zenbookerJobId, localJobId];
+    const jobConditions = ['id = $2'];
+    if (companyId) {
+        jobParams.push(companyId);
+        jobConditions.push(`company_id = $${jobParams.length}`);
+    }
+    await db.query(
+        `UPDATE jobs SET zenbooker_job_id = $1, updated_at = NOW()
+         WHERE ${jobConditions.join(' AND ')}`,
+        jobParams
+    );
+
+    const leadParams = [zenbookerJobId, leadId];
+    const leadConditions = ['id = $2'];
+    if (companyId) {
+        leadParams.push(companyId);
+        leadConditions.push(`company_id = $${leadParams.length}`);
+    }
+    await db.query(
+        `UPDATE leads SET zenbooker_job_id = $1, converted_to_job = true, status = 'Converted'
+         WHERE ${leadConditions.join(' AND ')}`,
+        leadParams
+    );
+}
+
 async function convertLead(uuid, overrides = {}, companyId = null) {
     // 1. Fetch full lead
     const conditions = ['uuid = $1'];
@@ -589,7 +737,9 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
         }
     }
 
-    // 2. Create local job row in Blanc
+    // 2. Claim or create the local job row in Blanc.
+    // This makes conversion idempotent: a retry after Zenbooker/network failure
+    // reuses the same local job instead of inserting a duplicate.
     const serviceName = overrides.service?.name || lead.JobType || 'General Service';
     const address = overrides.address
         ? [overrides.address.line1, overrides.address.line2, overrides.address.city, overrides.address.state, overrides.address.postal_code].filter(Boolean).join(', ')
@@ -611,39 +761,42 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
         }
     }
 
-    const { rows: [jobRow] } = await db.query(`
-        INSERT INTO jobs (
-            lead_id, contact_id, blanc_status, service_name, address,
-            customer_name, customer_phone, customer_email, company_id,
-            job_type, job_source, description, metadata, comments,
-            start_date, end_date, assigned_techs
-        ) VALUES ($1, $2, 'Submitted', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb)
-        RETURNING id
-    `, [
-        leadRow.id,
+    let zenbookerJobId = overrides.zenbooker_job_id || null;
+    let shouldSyncZenbookerDetail = !!zenbookerJobId;
+
+    const claimedJob = await claimLocalJobForConversion({
+        leadRow,
         contactId,
-        serviceName,
-        address,
-        customerName,
-        customerPhone,
-        customerEmail,
-        leadRow.company_id || null,
-        leadRow.job_type || serviceName,
-        leadRow.job_source || null,
-        overrides.service?.description || leadRow.lead_notes || leadRow.comments || null,
-        leadRow.metadata || '{}',
-        leadRow.comments || null,
-        initialStartDate,
-        initialEndDate,
-        initialAssignedTechs,
-    ]);
-    const localJobId = jobRow.id;
-    console.log(`[ConvertLead] Local job created: ${localJobId}`);
+        zenbookerJobId,
+        localJobFields: {
+            serviceName,
+            address,
+            customerName,
+            customerPhone,
+            customerEmail,
+            description: overrides.service?.description || leadRow.lead_notes || leadRow.comments || null,
+            initialStartDate,
+            initialEndDate,
+            initialAssignedTechs,
+        },
+        companyId,
+    });
+
+    const localJobId = claimedJob.localJobId;
+    const localJobCreated = claimedJob.localJobCreated;
+    zenbookerJobId = claimedJob.zenbookerJobId;
+    shouldSyncZenbookerDetail = shouldSyncZenbookerDetail && !claimedJob.existingZenbookerJobId;
+
+    if (localJobCreated) {
+        console.log(`[ConvertLead] Local job created: ${localJobId}`);
+    } else {
+        console.log(`[ConvertLead] Reusing existing local job ${localJobId} for lead ${leadRow.id}`);
+    }
 
     // 2a. Link contact to timeline (adopt orphan timeline)
     // Only adopt if the timeline's phone matches the contact's phone —
     // prevents cross-contamination when user changes phone in the wizard
-    if (overrides.timeline_id && contactId) {
+    if (localJobCreated && overrides.timeline_id && contactId) {
         try {
             const contactRow = await db.query('SELECT phone_e164, secondary_phone FROM contacts WHERE id = $1', [contactId]);
             const c = contactRow.rows[0];
@@ -679,7 +832,6 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
     }
 
     // 3. Create Zenbooker job (if booking data provided or auto-create)
-    let zenbookerJobId = overrides.zenbooker_job_id || null;
     let zbWarning = null;
 
     if (!zenbookerJobId && overrides.zb_job_payload) {
@@ -696,6 +848,8 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
         try {
             const zbResult = await zenbookerClient.createJob(zbPayload);
             zenbookerJobId = zbResult.job_id;
+            await persistZenbookerJobLink(localJobId, leadRow.id, zenbookerJobId, companyId);
+            shouldSyncZenbookerDetail = true;
             console.log(`[ConvertLead] Zenbooker job created from booking: ${zenbookerJobId}`);
         } catch (err) {
             const errData = err.response?.data;
@@ -709,6 +863,8 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
         try {
             const zbResult = await zenbookerClient.createJobFromLead(lead);
             zenbookerJobId = zbResult.job_id;
+            await persistZenbookerJobLink(localJobId, leadRow.id, zenbookerJobId, companyId);
+            shouldSyncZenbookerDetail = true;
             console.log(`[ConvertLead] Zenbooker job created: ${zenbookerJobId}`);
         } catch (err) {
             if (err.message === 'ZENBOOKER_API_KEY is not configured') {
@@ -721,12 +877,14 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
                 // Don't fail — local job is already created
             }
         }
-    } else {
+    } else if (shouldSyncZenbookerDetail) {
         console.log(`[ConvertLead] Using pre-created Zenbooker job: ${zenbookerJobId}`);
+    } else {
+        console.log(`[ConvertLead] Local job ${localJobId} is already linked to Zenbooker job: ${zenbookerJobId}`);
     }
 
     // 4. Update local job with ZB data and link contact
-    if (zenbookerJobId) {
+    if (zenbookerJobId && shouldSyncZenbookerDetail) {
         try {
             let jobDetail = await zenbookerClient.getJob(zenbookerJobId);
             // ZB may not assign job_number immediately — retry once after a short delay
@@ -849,7 +1007,7 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
         const commentText = leadRow.comments?.trim();
 
         // Add comments as note if present
-        if (commentText) {
+        if (localJobCreated && commentText) {
             await jobsService.addNote(localJobId, `[Lead Comment] ${commentText}`);
             console.log(`[ConvertLead] Added comments as note to job ${localJobId}`);
         }

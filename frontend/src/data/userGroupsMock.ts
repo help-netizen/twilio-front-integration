@@ -11,7 +11,7 @@ export interface UserGroupData {
     members: { id: string; name: string; status: string }[];
     numbers: { id: string; number: string; friendly_name: string }[];
     schedule: { timezone: string; hours: ScheduleDay[] };
-    flow: { id: string; status: 'draft' | 'published'; updated_at: string; graph: CallFlowGraph };
+    flow: { id: string; status: 'active'; updated_at: string; graph: CallFlowGraph };
 }
 
 export const USER_GROUPS: UserGroupData[] = [
@@ -35,7 +35,7 @@ export const USER_GROUPS: UserGroupData[] = [
             ],
         },
         flow: {
-            id: 'cf-1', status: 'published', updated_at: '2026-03-06',
+            id: 'cf-1', status: 'active', updated_at: '2026-03-06',
             graph: createSkeletonFlow('Sales Team'),
         },
     },
@@ -58,7 +58,7 @@ export const USER_GROUPS: UserGroupData[] = [
             ],
         },
         flow: {
-            id: 'cf-2', status: 'draft', updated_at: '2026-03-07',
+            id: 'cf-2', status: 'active', updated_at: '2026-03-07',
             graph: createSkeletonFlow('Support Team'),
         },
     },

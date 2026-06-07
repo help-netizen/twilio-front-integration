@@ -1,8 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const queries = require('../db/queries');
+const db = require('../db/connection');
 const fetch = require('node-fetch');
 const { generateCallSummary } = require('../services/callSummaryService');
+const { getTwilioClient } = require('../services/twilioClient');
+const operationsDashboard = require('../services/operationsDashboard');
+const agentPresence = require('../services/agentPresence');
+const { buildSoftphoneIdentity } = require('../services/softphoneIdentity');
 
 // =============================================================================
 // GET /api/calls — list calls with cursor pagination
@@ -19,6 +24,7 @@ router.get('/', async (req, res) => {
             date_from,
             date_to,
             root_only,
+            group_id,
         } = req.query;
 
         const isoDate = /^\d{4}-\d{2}-\d{2}$/;
@@ -37,6 +43,7 @@ router.get('/', async (req, res) => {
             dateFrom,
             dateTo,
             rootOnly: root_only === 'true' ? true : undefined,
+            groupId: group_id || undefined,
         });
 
         res.json({
@@ -63,6 +70,22 @@ router.get('/active', async (req, res) => {
     } catch (error) {
         console.error('Error fetching active calls:', error);
         res.status(500).json({ error: 'Failed to fetch active calls' });
+    }
+});
+
+// =============================================================================
+// GET /api/calls/operations-dashboard — F017 group-aware operations dashboard
+// =============================================================================
+router.get('/operations-dashboard', async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id;
+        if (!companyId) return res.status(401).json({ ok: false, error: 'No company context' });
+
+        const data = await operationsDashboard.getOperationsDashboard(companyId);
+        res.json({ ok: true, data });
+    } catch (error) {
+        console.error('Error fetching operations dashboard:', error);
+        res.status(500).json({ ok: false, error: 'Failed to fetch operations dashboard' });
     }
 });
 
@@ -496,6 +519,111 @@ router.get('/contact/:contactId', async (req, res) => {
 });
 
 // =============================================================================
+// POST /api/calls/:callSid/transfer — F017 cold transfer to another group agent
+// =============================================================================
+router.post('/:callSid/transfer', async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const { callSid } = req.params;
+        const { target_user_id } = req.body || {};
+        if (!companyId) return res.status(401).json({ ok: false, error: 'No company context' });
+        if (!target_user_id) return res.status(400).json({ ok: false, error: 'target_user_id is required' });
+
+        const execution = await db.query(
+            `SELECT cfe.call_sid, cfe.group_id, ug.name AS group_name
+             FROM call_flow_executions cfe
+             JOIN user_groups ug
+               ON ug.id = cfe.group_id
+              AND ug.company_id = cfe.company_id::text
+             WHERE cfe.call_sid = $1
+               AND cfe.company_id = $2
+             ORDER BY cfe.created_at DESC
+             LIMIT 1`,
+            [callSid, companyId]
+        );
+        const row = execution.rows[0];
+        if (!row) return res.status(404).json({ ok: false, error: 'Active group call not found' });
+
+        const member = await db.query(
+            `SELECT
+                 ugm.user_id,
+                 COALESCE(cu.full_name, cu.email, ugm.user_id) AS name,
+                 COALESCE(cup.phone_calls_allowed, false) AS phone_calls_allowed
+             FROM user_group_members ugm
+             JOIN user_groups ug
+               ON ug.id = ugm.group_id
+              AND ug.company_id = $3
+             LEFT JOIN crm_users cu ON cu.id::text = ugm.user_id
+             LEFT JOIN company_memberships cm
+               ON cm.user_id::text = ugm.user_id
+              AND cm.company_id::text = ug.company_id
+             LEFT JOIN company_user_profiles cup ON cup.membership_id = cm.id
+             WHERE ugm.group_id = $1
+               AND ugm.user_id = $2
+               AND COALESCE(ugm.is_active, true) = true
+             LIMIT 1`,
+            [row.group_id, String(target_user_id), companyId]
+        );
+        if (member.rows.length === 0) {
+            return res.status(403).json({ ok: false, error: 'Target agent is not a member of this call group' });
+        }
+        if (member.rows[0].phone_calls_allowed !== true) {
+            return res.status(403).json({ ok: false, error: 'Target agent is not enabled for phone calls' });
+        }
+        if ((await agentPresence.getAgentStatus(String(target_user_id), companyId)) !== 'available') {
+            return res.status(409).json({ ok: false, error: 'Target agent is not available for transfer' });
+        }
+
+        if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN) {
+            return res.status(503).json({ ok: false, error: 'Twilio REST credentials are not configured' });
+        }
+
+        const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
+        const targetIdentity = buildSoftphoneIdentity(companyId, target_user_id);
+        const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Dial answerOnBridge="true"
+          action="${baseUrl}/webhooks/twilio/voice-dial-action?flowEvent=call.handoff"
+          method="POST">
+        <Client>${escapeXml(targetIdentity)}</Client>
+    </Dial>
+</Response>`;
+
+        const client = getTwilioClient();
+        try {
+            await client.calls(callSid).update({ twiml });
+        } catch (twilioError) {
+            console.warn('Twilio transfer update failed:', {
+                status: twilioError.status,
+                code: twilioError.code,
+                message: twilioError.message,
+            });
+            const statusCode = twilioError.status === 404 || twilioError.code === 20404 ? 404 : 502;
+            return res.status(statusCode).json({
+                ok: false,
+                error: 'Twilio could not update the active call',
+                twilio_status: twilioError.status || null,
+                twilio_code: twilioError.code || null,
+            });
+        }
+
+        res.json({
+            ok: true,
+            data: {
+                call_sid: callSid,
+                group_id: row.group_id,
+                target_user_id: String(target_user_id),
+                target_identity: targetIdentity,
+                target_name: member.rows[0].name,
+            },
+        });
+    } catch (error) {
+        console.error('Error transferring call:', error);
+        res.status(500).json({ ok: false, error: 'Failed to transfer call' });
+    }
+});
+
+// =============================================================================
 // GET /api/calls/:callSid — single call detail
 // =============================================================================
 router.get('/:callSid', async (req, res) => {
@@ -828,7 +956,43 @@ function formatCall(row) {
         call.call_count = parseInt(row.call_count);
     }
 
+    if (row.routing_group_id) {
+        call.routing_group = {
+            id: row.routing_group_id,
+            name: row.routing_group_name || row.routing_group_id,
+        };
+    }
+
+    if (row.flow_context_json || row.flow_current_node_id || row.flow_execution_status) {
+        const context = safeParseJSON(row.flow_context_json);
+        call.flow_path = operationsDashboard.flowPathFromContext(
+            context,
+            row.flow_current_node_id,
+            row.flow_execution_status || row.status
+        );
+        call.flow_execution_status = row.flow_execution_status || null;
+        call.flow_current_node_id = row.flow_current_node_id || null;
+    }
+
     return call;
+}
+
+function safeParseJSON(value) {
+    try {
+        if (!value) return {};
+        return typeof value === 'string' ? JSON.parse(value) : value;
+    } catch {
+        return {};
+    }
+}
+
+function escapeXml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
 }
 
 module.exports = router;

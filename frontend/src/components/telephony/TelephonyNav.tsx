@@ -8,7 +8,7 @@ const sections = [
     {
         title: 'Operations',
         items: [
-            { label: 'Dashboard', path: '/calls/dashboard', icon: <LayoutDashboard size={15} /> },
+            { label: 'Dashboard', path: '/settings/telephony/dashboard', icon: <LayoutDashboard size={15} /> },
 
         ],
     },

@@ -70,16 +70,32 @@ async function getCallByCallSid(callSid, companyId = null) {
         params.push(companyId);
     }
     const result = await db.query(
-        `SELECT c.*, to_json(co) as contact
+        `SELECT c.*,
+                to_json(co) as contact,
+                cfe.group_id AS routing_group_id,
+                ug.name AS routing_group_name,
+                cfe.current_node_id AS flow_current_node_id,
+                cfe.status AS flow_execution_status,
+                cfe.context_json AS flow_context_json
          FROM calls c
          LEFT JOIN contacts co ON c.contact_id = co.id
+         LEFT JOIN LATERAL (
+             SELECT *
+             FROM call_flow_executions cfe
+             WHERE cfe.call_sid = c.call_sid
+             ORDER BY cfe.created_at DESC
+             LIMIT 1
+         ) cfe ON true
+         LEFT JOIN user_groups ug
+           ON ug.id = cfe.group_id
+          AND ug.company_id = c.company_id::text
          WHERE ${conditions.join(' AND ')}`,
         params
     );
     return result.rows[0];
 }
 
-async function getCalls({ cursor, limit = 50, status, hasRecording, hasTranscript, contactId, companyId, dateFrom, dateTo, rootOnly } = {}) {
+async function getCalls({ cursor, limit = 50, status, hasRecording, hasTranscript, contactId, companyId, dateFrom, dateTo, rootOnly, groupId } = {}) {
     const conditions = [];
     const params = [];
     let paramIdx = 1;
@@ -91,6 +107,7 @@ async function getCalls({ cursor, limit = 50, status, hasRecording, hasTranscrip
     if (hasRecording === true) { conditions.push(`EXISTS (SELECT 1 FROM recordings r WHERE r.call_sid = c.call_sid AND r.status = 'completed')`); }
     if (hasTranscript === true) { conditions.push(`EXISTS (SELECT 1 FROM transcripts t WHERE t.call_sid = c.call_sid AND t.status = 'completed')`); }
     if (rootOnly === true) { conditions.push(`c.parent_call_sid IS NULL`); }
+    if (groupId) { conditions.push(`cfe.group_id = $${paramIdx++}`); params.push(groupId); }
     if (dateFrom) {
         conditions.push(`COALESCE(c.started_at, c.created_at) >= $${paramIdx++}`);
         params.push(`${dateFrom} 00:00:00`);
@@ -105,9 +122,25 @@ async function getCalls({ cursor, limit = 50, status, hasRecording, hasTranscrip
     params.push(limit);
 
     const result = await db.query(
-        `SELECT c.*, to_json(co) as contact
+        `SELECT c.*,
+                to_json(co) as contact,
+                cfe.group_id AS routing_group_id,
+                ug.name AS routing_group_name,
+                cfe.current_node_id AS flow_current_node_id,
+                cfe.status AS flow_execution_status,
+                cfe.context_json AS flow_context_json
          FROM calls c
          LEFT JOIN contacts co ON c.contact_id = co.id
+         LEFT JOIN LATERAL (
+             SELECT *
+             FROM call_flow_executions cfe
+             WHERE cfe.call_sid = c.call_sid
+             ORDER BY cfe.created_at DESC
+             LIMIT 1
+         ) cfe ON true
+         LEFT JOIN user_groups ug
+           ON ug.id = cfe.group_id
+          AND ug.company_id = c.company_id::text
          ${whereClause}
          ORDER BY c.id DESC
          LIMIT $${paramIdx}`,

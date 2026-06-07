@@ -184,7 +184,9 @@ async function createJobFromLead(lead) {
 
     console.log('[Zenbooker] Creating job:', JSON.stringify(payload, null, 2));
 
-    const res = await retryRequest(() => getClient().post('/jobs', payload));
+    // Creating jobs is not idempotent in Zenbooker; retrying a timed-out POST can
+    // create duplicate external jobs.
+    const res = await retryRequest(() => getClient().post('/jobs', payload), 1);
     console.log('[Zenbooker] Job created:', res.data.job_id);
     return res.data;
 }
@@ -233,7 +235,9 @@ async function getServices() {
  */
 async function createJob(payload) {
     console.log('[Zenbooker] Creating job (direct):', JSON.stringify(payload, null, 2));
-    const res = await retryRequest(() => getClient().post('/jobs', payload));
+    // Creating jobs is not idempotent in Zenbooker; retrying a timed-out POST can
+    // create duplicate external jobs.
+    const res = await retryRequest(() => getClient().post('/jobs', payload), 1);
     console.log('[Zenbooker] Job created:', res.data.job_id);
     return res.data;
 }
@@ -581,4 +585,3 @@ module.exports = {
     addCustomerNote,
     getTeamMembers,
 };
-

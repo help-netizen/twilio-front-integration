@@ -4,6 +4,7 @@ import { fetchVoiceToken } from '../services/voiceApi';
 import { startRingtone, stopRingtone } from '../utils/ringtone';
 import type { CallState, UseTwilioDeviceReturn } from './twilioDeviceTypes';
 import { useRealtimeEvents } from './useRealtimeEvents';
+import { authedFetch } from '../services/apiClient';
 
 export type { CallState, UseTwilioDeviceReturn };
 
@@ -17,7 +18,12 @@ interface PendingCall {
     from: string;
 }
 
-export function useTwilioDevice(): UseTwilioDeviceReturn {
+interface UseTwilioDeviceOptions {
+    enabled?: boolean;
+}
+
+export function useTwilioDevice(options: UseTwilioDeviceOptions = {}): UseTwilioDeviceReturn {
+    const enabled = options.enabled ?? true;
     const [device, setDevice] = useState<Device | null>(null);
     const [activeCall, setActiveCall] = useState<Call | null>(null);
     const [incomingCall, setIncomingCall] = useState<Call | null>(null);
@@ -36,6 +42,7 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
     const connectedAtRef = useRef<number | null>(null);
     const deviceRef = useRef<Device | null>(null);
     const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const lastPresenceRef = useRef<string | null>(null);
 
     // ── Pending (queued) calls ref ─────────────────────────────────
     // We use a ref instead of state because the Twilio `incoming`
@@ -55,6 +62,15 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
 
     const startDurationTimer = useCallback(() => { connectedAtRef.current = Date.now(); durationIntervalRef.current = setInterval(() => { if (connectedAtRef.current) setCallDuration(Math.floor((Date.now() - connectedAtRef.current) / 1000)); }, 1000); }, []);
     const stopDurationTimer = useCallback(() => { if (durationIntervalRef.current) { clearInterval(durationIntervalRef.current); durationIntervalRef.current = null; } connectedAtRef.current = null; }, []);
+    const publishPresence = useCallback((status: 'available' | 'on_call' | 'offline') => {
+        if (!enabled || lastPresenceRef.current === status) return;
+        lastPresenceRef.current = status;
+        authedFetch('/api/voice/presence', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status }),
+        }).catch(() => { });
+    }, [enabled]);
 
     // ── Promote next pending call ──────────────────────────────────
     // Called after current call ends to activate the next queued call.
@@ -118,6 +134,27 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
     }, [startDurationTimer, stopDurationTimer, resetToIdle]);
 
     useEffect(() => {
+        if (!enabled) {
+            setDevice(null);
+            setActiveCall(null);
+            setIncomingCall(null);
+            setCallState('idle');
+            setCallDuration(0);
+            setCallerInfo(null);
+            setDeviceReady(false);
+            setPhoneAllowed(false);
+            setPendingCount(0);
+            setPendingCallerInfo(null);
+            setHoldingCallerInfo(null);
+            busyRef.current = false;
+            pendingCallsRef.current = [];
+            if (deviceRef.current) {
+                deviceRef.current.destroy();
+                deviceRef.current = null;
+            }
+            return;
+        }
+
         let cancelled = false;
         async function initDevice() {
             try {
@@ -126,9 +163,9 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
                 if (tokenResponse.allowed === false) { setPhoneAllowed(false); return; }
                 setPhoneAllowed(true);
                 const dev = new Device(tokenResponse.token, { logLevel: 1, codecPreferences: [Call.Codec.Opus, Call.Codec.PCMU] });
-                dev.on('registered', () => { setDeviceReady(true); setError(null); });
-                dev.on('error', (err) => { setError(err.message || 'Device error'); setDeviceReady(false); });
-                dev.on('unregistered', () => { setDeviceReady(false); });
+                dev.on('registered', () => { setDeviceReady(true); setError(null); publishPresence('available'); });
+                dev.on('error', (err) => { setError(err.message || 'Device error'); setDeviceReady(false); publishPresence('offline'); });
+                dev.on('unregistered', () => { setDeviceReady(false); publishPresence('offline'); });
                 dev.on('tokenWillExpire', async () => { try { const { token: newToken } = await fetchVoiceToken(); dev.updateToken(newToken); } catch { setError('Token refresh failed'); } });
 
                 // ── Incoming call handler (queue-aware) ────────────────────
@@ -201,8 +238,14 @@ export function useTwilioDevice(): UseTwilioDeviceReturn {
             } catch (err: any) { if (!cancelled) { setError(err.message || 'Failed to initialize SoftPhone'); } }
         }
         initDevice();
-        return () => { cancelled = true; stopDurationTimer(); if (resetTimerRef.current) clearTimeout(resetTimerRef.current); if (deviceRef.current) { deviceRef.current.destroy(); deviceRef.current = null; } };
-    }, [attachCallHandlers, stopDurationTimer, resetToIdle, syncPendingCount]);
+        return () => { cancelled = true; publishPresence('offline'); stopDurationTimer(); if (resetTimerRef.current) clearTimeout(resetTimerRef.current); if (deviceRef.current) { deviceRef.current.destroy(); deviceRef.current = null; } };
+    }, [enabled, attachCallHandlers, stopDurationTimer, resetToIdle, syncPendingCount, publishPresence]);
+
+    useEffect(() => {
+        if (!enabled || !deviceReady) return;
+        if (['connecting', 'ringing', 'incoming', 'connected'].includes(callState)) publishPresence('on_call');
+        else if (callState === 'idle' || callState === 'ended' || callState === 'failed') publishPresence('available');
+    }, [enabled, deviceReady, callState, publishPresence]);
 
     // ── SSE listener: backend hold queue notifications ──────────────────
     useRealtimeEvents({

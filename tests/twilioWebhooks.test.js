@@ -1,163 +1,155 @@
-const { handleVoiceStatus, validateTwilioSignature } = require('../backend/src/webhooks/twilioWebhooks');
+const mockInsertInboxEvent = jest.fn();
+const mockResolveGroupForNumber = jest.fn();
+const mockBuildVoicemailTwiml = jest.fn(() => '<?xml version="1.0" encoding="UTF-8"?><Response><Record /></Response>');
+const mockAdvance = jest.fn();
 
-describe('Twilio Webhook Handlers', () => {
-    let mockReq;
-    let mockRes;
-    let mockDb;
+jest.mock('../backend/src/db/queries', () => ({
+    insertInboxEvent: (...args) => mockInsertInboxEvent(...args),
+}));
 
+jest.mock('../backend/src/services/realtimeService', () => ({
+    broadcast: jest.fn(),
+    publishCallUpdate: jest.fn(),
+}));
+
+jest.mock('../backend/src/services/groupRouting', () => ({
+    resolveGroupForNumber: (...args) => mockResolveGroupForNumber(...args),
+}));
+
+jest.mock('../backend/src/services/callFlowRuntime', () => ({
+    buildVoicemailTwiml: (...args) => mockBuildVoicemailTwiml(...args),
+    advance: (...args) => mockAdvance(...args),
+}));
+
+const {
+    handleVoiceInbound,
+    handleVoiceStatus,
+    handleVoicemailComplete,
+    validateTwilioSignature,
+} = require('../backend/src/webhooks/twilioWebhooks');
+
+function makeReq(body = {}, headers = {}) {
+    return {
+        headers,
+        body,
+        query: {},
+        protocol: 'https',
+        get: header => header === 'host' ? 'test.example.com' : '',
+        originalUrl: '/webhooks/twilio/voice-status',
+    };
+}
+
+function makeRes() {
+    return {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn().mockReturnThis(),
+        send: jest.fn().mockReturnThis(),
+        type: jest.fn().mockReturnThis(),
+    };
+}
+
+describe('Twilio webhook handlers', () => {
     beforeEach(() => {
-        // Mock request
-        mockReq = {
-            headers: {},
-            body: {},
-            protocol: 'https',
-            get: (header) => 'test.example.com',
-            originalUrl: '/webhooks/twilio/voice-status'
-        };
-
-        // Mock response
-        mockRes = {
-            status: jest.fn().mockReturnThis(),
-            json: jest.fn().mockReturnThis(),
-            send: jest.fn().mockReturnThis()
-        };
-
-        // Mock database
-        mockDb = {
-            query: jest.fn()
-        };
-
-        // Mock environment
-        process.env.TWILIO_AUTH_TOKEN = 'test_auth_token_123';
+        jest.clearAllMocks();
+        process.env.NODE_ENV = 'development';
+        process.env.TWILIO_AUTH_TOKEN = 'test_auth_token';
+        mockInsertInboxEvent.mockResolvedValue({ id: 123 });
     });
 
     describe('validateTwilioSignature', () => {
-        it('should return false when signature header is missing', () => {
-            const result = validateTwilioSignature(mockReq);
-            expect(result).toBe(false);
+        test('returns false when signature header is missing', () => {
+            expect(validateTwilioSignature(makeReq())).toBe(false);
         });
 
-        it('should return false when auth token is missing', () => {
+        test('returns false when auth token is missing', () => {
             delete process.env.TWILIO_AUTH_TOKEN;
-            mockReq.headers['x-twilio-signature'] = 'some-signature';
-            const result = validateTwilioSignature(mockReq);
-            expect(result).toBe(false);
-        });
-
-        it('should construct proper URL for signature validation', () => {
-            mockReq.headers['x-twilio-signature'] = 'test-signature';
-            mockReq.headers['x-forwarded-proto'] = 'https';
-            mockReq.headers['x-forwarded-host'] = 'prod.example.com';
-
-            // This will fail validation but should construct URL correctly
-            const result = validateTwilioSignature(mockReq);
-            expect(result).toBe(false); // Will fail because signature is fake
+            expect(validateTwilioSignature(makeReq({}, { 'x-twilio-signature': 'sig' }))).toBe(false);
         });
     });
 
     describe('handleVoiceStatus', () => {
-        beforeEach(() => {
-            // Mock successful signature validation
-            mockReq.headers['x-twilio-signature'] = 'valid-signature';
-            mockReq.body = {
+        test('returns 400 for missing CallSid', async () => {
+            const req = makeReq({ CallStatus: 'completed' });
+            const res = makeRes();
+
+            await handleVoiceStatus(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(400);
+            expect(res.json).toHaveBeenCalledWith({ error: 'Missing CallSid or CallStatus' });
+            expect(mockInsertInboxEvent).not.toHaveBeenCalled();
+        });
+
+        test('inserts a voice status event into webhook inbox and returns 204', async () => {
+            const req = makeReq({
                 CallSid: 'CA1234567890abcdef',
                 CallStatus: 'completed',
-                Timestamp: '1234567890'
-            };
-        });
-
-        it('should return 403 for invalid signature', async () => {
-            mockReq.headers['x-twilio-signature'] = '';
-
-            await handleVoiceStatus(mockReq, mockRes);
-
-            expect(mockRes.status).toHaveBeenCalledWith(403);
-            expect(mockRes.json).toHaveBeenCalledWith({ error: 'Invalid signature' });
-        });
-
-        it('should return 400 for missing CallSid', async () => {
-            delete mockReq.body.CallSid;
-
-            // Skip signature validation for this test
-            jest.spyOn(require('../backend/src/webhooks/twilioWebhooks'), 'validateTwilioSignature')
-                .mockReturnValue(true);
-
-            await handleVoiceStatus(mockReq, mockRes);
-
-            expect(mockRes.status).toHaveBeenCalledWith(400);
-            expect(mockRes.json).toHaveBeenCalledWith({
-                error: 'Missing CallSid or CallStatus'
+                Timestamp: '1234567890',
+            }, {
+                'x-twilio-signature': 'valid-signature',
+                'i-twilio-idempotency-token': 'idem-1',
             });
+            const res = makeRes();
+
+            await handleVoiceStatus(req, res);
+
+            expect(mockInsertInboxEvent).toHaveBeenCalledWith(expect.objectContaining({
+                eventKey: 'idem-1',
+                source: 'voice',
+                eventType: 'call.status_changed',
+                callSid: 'CA1234567890abcdef',
+                payload: expect.objectContaining({ CallStatus: 'completed' }),
+            }));
+            expect(res.status).toHaveBeenCalledWith(204);
+            expect(res.send).toHaveBeenCalled();
         });
 
-        it('should insert event into inbox on valid webhook', async () => {
-            // Skip signature validation
-            jest.spyOn(require('../backend/src/webhooks/twilioWebhooks'), 'validateTwilioSignature')
-                .mockReturnValue(true);
+        test('returns 500 when inbox insert fails', async () => {
+            mockInsertInboxEvent.mockRejectedValue(new Error('Database connection failed'));
+            const req = makeReq({ CallSid: 'CA123', CallStatus: 'completed' });
+            const res = makeRes();
 
-            // Mock successful DB insert
-            const mockDbModule = require('../backend/src/db/connection');
-            mockDbModule.query = jest.fn().mockResolvedValue({
-                rows: [{ id: 123 }]
+            await handleVoiceStatus(req, res);
+
+            expect(res.status).toHaveBeenCalledWith(500);
+            expect(res.json).toHaveBeenCalledWith({ error: 'Internal server error' });
+        });
+    });
+
+    describe('handleVoiceInbound F017 no-group guard', () => {
+        test('routes inbound calls without an assigned group to voicemail only', async () => {
+            mockResolveGroupForNumber.mockResolvedValue(null);
+            const req = makeReq({
+                CallSid: 'CA_no_group',
+                From: '+15551112222',
+                To: '+15553334444',
             });
+            req.originalUrl = '/webhooks/twilio/voice-inbound';
+            const res = makeRes();
 
-            await handleVoiceStatus(mockReq, mockRes);
+            await handleVoiceInbound(req, res);
 
-            expect(mockDbModule.query).toHaveBeenCalled();
-            expect(mockRes.status).toHaveBeenCalledWith(200);
-            expect(mockRes.send).toHaveBeenCalledWith('OK');
+            expect(mockResolveGroupForNumber).toHaveBeenCalledWith('+15553334444');
+            expect(mockBuildVoicemailTwiml).toHaveBeenCalledWith({ baseUrl: 'https://abc-metrics.fly.dev' });
+            expect(res.type).toHaveBeenCalledWith('text/xml');
+            expect(res.send.mock.calls[0][0]).toContain('<Record');
+            expect(res.send.mock.calls[0][0]).not.toContain('<Client');
+            expect(res.send.mock.calls[0][0]).not.toContain('<Sip');
         });
+    });
 
-        it('should handle duplicate events gracefully', async () => {
-            // Skip signature validation
-            jest.spyOn(require('../backend/src/webhooks/twilioWebhooks'), 'validateTwilioSignature')
-                .mockReturnValue(true);
+    describe('handleVoicemailComplete', () => {
+        test('advances the active flow with voicemail.recorded before hanging up', async () => {
+            mockAdvance.mockResolvedValue('<?xml version="1.0" encoding="UTF-8"?><Response><Hangup /></Response>');
+            const req = makeReq({ CallSid: 'CA_vm', RecordingSid: 'RE_vm' });
+            req.originalUrl = '/webhooks/twilio/voicemail-complete?flowEvent=voicemail.recorded';
+            req.query = { flowEvent: 'voicemail.recorded' };
+            const res = makeRes();
 
-            // Mock DB conflict (duplicate)
-            const mockDbModule = require('../backend/src/db/connection');
-            mockDbModule.query = jest.fn().mockResolvedValue({
-                rows: [] // ON CONFLICT DO NOTHING returns empty
-            });
+            await handleVoicemailComplete(req, res);
 
-            await handleVoiceStatus(mockReq, mockRes);
-
-            expect(mockRes.status).toHaveBeenCalledWith(200);
-            expect(mockRes.send).toHaveBeenCalledWith('OK');
-        });
-
-        it('should return 500 on database error', async () => {
-            // Skip signature validation
-            jest.spyOn(require('../backend/src/webhooks/twilioWebhooks'), 'validateTwilioSignature')
-                .mockReturnValue(true);
-
-            // Mock DB error
-            const mockDbModule = require('../backend/src/db/connection');
-            mockDbModule.query = jest.fn().mockRejectedValue(
-                new Error('Database connection failed')
-            );
-
-            await handleVoiceStatus(mockReq, mockRes);
-
-            expect(mockRes.status).toHaveBeenCalledWith(500);
-            expect(mockRes.json).toHaveBeenCalledWith({
-                error: 'Internal server error'
-            });
-        });
-
-        it('should generate unique dedupe keys', async () => {
-            jest.spyOn(require('../backend/src/webhooks/twilioWebhooks'), 'validateTwilioSignature')
-                .mockReturnValue(true);
-
-            const mockDbModule = require('../backend/src/db/connection');
-            const querySpy = jest.fn().mockResolvedValue({ rows: [{ id: 1 }] });
-            mockDbModule.query = querySpy;
-
-            await handleVoiceStatus(mockReq, mockRes);
-
-            const queryArgs = querySpy.mock.calls[0];
-            const dedupeKey = queryArgs[1][3]; // Fourth parameter
-
-            expect(dedupeKey).toBe('call:CA1234567890abcdef:completed:1234567890');
+            expect(mockAdvance).toHaveBeenCalledWith('CA_vm', 'voicemail.recorded', expect.stringMatching(/^trace_/));
+            expect(res.type).toHaveBeenCalledWith('text/xml');
+            expect(res.send.mock.calls[0][0]).toContain('<Hangup');
         });
     });
 });

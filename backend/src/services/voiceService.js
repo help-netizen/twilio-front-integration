@@ -2,8 +2,8 @@
  * Voice Service — Twilio Access Token generation for WebRTC SoftPhone.
  *
  * Uses Twilio API Key + Secret to mint short-lived Access Tokens with VoiceGrant.
- * Each FSM user gets a unique identity (user_<id>) so Twilio can route
- * incoming calls to the correct browser session.
+ * Each FSM user gets a tenant-scoped identity so Twilio can route incoming calls
+ * to the correct browser session without mixing users across companies.
  */
 
 const twilio = require('twilio');
@@ -21,7 +21,7 @@ const TOKEN_TTL = 3600; // 1 hour
 /**
  * Generate a Twilio Access Token with VoiceGrant for the given identity.
  *
- * @param {string} identity — unique user identity, e.g. "user_42"
+ * @param {string} identity — unique tenant-scoped user identity
  * @returns {{ token: string, identity: string, expiresAt: string }}
  */
 function generateToken(identity) {

@@ -5,7 +5,7 @@ import { useSoftPhone } from '../../contexts/SoftPhoneContext';
 import { authedFetch } from '../../services/apiClient';
 import React from 'react';
 
-interface BlancNumber { phone_number: string; friendly_name: string | null; }
+interface BlancNumber { phone_number: string; friendly_name: string | null; group_name?: string | null; }
 
 export function useSoftPhoneWidget(voice: UseTwilioDeviceReturn, open: boolean) {
     const [inputValue, setInputValue] = useState('');
@@ -38,6 +38,7 @@ export function useSoftPhoneWidget(voice: UseTwilioDeviceReturn, open: boolean) 
                 const res = await authedFetch('/api/voice/blanc-numbers');
                 const data = await res.json();
                 if (data.ok && data.numbers.length > 0) { setBlancNumbers(data.numbers); setSelectedCallerId(data.numbers[0].phone_number); }
+                else { setBlancNumbers([]); setSelectedCallerId(''); }
             } catch (err) { console.error('[SoftPhone] Failed to load blanc numbers:', err); }
         })();
     }, []);
