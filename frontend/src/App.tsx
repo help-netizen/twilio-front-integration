@@ -45,6 +45,7 @@ import OperationsDashboardPage from './pages/telephony/OperationsDashboardPage';
 
 import ActiveCallWorkspacePage from './pages/telephony/ActiveCallWorkspacePage';
 import UserGroupsPage from './pages/telephony/UserGroupsPage';
+import UserGroupDetailPage from './pages/telephony/UserGroupDetailPage';
 
 import TelephonyLayout from './components/telephony/TelephonyLayout';
 import { EventNotification } from './components/EventNotification';
@@ -117,10 +118,12 @@ function App() {
               {/* Telephony — Configuration (with sidebar) */}
               <Route path="/settings/telephony" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><RouteManagerOverviewPage /></TelephonyLayout></ProtectedRoute>} />
               <Route path="/settings/telephony/user-groups" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><UserGroupsPage /></TelephonyLayout></ProtectedRoute>} />
+              <Route path="/settings/telephony/user-groups/:groupId" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><UserGroupDetailPage /></TelephonyLayout></ProtectedRoute>} />
               <Route path="/settings/telephony/phone-numbers" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><PhoneNumbersPage /></TelephonyLayout></ProtectedRoute>} />
               <Route path="/settings/telephony/audio-library" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><AudioLibraryPage /></TelephonyLayout></ProtectedRoute>} />
               <Route path="/settings/telephony/provider-settings" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><ProviderSettingsPage /></TelephonyLayout></ProtectedRoute>} />
               <Route path="/settings/telephony/routing-logs" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><RoutingLogsPage /></TelephonyLayout></ProtectedRoute>} />
+              <Route path="/settings/telephony/dashboard" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><OperationsDashboardPage /></TelephonyLayout></ProtectedRoute>} />
 
               {/* Call Flow Builder — full-screen, accessed from User Group detail */}
               <Route path="/settings/telephony/user-groups/:groupId/flow" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><CallFlowBuilderPage /></ProtectedRoute>} />
@@ -128,8 +131,8 @@ function App() {
               {/* Workflow Builder — full-screen visual FSM editor */}
               <Route path="/settings/workflows/:machineKey" element={<ProtectedRoute permissions={['tenant.company.manage']}><WorkflowBuilderPage /></ProtectedRoute>} />
 
-              {/* Operations — Dashboard & Queue (with sidebar) */}
-              <Route path="/calls/dashboard" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><OperationsDashboardPage /></TelephonyLayout></ProtectedRoute>} />
+              {/* Backward-compatible operations URL */}
+              <Route path="/calls/dashboard" element={<Navigate to="/settings/telephony/dashboard" replace />} />
 
               {/* Active Call Workspace — full-screen */}
               <Route path="/calls/live/:callId" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><ActiveCallWorkspacePage /></ProtectedRoute>} />
@@ -147,4 +150,3 @@ function App() {
 }
 
 export default App;
-

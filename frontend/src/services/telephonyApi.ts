@@ -1,6 +1,7 @@
 import type {
     CallFlow, PhoneNumber, AudioAsset, RoutingLogEntry, AgentStatus,
     QueuedCall, DashboardKPI, ProviderInfo, ActiveCallInfo, UserGroup,
+    OperationsDashboardData,
 } from '../types/telephony';
 
 import { authedFetch } from './apiClient';
@@ -32,39 +33,10 @@ const MOCK_AUDIO: AudioAsset[] = [
     { id: 'a-5', name: 'Thank You TTS', category: 'tts', duration_sec: 3, format: 'wav', created_at: '2026-03-05' },
 ];
 
-const MOCK_LOGS: RoutingLogEntry[] = [
-    { id: 'rl-1', session_id: 'sess-a1', caller: '+1 (555) 123-4567', number_called: '+1 (617) 555-0101', result: 'answered', duration_sec: 245, timestamp: '2026-03-08 11:23:15', flow_path: ['Start', 'Greeting', 'Menu', 'Queue', 'Agent'], latency_ms: 320 },
-    { id: 'rl-2', session_id: 'sess-a2', caller: '+1 (555) 234-5678', number_called: '+1 (617) 555-0102', result: 'voicemail', duration_sec: 62, timestamp: '2026-03-08 11:18:42', flow_path: ['Start', 'Greeting', 'Hours Check', 'Voicemail'], latency_ms: 180 },
-    { id: 'rl-3', session_id: 'sess-a3', caller: '+1 (555) 345-6789', number_called: '+1 (617) 555-0101', result: 'abandoned', duration_sec: 30, timestamp: '2026-03-08 10:55:01', flow_path: ['Start', 'Greeting', 'Queue'], latency_ms: 220 },
-    { id: 'rl-4', session_id: 'sess-a4', caller: '+1 (555) 456-7890', number_called: '+1 (617) 555-0103', result: 'error', duration_sec: 0, timestamp: '2026-03-08 10:32:18', flow_path: ['Start'], latency_ms: 5200, error: 'Queue timeout exceeded' },
-];
-
 const MOCK_PROVIDER: ProviderInfo = {
     name: 'Twilio', status: 'connected', account_sid: 'AC****abcd1234', numbers_synced: 4,
     last_sync: '2026-03-08 06:00:00', error_log: [],
 };
-
-const MOCK_AGENTS: AgentStatus[] = [
-    { id: 'ag-1', name: 'Sarah Johnson', status: 'available', device_ready: true },
-    { id: 'ag-2', name: 'Mike Chen', status: 'on_call', current_call: '+1 (555) 123-4567', device_ready: true },
-    { id: 'ag-3', name: 'Lisa Park', status: 'away', device_ready: true },
-    { id: 'ag-4', name: 'Tom Rivera', status: 'available', device_ready: false },
-];
-
-const MOCK_QUEUE: QueuedCall[] = [
-    { id: 'qc-1', caller: '+1 (555) 111-2222', caller_name: 'John Miller', queue_name: 'General', wait_seconds: 45, priority: 'normal' },
-    { id: 'qc-2', caller: '+1 (555) 333-4444', caller_name: 'VIP Client', queue_name: 'General', wait_seconds: 120, priority: 'vip' },
-    { id: 'qc-3', caller: '+1 (555) 555-6666', queue_name: 'Support', wait_seconds: 15, priority: 'high' },
-];
-
-const MOCK_KPIS: DashboardKPI[] = [
-    { label: 'Total Calls Today', value: 47, change: '+12%', trend: 'up' },
-    { label: 'Avg Wait Time', value: '1m 23s', change: '-8%', trend: 'down' },
-    { label: 'Answer Rate', value: '92%', change: '+3%', trend: 'up' },
-    { label: 'Active Now', value: 3, trend: 'flat' },
-    { label: 'In Queue', value: 3, change: '+1', trend: 'up' },
-    { label: 'Missed Today', value: 4, change: '-2', trend: 'down' },
-];
 
 const MOCK_ACTIVE_CALL: ActiveCallInfo = {
     call_sid: 'CA-mock-001', caller: 'John Miller', caller_name: 'John Miller',
@@ -95,12 +67,10 @@ export const telephonyApi = {
         catch { await delay(); return undefined; }
     },
     saveFlow: async (id: string, graph: CallFlow['graph']): Promise<void> => {
-        try {
-            await apiFetch<void>(`/call-flows/${id}`, {
-                method: 'PUT',
-                body: JSON.stringify({ graph }),
-            });
-        } catch { /* silent fallback in dev */ }
+        await apiFetch<void>(`/call-flows/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify({ graph }),
+        });
     },
 
     getUserGroup: async (id: string): Promise<UserGroup | undefined> => {
@@ -118,62 +88,82 @@ export const telephonyApi = {
     listAudio: async (): Promise<AudioAsset[]> => { await delay(); return MOCK_AUDIO; },
 
     // Logs — real API (calls table)
-    listLogs: async (params: { dateFrom?: string; dateTo?: string; limit?: number } = {}): Promise<RoutingLogEntry[]> => {
-        const { dateFrom, dateTo, limit = 200 } = params;
-        try {
-            const qs = new URLSearchParams();
-            qs.set('limit', String(limit));
-            qs.set('root_only', 'true');
-            if (dateFrom) qs.set('date_from', dateFrom);
-            if (dateTo) qs.set('date_to', dateTo);
-            const data = await apiFetch<{ calls: any[]; next_cursor: number | null; count: number }>(
-                `/calls?${qs.toString()}`,
-            );
-            const calls = (data.calls || []).filter((c: any) => !c.parent_call_sid);
-            return calls.map((c: any) => {
-                let result: RoutingLogEntry['result'] = 'answered';
-                if (c.status === 'failed') result = 'error';
-                else if (c.status === 'busy' || c.status === 'no-answer' || c.status === 'canceled') result = 'abandoned';
-                else if (c.status === 'completed' && !c.answered_at) result = 'voicemail';
+    listLogs: async (params: { dateFrom?: string; dateTo?: string; limit?: number; groupId?: string } = {}): Promise<RoutingLogEntry[]> => {
+        const { dateFrom, dateTo, limit = 200, groupId } = params;
+        const qs = new URLSearchParams();
+        qs.set('limit', String(limit));
+        qs.set('root_only', 'true');
+        if (dateFrom) qs.set('date_from', dateFrom);
+        if (dateTo) qs.set('date_to', dateTo);
+        if (groupId) qs.set('group_id', groupId);
+        const data = await apiFetch<{ calls: any[]; next_cursor: number | null; count: number }>(
+            `/calls?${qs.toString()}`,
+        );
+        const calls = (data.calls || []).filter((c: any) => !c.parent_call_sid);
+        return calls.map((c: any) => {
+            let result: RoutingLogEntry['result'] = 'answered';
+            if (c.status === 'failed') result = 'error';
+            else if (c.status === 'busy' || c.status === 'no-answer' || c.status === 'canceled') result = 'abandoned';
+            else if (c.status === 'completed' && !c.answered_at) result = 'voicemail';
 
-                const startedAt = c.started_at || c.created_at;
-                const answeredAt = c.answered_at;
-                const latencyMs = startedAt && answeredAt
-                    ? Math.round(new Date(answeredAt).getTime() - new Date(startedAt).getTime())
-                    : 0;
+            const startedAt = c.started_at || c.created_at;
+            const answeredAt = c.answered_at;
+            const latencyMs = startedAt && answeredAt
+                ? Math.round(new Date(answeredAt).getTime() - new Date(startedAt).getTime())
+                : 0;
 
-                const flowPath: string[] = [c.direction === 'inbound' ? 'Inbound' : 'Outbound'];
+            const flowPath: string[] = Array.isArray(c.flow_path) && c.flow_path.length > 0
+                ? c.flow_path
+                : [c.direction === 'inbound' ? 'Inbound' : 'Outbound'];
+            if (flowPath.length === 1) {
                 if (c.status === 'completed' && c.answered_at) flowPath.push('Connected');
                 if (c.duration_sec && c.duration_sec > 0) flowPath.push('In Call');
                 flowPath.push(c.status === 'completed' ? 'Completed' : c.status);
+            }
 
-                return {
-                    id: String(c.id),
-                    session_id: c.call_sid || '',
-                    caller: c.from_number || '',
-                    number_called: c.to_number || '',
-                    result,
-                    duration_sec: c.duration_sec || 0,
-                    timestamp: startedAt || '',
-                    flow_path: flowPath,
-                    latency_ms: latencyMs,
-                    direction: c.direction || 'inbound',
-                    contact_name: c.contact?.full_name || null,
-                } as RoutingLogEntry;
-            });
-        } catch {
-            await delay();
-            return MOCK_LOGS;
-        }
+            return {
+                id: String(c.id),
+                session_id: c.call_sid || '',
+                caller: c.from_number || '',
+                number_called: c.to_number || '',
+                group_id: c.routing_group?.id || null,
+                group_name: c.routing_group?.name || null,
+                result,
+                duration_sec: c.duration_sec || 0,
+                timestamp: startedAt || '',
+                flow_path: flowPath,
+                latency_ms: latencyMs,
+                direction: c.direction || 'inbound',
+                contact_name: c.contact?.full_name || null,
+            } as RoutingLogEntry;
+        });
     },
 
     // Provider — still mock
     getProvider: async (): Promise<ProviderInfo> => { await delay(); return MOCK_PROVIDER; },
 
-    // Operations — still mock
-    getAgents: async (): Promise<AgentStatus[]> => { await delay(); return MOCK_AGENTS; },
-    getQueue: async (): Promise<QueuedCall[]> => { await delay(); return MOCK_QUEUE; },
-    getKpis: async (): Promise<DashboardKPI[]> => { await delay(); return MOCK_KPIS; },
+    // Operations — group-aware API
+    getOperationsDashboard: async (): Promise<OperationsDashboardData> => {
+        return apiFetch<OperationsDashboardData>('/calls/operations-dashboard');
+    },
+    transferCall: async (callSid: string, targetUserId: string): Promise<void> => {
+        await apiFetch<void>(`/calls/${encodeURIComponent(callSid)}/transfer`, {
+            method: 'POST',
+            body: JSON.stringify({ target_user_id: targetUserId }),
+        });
+    },
+    getAgents: async (): Promise<AgentStatus[]> => {
+        const data = await telephonyApi.getOperationsDashboard();
+        return data.agents;
+    },
+    getQueue: async (): Promise<QueuedCall[]> => {
+        const data = await telephonyApi.getOperationsDashboard();
+        return data.queue;
+    },
+    getKpis: async (): Promise<DashboardKPI[]> => {
+        const data = await telephonyApi.getOperationsDashboard();
+        return data.kpis;
+    },
     getActiveCall: async (_id: string): Promise<ActiveCallInfo> => { await delay(); return MOCK_ACTIVE_CALL; },
 
     // Telephony Overview — real API

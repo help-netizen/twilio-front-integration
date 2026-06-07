@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Plus, Users, Phone, Calendar, Play, Pencil, X, Trash2, Shuffle } from 'lucide-react';
+import { Plus, Users, Phone, Calendar, Play, Pencil, X, Trash2, Shuffle, Eye } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useRealtimeEvents } from '../../hooks/useRealtimeEvents';
+import { getScheduleStatus } from './scheduleStatus';
 
 // ── Types (kept local, matches API response) ─────────────────────────────────
 interface ScheduleDay { day: string; open: string; close: string }
@@ -12,7 +14,7 @@ interface UserGroupData {
     members: { id: string; name: string; status: string }[];
     numbers: { id: string; number: string; friendly_name: string }[];
     schedule: { timezone: string; hours: ScheduleDay[] };
-    flow: { id: string; status: 'draft' | 'published'; updated_at: string; graph: unknown } | null;
+    flow: { id: string; status: 'active'; updated_at: string; graph: unknown } | null;
 }
 const STATUS_COLORS: Record<string, { bg: string; dot: string }> = {
     available: { bg: '#d1fae5', dot: '#10b981' },
@@ -46,11 +48,7 @@ let _allAgents: { id: string; name: string }[] = [];
 let _allNumbers: { id: string; number: string; friendly_name: string }[] = [];
 
 const RING_STRATEGIES: Record<string, string> = {
-    'Round Robin': 'Distributes calls evenly across agents in rotation',
     'Simultaneous': 'Rings all available agents at the same time',
-    'Most Idle': 'Routes to the agent who has been idle the longest',
-    'Sequential': 'Rings agents in a fixed order, first available answers',
-    'Weighted': 'Routes based on assigned weights (skill or priority)',
 };
 const DEFAULT_HOURS: ScheduleDay[] = [
     { day: 'Mon', open: '09:00', close: '17:00' }, { day: 'Tue', open: '09:00', close: '17:00' },
@@ -87,7 +85,6 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
     const [name, setName] = useState(group?.name || '');
     const [members, setMembers] = useState<string[]>(group?.members.map(m => m.id) || []);
     const [nums, setNums] = useState<string[]>(group?.numbers.map(n => n.id) || []);
-    const [strategy, setStrategy] = useState(group?.strategy || 'Round Robin');
     const [hours, setHours] = useState<ScheduleDay[]>(group ? [...group.schedule.hours] : [...DEFAULT_HOURS]);
     const [saving, setSaving] = useState(false);
 
@@ -119,7 +116,7 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
         setSaving(true);
         try {
             const payload = {
-                name, strategy, members, numbers: nums.map(id => {
+                name, strategy: 'Simultaneous', members, numbers: nums.map(id => {
                     const n = _allNumbers.find(x => x.id === id);
                     return n ? { number: n.number, friendly_name: n.friendly_name } : { number: id };
                 }), hours
@@ -218,8 +215,8 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
                 <div style={sectionLabel}><Shuffle size={13} />Ring Strategy</div>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     {Object.entries(RING_STRATEGIES).map(([s, tip]) => (
-                        <button key={s} onClick={() => setStrategy(s)} title={tip}
-                            style={{ padding: '4px 10px', fontSize: 11, fontWeight: strategy === s ? 600 : 400, background: strategy === s ? '#6366f1' : '#f3f4f6', color: strategy === s ? '#fff' : '#374151', border: strategy === s ? 'none' : '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer' }}>
+                        <button key={s} type="button" title={tip}
+                            style={{ padding: '4px 10px', fontSize: 11, fontWeight: 600, background: '#6366f1', color: '#fff', border: 'none', borderRadius: 6, cursor: 'default' }}>
                             {s}
                         </button>
                     ))}
@@ -279,7 +276,12 @@ export default function UserGroupsPage() {
         try {
             const res = await authedFetch('/api/user-groups');
             const json = await res.json();
-            if (json.ok) setGroups(json.data);
+            if (json.ok) {
+                setGroups((json.data || []).map((group: UserGroupData) => ({
+                    ...group,
+                    strategy: 'Simultaneous',
+                })));
+            }
         } catch { /* fallback: empty */ }
         setLoading(false);
     };
@@ -304,6 +306,19 @@ export default function UserGroupsPage() {
             })
             .catch(err => console.error('[UserGroups] /api/phone-numbers failed:', err));
     }, []);
+
+    useRealtimeEvents({
+        onGenericEvent: (eventType, data) => {
+            if (eventType !== 'agent.status.changed') return;
+            setGroups(current => current.map(group => {
+                if (!Array.isArray(data.groupIds) || !data.groupIds.includes(group.id)) return group;
+                return {
+                    ...group,
+                    members: group.members.map(member => member.id === data.userId ? { ...member, status: data.status } : member),
+                };
+            }));
+        },
+    });
 
     return (
         <div style={{ padding: 24 }}>
@@ -330,9 +345,29 @@ export default function UserGroupsPage() {
                                 <div style={{ width: 40, height: 40, borderRadius: 10, background: '#fef3c7', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                     <Users size={18} style={{ color: '#f59e0b' }} />
                                 </div>
-                                <div style={{ fontSize: 16, fontWeight: 700, color: '#111' }}>{g.name}</div>
+                                <div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                        <div style={{ fontSize: 16, fontWeight: 700, color: '#111' }}>{g.name}</div>
+                                        {(() => {
+                                            const reachable = g.members.some(m => m.status === 'available');
+                                            return (
+                                                <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: reachable ? '#d1fae5' : '#fef2f2', color: reachable ? '#047857' : '#b91c1c' }}>
+                                                    {reachable ? 'Reachable' : 'Voicemail risk'}
+                                                </span>
+                                            );
+                                        })()}
+                                    </div>
+                                    {(() => {
+                                        const status = getScheduleStatus(g.schedule);
+                                        return <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{status.label}</div>;
+                                    })()}
+                                </div>
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <button onClick={(e) => { e.stopPropagation(); navigate(`/settings/telephony/user-groups/${g.id}`); }}
+                                    style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 12px', fontSize: 12, fontWeight: 500, background: '#fff', color: '#374151', border: '1px solid #e5e7eb', borderRadius: 8, cursor: 'pointer' }}>
+                                    <Eye size={13} />Details
+                                </button>
                                 <button onClick={(e) => { e.stopPropagation(); setEditGroup(g); }}
                                     style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 12px', fontSize: 12, fontWeight: 500, background: '#f3f4f6', color: '#374151', border: '1px solid #e5e7eb', borderRadius: 8, cursor: 'pointer' }}>
                                     <Pencil size={13} />Edit

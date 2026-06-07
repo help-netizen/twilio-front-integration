@@ -12,6 +12,8 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db/connection');
 const crypto = require('crypto');
+const agentPresence = require('../services/agentPresence');
+const { groupsForUser } = require('../services/groupRouting');
 
 /** Generate the default skeleton v2 call flow graph JSON for a group */
 function createSkeletonJSON(groupName) {
@@ -44,6 +46,14 @@ function genId(prefix = 'ug') {
     return `${prefix}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
+function getCompanyId(req) {
+    return req.companyFilter?.company_id;
+}
+
+function getCurrentUserId(req) {
+    return req.user?.crmUser?.id || req.user?.sub || null;
+}
+
 function hasRenderableGraph(graph) {
     return Array.isArray(graph?.states) && graph.states.length > 0;
 }
@@ -61,7 +71,7 @@ async function ensureFlowForGroup(group, companyId) {
         const flowId = genId('cf');
         const inserted = await db.query(
             `INSERT INTO call_flows (id, company_id, group_id, name, status, graph_json)
-             VALUES ($1, $2, $3, $4, 'draft', $5)
+             VALUES ($1, $2, $3, $4, 'active', $5)
              RETURNING id, status, updated_at, graph_json`,
             [flowId, companyId, group.id, `${group.name} Flow`, createSkeletonJSON(group.name)]
         );
@@ -71,10 +81,21 @@ async function ensureFlowForGroup(group, companyId) {
     if (!hasRenderableGraph(safeParseJSON(flow.graph_json))) {
         const updated = await db.query(
             `UPDATE call_flows
-             SET graph_json = $1
+             SET graph_json = $1, status = 'active'
              WHERE id = $2 AND company_id = $3
              RETURNING id, status, updated_at, graph_json`,
             [createSkeletonJSON(group.name), flow.id, companyId]
+        );
+        return updated.rows[0];
+    }
+
+    if (flow.status !== 'active') {
+        const updated = await db.query(
+            `UPDATE call_flows
+             SET status = 'active'
+             WHERE id = $1 AND company_id = $2
+             RETURNING id, status, updated_at, graph_json`,
+            [flow.id, companyId]
         );
         return updated.rows[0];
     }
@@ -84,20 +105,41 @@ async function ensureFlowForGroup(group, companyId) {
 
 /** Build full group object from base row + related rows */
 async function buildGroupPayload(group, companyId) {
-    const [membersRes, numbersRes, hoursRes, flow] = await Promise.all([
+    const [membersRes, numbersRes, hoursRes, companyRes, flow] = await Promise.all([
         db.query(`
-            SELECT ugm.user_id AS id, cu.full_name AS name, 'available' AS status
+            SELECT ugm.user_id AS id, COALESCE(cu.full_name, cu.email, ugm.user_id) AS name
             FROM user_group_members ugm
-            LEFT JOIN crm_users cu ON cu.id = ugm.user_id::uuid
+            LEFT JOIN crm_users cu ON cu.id::text = ugm.user_id
+            JOIN user_groups ug ON ug.id = ugm.group_id
             WHERE ugm.group_id = $1
+              AND ug.company_id = $2
+              AND COALESCE(ugm.is_active, true) = true
             ORDER BY ugm.priority, ugm.created_at
-        `, [group.id]),
+        `, [group.id, companyId]),
         db.query(`
-            SELECT id::text, phone_number AS number, friendly_name
-            FROM user_group_numbers
-            WHERE group_id = $1
-            ORDER BY created_at
-        `, [group.id]),
+            SELECT DISTINCT ON (phone_number)
+                   id, phone_number AS number, friendly_name
+            FROM (
+                SELECT pns.id::text AS id,
+                       pns.phone_number,
+                       COALESCE(pns.friendly_name, ugn.friendly_name) AS friendly_name,
+                       0 AS sort_order
+                FROM phone_number_settings pns
+                LEFT JOIN user_group_numbers ugn
+                  ON ugn.phone_number = pns.phone_number
+                 AND ugn.group_id = pns.group_id
+                WHERE pns.group_id = $1
+                  AND pns.company_id = $2
+                UNION ALL
+                SELECT ugn.id::text AS id,
+                       ugn.phone_number,
+                       ugn.friendly_name,
+                       1 AS sort_order
+                FROM user_group_numbers ugn
+                WHERE ugn.group_id = $1
+            ) numbers
+            ORDER BY phone_number, sort_order
+        `, [group.id, companyId]),
         db.query(`
             SELECT day_of_week AS day,
                    CASE WHEN is_open THEN open_time ELSE 'Closed' END AS open,
@@ -109,23 +151,30 @@ async function buildGroupPayload(group, companyId) {
                 WHEN 'Thu' THEN 4 WHEN 'Fri' THEN 5 WHEN 'Sat' THEN 6
                 WHEN 'Sun' THEN 7 END
         `, [group.id]),
+        db.query(`SELECT COALESCE(timezone, 'America/New_York') AS timezone FROM companies WHERE id::text = $1 LIMIT 1`, [String(companyId)]),
         ensureFlowForGroup(group, companyId),
     ]);
+
+    const presence = await agentPresence.getPresenceSnapshot(membersRes.rows.map(m => m.id), companyId);
+    const members = membersRes.rows.map(m => ({
+        ...m,
+        status: presence.get(String(m.id)) || 'offline',
+    }));
 
     return {
         id: group.id,
         name: group.name,
         desc: group.description || '',
-        strategy: group.strategy,
-        members: membersRes.rows,
+        strategy: 'Simultaneous',
+        members,
         numbers: numbersRes.rows,
         schedule: {
-            timezone: 'America/New_York',
+            timezone: group.timezone || companyRes.rows[0]?.timezone || 'America/New_York',
             hours: hoursRes.rows.length > 0 ? hoursRes.rows : [],
         },
         flow: flow ? {
             id: flow.id,
-            status: flow.status,
+            status: 'active',
             updated_at: flow.updated_at,
             graph: safeParseJSON(flow.graph_json),
         } : null,
@@ -173,7 +222,7 @@ async function ensureDefaultGroup(companyId) {
     // Default call flow
     const flowId = genId('cf');
     await db.query(
-        `INSERT INTO call_flows (id, company_id, group_id, name, status, graph_json) VALUES ($1, $2, $3, 'Dispatch Team Flow', 'draft', $4)`,
+        `INSERT INTO call_flows (id, company_id, group_id, name, status, graph_json) VALUES ($1, $2, $3, 'Dispatch Team Flow', 'active', $4)`,
         [flowId, companyId, groupId, createSkeletonJSON('Dispatch Team')]
     );
 }
@@ -182,7 +231,7 @@ async function ensureDefaultGroup(companyId) {
 
 router.get('/', async (req, res) => {
     try {
-        const companyId = req.user?.company_id;
+        const companyId = getCompanyId(req);
         console.log('[UserGroups] GET list — companyId:', companyId, 'user:', req.user?.email);
         if (!companyId) return res.status(401).json({ ok: false, error: 'No company context' });
 
@@ -206,11 +255,30 @@ router.get('/', async (req, res) => {
     }
 });
 
+// ─── MY GROUPS ────────────────────────────────────────────────────────────────
+
+router.get('/my', async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        const userId = getCurrentUserId(req);
+        if (!companyId) return res.status(401).json({ ok: false, error: 'No company context' });
+
+        const includeAllForDev = req.user?._devMode && !req.user?.crmUser?.id;
+        const rows = await groupsForUser(userId, companyId, { includeAllForDev });
+        const groups = await Promise.all(rows.map(g => buildGroupPayload(g, companyId)));
+
+        res.json({ ok: true, data: groups });
+    } catch (err) {
+        console.error('[UserGroups] GET /my error:', err.message);
+        res.status(500).json({ ok: false, error: 'Failed to fetch current user groups' });
+    }
+});
+
 // ─── DETAIL ───────────────────────────────────────────────────────────────────
 
 router.get('/:id', async (req, res) => {
     try {
-        const companyId = req.user?.company_id;
+        const companyId = getCompanyId(req);
         const { id } = req.params;
 
         const result = await db.query(
@@ -235,10 +303,10 @@ router.get('/:id', async (req, res) => {
 router.post('/', async (req, res) => {
     const client = await db.pool.connect();
     try {
-        const companyId = req.user?.company_id;
+        const companyId = getCompanyId(req);
         if (!companyId) return res.status(401).json({ ok: false, error: 'No company context' });
 
-        const { name, strategy = 'Round Robin', members = [], numbers = [], hours = [] } = req.body;
+        const { name, members = [], numbers = [], hours = [] } = req.body;
 
         if (!name || !name.trim()) {
             return res.status(400).json({ ok: false, error: 'Group name is required' });
@@ -249,7 +317,7 @@ router.post('/', async (req, res) => {
         const groupId = genId('ug');
         await client.query(
             `INSERT INTO user_groups (id, company_id, name, strategy) VALUES ($1, $2, $3, $4)`,
-            [groupId, companyId, name.trim(), strategy]
+            [groupId, companyId, name.trim(), 'Simultaneous']
         );
 
         // Members
@@ -264,9 +332,42 @@ router.post('/', async (req, res) => {
         for (const numObj of numbers) {
             const phone = typeof numObj === 'string' ? numObj : numObj.number;
             const fname = typeof numObj === 'string' ? '' : (numObj.friendly_name || '');
+            if (!phone) continue;
+            const conflict = await client.query(
+                `SELECT pns.group_id, ug.name AS group_name
+                 FROM phone_number_settings pns
+                 LEFT JOIN user_groups ug ON ug.id = pns.group_id AND ug.company_id = pns.company_id::text
+                 WHERE pns.phone_number = $1
+                   AND pns.company_id = $2
+                   AND pns.group_id IS NOT NULL
+                   AND pns.group_id <> $3
+                 LIMIT 1`,
+                [phone, companyId, groupId]
+            );
+            if (conflict.rows.length > 0) {
+                const err = new Error(`Phone number already assigned to ${conflict.rows[0].group_name || 'another group'}`);
+                err.statusCode = 409;
+                throw err;
+            }
+            await client.query(
+                `DELETE FROM user_group_numbers ugn
+                 USING user_groups ug
+                 WHERE ugn.group_id = ug.id
+                   AND ug.company_id = $3
+                   AND ugn.phone_number = $1
+                   AND ugn.group_id <> $2`,
+                [phone, groupId, companyId]
+            );
             await client.query(
                 `INSERT INTO user_group_numbers (group_id, phone_number, friendly_name) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
                 [groupId, phone, fname]
+            );
+            await client.query(
+                `UPDATE phone_number_settings
+                 SET group_id = $3, routing_mode = 'client'
+                 WHERE phone_number = $1
+                   AND company_id = $2`,
+                [phone, companyId, groupId]
             );
         }
 
@@ -282,20 +383,20 @@ router.post('/', async (req, res) => {
         // Create default call flow for group
         const flowId = genId('cf');
         await client.query(
-            `INSERT INTO call_flows (id, company_id, group_id, name, status, graph_json) VALUES ($1, $2, $3, $4, 'draft', $5)`,
+            `INSERT INTO call_flows (id, company_id, group_id, name, status, graph_json) VALUES ($1, $2, $3, $4, 'active', $5)`,
             [flowId, companyId, groupId, `${name.trim()} Flow`, createSkeletonJSON(name.trim())]
         );
 
         await client.query('COMMIT');
 
         // Return full payload
-        const groupRow = (await db.query(`SELECT * FROM user_groups WHERE id = $1`, [groupId])).rows[0];
+        const groupRow = (await db.query(`SELECT * FROM user_groups WHERE id = $1 AND company_id = $2`, [groupId, companyId])).rows[0];
         const payload = await buildGroupPayload(groupRow, companyId);
         res.status(201).json({ ok: true, data: payload });
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('[UserGroups] POST error:', err.message);
-        res.status(500).json({ ok: false, error: 'Failed to create group' });
+        res.status(err.statusCode || 500).json({ ok: false, error: err.statusCode === 409 ? err.message : 'Failed to create group' });
     } finally {
         client.release();
     }
@@ -306,9 +407,9 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
     const client = await db.pool.connect();
     try {
-        const companyId = req.user?.company_id;
+        const companyId = getCompanyId(req);
         const { id } = req.params;
-        const { name, strategy, members, numbers, hours } = req.body;
+        const { name, members, numbers, hours } = req.body;
 
         // Verify ownership
         const existing = await client.query(`SELECT id FROM user_groups WHERE id = $1 AND company_id = $2`, [id, companyId]);
@@ -319,15 +420,14 @@ router.put('/:id', async (req, res) => {
         await client.query('BEGIN');
 
         // Update base fields
-        if (name !== undefined || strategy !== undefined) {
+        if (name !== undefined) {
             const setClauses = [];
             const setVals = [];
             let si = 1;
             if (name !== undefined) { setClauses.push(`name = $${si++}`); setVals.push(name.trim()); }
-            if (strategy !== undefined) { setClauses.push(`strategy = $${si++}`); setVals.push(strategy); }
             if (setClauses.length > 0) {
-                setVals.push(id);
-                await client.query(`UPDATE user_groups SET ${setClauses.join(', ')} WHERE id = $${si}`, setVals);
+                setVals.push(id, companyId);
+                await client.query(`UPDATE user_groups SET ${setClauses.join(', ')} WHERE id = $${si++} AND company_id = $${si}`, setVals);
             }
         }
 
@@ -345,12 +445,52 @@ router.put('/:id', async (req, res) => {
         // Replace numbers
         if (numbers !== undefined) {
             await client.query(`DELETE FROM user_group_numbers WHERE group_id = $1`, [id]);
+            await client.query(
+                `UPDATE phone_number_settings
+                 SET group_id = NULL,
+                     routing_mode = CASE WHEN routing_mode = 'client' THEN 'sip' ELSE routing_mode END
+                 WHERE group_id = $1 AND company_id = $2`,
+                [id, companyId]
+            );
             for (const numObj of numbers) {
                 const phone = typeof numObj === 'string' ? numObj : numObj.number;
                 const fname = typeof numObj === 'string' ? '' : (numObj.friendly_name || '');
+                if (!phone) continue;
+                const conflict = await client.query(
+                    `SELECT pns.group_id, ug.name AS group_name
+                     FROM phone_number_settings pns
+                     LEFT JOIN user_groups ug ON ug.id = pns.group_id AND ug.company_id = pns.company_id::text
+                     WHERE pns.phone_number = $1
+                       AND pns.company_id = $2
+                       AND pns.group_id IS NOT NULL
+                       AND pns.group_id <> $3
+                     LIMIT 1`,
+                    [phone, companyId, id]
+                );
+                if (conflict.rows.length > 0) {
+                    const err = new Error(`Phone number already assigned to ${conflict.rows[0].group_name || 'another group'}`);
+                    err.statusCode = 409;
+                    throw err;
+                }
+                await client.query(
+                    `DELETE FROM user_group_numbers ugn
+                     USING user_groups ug
+                     WHERE ugn.group_id = ug.id
+                       AND ug.company_id = $3
+                       AND ugn.phone_number = $1
+                       AND ugn.group_id <> $2`,
+                    [phone, id, companyId]
+                );
                 await client.query(
                     `INSERT INTO user_group_numbers (group_id, phone_number, friendly_name) VALUES ($1, $2, $3)`,
                     [id, phone, fname]
+                );
+                await client.query(
+                    `UPDATE phone_number_settings
+                     SET group_id = $3, routing_mode = 'client'
+                     WHERE phone_number = $1
+                       AND company_id = $2`,
+                    [phone, companyId, id]
                 );
             }
         }
@@ -369,13 +509,13 @@ router.put('/:id', async (req, res) => {
 
         await client.query('COMMIT');
 
-        const groupRow = (await db.query(`SELECT * FROM user_groups WHERE id = $1`, [id])).rows[0];
+        const groupRow = (await db.query(`SELECT * FROM user_groups WHERE id = $1 AND company_id = $2`, [id, companyId])).rows[0];
         const payload = await buildGroupPayload(groupRow, companyId);
         res.json({ ok: true, data: payload });
     } catch (err) {
         await client.query('ROLLBACK');
         console.error('[UserGroups] PUT error:', err.message);
-        res.status(500).json({ ok: false, error: 'Failed to update group' });
+        res.status(err.statusCode || 500).json({ ok: false, error: err.statusCode === 409 ? err.message : 'Failed to update group' });
     } finally {
         client.release();
     }
@@ -385,7 +525,7 @@ router.put('/:id', async (req, res) => {
 
 router.delete('/:id', async (req, res) => {
     try {
-        const companyId = req.user?.company_id;
+        const companyId = getCompanyId(req);
         const { id } = req.params;
 
         const result = await db.query(
@@ -398,7 +538,14 @@ router.delete('/:id', async (req, res) => {
         }
 
         // Also delete associated flow
-        await db.query(`DELETE FROM call_flows WHERE group_id = $1`, [id]);
+        await db.query(`DELETE FROM call_flows WHERE group_id = $1 AND company_id = $2`, [id, companyId]);
+        await db.query(
+            `UPDATE phone_number_settings
+             SET group_id = NULL,
+                 routing_mode = CASE WHEN routing_mode = 'client' THEN 'sip' ELSE routing_mode END
+             WHERE group_id = $1 AND company_id = $2`,
+            [id, companyId]
+        );
 
         res.json({ ok: true });
     } catch (err) {

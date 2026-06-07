@@ -12,15 +12,37 @@ import './SoftPhoneWidget.css';
 
 const DTMF_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'];
 
-interface SoftPhoneWidgetProps { voice: UseTwilioDeviceReturn; open: boolean; minimized: boolean; onClose: () => void; onMinimize: () => void; }
+interface SoftPhoneWidgetProps { voice: UseTwilioDeviceReturn; open: boolean; minimized: boolean; disabledReason?: string; onClose: () => void; onMinimize: () => void; }
 
-export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({ voice, open, minimized, onClose, onMinimize }) => {
+export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({ voice, open, minimized, disabledReason, onClose, onMinimize }) => {
     const { inputValue, normalizedNumber, selectedContactName, showKeypad, setShowKeypad, showSearch, callError, blancNumbers, selectedCallerId, setSelectedCallerId, handleInputChange, handleContactSelect, handleCall, handleKeyDown, handleDtmf, setShowSearch } = useSoftPhoneWidget(voice, open);
     const { callState, callDuration, callerInfo, deviceReady, error, isMuted, acceptCall, declineCall, hangUp, toggleMute, pendingCount, pendingCallerInfo, holdingCallerInfo } = voice;
 
     const formatDuration = (seconds: number) => { const m = Math.floor(seconds / 60); const s = seconds % 60; return `${m}:${s.toString().padStart(2, '0')}`; };
 
     if (!open || minimized) return null;
+
+    if (disabledReason) {
+        return (
+            <div className="softphone-panel">
+                <div className="softphone-header">
+                    <div className="softphone-header-title">
+                        <span className="softphone-status-dot offline" />
+                        <span>SoftPhone</span>
+                    </div>
+                    <div className="softphone-header-actions">
+                        <button className="softphone-header-btn" onClick={onClose} title="Close"><X size={16} /></button>
+                    </div>
+                </div>
+                <div className="softphone-body">
+                    <div className="softphone-call-info">
+                        <div className="softphone-call-status failed"><PhoneOff size={16} />Unavailable</div>
+                        <div className="softphone-helper error">{disabledReason}</div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     const isInCall = ['connecting', 'ringing', 'connected', 'incoming'].includes(callState);
     const canCall = normalizedNumber && callState === 'idle' && deviceReady;
@@ -39,7 +61,7 @@ export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({ voice, open, m
                 <div className="softphone-header-title">
                     <span className={`softphone-status-dot ${deviceReady ? '' : 'offline'}`} />
                     {blancNumbers.length > 0 ? (
-                        <div className="softphone-header-caller-id"><span className="softphone-header-caller-label">Call from:</span><select className="softphone-header-caller-select" value={selectedCallerId} onChange={e => setSelectedCallerId(e.target.value)}>{blancNumbers.map(n => <option key={n.phone_number} value={n.phone_number}>{formatPhoneDisplay(n.phone_number)}</option>)}</select></div>
+                        <div className="softphone-header-caller-id"><span className="softphone-header-caller-label">Call from:</span><select className="softphone-header-caller-select" value={selectedCallerId} onChange={e => setSelectedCallerId(e.target.value)}>{blancNumbers.map(n => <option key={n.phone_number} value={n.phone_number}>{formatPhoneDisplay(n.phone_number)}{n.group_name ? ` · ${n.group_name}` : ''}</option>)}</select></div>
                     ) : <span>SoftPhone</span>}
                 </div>
                 <div className="softphone-header-actions">

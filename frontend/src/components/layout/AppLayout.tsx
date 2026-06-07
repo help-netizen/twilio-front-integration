@@ -25,12 +25,38 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
     const activeTab = getActiveTab(location.pathname);
     const { accessDeniedMessage, clearAccessDenied, logout, hasRole, company } = useAuth();
 
-    const voice = useTwilioDevice();
+    const [softPhoneGroups, setSoftPhoneGroups] = useState<any[]>([]);
+    const [softPhoneGroupsLoaded, setSoftPhoneGroupsLoaded] = useState(false);
+    const softPhoneEnabled = softPhoneGroupsLoaded && softPhoneGroups.length > 0;
+    const voice = useTwilioDevice({ enabled: softPhoneEnabled });
     const [softPhoneOpen, setSoftPhoneOpen] = useState(false);
     const [softPhoneMinimized, setSoftPhoneMinimized] = useState(false);
     const [showWarmUp, setShowWarmUp] = useState(false);
 
-    useEffect(() => { if (voice.phoneAllowed && voice.deviceReady) setShowWarmUp(true); }, [voice.phoneAllowed, voice.deviceReady]);
+    useEffect(() => {
+        if (!company) {
+            setSoftPhoneGroups([]);
+            setSoftPhoneGroupsLoaded(false);
+            return;
+        }
+        let cancelled = false;
+        setSoftPhoneGroupsLoaded(false);
+        authedFetch('/api/user-groups/my')
+            .then(r => r.json())
+            .then(data => {
+                if (cancelled) return;
+                setSoftPhoneGroups(Array.isArray(data.data) ? data.data : []);
+                setSoftPhoneGroupsLoaded(true);
+            })
+            .catch(() => {
+                if (cancelled) return;
+                setSoftPhoneGroups([]);
+                setSoftPhoneGroupsLoaded(true);
+            });
+        return () => { cancelled = true; };
+    }, [company]);
+
+    useEffect(() => { if (softPhoneEnabled && voice.phoneAllowed && voice.deviceReady) setShowWarmUp(true); }, [softPhoneEnabled, voice.phoneAllowed, voice.deviceReady]);
     const handleWarmUpDismiss = useCallback(() => { warmUpAudio(); setShowWarmUp(false); }, []);
 
     const handleAcceptIncoming = useCallback(() => {
@@ -42,11 +68,11 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
 
     // Auto-open softphone panel when an incoming/promoted call arrives
     useEffect(() => {
-        if (voice.callState === 'incoming') {
+        if (softPhoneEnabled && voice.callState === 'incoming') {
             setSoftPhoneOpen(true);
             setSoftPhoneMinimized(false);
         }
-    }, [voice.callState]);
+    }, [softPhoneEnabled, voice.callState]);
 
     const [incomingCallerName, setIncomingCallerName] = useState<string | null>(null);
     useEffect(() => { if (!voice.incomingCall) { setIncomingCallerName(null); return; } const p = voice.callerInfo?.number; if (!p) return; authedFetch(`/api/pulse/timeline-by-phone?phone=${encodeURIComponent(p)}`).then(r => r.json()).then(d => { if (d.contactName) setIncomingCallerName(d.contactName); }).catch(() => { }); }, [voice.incomingCall, voice.callerInfo?.number]);
@@ -76,7 +102,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                 <header className="app-header"><div className="header-content">
                     <AppNavTabs activeTab={activeTab} pulseUnreadCount={pulseUnreadCount} hasRole={hasRole} logout={logout} />
                     <div className="header-actions">
-                        {voice.phoneAllowed && <SoftPhoneHeaderButton voice={voice} softPhoneOpen={softPhoneOpen} softPhoneMinimized={softPhoneMinimized} onAcceptIncoming={handleAcceptIncoming} incomingCallerName={incomingCallerName} onOpenOrRestore={() => { if (softPhoneMinimized) setSoftPhoneMinimized(false); else setSoftPhoneOpen(true); }} />}
+                        {softPhoneEnabled && voice.phoneAllowed && <SoftPhoneHeaderButton voice={voice} softPhoneOpen={softPhoneOpen} softPhoneMinimized={softPhoneMinimized} onAcceptIncoming={handleAcceptIncoming} incomingCallerName={incomingCallerName} onOpenOrRestore={() => { if (softPhoneMinimized) setSoftPhoneMinimized(false); else setSoftPhoneOpen(true); }} />}
                         {activeTab === 'calls' && <button onClick={handleRefresh} disabled={isRefreshing} className="refresh-button" title="Refresh calls from last 3 days from Twilio">{isRefreshing ? '🔄 Refreshing...' : '🔄 Refresh'}</button>}
                         <SettingsMenu activeTab={activeTab} hasRole={hasRole} logout={logout} />
                     </div>
@@ -87,7 +113,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                     {children}
                 </main>
                 <Dialog open={showWarmUp && !location.pathname.startsWith('/schedule')} onOpenChange={open => { if (!open) handleWarmUpDismiss(); }}><DialogContent className="sm:max-w-[360px]" onPointerDownOutside={e => e.preventDefault()}><DialogHeader className="text-center sm:text-center"><div className="flex justify-center mb-2"><Phone className="size-8 text-primary" /></div><DialogTitle>SoftPhone Ready</DialogTitle><DialogDescription>Enable incoming call ringtone so you don't miss any calls.</DialogDescription></DialogHeader><DialogFooter className="sm:justify-center"><Button onClick={handleWarmUpDismiss} size="lg" className="w-full"><Phone />Enable Ringtone</Button></DialogFooter></DialogContent></Dialog>
-                <SoftPhoneWidget voice={voice} open={softPhoneOpen} minimized={softPhoneMinimized} onClose={() => { setSoftPhoneOpen(false); setSoftPhoneMinimized(false); }} onMinimize={() => setSoftPhoneMinimized(true)} />
+                <SoftPhoneWidget voice={voice} open={softPhoneOpen} minimized={softPhoneMinimized} disabledReason={!softPhoneEnabled && softPhoneGroupsLoaded ? 'You are not assigned to any group. Ask your administrator.' : undefined} onClose={() => { setSoftPhoneOpen(false); setSoftPhoneMinimized(false); }} onMinimize={() => setSoftPhoneMinimized(true)} />
             </div>
         </SoftPhoneProvider>
     );

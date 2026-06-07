@@ -34,7 +34,7 @@ export default function CallFlowsPage() {
                             </div>
                             <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 12px' }}>{f.description}</p>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: f.status === 'published' ? '#d1fae5' : '#fef3c7', color: f.status === 'published' ? '#065f46' : '#92400e' }}>{f.status}</span>
+                                <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: '#d1fae5', color: '#065f46' }}>{f.status}</span>
                                 <span style={{ fontSize: 11, color: '#9ca3af' }}>{f.graph.states.length} states</span>
                                 <span style={{ fontSize: 11, color: '#9ca3af' }}>Updated {f.updated_at}</span>
                             </div>

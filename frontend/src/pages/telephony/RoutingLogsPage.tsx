@@ -10,7 +10,8 @@ import { ArrowUp, ArrowDown, ArrowUpDown, PhoneIncoming, PhoneOutgoing, Download
 import { format } from 'date-fns';
 import { telephonyApi } from '../../services/telephonyApi';
 import { DateRangePickerPopover } from '../../components/ui/DateRangePickerPopover';
-import type { RoutingLogEntry } from '../../types/telephony';
+import type { RoutingLogEntry, UserGroup } from '../../types/telephony';
+import { authedFetch } from '../../services/apiClient';
 
 // ── Result styling ───────────────────────────────────────────────────────
 
@@ -65,7 +66,7 @@ function formatDuration(sec: number): string {
 
 // ── Sorting ──────────────────────────────────────────────────────────────
 
-type SortField = 'timestamp' | 'caller' | 'caller_phone' | 'number_called' | 'result' | 'duration_sec';
+type SortField = 'timestamp' | 'caller' | 'caller_phone' | 'number_called' | 'group_name' | 'result' | 'duration_sec';
 type SortOrder = 'asc' | 'desc';
 
 function sortLogs(logs: RoutingLogEntry[], field: SortField, order: SortOrder): RoutingLogEntry[] {
@@ -84,6 +85,9 @@ function sortLogs(logs: RoutingLogEntry[], field: SortField, order: SortOrder): 
                 break;
             case 'number_called':
                 cmp = a.number_called.localeCompare(b.number_called);
+                break;
+            case 'group_name':
+                cmp = (a.group_name || '').localeCompare(b.group_name || '');
                 break;
             case 'result':
                 cmp = a.result.localeCompare(b.result);
@@ -139,11 +143,12 @@ function formatDateForCsv(ts: string): string {
 }
 
 function exportToCsv(logs: RoutingLogEntry[]) {
-    const header = ['Date', 'Time', 'Direction', 'Caller', 'Phone', 'To', 'Result', 'Duration (s)'];
+    const header = ['Date', 'Time', 'Direction', 'Group', 'Caller', 'Phone', 'To', 'Result', 'Duration (s)'];
     const rows = logs.map(log => [
         escapeCsv(formatDateForCsv(log.timestamp)),
         escapeCsv(formatTime(log.timestamp)),
         escapeCsv(log.direction === 'outbound' ? 'Outbound' : 'Inbound'),
+        escapeCsv(log.group_name || ''),
         escapeCsv(log.contact_name || ''),
         escapeCsv(log.caller),
         escapeCsv(log.number_called),
@@ -176,6 +181,7 @@ const COLUMNS: ColDef[] = [
     { key: 'caller', label: 'Caller', sortKey: 'caller', width: '1fr', align: 'left' },
     { key: 'caller_phone', label: 'From', sortKey: 'caller_phone', width: '160px', align: 'left' },
     { key: 'to', label: 'To', sortKey: 'number_called', width: '160px', align: 'left' },
+    { key: 'group', label: 'Group', sortKey: 'group_name', width: '140px', align: 'left' },
     { key: 'result', label: 'Result', sortKey: 'result', width: '100px', align: 'center' },
     { key: 'duration', label: 'Duration', sortKey: 'duration_sec', width: '80px', align: 'right' },
 ];
@@ -197,17 +203,39 @@ export default function RoutingLogsPage() {
     const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
     const [dateFrom, setDateFrom] = useState<string>(defaultDateFrom);
     const [dateTo, setDateTo] = useState<string>(() => format(new Date(), 'yyyy-MM-dd'));
+    const [groups, setGroups] = useState<UserGroup[]>([]);
+    const [groupId, setGroupId] = useState('');
+    const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
         let cancelled = false;
         setLoading(true);
-        telephonyApi.listLogs({ dateFrom, dateTo }).then(l => {
-            if (cancelled) return;
-            setLogs(l);
-            setLoading(false);
-        });
+        setError(null);
+        telephonyApi.listLogs({ dateFrom, dateTo, groupId: groupId || undefined })
+            .then(l => {
+                if (cancelled) return;
+                setLogs(l);
+            })
+            .catch(err => {
+                if (cancelled) return;
+                console.error('[RoutingLogs] failed to load logs:', err);
+                setLogs([]);
+                setError(err instanceof Error ? err.message : 'Failed to load routing logs');
+            })
+            .finally(() => {
+                if (!cancelled) setLoading(false);
+            });
         return () => { cancelled = true; };
-    }, [dateFrom, dateTo]);
+    }, [dateFrom, dateTo, groupId]);
+
+    useEffect(() => {
+        let cancelled = false;
+        authedFetch('/api/user-groups')
+            .then(r => r.json())
+            .then(json => { if (!cancelled) setGroups(json.data || []); })
+            .catch(() => { if (!cancelled) setGroups([]); });
+        return () => { cancelled = true; };
+    }, []);
 
     const filtered = useMemo(() => {
         if (!dateFrom && !dateTo) return logs;
@@ -242,6 +270,23 @@ export default function RoutingLogsPage() {
         );
     }
 
+    if (error) {
+        return (
+            <div style={{ padding: 24 }}>
+                <PageHeader
+                    dateFrom={dateFrom}
+                    dateTo={dateTo}
+                    onDateFromChange={setDateFrom}
+                    onDateToChange={setDateTo}
+                    groups={groups}
+                    groupId={groupId}
+                    onGroupIdChange={setGroupId}
+                />
+                <div style={{ padding: 60, textAlign: 'center', color: '#b91c1c' }}>{error}</div>
+            </div>
+        );
+    }
+
     return (
         <div style={{ padding: 24 }}>
             <PageHeader
@@ -251,6 +296,9 @@ export default function RoutingLogsPage() {
                 dateTo={dateTo}
                 onDateFromChange={setDateFrom}
                 onDateToChange={setDateTo}
+                groups={groups}
+                groupId={groupId}
+                onGroupIdChange={setGroupId}
             />
 
             <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
@@ -351,13 +399,16 @@ export default function RoutingLogsPage() {
 
 // ── Sub-components ───────────────────────────────────────────────────────
 
-function PageHeader({ count, onExport, dateFrom, dateTo, onDateFromChange, onDateToChange }: {
+function PageHeader({ count, onExport, dateFrom, dateTo, onDateFromChange, onDateToChange, groups = [], groupId = '', onGroupIdChange }: {
     count?: number;
     onExport?: () => void;
     dateFrom?: string;
     dateTo?: string;
     onDateFromChange?: (d: string) => void;
     onDateToChange?: (d: string) => void;
+    groups?: UserGroup[];
+    groupId?: string;
+    onGroupIdChange?: (id: string) => void;
 }) {
     return (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
@@ -383,6 +434,24 @@ function PageHeader({ count, onExport, dateFrom, dateTo, onDateFromChange, onDat
                     onDateFromChange={onDateFromChange}
                     onDateToChange={onDateToChange}
                 />
+            )}
+            {onGroupIdChange && (
+                <select
+                    value={groupId}
+                    onChange={e => onGroupIdChange(e.target.value)}
+                    style={{
+                        height: 34,
+                        padding: '0 10px',
+                        borderRadius: 10,
+                        border: '1px solid var(--blanc-line)',
+                        background: 'transparent',
+                        color: 'var(--blanc-ink-2)',
+                        fontSize: 13,
+                    }}
+                >
+                    <option value="">All groups</option>
+                    {groups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
+                </select>
             )}
             {onExport && (
                 <button
@@ -465,6 +534,14 @@ function LogRow({ log, isSelected, onClick }: { log: RoutingLogEntry; isSelected
                 {log.number_called}
             </span>
 
+            {/* Group */}
+            <span style={{
+                fontSize: 12, color: 'var(--blanc-ink-2)', padding: '0 6px',
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+                {log.group_name || 'Unassigned'}
+            </span>
+
             {/* Result */}
             <div style={{ display: 'flex', justifyContent: 'center', padding: '0 6px' }}>
                 <span style={{
@@ -515,6 +592,7 @@ function DetailPanel({ log, onClose }: { log: RoutingLogEntry; onClose: () => vo
             )}
             <div style={{ fontSize: 13, color: 'var(--blanc-ink-2)', marginBottom: 4 }}>{log.caller}</div>
             <div style={{ fontSize: 12, color: 'var(--blanc-ink-3)', marginBottom: 14 }}>→ {log.number_called}</div>
+            {log.group_name && <div style={{ fontSize: 12, color: 'var(--blanc-ink-3)', marginBottom: 10 }}>Group: {log.group_name}</div>}
 
             <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
                 <span style={{ fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 10, background: rc.bg, color: rc.text }}>{rc.label}</span>

@@ -79,7 +79,7 @@ export interface CallFlow {
     id: string;
     name: string;
     description: string;
-    status: 'draft' | 'published';
+    status: 'active';
     created_at: string;
     updated_at: string;
     graph: CallFlowGraph;
@@ -112,6 +112,7 @@ export interface PhoneNumber {
     friendly_name: string;
     provider: string;
     status: 'active' | 'inactive' | 'pending';
+    group_id?: string | null;
     group?: string;
     webhook_configured: boolean;
     last_call_at?: string;
@@ -131,6 +132,8 @@ export interface RoutingLogEntry {
     session_id: string;
     caller: string;
     number_called: string;
+    group_id?: string | null;
+    group_name?: string | null;
     result: 'answered' | 'voicemail' | 'abandoned' | 'error';
     duration_sec: number;
     timestamp: string;
@@ -147,6 +150,9 @@ export interface AgentStatus {
     status: 'available' | 'on_call' | 'away' | 'offline';
     current_call?: string;
     device_ready: boolean;
+    group_id?: string;
+    group_name?: string;
+    phone_calls_allowed?: boolean;
 }
 
 export interface QueuedCall {
@@ -154,6 +160,10 @@ export interface QueuedCall {
     caller: string;
     caller_name?: string;
     queue_name: string;
+    group_id?: string;
+    group_name?: string;
+    called_number?: string;
+    call_sid?: string;
     wait_seconds: number;
     priority: 'normal' | 'high' | 'vip';
 }
@@ -185,4 +195,36 @@ export interface ActiveCallInfo {
     status: 'connected' | 'on_hold' | 'transferring';
     notes: string[];
     timeline: { time: string; event: string }[];
+}
+
+export interface OperationCall {
+    call_sid: string;
+    caller: string;
+    caller_name?: string | null;
+    called_number: string;
+    status: string;
+    agent_user_id?: string | null;
+    wait_seconds: number;
+    duration_sec: number;
+    current_node_id?: string | null;
+    current_node_kind?: string | null;
+    flow_path: string[];
+}
+
+export interface OperationGroup {
+    id: string;
+    name: string;
+    reachable: boolean;
+    agents: AgentStatus[];
+    active_calls: OperationCall[];
+    queued_calls: OperationCall[];
+    waiting_count: number;
+    longest_wait_seconds: number;
+}
+
+export interface OperationsDashboardData {
+    groups: OperationGroup[];
+    agents: AgentStatus[];
+    queue: QueuedCall[];
+    kpis: DashboardKPI[];
 }

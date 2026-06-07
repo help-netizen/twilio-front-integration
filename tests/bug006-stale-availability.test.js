@@ -87,24 +87,15 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
     });
 
     // -----------------------------------------------------------------------
-    // Layer 1a — Age filter: Client routing
+    // F017 — known number without a group no longer falls back to Client routing
     // -----------------------------------------------------------------------
-    describe('Layer 1a — Age filter (Client routing)', () => {
-        it('should exclude stale ringing records from busy check via SQL age filter', async () => {
+    describe('F017 no-group routing guard (Client legacy)', () => {
+        it('routes a known client-mode number without group to voicemail', async () => {
             process.env.SOFTPHONE_DEFAULT_IDENTITY = 'user_1';
 
             mockQuery.mockImplementation((sql) => {
                 if (sql.includes('phone_number_settings')) {
-                    return { rows: [{ routing_mode: 'client', client_identity: 'user_1' }] };
-                }
-                if (sql.includes('company_memberships')) {
-                    return { rows: [{ identity: 'user_1' }] };
-                }
-                if (sql.includes('is_final = false') && sql.includes('client:%')) {
-                    // Verify the SQL includes age filtering via STALE_FILTER_SQL
-                    expect(sql).toContain('90 seconds');
-                    expect(sql).toContain('4 hours');
-                    return { rows: [] };
+                    return { rows: [{ routing_mode: 'client', client_identity: 'user_1', group_id: null }] };
                 }
                 return { rows: [] };
             });
@@ -114,28 +105,22 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
             await handleVoiceInbound(req, res);
 
             const twiml = res.send.mock.calls[0][0];
-            expect(twiml).toContain('<Client');
-            expect(twiml).toContain('user_1');
-            expect(twiml).not.toContain('<Record');
+            expect(twiml).toContain('<Record');
+            expect(twiml).not.toContain('<Client');
         });
     });
 
     // -----------------------------------------------------------------------
-    // Layer 1b — Age filter: SIP routing
+    // F017 — known number without a group no longer falls back to SIP routing
     // -----------------------------------------------------------------------
-    describe('Layer 1b — Age filter (SIP routing)', () => {
-        it('should exclude stale ringing records from SIP busy check via SQL age filter', async () => {
+    describe('F017 no-group routing guard (SIP legacy)', () => {
+        it('routes a known SIP-mode number without group to voicemail', async () => {
             process.env.SIP_USERS = 'dispatcher';
             process.env.SIP_DOMAIN = 'test.sip.twilio.com';
 
             mockQuery.mockImplementation((sql) => {
                 if (sql.includes('phone_number_settings')) {
-                    return { rows: [{ routing_mode: 'sip', client_identity: null }] };
-                }
-                if (sql.includes('is_final = false') && sql.includes("sip:%")) {
-                    expect(sql).toContain('90 seconds');
-                    expect(sql).toContain('4 hours');
-                    return { rows: [] };
+                    return { rows: [{ routing_mode: 'sip', client_identity: null, group_id: null }] };
                 }
                 return { rows: [] };
             });
@@ -145,9 +130,8 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
             await handleVoiceInbound(req, res);
 
             const twiml = res.send.mock.calls[0][0];
-            expect(twiml).toContain('<Sip');
-            expect(twiml).toContain('dispatcher@test.sip.twilio.com');
-            expect(twiml).not.toContain('<Record');
+            expect(twiml).toContain('<Record');
+            expect(twiml).not.toContain('<Sip');
         });
     });
 
@@ -237,31 +221,8 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
     // Layer 4 — Twilio API fallback
     // -----------------------------------------------------------------------
     describe('Layer 4 — Twilio API fallback', () => {
-        it('should verify stale records via Twilio API when all clients appear busy', async () => {
-            process.env.SOFTPHONE_DEFAULT_IDENTITY = 'user_1';
-
-            let busyQueryCount = 0;
-            mockQuery.mockImplementation((sql, params) => {
-                if (sql.includes('phone_number_settings')) {
-                    return { rows: [{ routing_mode: 'client', client_identity: 'user_1' }] };
-                }
-                if (sql.includes('company_memberships')) {
-                    return { rows: [{ identity: 'user_1' }] };
-                }
-                if (sql.includes('is_final = false') && sql.includes('client:%') && !sql.includes('UPDATE')) {
-                    busyQueryCount++;
-                    if (busyQueryCount === 1) {
-                        // First query: DB says user_1 is busy (stale record)
-                        return {
-                            rows: [{
-                                client_number: 'client:user_1',
-                                call_sid: 'CA_stale_999',
-                            }],
-                        };
-                    }
-                    // Second query (after Twilio API fix): no longer busy
-                    return { rows: [] };
-                }
+        it('should verify stale records via Twilio API and mark completed calls final', async () => {
+            mockQuery.mockImplementation((sql) => {
                 if (sql.includes('UPDATE calls SET status')) {
                     return { rowCount: 1, rows: [] };
                 }
@@ -274,15 +235,13 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
                 endTime: new Date().toISOString(),
             });
 
-            const req = makeReq();
-            const res = makeRes();
-            await handleVoiceInbound(req, res);
+            const ca = require('../backend/src/services/callAvailability');
+            const resolved = await ca.verifyAndFixStaleCalls(['CA_stale_999'], 'test');
 
-            // Twilio API should have been called with the stale SID
             expect(mockTwilioCallsFn).toHaveBeenCalledWith('CA_stale_999');
             expect(mockTwilioFetch).toHaveBeenCalled();
+            expect(resolved.has('CA_stale_999')).toBe(true);
 
-            // The stale record should be updated in DB
             const updateCalls = mockQuery.mock.calls.filter(
                 ([sql, params]) =>
                     typeof sql === 'string' &&
@@ -290,12 +249,6 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
                     params && params.includes('CA_stale_999')
             );
             expect(updateCalls.length).toBeGreaterThanOrEqual(1);
-
-            // After fixing, user_1 is free → should get <Dial><Client>
-            const twiml = res.send.mock.calls[0][0];
-            expect(twiml).toContain('<Client');
-            expect(twiml).toContain('user_1');
-            expect(twiml).not.toContain('<Record');
         });
     });
 
