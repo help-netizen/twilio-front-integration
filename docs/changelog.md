@@ -4,6 +4,60 @@
 
 ---
 
+## 2026-06-03 — CRM-SALES-MCP Stage 6 Testing and Rollout
+
+### Backend
+- Mounted `/api/crm` and `/api/crm/mcp` in `src/server.js` behind `authenticate, requireCompanyAccess`.
+- Mounted public `/mcp/crm` transport separately with token/env-context guards.
+- Hardened MCP error detail sanitization so arrays containing objects are redacted instead of leaking nested data.
+
+### Tests
+- Added rollout gate coverage for CRM/MCP route mounts, 401/403 behavior, tenant isolation SQL scopes, write permission gates, no delete tools, secret redaction, stale activity queries, slippage/history calculations, and predefined Sales workflow lists.
+- Full rollout run passed: `npm test -- --runInBand tests/routes/crmAuthGate.test.js tests/routes/crm.test.js tests/routes/crmMcp.test.js tests/routes/crmMcpPublic.test.js tests/routes/crmServerMount.test.js tests/cli/crmMcpStdio.test.js tests/services/crmMcpToolRegistry.test.js tests/services/crmMcpSchemaValidator.test.js tests/services/crmMcpResponse.test.js tests/services/crmListsService.test.js tests/services/crmDealsService.test.js tests/services/crmTasksService.test.js tests/services/crmNotesService.test.js tests/services/crmWriteAuditService.test.js tests/services/crmPipelineService.test.js tests/db/crmQueries.test.js` — 16 suites / 105 tests.
+
+---
+
+## 2026-06-03 — CRM-SALES-MCP Stage 5 Sales Workflow Selections
+
+### Backend
+- Added `crm.list_sales_workflows` discovery metadata for ready-made Sales workflow selections.
+- Centralized Sales workflow keys and defaults in `crmListsService`.
+- Exposed explicit read-only MCP workflow aliases for my open deals, closing this month/quarter, deals without activity, deals without next step, risky deals, top accounts by pipeline, accounts needing follow-up, contacts missing role/title/email, and tasks due this week.
+- Changed `crm.find_deals_without_activity` to support the workflow default inactivity window when `days` is omitted.
+- Made `tasks_due_this_week` use the current calendar week instead of a rolling seven-day window.
+- Closed Stage 5 gaps: workflow date windows now use company timezone, `my_open_deals` requires current actor scope and rejects cross-owner scope, and invalid explicit `days` values are no longer masked by defaults.
+
+### Tests
+- Full CRM/MCP run passed: `npm test -- --runInBand tests/routes/crmAuthGate.test.js tests/routes/crm.test.js tests/routes/crmMcp.test.js tests/routes/crmMcpPublic.test.js tests/routes/crmServerMount.test.js tests/cli/crmMcpStdio.test.js tests/services/crmMcpToolRegistry.test.js tests/services/crmMcpSchemaValidator.test.js tests/services/crmMcpResponse.test.js tests/services/crmListsService.test.js tests/services/crmDealsService.test.js tests/services/crmTasksService.test.js tests/services/crmNotesService.test.js tests/services/crmWriteAuditService.test.js tests/services/crmPipelineService.test.js tests/db/crmQueries.test.js` — 16 suites / 105 tests.
+
+---
+
+## 2026-06-03 — CRM-SALES-MCP Stage 4 Write Tools
+
+### Backend
+- Added typed MCP write tools for the allowed update surface: `deal.next_step`, `deal.stage`, `deal.forecast_category`, `deal.close_date`, `deal.amount`, `deal.risk_summary`, `deal.competitor`, and `task.status`.
+- Kept writes routed through CRM services so tenant scope, allowlist checks, before/after responses, request id propagation, and audit logging stay centralized.
+- Added runtime schema support for `number` and nullable typed write values; `amount` rejects negative/non-number values and `close_date` rejects invalid calendar dates before dispatch.
+- Closed Stage 4 gaps: executor now generates `crm-mcp-*` request ids when upstream context is missing, generic `crm.update_deal_field` validates `value` by selected field, create task/note write tools return before/after envelopes, and empty `forecast_category` clears to `null`.
+- Confirmed no bulk/delete MCP tools are registered.
+
+### Tests
+- Full CRM/MCP run passed: `npm test -- --runInBand tests/routes/crmAuthGate.test.js tests/routes/crm.test.js tests/routes/crmMcp.test.js tests/routes/crmMcpPublic.test.js tests/routes/crmServerMount.test.js tests/cli/crmMcpStdio.test.js tests/services/crmMcpToolRegistry.test.js tests/services/crmMcpSchemaValidator.test.js tests/services/crmMcpResponse.test.js tests/services/crmListsService.test.js tests/services/crmDealsService.test.js tests/services/crmTasksService.test.js tests/services/crmNotesService.test.js tests/services/crmWriteAuditService.test.js tests/services/crmPipelineService.test.js tests/db/crmQueries.test.js` — 16 suites / 105 tests.
+
+---
+
+## 2026-06-03 — CRM-SALES-MCP Cross-stage Audit
+
+### Backend
+- Verified Stage 0-3 CRM/MCP alignment across `/api/crm`, MCP registry/executor, public/SSE/stdio transports, read-only tools, and pipeline/forecast analytics.
+- Tightened MCP runtime schema validation so required typed fields reject `null`; nullable typed write values remain allowed only for explicit field clearing.
+- Confirmed registry has 40 read tools and 11 write tools; all write tools require confirmation and `sales.crm.write`; no bulk/delete tools are registered.
+
+### Tests
+- Targeted CRM/MCP run passed: `npm test -- --runInBand tests/routes/crmAuthGate.test.js tests/routes/crm.test.js tests/routes/crmMcp.test.js tests/routes/crmMcpPublic.test.js tests/routes/crmServerMount.test.js tests/cli/crmMcpStdio.test.js tests/services/crmMcpToolRegistry.test.js tests/services/crmMcpSchemaValidator.test.js tests/services/crmMcpResponse.test.js tests/services/crmListsService.test.js tests/services/crmDealsService.test.js tests/services/crmTasksService.test.js tests/services/crmNotesService.test.js tests/services/crmWriteAuditService.test.js tests/services/crmPipelineService.test.js tests/db/crmQueries.test.js` — 16 suites / 105 tests.
+
+---
+
 ## 2026-05-10 — INV-001 Invoices MVP (with manual payment recording)
 
 ### Goal

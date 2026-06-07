@@ -27,6 +27,9 @@ const quickMessagesRouter = require('../backend/src/routes/quick-messages');
 const textPolishRouter = require('../backend/src/routes/text-polish');
 const fsmRouter = require('../backend/src/routes/fsm');
 const noteAttachmentsRouter = require('../backend/src/routes/noteAttachments');
+const crmRouter = require('../backend/src/routes/crm');
+const crmMcpRouter = require('../backend/src/routes/crmMcp');
+const crmMcpPublicRouter = require('../backend/src/routes/crmMcpPublic');
 const authRouter = require('../backend/src/routes/auth');
 const requestId = require('../backend/src/middleware/requestId');
 const { authenticate, requireRole, requireCompanyAccess } = require('../backend/src/middleware/keycloakAuth');
@@ -177,6 +180,9 @@ app.use('/api/payments', authenticate, requireCompanyAccess, paymentsCanonicalRo
 app.use('/api/portal', portalRouter); // public auth + portal-session auth inside router
 app.use('/api/fsm', authenticate, requireCompanyAccess, fsmRouter);
 app.use('/api/note-attachments', authenticate, requireCompanyAccess, noteAttachmentsRouter);
+app.use('/api/crm', authenticate, requireCompanyAccess, crmRouter);
+app.use('/api/crm/mcp', authenticate, requireCompanyAccess, crmMcpRouter);
+app.use('/mcp/crm', crmMcpPublicRouter);
 
 // BLANC Integrations API (secured header-based auth)
 app.use('/api/v1/integrations', integrationsLeadsRouter);

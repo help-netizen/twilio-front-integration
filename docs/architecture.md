@@ -1663,3 +1663,35 @@ GET /api/vapi/connections
 ### Middleware (унаследованы от существующих роутов)
 - `/api/vapi/*` — `authenticate + requireCompanyAccess`
 - `/api/marketplace/*` — `authenticate + requirePermission('tenant.integrations.manage') + requireCompanyAccess`
+
+---
+
+## Sales CRM MCP Architecture
+
+**Status:** Implemented and audited through Sales workflow selections.
+
+```
+/api/crm REST
+      │
+      ▼
+CRM service layer ──► CRM query layer ──► crm_* tables / tasks / contacts / audit_log
+      ▲
+      │
+MCP executor ◄── MCP registry/schema validator
+      ▲
+      │
+Authenticated backend MCP / public HTTP / legacy SSE / stdio
+```
+
+**Core rules:**
+- `/api/crm` is the source service surface for accounts, contacts, deals, pipeline, activities, tasks, notes, metadata, and predefined lists.
+- MCP tools call the CRM service layer directly in-process, preserving tenant scope, write allowlists, before/after responses, audit, and sanitized error mapping.
+- Read tools require tenant context only. Write tools require `sales.crm.write` and explicit confirmation.
+- Write MCP tools use field-specific schemas for the allowed update surface: `deal.next_step`, `deal.stage`, `deal.forecast_category`, `deal.close_date`, `deal.amount`, `deal.risk_summary`, `deal.competitor`, and `task.status`. They still dispatch through CRM services so company scope, allowlists, before/after values, generated-or-propagated request id, and audit remain centralized.
+- The compatibility `crm.update_deal_field` tool validates its free-form `value` against the selected allowlisted field before service dispatch.
+- Public and stdio transports build env-bound tenant/user context and fail closed when required config is missing.
+- Pipeline analytics compute current state from `crm_deals`, changes/slippage from `crm_deal_history`, and optional baseline deltas from `crm_pipeline_weekly_snapshots`.
+- Sales workflow selections are centralized in `crmListsService`: `crm.list_sales_workflows` exposes discovery metadata, `crm.get_sales_list` supports stable workflow keys, and explicit alias tools route to the same list service where defaults are needed.
+- Workflow calendar windows use company timezone from MCP context. `my_open_deals` requires the current actor and rejects cross-owner scoping to avoid returning all open deals by accident.
+- Rollout mounts `/api/crm` and `/api/crm/mcp` through `authenticate, requireCompanyAccess`; `/mcp/crm` is mounted separately and guarded by public MCP token/env context.
+- Bulk/delete MCP tools are not registered. Public/stdio write calls remain disabled unless explicitly enabled by environment flags.

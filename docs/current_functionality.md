@@ -308,3 +308,49 @@ Master list — двухколоночный layout: список контакт
   - SCXML-based workflow editor
   - route `/settings/workflows/:machineKey`
 - Это не было частью исходного Workiz-gap backlog, но уже является реальной частью продукта и влияет на current platform foundation
+
+### 6.6 Sales CRM Core foundation (`/api/crm`)
+- Добавлен backend foundation для будущего Sales MCP: accounts, contacts, deals, deal contacts, deal history, activities, notes, metadata, tasks links и audit.
+- Deals отделены от service Jobs; `jobs` остаются Zenbooker/service-dispatch records.
+- `/api/crm` смонтирован с `authenticate, requireCompanyAccess`; route/service/db слой использует `req.companyFilter?.company_id`.
+- CRM write routes требуют `sales.crm.write`; allowlist updates возвращают before/after и пишут audit.
+
+### 6.7 Sales MCP backend adapter (`/api/crm/mcp`)
+- MCP adapter работает поверх CRM service layer: `/tools`, `/call`, `/jsonrpc`.
+- Tool registry разделяет `read` и `write`; write tools требуют `sales.crm.write` и explicit confirmation.
+- Required typed MCP arguments reject `null`; nullable typed write values остаются разрешёнными только для explicit field clearing.
+- Bulk/delete tools не зарегистрированы.
+
+### 6.8 Sales MCP transports (`/mcp/crm`, SSE, stdio)
+- Public HTTP, legacy SSE и stdio transports используют общий JSON-RPC protocol service.
+- Public transport fail-closed без bearer token и env-bound company/user context.
+- Public/stdio writes disabled by default и включаются только explicit env flags.
+
+### 6.9 Sales MCP read-only tools
+- Добавлены explicit read-only tools для deal hygiene, forecast windows, account/contact follow-up, task follow-up, last customer-facing activity и deal history.
+- `tools/list` поддерживает `kind=read`; date-window inputs валидируются как `YYYY-MM-DD`.
+
+### 6.10 Sales MCP pipeline and forecast analytics
+- Добавлены read-only analytics tools для pipeline by owner/team/period, grouping by stage/forecast category, forecast totals, changes, risky deals и slippage.
+- Current pipeline truth считается из `crm_deals`; changes/slippage из `crm_deal_history`; weekly snapshots используются только как optional baseline.
+- `since` валидируется как ISO 8601 timestamp; forecast grouping сортируется по CRM metadata display order.
+
+### 6.11 Sales MCP write tools
+- Добавлены typed write tools для `deal.next_step`, `deal.stage`, `deal.forecast_category`, `deal.close_date`, `deal.amount`, `deal.risk_summary`, `deal.competitor` и `task.status`.
+- Все write tools требуют `company_id` из auth/env context, `sales.crm.write`, explicit confirmation и `request_id`; сервисы возвращают before/after и пишут audit.
+- Если upstream context не передал `request_id`, MCP executor генерирует `crm-mcp-*` id для response meta и audit context.
+- `amount` валидируется как non-negative number, `close_date` как календарная дата `YYYY-MM-DD`; nullable поля можно очистить явным `null`.
+- Compatibility tool `crm.update_deal_field` валидирует `value` по выбранному allowlisted field; `forecast_category: ""` нормализуется в `null`.
+- Bulk/delete MCP tools не зарегистрированы.
+
+### 6.12 Sales MCP workflow selections
+- `crm.list_sales_workflows` возвращает discovery metadata для готовых Sales выборок: key, matching tool и default args.
+- `crm.get_sales_list` поддерживает stable keys: `my_open_deals`, `deals_closing_this_month`, `deals_closing_this_quarter`, `deals_without_activity`, `deals_without_next_step`, `risky_deals`, `top_accounts_by_pipeline`, `accounts_needing_follow_up`, `contacts_missing_role_title_email`, `tasks_due_this_week`.
+- Explicit alias tools доступны через `/api/crm/mcp/tools` и JSON-RPC `tools/list`: мои открытые сделки, сделки на закрытие в месяце/квартале, сделки без активности, сделки без next step, рискованные сделки, top accounts by pipeline, accounts needing follow-up, contacts missing role/title/email, tasks due this week.
+- Workflow defaults: inactivity window 14 дней только если `days` omitted, top accounts limit 10, my open deals/current actor limit 100, tasks due this week uses current company-timezone calendar week.
+- `my_open_deals` требует current actor и не позволяет scope на другого owner; month/quarter/week windows считаются в company timezone из auth/env context.
+
+### 6.13 Sales MCP testing and rollout
+- `/api/crm` и `/api/crm/mcp` смонтированы в `src/server.js` через `authenticate, requireCompanyAccess`; `/mcp/crm` смонтирован как public token-gated transport.
+- Rollout gate покрывает 401/403 auth behavior, tenant isolation, write allowlist, before/after audit, no delete tools, no secret leakage, slippage/history calculations, stale activity queries и predefined Sales workflow lists.
+- Public/stdio writes остаются fail-closed без explicit env flags.
