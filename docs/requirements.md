@@ -1098,3 +1098,25 @@ The descriptor is the canonical document model, equivalent to the current hardco
 - `backend/db/` schema — менять только через задачи с явным планом миграций
 
 **Non-goals:** hold/swap/conference, многоуровневый IVR, биллинг, UI записей звонков, RBAC на уровне групп, версионирование flow.
+
+---
+
+## CRM-SALES-MCP Cross-stage Requirements
+
+**Status:** Implemented and audited
+
+- Stage 0 CRM core exposes `/api/crm` over tenant-scoped services and SQL. Account/contact/deal cards, activities, tasks, notes, metadata, lists, pipeline, allowed writes, before/after audit, and deal history are implemented.
+- Stage 1 MCP backend adapter exposes tool definitions and calls over `/api/crm/mcp`; tools are separated into read/write, arguments are runtime-validated, write tools require `sales.crm.write` and confirmation, and CRM errors map to sanitized MCP responses.
+- Stage 2 transports expose the same MCP protocol through authenticated backend JSON-RPC, public token-protected HTTP, legacy SSE, and stdio. Public/stdio writes are disabled unless explicitly enabled.
+- Stage 3 read-only tools expose explicit seller workflows for deal hygiene, forecast windows, account/contact follow-up, tasks, last customer-facing activity, and deal history.
+- Pipeline/forecast analytics tools expose pipeline by owner/team/period, grouping by stage/forecast category, totals, changes, risky deals, and slippage.
+- Stage 4 write MCP tools expose typed updates for `deal.next_step`, `deal.stage`, `deal.forecast_category`, `deal.close_date`, `deal.amount`, `deal.risk_summary`, `deal.competitor`, and `task.status`. Each write requires tenant context, `sales.crm.write`, explicit confirmation, before/after response, generated-or-propagated request id, and audit logging.
+- Stage 5 Sales workflow selections expose `crm.list_sales_workflows`, generic `crm.get_sales_list`, and explicit read tools for my open deals, closing this month/quarter, deals without activity, deals without next step, risky deals, top accounts by pipeline, accounts needing follow-up, contacts missing role/title/email, and tasks due this week.
+- Stage 6 testing and rollout mounts `/api/crm` and `/api/crm/mcp` behind authenticated tenant middleware, mounts public `/mcp/crm` behind token-gated MCP auth, and verifies the minimum regression suite for auth, tenant isolation, writes, audit, no delete tools, secret redaction, slippage/history, stale activity, and workflow lists.
+
+**Cross-stage constraints:**
+- `company_id` comes from `req.companyFilter?.company_id` or env-bound public/stdio context, never from client payload.
+- Sales workflow calendar windows use company timezone from auth/env context, falling back to `America/New_York`.
+- No MCP bulk/delete tools are registered.
+- Required typed MCP arguments reject `null` unless the specific write value schema is nullable for explicit field clearing. Legacy generic deal writes validate `value` against the selected allowlisted field before dispatch.
+- Current pipeline truth is `crm_deals`; changes/slippage use `crm_deal_history`; weekly snapshots are optional baselines only.

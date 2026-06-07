@@ -2302,3 +2302,69 @@ Test cases: `docs/test-cases/F014-ads-analytics-microservice.md`
 - **Волна 7:** 019 (backend tests), 020 (frontend tests + docs)
 
 **P0-срез (минимальный разблокирующий):** 001 → 002,003 → 004 → 005,012,013 → 008,009 → 010 → 019.
+
+---
+
+## CRM-SALES-MCP Cross-stage Audit
+
+**Status:** done
+
+### TASK-CRM-MCP-AUDIT-001: Verify implemented stages are aligned
+
+**Files checked/updated:**
+- CRM/MCP backend modules under `backend/src/services`, `backend/src/routes`, `backend/src/db`, and `backend/src/cli`.
+- CRM migrations `088`, `089`, `090`.
+- CRM/MCP tests under `tests/routes`, `tests/services`, `tests/db`, and `tests/cli`.
+- CRM/MCP documentation sections.
+
+**Expected result:**
+Stage 0 CRM core, Stage 1 MCP backend adapter, Stage 2 transports, Stage 3 read-only tools, and pipeline/forecast analytics use the same tenant/auth/write/audit/error contracts. Required typed MCP arguments reject `null`; nullable typed write values remain allowed only for explicit field clearing.
+
+**Verification:**
+`npm test -- --runInBand tests/routes/crmAuthGate.test.js tests/routes/crm.test.js tests/routes/crmMcp.test.js tests/routes/crmMcpPublic.test.js tests/routes/crmServerMount.test.js tests/cli/crmMcpStdio.test.js tests/services/crmMcpToolRegistry.test.js tests/services/crmMcpSchemaValidator.test.js tests/services/crmMcpResponse.test.js tests/services/crmListsService.test.js tests/services/crmDealsService.test.js tests/services/crmTasksService.test.js tests/services/crmNotesService.test.js tests/services/crmWriteAuditService.test.js tests/services/crmPipelineService.test.js tests/db/crmQueries.test.js` — 16 suites / 105 tests.
+
+### TASK-CRM-MCP-005: Stage 4 write MCP tools
+
+**Files checked/updated:**
+- `backend/src/services/crmMcpToolRegistry.js`
+- `backend/src/services/crmMcpToolExecutor.js`
+- `backend/src/services/crmMcpSchemaValidator.js`
+- `backend/src/services/crmDealsService.js`
+- CRM/MCP route, registry, schema validator, and deal service tests.
+
+**Expected result:**
+Field-specific write MCP tools exist for the allowed update surface only: `deal.next_step`, `deal.stage`, `deal.forecast_category`, `deal.close_date`, `deal.amount`, `deal.risk_summary`, `deal.competitor`, and `task.status`. Every write checks tenant context, `sales.crm.write`, explicit confirmation, allowlist, returns before/after, generates or propagates request id, and writes audit. Generic deal write validates `value` against the selected allowlisted field. Create task/note write tools return before/after envelopes. No bulk/delete MCP tools are registered.
+
+**Verification:**
+`npm test -- --runInBand tests/routes/crmAuthGate.test.js tests/routes/crm.test.js tests/routes/crmMcp.test.js tests/routes/crmMcpPublic.test.js tests/routes/crmServerMount.test.js tests/cli/crmMcpStdio.test.js tests/services/crmMcpToolRegistry.test.js tests/services/crmMcpSchemaValidator.test.js tests/services/crmMcpResponse.test.js tests/services/crmListsService.test.js tests/services/crmDealsService.test.js tests/services/crmTasksService.test.js tests/services/crmNotesService.test.js tests/services/crmWriteAuditService.test.js tests/services/crmPipelineService.test.js tests/db/crmQueries.test.js` — 16 suites / 105 tests.
+
+### TASK-CRM-MCP-006: Stage 5 Sales workflow selections
+
+**Files checked/updated:**
+- `backend/src/services/crmListsService.js`
+- `backend/src/services/crmMcpToolRegistry.js`
+- `backend/src/services/crmMcpToolExecutor.js`
+- CRM/MCP route, registry, schema validator, and list service tests.
+- `docs/specs/CRM-SALES-MCP-006-sales-workflow-selections.md`
+- `docs/test-cases/CRM-SALES-MCP-006-sales-workflow-selections.md`
+
+**Expected result:**
+MCP exposes ready-made read-only Sales workflow selections through `crm.list_sales_workflows`, `crm.get_sales_list`, and explicit alias tools for my open deals, closing this month/quarter, deals without activity, deals without next step, risky deals, top accounts by pipeline, accounts needing follow-up, contacts missing role/title/email, and tasks due this week. Workflow defaults and date windows are centralized in `crmListsService`; unsupported keys return allowed values.
+
+**Verification:**
+Full run passed: `npm test -- --runInBand tests/routes/crmAuthGate.test.js tests/routes/crm.test.js tests/routes/crmMcp.test.js tests/routes/crmMcpPublic.test.js tests/routes/crmServerMount.test.js tests/cli/crmMcpStdio.test.js tests/services/crmMcpToolRegistry.test.js tests/services/crmMcpSchemaValidator.test.js tests/services/crmMcpResponse.test.js tests/services/crmListsService.test.js tests/services/crmDealsService.test.js tests/services/crmTasksService.test.js tests/services/crmNotesService.test.js tests/services/crmWriteAuditService.test.js tests/services/crmPipelineService.test.js tests/db/crmQueries.test.js` — 16 suites / 105 tests.
+
+### TASK-CRM-MCP-007: Stage 6 testing and rollout
+
+**Files checked/updated:**
+- `src/server.js`
+- `backend/src/services/crmMcpResponse.js`
+- CRM/MCP route, public transport, response sanitizer, query isolation, and server mount tests.
+- `docs/specs/CRM-SALES-MCP-007-testing-rollout.md`
+- `docs/test-cases/CRM-SALES-MCP-007-testing-rollout.md`
+
+**Expected result:**
+CRM REST and authenticated MCP routes are mounted behind auth and tenant middleware; public MCP is token-gated and fail-closed. The minimum rollout suite covers 401/403 behavior, tenant isolation, write allowlist, before/after audit, no delete tools, secret redaction, slippage/history calculations, stale activity queries, and predefined Sales workflow lists.
+
+**Verification:**
+Full rollout run passed: `npm test -- --runInBand tests/routes/crmAuthGate.test.js tests/routes/crm.test.js tests/routes/crmMcp.test.js tests/routes/crmMcpPublic.test.js tests/routes/crmServerMount.test.js tests/cli/crmMcpStdio.test.js tests/services/crmMcpToolRegistry.test.js tests/services/crmMcpSchemaValidator.test.js tests/services/crmMcpResponse.test.js tests/services/crmListsService.test.js tests/services/crmDealsService.test.js tests/services/crmTasksService.test.js tests/services/crmNotesService.test.js tests/services/crmWriteAuditService.test.js tests/services/crmPipelineService.test.js tests/db/crmQueries.test.js` — 16 suites / 105 tests.

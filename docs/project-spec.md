@@ -62,3 +62,21 @@ Per-company, versioned, JSON-encoded descriptors that drive client-facing docume
 **API:** `/api/document-templates` (list, get `:id`, PUT `:id`, POST `:id/reset`, POST `:id/preview`, GET `factory/:document_type`). Mounted with `authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess` (P0 reuses the integrations permission until a dedicated `tenant.documents.manage` is seeded).
 
 **Settings UI:** `/settings/document-templates` (list grouped by `document_type`) and `/settings/document-templates/:id` (form editor: Brand, ACH, Theme color pickers, Section visibility toggles, Terms & Warranty Markdown textarea, Reset to default).
+
+---
+
+## Sales CRM MCP
+
+Sales CRM MCP adds a backend CRM core plus MCP-compatible tool access for seller workflows.
+
+**Storage:** `crm_accounts`, `crm_deals`, `crm_deal_contacts`, `crm_deal_history`, `crm_activities`, `crm_notes`, CRM metadata tables, sales task links, and optional `crm_pipeline_weekly_snapshots`.
+
+**API:** `/api/crm` is mounted with authenticated company access and provides account/contact/deal cards, pipeline, activities, tasks, notes, metadata, predefined lists, and allowlisted writes. Direct entity access is tenant-scoped.
+
+**MCP:** `/api/crm/mcp`, `/mcp/crm`, legacy SSE, and stdio expose the same tool registry and executor. Tools are marked `read` or `write`; write tools require `sales.crm.write` plus confirmation. Typed write tools are limited to the allowed deal fields and `task.status`, return before/after values, generate or propagate request id, and write audit. Bulk/delete tools are not registered.
+
+**Analytics:** pipeline/forecast tools support owner/team/period scope, stage and forecast grouping, total and weighted pipeline, commit/best case/pipeline totals, changes, risky deals, and slippage. Current truth is `crm_deals`; change truth is `crm_deal_history`; snapshots are optional comparison baselines.
+
+**Sales Workflows:** `crm.list_sales_workflows` discovers ready-made workflow selections. `crm.get_sales_list` and explicit alias tools cover my open deals, closing this month/quarter, deals without activity, deals without next step, risky deals, top accounts by pipeline, accounts needing follow-up, contacts missing role/title/email, and tasks due this week.
+
+**Rollout:** CRM REST and authenticated MCP are mounted behind `authenticate, requireCompanyAccess`; public MCP is token-gated and fail-closed by env config. Regression tests cover auth/tenant gates, tenant isolation, write allowlist/audit, no delete tools, secret redaction, slippage/history, stale activity, and workflow lists.
