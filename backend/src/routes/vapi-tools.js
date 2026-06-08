@@ -149,21 +149,28 @@ async function handleCreateLead(args) {
         street, apt, zip, city, state,
         unitType, brand, unitAge, problemDescription,
         preferredSlot, addressValidated, escalationRequested,
+        disqualified, disqualReason,
         callerName,
     } = args;
 
-    if (!phone || phone.length < 5) {
+    // Disqualified leads (out-of-area / unsupported appliance) are logged for
+    // lead-gen refund tracking even without full contact details — the call
+    // transcript is the evidence. Valid leads still require a phone number.
+    if (!disqualified && (!phone || phone.length < 5)) {
         return { success: false, error: 'Phone number is required to create lead' };
     }
 
+    const summary = buildCallSummary({ unitType, brand, unitAge, problemDescription, preferredSlot, addressValidated, escalationRequested });
     const body = {
         FirstName: firstName || callerName?.split(' ')[0] || 'Unknown',
         LastName:  lastName  || callerName?.split(' ').slice(1).join(' ') || 'Caller',
-        Phone:     phone,
+        Phone:     phone || '',
         ...(email && { Email: email }),
         JobType:   unitType ? `${unitType} Repair` : 'Appliance Repair',
-        JobSource: 'AI Phone',
-        Comments:  buildCallSummary({ unitType, brand, unitAge, problemDescription, preferredSlot, addressValidated, escalationRequested }),
+        JobSource: disqualified ? 'AI Phone (Invalid)' : 'AI Phone',
+        Comments:  disqualified
+            ? `INVALID LEAD — ${disqualReason || 'disqualified'}. ${summary}`.trim()
+            : summary,
         ...(street && { Address: street }),
         ...(apt && { Unit: apt }),
         City:      city || '',

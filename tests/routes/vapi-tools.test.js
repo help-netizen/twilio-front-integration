@@ -455,6 +455,20 @@ describe('Group 6 — createLead', () => {
         expect(leadsService.createLead).not.toHaveBeenCalled();
     });
 
+    // Disqualified (invalid) lead: logged for refund tracking, no phone required
+    test('disqualified out_of_area → flagged lead, phone not required', async () => {
+        leadsService.createLead.mockResolvedValue({ uuid: 'dq' });
+        const res = await auth(request(app).post('/api/vapi-tools'))
+            .send(toolCall('createLead', {
+                firstName: 'Jane', lastName: 'Caller', zip: '03801', unitType: 'Refrigerator',
+                disqualified: true, disqualReason: 'out_of_area',
+            }));
+        expect(resultOf(res)).toEqual({ success: true, leadId: 'dq' });
+        const body = leadsService.createLead.mock.calls[0][0];
+        expect(body.JobSource).toBe('AI Phone (Invalid)');
+        expect(body.Comments).toMatch(/^INVALID LEAD — out_of_area\./);
+    });
+
     // TC-LQV2-024
     test('phone too short → success false', async () => {
         const res = await auth(request(app).post('/api/vapi-tools'))
