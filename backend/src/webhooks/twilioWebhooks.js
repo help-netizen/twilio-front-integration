@@ -353,7 +353,11 @@ async function handleDialAction(req, res) {
 
         const execution = await callFlowRuntime.getExecution(CallSid);
         if (execution && execution.status === 'active') {
-            const flowEvent = req.query.flowEvent || callFlowRuntime.eventFromDialStatus(dialStatus);
+            // vapi_agent nodes mark their Dial action with ?vapiNode=1 so the
+            // real DialCallStatus maps to a vapi.* event (completed → end call,
+            // failure/timeout → follow the node's fallback edge).
+            const flowEvent = req.query.flowEvent
+                || (req.query.vapiNode ? callFlowRuntime.vapiEventFromDialStatus(dialStatus) : callFlowRuntime.eventFromDialStatus(dialStatus));
             const flowTwiml = await callFlowRuntime.advance(CallSid, flowEvent, traceId);
             if (flowTwiml) {
                 res.type('text/xml');
