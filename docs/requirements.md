@@ -4,6 +4,123 @@
 
 ---
 
+## LQV2: Lead Qualifier v2 — AI Inbound Phone Assistant
+
+**Status:** Requirements
+**Priority:** P0
+**Owner:** Voice / CRM
+**Spec:** `voice-agent/assistants/lead-qualifier-v2-spec.md`
+**Predecessor:** Lead Qualifier v1 (`48844b0e-93aa-4d32-aab9-81a3972e9502`) — greeting + basic zip check only
+
+### 1. Description
+
+An autonomous AI voice assistant (VAPI platform, GPT-4o, Azure/Andrew voice, persona "Alex") that handles inbound service calls end-to-end for ABC Homes Appliance Repair. The assistant qualifies leads, collects unit/problem/contact/address data, checks schedule availability, applies NLP and marketing conversion techniques, handles objections and escalations, and creates a lead in the CRM — all without human involvement.
+
+This is a **new feature** in the `voice-agent/` domain. It extends the existing `/api/vapi-tools` backend endpoint (introduced in LQV1) with two new tool handlers. No frontend changes required.
+
+### 2. User Scenarios
+
+#### SC-01: Qualified call → booked slot → CRM lead
+**Actor:** Inbound caller (homeowner or property manager)
+**Flow:**
+1. Caller dials the company's SIP number; VAPI routes to Lead Qualifier v2.
+2. Alex greets: *"Hi, this is Alex from ABC Homes Appliance Repair! How can I help you today?"*
+3. Caller describes an appliance problem → assistant validates appliance type eligibility.
+4. Assistant asks for zip code → calls `checkServiceArea` → confirms service area.
+5. Assistant explains $95 service call fee → caller agrees.
+6. Assistant collects unit type, brand, approximate age, problem description.
+7. Assistant may handle objections and apply marketing/NLP techniques.
+8. Assistant collects full name, confirms callback phone, collects service address.
+9. Assistant calls `validateAddress` → reads back standardized address for confirmation.
+10. Assistant calls `checkAvailability` → offers 2–3 slots using "choice without choice".
+11. Caller selects a slot.
+12. Assistant calls `createLead` with full payload → CRM lead created.
+13. Assistant confirms booking and closes the call.
+
+#### SC-02: Disqualified call — wrong appliance
+**Flow:** Caller describes a small countertop appliance → assistant politely disqualifies and closes. No lead created.
+
+#### SC-03: Disqualified call — outside service area
+**Flow:** Caller provides zip → `checkServiceArea` returns `inServiceArea: false` → assistant apologizes and closes. No lead created.
+
+#### SC-04: Caller declines $95 service fee
+**Flow:** Caller declines after fee explanation → assistant acknowledges with open-door statement → closes. No lead created.
+
+#### SC-05: Caller cannot commit to a slot
+**Flow:** Qualification and data collection complete, but caller cannot book now → `createLead` called with `status: pending_schedule`, Comments includes "Caller requested callback to confirm slot".
+
+#### SC-06: Caller demands human agent
+**Flow:** One retention attempt → if still insisting, confirm phone, create lead with `escalation_requested: true` in Comments, close warmly.
+
+#### SC-07: FAQ / question call
+**Flow:** Caller asks a question (pricing, warranty, service area, brands, etc.) → assistant answers from knowledge base → pivots to service intent. If unknown question → offer callback.
+
+#### SC-08: Address validation mismatch
+**Flow:** `validateAddress` returns corrected zip different from qualification zip → re-run `checkServiceArea` → if outside area, disqualify.
+
+### 3. Functional Requirements Summary
+
+| FR | Description | Priority |
+|---|---|---|
+| FR-1 | Greeting with persona "Alex", intent detection, silence handling | P0 |
+| FR-2 | Lead qualification: appliance type + service area + fee agreement | P0 |
+| FR-3 | Unit & problem collection (type, brand, age, description) | P0 |
+| FR-4 | Objection handling (7 objection types, max 2 attempts each) | P0 |
+| FR-5 | Marketing techniques (FOMO, scarcity, social proof, time-limited offer before 2PM ET) | P1 |
+| FR-6 | NLP techniques (choice-without-choice, pacing, reframing, presuppositions, embedded commands, meta-model) | P1 |
+| FR-7 | Contact & address collection (name, phone pre-fill, address, optional email) | P0 |
+| FR-8 | Address validation via Google Maps Geocoding; zip mismatch re-check | P0 |
+| FR-9 | Schedule check via Blanc scheduleService (dispatch_settings + booked items); slot offer with scarcity trigger | P0 |
+| FR-10 | Lead creation in CRM with structured Comments; retry on failure; silent on error | P0 |
+| FR-11 | FAQ knowledge base; always pivot to service intent | P1 |
+| FR-11b | Human escalation: one retention attempt, then callback + lead with flag | P1 |
+| FR-12 | Graceful disqualification and call close; 15-min duration cap | P0 |
+
+### 4. Constraints and Non-Functional Requirements
+
+- `maxDurationSeconds: 900` (15 min hard cap — must be set in VAPI assistant config)
+- `firstResponseLatency < 1200ms`
+- Tool call p95 < 2000ms
+- Concurrent calls: ≥ 10 simultaneous inbound calls supported
+- Uptime SLA: 99.9% (VAPI SLA + backend Fly.io SLA)
+- Lead creation must never block call completion
+- `VAPI_TOOLS_SECRET` header required on all tool calls (already implemented in v1 handler)
+- VAPI `x-vapi-secret` validated server-side before processing any tool call
+- Address validation failure must NOT block lead creation (max 2 attempts, then proceed unvalidated)
+- `JobSource` always hardcoded to `"AI Phone"` — never override
+- `createLead` retry: 1 retry after 2-second wait on failure; silent to caller on both attempts failing
+- `/api/vapi-tools` endpoint handles multiple tool calls in a single request (toolCallList array); all results returned in one response
+- **`VITE_GOOGLE_MAPS_API_KEY`** — same key reused on the backend (`process.env.VITE_GOOGLE_MAPS_API_KEY`). Already set on Fly.io. No new key needed.
+- Phone number pre-filled from VAPI call metadata (`message.call.customer.number`), confirmed verbally with caller
+- Time-limited offer (FR-5.2) requires current time context in system prompt — inject via VAPI variable or time tool; must not fire at or after 14:00 ET
+
+### 5. Potentially Involved Modules
+
+| Module | Role |
+|---|---|
+| `backend/src/routes/vapi-tools.js` | Extend: add `validateAddress` and `checkAvailability` handlers |
+| `backend/src/services/scheduleService.js` | Extend: add `getAvailableSlots(companyId, opts)` |
+| `backend/src/db/serviceTerritoryQueries.js` | Reuse: `search(companyId, zip)` — no changes |
+| `backend/src/services/leadsService.js` | Reuse: `createLead(fields, companyId)` — no changes |
+| `voice-agent/assistants/lead-qualifier-v2.json` | New: VAPI assistant config for deployment |
+| `src/server.js` | Already patched (LQV1): `/api/vapi-tools` mounted without auth |
+
+### 6. Integrations Affected
+
+- **VAPI** — new assistant deployment via REST API / CLI
+- **Google Maps Geocoding API** — new server-side usage for `validateAddress`
+- **Blanc scheduleService** — `getAvailableSlots` reads `dispatch_settings` + booked items from DB
+
+### 7. Protected Parts (DO NOT BREAK)
+
+- `src/server.js` — mounting already done; do not re-order middleware
+- `backend/src/services/leadsService.js` — signature `createLead(fields, companyId)` must remain unchanged
+- `backend/src/db/serviceTerritoryQueries.js` — no schema changes
+- `backend/src/routes/zip-check.js` — existing consumers (frontend) must not break
+- Lead Qualifier v1 assistant (`48844b0e-...`) — must remain active until v2 is validated
+
+---
+
 ## PF002-R2: Estimates Composer Refresh
 
 **Status:** Requirements

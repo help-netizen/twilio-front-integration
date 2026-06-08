@@ -171,6 +171,135 @@ async function createFromSlot(companyId, entityType, slotData) {
 }
 
 /**
+ * Get available appointment slots for inbound call booking.
+ *
+ * Algorithm:
+ *   1. Load dispatch_settings (working hours, work days, slot_duration, timezone)
+ *   2. Load already-booked schedule items for the date range
+ *   3. For each working day, generate candidate time windows
+ *   4. Filter out windows that overlap with existing bookings
+ *   5. Return up to maxSlots results, formatted for speech
+ *
+ * @param {string} companyId
+ * @param {Object} opts
+ * @param {string} [opts.startDate]          - ISO date string (YYYY-MM-DD), defaults to today
+ * @param {number} [opts.days=5]             - how many calendar days to scan
+ * @param {number} [opts.slotDurationMin=120] - appointment window length in minutes
+ * @param {number} [opts.maxSlots=3]         - max slots to return
+ * @returns {Promise<{ slots: Array<{date,label,start,end}>, error?: string }>}
+ */
+async function getAvailableSlots(companyId, {
+    startDate,
+    days = 5,
+    slotDurationMin = 120,
+    maxSlots = 3,
+} = {}) {
+    // 1. Load dispatch settings
+    const settings = await getDispatchSettings(companyId);
+    const tz = settings.timezone || 'America/New_York';
+    const workStart = settings.work_start_time || '08:00';
+    const workEnd   = settings.work_end_time   || '18:00';
+    const workDays  = settings.work_days || [1, 2, 3, 4, 5]; // 0=Sun…6=Sat
+    const bufferMin = settings.buffer_minutes || 0;
+    const windowMin = slotDurationMin + bufferMin;
+
+    // 2. Determine date range
+    const todayStr = startDate || new Date().toLocaleDateString('en-CA', { timeZone: tz });
+    const endDateObj = new Date(todayStr + 'T00:00:00');
+    endDateObj.setDate(endDateObj.getDate() + days);
+    const endDateStr = endDateObj.toLocaleDateString('en-CA', { timeZone: tz });
+
+    // 3. Load booked items in range (jobs + leads + tasks that have start_at)
+    const { items: bookedItems } = await getScheduleItems(companyId, {
+        startDate: todayStr,
+        endDate: endDateStr,
+    });
+
+    // Build set of booked intervals as [startMs, endMs]
+    const bookedIntervals = bookedItems
+        .filter(i => i.start_at)
+        .map(i => [
+            new Date(i.start_at).getTime(),
+            i.end_at ? new Date(i.end_at).getTime() : new Date(i.start_at).getTime() + windowMin * 60 * 1000,
+        ]);
+
+    // 4. Generate candidate windows for each working day
+    const slots = [];
+    const [wStartH, wStartM] = workStart.split(':').map(Number);
+    const [wEndH,   wEndM]   = workEnd.split(':').map(Number);
+    const workStartTotalMin = wStartH * 60 + wStartM;
+    const workEndTotalMin   = wEndH   * 60 + wEndM;
+
+    const DAY_NAMES  = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+    function ordinal(n) {
+        const s = ['th','st','nd','rd'];
+        const v = n % 100;
+        return n + (s[(v - 20) % 10] || s[v] || s[0]);
+    }
+
+    function fmtHour(totalMin) {
+        const h = Math.floor(totalMin / 60);
+        const m = totalMin % 60;
+        const suffix = h >= 12 ? 'pm' : 'am';
+        const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+        return m === 0 ? `${h12}${suffix}` : `${h12}:${String(m).padStart(2,'0')}${suffix}`;
+    }
+
+    let cursor = new Date(todayStr + 'T00:00:00');
+
+    for (let d = 0; d < days && slots.length < maxSlots; d++) {
+        const dayOfWeek = cursor.getDay(); // local, but we only need dow
+
+        if (workDays.includes(dayOfWeek)) {
+            // Offer the FIRST open window of each working day, for day variety
+            // (matches the "Tuesday … or Thursday …" choice-without-choice framing).
+            for (
+                let slotStart = workStartTotalMin;
+                slotStart + windowMin <= workEndTotalMin;
+                slotStart += windowMin
+            ) {
+                const slotEnd = slotStart + slotDurationMin; // end without buffer
+
+                // Build absolute ms timestamps for overlap check
+                const dateStr = cursor.toLocaleDateString('en-CA', { timeZone: tz });
+                const slotStartMs = new Date(`${dateStr}T${String(Math.floor(slotStart/60)).padStart(2,'0')}:${String(slotStart%60).padStart(2,'0')}:00`).getTime();
+                const slotEndMs   = slotStartMs + windowMin * 60 * 1000;
+
+                // Check overlap with any booked interval
+                const overlaps = bookedIntervals.some(([bs, be]) => slotStartMs < be && slotEndMs > bs);
+
+                if (!overlaps) {
+                    const dayName   = DAY_NAMES[cursor.getDay()];
+                    const dayNum    = cursor.getDate();
+                    const monthName = MONTH_NAMES[cursor.getMonth()];
+                    const label     = `${dayName}, ${monthName} ${ordinal(dayNum)} between ${fmtHour(slotStart)} and ${fmtHour(slotEnd)}`;
+
+                    slots.push({
+                        date:  dateStr,
+                        label,
+                        start: `${String(Math.floor(slotStart/60)).padStart(2,'0')}:${String(slotStart%60).padStart(2,'0')}`,
+                        end:   `${String(Math.floor(slotEnd/60)).padStart(2,'0')}:${String(slotEnd%60).padStart(2,'0')}`,
+                    });
+                    break; // one slot per day → move to next day
+                }
+            }
+        }
+
+        if (slots.length >= maxSlots) break;
+
+        cursor.setDate(cursor.getDate() + 1);
+    }
+
+    if (slots.length === 0) {
+        return { slots: [], error: `No availability found in the next ${days} days` };
+    }
+
+    return { slots };
+}
+
+/**
  * Get dispatch settings for a company, returning defaults if none exist.
  */
 async function getDispatchSettings(companyId) {
@@ -210,5 +339,6 @@ module.exports = {
     createFromSlot,
     getDispatchSettings,
     updateDispatchSettings,
+    getAvailableSlots,
     ScheduleServiceError,
 };

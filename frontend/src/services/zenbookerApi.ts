@@ -95,6 +95,8 @@ export interface ZipCheckResult {
     exists: boolean;
     area: string;
     zip: string;
+    city: string;
+    state: string;
 }
 
 export async function checkZipCode(query: string): Promise<ZipCheckResult> {
