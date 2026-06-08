@@ -97,7 +97,8 @@ let app;
 beforeEach(() => {
     jest.clearAllMocks();
     process.env.VAPI_TOOLS_SECRET = SECRET;
-    process.env.VITE_GOOGLE_MAPS_API_KEY = 'test-maps-key';
+    process.env.GOOGLE_GEOCODING_KEY = 'test-geocoding-key';
+    delete process.env.VITE_GOOGLE_MAPS_API_KEY; // ensure dedicated key is used
     app = makeApp();
 });
 
@@ -302,7 +303,8 @@ describe('Group 4 — validateAddress', () => {
     });
 
     // TC-LQV2-016
-    test('missing VITE_GOOGLE_MAPS_API_KEY → valid false, never calls https', async () => {
+    test('missing geocoding key → valid false, never calls https', async () => {
+        delete process.env.GOOGLE_GEOCODING_KEY;
         delete process.env.VITE_GOOGLE_MAPS_API_KEY;
         const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
         const res = await auth(request(app).post('/api/vapi-tools'))
@@ -311,6 +313,16 @@ describe('Group 4 — validateAddress', () => {
         expect(out.valid).toBe(false);
         expect(https.get).not.toHaveBeenCalled();
         warn.mockRestore();
+    });
+
+    test('falls back to VITE_GOOGLE_MAPS_API_KEY when GOOGLE_GEOCODING_KEY unset', async () => {
+        delete process.env.GOOGLE_GEOCODING_KEY;
+        process.env.VITE_GOOGLE_MAPS_API_KEY = 'fallback-key';
+        mockGeocode({ status: 'ZERO_RESULTS', results: [] });
+        const res = await auth(request(app).post('/api/vapi-tools'))
+            .send(toolCall('validateAddress', { street: '45 Tremont St' }));
+        expect(resultOf(res)).toEqual({ valid: false });
+        expect(https.get).toHaveBeenCalled(); // fallback key was used → request made
     });
 });
 

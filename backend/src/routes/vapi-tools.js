@@ -8,7 +8,7 @@
  *
  * Tools handled:
  *   - checkServiceArea({ zip })              — check zip against service_territories DB
- *   - validateAddress({ street, apt, ... })  — Google Maps Geocoding (uses VITE_GOOGLE_MAPS_API_KEY)
+ *   - validateAddress({ street, apt, ... })  — Google Maps Geocoding (uses GOOGLE_GEOCODING_KEY)
  *   - checkAvailability({ zip, unitType })   — Blanc scheduleService.getAvailableSlots (dispatch_settings + booked items)
  *   - createLead({ ... })                    — create qualified lead in CRM
  *
@@ -62,10 +62,12 @@ async function handleCheckServiceArea({ zip }) {
 // ─── Tool: validateAddress ────────────────────────────────────────────────────
 
 async function handleValidateAddress({ street, apt, city, state, zip }) {
-    const apiKey = process.env.VITE_GOOGLE_MAPS_API_KEY;
+    // Dedicated server-side Geocoding key (IP-restricted). Falls back to the
+    // frontend Maps key for back-compat if the dedicated one isn't set.
+    const apiKey = process.env.GOOGLE_GEOCODING_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY;
     if (!apiKey) {
-        console.warn('[vapi-tools] VITE_GOOGLE_MAPS_API_KEY not set — address validation skipped');
-        return { valid: false, error: 'VITE_GOOGLE_MAPS_API_KEY not configured' };
+        console.warn('[vapi-tools] GOOGLE_GEOCODING_KEY not set — address validation skipped');
+        return { valid: false, error: 'GOOGLE_GEOCODING_KEY not configured' };
     }
 
     try {
