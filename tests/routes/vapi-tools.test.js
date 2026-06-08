@@ -426,6 +426,26 @@ describe('Group 6 — createLead', () => {
         expect(leadsService.createLead.mock.calls[0][0]).not.toHaveProperty('Email');
     });
 
+    // Regression: street/apt must reach the lead as Address/Unit
+    test('street + apt → mapped to Address/Unit', async () => {
+        leadsService.createLead.mockResolvedValue({ uuid: 'x' });
+        await auth(request(app).post('/api/vapi-tools'))
+            .send(toolCall('createLead', { ...fullArgs, street: '12 Walpole St', apt: '2B' }));
+        const body = leadsService.createLead.mock.calls[0][0];
+        expect(body.Address).toBe('12 Walpole St');
+        expect(body.Unit).toBe('2B');
+        expect(body.City).toBe('Boston');
+    });
+
+    test('no street → Address/Unit keys absent (cold/escalation lead)', async () => {
+        leadsService.createLead.mockResolvedValue({ uuid: 'x' });
+        await auth(request(app).post('/api/vapi-tools'))
+            .send(toolCall('createLead', fullArgs));
+        const body = leadsService.createLead.mock.calls[0][0];
+        expect(body).not.toHaveProperty('Address');
+        expect(body).not.toHaveProperty('Unit');
+    });
+
     // TC-LQV2-023
     test('phone missing → success false, createLead not called', async () => {
         const { phone, ...noPhone } = fullArgs;

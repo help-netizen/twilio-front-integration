@@ -146,7 +146,7 @@ function buildCallSummary({ unitType, brand, unitAge, problemDescription, prefer
 async function handleCreateLead(args) {
     const {
         firstName, lastName, phone, email,
-        zip, city, state,
+        street, apt, zip, city, state,
         unitType, brand, unitAge, problemDescription,
         preferredSlot, addressValidated, escalationRequested,
         callerName,
@@ -164,6 +164,8 @@ async function handleCreateLead(args) {
         JobType:   unitType ? `${unitType} Repair` : 'Appliance Repair',
         JobSource: 'AI Phone',
         Comments:  buildCallSummary({ unitType, brand, unitAge, problemDescription, preferredSlot, addressValidated, escalationRequested }),
+        ...(street && { Address: street }),
+        ...(apt && { Unit: apt }),
         City:      city || '',
         State:     state || '',
         PostalCode: zip || '',
