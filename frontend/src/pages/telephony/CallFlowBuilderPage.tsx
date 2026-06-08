@@ -10,6 +10,7 @@ import '@xyflow/react/dist/style.css';
 import { ArrowLeft, Save, AlertCircle, CheckCircle, Undo2, Redo2, LayoutGrid, Trash2, X, Plus, Lock } from 'lucide-react';
 import { telephonyApi } from '../../services/telephonyApi';
 import { vapiApi } from '../../services/vapiApi';
+import { fetchMarketplaceApps } from '../../services/marketplaceApi';
 import { NODE_KIND_META, type CallFlowNodeKind, type CallFlow, type CallFlowNode as CFNode, type CallFlowTransition, type TelephonyTargetGroupOption, type TelephonyTargetUserOption } from '../../types/telephony';
 import { layoutWithElkLayered } from '../../utils/elkLayout';
 import { createSkeletonFlow } from '../../utils/skeletonFlow';
@@ -398,10 +399,19 @@ export default function CallFlowBuilderPage() {
 
     const { push: pushSnap, undo, redo, canUndo, canRedo } = useUndoRedo(nodes as any, edges, setNodes as any, setEdges as any);
 
-    // Check VAPI connection for node gating
+    // Check VAPI readiness for node gating.
     useEffect(() => {
-        vapiApi.getConnections()
-            .then(conns => setVapiConnected(conns.some(c => c.status === 'active')))
+        Promise.all([
+            vapiApi.getConnections(),
+            vapiApi.getResources(),
+            fetchMarketplaceApps(),
+        ])
+            .then(([conns, resources, apps]) => {
+                const hasConnection = conns.some(c => c.status === 'active');
+                const hasResource = resources.some(r => r.is_active && String(r.sip_uri || '').trim());
+                const hasInstallation = apps.some(a => a.app_key === 'vapi-ai' && a.installation?.status === 'connected');
+                setVapiConnected(hasConnection && hasResource && hasInstallation);
+            })
             .catch(() => setVapiConnected(false));
     }, []);
 

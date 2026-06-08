@@ -308,4 +308,114 @@ describe('F017 callFlowRuntime branch insertion metadata recovery', () => {
         expect(twiml).toContain('<Record');
         expect(twiml).toContain('voicemail.recorded');
     });
+
+    test('resolves VAPI SIP URI from active tenant resource settings', async () => {
+        const vapiGraph = {
+            states: [
+                { id: 'start', name: 'Start', kind: 'start' },
+                {
+                    id: 'vapi',
+                    name: 'VAPI AI Agent',
+                    kind: 'vapi_agent',
+                    config: { timeout_sec: 45 },
+                },
+            ],
+            transitions: [
+                { id: 'start-vapi', from_state_id: 'start', to_state_id: 'vapi', transitionMode: 'eventless' },
+            ],
+        };
+        const startExecution = {
+            call_sid: 'CA_vapi',
+            company_id: 'company-1',
+            group_id: 'ug-1',
+            current_node_id: 'start',
+            status: 'active',
+            context_json: JSON.stringify({
+                graph: vapiGraph,
+                groupId: 'ug-1',
+                callerNumber: '+15551112222',
+                calledNumber: '+16175006181',
+                baseUrl: 'https://example.test',
+                companyId: 'company-1',
+            }),
+        };
+        const vapiExecution = { ...startExecution, current_node_id: 'vapi' };
+        const selectRows = [startExecution, vapiExecution];
+
+        mockQuery.mockImplementation(sql => {
+            if (sql.includes('SELECT * FROM call_flow_executions')) {
+                return { rows: [selectRows.shift() || vapiExecution] };
+            }
+            if (sql.includes('FROM vapi_tenant_resources r')) {
+                return { rows: [{ sip_uri: 'sip:assistant@sip.vapi.ai' }] };
+            }
+            if (sql.includes('UPDATE call_flow_executions')) {
+                return { rows: [vapiExecution] };
+            }
+            return { rows: [] };
+        });
+
+        const twiml = await advance('CA_vapi', 'node.completed', 'test');
+
+        expect(twiml).toContain('<Dial action="https://example.test/webhooks/twilio/voice-dial-action?flowEvent=vapi.completed"');
+        expect(twiml).toContain('<Sip>sip:assistant@sip.vapi.ai?');
+        expect(twiml).toContain('x-blanc-company-id=company-1');
+        expect(twiml).toContain('x-blanc-group-id=ug-1');
+    });
+
+    test('routes unconfigured VAPI node through its outgoing edge before audible failure', async () => {
+        const vapiGraph = {
+            states: [
+                { id: 'start', name: 'Start', kind: 'start' },
+                { id: 'vapi', name: 'VAPI AI Agent', kind: 'vapi_agent', config: {} },
+                { id: 'vm', name: 'Voicemail', kind: 'voicemail' },
+            ],
+            transitions: [
+                { id: 'start-vapi', from_state_id: 'start', to_state_id: 'vapi', transitionMode: 'eventless' },
+                {
+                    id: 'vapi-vm',
+                    from_state_id: 'vapi',
+                    to_state_id: 'vm',
+                    transitionMode: 'event',
+                    event_key: 'vapi.completed vapi.no_target vapi.failed vapi.timeout',
+                },
+            ],
+        };
+        const startExecution = {
+            call_sid: 'CA_vapi_missing',
+            company_id: 'company-1',
+            group_id: 'ug-1',
+            current_node_id: 'start',
+            status: 'active',
+            context_json: JSON.stringify({
+                graph: vapiGraph,
+                groupId: 'ug-1',
+                callerNumber: '+15551112222',
+                calledNumber: '+16175006181',
+                baseUrl: 'https://example.test',
+                companyId: 'company-1',
+            }),
+        };
+        const vapiExecution = { ...startExecution, current_node_id: 'vapi' };
+        const voicemailExecution = { ...startExecution, current_node_id: 'vm' };
+        const selectRows = [startExecution, vapiExecution, voicemailExecution];
+
+        mockQuery.mockImplementation(sql => {
+            if (sql.includes('SELECT * FROM call_flow_executions')) {
+                return { rows: [selectRows.shift() || voicemailExecution] };
+            }
+            if (sql.includes('FROM vapi_tenant_resources r')) {
+                return { rows: [] };
+            }
+            if (sql.includes('UPDATE call_flow_executions')) {
+                return { rows: [voicemailExecution] };
+            }
+            return { rows: [] };
+        });
+
+        const twiml = await advance('CA_vapi_missing', 'node.completed', 'test');
+
+        expect(twiml).toContain('<Record');
+        expect(twiml).not.toContain('AI agent is not configured');
+    });
 });

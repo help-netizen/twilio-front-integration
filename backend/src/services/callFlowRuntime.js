@@ -214,11 +214,13 @@ async function completeVoicemailCall(execution, context) {
     }
 }
 
-async function followFailureEdge({ execution, node, context, traceId, fallbackTwiml }) {
-    const nextId = nextNodeIdForEvent(context.graph, node.id, 'transfer.failed', context) ||
-        nextNodeIdForEvent(context.graph, node.id, 'queue.timeout', context) ||
-        nextNodeIdForEvent(context.graph, node.id, 'queue.failed', context) ||
-        nextNodeIdForEvent(context.graph, node.id, null, context);
+async function followFailureEdge({ execution, node, context, traceId, fallbackTwiml, events }) {
+    const failureEvents = events || ['transfer.failed', 'queue.timeout', 'queue.failed', null];
+    let nextId = null;
+    for (const event of failureEvents) {
+        nextId = nextNodeIdForEvent(context.graph, node.id, event, context);
+        if (nextId) break;
+    }
     if (!nextId) return fallbackTwiml();
     await saveExecutionState(execution.call_sid, execution.company_id, { currentNodeId: nextId, contextJson: context });
     return renderNodeById(execution.call_sid, nextId, traceId);
@@ -384,10 +386,66 @@ async function renderTransferNode({ execution, node, context, traceId }) {
     </Dial>`);
 }
 
-function renderVapiNode(node, context) {
+async function resolveVapiSipUri(node, context, companyId) {
     const cfg = node.config || {};
-    const sipUri = cfg.sip_uri || cfg.sipUri || process.env.VAPI_SIP_URI;
-    if (!sipUri) return buildHangupTwiml('AI agent is not configured.');
+    const configuredSipUri = cfg.sip_uri || cfg.sipUri;
+    if (configuredSipUri) return String(configuredSipUri);
+
+    const tenantIds = [...new Set([companyId, context.companyId, 'default'].filter(Boolean).map(String))];
+    const environment = String(cfg.environment || process.env.VAPI_ENVIRONMENT || 'prod');
+    const params = [tenantIds, environment];
+    let scopedFilter = '';
+    if (cfg.vapi_resource_id || cfg.resource_id) {
+        params.push(String(cfg.vapi_resource_id || cfg.resource_id));
+        scopedFilter = `AND r.id = $${params.length}`;
+    } else if (cfg.provider_connection_id) {
+        params.push(String(cfg.provider_connection_id));
+        scopedFilter = `AND r.provider_connection_id = $${params.length}`;
+    }
+
+    try {
+        const result = await db.query(
+            `SELECT NULLIF(BTRIM(r.sip_uri), '') AS sip_uri
+             FROM vapi_tenant_resources r
+             JOIN provider_connections pc ON pc.id = r.provider_connection_id
+             WHERE r.tenant_id = ANY($1::text[])
+               AND r.is_active = true
+               AND pc.provider = 'vapi'
+               AND pc.status = 'active'
+               AND NULLIF(BTRIM(r.sip_uri), '') IS NOT NULL
+               ${scopedFilter}
+             ORDER BY
+               array_position($1::text[], r.tenant_id),
+               CASE WHEN r.environment = $2 THEN 0 ELSE 1 END,
+               r.created_at DESC
+             LIMIT 1`,
+            params
+        );
+        return result.rows[0]?.sip_uri || process.env.VAPI_SIP_URI || null;
+    } catch (err) {
+        console.error('[CallFlowRuntime] Failed to resolve VAPI SIP resource:', err.message);
+        return process.env.VAPI_SIP_URI || null;
+    }
+}
+
+function appendSipQuery(sipUri, query) {
+    const separator = String(sipUri).includes('?') ? '&amp;' : '?';
+    return `${escapeXml(sipUri)}${separator}${query}`;
+}
+
+async function renderVapiNode({ execution, node, context, traceId }) {
+    const cfg = node.config || {};
+    const sipUri = await resolveVapiSipUri(node, context, execution.company_id);
+    if (!sipUri) {
+        return followFailureEdge({
+            execution,
+            node,
+            context,
+            traceId,
+            events: ['vapi.no_target', 'vapi.failed', 'vapi.timeout', null],
+            fallbackTwiml: () => buildHangupTwiml('AI agent is not configured.'),
+        });
+    }
     const actionUrl = `${context.baseUrl}/webhooks/twilio/voice-dial-action?flowEvent=vapi.completed`;
     const query = new URLSearchParams({
         'x-blanc-company-id': context.companyId,
@@ -397,7 +455,7 @@ function renderVapiNode(node, context) {
     }).toString().replace(/&/g, '&amp;');
     return xmlResponse(`
     <Dial action="${actionUrl}" method="POST" answerOnBridge="true" timeout="${Number(cfg.timeout_sec || 60)}">
-        <Sip>${escapeXml(sipUri)}?${query}</Sip>
+        <Sip>${appendSipQuery(sipUri, query)}</Sip>
     </Dial>`);
 }
 
@@ -443,7 +501,7 @@ async function renderNodeById(callSid, nodeId, traceId = 'call-flow') {
         case 'transfer':
             return renderTransferNode({ execution, node, context, traceId });
         case 'vapi_agent':
-            return renderVapiNode(node, context);
+            return renderVapiNode({ execution, node, context, traceId });
         case 'hangup':
             await saveExecutionState(callSid, execution.company_id, { status: 'completed' });
             return buildHangupTwiml(node.config?.message || node.config?.optional_message_text);
