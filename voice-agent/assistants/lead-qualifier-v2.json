@@ -215,5 +215,13 @@
         }
       }
     ]
+  },
+  "messagePlan": {
+    "idleMessages": [
+      "Are you still there? How can I help you today?",
+      "I'm still here whenever you're ready — what can I help you with?"
+    ],
+    "idleTimeoutSeconds": 8,
+    "idleMessageMaxSpokenCount": 2
   }
 }
