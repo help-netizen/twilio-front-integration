@@ -35,7 +35,7 @@ VAPI injects caller's phone number in the call payload: `message.call.customer.n
 - Area: Greater Boston
 - Years in market: 5+
 - Rating: 4.9 (Google + Yelp)
-- Partners: Home Depot, National Service Alliance, Liberty Mutual, Home Choice
+- Partners: Home Depot, National Service Alliance, Liberty Home Guard, Home Choice
 - Service call fee: $95 — waived if repair approved (included in final price); only pay $95 if no repair
 - Warranty: 90 days parts + labor on all repairs (standard, no upsell in v2)
 

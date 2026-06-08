@@ -19,7 +19,7 @@ company:
   partners:
     - "Home Depot"
     - "National Service Alliance"
-    - "Liberty Mutual"
+    - "Liberty Home Guard"
     - "Home Choice"
 
 business_hours:
@@ -412,7 +412,7 @@ Do not fabricate specific slot counts that don't come from the `checkAvailabilit
 
 **FR-5.4 Social proof**
 Available trust anchors — use contextually, never all at once:
-- *"We're an authorized service partner with Home Depot, National Service Alliance, Liberty Mutual, and Home Choice"*
+- *"We're an authorized service partner with Home Depot, National Service Alliance, Liberty Home Guard, and Home Choice"*
 - *"We maintain a 4.9-star rating across Google and Yelp"*
 - *"We've been serving homeowners in [area] for over 5 years"*
 - *"A lot of your neighbors in [city] use us for annual maintenance"*
