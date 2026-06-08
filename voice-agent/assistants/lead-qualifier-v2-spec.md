@@ -58,13 +58,10 @@ eligible_appliances:
   - "Wine Coolers"
   - "Built-in Ice Makers"
   - "Garbage Disposals"
-  - "Trash Compactors"
   - "Hood Vents / Range Hoods"
-  - "HVAC Units"
   - "Commercial Kitchen Equipment"
 
 ineligible_appliances:
-  - "Countertop microwaves"
   - "Coffee makers"
   - "Stand mixers"
   - "Blenders / Toasters"
