@@ -135,6 +135,21 @@ function FlowNodeComponent({ data, selected }: { data: FlowNodeData; selected?: 
 }
 const nodeTypes: NodeTypes = { flowNode: FlowNodeComponent };
 
+const DEFAULT_INSERT_MODE = 'between';
+
+function isInsertableTransition(t: CallFlowTransition) {
+    return t.insertable !== false;
+}
+
+function insertableData(data?: Record<string, unknown> | null, overrides: Record<string, unknown> = {}) {
+    const merged = { ...(data || {}), ...overrides };
+    return {
+        ...merged,
+        insertable: merged.insertable ?? true,
+        insertMode: merged.insertMode || DEFAULT_INSERT_MODE,
+    };
+}
+
 // ─── Custom Edge with + button ────────────────────────────────────────────────
 // Context lets InsertableEdge call setInsertTarget without a module-level variable
 // (module-level vars break after React Fast Refresh / HMR because useEffect([]) doesn't re-run)
@@ -188,19 +203,22 @@ function graphToReactFlow(states: CFNode[], transitions: CallFlowTransition[]) {
             labelExpr: s.labelExpr, groupRef: s.groupRef, config: s.config,
         },
     }));
-    const edges: Edge[] = visibleTransitions.map(t => ({
-        id: t.id, source: t.from_state_id, target: t.to_state_id,
-        type: t.insertable ? 'insertable' : 'default',
-        label: t.label || t.edgeLabel || t.event_key,
-        markerEnd: { type: MarkerType.ArrowClosed },
-        style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' },
-        data: {
-            system: t.system, immutable: t.immutable, deletable: t.deletable, hidden: t.hidden,
-            insertable: t.insertable, insertMode: t.insertMode, edgeLabel: t.edgeLabel,
-            branchKey: t.branchKey, edgeRole: t.edgeRole, transitionMode: t.transitionMode,
-            condExpr: t.condExpr, event_key: t.event_key
-        },
-    }));
+    const edges: Edge[] = visibleTransitions.map(t => {
+        const insertable = isInsertableTransition(t);
+        return {
+            id: t.id, source: t.from_state_id, target: t.to_state_id,
+            type: insertable ? 'insertable' : 'default',
+            label: t.label || t.edgeLabel || t.event_key,
+            markerEnd: { type: MarkerType.ArrowClosed },
+            style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' },
+            data: {
+                system: t.system, immutable: t.immutable, deletable: t.deletable, hidden: t.hidden,
+                insertable, insertMode: t.insertMode || (insertable ? DEFAULT_INSERT_MODE : undefined), edgeLabel: t.edgeLabel,
+                branchKey: t.branchKey, edgeRole: t.edgeRole, transitionMode: t.transitionMode,
+                condExpr: t.condExpr, event_key: t.event_key
+            },
+        };
+    });
     return { nodes, edges };
 }
 
@@ -270,8 +288,8 @@ function reactFlowToGraph(
                 immutable: data.immutable,
                 deletable: data.deletable,
                 hidden: data.hidden,
-                insertable: data.insertable,
-                insertMode: data.insertMode,
+                insertable: data.insertable ?? (e.type === 'insertable' ? true : undefined),
+                insertMode: data.insertMode || (e.type === 'insertable' ? DEFAULT_INSERT_MODE : undefined),
                 edgeLabel: data.edgeLabel,
                 branchKey: data.branchKey,
                 edgeRole: data.edgeRole,
@@ -356,7 +374,7 @@ export default function CallFlowBuilderPage() {
 
     const onConnect = useCallback((p: Connection) => {
         pushSnap();
-        setEdges(eds => addEdge({ ...p, type: 'insertable', markerEnd: { type: MarkerType.ArrowClosed }, label: 'transition', style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' } }, eds) as any);
+        setEdges(eds => addEdge({ ...p, type: 'insertable', markerEnd: { type: MarkerType.ArrowClosed }, label: 'transition', style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' }, data: insertableData() }, eds) as any);
     }, [setEdges, pushSnap]);
 
     const onNodeClick = useCallback((_: React.MouseEvent, n: Node) => { setSelectedNode(n as Node<FlowNodeData>); setSelectedEdge(null); }, []);
@@ -400,11 +418,11 @@ export default function CallFlowBuilderPage() {
                 },
             };
             // Success edge: keep original target (continue flow)
-            const eCompleted: Edge = { id: `e-${Date.now()}-ok`, source: id, target: edge.target, type: 'insertable', label: 'Continue', markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' }, data: { edgeRole: 'success', edgeLabel: 'Continue', transitionMode: 'event', event_key: 'vapi.completed' } };
+            const eCompleted: Edge = { id: `e-${Date.now()}-ok`, source: id, target: edge.target, type: 'insertable', label: 'Continue', markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' }, data: insertableData(null, { edgeRole: 'success', edgeLabel: 'Continue', transitionMode: 'event', event_key: 'vapi.completed' }) };
             // Fallback edge: needs a target — point to edge's original target for now
-            const eFallback: Edge = { id: `e-${Date.now()}-fb`, source: id, target: edge.target, type: 'insertable', label: 'Fallback', markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2, strokeDasharray: '4 3' }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#ef4444' }, data: { edgeRole: 'fallback', edgeLabel: 'Fallback', transitionMode: 'event', event_key: 'vapi.no_target vapi.failed vapi.timeout' } };
+            const eFallback: Edge = { id: `e-${Date.now()}-fb`, source: id, target: edge.target, type: 'insertable', label: 'Fallback', markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2, strokeDasharray: '4 3' }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#ef4444' }, data: insertableData(null, { edgeRole: 'fallback', edgeLabel: 'Fallback', transitionMode: 'event', event_key: 'vapi.no_target vapi.failed vapi.timeout' }) };
             // Incoming edge: from original source
-            const eIn: Edge = { id: `e-${Date.now()}-in`, source: edge.source, target: id, type: 'insertable', label: edge.label, markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' }, data: edge.data };
+            const eIn: Edge = { id: `e-${Date.now()}-in`, source: edge.source, target: id, type: 'insertable', label: edge.label, markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' }, data: insertableData(edge.data) };
             setNodes(nds => [...nds, newNode] as any);
             setEdges(eds => [...(eds as any[]).filter((e: any) => e.id !== insertTarget.edgeId), eIn, eCompleted, eFallback] as any);
         } else {
@@ -415,13 +433,13 @@ export default function CallFlowBuilderPage() {
                 id, type: 'flowNode', position: { x: insertTarget.midX - 90, y: insertTarget.midY },
                 data: { label: meta.label, kind, config: defaultConfig, uiTerminal: isTerminal || undefined },
             };
-            const newEdge1: Edge = { id: `e-${Date.now()}-a`, source: edge.source, target: id, type: 'insertable', label: edge.label, markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' }, data: edge.data };
+            const newEdge1: Edge = { id: `e-${Date.now()}-a`, source: edge.source, target: id, type: 'insertable', label: edge.label, markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' }, data: insertableData(edge.data) };
             if (isTerminal) {
                 // Terminal nodes: only incoming edge, no outgoing
                 setNodes(nds => [...nds, newNode] as any);
                 setEdges(eds => [...(eds as any[]).filter((e: any) => e.id !== insertTarget.edgeId), newEdge1] as any);
             } else {
-                const newEdge2: Edge = { id: `e-${Date.now()}-b`, source: id, target: edge.target, type: 'insertable', label: 'next', markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' } };
+                const newEdge2: Edge = { id: `e-${Date.now()}-b`, source: id, target: edge.target, type: 'insertable', label: 'next', markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' }, data: insertableData(null, { edgeLabel: 'next', transitionMode: 'eventless' }) };
                 setNodes(nds => [...nds, newNode] as any);
                 setEdges(eds => [...(eds as any[]).filter((e: any) => e.id !== insertTarget.edgeId), newEdge1, newEdge2] as any);
             }
@@ -450,7 +468,7 @@ export default function CallFlowBuilderPage() {
             const healEdges: Edge[] = [];
             for (const inc of incoming) {
                 for (const out of outgoing) {
-                    healEdges.push({ id: `heal-${Date.now()}-${Math.random()}`, source: inc.source, target: out.target, type: 'insertable', label: inc.label || 'reconnect', markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' } });
+                    healEdges.push({ id: `heal-${Date.now()}-${Math.random()}`, source: inc.source, target: out.target, type: 'insertable', label: inc.label || 'reconnect', markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' }, data: insertableData(inc.data) });
                 }
             }
             setNodes(nds => (nds as any[]).filter((n: any) => n.id !== id) as any);
