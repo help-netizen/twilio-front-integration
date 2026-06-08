@@ -364,7 +364,9 @@ describe('F017 callFlowRuntime branch insertion metadata recovery', () => {
         expect(twiml).toContain('record="record-from-answer-dual"');
         expect(twiml).toContain('recordingStatusCallback="https://example.test/webhooks/twilio/recording-status"');
         expect(twiml).toContain('recordingStatusCallbackMethod="POST"');
-        expect(twiml).toContain('<Sip>sip:assistant@sip.vapi.ai?');
+        expect(twiml).toContain('<Sip statusCallback="https://example.test/webhooks/twilio/voice-status"');
+        expect(twiml).toContain('statusCallbackEvent="initiated ringing answered completed"');
+        expect(twiml).toContain('statusCallbackMethod="POST">sip:assistant@sip.vapi.ai?');
         expect(twiml).toContain('x-blanc-company-id=company-1');
         expect(twiml).toContain('x-blanc-group-id=ug-1');
     });
