@@ -16,6 +16,7 @@ npm-debug.log*
 # Database
 *.sqlite
 *.db
+exports/
 
 # IDE
 .vscode/
