@@ -28,6 +28,8 @@ router.get('/', async (req, res) => {
                 success: true,
                 exists: !!row,
                 area: row?.area || '',
+                city: row?.city || '',
+                state: row?.state || '',
                 zip: row?.zip || '',
             },
         });

@@ -165,6 +165,10 @@ app.use('/api/schedule', authenticate, requireCompanyAccess, scheduleRouter);
 app.use('/api/estimates', authenticate, requireCompanyAccess, estimatesRouter);
 const estimateItemPresetsRouter = require('../backend/src/routes/estimate-item-presets');
 app.use('/api/estimate-item-presets', authenticate, requireCompanyAccess, estimateItemPresetsRouter);
+// VAPI Tool Call Handler — public endpoint, secured by x-vapi-secret header
+const vapiToolsRouter = require('../backend/src/routes/vapi-tools');
+app.use('/api/vapi-tools', vapiToolsRouter);
+
 // Public, un-authenticated invoice routes (tokenized PDF for "send" links).
 // Must be mounted BEFORE the authenticated /api/invoices route so the auth
 // middleware doesn't intercept /api/public/* requests.

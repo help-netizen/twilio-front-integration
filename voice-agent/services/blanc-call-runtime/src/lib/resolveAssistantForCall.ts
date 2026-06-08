@@ -38,6 +38,7 @@ export interface AssistantResolutionResult {
  */
 const ASSISTANT_PROFILES: Record<string, string> = {
     greeting_only_v1: '4339f404-9b71-454b-ba6d-8167392304f0',
+    lead_qualifier_v2: '30e85a87-9d7e-4694-828e-1fea7d10f3ef',
 };
 
 /**

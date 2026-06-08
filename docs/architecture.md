@@ -4,6 +4,128 @@
 
 ---
 
+## LQV2: Lead Qualifier v2 — AI Inbound Phone Assistant
+
+**Status:** Architecture
+**Feature:** VAPI inbound call assistant — lead qualification, booking, CRM creation
+**Related requirements:** `LQV2` in `Docs/requirements.md`
+**Spec:** `voice-agent/assistants/lead-qualifier-v2-spec.md`
+
+### 1. System Overview
+
+```
+Inbound SIP call
+       │
+       ▼
+  VAPI Platform (GPT-4o, Azure/Andrew voice, persona "Alex")
+       │
+       ├─ tool: checkServiceArea ──────────────────────────────────────┐
+       ├─ tool: validateAddress  ──────────────────────────────────────┤
+       ├─ tool: checkAvailability ─────────────────────────────────────┤
+       └─ tool: createLead ────────────────────────────────────────────┤
+                                                                       │
+                POST /api/vapi-tools (x-vapi-secret header)            │
+                         │◄──────────────────────────────────────────-─┘
+                         ▼
+              vapi-tools.js route (vapiSecretAuth)
+                         │
+          ┌──────────────┬──────────────┬──────────────┐
+          ▼              ▼              ▼              ▼
+  serviceTerritory   Google Maps    scheduleService  leadsService
+  Queries.search()   Geocoding API  .getAvailable    .createLead()
+  (checkServiceArea) (validateAddr)  Slots()          (createLead)
+          │              │           (checkAvail)         │
+          ▼              ▼              ▼                  ▼
+   service_territories  maps.googleapis  dispatch_settings  leads
+   (PostgreSQL)         .com/geocode     + booked items     (PostgreSQL)
+                                         (PostgreSQL)
+```
+
+The endpoint `/api/vapi-tools` is already mounted in `src/server.js` without `authenticate`/`requireCompanyAccess` middleware (intentional — VAPI is server-to-server, secured by `x-vapi-secret`). It uses a hardcoded `DEFAULT_COMPANY_ID` because tenant context is determined by the VAPI assistant assignment, not by session.
+
+### 2. Existing Functionality to Extend
+
+| Module | Decision |
+|---|---|
+| `backend/src/routes/vapi-tools.js` | **Extend.** Add `handleValidateAddress` and `handleCheckAvailability` handlers. Add routing for new tool names in the dispatcher. |
+| `backend/src/services/scheduleService.js` | **Extend.** Add `getAvailableSlots(companyId, opts)` — reads `dispatch_settings` + booked schedule items. |
+| `backend/src/db/serviceTerritoryQueries.js` | **Reuse as-is.** `search(companyId, zip)` already handles zip → area/city lookup. |
+| `backend/src/services/leadsService.js` | **Reuse as-is.** `createLead(fields, companyId)` signature unchanged. |
+| `backend/src/routes/zip-check.js` | **No change.** Already returns `city`/`state` (updated in LQV1). |
+| `src/server.js` | **No change.** `/api/vapi-tools` mount already exists. |
+
+### 3. New Components
+
+#### Backend
+
+**`backend/src/routes/vapi-tools.js`** — extend with two new handlers:
+
+- `handleValidateAddress({ street, apt, city, state, zip })` — calls Google Maps Geocoding API server-side using `VITE_GOOGLE_MAPS_API_KEY` env var. Returns `{ valid, standardized, correctedZip, lat, lng }`. On error or not-found → returns `{ valid: false }`, never throws.
+
+- `handleCheckAvailability({ zip, unitType, days })` — calls `scheduleService.getAvailableSlots(DEFAULT_COMPANY_ID, { days, slotDurationMin: 120, maxSlots: 3 })`. Reads Blanc's own `dispatch_settings` + booked items. Returns `{ slots: [{ date, label, start, end }] }` — max 3 slots formatted for speech (e.g. "Tuesday, June 10th between 10am and 1pm").
+
+#### Voice Agent Config
+
+**`voice-agent/assistants/lead-qualifier-v2.json`** — complete VAPI assistant config for deployment:
+- Model: `openai/gpt-4o`, temp 0.5, max tokens 400
+- Voice: `azure/andrew`
+- System prompt: full conversation instructions from spec (FR-1 through FR-12)
+- Tools: all 4 tools with `server.url` and `server.secret`
+- `firstMessage`, `endCallMessage`, `maxDurationSeconds: 900`
+- `metadata.slug: lead_qualifier_v2`, `metadata.stage: 2`
+
+#### Env vars (no new secrets needed)
+
+| Var | Purpose |
+|---|---|
+| `VITE_GOOGLE_MAPS_API_KEY` | Reused from existing frontend key — already set on Fly.io, read on backend via `process.env` |
+| `VAPI_TOOLS_SECRET` | Already added in LQV1 |
+
+### 4. Files to Modify / Create
+
+| File | Action | Notes |
+|---|---|---|
+| `backend/src/routes/vapi-tools.js` | **Modify** | Add `handleValidateAddress`, `handleCheckAvailability`, update dispatcher |
+| `voice-agent/assistants/lead-qualifier-v2.json` | **Create** | VAPI assistant config for CLI deploy |
+| `.env.example` | **Modify** | Add `VITE_GOOGLE_MAPS_API_KEY` |
+
+### 5. Files NOT to Touch
+
+| File | Reason |
+|---|---|
+| `src/server.js` | Route already mounted; middleware chain correct |
+| `backend/src/services/leadsService.js` | Signature used by vapi-tools and UI leads; do not modify |
+| `backend/src/db/serviceTerritoryQueries.js` | No schema change needed |
+| `backend/src/routes/zip-check.js` | Frontend consumers depend on current contract |
+| `frontend/src/` | No frontend changes required for LQV2 |
+
+### 6. API Contracts (new tool handlers)
+
+**`validateAddress` tool call** (invoked by VAPI, handled in `vapi-tools.js`):
+```
+Input:  { street: string, apt?: string, city?: string, state?: string, zip?: string }
+Output: { valid: boolean, standardized?: string, correctedZip?: string, lat?: number, lng?: number }
+Errors: always returns object — never throws to caller
+```
+
+**`checkAvailability` tool call**:
+```
+Input:  { zip: string, unitType?: string, days?: number }
+Output: { slots: [{ date: string, label: string, start: string, end: string }], error?: string }
+        slots[].label — human-readable e.g. "Tuesday, June 10th between 10am and 1pm"
+        max 3 slots returned
+Errors: { slots: [], error: "No availability found" }
+```
+
+### 7. Security Notes
+
+- `/api/vapi-tools` is intentionally public (no `authenticate`/`requireCompanyAccess`)
+- Protected by `VAPI_TOOLS_SECRET` header check (`x-vapi-secret`)
+- `VITE_GOOGLE_MAPS_API_KEY` — existing key, already available on server via process.env
+- All DB calls inside tool handlers use hardcoded `DEFAULT_COMPANY_ID` — single-tenant deployment
+
+---
+
 ## PF002-R2: Estimates Composer Refresh
 
 **Status:** Architecture

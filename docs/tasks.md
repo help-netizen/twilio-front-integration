@@ -4,6 +4,204 @@
 
 ---
 
+## LQV2: Lead Qualifier v2 — AI Inbound Phone Assistant
+
+**Feature:** VAPI assistant with full lead qualification, address validation, schedule booking, CRM creation
+**Status:** implemented (deployed — assistant `30e85a87-9d7e-4694-828e-1fea7d10f3ef`; 42 Jest tests passing)
+**Pending ops:** set `VAPI_TOOLS_SECRET` on Fly.io; deploy backend; assign profile `lead_qualifier_v2` to a call-flow `vapi_agent` node
+**Related docs:**
+- Requirements: `Docs/requirements.md#LQV2`
+- Architecture: `Docs/architecture.md#LQV2`
+- Spec: `Docs/specs/LQV2-lead-qualifier-v2-assistant.md`
+- Test cases: `Docs/test-cases/LQV2-lead-qualifier-v2.md`
+- Product spec: `voice-agent/assistants/lead-qualifier-v2-spec.md`
+
+---
+
+### TASK-LQV2-001: Backend — добавить `handleValidateAddress` в vapi-tools.js
+
+**Цель:** Реализовать обработчик `validateAddress` tool call, использующий Google Maps Geocoding API для стандартизации адреса и извлечения исправленного zip.
+
+**Файлы, которые можно менять:**
+- `backend/src/routes/vapi-tools.js`
+- `.env.example` (добавить `VITE_GOOGLE_MAPS_API_KEY`)
+
+**Файлы, которые трогать нельзя:**
+- `src/server.js` — монтирование уже есть, не трогать
+- `backend/src/services/leadsService.js` — не менять сигнатуру
+- `backend/src/db/serviceTerritoryQueries.js` — нет изменений в схеме
+
+**Ожидаемый результат:**
+- Функция `handleValidateAddress({ street, apt, city, state, zip })` добавлена в `vapi-tools.js`
+- Делает GET запрос к `https://maps.googleapis.com/maps/api/geocode/json?address=...&key=VITE_GOOGLE_MAPS_API_KEY`
+- При статусе `OK` возвращает `{ valid: true, standardized, correctedZip, lat, lng }`
+- При ZERO_RESULTS / ошибке / отсутствии ключа — возвращает `{ valid: false }`, никогда не throws
+- Диспатчер в роутере (`name === "validateAddress"`) вызывает новый обработчик
+- TC-LQV2-012 – TC-LQV2-016 покрываются
+
+**Зависимости:** Нет (параллельна TASK-LQV2-002)
+
+**Статус:** done
+
+---
+
+### TASK-LQV2-002: Backend — добавить `handleCheckAvailability` в vapi-tools.js
+
+**Цель:** Реализовать обработчик `checkAvailability` tool call, который через Blanc scheduleService получает доступные слоты расписания и форматирует их в человекочитаемые строки.
+
+**Файлы, которые можно менять:**
+- `backend/src/routes/vapi-tools.js`
+
+**Файлы, которые трогать нельзя:**
+- `backend/src/services/scheduleService.js` — добавить `getAvailableSlots` (новая функция)
+- `src/server.js`
+
+**Ожидаемый результат:**
+- Функция `handleCheckAvailability({ zip, unitType, days })` добавлена
+- Вызывает `scheduleService.getAvailableSlots(DEFAULT_COMPANY_ID, { days, slotDurationMin: 120, maxSlots: 3 })`
+  (scheduleService читает dispatch_settings + booked items из БД)
+- Форматирует до 3 ближайших слотов в `{ date, label, start, end }`, где `label` — *"Tuesday, June 10th between 10am and 1pm"* (ET timezone)
+- При ошибке / пустом расписании — `{ slots: [], error: "..." }`, никогда не throws
+- Диспатчер (`name === "checkAvailability"`) вызывает новый обработчик
+- TC-LQV2-017 – TC-LQV2-021 покрываются
+
+**Зависимости:** Нет (параллельна TASK-LQV2-001)
+
+**Статус:** done
+
+---
+
+### TASK-LQV2-003: Backend — обновить `handleCreateLead` для LQV2 полей
+
+**Цель:** Расширить существующий `handleCreateLead` поддержкой новых полей LQV2: `preferredSlot`, `addressValidated`, `escalationRequested`; обновить `buildCallSummary`; добавить retry логику.
+
+**Файлы, которые можно менять:**
+- `backend/src/routes/vapi-tools.js`
+
+**Файлы, которые трогать нельзя:**
+- `backend/src/services/leadsService.js` — сигнатура `createLead(fields, companyId)` не меняется
+
+**Ожидаемый результат:**
+- `handleCreateLead` принимает `preferredSlot`, `addressValidated`, `escalationRequested`
+- `buildCallSummary` включает все поля: `Unit | Brand | Age | Problem | Fee agreed: Yes | Slot | Address validated | escalation_requested (если true)`
+- `Age: unknown` если не передан
+- `Slot: pending callback` если `preferredSlot` null/undefined
+- Retry: при ошибке `createLead` — ждёт 2 секунды, повторяет 1 раз; после двух ошибок возвращает `{ success: false, error }`, HTTP 200
+- TC-LQV2-022 – TC-LQV2-029, TC-LQV2-031 – TC-LQV2-032 покрываются
+
+**Зависимости:** Нет (можно делать параллельно с TASK-LQV2-001 и 002)
+
+**Статус:** done
+
+---
+
+### TASK-LQV2-004: Tests — написать `tests/routes/vapi-tools.test.js`
+
+**Цель:** Покрыть все 34 тест-кейса из `Docs/test-cases/LQV2-lead-qualifier-v2.md` Jest тестами. Следовать паттернам из `tests/routes/vapi.test.js`.
+
+**Файлы, которые можно менять:**
+- `tests/routes/vapi-tools.test.js` (создать новый)
+
+**Файлы, которые трогать нельзя:**
+- `tests/routes/vapi.test.js` — не трогать существующие тесты
+- Любые production файлы
+
+**Ожидаемый результат:**
+- Файл `tests/routes/vapi-tools.test.js` создан (+ `tests/services/scheduleService.getAvailableSlots.test.js` для slot-логики)
+- Моки: `jest.mock` для `serviceTerritoryQueries`, `leadsService`, `scheduleService`, и `https` для Google Maps geocoding
+- Тесты TC-LQV2-001 – TC-LQV2-033 реализованы
+- Группы: middleware (001-004), dispatcher (005-007), checkServiceArea (008-011), validateAddress (012-016), checkAvailability (017-020), createLead (022a,022-029,029a), parallel tool calls (030), buildCallSummary (031-032), server mount (033)
+- slot-логика: label-формат, one-slot-per-day, overlap-фильтрация, work_days/work_hours, custom dispatch_settings
+- LLM-evaluation кейсы (TC-038–057: objections, NLP, FAQ, escalation, time-cutoff) — вне Jest, в `tests/prompts/*` (отдельный слой, не покрыт здесь)
+
+**Зависимости:** TASK-LQV2-001, TASK-LQV2-002, TASK-LQV2-003 (тесты пишутся по итогу реализации)
+
+**Статус:** done — 42 теста проходят (`tests/routes/vapi-tools.test.js` + `tests/services/scheduleService.getAvailableSlots.test.js`)
+
+---
+
+### TASK-LQV2-005: Voice Agent — создать `voice-agent/assistants/lead-qualifier-v2.json`
+
+**Цель:** Собрать полный конфиг VAPI ассистента "Lead Qualifier v2" для деплоя через CLI / REST API. Включить все 4 tools, полный system prompt (FR-1 – FR-12), корректные `server.url` и `server.secret`.
+
+**Файлы, которые можно менять:**
+- `voice-agent/assistants/lead-qualifier-v2.json` (создать новый)
+
+**Файлы, которые трогать нельзя:**
+- `voice-agent/assistants/lead-qualifier-v1.json` — v1 остаётся активным до валидации v2
+- `voice-agent/assistants/lead-qualifier-v2-spec.md` — это source of truth, только читать
+
+**Ожидаемый результат:**
+- Валидный JSON для VAPI REST API `POST /assistant`
+- `name: "Lead Qualifier v2"`, `model.provider: "openai"`, `model.model: "gpt-4o"`, `model.temperature: 0.5`, `model.maxTokens: 400`
+- `voice.provider: "azure"`, `voice.voiceId: "andrew"`
+- `firstMessage: "Hi, this is Alex from ABC Homes Appliance Repair! How can I help you today?"`
+- `firstMessageMode: "assistant-speaks-first"`
+- `maxDurationSeconds: 900` (**обязательно** — 15 мин hard cap)
+- `silenceTimeoutSeconds: 30`
+- `endCallFunctionEnabled: true`
+- `endCallMessage: "Thank you for calling ABC Homes Appliance Repair. Have a great day!"`
+- System prompt полностью описывает поведение согласно FR-1 – FR-12 (из spec.md):
+  - Persona: "Alex", company info (rating 4.9, partners, 5+ years)
+  - Eligible/ineligible appliances lists
+  - Всю conversation flow state machine (S0–S12)
+  - FR-4 objection matrix (7 типов, 2-attempt limit)
+  - FR-5 marketing triggers (FOMO, scarcity, social proof — без ограничений; time-limited offer ТОЛЬКО до 14:00 ET)
+  - FR-6 NLP techniques (choice-without-choice, pacing, reframing, presuppositions, meta-model)
+  - FR-11 FAQ answers
+  - FR-11b escalation flow (1 retention attempt, затем callback)
+  - FR-12 disqualification scripts
+  - Current time injection: `{{now}}` variable для определения 14:00 ET cutoff
+- 4 tools: `checkServiceArea`, `validateAddress`, `checkAvailability`, `createLead` — каждый с `server.url: "https://abc-metrics.fly.dev/api/vapi-tools"` и `server.secret: "{{VAPI_TOOLS_SECRET}}"`
+- `metadata.slug: "lead_qualifier_v2"`, `metadata.stage: "2"`, `metadata.version: "2.0.0"`
+- После создания файла — деплой: `curl -X POST https://api.vapi.ai/assistant -H "Authorization: Bearer $VAPI_API_KEY" -d @lead-qualifier-v2.json` и обновление секрета через PATCH
+
+**Зависимости:** TASK-LQV2-001, TASK-LQV2-002, TASK-LQV2-003 (конфиг finaliz-ируется после имплементации tool handlers)
+
+**Статус:** done
+
+---
+
+### TASK-LQV2-006: Ops — добавить env vars на Fly.io и в .env.example
+
+**Цель:** Добавить `VITE_GOOGLE_MAPS_API_KEY` в `.env.example` и установить на Fly.io продакшн.
+
+**Файлы, которые можно менять:**
+- `.env.example`
+
+**Файлы, которые трогать нельзя:**
+- `fly.toml` — конфиг деплоя, только ops команды
+
+**Ожидаемый результат:**
+- `.env.example` содержит `VITE_GOOGLE_MAPS_API_KEY=your_google_maps_server_key_here`
+- Fly.io: key already set as `VITE_GOOGLE_MAPS_API_KEY` — no action needed
+- Примечание: ключ должен иметь разрешение только на Geocoding API, ограничен по IP до Fly.io VM
+
+**Зависимости:** Нет (можно сделать первым)
+
+**Статус:** done (key VITE_GOOGLE_MAPS_API_KEY exists; VAPI_TOOLS_SECRET still to set on Fly.io)
+
+---
+
+## Порядок выполнения LQV2
+
+```
+TASK-LQV2-006 (env vars)  ←── сначала
+       │
+       ▼
+TASK-LQV2-001  ──┐
+TASK-LQV2-002  ──┤  (параллельно)
+TASK-LQV2-003  ──┘
+       │
+       ▼
+TASK-LQV2-004 (tests)
+       │
+       ▼
+TASK-LQV2-005 (assistant config + deploy)
+```
+
+---
+
 ## PF002-R2: Estimates Composer Refresh
 
 **Feature:** Repair-focused estimate composer and lifecycle correction
