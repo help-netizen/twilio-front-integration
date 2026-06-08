@@ -503,12 +503,10 @@ export default function CallFlowBuilderPage() {
             const newNode: Node<FlowNodeData> = {
                 id, type: 'flowNode', position: { x: insertTarget.midX - 90, y: insertTarget.midY },
                 data: {
-                    label: 'AI Greeting', kind, provider: 'vapi', config: {
-                        greeting_text: 'Thank you for calling. How can I help you today?',
-                        first_message_mode: 'exact', locale: 'en-US',
-                        strategy: 'dynamic_assistant_request', max_duration_seconds: 180, timeout_seconds: 45,
-                        on_completed: 'continue_to_next_node', on_failed: 'fallback_transition',
-                    }
+                    // Assistant behavior (greeting, prompt, voice, tools, max duration)
+                    // is configured in VAPI — not per-node. Routing defaults are
+                    // baked into the backend runtime (completed → end, failure → edge).
+                    label: 'AI Agent', kind, provider: 'vapi', config: {}
                 },
             };
             const eNext: Edge = { id: `e-${Date.now()}-next`, source: id, target: edge.target, type: 'insertable', label: 'Next', markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' }, data: insertableData(null, { edgeRole: 'next', edgeLabel: 'Next', transitionMode: 'event', event_key: 'vapi.completed vapi.no_target vapi.failed vapi.timeout' }) };
@@ -742,88 +740,18 @@ export default function CallFlowBuilderPage() {
                                 );
                             })()}
                             {/* ── Vapi Agent Inspector ── */}
-                            {selectedNode.data?.kind === 'vapi_agent' && (() => {
-                                const cfg = (selectedNode.data?.config || {}) as Record<string, unknown>;
-                                const updateCfg = (key: string, val: unknown) => {
-                                    pushSnap();
-                                    setNodes(nds => (nds as any[]).map((n: any) => n.id === selectedNode.id ? { ...n, data: { ...n.data, config: { ...n.data.config, [key]: val } } } : n) as any);
-                                    setSelectedNode(p => p && p.id === selectedNode.id ? { ...p, data: { ...p.data, config: { ...p.data.config, [key]: val } } } : p);
-                                };
-                                const fieldStyle = { width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12 } as const;
-                                const sectionTitle = (title: string) => <div style={{ fontSize: 10, fontWeight: 700, color: '#7c3aed', textTransform: 'uppercase' as const, letterSpacing: '0.06em', marginTop: 14, marginBottom: 6, borderTop: '1px solid #ede9fe', paddingTop: 8 }}>{title}</div>;
-                                return (<>
-                                    {sectionTitle('Greeting')}
-                                    <div style={{ marginBottom: 8 }}>
-                                        <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 3 }}>First Message</label>
-                                        <textarea value={String(cfg.greeting_text || '')} onChange={e => updateCfg('greeting_text', e.target.value)} rows={3} style={{ ...fieldStyle, resize: 'vertical' }} />
+                            {selectedNode.data?.kind === 'vapi_agent' && (
+                                <div style={{ marginTop: 8, padding: '12px 14px', background: '#faf5ff', border: '1px solid #ede9fe', borderRadius: 8, fontSize: 12, color: '#6b21a8', lineHeight: 1.55 }}>
+                                    This node hands the call to your <strong>VAPI assistant</strong>.
+                                    The greeting, prompt, voice, tools, and max call duration are
+                                    configured in VAPI — not here.
+                                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #ede9fe' }}>
+                                        <strong>Routing:</strong> when the assistant finishes, the call ends.
+                                        If the assistant can&apos;t be reached (failure or timeout), the call
+                                        follows this node&apos;s outgoing edge.
                                     </div>
-                                    <div style={{ marginBottom: 8, display: 'flex', gap: 8 }}>
-                                        <div style={{ flex: 1 }}>
-                                            <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 3 }}>Mode</label>
-                                            <select value={String(cfg.first_message_mode || 'exact')} onChange={e => updateCfg('first_message_mode', e.target.value)} style={fieldStyle}>
-                                                <option value="exact">Exact text</option>
-                                                <option value="prompt_template">Prompt template</option>
-                                            </select>
-                                        </div>
-                                        <div style={{ flex: 1 }}>
-                                            <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 3 }}>Locale</label>
-                                            <select value={String(cfg.locale || 'en-US')} onChange={e => updateCfg('locale', e.target.value)} style={fieldStyle}>
-                                                <option value="en-US">English (US)</option>
-                                                <option value="es-US">Spanish (US)</option>
-                                            </select>
-                                        </div>
-                                    </div>
-
-                                    {sectionTitle('Resolution')}
-                                    <div style={{ marginBottom: 8 }}>
-                                        <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 3 }}>Strategy</label>
-                                        <select value={String(cfg.strategy || 'dynamic_assistant_request')} onChange={e => updateCfg('strategy', e.target.value)} style={fieldStyle}>
-                                            <option value="dynamic_assistant_request">Dynamic (assistant-request)</option>
-                                            <option value="static_assistant">Static assistant</option>
-                                        </select>
-                                    </div>
-
-                                    {sectionTitle('Call Behavior')}
-                                    <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                                        <div style={{ flex: 1 }}>
-                                            <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 3 }}>Max Duration (s)</label>
-                                            <input type="number" value={Number(cfg.max_duration_seconds || 180)} onChange={e => updateCfg('max_duration_seconds', parseInt(e.target.value))} style={fieldStyle} />
-                                        </div>
-                                        <div style={{ flex: 1 }}>
-                                            <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 3 }}>Timeout (s)</label>
-                                            <input type="number" value={Number(cfg.timeout_seconds || 45)} onChange={e => updateCfg('timeout_seconds', parseInt(e.target.value))} style={fieldStyle} />
-                                        </div>
-                                    </div>
-
-                                    {sectionTitle('Post-Agent Routing')}
-                                    <div style={{ marginBottom: 8 }}>
-                                        <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 3 }}>On Completed</label>
-                                        <select value={String(cfg.on_completed || 'continue_to_next_node')} onChange={e => updateCfg('on_completed', e.target.value)} style={fieldStyle}>
-                                            <option value="continue_to_next_node">Continue to next node</option>
-                                            <option value="transfer_to_group_queue">Transfer to group queue</option>
-                                            <option value="go_to_voicemail">Go to voicemail</option>
-                                            <option value="end_flow">End flow</option>
-                                        </select>
-                                    </div>
-                                    <div style={{ marginBottom: 8 }}>
-                                        <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 3 }}>On Failed / Timeout</label>
-                                        <select value={String(cfg.on_failed || 'fallback_transition')} onChange={e => updateCfg('on_failed', e.target.value)} style={fieldStyle}>
-                                            <option value="fallback_transition">Fallback transition</option>
-                                            <option value="transfer_to_group_queue">Transfer to group queue</option>
-                                            <option value="go_to_voicemail">Go to voicemail</option>
-                                            <option value="end_flow">End flow</option>
-                                        </select>
-                                    </div>
-
-                                    {sectionTitle('Context')}
-                                    {(['include_group_name', 'include_called_number', 'include_caller_number', 'include_transfer_targets'] as const).map(key => (
-                                        <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#374151', marginBottom: 4, cursor: 'pointer' }}>
-                                            <input type="checkbox" checked={cfg[key] !== false} onChange={e => updateCfg(key, e.target.checked)} style={{ accentColor: '#7c3aed' }} />
-                                            {key.replace('include_', '').replace(/_/g, ' ')}
-                                        </label>
-                                    ))}
-                                </>);
-                            })()}
+                                </div>
+                            )}
                             {/* Only show delete for non-protected, non-start nodes */}
                             {!selectedNode.data?.isProtected && (
                                 <button onClick={() => setShowDeleteConfirm({ type: 'node', id: selectedNode.id, label: String(selectedNode.data?.label || selectedNode.id) })}

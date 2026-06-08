@@ -386,6 +386,12 @@ async function renderTransferNode({ execution, node, context, traceId }) {
     </Dial>`);
 }
 
+// Hard wall-clock cap for an AI agent call leg (Twilio backstop). The VAPI
+// assistant enforces its own maxDurationSeconds; this guards against a stuck
+// SIP leg running indefinitely. 15 minutes. Assistant behaviour (greeting,
+// prompt, voice, tools, duration) is configured in VAPI, not on the node.
+const VAPI_MAX_DURATION_SECONDS = 900;
+
 async function resolveVapiSipUri(node, context, companyId) {
     const cfg = node.config || {};
     const configuredSipUri = cfg.sip_uri || cfg.sipUri;
@@ -446,7 +452,9 @@ async function renderVapiNode({ execution, node, context, traceId }) {
             fallbackTwiml: () => buildHangupTwiml('AI agent is not configured.'),
         });
     }
-    const actionUrl = `${context.baseUrl}/webhooks/twilio/voice-dial-action?flowEvent=vapi.completed`;
+    // vapiNode=1 → the dial-action handler maps the real DialCallStatus to a
+    // vapi.* event: completed ends the call, failure/timeout follows the edge.
+    const actionUrl = `${context.baseUrl}/webhooks/twilio/voice-dial-action?vapiNode=1`;
     const query = new URLSearchParams({
         'x-blanc-company-id': context.companyId,
         'x-blanc-group-id': context.groupId,
@@ -454,7 +462,7 @@ async function renderVapiNode({ execution, node, context, traceId }) {
         'x-blanc-call-sid': context.callSid || '',
     }).toString().replace(/&/g, '&amp;');
     return xmlResponse(`
-    <Dial action="${actionUrl}" method="POST" answerOnBridge="true" timeout="${Number(cfg.timeout_sec || 60)}">
+    <Dial action="${actionUrl}" method="POST" answerOnBridge="true" timeout="${Number(cfg.timeout_sec || 60)}" timeLimit="${VAPI_MAX_DURATION_SECONDS}">
         <Sip>${appendSipQuery(sipUri, query)}</Sip>
     </Dial>`);
 }
@@ -538,6 +546,17 @@ function eventFromDialStatus(dialStatus) {
     return 'queue.not_answered';
 }
 
+// Maps a vapi_agent Dial result to a vapi.* flow event.
+// completed/answered → call is done (the assistant handled it) → end the call.
+// no-answer → vapi.timeout, busy/failed/canceled → vapi.failed → follow the
+// node's fallback edge (e.g. to a human queue).
+function vapiEventFromDialStatus(dialStatus) {
+    const status = String(dialStatus || '').toLowerCase();
+    if (status === 'completed' || status === 'answered') return 'vapi.completed';
+    if (status === 'no-answer') return 'vapi.timeout';
+    return 'vapi.failed';
+}
+
 async function advance(callSid, event, traceId = 'call-flow') {
     const execution = await getExecution(callSid);
     const resolvedEvent = event || 'node.completed';
@@ -557,6 +576,14 @@ async function advance(callSid, event, traceId = 'call-flow') {
             from_number: context.callerNumber,
             to_number: context.calledNumber,
         });
+        return buildHangupTwiml();
+    }
+
+    // AI agent finished the call successfully → end the call. Failure/timeout
+    // events (vapi.failed / vapi.timeout) fall through to edge routing below so
+    // the flow can continue to a fallback node (e.g. a human queue).
+    if (resolvedEvent === 'vapi.completed') {
+        await saveExecutionState(callSid, execution.company_id, { status: 'completed' });
         return buildHangupTwiml();
     }
 
@@ -580,6 +607,7 @@ module.exports = {
     advance,
     getExecution,
     eventFromDialStatus,
+    vapiEventFromDialStatus,
     buildVoicemailTwiml,
     buildHangupTwiml,
 };
