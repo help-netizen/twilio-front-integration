@@ -25,6 +25,7 @@ const label = (text: string) => (
 );
 
 const sectionCard = { background: 'rgba(117,106,89,0.04)', borderRadius: 16, padding: '20px 22px', marginBottom: 16 } as const;
+const VAPI_DISPLAY_NAME = 'VAPI AI';
 
 const fieldStyle = {
     width: '100%',
@@ -48,13 +49,12 @@ function ConnectionSection({
     onConnected: (c: VapiConnection) => void;
 }) {
     const [apiKey, setApiKey] = useState('');
-    const [displayName, setDisplayName] = useState('');
     const [environment, setEnvironment] = useState<'prod' | 'dev'>('prod');
     const [showKey, setShowKey] = useState(false);
     const [error, setError] = useState('');
 
     const mutation = useMutation({
-        mutationFn: () => vapiApi.createConnection({ api_key: apiKey.trim(), display_name: displayName.trim() || undefined, environment }),
+        mutationFn: () => vapiApi.createConnection({ api_key: apiKey.trim(), display_name: VAPI_DISPLAY_NAME, environment }),
         onSuccess: (data) => {
             setError('');
             onConnected(data);
@@ -73,7 +73,7 @@ function ConnectionSection({
                     <CheckCircle2 size={16} style={{ color: '#22c55e', flexShrink: 0 }} />
                     <div>
                         <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--blanc-ink-1)' }}>
-                            {connection.display_name || 'VAPI Connection'}
+                            {VAPI_DISPLAY_NAME}
                         </div>
                         <div style={{ display: 'flex', gap: 8, marginTop: 4, alignItems: 'center' }}>
                             <span style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--blanc-ink-2)' }}>••••••••••••••••</span>
@@ -117,28 +117,16 @@ function ConnectionSection({
                     )}
                 </div>
 
-                <div style={{ display: 'flex', gap: 12 }}>
-                    <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--blanc-ink-2)', marginBottom: 6 }}>Display Name</div>
-                        <input
-                            type="text"
-                            value={displayName}
-                            onChange={e => setDisplayName(e.target.value)}
-                            placeholder="My VAPI Prod"
-                            style={fieldStyle}
-                        />
-                    </div>
-                    <div style={{ width: 120 }}>
-                        <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--blanc-ink-2)', marginBottom: 6 }}>Environment</div>
-                        <select
-                            value={environment}
-                            onChange={e => setEnvironment(e.target.value as 'prod' | 'dev')}
-                            style={fieldStyle}
-                        >
-                            <option value="prod">Production</option>
-                            <option value="dev">Development</option>
-                        </select>
-                    </div>
+                <div style={{ width: 160 }}>
+                    <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--blanc-ink-2)', marginBottom: 6 }}>Environment</div>
+                    <select
+                        value={environment}
+                        onChange={e => setEnvironment(e.target.value as 'prod' | 'dev')}
+                        style={fieldStyle}
+                    >
+                        <option value="prod">Production</option>
+                        <option value="dev">Development</option>
+                    </select>
                 </div>
 
                 <Button

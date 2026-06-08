@@ -142,6 +142,61 @@ function isInsertableTransition(t: CallFlowTransition) {
     return t.insertable !== false;
 }
 
+function eventKeyTokens(...values: Array<string | undefined>) {
+    return Array.from(new Set(values.join(' ').split(/\s+/).filter(Boolean))).join(' ');
+}
+
+function isVapiSuccessTransition(t: CallFlowTransition) {
+    return t.edgeRole === 'success' || eventKeyTokens(t.event_key).split(' ').includes('vapi.completed');
+}
+
+function isVapiFallbackTransition(t: CallFlowTransition) {
+    const events = eventKeyTokens(t.event_key).split(' ');
+    return t.edgeRole === 'fallback' || events.some(event => event === 'vapi.no_target' || event === 'vapi.failed' || event === 'vapi.timeout');
+}
+
+function collapseDuplicateVapiEdges(states: CFNode[], transitions: CallFlowTransition[]) {
+    const kindById = new Map(states.map(state => [state.id, state.kind]));
+    const replacements = new Map<string, CallFlowTransition>();
+    const skipIds = new Set<string>();
+    const groups = new Map<string, CallFlowTransition[]>();
+
+    for (const transition of transitions) {
+        if (transition.hidden || kindById.get(transition.from_state_id) !== 'vapi_agent') continue;
+        const key = `${transition.from_state_id}→${transition.to_state_id}`;
+        groups.set(key, [...(groups.get(key) || []), transition]);
+    }
+
+    for (const group of groups.values()) {
+        const success = group.find(isVapiSuccessTransition);
+        const fallback = group.find(isVapiFallbackTransition);
+        if (!success || !fallback || success.id === fallback.id) continue;
+
+        const successIndex = transitions.findIndex(t => t.id === success.id);
+        const fallbackIndex = transitions.findIndex(t => t.id === fallback.id);
+        const anchor = successIndex <= fallbackIndex ? success : fallback;
+        const other = anchor.id === success.id ? fallback : success;
+
+        replacements.set(anchor.id, {
+            ...success,
+            id: anchor.id,
+            label: 'Next',
+            edgeLabel: 'Next',
+            edgeRole: 'next',
+            transitionMode: 'event',
+            event_key: eventKeyTokens(success.event_key, fallback.event_key, 'vapi.completed vapi.no_target vapi.failed vapi.timeout'),
+            insertable: success.insertable !== false && fallback.insertable !== false,
+            insertMode: success.insertMode || fallback.insertMode || DEFAULT_INSERT_MODE,
+        });
+        skipIds.add(other.id);
+    }
+
+    return transitions.flatMap(transition => {
+        if (skipIds.has(transition.id)) return [];
+        return [replacements.get(transition.id) || transition];
+    });
+}
+
 function insertableData(data?: Record<string, unknown> | null, overrides: Record<string, unknown> = {}) {
     const merged = { ...(data || {}), ...overrides };
     return {
@@ -195,7 +250,7 @@ const edgeTypes: EdgeTypes = { insertable: InsertableEdge };
 function graphToReactFlow(states: CFNode[], transitions: CallFlowTransition[]) {
     // Filter out hidden nodes (finals) and hidden edges
     const visibleStates = (states || []).filter(s => !s.hidden);
-    const visibleTransitions = (transitions || []).filter(t => !t.hidden);
+    const visibleTransitions = collapseDuplicateVapiEdges(states || [], transitions || []).filter(t => !t.hidden);
     const nodes: Node<FlowNodeData>[] = visibleStates.map((s, i) => ({
         id: s.id, type: 'flowNode' as const, position: { x: 200, y: i * 120 },
         data: {
@@ -446,14 +501,11 @@ export default function CallFlowBuilderPage() {
                     }
                 },
             };
-            // Success edge: keep original target (continue flow)
-            const eCompleted: Edge = { id: `e-${Date.now()}-ok`, source: id, target: edge.target, type: 'insertable', label: 'Continue', markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' }, data: insertableData(null, { edgeRole: 'success', edgeLabel: 'Continue', transitionMode: 'event', event_key: 'vapi.completed' }) };
-            // Fallback edge: needs a target — point to edge's original target for now
-            const eFallback: Edge = { id: `e-${Date.now()}-fb`, source: id, target: edge.target, type: 'insertable', label: 'Fallback', markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2, strokeDasharray: '4 3' }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#ef4444' }, data: insertableData(null, { edgeRole: 'fallback', edgeLabel: 'Fallback', transitionMode: 'event', event_key: 'vapi.no_target vapi.failed vapi.timeout' }) };
+            const eNext: Edge = { id: `e-${Date.now()}-next`, source: id, target: edge.target, type: 'insertable', label: 'Next', markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' }, data: insertableData(null, { edgeRole: 'next', edgeLabel: 'Next', transitionMode: 'event', event_key: 'vapi.completed vapi.no_target vapi.failed vapi.timeout' }) };
             // Incoming edge: from original source
             const eIn: Edge = { id: `e-${Date.now()}-in`, source: edge.source, target: id, type: 'insertable', label: edge.label, markerEnd: { type: MarkerType.ArrowClosed }, style: { strokeWidth: 2 }, labelStyle: { fontSize: 10, fontWeight: 500, fill: '#6b7280' }, data: insertableData(edge.data) };
             setNodes(nds => [...nds, newNode] as any);
-            setEdges(eds => [...(eds as any[]).filter((e: any) => e.id !== insertTarget.edgeId), eIn, eCompleted, eFallback] as any);
+            setEdges(eds => [...(eds as any[]).filter((e: any) => e.id !== insertTarget.edgeId), eIn, eNext] as any);
         } else {
             // ── Generic node insertion with kind-specific defaults
             const defaultConfig = NODE_DEFAULTS[kind] ? { ...NODE_DEFAULTS[kind] } : undefined;

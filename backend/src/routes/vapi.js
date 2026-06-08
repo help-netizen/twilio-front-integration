@@ -31,6 +31,7 @@ const crypto = require('crypto');
 
 // Default tenant for single-tenant mode
 const DEFAULT_TENANT = 'default';
+const VAPI_DISPLAY_NAME = 'VAPI AI';
 
 // ─── Ensure tables ───────────────────────────────────────────────────────────
 let tablesEnsured = false;
@@ -155,7 +156,7 @@ router.get('/connections', async (req, res) => {
 router.post('/connections', async (req, res) => {
     try {
         await ensureTables();
-        const { environment, api_key, display_name } = req.body;
+        const { environment, api_key } = req.body;
 
         if (!api_key) {
             return res.status(400).json({ ok: false, error: 'api_key is required' });
@@ -182,7 +183,7 @@ router.post('/connections', async (req, res) => {
         await db.query(
             `INSERT INTO provider_connections (id, tenant_id, provider, environment, status, encrypted_credentials_json, display_name)
              VALUES ($1, $2, 'vapi', $3, 'active', $4, $5)`,
-            [id, DEFAULT_TENANT, environment || 'prod', JSON.stringify({ api_key }), display_name || `VAPI ${environment || 'prod'}`]
+            [id, DEFAULT_TENANT, environment || 'prod', JSON.stringify({ api_key }), VAPI_DISPLAY_NAME]
         );
 
         const result = await db.query('SELECT * FROM provider_connections WHERE id = $1', [id]);
@@ -201,14 +202,14 @@ router.put('/connections/:id', async (req, res) => {
     try {
         await ensureTables();
         const { id } = req.params;
-        const { status, display_name } = req.body;
+        const { status } = req.body;
 
         const result = await db.query(
             `UPDATE provider_connections
-             SET status = COALESCE($1, status), display_name = COALESCE($2, display_name)
+             SET status = COALESCE($1, status), display_name = $2
              WHERE id = $3 AND tenant_id = $4
              RETURNING id, tenant_id, provider, environment, status, display_name, created_at, updated_at`,
-            [status, display_name, id, DEFAULT_TENANT]
+            [status, VAPI_DISPLAY_NAME, id, DEFAULT_TENANT]
         );
 
         if (result.rows.length === 0) {
