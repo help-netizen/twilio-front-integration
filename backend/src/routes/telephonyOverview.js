@@ -10,12 +10,12 @@ const db = require('../db/connection');
 
 router.get('/', async (req, res) => {
     try {
-        const companyId = req.user?.company_id;
+        const companyId = req.companyFilter?.company_id || req.user?.company_id;
         if (!companyId) return res.status(401).json({ ok: false, error: 'No company context' });
 
         const [groups, numbers, flows] = await Promise.all([
             db.query(`SELECT COUNT(*)::int AS count FROM user_groups WHERE company_id = $1`, [companyId]),
-            db.query(`SELECT COUNT(*)::int AS count FROM phone_number_settings`),
+            db.query(`SELECT COUNT(*)::int AS count FROM phone_number_settings WHERE company_id = $1`, [companyId]),
             db.query(`SELECT COUNT(*)::int AS count FROM call_flows WHERE company_id = $1`, [companyId]),
         ]);
 

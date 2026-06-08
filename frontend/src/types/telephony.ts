@@ -178,8 +178,9 @@ export interface DashboardKPI {
 export interface ProviderInfo {
     name: string;
     status: 'connected' | 'error' | 'pending';
-    account_sid?: string;
-    numbers_synced: number;
+    account_sid?: string | null;
+    numbers_count: number;
+    inventory_source?: string;
     last_sync?: string;
     error_log: string[];
 }

@@ -139,10 +139,12 @@ const userGroupsRouter = require('../backend/src/routes/userGroups');
 const callFlowsRouter = require('../backend/src/routes/callFlows');
 const phoneNumbersRouter = require('../backend/src/routes/phoneNumbers');
 const telephonyOverviewRouter = require('../backend/src/routes/telephonyOverview');
+const telephonyProviderRouter = require('../backend/src/routes/telephonyProvider');
 app.use('/api/user-groups', authenticate, requireCompanyAccess, userGroupsRouter);
 app.use('/api/call-flows', authenticate, requireCompanyAccess, callFlowsRouter);
 app.use('/api/phone-numbers', authenticate, requireCompanyAccess, phoneNumbersRouter);
 app.use('/api/telephony/overview', authenticate, requireCompanyAccess, telephonyOverviewRouter);
+app.use('/api/telephony/provider', authenticate, requireCompanyAccess, telephonyProviderRouter);
 
 // Fast zip-code check (rely-lead-processor)
 const zipCheckRouter = require('../backend/src/routes/zip-check');

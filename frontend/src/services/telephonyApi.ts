@@ -33,11 +33,6 @@ const MOCK_AUDIO: AudioAsset[] = [
     { id: 'a-5', name: 'Thank You TTS', category: 'tts', duration_sec: 3, format: 'wav', created_at: '2026-03-05' },
 ];
 
-const MOCK_PROVIDER: ProviderInfo = {
-    name: 'Twilio', status: 'connected', account_sid: 'AC****abcd1234', numbers_synced: 4,
-    last_sync: '2026-03-08 06:00:00', error_log: [],
-};
-
 const MOCK_ACTIVE_CALL: ActiveCallInfo = {
     call_sid: 'CA-mock-001', caller: 'John Miller', caller_name: 'John Miller',
     caller_phone: '+1 (555) 111-2222', agent: 'Sarah Johnson', duration_sec: 187,
@@ -139,8 +134,10 @@ export const telephonyApi = {
         });
     },
 
-    // Provider — still mock
-    getProvider: async (): Promise<ProviderInfo> => { await delay(); return MOCK_PROVIDER; },
+    // Provider — real API. Number inventory comes from F017 phone_number_settings.
+    getProvider: async (): Promise<ProviderInfo> => {
+        return apiFetch<ProviderInfo>('/telephony/provider');
+    },
 
     // Operations — group-aware API
     getOperationsDashboard: async (): Promise<OperationsDashboardData> => {
