@@ -90,7 +90,7 @@ This is a **new feature** in the `voice-agent/` domain. It extends the existing 
 - `JobSource` always hardcoded to `"AI Phone"` — never override
 - `createLead` retry: 1 retry after 2-second wait on failure; silent to caller on both attempts failing
 - `/api/vapi-tools` endpoint handles multiple tool calls in a single request (toolCallList array); all results returned in one response
-- **`VITE_GOOGLE_MAPS_API_KEY`** — same key reused on the backend (`process.env.VITE_GOOGLE_MAPS_API_KEY`). Already set on Fly.io. No new key needed.
+- **`GOOGLE_GEOCODING_KEY`** — dedicated server-side Geocoding key (Fly secret, IP-restricted). Backend `validateAddress` reads it; falls back to `VITE_GOOGLE_MAPS_API_KEY` if unset. Kept separate from the referrer-restricted frontend key.
 - Phone number pre-filled from VAPI call metadata (`message.call.customer.number`), confirmed verbally with caller
 - Time-limited offer (FR-5.2) requires current time context in system prompt — inject via VAPI variable or time tool; must not fire at or after 14:00 ET
 

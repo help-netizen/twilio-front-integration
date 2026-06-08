@@ -121,7 +121,7 @@ Errors: { slots: [], error: "No availability found" }
 
 - `/api/vapi-tools` is intentionally public (no `authenticate`/`requireCompanyAccess`)
 - Protected by `VAPI_TOOLS_SECRET` header check (`x-vapi-secret`)
-- `VITE_GOOGLE_MAPS_API_KEY` — existing key, already available on server via process.env
+- `GOOGLE_GEOCODING_KEY` — dedicated server-side key (Fly secret, IP-restricted, Geocoding API only). Falls back to `VITE_GOOGLE_MAPS_API_KEY` if unset. Kept separate from the frontend key, which is HTTP-referrer-restricted and can't serve server-side calls.
 - All DB calls inside tool handlers use hardcoded `DEFAULT_COMPANY_ID` — single-tenant deployment
 
 ---
