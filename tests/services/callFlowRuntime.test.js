@@ -14,6 +14,8 @@ jest.mock('../../backend/src/services/groupRouting', () => ({
 }));
 
 const { advance } = require('../../backend/src/services/callFlowRuntime');
+const groupRouting = require('../../backend/src/services/groupRouting');
+const { buildSoftphoneIdentity } = require('../../backend/src/services/softphoneIdentity');
 
 const graph = {
     states: [
@@ -178,5 +180,132 @@ describe('F017 callFlowRuntime branch insertion metadata recovery', () => {
         expect(twiml).toContain('<Dial timeout="20"');
         expect(twiml).toContain('callerId="+16175006181"');
         expect(twiml).toContain('<Number>+17743831412</Number>');
+    });
+
+    test('dials selected phone-enabled company user for user transfer nodes', async () => {
+        const targetUserId = 'agent-1';
+        const transferGraph = {
+            states: [
+                { id: 'start', name: 'Start', kind: 'start' },
+                {
+                    id: 'transfer',
+                    name: 'Transfer',
+                    kind: 'transfer',
+                    config: {
+                        target_type: 'user',
+                        target_user_id: targetUserId,
+                        timeout_sec: 20,
+                        caller_id_policy: 'preserve_called_number',
+                    },
+                },
+            ],
+            transitions: [
+                { id: 'start-transfer', from_state_id: 'start', to_state_id: 'transfer', transitionMode: 'eventless' },
+            ],
+        };
+        const startExecution = {
+            call_sid: 'CA_user_transfer',
+            company_id: 'company-1',
+            group_id: 'ug-1',
+            current_node_id: 'start',
+            status: 'active',
+            context_json: JSON.stringify({
+                graph: transferGraph,
+                groupId: 'ug-1',
+                callerNumber: '+15551112222',
+                calledNumber: '+16175006181',
+                baseUrl: 'https://example.test',
+            }),
+        };
+        const transferExecution = { ...startExecution, current_node_id: 'transfer' };
+        const selectRows = [startExecution, transferExecution];
+
+        mockQuery.mockImplementation(sql => {
+            if (sql.includes('SELECT * FROM call_flow_executions')) {
+                return { rows: [selectRows.shift() || transferExecution] };
+            }
+            if (sql.includes('FROM company_memberships cm')) {
+                return { rows: [{ id: targetUserId, name: 'Agent One', phone_calls_allowed: true }] };
+            }
+            if (sql.includes('UPDATE call_flow_executions')) {
+                return { rows: [transferExecution] };
+            }
+            return { rows: [] };
+        });
+
+        const twiml = await advance('CA_user_transfer', 'node.completed', 'test');
+
+        expect(twiml).toContain('<Dial timeout="20"');
+        expect(twiml).toContain(`<Client>${buildSoftphoneIdentity('company-1', targetUserId)}</Client>`);
+    });
+
+    test('routes group transfer failures through the outgoing edge', async () => {
+        groupRouting.availableAgentsForGroup.mockResolvedValue([]);
+        const transferGraph = {
+            states: [
+                { id: 'start', name: 'Start', kind: 'start' },
+                {
+                    id: 'transfer',
+                    name: 'Transfer',
+                    kind: 'transfer',
+                    config: {
+                        target_type: 'phone_number_group',
+                        target_group_id: 'ug-target',
+                        timeout_sec: 20,
+                        caller_id_policy: 'preserve_called_number',
+                    },
+                },
+                { id: 'vm', name: 'Voicemail', kind: 'voicemail' },
+            ],
+            transitions: [
+                { id: 'start-transfer', from_state_id: 'start', to_state_id: 'transfer', transitionMode: 'eventless' },
+                { id: 'transfer-vm', from_state_id: 'transfer', to_state_id: 'vm', transitionMode: 'eventless', label: 'next' },
+            ],
+        };
+        const startExecution = {
+            call_sid: 'CA_group_transfer',
+            company_id: 'company-1',
+            group_id: 'ug-1',
+            current_node_id: 'start',
+            status: 'active',
+            context_json: JSON.stringify({
+                graph: transferGraph,
+                groupId: 'ug-1',
+                groupName: 'Dispatch Team',
+                callerNumber: '+15551112222',
+                calledNumber: '+16175006181',
+                baseUrl: 'https://example.test',
+            }),
+        };
+        const transferExecution = { ...startExecution, current_node_id: 'transfer' };
+        const voicemailExecution = {
+            ...startExecution,
+            current_node_id: 'vm',
+            context_json: JSON.stringify({
+                ...JSON.parse(startExecution.context_json),
+                groupId: 'ug-target',
+                groupName: 'After Hours Team',
+            }),
+        };
+        const selectRows = [startExecution, transferExecution, voicemailExecution];
+
+        mockQuery.mockImplementation(sql => {
+            if (sql.includes('SELECT * FROM call_flow_executions')) {
+                return { rows: [selectRows.shift() || voicemailExecution] };
+            }
+            if (sql.includes('FROM user_groups')) {
+                return { rows: [{ id: 'ug-target', name: 'After Hours Team', company_id: 'company-1' }] };
+            }
+            if (sql.includes('UPDATE call_flow_executions')) {
+                return { rows: [voicemailExecution] };
+            }
+            return { rows: [] };
+        });
+
+        const twiml = await advance('CA_group_transfer', 'node.completed', 'test');
+
+        expect(groupRouting.availableAgentsForGroup).toHaveBeenCalledWith('ug-target', 'company-1', 'test');
+        expect(twiml).toContain('<Record');
+        expect(twiml).toContain('voicemail.recorded');
     });
 });

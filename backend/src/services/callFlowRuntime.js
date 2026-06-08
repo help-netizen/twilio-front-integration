@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const db = require('../db/connection');
 const realtimeService = require('./realtimeService');
 const groupRouting = require('./groupRouting');
+const { buildSoftphoneIdentity } = require('./softphoneIdentity');
 const { toE164 } = require('../utils/phoneUtils');
 
 function escapeXml(value) {
@@ -213,6 +214,16 @@ async function completeVoicemailCall(execution, context) {
     }
 }
 
+async function followFailureEdge({ execution, node, context, traceId, fallbackTwiml }) {
+    const nextId = nextNodeIdForEvent(context.graph, node.id, 'transfer.failed', context) ||
+        nextNodeIdForEvent(context.graph, node.id, 'queue.timeout', context) ||
+        nextNodeIdForEvent(context.graph, node.id, 'queue.failed', context) ||
+        nextNodeIdForEvent(context.graph, node.id, null, context);
+    if (!nextId) return fallbackTwiml();
+    await saveExecutionState(execution.call_sid, execution.company_id, { currentNodeId: nextId, contextJson: context });
+    return renderNodeById(execution.call_sid, nextId, traceId);
+}
+
 async function renderQueueNode({ execution, node, context, traceId }) {
     const timeout = Number(node.config?.timeout_sec || process.env.DIAL_TIMEOUT || 25);
     const agents = await groupRouting.availableAgentsForGroup(context.groupId, execution.company_id, traceId);
@@ -225,11 +236,13 @@ async function renderQueueNode({ execution, node, context, traceId }) {
             to_number: context.calledNumber,
             status: 'no_available_agents',
         });
-        const nextId = nextNodeIdForEvent(context.graph, node.id, 'queue.timeout', context) ||
-            nextNodeIdForEvent(context.graph, node.id, 'queue.failed', context);
-        if (!nextId) return buildVoicemailTwiml(context, node);
-        await saveExecutionState(execution.call_sid, execution.company_id, { currentNodeId: nextId, contextJson: context });
-        return renderNodeById(execution.call_sid, nextId, traceId);
+        return followFailureEdge({
+            execution,
+            node,
+            context,
+            traceId,
+            fallbackTwiml: () => buildVoicemailTwiml(context, node),
+        });
     }
 
     const baseUrl = context.baseUrl;
@@ -260,17 +273,96 @@ ${clients}
     </Dial>`);
 }
 
-async function renderTransferNode({ execution, node, context }) {
+async function findPhoneEnabledCompanyUser(companyId, userId) {
+    const result = await db.query(
+        `SELECT
+             u.id,
+             COALESCE(u.full_name, u.email, u.id::text) AS name,
+             COALESCE(cup.phone_calls_allowed, false) AS phone_calls_allowed
+         FROM company_memberships cm
+         JOIN crm_users u ON u.id::text = cm.user_id::text
+         LEFT JOIN company_user_profiles cup ON cup.membership_id = cm.id
+         WHERE cm.company_id::text = $1::text
+           AND cm.user_id::text = $2::text
+           AND cm.status = 'active'
+         LIMIT 1`,
+        [companyId, userId]
+    );
+    const user = result.rows[0];
+    if (!user || user.phone_calls_allowed !== true) return null;
+    return user;
+}
+
+async function findTargetGroup(companyId, groupId) {
+    const result = await db.query(
+        `SELECT id, name, company_id
+         FROM user_groups
+         WHERE id = $1
+           AND company_id::text = $2::text
+         LIMIT 1`,
+        [groupId, companyId]
+    );
+    return result.rows[0] || null;
+}
+
+async function renderTransferNode({ execution, node, context, traceId }) {
     const cfg = node.config || {};
+    const targetType = cfg.target_type || 'external_number';
+    const transferFailure = (message) => followFailureEdge({
+        execution,
+        node,
+        context,
+        traceId,
+        fallbackTwiml: () => buildHangupTwiml(message),
+    });
+
+    if (targetType === 'phone_number_group') {
+        const targetGroupId = String(cfg.target_group_id || '').trim();
+        if (!targetGroupId) return transferFailure('Transfer target group is not configured.');
+        const group = await findTargetGroup(execution.company_id, targetGroupId);
+        if (!group) return transferFailure('Transfer target group is not available.');
+        const nextContext = {
+            ...context,
+            groupId: group.id,
+            groupName: group.name,
+            transferFromGroupId: context.groupId,
+            transferFromGroupName: context.groupName,
+        };
+        const queueNode = {
+            ...node,
+            kind: 'queue',
+            config: {
+                ...cfg,
+                timeout_sec: Number(cfg.timeout_sec || process.env.DIAL_TIMEOUT || 25),
+            },
+        };
+        await saveExecutionState(execution.call_sid, execution.company_id, { currentNodeId: node.id, contextJson: nextContext });
+        return renderQueueNode({ execution, node: queueNode, context: nextContext, traceId });
+    }
+
     const rawTarget = cfg.target_external_number || cfg.target_number || cfg.sip_uri || cfg.target_sip || cfg.target;
-    if (!rawTarget) return buildHangupTwiml('Transfer target is not configured.');
+    let isSip = false;
+    let target = null;
+    let child = '';
+
+    if (targetType === 'user') {
+        const targetUserId = String(cfg.target_user_id || '').trim();
+        if (!targetUserId) return transferFailure('Transfer target user is not configured.');
+        const user = await findPhoneEnabledCompanyUser(execution.company_id, targetUserId);
+        if (!user) return transferFailure('Transfer target user is not enabled for phone calls.');
+        target = buildSoftphoneIdentity(execution.company_id, targetUserId);
+        child = `<Client>${escapeXml(target)}</Client>`;
+    } else {
+        if (!rawTarget) return transferFailure('Transfer target is not configured.');
+        isSip = String(rawTarget).startsWith('sip:');
+        target = isSip ? String(rawTarget) : toE164(rawTarget);
+        if (!target) return transferFailure('Transfer target phone number is invalid.');
+        child = isSip ? `<Sip>${escapeXml(target)}</Sip>` : `<Number>${escapeXml(target)}</Number>`;
+    }
 
     const baseUrl = context.baseUrl;
     const dialActionUrl = `${baseUrl}/webhooks/twilio/voice-dial-action`;
     const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;
-    const isSip = String(rawTarget).startsWith('sip:');
-    const target = isSip ? String(rawTarget) : toE164(rawTarget);
-    if (!target) return buildHangupTwiml('Transfer target phone number is invalid.');
 
     const callerId = (() => {
         if (cfg.caller_id_policy === 'explicit_number') return toE164(cfg.explicit_caller_id_number);
@@ -278,7 +370,6 @@ async function renderTransferNode({ execution, node, context }) {
         return toE164(context.calledNumber);
     })();
     const callerIdAttr = callerId ? ` callerId="${escapeXml(callerId)}"` : '';
-    const child = isSip ? `<Sip>${escapeXml(target)}</Sip>` : `<Number>${escapeXml(target)}</Number>`;
     await saveExecutionState(execution.call_sid, execution.company_id, { currentNodeId: node.id, contextJson: context });
     return xmlResponse(`
     <Dial timeout="${Number(cfg.timeout_sec || process.env.DIAL_TIMEOUT || 25)}"
@@ -350,7 +441,7 @@ async function renderNodeById(callSid, nodeId, traceId = 'call-flow') {
             await saveExecutionState(callSid, execution.company_id, { status: 'voicemail' });
             return buildVoicemailTwiml(context, node);
         case 'transfer':
-            return renderTransferNode({ execution, node, context });
+            return renderTransferNode({ execution, node, context, traceId });
         case 'vapi_agent':
             return renderVapiNode(node, context);
         case 'hangup':

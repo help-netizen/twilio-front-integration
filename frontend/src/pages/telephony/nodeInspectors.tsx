@@ -1,4 +1,5 @@
-import type { CallFlowNodeKind } from '../../types/telephony';
+import type { CallFlowNodeKind, TelephonyTargetGroupOption, TelephonyTargetUserOption } from '../../types/telephony';
+import { normalizeToE164 } from '../../utils/phoneUtils';
 
 // ── Shared styles ────────────────────────────────────────────────────────────
 const fieldStyle = { width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 12, boxSizing: 'border-box' as const } as const;
@@ -11,7 +12,23 @@ type InspectorProps = {
     cfg: Record<string, unknown>;
     updateCfg: (key: string, val: unknown) => void;
     isProtected?: boolean;
+    groupOptions?: TelephonyTargetGroupOption[];
+    userOptions?: TelephonyTargetUserOption[];
 };
+
+function formatPhoneDraft(value: unknown) {
+    const digits = String(value || '').replace(/\D/g, '');
+    if (!digits) return '';
+    let national = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+    if (national.length > 10) national = national.slice(0, 10);
+    if (national.length <= 3) return `(${national}`;
+    if (national.length <= 6) return `(${national.slice(0, 3)}) ${national.slice(3)}`;
+    return `(${national.slice(0, 3)}) ${national.slice(3, 6)}-${national.slice(6)}`;
+}
+
+function optionLabel(label: string, secondary?: string) {
+    return secondary ? `${label} (${secondary})` : label;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // GREETING
@@ -69,7 +86,10 @@ export function GreetingInspector({ cfg, updateCfg, isProtected }: InspectorProp
 // ═══════════════════════════════════════════════════════════════════════════════
 // QUEUE
 // ═══════════════════════════════════════════════════════════════════════════════
-export function QueueInspector({ cfg, updateCfg, isProtected }: InspectorProps) {
+export function QueueInspector({ cfg, updateCfg, isProtected, groupOptions = [] }: InspectorProps) {
+    const selectedGroupId = String(cfg.user_group_id || '');
+    const hasUnknownSelectedGroup = !!selectedGroupId && !groupOptions.some(group => group.id === selectedGroupId);
+
     return (<>
         <div style={row}>
             <label style={labelStyle}>Target</label>
@@ -80,8 +100,12 @@ export function QueueInspector({ cfg, updateCfg, isProtected }: InspectorProps) 
         </div>
         {cfg.target_mode === 'user_group' && (
             <div style={row}>
-                <label style={labelStyle}>User Group ID <span style={{ color: '#ef4444' }}>*</span></label>
-                <input value={String(cfg.user_group_id || '')} onChange={e => updateCfg('user_group_id', e.target.value)} style={fieldStyle} placeholder="ug-…" />
+                <label style={labelStyle}>User Group <span style={{ color: '#ef4444' }}>*</span></label>
+                <select value={selectedGroupId} onChange={e => updateCfg('user_group_id', e.target.value)} style={fieldStyle} disabled={isProtected || groupOptions.length === 0}>
+                    <option value="">{groupOptions.length > 0 ? 'Select group' : 'No groups available'}</option>
+                    {hasUnknownSelectedGroup && <option value={selectedGroupId}>{selectedGroupId}</option>}
+                    {groupOptions.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
+                </select>
             </div>
         )}
         <div style={row}>
@@ -212,35 +236,61 @@ export function BranchInspector({ cfg, updateCfg, isProtected }: InspectorProps)
 // ═══════════════════════════════════════════════════════════════════════════════
 // TRANSFER
 // ═══════════════════════════════════════════════════════════════════════════════
-export function TransferInspector({ cfg, updateCfg, isProtected }: InspectorProps) {
+export function TransferInspector({ cfg, updateCfg, isProtected, groupOptions = [], userOptions = [] }: InspectorProps) {
+    const targetType = String(cfg.target_type || 'phone_number_group');
+    const selectedGroupId = String(cfg.target_group_id || '');
+    const selectedUserId = String(cfg.target_user_id || '');
+    const hasUnknownSelectedGroup = !!selectedGroupId && !groupOptions.some(group => group.id === selectedGroupId);
+    const hasUnknownSelectedUser = !!selectedUserId && !userOptions.some(user => user.id === selectedUserId);
+    const normalizePhoneField = (key: string, value: unknown) => {
+        const normalized = normalizeToE164(String(value || ''));
+        if (normalized && normalized !== value) updateCfg(key, normalized);
+    };
+
     return (<>
         <div style={row}>
             <label style={labelStyle}>Target Type</label>
-            <select value={String(cfg.target_type || 'phone_number_group')} onChange={e => updateCfg('target_type', e.target.value)} style={fieldStyle} disabled={isProtected}>
+            <select value={targetType} onChange={e => updateCfg('target_type', e.target.value)} style={fieldStyle} disabled={isProtected}>
                 <option value="phone_number_group">Phone Number Group</option>
                 <option value="user">Specific User</option>
                 <option value="external_number">External Number</option>
             </select>
         </div>
-        {cfg.target_type === 'phone_number_group' && (
+        {targetType === 'phone_number_group' && (
             <div style={row}>
-                <label style={labelStyle}>Target Group ID</label>
-                <input value={String(cfg.target_group_id || '')} onChange={e => updateCfg('target_group_id', e.target.value)} style={fieldStyle} placeholder="ug-…" />
+                <label style={labelStyle}>Target Group</label>
+                <select value={selectedGroupId} onChange={e => updateCfg('target_group_id', e.target.value)} style={fieldStyle} disabled={isProtected || groupOptions.length === 0}>
+                    <option value="">{groupOptions.length > 0 ? 'Select group' : 'No groups available'}</option>
+                    {hasUnknownSelectedGroup && <option value={selectedGroupId}>{selectedGroupId}</option>}
+                    {groupOptions.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
+                </select>
             </div>
         )}
-        {cfg.target_type === 'user' && (
+        {targetType === 'user' && (
             <div style={row}>
-                <label style={labelStyle}>Target User ID</label>
-                <input value={String(cfg.target_user_id || '')} onChange={e => updateCfg('target_user_id', e.target.value)} style={fieldStyle} placeholder="User UUID" />
+                <label style={labelStyle}>Target User</label>
+                <select value={selectedUserId} onChange={e => updateCfg('target_user_id', e.target.value)} style={fieldStyle} disabled={isProtected || userOptions.length === 0}>
+                    <option value="">{userOptions.length > 0 ? 'Select user' : 'No phone-enabled users'}</option>
+                    {hasUnknownSelectedUser && <option value={selectedUserId}>{selectedUserId}</option>}
+                    {userOptions.map(user => <option key={user.id} value={user.id}>{optionLabel(user.name, user.email)}</option>)}
+                </select>
             </div>
         )}
-        {cfg.target_type === 'external_number' && (
+        {targetType === 'external_number' && (
             <div style={row}>
                 <label style={labelStyle}>External Number <span style={{ color: '#ef4444' }}>*</span></label>
-                <input value={String(cfg.target_external_number || '')} onChange={e => updateCfg('target_external_number', e.target.value)} style={fieldStyle} placeholder="+1…" />
+                <input
+                    type="tel"
+                    value={formatPhoneDraft(cfg.target_external_number)}
+                    onChange={e => updateCfg('target_external_number', formatPhoneDraft(e.target.value))}
+                    onBlur={e => normalizePhoneField('target_external_number', e.currentTarget.value)}
+                    style={fieldStyle}
+                    placeholder="(___) ___-____"
+                    disabled={isProtected}
+                />
             </div>
         )}
-        {cfg.target_type === 'phone_number_group' && (
+        {targetType === 'phone_number_group' && (
             <div style={row}>
                 <label style={labelStyle}>Group Handoff Mode</label>
                 <select value={String(cfg.group_handoff_mode || 'enter_group_queue')} onChange={e => updateCfg('group_handoff_mode', e.target.value)} style={fieldStyle} disabled={isProtected}>
@@ -252,7 +302,7 @@ export function TransferInspector({ cfg, updateCfg, isProtected }: InspectorProp
                 )}
             </div>
         )}
-        {cfg.target_type === 'user' && (
+        {targetType === 'user' && (
             <div style={row}>
                 <label style={labelStyle}>User Target Preference</label>
                 <select value={String(cfg.user_target_preference || 'sdk_first_then_external')} onChange={e => updateCfg('user_target_preference', e.target.value)} style={fieldStyle} disabled={isProtected}>
@@ -281,17 +331,17 @@ export function TransferInspector({ cfg, updateCfg, isProtected }: InspectorProp
         {cfg.caller_id_policy === 'explicit_number' && (
             <div style={row}>
                 <label style={labelStyle}>Explicit Caller ID <span style={{ color: '#ef4444' }}>*</span></label>
-                <input value={String(cfg.explicit_caller_id_number || '')} onChange={e => updateCfg('explicit_caller_id_number', e.target.value)} style={fieldStyle} placeholder="+1…" />
+                <input
+                    type="tel"
+                    value={formatPhoneDraft(cfg.explicit_caller_id_number)}
+                    onChange={e => updateCfg('explicit_caller_id_number', formatPhoneDraft(e.target.value))}
+                    onBlur={e => normalizePhoneField('explicit_caller_id_number', e.currentTarget.value)}
+                    style={fieldStyle}
+                    placeholder="(___) ___-____"
+                    disabled={isProtected}
+                />
             </div>
         )}
-        <div style={row}>
-            <label style={labelStyle}>On Fail</label>
-            <select value={String(cfg.on_fail || 'edge')} onChange={e => updateCfg('on_fail', e.target.value)} style={fieldStyle} disabled={isProtected}>
-                <option value="edge">Follow edge</option>
-                <option value="voicemail_terminal">Go to voicemail</option>
-                <option value="hangup_terminal">Hang up</option>
-            </select>
-        </div>
     </>);
 }
 
@@ -446,12 +496,12 @@ export function PlayAudioInspector({ cfg, updateCfg, isProtected }: InspectorPro
 // ═══════════════════════════════════════════════════════════════════════════════
 // DISPATCHER — maps kind to inspector component
 // ═══════════════════════════════════════════════════════════════════════════════
-export function NodeKindInspector({ kind, cfg, updateCfg, isProtected }: InspectorProps & { kind: CallFlowNodeKind }) {
+export function NodeKindInspector({ kind, cfg, updateCfg, isProtected, groupOptions, userOptions }: InspectorProps & { kind: CallFlowNodeKind }) {
     switch (kind) {
         case 'greeting': return <GreetingInspector cfg={cfg} updateCfg={updateCfg} isProtected={isProtected} />;
-        case 'queue': return <QueueInspector cfg={cfg} updateCfg={updateCfg} isProtected={isProtected} />;
+        case 'queue': return <QueueInspector cfg={cfg} updateCfg={updateCfg} isProtected={isProtected} groupOptions={groupOptions} />;
         case 'branch': return <BranchInspector cfg={cfg} updateCfg={updateCfg} isProtected={isProtected} />;
-        case 'transfer': return <TransferInspector cfg={cfg} updateCfg={updateCfg} isProtected={isProtected} />;
+        case 'transfer': return <TransferInspector cfg={cfg} updateCfg={updateCfg} isProtected={isProtected} groupOptions={groupOptions} userOptions={userOptions} />;
         case 'voicemail': return <VoicemailInspector cfg={cfg} updateCfg={updateCfg} isProtected={isProtected} />;
         case 'hangup': return <HangUpInspector cfg={cfg} updateCfg={updateCfg} isProtected={isProtected} />;
         case 'play_audio': return <PlayAudioInspector cfg={cfg} updateCfg={updateCfg} isProtected={isProtected} />;

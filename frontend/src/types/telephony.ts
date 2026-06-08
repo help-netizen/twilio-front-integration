@@ -104,6 +104,17 @@ export interface UserGroup {
     flow: CallFlow | null;
 }
 
+export interface TelephonyTargetGroupOption {
+    id: string;
+    name: string;
+}
+
+export interface TelephonyTargetUserOption {
+    id: string;
+    name: string;
+    email?: string;
+}
+
 // ─── Telephony domain types ───────────────────────────────────────────────────
 
 export interface PhoneNumber {

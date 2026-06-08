@@ -10,11 +10,12 @@ import '@xyflow/react/dist/style.css';
 import { ArrowLeft, Save, AlertCircle, CheckCircle, Undo2, Redo2, LayoutGrid, Trash2, X, Plus, Lock } from 'lucide-react';
 import { telephonyApi } from '../../services/telephonyApi';
 import { vapiApi } from '../../services/vapiApi';
-import { NODE_KIND_META, type CallFlowNodeKind, type CallFlow, type CallFlowNode as CFNode, type CallFlowTransition } from '../../types/telephony';
+import { NODE_KIND_META, type CallFlowNodeKind, type CallFlow, type CallFlowNode as CFNode, type CallFlowTransition, type TelephonyTargetGroupOption, type TelephonyTargetUserOption } from '../../types/telephony';
 import { layoutWithElkLayered } from '../../utils/elkLayout';
 import { createSkeletonFlow } from '../../utils/skeletonFlow';
 import { NodeKindInspector } from './nodeInspectors';
 import { NODE_DEFAULTS, TERMINAL_KINDS, DISABLED_KINDS, LOCKED_KINDS, PALETTE_ORDER } from './nodeDefaults';
+import { normalizeToE164 } from '../../utils/phoneUtils';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type FlowNodeData = {
@@ -250,6 +251,26 @@ function hasRenderableGraph(graph: CallFlow['graph'] | null | undefined) {
     return Array.isArray(graph?.states) && graph.states.length > 0;
 }
 
+function normalizePhoneForSave(value: unknown) {
+    const raw = String(value || '').trim();
+    if (!raw) return raw;
+    return normalizeToE164(raw) || raw;
+}
+
+function normalizeConfigForSave(kind: CallFlowNodeKind | undefined, config: Record<string, unknown> | undefined) {
+    if (!config) return config;
+    if (kind !== 'transfer') return config;
+
+    const next: Record<string, unknown> = { ...config, on_fail: 'edge' };
+    if (next.target_external_number) {
+        next.target_external_number = normalizePhoneForSave(next.target_external_number);
+    }
+    if (next.explicit_caller_id_number) {
+        next.explicit_caller_id_number = normalizePhoneForSave(next.explicit_caller_id_number);
+    }
+    return next;
+}
+
 function reactFlowToGraph(
     visibleNodes: Node<FlowNodeData>[],
     visibleEdges: Edge[],
@@ -274,7 +295,7 @@ function reactFlowToGraph(
             groupRef: n.data?.groupRef,
             provider: n.data?.provider,
             configRef: n.data?.configRef,
-            config: n.data?.config,
+            config: normalizeConfigForSave(n.data?.kind as CallFlowNodeKind, n.data?.config),
         })),
         transitions: allEdges.map((e) => {
             const data = (e.data || {}) as any;
@@ -316,6 +337,8 @@ export default function CallFlowBuilderPage() {
     const [saving, setSaving] = useState(false);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState<{ type: 'node' | 'edge'; id: string; label: string } | null>(null);
     const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+    const [targetGroupOptions, setTargetGroupOptions] = useState<TelephonyTargetGroupOption[]>([]);
+    const [targetUserOptions, setTargetUserOptions] = useState<TelephonyTargetUserOption[]>([]);
     const pendingLayoutRef = useRef(false);
 
     const { push: pushSnap, undo, redo, canUndo, canRedo } = useUndoRedo(nodes as any, edges, setNodes as any, setEdges as any);
@@ -331,7 +354,13 @@ export default function CallFlowBuilderPage() {
     useEffect(() => {
         if (!groupId) return;
         (async () => {
-            const group = await telephonyApi.getUserGroup(groupId);
+            const [group, groups, users] = await Promise.all([
+                telephonyApi.getUserGroup(groupId),
+                telephonyApi.listUserGroups().catch(() => []),
+                telephonyApi.listPhoneEnabledUsers().catch(() => []),
+            ]);
+            setTargetGroupOptions(groups);
+            setTargetUserOptions(users);
             let f = group?.flow;
 
             if (!f || !hasRenderableGraph(f.graph)) {
@@ -489,19 +518,21 @@ export default function CallFlowBuilderPage() {
         setShowDeleteConfirm(null);
     }, [showDeleteConfirm, nodes, edges, setNodes, setEdges, pushSnap]);
 
-    const runAutoLayout = useCallback(async () => {
-        pushSnap();
+    const applyAutoLayout = useCallback(async (recordHistory = true) => {
+        if (recordHistory) pushSnap();
         try { const laid = await layoutWithElkLayered(nodes as any, edges as any); setNodes(laid.nodes as any); setEdges(laid.edges as any); }
         catch { /* keep */ }
     }, [nodes, edges, setNodes, setEdges, pushSnap]);
+
+    const runAutoLayout = useCallback(() => applyAutoLayout(true), [applyAutoLayout]);
 
     // Auto-layout after node insertion
     useEffect(() => {
         if (pendingLayoutRef.current) {
             pendingLayoutRef.current = false;
-            runAutoLayout();
+            applyAutoLayout(false);
         }
-    }, [nodes.length, runAutoLayout]);
+    }, [nodes.length, applyAutoLayout]);
 
     const updateNodeName = useCallback((id: string, name: string) => {
         pushSnap();
@@ -637,7 +668,14 @@ export default function CallFlowBuilderPage() {
                                 return (
                                     <div style={{ marginBottom: 12 }}>
                                         <label style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', display: 'block', marginBottom: 6, borderTop: '1px solid #e5e7eb', paddingTop: 10 }}>Configuration</label>
-                                        <NodeKindInspector kind={selectedNode.data?.kind as CallFlowNodeKind} cfg={cfg} updateCfg={updateCfg} isProtected={selectedNode.data?.isProtected} />
+                                        <NodeKindInspector
+                                            kind={selectedNode.data?.kind as CallFlowNodeKind}
+                                            cfg={cfg}
+                                            updateCfg={updateCfg}
+                                            isProtected={selectedNode.data?.isProtected}
+                                            groupOptions={targetGroupOptions}
+                                            userOptions={targetUserOptions}
+                                        />
                                     </div>
                                 );
                             })()}

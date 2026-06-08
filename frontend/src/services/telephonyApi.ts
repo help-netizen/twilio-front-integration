@@ -1,7 +1,7 @@
 import type {
     CallFlow, PhoneNumber, AudioAsset, RoutingLogEntry, AgentStatus,
     QueuedCall, DashboardKPI, ProviderInfo, ActiveCallInfo, UserGroup,
-    OperationsDashboardData,
+    OperationsDashboardData, TelephonyTargetGroupOption, TelephonyTargetUserOption,
 } from '../types/telephony';
 
 import { authedFetch } from './apiClient';
@@ -71,6 +71,22 @@ export const telephonyApi = {
     getUserGroup: async (id: string): Promise<UserGroup | undefined> => {
         try { return await apiFetch<UserGroup>(`/user-groups/${id}`); }
         catch { await delay(); return undefined; }
+    },
+
+    listUserGroups: async (): Promise<TelephonyTargetGroupOption[]> => {
+        const groups = await apiFetch<UserGroup[]>('/user-groups');
+        return (groups || []).map(group => ({ id: group.id, name: group.name || group.id }));
+    },
+
+    listPhoneEnabledUsers: async (): Promise<TelephonyTargetUserOption[]> => {
+        const data = await apiFetch<{ users: Array<{ id: string; full_name?: string | null; email?: string | null; membership_status?: string | null; phone_calls_allowed?: boolean }> }>('/users?limit=500&status=active');
+        return (data.users || [])
+            .filter(user => user.phone_calls_allowed === true && user.membership_status !== 'inactive')
+            .map(user => ({
+                id: String(user.id),
+                name: user.full_name || user.email || String(user.id),
+                email: user.email || undefined,
+            }));
     },
 
     // Phone Numbers — real API (reads from Twilio-synced phone_number_settings)

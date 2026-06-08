@@ -200,16 +200,24 @@ function validateGraph(graph) {
             }
 
             case 'transfer':
-                if (cfg.target_type === 'external_number' && cfg.target_external_number) {
-                    if (!/^\+\d{7,15}$/.test(cfg.target_external_number)) {
+                if (cfg.target_type === 'phone_number_group' && !cfg.target_group_id) {
+                    errors.push({ message: `Transfer "${s.name}": target group required` });
+                }
+                if (cfg.target_type === 'user' && !cfg.target_user_id) {
+                    errors.push({ message: `Transfer "${s.name}": target user required` });
+                }
+                if (cfg.target_type === 'external_number') {
+                    if (!cfg.target_external_number) {
+                        errors.push({ message: `Transfer "${s.name}": external number required` });
+                    } else if (!/^\+\d{7,15}$/.test(cfg.target_external_number)) {
                         errors.push({ message: `Transfer "${s.name}": external number must be valid E.164` });
                     }
                 }
                 if (cfg.caller_id_policy === 'explicit_number' && !cfg.explicit_caller_id_number) {
                     errors.push({ message: `Transfer "${s.name}": explicit caller ID number required` });
                 }
-                if (cfg.on_fail === 'edge' && outgoing.filter(t => t.edgeRole === 'fallback').length === 0 && !s.system) {
-                    warnings.push({ message: `Transfer "${s.name}": fail path edge recommended when on_fail=edge` });
+                if (outgoing.length === 0 && !s.system) {
+                    warnings.push({ message: `Transfer "${s.name}": add an outgoing edge for failed or unanswered transfers` });
                 }
                 break;
 
