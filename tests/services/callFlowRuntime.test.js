@@ -361,6 +361,9 @@ describe('F017 callFlowRuntime branch insertion metadata recovery', () => {
         // DialCallStatus to a vapi.* event (completed → end, failure → edge).
         expect(twiml).toContain('<Dial action="https://example.test/webhooks/twilio/voice-dial-action?vapiNode=1"');
         expect(twiml).toContain('timeLimit="900"');
+        expect(twiml).toContain('record="record-from-answer-dual"');
+        expect(twiml).toContain('recordingStatusCallback="https://example.test/webhooks/twilio/recording-status"');
+        expect(twiml).toContain('recordingStatusCallbackMethod="POST"');
         expect(twiml).toContain('<Sip>sip:assistant@sip.vapi.ai?');
         expect(twiml).toContain('x-blanc-company-id=company-1');
         expect(twiml).toContain('x-blanc-group-id=ug-1');

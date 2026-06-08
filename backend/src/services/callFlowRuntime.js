@@ -455,6 +455,7 @@ async function renderVapiNode({ execution, node, context, traceId }) {
     // vapiNode=1 → the dial-action handler maps the real DialCallStatus to a
     // vapi.* event: completed ends the call, failure/timeout follows the edge.
     const actionUrl = `${context.baseUrl}/webhooks/twilio/voice-dial-action?vapiNode=1`;
+    const recordingStatusUrl = `${context.baseUrl}/webhooks/twilio/recording-status`;
     const query = new URLSearchParams({
         'x-blanc-company-id': context.companyId,
         'x-blanc-group-id': context.groupId,
@@ -462,7 +463,14 @@ async function renderVapiNode({ execution, node, context, traceId }) {
         'x-blanc-call-sid': context.callSid || '',
     }).toString().replace(/&/g, '&amp;');
     return xmlResponse(`
-    <Dial action="${actionUrl}" method="POST" answerOnBridge="true" timeout="${Number(cfg.timeout_sec || 60)}" timeLimit="${VAPI_MAX_DURATION_SECONDS}">
+    <Dial action="${actionUrl}"
+          method="POST"
+          answerOnBridge="true"
+          timeout="${Number(cfg.timeout_sec || 60)}"
+          timeLimit="${VAPI_MAX_DURATION_SECONDS}"
+          record="record-from-answer-dual"
+          recordingStatusCallback="${recordingStatusUrl}"
+          recordingStatusCallbackMethod="POST">
         <Sip>${appendSipQuery(sipUri, query)}</Sip>
     </Dial>`);
 }
