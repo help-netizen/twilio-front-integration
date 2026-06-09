@@ -1,6 +1,6 @@
 {
   "name": "Lead Qualifier v2",
-  "firstMessage": "Hi, this is Alex from Homes Appliance Repair! How can I help you today?",
+  "firstMessage": "Hi, this is Sara from ABC Homes Appliance Repair! How can I help you today?",
   "firstMessageMode": "assistant-speaks-first",
   "maxDurationSeconds": 900,
   "silenceTimeoutSeconds": 30,
