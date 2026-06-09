@@ -17,6 +17,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { MetadataSection, LeadDetailFooter } from './LeadDetailSections';
 import { LeadInfoSections } from './LeadInfoSections';
 import { LeadFinancialsTab } from './LeadFinancialsTab';
+import { LEAD_STATUS_COLORS, hexToRgba } from './leadStatusStyles';
 
 interface LeadDetailPanelProps {
     lead: Lead | null;
@@ -33,21 +34,6 @@ interface LeadDetailPanelProps {
 }
 
 const JOB_SOURCES = ['Website', 'Referral', 'Google Ads', 'Facebook', 'Yelp', 'Direct Call', 'Email', 'Instagram', 'LinkedIn', 'Twitter', 'Other'];
-
-// ─── Status pill color helpers ───────────────────────────────────────────────
-
-const LEAD_STATUS_COLORS: Record<string, string> = {
-    'Submitted': '#3B82F6', 'New': '#8B5CF6', 'Contacted': '#1B8B63',
-    'Qualified': '#22C55E', 'Proposal Sent': '#F59E0B',
-    'Negotiation': '#F97316', 'Lost': '#EF4444', 'Converted': '#6B7280',
-};
-
-function hexToRgba(hex: string, alpha: number): string {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return `rgba(${r},${g},${b},${alpha})`;
-}
 
 // ─── Job Details section ─────────────────────────────────────────────────────
 

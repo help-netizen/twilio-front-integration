@@ -8,6 +8,7 @@ import { useFsmStates } from '../../hooks/useFsmActions';
 import { useLeadFormSettings } from '../../hooks/useLeadFormSettings';
 import { DateRangePickerPopover } from '../ui/DateRangePickerPopover';
 import { isMobileViewport } from '../../hooks/useViewportSafePosition';
+import { LEAD_STATUS_COLORS } from './leadStatusStyles';
 
 interface LeadsFiltersProps {
     filters: LeadsListParams;
@@ -197,19 +198,6 @@ export function LeadsFilters({
         </>
     );
 }
-
-/* ────────────── Lead status colors ────────────── */
-
-const LEAD_STATUS_COLORS: Record<string, string> = {
-    'Submitted':     '#3B82F6',
-    'New':           '#8B5CF6',
-    'Contacted':     '#1B8B63',
-    'Qualified':     '#22C55E',
-    'Proposal Sent': '#F59E0B',
-    'Negotiation':   '#F97316',
-    'Lost':          '#EF4444',
-    'Converted':     '#6B7280',
-};
 
 /* ────────────── Filter Column sub-component ────────────── */
 

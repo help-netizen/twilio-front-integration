@@ -17,21 +17,7 @@ import { pulseApi } from '../../services/pulseApi';
 import { ContactInfoSections } from './ContactInfoSections';
 import { EditContactDialog } from './EditContactDialog';
 import { JobsList } from './ContactJobsList';
-
-// ─── Status color helpers ────────────────────────────────────────────────────
-
-const LEAD_STATUS_COLORS: Record<string, string> = {
-    'Submitted': '#3B82F6', 'New': '#8B5CF6', 'Contacted': '#1B8B63',
-    'Qualified': '#22C55E', 'Proposal Sent': '#F59E0B',
-    'Negotiation': '#F97316', 'Lost': '#EF4444', 'Converted': '#6B7280',
-};
-
-function hexToRgba(hex: string, alpha: number): string {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return `rgba(${r},${g},${b},${alpha})`;
-}
+import { LEAD_STATUS_COLORS, hexToRgba } from '../leads/leadStatusStyles';
 
 // ─── Props ───────────────────────────────────────────────────────────────────
 

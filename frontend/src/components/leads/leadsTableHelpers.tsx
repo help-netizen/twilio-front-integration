@@ -5,23 +5,7 @@ import { Copy } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import type { Lead } from '../../types/lead';
-
-// ── Status badge colors (Blanc warm palette) ──────────────────────────────────
-
-const STATUS_STYLES: Record<string, { bg: string; color: string }> = {
-    'New':            { bg: 'rgba(37, 99, 235, 0.1)',  color: '#2563eb' },
-    'Submitted':      { bg: 'rgba(37, 99, 235, 0.1)',  color: '#2563eb' },
-    'Contacted':      { bg: 'rgba(27, 139, 99, 0.1)',  color: '#1b8b63' },
-    'Qualified':      { bg: 'rgba(124, 58, 237, 0.1)', color: '#7c3aed' },
-    'Proposal Sent':  { bg: 'rgba(124, 58, 237, 0.1)', color: '#7c3aed' },
-    'Negotiation':    { bg: 'rgba(234, 179, 8, 0.1)',  color: '#ca8a04' },
-    'Converted':      { bg: 'rgba(27, 139, 99, 0.08)', color: 'var(--blanc-ink-3)' },
-    'Lost':           { bg: 'rgba(212, 77, 60, 0.1)',  color: '#d44d3c' },
-};
-
-function getStatusStyle(status: string) {
-    return STATUS_STYLES[status] || { bg: 'rgba(117, 106, 89, 0.08)', color: 'var(--blanc-ink-2)' };
-}
+import { getLeadStatusPillStyle } from './leadStatusStyles';
 
 export function handleCopyPhone(phone: string, e: React.MouseEvent) { e.stopPropagation(); navigator.clipboard.writeText(phone); toast.success('Phone number copied to clipboard'); }
 export function handleCall(phone: string, e: React.MouseEvent) { e.stopPropagation(); window.location.href = `tel:${phone}`; }
@@ -31,12 +15,12 @@ export function renderCell(columnId: string, lead: Lead, key: string) {
 
     switch (columnId) {
         case 'status': {
-            const st = getStatusStyle(lead.Status);
+            const st = getLeadStatusPillStyle(lead.Status);
             return (
                 <TableCell key={key} style={cellStyle}>
                     <span
                         className="inline-flex items-center px-3 text-xs font-semibold"
-                        style={{ backgroundColor: st.bg, color: st.color, minHeight: 28, borderRadius: 8 }}
+                        style={{ backgroundColor: st.bg, color: st.color, border: `1px solid ${st.border}`, minHeight: 28, borderRadius: 8 }}
                     >
                         {lead.Status}
                     </span>

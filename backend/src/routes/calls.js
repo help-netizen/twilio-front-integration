@@ -922,6 +922,7 @@ function formatCall(row) {
         answered_at: row.answered_at,
         ended_at: row.ended_at,
         duration_sec: row.duration_sec,
+        answered_by: row.answered_by || null,
         price: row.price,
         price_unit: row.price_unit,
         created_at: row.created_at,

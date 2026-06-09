@@ -179,6 +179,7 @@ export const DEFAULT_COLUMNS: TableColumn[] = [
 ];
 
 export type LeadStatus =
+    | 'Review'
     | 'Submitted'
     | 'New'
     | 'Contacted'
@@ -189,6 +190,7 @@ export type LeadStatus =
     | 'Converted';
 
 export const LEAD_STATUSES: LeadStatus[] = [
+    'Review',
     'Submitted',
     'New',
     'Contacted',

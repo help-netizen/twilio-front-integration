@@ -12,7 +12,7 @@ import type { Lead } from '../../types/lead';
 import {
     PhoneIncoming, PhoneOutgoing, ArrowLeftRight,
     MessageSquare, MessageSquareReply, MoreVertical,
-    EyeOff, Clock, CheckCircle2, AlertTriangle,
+    EyeOff, Clock, CheckCircle2, AlertTriangle, Bot,
 } from 'lucide-react';
 import type { Call } from '../../types/models';
 import { tomorrowAtInTZ } from '../../utils/companyTime';
@@ -42,6 +42,8 @@ export const REASON_LABELS: Record<string, string> = {
     estimate_approved: 'Estimate approved', time_confirmed: 'Time confirmed',
 };
 
+const AI_ANSWERED_BY_MARKERS = ['ai', 'vapi', 'bot', 'assistant'];
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatExactTime(date: Date, tz: string): string {
@@ -66,6 +68,11 @@ function formatRelativeOrDate(date: Date, tz: string): string {
         return `${hours}h ago`;
     }
     return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: tz });
+}
+
+function isAiAnsweredBy(answeredBy: string | null | undefined): boolean {
+    const normalized = (answeredBy || '').toLowerCase();
+    return AI_ANSWERED_BY_MARKERS.some(marker => normalized.includes(marker));
 }
 
 /** Get initials from a name or phone */
@@ -129,6 +136,7 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
         : call.direction?.startsWith('outbound') ? 'outbound'
             : call.direction === 'internal' ? 'internal' : 'outbound';
     const callColor = STATUS_ICON_COLORS[call.status?.toLowerCase() || ''] || '#16a34a';
+    const isAiAnsweredLatestCall = interactionType === 'call' && isAiAnsweredBy(call.answered_by);
 
     // Missed incoming call — last interaction is a call, direction is inbound, status is not answered
     const isMissedIncoming = interactionType === 'call'
@@ -171,10 +179,11 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
 
             <div className="flex items-start gap-2.5">
                 {/* Event type icon */}
-                <div className="relative shrink-0 mt-1">
+                <div className="relative shrink-0 mt-1" title={isAiAnsweredLatestCall ? 'AI bot answered this call' : undefined}>
                     {(() => {
                         if (interactionType === 'sms_inbound') return <MessageSquareReply className="size-[18px]" style={{ color: 'var(--blanc-info)' }} />;
                         if (interactionType === 'sms_outbound') return <MessageSquare className="size-[18px]" style={{ color: 'var(--blanc-ink-2)' }} />;
+                        if (isAiAnsweredLatestCall) return <Bot className="size-[18px]" style={{ color: '#dc2626' }} aria-label="AI bot answered this call" />;
                         if (callDirection === 'internal') return <ArrowLeftRight className="size-[18px]" style={{ color: 'var(--blanc-ink-2)' }} />;
                         if (callDirection === 'inbound') return <PhoneIncoming className="size-[18px]" style={{ color: callColor }} />;
                         return <PhoneOutgoing className="size-[18px]" style={{ color: callColor }} />;

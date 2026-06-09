@@ -166,6 +166,7 @@ async function handleCreateLead(args) {
         LastName:  lastName  || callerName?.split(' ').slice(1).join(' ') || 'Caller',
         Phone:     phone || '',
         ...(email && { Email: email }),
+        Status:    'Review',
         JobType:   unitType ? `${unitType} Repair` : 'Appliance Repair',
         JobSource: disqualified ? 'AI Phone (Invalid)' : 'AI Phone',
         Comments:  disqualified
@@ -182,7 +183,7 @@ async function handleCreateLead(args) {
     for (let attempt = 1; attempt <= 2; attempt++) {
         try {
             const lead = await leadsService.createLead(body, DEFAULT_COMPANY_ID);
-            return { success: true, leadId: lead?.uuid || lead?.id || null };
+            return { success: true, leadId: lead?.UUID || lead?.uuid || lead?.id || null };
         } catch (err) {
             console.error(`[vapi-tools] createLead attempt ${attempt} failed:`, err.message);
             if (attempt < 2) await new Promise(r => setTimeout(r, 2000));
