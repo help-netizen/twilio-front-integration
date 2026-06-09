@@ -387,6 +387,9 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
 
     // Publish realtime event (after enrichment so frontend gets correct duration)
     if (!skipUpsert) {
+        if (call && eventType === 'call.inbound' && !normalized.parentCallSid) {
+            publishRealtimeEvent('call.created', call, traceId);
+        }
         publishRealtimeEvent('call.updated', enrichedCall || { call_sid: normalized.callSid, status: normalized.eventStatus }, traceId);
     }
 

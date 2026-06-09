@@ -22,6 +22,9 @@ interface UseTwilioDeviceOptions {
     enabled?: boolean;
 }
 
+type PresenceStatus = 'available' | 'on_call' | 'offline';
+const PRESENCE_HEARTBEAT_MS = 30_000;
+
 export function useTwilioDevice(options: UseTwilioDeviceOptions = {}): UseTwilioDeviceReturn {
     const enabled = options.enabled ?? true;
     const [device, setDevice] = useState<Device | null>(null);
@@ -62,8 +65,8 @@ export function useTwilioDevice(options: UseTwilioDeviceOptions = {}): UseTwilio
 
     const startDurationTimer = useCallback(() => { connectedAtRef.current = Date.now(); durationIntervalRef.current = setInterval(() => { if (connectedAtRef.current) setCallDuration(Math.floor((Date.now() - connectedAtRef.current) / 1000)); }, 1000); }, []);
     const stopDurationTimer = useCallback(() => { if (durationIntervalRef.current) { clearInterval(durationIntervalRef.current); durationIntervalRef.current = null; } connectedAtRef.current = null; }, []);
-    const publishPresence = useCallback((status: 'available' | 'on_call' | 'offline') => {
-        if (!enabled || lastPresenceRef.current === status) return;
+    const publishPresence = useCallback((status: PresenceStatus, options: { force?: boolean } = {}) => {
+        if (!enabled || (!options.force && lastPresenceRef.current === status)) return;
         lastPresenceRef.current = status;
         authedFetch('/api/voice/presence', {
             method: 'POST',
@@ -245,6 +248,18 @@ export function useTwilioDevice(options: UseTwilioDeviceOptions = {}): UseTwilio
         if (!enabled || !deviceReady) return;
         if (['connecting', 'ringing', 'incoming', 'connected'].includes(callState)) publishPresence('on_call');
         else if (callState === 'idle' || callState === 'ended' || callState === 'failed') publishPresence('available');
+    }, [enabled, deviceReady, callState, publishPresence]);
+
+    useEffect(() => {
+        if (!enabled || !deviceReady) return;
+        const heartbeat = () => {
+            const status: PresenceStatus = ['connecting', 'ringing', 'incoming', 'connected'].includes(callState)
+                ? 'on_call'
+                : 'available';
+            publishPresence(status, { force: true });
+        };
+        const id = window.setInterval(heartbeat, PRESENCE_HEARTBEAT_MS);
+        return () => window.clearInterval(id);
     }, [enabled, deviceReady, callState, publishPresence]);
 
     // ── SSE listener: backend hold queue notifications ──────────────────

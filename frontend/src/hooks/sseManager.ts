@@ -98,6 +98,8 @@ function connect() {
             'thread.action_required', 'thread.handled', 'thread.snoozed',
             'thread.unsnoozed', 'thread.assigned', 'timeline.read',
             'timeline.unread', 'contact.unread', 'call.holding',
+            'agent.status.changed', 'group.call.queued', 'group.call.accepted',
+            'group.call.ended',
         ];
 
         for (const eventType of namedEvents) {
