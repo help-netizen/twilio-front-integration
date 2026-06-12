@@ -11,6 +11,20 @@ const authorizationService = require('../services/authorizationService');
 
 const KEYCLOAK_REALM_URL = process.env.KEYCLOAK_REALM_URL;
 const FEATURE_AUTH = process.env.FEATURE_AUTH_ENABLED === 'true';
+const FEATURE_SMS_2FA = () => process.env.FEATURE_SMS_2FA === 'true';
+
+// Paths reachable while the device is not yet trusted (OTP flow itself, health)
+const TWO_FA_EXEMPT = [/^\/api\/auth\//, /^\/health/, /^\/api\/public\//, /^\/api\/onboarding/];
+
+function readCookie(req, name) {
+    const header = req.headers.cookie;
+    if (!header) return null;
+    for (const part of header.split(';')) {
+        const [k, ...v] = part.trim().split('=');
+        if (k === name) return decodeURIComponent(v.join('='));
+    }
+    return null;
+}
 
 let jwksRsa = null;
 function getJwksClient() {
@@ -95,6 +109,28 @@ function authenticate(req, res, next) {
         } catch (profileErr) {
             console.error('[Auth] Failed to sync user profile:', profileErr.message);
             req.authz = { scope: null, platform_role: is_super_admin ? 'super_admin' : 'none', company: null, membership: null, permissions: [], scopes: {} };
+        }
+
+        // SMS 2FA (ALB-101, FEATURE_SMS_2FA): users with a verified phone must
+        // present a trusted-device cookie; otherwise the API answers with a
+        // dedicated code and the frontend runs the OTP flow.
+        try {
+            const crmUser = req.user?.crmUser;
+            if (FEATURE_SMS_2FA() && crmUser?.phone_verified_at
+                && !TWO_FA_EXEMPT.some(rx => rx.test(req.originalUrl || req.path || ''))) {
+                const otpService = require('../services/otpService');
+                const deviceId = readCookie(req, 'albusto_td');
+                const trusted = await otpService.isDeviceTrusted(crmUser.id, deviceId);
+                if (!trusted) {
+                    return res.status(401).json({
+                        code: 'PHONE_VERIFICATION_REQUIRED',
+                        message: 'Confirm this device with the SMS code',
+                        trace_id: req.traceId,
+                    });
+                }
+            }
+        } catch (tfaErr) {
+            console.error('[Auth] 2FA check failed:', tfaErr.message);
         }
 
         next();

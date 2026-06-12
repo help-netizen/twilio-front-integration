@@ -29,7 +29,7 @@ export const AppNavTabs: React.FC<AppNavProps> = ({ activeTab, pulseUnreadCount 
     const tabs = useVisibleTabs();
     return (
         <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
-            <h1 className="text-2xl font-semibold" style={{ margin: 0, color: '#202223' }}>Blanc</h1>
+            <h1 className="text-2xl font-semibold" style={{ margin: 0, color: '#202223' }}>Albusto</h1>
             <Tabs value={activeTab} className="w-auto hidden md:block">
                 <TabsList>
                     {tabs.map(t => {

@@ -34,9 +34,9 @@ export function ProtectedRoute({ children, roles, permissions, platformRoles }: 
     const checks: boolean[] = [];
 
     if (platformRoles && platformRoles.length > 0) {
-        // Rollout fallback: legacy realm super_admin still reaches the
-        // platform page; it grants no tenant capability anywhere else.
-        checks.push(hasPlatformRole(...platformRoles) || hasRole(...platformRoles));
+        // Platform surfaces require the resolved platform role (ALB-106:
+        // a legacy realm super_admin role no longer grants access).
+        checks.push(hasPlatformRole(...platformRoles));
     }
     if (roles && roles.length > 0) {
         checks.push(hasRole(...roles));

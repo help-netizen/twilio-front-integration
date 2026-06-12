@@ -33,7 +33,7 @@ const crmMcpPublicRouter = require('../backend/src/routes/crmMcpPublic');
 const authRouter = require('../backend/src/routes/auth');
 const requestId = require('../backend/src/middleware/requestId');
 const { authenticate, requireRole, requireCompanyAccess } = require('../backend/src/middleware/keycloakAuth');
-const { requirePermission } = require('../backend/src/middleware/authorization');
+const { requirePermission, requirePlatformRole } = require('../backend/src/middleware/authorization');
 const db = require('../backend/src/db/connection');
 
 const app = express();
@@ -179,6 +179,9 @@ app.use('/api/vapi-tools', vapiToolsRouter);
 // middleware doesn't intercept /api/public/* requests.
 const publicInvoicesRouter = require('../backend/src/routes/public-invoices');
 app.use('/api/public', publicInvoicesRouter);
+// ALB-101: self-registration surface (rate-limited, no auth, no tenant data)
+const publicAuthRouter = require('../backend/src/routes/publicAuth');
+app.use('/api/public', publicAuthRouter);
 // Top-level short-link redirect (e.g. /i/abc123 → /api/public/invoices/abc123/pdf).
 app.use('/', publicInvoicesRouter.shortRouter);
 app.use('/api/invoices', authenticate, requireCompanyAccess, invoicesRouter);
@@ -230,6 +233,15 @@ app.use('/api/push-subscriptions', authenticate, requireCompanyAccess, pushSubsc
 
 // Auth contextual endpoint
 app.use('/api/auth', authenticate, authRouter);
+// ALB-101: login 2FA (OTP + trusted devices)
+const authDeviceRouter = require('../backend/src/routes/authDevice');
+app.use('/api/auth', authenticate, authDeviceRouter);
+// ALB-101: company onboarding (authenticated, pre-tenant)
+const onboardingRouter = require('../backend/src/routes/onboarding');
+app.use('/api/onboarding', authenticate, onboardingRouter);
+// ALB-102: platform companies (platform super admin only)
+const platformCompaniesRouter = require('../backend/src/routes/platformCompanies');
+app.use('/api/platform/companies', authenticate, requirePlatformRole('super_admin'), platformCompaniesRouter);
 
 // User management API (§5, §6)
 app.use('/api/users', authenticate, requirePermission('tenant.users.manage'), requireCompanyAccess, usersRouter);
@@ -238,9 +250,9 @@ app.use('/api/users', authenticate, requirePermission('tenant.users.manage'), re
 const sessionsRouter = require('../backend/src/routes/sessions');
 const adminCompaniesRouter = require('../backend/src/routes/admin-companies');
 const adminCompanyUsersRouter = require('../backend/src/routes/admin-company-users');
-app.use('/api/admin/sessions', authenticate, requireRole('super_admin'), sessionsRouter);
-app.use('/api/admin/companies', authenticate, requireRole('super_admin'), adminCompaniesRouter);
-app.use('/api/admin/companies/:companyId/users', authenticate, requireRole('super_admin'), adminCompanyUsersRouter);
+app.use('/api/admin/sessions', authenticate, requirePlatformRole('super_admin'), sessionsRouter);
+app.use('/api/admin/companies', authenticate, requirePlatformRole('super_admin'), adminCompaniesRouter);
+app.use('/api/admin/companies/:companyId/users', authenticate, requirePlatformRole('super_admin'), adminCompanyUsersRouter);
 console.log('🔐 BLANC Integrations API enabled at /api/v1/integrations/{leads, analytics/*}');
 
 

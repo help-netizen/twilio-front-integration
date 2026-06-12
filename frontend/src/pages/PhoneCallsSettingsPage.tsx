@@ -66,7 +66,7 @@ export default function PhoneCallsSettingsPage() {
             updatePhoneRouting(id, routing_mode, client_identity),
         onSuccess: (_data, variables) => {
             queryClient.invalidateQueries({ queryKey: ['phone-settings'] });
-            const label = variables.routing_mode === 'client' ? 'Blanc SoftPhone' : 'Bria (SIP)';
+            const label = variables.routing_mode === 'client' ? 'Albusto SoftPhone' : 'Bria (SIP)';
             toast.success(`Routing updated to ${label}`);
         },
         onError: () => toast.error('Failed to update routing'),
@@ -117,7 +117,7 @@ export default function PhoneCallsSettingsPage() {
                     </span>
                     <span className="flex items-center gap-1.5">
                         <Monitor className="h-4 w-4" />
-                        <strong>Blanc SoftPhone</strong> — calls ring in the browser
+                        <strong>Albusto SoftPhone</strong> — calls ring in the browser
                     </span>
                 </div>
             </div>
@@ -157,7 +157,7 @@ export default function PhoneCallsSettingsPage() {
                                         {setting.routing_mode === 'client' ? (
                                             <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 gap-1">
                                                 <Monitor className="h-3 w-3" />
-                                                Blanc SoftPhone
+                                                Albusto SoftPhone
                                             </Badge>
                                         ) : (
                                             <Badge variant="secondary" className="gap-1">

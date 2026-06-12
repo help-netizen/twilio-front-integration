@@ -34,7 +34,7 @@ export default function ApiDocsPage() {
             <main id="docs-content" style={{ flex: 1, overflowY: 'auto', padding: '32px 48px 80px' }}>
                 <div style={{ maxWidth: '900px' }}>
                     <h1 style={{ fontSize: '28px', fontWeight: 700, color: '#111', margin: '0 0 8px' }}>BLANC API Reference</h1>
-                    <p style={{ fontSize: '15px', color: '#666', lineHeight: '1.6', margin: '0 0 32px' }}>Integrate with Blanc to create and manage leads programmatically. All endpoints return JSON responses with a consistent structure.</p>
+                    <p style={{ fontSize: '15px', color: '#666', lineHeight: '1.6', margin: '0 0 32px' }}>Integrate with Albusto to create and manage leads programmatically. All endpoints return JSON responses with a consistent structure.</p>
 
                     <section ref={el => { sectionRefs.current['authentication'] = el; }} id="authentication" style={{ marginBottom: '48px', scrollMarginTop: '24px' }}>
                         <h2 style={{ fontSize: '22px', fontWeight: 700, color: '#111', margin: '0 0 12px', paddingBottom: '8px', borderBottom: '2px solid #e5e7eb' }}>🔐 Authentication</h2>
@@ -76,7 +76,7 @@ export default function ApiDocsPage() {
                         </section>
                     ))}
 
-                    <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '24px', marginTop: '40px' }}><p style={{ fontSize: '13px', color: '#999' }}>Blanc API v1 — All requests and responses use JSON. Every response includes a <code style={{ background: '#f3f4f6', padding: '1px 4px', borderRadius: '2px' }}>request_id</code> for debugging.</p></div>
+                    <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '24px', marginTop: '40px' }}><p style={{ fontSize: '13px', color: '#999' }}>Albusto API v1 — All requests and responses use JSON. Every response includes a <code style={{ background: '#f3f4f6', padding: '1px 4px', borderRadius: '2px' }}>request_id</code> for debugging.</p></div>
                 </div>
             </main>
         </div>

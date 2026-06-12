@@ -58,8 +58,8 @@ function MarketplaceConnectDialog({
     const canConnect = !requiresGmail || gmailConnected;
     const settingsPath = app?.metadata?.dependency_cta?.path || '/settings/email';
     const credentialCopy = app?.provisioning_mode === 'none'
-        ? 'Blanc will enable this module for your company. No external API credentials will be issued.'
-        : 'Blanc will create tenant-scoped credentials for this app. Secrets are handled under the hood.';
+        ? 'Albusto will enable this module for your company. No external API credentials will be issued.'
+        : 'Albusto will create tenant-scoped credentials for this app. Secrets are handled under the hood.';
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
@@ -131,7 +131,7 @@ function MarketplaceDisconnectDialog({
                 <DialogHeader>
                     <DialogTitle>Disconnect {app?.name}</DialogTitle>
                     <DialogDescription>
-                        Blanc will revoke this app's API credentials immediately. Data already stored in the provider's own system is not deleted by Blanc.
+                        Albusto will revoke this app's API credentials immediately. Data already stored in the provider's own system is not deleted by Albusto.
                     </DialogDescription>
                 </DialogHeader>
                 <DialogFooter>

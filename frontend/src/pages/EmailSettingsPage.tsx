@@ -91,7 +91,7 @@ export default function EmailSettingsPage() {
                         <div className="text-center">
                             <p className="font-medium" style={{ color: 'var(--blanc-ink-1)' }}>Not connected</p>
                             <p className="text-sm mt-1" style={{ color: 'var(--blanc-ink-2)' }}>
-                                Blanc supports one shared Gmail / Google Workspace mailbox per company.
+                                Albusto supports one shared Gmail / Google Workspace mailbox per company.
                             </p>
                         </div>
                         <button
