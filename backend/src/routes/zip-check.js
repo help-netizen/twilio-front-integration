@@ -11,8 +11,7 @@ const stQueries = require('../db/serviceTerritoryQueries');
 const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 
 function getCompanyId(req) {
-    return req.user?.company_id
-        || req.companyFilter?.company_id
+    return req.companyFilter?.company_id
         || DEFAULT_COMPANY_ID;
 }
 

@@ -20,7 +20,7 @@ router.get('/', async (req, res) => {
             limit: parseInt(limit),
             cursor,
             state,
-            company_id: req.companyId,
+            company_id: req.companyFilter?.company_id,
         });
         const nextCursor = conversations.length === parseInt(limit)
             ? conversations[conversations.length - 1].last_message_at
@@ -136,7 +136,7 @@ router.post('/start', async (req, res) => {
             return res.status(400).json({ error: 'customerE164 and proxyE164 required' });
         }
         const conversation = await conversationsService.getOrCreateConversation(
-            customerE164, proxyE164, req.companyId
+            customerE164, proxyE164, req.companyFilter?.company_id
         );
         let message = null;
         if (initialMessage) {

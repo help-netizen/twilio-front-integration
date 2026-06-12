@@ -21,7 +21,7 @@ const { DocumentTemplateServiceError } = documentTemplatesService;
 const router = express.Router();
 
 function getCompanyId(req) {
-    return req.companyFilter?.company_id || req.user?.company_id || null;
+    return req.companyFilter?.company_id || null;
 }
 
 function sendServiceError(res, err) {

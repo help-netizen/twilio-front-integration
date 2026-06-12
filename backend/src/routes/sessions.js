@@ -120,7 +120,7 @@ router.delete('/:sessionId', async (req, res) => {
             action: 'session_revoked',
             target_type: 'session',
             target_id: req.params.sessionId,
-            company_id: req.user?.company_id,
+            company_id: req.user?.company_id, // tenant-safety-allow: audit context only
             trace_id: req.traceId,
         }).catch(() => { });
 
@@ -150,7 +150,7 @@ router.delete('/user/:userId', async (req, res) => {
             action: 'session_revoked',
             target_type: 'user_sessions',
             target_id: req.params.userId,
-            company_id: req.user?.company_id,
+            company_id: req.user?.company_id, // tenant-safety-allow: audit context only
             details: { scope: 'all_sessions' },
             trace_id: req.traceId,
         }).catch(() => { });
@@ -238,7 +238,7 @@ router.put('/auth-policy', async (req, res) => {
             action: 'auth_policy_changed',
             target_type: 'realm',
             target_id: KC_REALM,
-            company_id: req.user?.company_id,
+            company_id: req.user?.company_id, // tenant-safety-allow: audit context only
             details: update,
             trace_id: req.traceId,
         }).catch(() => { });

@@ -11,8 +11,7 @@ const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 
 /** Resolve company_id: from user profile, companyFilter, or default */
 function getCompanyId(req) {
-    return req.user?.company_id
-        || req.companyFilter?.company_id
+    return req.companyFilter?.company_id
         || DEFAULT_COMPANY_ID;
 }
 

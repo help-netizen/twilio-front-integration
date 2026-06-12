@@ -28,6 +28,7 @@ function createApp() {
     // Simulate auth middleware
     app.use((req, _res, next) => {
         req.user = { company_id: TEST_COMPANY_ID };
+        req.companyFilter = { company_id: TEST_COMPANY_ID };
         next();
     });
     app.use('/', paymentsRouter);

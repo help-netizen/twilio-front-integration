@@ -13,7 +13,7 @@ const router = express.Router();
 const db = require('../db/connection');
 
 function getCompanyId(req) {
-    return req.companyFilter?.company_id || req.user?.company_id;
+    return req.companyFilter?.company_id;
 }
 
 function maskAccountSid(accountSid) {

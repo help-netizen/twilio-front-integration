@@ -21,7 +21,7 @@ router.post('/sync', async (req, res) => {
     res.setTimeout(300000);
 
     try {
-        const companyId = req.user.company_id;
+        const companyId = req.companyFilter?.company_id;
         if (!companyId) {
             return res.status(403).json({ ok: false, error: 'No company context' });
         }
@@ -52,7 +52,7 @@ router.post('/sync', async (req, res) => {
 
 router.get('/export', async (req, res) => {
     try {
-        const companyId = req.user.company_id;
+        const companyId = req.companyFilter?.company_id;
         if (!companyId) {
             return res.status(403).json({ ok: false, error: 'No company context' });
         }
@@ -83,7 +83,7 @@ router.get('/export', async (req, res) => {
 
 router.get('/', async (req, res) => {
     try {
-        const companyId = req.user.company_id;
+        const companyId = req.companyFilter?.company_id;
         if (!companyId) {
             return res.status(403).json({ ok: false, error: 'No company context' });
         }
@@ -121,7 +121,7 @@ router.get('/', async (req, res) => {
 
 router.get('/:id', async (req, res) => {
     try {
-        const companyId = req.user.company_id;
+        const companyId = req.companyFilter?.company_id;
         if (!companyId) {
             return res.status(403).json({ ok: false, error: 'No company context' });
         }
@@ -154,7 +154,7 @@ router.get('/:id', async (req, res) => {
 
 router.patch('/:id', async (req, res) => {
     try {
-        const companyId = req.user.company_id;
+        const companyId = req.companyFilter?.company_id;
         if (!companyId) {
             return res.status(403).json({ ok: false, error: 'No company context' });
         }

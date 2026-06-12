@@ -10,7 +10,7 @@ const db = require('../db/connection');
 
 router.get('/', async (req, res) => {
     try {
-        const companyId = req.companyFilter?.company_id || req.user?.company_id;
+        const companyId = req.companyFilter?.company_id;
         if (!companyId) return res.status(401).json({ ok: false, error: 'No company context' });
 
         const [groups, numbers, flows] = await Promise.all([

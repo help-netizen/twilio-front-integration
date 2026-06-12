@@ -125,7 +125,7 @@ router.post('/auth/verify', async (req, res) => {
 // GET /api/portal/links
 router.get('/links', authenticate, async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = req.companyFilter?.company_id;
         const { contact_id, scope, document_type, document_id } = req.query;
 
         if (!contact_id) {

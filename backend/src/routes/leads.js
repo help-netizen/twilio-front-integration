@@ -189,7 +189,7 @@ router.post('/', async (req, res) => {
         }
 
         const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
-        const companyId = req.companyFilter?.company_id || req.user?.company_id || DEFAULT_COMPANY_ID;
+        const companyId = req.companyFilter?.company_id || DEFAULT_COMPANY_ID;
 
         // Extract contact resolution params
         const selectedContactId = body.selected_contact_id || null;

@@ -185,7 +185,7 @@ router.post('/wh/:key', async (req, res) => {
 router.get('/webhook-url', authenticate, requireCompanyAccess, async (req, res) => {
     const reqId = requestId();
     try {
-        const companyId = req.companyId;
+        const companyId = req.companyFilter?.company_id;
         let result = await db.query(
             `SELECT zenbooker_webhook_key FROM companies WHERE id = $1`,
             [companyId]
@@ -219,7 +219,7 @@ router.get('/webhook-url', authenticate, requireCompanyAccess, async (req, res) 
 router.post('/webhook-url/regenerate', authenticate, requireCompanyAccess, async (req, res) => {
     const reqId = requestId();
     try {
-        const companyId = req.companyId;
+        const companyId = req.companyFilter?.company_id;
         const key = crypto.randomBytes(32).toString('hex');
 
         await db.query(
@@ -280,7 +280,7 @@ router.post('/contacts/:contactId/sync', authenticate, requireCompanyAccess, asy
         await zenbookerSyncService.syncContactToZenbooker(contactId);
 
         const contactsService = require('../services/contactsService');
-        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
+        const companyId = req.companyFilter?.company_id || null;
         const contact = await contactsService.getContactById(contactId, companyId);
         res.json({ ok: true, data: { contact }, meta: { request_id: reqId } });
     } catch (err) {
@@ -353,7 +353,7 @@ router.get('/jobs', authenticate, requireCompanyAccess, async (req, res) => {
 router.get('/api-key', authenticate, requireCompanyAccess, async (req, res) => {
     const reqId = requestId();
     try {
-        const companyId = req.companyFilter?.company_id || req.user?.company_id;
+        const companyId = req.companyFilter?.company_id;
         const { rows } = await db.query(
             'SELECT zenbooker_api_key FROM companies WHERE id = $1',
             [companyId]
@@ -378,7 +378,7 @@ router.get('/api-key', authenticate, requireCompanyAccess, async (req, res) => {
 router.put('/api-key', authenticate, requireCompanyAccess, async (req, res) => {
     const reqId = requestId();
     try {
-        const companyId = req.companyFilter?.company_id || req.user?.company_id;
+        const companyId = req.companyFilter?.company_id;
         const { api_key } = req.body;
 
         if (api_key !== undefined && api_key !== null && typeof api_key !== 'string') {

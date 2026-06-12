@@ -3,7 +3,7 @@ const router = express.Router();
 const marketplaceService = require('../services/marketplaceService');
 
 function companyId(req) {
-    return req.companyFilter?.company_id || req.user?.company_id;
+    return req.companyFilter?.company_id;
 }
 
 function actorId(req) {
