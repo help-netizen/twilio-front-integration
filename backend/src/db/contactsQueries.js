@@ -13,11 +13,16 @@ const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 // Contact operations
 // =============================================================================
 
-async function findContactByPhone(phoneE164) {
+// Phone lookups are tenant-scoped (PF007-HARDENING-001): a phone match must
+// never resolve to another company's contact. Callers without explicit tenant
+// context fall back to the legacy default company.
+async function findContactByPhone(phoneE164, companyId = DEFAULT_COMPANY_ID) {
     const digits = phoneE164.replace(/\D/g, '');
     const result = await db.query(
-        `SELECT * FROM contacts WHERE regexp_replace(phone_e164, '\\D', '', 'g') = $1 LIMIT 1`,
-        [digits]
+        `SELECT * FROM contacts
+         WHERE regexp_replace(phone_e164, '\\D', '', 'g') = $1 AND company_id = $2
+         LIMIT 1`,
+        [digits, companyId || DEFAULT_COMPANY_ID]
     );
     return result.rows[0];
 }
@@ -33,25 +38,30 @@ async function createContact(phoneE164, fullName = null, companyId = null) {
     return result.rows[0];
 }
 
-async function findOrCreateContact(phoneE164, fullName = null) {
-    let contact = await findContactByPhone(phoneE164);
+async function findOrCreateContact(phoneE164, fullName = null, companyId = DEFAULT_COMPANY_ID) {
+    let contact = await findContactByPhone(phoneE164, companyId);
     if (!contact) {
-        contact = await createContact(phoneE164, fullName);
+        contact = await createContact(phoneE164, fullName, companyId);
     }
     return contact;
 }
 
-async function findContactByPhoneOrSecondary(phoneE164) {
+async function findContactByPhoneOrSecondary(phoneE164, companyId = DEFAULT_COMPANY_ID) {
     const digits = phoneE164.replace(/\D/g, '');
+    const cid = companyId || DEFAULT_COMPANY_ID;
     let result = await db.query(
-        `SELECT * FROM contacts WHERE regexp_replace(phone_e164, '\\D', '', 'g') = $1 LIMIT 1`,
-        [digits]
+        `SELECT * FROM contacts
+         WHERE regexp_replace(phone_e164, '\\D', '', 'g') = $1 AND company_id = $2
+         LIMIT 1`,
+        [digits, cid]
     );
     if (result.rows[0]) return result.rows[0];
 
     result = await db.query(
-        `SELECT * FROM contacts WHERE regexp_replace(secondary_phone, '\\D', '', 'g') = $1 LIMIT 1`,
-        [digits]
+        `SELECT * FROM contacts
+         WHERE regexp_replace(secondary_phone, '\\D', '', 'g') = $1 AND company_id = $2
+         LIMIT 1`,
+        [digits, cid]
     );
     return result.rows[0] || null;
 }

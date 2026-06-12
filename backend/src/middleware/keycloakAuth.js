@@ -130,10 +130,43 @@ function requireCompanyAccess(req, res, next) {
         return next();
     }
 
-    if (req.authz?.scope === 'platform' || req.user?.is_super_admin) return res.status(403).json({ code: 'PLATFORM_SCOPE_ONLY', message: 'Platform admins cannot access tenant resources.', trace_id: req.traceId });
-    if (!req.user?.company_id) return res.status(403).json({ code: 'TENANT_CONTEXT_REQUIRED', message: 'No company association found', trace_id: req.traceId });
+    // Tenant access is derived from req.authz only (PF007-HARDENING-001).
+    // Platform-scope users (super_admin) are consistently denied on tenant
+    // routes — there is no bypass and no implicit all-companies filter.
+    const isPlatformOnly = req.authz?.scope === 'platform'
+        || req.authz?.platform_role === 'super_admin';
+    if (isPlatformOnly) {
+        auditService.log({
+            actor_id: req.user?.crmUser?.id,
+            actor_email: req.user?.email,
+            actor_ip: req.ip,
+            action: 'access_denied_403',
+            target_type: 'route',
+            target_id: `${req.method} ${req.originalUrl}`,
+            details: { code: 'PLATFORM_SCOPE_ONLY', platform_role: req.authz?.platform_role || null },
+            trace_id: req.traceId,
+        }).catch(() => { });
+        return res.status(403).json({ code: 'PLATFORM_SCOPE_ONLY', message: 'Platform admins cannot access tenant resources.', trace_id: req.traceId });
+    }
 
-    req.companyFilter = { company_id: req.user.company_id };
+    // Membership is the authoritative tenant source; crm_users.company_id is
+    // only a compatibility shadow for requests where authz resolution failed.
+    const companyId = req.authz?.company?.id || req.user?.company_id || null;
+    if (!companyId) {
+        auditService.log({
+            actor_id: req.user?.crmUser?.id,
+            actor_email: req.user?.email,
+            actor_ip: req.ip,
+            action: 'access_denied_403',
+            target_type: 'route',
+            target_id: `${req.method} ${req.originalUrl}`,
+            details: { code: 'TENANT_CONTEXT_REQUIRED', platform_role: req.authz?.platform_role || null },
+            trace_id: req.traceId,
+        }).catch(() => { });
+        return res.status(403).json({ code: 'TENANT_CONTEXT_REQUIRED', message: 'No company association found', trace_id: req.traceId });
+    }
+
+    req.companyFilter = { company_id: companyId };
     next();
 }
 

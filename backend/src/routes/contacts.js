@@ -7,6 +7,8 @@ const zenbookerSyncService = require('../services/zenbookerSyncService');
 const noteAttachmentsService = require('../services/noteAttachmentsService');
 const { toE164 } = require('../utils/phoneUtils');
 const eventService = require('../services/eventService');
+const { requirePermission } = require('../middleware/authorization');
+const { getProviderScope } = require('../middleware/providerScope');
 
 const upload = multer({
     storage: multer.memoryStorage(),
@@ -45,7 +47,7 @@ function errorResponse(code, message, reqId) {
 // =============================================================================
 // GET /api/contacts — List contacts
 // =============================================================================
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('contacts.view'), async (req, res) => {
     const reqId = requestId();
     try {
         const { search, offset, limit } = req.query;
@@ -54,6 +56,8 @@ router.get('/', async (req, res) => {
             search: search || undefined,
             offset: offset ? Number(offset) : 0,
             limit: limit ? Math.min(Number(limit), 100) : 50,
+            companyId: req.companyFilter?.company_id,
+            providerScope: getProviderScope(req),
         };
 
         const result = await contactsService.listContacts(params);
@@ -67,12 +71,12 @@ router.get('/', async (req, res) => {
 // =============================================================================
 // GET /api/contacts/search-candidates — Contact lookup for UI
 // =============================================================================
-router.get('/search-candidates', async (req, res) => {
+router.get('/search-candidates', requirePermission('contacts.view'), async (req, res) => {
     const reqId = requestId();
     try {
         const { first_name, last_name, phone, email } = req.query;
 
-        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
+        const companyId = req.companyFilter?.company_id || null;
         const result = await contactDedupeService.searchCandidates(
             { first_name: first_name || '', last_name: last_name || '', phone: phone || null, email: email || null },
             companyId
@@ -88,7 +92,7 @@ router.get('/search-candidates', async (req, res) => {
 // =============================================================================
 // GET /api/contacts/:id — Get contact detail
 // =============================================================================
-router.get('/:id', async (req, res) => {
+router.get('/:id', requirePermission('contacts.view'), async (req, res) => {
     const reqId = requestId();
     try {
         const id = Number(req.params.id);
@@ -96,8 +100,9 @@ router.get('/:id', async (req, res) => {
             return res.status(400).json(errorResponse('INVALID_ID', 'Contact ID must be a number', reqId));
         }
 
-        const contact = await contactsService.getContactById(id);
-        const leads = await contactsService.getContactLeads(id);
+        const companyId = req.companyFilter?.company_id;
+        const contact = await contactsService.getContactById(id, companyId, getProviderScope(req));
+        const leads = await contactsService.getContactLeads(id, companyId);
 
         // Merge contact_addresses from our DB into contact.addresses
         const contactAddressService = require('../services/contactAddressService');
@@ -143,12 +148,18 @@ router.get('/:id', async (req, res) => {
 // =============================================================================
 // PATCH /api/contacts/:id — Update contact fields
 // =============================================================================
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', requirePermission('contacts.edit'), async (req, res) => {
     const reqId = requestId();
     try {
         const id = Number(req.params.id);
         if (isNaN(id)) {
             return res.status(400).json(errorResponse('INVALID_ID', 'Contact ID must be a number', reqId));
+        }
+
+        const companyId = req.companyFilter?.company_id;
+        const existing = await contactsService.getById(id, companyId, getProviderScope(req));
+        if (!existing) {
+            return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));
         }
 
         const db = require('../db/connection');
@@ -193,21 +204,22 @@ router.patch('/:id', async (req, res) => {
 
         setClauses.push(`updated_at = NOW()`);
         params.push(id);
+        params.push(companyId);
 
         await db.query(
-            `UPDATE contacts SET ${setClauses.join(', ')} WHERE id = $${paramIdx}`,
+            `UPDATE contacts SET ${setClauses.join(', ')} WHERE id = $${paramIdx} AND company_id = $${paramIdx + 1}`,
             params
         );
 
         // Cascade contact fields to linked leads
-        const updated = await contactsService.getContactById(id);
+        const updated = await contactsService.getContactById(id, companyId);
         await db.query(
             `UPDATE leads
              SET first_name = $1, last_name = $2, phone = $3, email = $4,
                  second_phone = $5, second_phone_name = $6, company = $7, updated_at = NOW()
-             WHERE contact_id = $8`,
+             WHERE contact_id = $8 AND company_id = $9`,
             [updated.first_name || '', updated.last_name || '', updated.phone_e164 || '', updated.email || '',
-            updated.secondary_phone || null, updated.secondary_phone_name || null, updated.company_name || null, id]
+            updated.secondary_phone || null, updated.secondary_phone_name || null, updated.company_name || null, id, companyId]
         );
         console.log(`[ContactsAPI][${reqId}] Cascaded contact fields to linked leads for contact ${id}`);
 
@@ -242,13 +254,16 @@ router.patch('/:id', async (req, res) => {
 // =============================================================================
 // GET /api/contacts/:id/addresses — List contact addresses
 // =============================================================================
-router.get('/:id/addresses', async (req, res) => {
+router.get('/:id/addresses', requirePermission('contacts.view'), async (req, res) => {
     const reqId = requestId();
     try {
         const id = Number(req.params.id);
         if (isNaN(id)) {
             return res.status(400).json(errorResponse('INVALID_ID', 'Contact ID must be a number', reqId));
         }
+
+        const owned = await contactsService.getById(id, req.companyFilter?.company_id, getProviderScope(req));
+        if (!owned) return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));
 
         const contactAddressService = require('../services/contactAddressService');
         const addresses = await contactAddressService.getAddressesForContact(id);
@@ -262,7 +277,7 @@ router.get('/:id/addresses', async (req, res) => {
 // =============================================================================
 // PATCH /api/contacts/:id/addresses/:addressId — Update contact address
 // =============================================================================
-router.patch('/:id/addresses/:addressId', async (req, res) => {
+router.patch('/:id/addresses/:addressId', requirePermission('contacts.edit'), async (req, res) => {
     const reqId = requestId();
     try {
         const contactId = Number(req.params.id);
@@ -270,6 +285,9 @@ router.patch('/:id/addresses/:addressId', async (req, res) => {
         if (isNaN(contactId) || isNaN(addressId)) {
             return res.status(400).json(errorResponse('INVALID_ID', 'IDs must be numbers', reqId));
         }
+
+        const ownedContact = await contactsService.getById(contactId, req.companyFilter?.company_id, getProviderScope(req));
+        if (!ownedContact) return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));
 
         const contactAddressService = require('../services/contactAddressService');
         const db = require('../db/connection');
@@ -319,7 +337,7 @@ router.patch('/:id/addresses/:addressId', async (req, res) => {
 // =============================================================================
 // PUT /api/contacts/:id/addresses/:addressId/default — Set default address
 // =============================================================================
-router.put('/:id/addresses/:addressId/default', async (req, res) => {
+router.put('/:id/addresses/:addressId/default', requirePermission('contacts.edit'), async (req, res) => {
     const reqId = requestId();
     try {
         const contactId = Number(req.params.id);
@@ -327,6 +345,9 @@ router.put('/:id/addresses/:addressId/default', async (req, res) => {
         if (isNaN(contactId) || isNaN(addressId)) {
             return res.status(400).json(errorResponse('INVALID_ID', 'IDs must be numbers', reqId));
         }
+
+        const ownedContact2 = await contactsService.getById(contactId, req.companyFilter?.company_id, getProviderScope(req));
+        if (!ownedContact2) return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));
 
         const contactAddressService = require('../services/contactAddressService');
 
@@ -349,11 +370,11 @@ router.put('/:id/addresses/:addressId/default', async (req, res) => {
 // Structured Notes (with file attachments)
 // =============================================================================
 
-router.get('/:id/history', async (req, res) => {
+router.get('/:id/history', requirePermission('contacts.view'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
         const contactId = parseInt(req.params.id, 10);
-        const contact = await contactsService.getById(contactId, companyId);
+        const contact = await contactsService.getById(contactId, companyId, getProviderScope(req));
         if (!contact) return res.status(404).json({ ok: false, error: 'Contact not found' });
 
         const history = await eventService.getEntityHistory(companyId, 'contact', contactId, contact.structured_notes || []);
@@ -364,12 +385,12 @@ router.get('/:id/history', async (req, res) => {
     }
 });
 
-router.get('/:id/notes', async (req, res) => {
+router.get('/:id/notes', requirePermission('contacts.view'), async (req, res) => {
     const reqId = requestId();
     try {
         const companyId = req.companyFilter?.company_id;
         const contactId = parseInt(req.params.id, 10);
-        const contact = await contactsService.getById(contactId, companyId);
+        const contact = await contactsService.getById(contactId, companyId, getProviderScope(req));
         if (!contact) return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));
 
         const notes = contact.structured_notes || [];
@@ -388,13 +409,13 @@ router.get('/:id/notes', async (req, res) => {
     }
 });
 
-router.post('/:id/notes', upload.array('attachments', noteAttachmentsService.MAX_FILES_PER_NOTE), async (req, res) => {
+router.post('/:id/notes', requirePermission('contacts.edit'), upload.array('attachments', noteAttachmentsService.MAX_FILES_PER_NOTE), async (req, res) => {
     const reqId = requestId();
     try {
         const companyId = req.companyFilter?.company_id;
         const userId = req.user?.sub || null;
         const contactId = parseInt(req.params.id, 10);
-        const contact = await contactsService.getById(contactId, companyId);
+        const contact = await contactsService.getById(contactId, companyId, getProviderScope(req));
         if (!contact) return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));
 
         const text = (req.body.text || '').trim();

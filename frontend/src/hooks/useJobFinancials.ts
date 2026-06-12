@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { fetchEstimates, createEstimate, type Estimate, type EstimateCreateData } from '../services/estimatesApi';
 import { fetchInvoices, createInvoice, type Invoice, type InvoiceCreateData } from '../services/invoicesApi';
 import { toast } from 'sonner';
+import { useAuthz } from './useAuthz';
 
 interface UseJobFinancialsReturn {
     estimates: Estimate[];
@@ -22,6 +23,9 @@ interface UseJobFinancialsReturn {
 }
 
 export function useJobFinancials(jobId: number): UseJobFinancialsReturn {
+    const { hasAnyPermission } = useAuthz();
+    // No finance visibility → no estimates/invoices requests at all (PF007)
+    const canViewFinancials = hasAnyPermission('financial_data.view', 'estimates.view', 'invoices.view');
     const [estimates, setEstimates] = useState<Estimate[]>([]);
     const [invoices, setInvoices] = useState<Invoice[]>([]);
     const [loading, setLoading] = useState(false);
@@ -32,7 +36,7 @@ export function useJobFinancials(jobId: number): UseJobFinancialsReturn {
     const refresh = useCallback(() => setRev(r => r + 1), []);
 
     useEffect(() => {
-        if (!jobId) return;
+        if (!jobId || !canViewFinancials) return;
         let cancelled = false;
         setLoading(true);
         Promise.all([
@@ -52,7 +56,7 @@ export function useJobFinancials(jobId: number): UseJobFinancialsReturn {
                 if (!cancelled) setLoading(false);
             });
         return () => { cancelled = true; };
-    }, [jobId, rev]);
+    }, [jobId, rev, canViewFinancials]);
 
     const handleCreateEstimate = useCallback(async (data: EstimateCreateData) => {
         await createEstimate({ ...data, job_id: jobId });

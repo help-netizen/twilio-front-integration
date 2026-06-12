@@ -5,9 +5,11 @@
 const express = require('express');
 const router = express.Router();
 const estimatesService = require('../services/estimatesService');
+const { requirePermission } = require('../middleware/authorization');
 
+// Tenant context comes ONLY from requireCompanyAccess (PF007-HARDENING-001)
 function getCompanyId(req) {
-    return req.companyFilter?.company_id || req.user?.company_id || req.companyId;
+    return req.companyFilter?.company_id;
 }
 
 function getUserId(req) {
@@ -22,7 +24,7 @@ function getUserId(req) {
 // =============================================================================
 
 // GET /api/estimates — List estimates with filters
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('estimates.view'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const {
@@ -59,7 +61,7 @@ router.get('/', async (req, res) => {
 });
 
 // POST /api/estimates — Create estimate
-router.post('/', async (req, res) => {
+router.post('/', requirePermission('estimates.create'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
@@ -75,7 +77,7 @@ router.post('/', async (req, res) => {
 });
 
 // GET /api/estimates/:id — Get estimate by ID
-router.get('/:id', async (req, res) => {
+router.get('/:id', requirePermission('estimates.view'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const { id } = req.params;
@@ -90,7 +92,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // PUT /api/estimates/:id — Update estimate
-router.put('/:id', async (req, res) => {
+router.put('/:id', requirePermission('estimates.create'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
@@ -107,7 +109,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // POST /api/estimates/:id/archive — Archive estimate
-router.post('/:id/archive', async (req, res) => {
+router.post('/:id/archive', requirePermission('estimates.create'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
@@ -123,7 +125,7 @@ router.post('/:id/archive', async (req, res) => {
 });
 
 // POST /api/estimates/:id/restore — Restore archived estimate to draft
-router.post('/:id/restore', async (req, res) => {
+router.post('/:id/restore', requirePermission('estimates.create'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
@@ -139,7 +141,7 @@ router.post('/:id/restore', async (req, res) => {
 });
 
 // DELETE kept as a compatibility alias for old callers; it archives, never hard-deletes.
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requirePermission('estimates.create'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
@@ -159,7 +161,7 @@ router.delete('/:id', async (req, res) => {
 // =============================================================================
 
 // POST /api/estimates/:id/send — Send estimate to client
-router.post('/:id/send', async (req, res) => {
+router.post('/:id/send', requirePermission('estimates.send'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
@@ -176,7 +178,7 @@ router.post('/:id/send', async (req, res) => {
 });
 
 // POST /api/estimates/:id/approve — Mark estimate approved
-router.post('/:id/approve', async (req, res) => {
+router.post('/:id/approve', requirePermission('estimates.send'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const { id } = req.params;
@@ -197,7 +199,7 @@ router.post('/:id/approve', async (req, res) => {
 });
 
 // POST /api/estimates/:id/decline — Mark estimate declined
-router.post('/:id/decline', async (req, res) => {
+router.post('/:id/decline', requirePermission('estimates.send'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const { id } = req.params;
@@ -215,7 +217,7 @@ router.post('/:id/decline', async (req, res) => {
 });
 
 // POST /api/estimates/:id/convert — Convert approved estimate to invoice
-router.post('/:id/convert', async (req, res) => {
+router.post('/:id/convert', requirePermission('invoices.create'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
@@ -231,7 +233,7 @@ router.post('/:id/convert', async (req, res) => {
 });
 
 // POST /api/estimates/:id/link-job — Link estimate to job
-router.post('/:id/link-job', async (req, res) => {
+router.post('/:id/link-job', requirePermission('estimates.create'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
@@ -252,7 +254,7 @@ router.post('/:id/link-job', async (req, res) => {
 });
 
 // POST /api/estimates/:id/copy-to-invoice — Copy items to new invoice (stub — Sprint 4)
-router.post('/:id/copy-to-invoice', (req, res) => {
+router.post('/:id/copy-to-invoice', requirePermission('invoices.create'), (req, res) => {
     res.status(501).json({ ok: false, error: { code: 'NOT_IMPLEMENTED', message: 'Copy to invoice is planned for Sprint 4' } });
 });
 
@@ -261,7 +263,7 @@ router.post('/:id/copy-to-invoice', (req, res) => {
 // =============================================================================
 
 // GET /api/estimates/:id/revisions — List estimate revisions
-router.get('/:id/revisions', async (req, res) => {
+router.get('/:id/revisions', requirePermission('estimates.view'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const { id } = req.params;
@@ -276,7 +278,7 @@ router.get('/:id/revisions', async (req, res) => {
 });
 
 // GET /api/estimates/:id/events — List estimate events
-router.get('/:id/events', async (req, res) => {
+router.get('/:id/events', requirePermission('estimates.view'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const { id } = req.params;
@@ -291,7 +293,7 @@ router.get('/:id/events', async (req, res) => {
 });
 
 // GET /api/estimates/:id/payments — List payments linked to estimate (stub — Sprint 4)
-router.get('/:id/payments', (req, res) => {
+router.get('/:id/payments', requirePermission('payments.view'), (req, res) => {
     res.status(501).json({ ok: false, error: { code: 'NOT_IMPLEMENTED', message: 'Payments are planned for Sprint 4' } });
 });
 
@@ -300,7 +302,7 @@ router.get('/:id/payments', (req, res) => {
 // =============================================================================
 
 // POST /api/estimates/:id/items — Add line item
-router.post('/:id/items', async (req, res) => {
+router.post('/:id/items', requirePermission('estimates.create'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
@@ -317,7 +319,7 @@ router.post('/:id/items', async (req, res) => {
 });
 
 // PUT /api/estimates/:id/items/:itemId — Update line item
-router.put('/:id/items/:itemId', async (req, res) => {
+router.put('/:id/items/:itemId', requirePermission('estimates.create'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
@@ -334,7 +336,7 @@ router.put('/:id/items/:itemId', async (req, res) => {
 });
 
 // DELETE /api/estimates/:id/items/:itemId — Remove line item
-router.delete('/:id/items/:itemId', async (req, res) => {
+router.delete('/:id/items/:itemId', requirePermission('estimates.create'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
@@ -353,15 +355,15 @@ router.delete('/:id/items/:itemId', async (req, res) => {
 // Attachments & PDF
 // =============================================================================
 
-router.get('/:id/attachments', (req, res) => {
+router.get('/:id/attachments', requirePermission('estimates.view'), (req, res) => {
     res.status(501).json({ ok: false, error: { code: 'NOT_IMPLEMENTED', message: 'Attachments are planned for a future sprint' } });
 });
 
-router.post('/:id/attachments', (req, res) => {
+router.post('/:id/attachments', requirePermission('estimates.create'), (req, res) => {
     res.status(501).json({ ok: false, error: { code: 'NOT_IMPLEMENTED', message: 'Attachments are planned for a future sprint' } });
 });
 
-router.get('/:id/pdf', async (req, res) => {
+router.get('/:id/pdf', requirePermission('estimates.view'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const { id } = req.params;

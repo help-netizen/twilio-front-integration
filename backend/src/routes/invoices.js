@@ -4,11 +4,12 @@
  */
 const express = require('express');
 const router = express.Router();
+const { requirePermission } = require('../middleware/authorization');
 const invoicesService = require('../services/invoicesService');
 
 // Resolve the active company scope from any of the supported middleware shapes.
 function getCompanyId(req) {
-    return req.companyFilter?.company_id || req.user?.company_id || req.companyId;
+    return req.companyFilter?.company_id;
 }
 
 // Return a valid UUID userId or null (dev-mode injects "dev-user" which would break UUID columns).
@@ -24,7 +25,7 @@ function getUserId(req) {
 // =============================================================================
 
 // GET /api/invoices — List invoices with filters
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('invoices.view'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const {
@@ -62,7 +63,7 @@ router.get('/', async (req, res) => {
 });
 
 // POST /api/invoices — Create invoice
-router.post('/', async (req, res) => {
+router.post('/', requirePermission('invoices.create'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
@@ -78,7 +79,7 @@ router.post('/', async (req, res) => {
 });
 
 // GET /api/invoices/:id — Get invoice by ID
-router.get('/:id', async (req, res) => {
+router.get('/:id', requirePermission('invoices.view'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const { id } = req.params;
@@ -93,7 +94,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // PUT /api/invoices/:id — Update invoice
-router.put('/:id', async (req, res) => {
+router.put('/:id', requirePermission('invoices.create'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
@@ -110,7 +111,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE /api/invoices/:id — Delete/void invoice
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requirePermission('invoices.create'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const { id } = req.params;
@@ -129,7 +130,7 @@ router.delete('/:id', async (req, res) => {
 // =============================================================================
 
 // POST /api/invoices/:id/send — Send invoice to client
-router.post('/:id/send', async (req, res) => {
+router.post('/:id/send', requirePermission('invoices.send'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
@@ -146,7 +147,7 @@ router.post('/:id/send', async (req, res) => {
 });
 
 // POST /api/invoices/:id/void — Void invoice
-router.post('/:id/void', async (req, res) => {
+router.post('/:id/void', requirePermission('invoices.create'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
@@ -162,7 +163,7 @@ router.post('/:id/void', async (req, res) => {
 });
 
 // POST /api/invoices/:id/record-payment — Record payment against invoice
-router.post('/:id/record-payment', async (req, res) => {
+router.post('/:id/record-payment', requirePermission('payments.collect_offline'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
@@ -179,7 +180,7 @@ router.post('/:id/record-payment', async (req, res) => {
 });
 
 // POST /api/invoices/:id/sync-items — Sync line items from estimate
-router.post('/:id/sync-items', async (req, res) => {
+router.post('/:id/sync-items', requirePermission('invoices.create'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
@@ -210,7 +211,7 @@ router.post('/:id/sync-items', async (req, res) => {
 // =============================================================================
 
 // GET /api/invoices/:id/revisions — List invoice revisions
-router.get('/:id/revisions', async (req, res) => {
+router.get('/:id/revisions', requirePermission('invoices.view'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const { id } = req.params;
@@ -225,7 +226,7 @@ router.get('/:id/revisions', async (req, res) => {
 });
 
 // GET /api/invoices/:id/events — List invoice events
-router.get('/:id/events', async (req, res) => {
+router.get('/:id/events', requirePermission('invoices.view'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const { id } = req.params;
@@ -240,7 +241,7 @@ router.get('/:id/events', async (req, res) => {
 });
 
 // GET /api/invoices/:id/payments — List payments for invoice
-router.get('/:id/payments', async (req, res) => {
+router.get('/:id/payments', requirePermission('payments.view'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const { id } = req.params;
@@ -259,7 +260,7 @@ router.get('/:id/payments', async (req, res) => {
 // =============================================================================
 
 // POST /api/invoices/:id/items — Add line item
-router.post('/:id/items', async (req, res) => {
+router.post('/:id/items', requirePermission('invoices.create'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
@@ -276,7 +277,7 @@ router.post('/:id/items', async (req, res) => {
 });
 
 // PUT /api/invoices/:id/items/:itemId — Update line item
-router.put('/:id/items/:itemId', async (req, res) => {
+router.put('/:id/items/:itemId', requirePermission('invoices.create'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
@@ -293,7 +294,7 @@ router.put('/:id/items/:itemId', async (req, res) => {
 });
 
 // DELETE /api/invoices/:id/items/:itemId — Remove line item
-router.delete('/:id/items/:itemId', async (req, res) => {
+router.delete('/:id/items/:itemId', requirePermission('invoices.create'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
@@ -312,16 +313,16 @@ router.delete('/:id/items/:itemId', async (req, res) => {
 // Attachments & PDF (stubs — not in MVP scope)
 // =============================================================================
 
-router.get('/:id/attachments', (req, res) => {
+router.get('/:id/attachments', requirePermission('invoices.view'), (req, res) => {
     res.status(501).json({ ok: false, error: { code: 'NOT_IMPLEMENTED', message: 'Attachments are planned for a future sprint' } });
 });
 
-router.post('/:id/attachments', (req, res) => {
+router.post('/:id/attachments', requirePermission('invoices.create'), (req, res) => {
     res.status(501).json({ ok: false, error: { code: 'NOT_IMPLEMENTED', message: 'Attachments are planned for a future sprint' } });
 });
 
 // POST /api/invoices/:id/public-link — Idempotently mint (or fetch) a tokenized public PDF URL.
-router.post('/:id/public-link', async (req, res) => {
+router.post('/:id/public-link', requirePermission('invoices.send'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const { id } = req.params;
@@ -335,7 +336,7 @@ router.post('/:id/public-link', async (req, res) => {
 });
 
 // GET /api/invoices/:id/pdf — Render the invoice as a PDF buffer (F015 templates).
-router.get('/:id/pdf', async (req, res) => {
+router.get('/:id/pdf', requirePermission('invoices.view'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const { id } = req.params;

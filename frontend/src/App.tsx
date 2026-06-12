@@ -82,7 +82,7 @@ function App() {
               <Route path="/leads/:leadId" element={<ProtectedRoute permissions={['leads.view']}><LeadsPage /></ProtectedRoute>} />
               <Route path="/jobs" element={<ProtectedRoute permissions={['jobs.view']}><JobsPage /></ProtectedRoute>} />
               <Route path="/jobs/:jobId" element={<ProtectedRoute permissions={['jobs.view']}><JobsPage /></ProtectedRoute>} />
-              <Route path="/schedule" element={<ProtectedRoute permissions={['jobs.view']}><SchedulePage /></ProtectedRoute>} />
+              <Route path="/schedule" element={<ProtectedRoute permissions={['schedule.view']}><SchedulePage /></ProtectedRoute>} />
               <Route path="/estimates" element={<ProtectedRoute permissions={['estimates.view']}><EstimatesPage /></ProtectedRoute>} />
               <Route path="/invoices" element={<ProtectedRoute permissions={['invoices.view']}><InvoicesPage /></ProtectedRoute>} />
               <Route path="/contacts" element={<ProtectedRoute permissions={['contacts.view']}><ContactsPage /></ProtectedRoute>} />
@@ -112,8 +112,8 @@ function App() {
               <Route path="/settings/document-templates/:id" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><DocumentTemplateEditorPage /></ProtectedRoute>} />
               <Route path="/email" element={<ProtectedRoute permissions={['messages.view_internal']}><EmailPage /></ProtectedRoute>} />
               <Route path="/settings/users" element={<ProtectedRoute permissions={['tenant.users.manage']}><CompanyUsersPage /></ProtectedRoute>} />
-              <Route path="/settings/admin" element={<ProtectedRoute roles={['super_admin']}><SuperAdminPage /></ProtectedRoute>} />
-              <Route path="/settings/admin/companies/:companyId" element={<ProtectedRoute roles={['super_admin']}><AdminCompanyDetailPage /></ProtectedRoute>} />
+              <Route path="/settings/admin" element={<ProtectedRoute platformRoles={['super_admin']}><SuperAdminPage /></ProtectedRoute>} />
+              <Route path="/settings/admin/companies/:companyId" element={<ProtectedRoute platformRoles={['super_admin']}><AdminCompanyDetailPage /></ProtectedRoute>} />
 
               {/* Telephony — Configuration (with sidebar) */}
               <Route path="/settings/telephony" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><RouteManagerOverviewPage /></TelephonyLayout></ProtectedRoute>} />

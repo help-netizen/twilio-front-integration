@@ -278,3 +278,83 @@ describe('Payments Route (DB-backed)', () => {
         });
     });
 });
+
+// =============================================================================
+// PF007-HARDENING-001 / TASK-RBAC-017 — canonical /api/payments router:
+// tenant context comes only from req.companyFilter and every action is
+// permission-gated.
+// =============================================================================
+
+const mockCanonical = {
+    listTransactions: jest.fn(),
+    createTransaction: jest.fn(),
+    getSummary: jest.fn(),
+    recordManualPayment: jest.fn(),
+    getTransaction: jest.fn(),
+    refundTransaction: jest.fn(),
+    voidTransaction: jest.fn(),
+    getReceipt: jest.fn(),
+    sendReceipt: jest.fn(),
+};
+jest.mock('../backend/src/services/paymentsService', () => mockCanonical);
+jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn(async () => {}) }));
+
+describe('PF007: canonical payments router', () => {
+    const COMPANY = '00000000-0000-0000-0000-00000000000a';
+
+    function canonicalApp({ permissions = [] } = {}) {
+        const app = express();
+        app.use(express.json());
+        app.use((req, _res, next) => {
+            req.user = { sub: 'kc', email: 'u@x.com', crmUser: { id: 'u-1' } };
+            req.authz = { scope: 'tenant', permissions, scopes: {} };
+            req.companyFilter = { company_id: COMPANY };
+            // Poison the legacy field: routes must never read it (PF007)
+            req.companyId = 'LEGACY-DO-NOT-USE';
+            next();
+        });
+        app.use('/', require('../backend/src/routes/payments'));
+        return app;
+    }
+
+    beforeEach(() => {
+        Object.values(mockCanonical).forEach(fn => fn.mockReset());
+    });
+
+    it('GET / denies without payments.view', async () => {
+        const res = await request(canonicalApp({ permissions: [] }), 'GET', '/');
+        expect(res.status).toBe(403);
+        expect(mockCanonical.listTransactions).not.toHaveBeenCalled();
+    });
+
+    it('GET / uses req.companyFilter company, never req.companyId', async () => {
+        mockCanonical.listTransactions.mockResolvedValue({ transactions: [], total: 0 });
+        const res = await request(canonicalApp({ permissions: ['payments.view'] }), 'GET', '/');
+        expect(res.status).toBe(200);
+        expect(mockCanonical.listTransactions.mock.calls[0][0]).toBe(COMPANY);
+    });
+
+    it('summary totals are not readable without payments.view', async () => {
+        const res = await request(canonicalApp({ permissions: ['invoices.view'] }), 'GET', '/summary');
+        expect(res.status).toBe(403);
+        expect(mockCanonical.getSummary).not.toHaveBeenCalled();
+    });
+
+    it('online collection requires payments.collect_online', async () => {
+        const res = await request(canonicalApp({ permissions: ['payments.view'] }), 'POST', '/', { amount: 10 });
+        expect(res.status).toBe(403);
+        expect(mockCanonical.createTransaction).not.toHaveBeenCalled();
+    });
+
+    it('manual collection requires payments.collect_offline', async () => {
+        const res = await request(canonicalApp({ permissions: ['payments.view', 'payments.collect_online'] }), 'POST', '/manual', { amount: 10 });
+        expect(res.status).toBe(403);
+        expect(mockCanonical.recordManualPayment).not.toHaveBeenCalled();
+    });
+
+    it('refund requires payments.refund', async () => {
+        const res = await request(canonicalApp({ permissions: ['payments.view', 'payments.collect_online'] }), 'POST', '/tx-1/refund', { amount: 5 });
+        expect(res.status).toBe(403);
+        expect(mockCanonical.refundTransaction).not.toHaveBeenCalled();
+    });
+});

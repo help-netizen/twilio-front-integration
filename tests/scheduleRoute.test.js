@@ -51,12 +51,15 @@ function createApp(mode = 'auth', companyId = COMPANY_A) {
     if (mode === 'auth') {
         app.use((req, _res, next) => {
             req.user = { sub: 'user-1', email: 'test@test.com' };
+            // PF007: routes are permission-guarded; grant the schedule capabilities
+            req.authz = { scope: 'tenant', permissions: ['schedule.view', 'schedule.dispatch'], scopes: {} };
             req.companyFilter = { company_id: companyId };
             next();
         });
     } else if (mode === 'no-company') {
         app.use((req, _res, next) => {
             req.user = { sub: 'user-1', email: 'test@test.com' };
+            req.authz = { scope: 'tenant', permissions: ['schedule.view', 'schedule.dispatch'], scopes: {} };
             // companyFilter intentionally omitted
             next();
         });
@@ -101,6 +104,7 @@ describeIfSupertest('F013 Schedule Route — Middleware & Data Isolation', () =>
             expect(res.status).toBe(200);
             expect(mockGetItems).toHaveBeenCalledWith(
                 COMPANY_A,
+                expect.any(Object),
                 expect.any(Object)
             );
         });
@@ -128,6 +132,7 @@ describeIfSupertest('F013 Schedule Route — Middleware & Data Isolation', () =>
             // companyId should be undefined when no companyFilter
             expect(mockGetItems).toHaveBeenCalledWith(
                 undefined,
+                expect.any(Object),
                 expect.any(Object)
             );
         });

@@ -11,6 +11,8 @@ const jobsService = require('../services/jobsService');
 const zenbookerClient = require('../services/zenbookerClient');
 const noteAttachmentsService = require('../services/noteAttachmentsService');
 const eventService = require('../services/eventService');
+const { requirePermission } = require('../middleware/authorization');
+const { getProviderScope } = require('../middleware/providerScope');
 
 const upload = multer({
     storage: multer.memoryStorage(),
@@ -19,9 +21,9 @@ const upload = multer({
 
 // ─── Sync Jobs from Zenbooker ────────────────────────────────────────────────
 
-router.post('/sync', async (req, res) => {
+router.post('/sync', requirePermission('jobs.edit'), async (req, res) => {
     try {
-        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
+        const companyId = req.companyFilter?.company_id || null;
         // Use per-tenant Zenbooker API key (falls back to global env var)
         const zbClient = await zenbookerClient.getClientForCompany(companyId);
         const makeRequest = (url, params) => zbClient.get(url, { params });
@@ -72,7 +74,7 @@ router.post('/sync', async (req, res) => {
 
 // ─── List Jobs ───────────────────────────────────────────────────────────────
 
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('jobs.view'), async (req, res) => {
     try {
         const { blanc_status, canceled, search, offset, limit, contact_id, sort_by, sort_order, only_open, start_date, end_date, service_name, provider, tag_ids, tag_match } = req.query;
         const result = await jobsService.listJobs({
@@ -81,7 +83,7 @@ router.get('/', async (req, res) => {
             search: search || undefined,
             offset: parseInt(offset, 10) || 0,
             limit: parseInt(limit, 10) || 50,
-            companyId: req.companyFilter?.company_id || req.user?.company_id || undefined,
+            companyId: req.companyFilter?.company_id || undefined,
             contactId: contact_id || undefined,
             sortBy: sort_by || undefined,
             sortOrder: sort_order || undefined,
@@ -92,6 +94,7 @@ router.get('/', async (req, res) => {
             provider: provider || undefined,
             tagIds: tag_ids || undefined,
             tagMatch: tag_match || undefined,
+            providerScope: getProviderScope(req),
         });
         res.json({ ok: true, data: result });
     } catch (err) {
@@ -102,10 +105,10 @@ router.get('/', async (req, res) => {
 
 // ─── Get Job by ID ───────────────────────────────────────────────────────────
 
-router.get('/:id', async (req, res) => {
+router.get('/:id', requirePermission('jobs.view'), async (req, res) => {
     try {
-        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
-        const job = await jobsService.getJobById(req.params.id, companyId);
+        const companyId = req.companyFilter?.company_id || null;
+        const job = await jobsService.getJobById(req.params.id, companyId, getProviderScope(req));
         if (!job) return res.status(404).json({ ok: false, error: 'Job not found' });
         res.json({ ok: true, data: job });
     } catch (err) {
@@ -116,10 +119,10 @@ router.get('/:id', async (req, res) => {
 
 // ─── Update Job Coordinates ──────────────────────────────────────────────────
 
-router.patch('/:id/coords', async (req, res) => {
+router.patch('/:id/coords', requirePermission('jobs.edit'), async (req, res) => {
     try {
-        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
-        const existing = await jobsService.getJobById(req.params.id, companyId);
+        const companyId = req.companyFilter?.company_id || null;
+        const existing = await jobsService.getJobById(req.params.id, companyId, getProviderScope(req));
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
         const { lat, lng } = req.body;
         if (lat == null || lng == null) return res.status(400).json({ ok: false, error: 'lat and lng required' });
@@ -133,10 +136,10 @@ router.patch('/:id/coords', async (req, res) => {
 
 // ─── Update Job Tags ─────────────────────────────────────────────────────────
 
-router.patch('/:id/tags', async (req, res) => {
+router.patch('/:id/tags', requirePermission('jobs.edit'), async (req, res) => {
     try {
-        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
-        const existing = await jobsService.getJobById(req.params.id, companyId);
+        const companyId = req.companyFilter?.company_id || null;
+        const existing = await jobsService.getJobById(req.params.id, companyId, getProviderScope(req));
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
         const { tag_ids } = req.body;
         if (!Array.isArray(tag_ids)) return res.status(400).json({ ok: false, error: 'tag_ids array required' });
@@ -150,13 +153,20 @@ router.patch('/:id/tags', async (req, res) => {
 
 // ─── Update Blanc Status (manual FSM transition) ────────────────────────────
 
-router.patch('/:id/status', async (req, res) => {
+router.patch('/:id/status', requirePermission('jobs.edit'), async (req, res) => {
     try {
-        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
-        const existing = await jobsService.getJobById(req.params.id, companyId);
+        const companyId = req.companyFilter?.company_id || null;
+        const existing = await jobsService.getJobById(req.params.id, companyId, getProviderScope(req));
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
         const { blanc_status } = req.body;
         if (!blanc_status) return res.status(400).json({ ok: false, error: 'blanc_status required' });
+        // Closing transitions require a closing permission (PF007-HARDENING-001)
+        if (['Job is Done', 'Canceled'].includes(blanc_status) && !req.user?._devMode) {
+            const perms = req.authz?.permissions || [];
+            if (!perms.includes('jobs.close') && !perms.includes('jobs.done_pending_approval')) {
+                return res.status(403).json({ ok: false, error: 'Insufficient permissions to close jobs' });
+            }
+        }
         const result = await jobsService.updateBlancStatus(parseInt(req.params.id, 10), blanc_status, companyId);
         eventService.logEvent(companyId, 'job', req.params.id, 'status_changed',
             { from: existing.blanc_status, to: blanc_status, actor_name: eventService.actorName(req) }, 'user', req.user?.sub);
@@ -170,11 +180,11 @@ router.patch('/:id/status', async (req, res) => {
 
 // ─── Get History ─────────────────────────────────────────────────────────────
 
-router.get('/:id/history', async (req, res) => {
+router.get('/:id/history', requirePermission('jobs.view'), async (req, res) => {
     try {
-        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
+        const companyId = req.companyFilter?.company_id || null;
         const jobId = parseInt(req.params.id, 10);
-        const job = await jobsService.getJobById(jobId, companyId);
+        const job = await jobsService.getJobById(jobId, companyId, getProviderScope(req));
         if (!job) return res.status(404).json({ ok: false, error: 'Job not found' });
 
         const history = await eventService.getEntityHistory(companyId, 'job', jobId, job.notes || []);
@@ -247,11 +257,11 @@ function normalizeJobNote(n, index, localAttachments = []) {
     };
 }
 
-router.get('/:id/notes', async (req, res) => {
+router.get('/:id/notes', requirePermission('jobs.view'), async (req, res) => {
     try {
-        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
+        const companyId = req.companyFilter?.company_id || null;
         const jobId = parseInt(req.params.id, 10);
-        const job = await jobsService.getJobById(jobId, companyId);
+        const job = await jobsService.getJobById(jobId, companyId, getProviderScope(req));
         if (!job) return res.status(404).json({ ok: false, error: 'Job not found' });
 
         const notes = job.notes || [];
@@ -281,12 +291,12 @@ router.get('/:id/notes', async (req, res) => {
 
 // ─── Add Note ────────────────────────────────────────────────────────────────
 
-router.post('/:id/notes', upload.array('attachments', noteAttachmentsService.MAX_FILES_PER_NOTE), async (req, res) => {
+router.post('/:id/notes', requirePermission('jobs.edit'), upload.array('attachments', noteAttachmentsService.MAX_FILES_PER_NOTE), async (req, res) => {
     try {
-        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
+        const companyId = req.companyFilter?.company_id || null;
         const userId = req.user?.sub || null;
         const jobId = parseInt(req.params.id, 10);
-        const existing = await jobsService.getJobById(jobId, companyId);
+        const existing = await jobsService.getJobById(jobId, companyId, getProviderScope(req));
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
 
         const text = (req.body.text || '').trim();
@@ -314,10 +324,10 @@ router.post('/:id/notes', upload.array('attachments', noteAttachmentsService.MAX
 
 // ─── Cancel Job ──────────────────────────────────────────────────────────────
 
-router.post('/:id/cancel', async (req, res) => {
+router.post('/:id/cancel', requirePermission('jobs.close'), async (req, res) => {
     try {
-        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
-        const existing = await jobsService.getJobById(req.params.id, companyId);
+        const companyId = req.companyFilter?.company_id || null;
+        const existing = await jobsService.getJobById(req.params.id, companyId, getProviderScope(req));
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
         const result = await jobsService.cancelJob(parseInt(req.params.id, 10));
         eventService.logEvent(companyId, 'job', req.params.id, 'canceled',
@@ -331,10 +341,10 @@ router.post('/:id/cancel', async (req, res) => {
 
 // ─── Mark En-route ───────────────────────────────────────────────────────────
 
-router.post('/:id/enroute', async (req, res) => {
+router.post('/:id/enroute', requirePermission('jobs.edit'), async (req, res) => {
     try {
-        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
-        const existing = await jobsService.getJobById(req.params.id, companyId);
+        const companyId = req.companyFilter?.company_id || null;
+        const existing = await jobsService.getJobById(req.params.id, companyId, getProviderScope(req));
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
         const result = await jobsService.markEnroute(parseInt(req.params.id, 10));
         res.json({ ok: true, data: result });
@@ -346,10 +356,10 @@ router.post('/:id/enroute', async (req, res) => {
 
 // ─── Mark In-Progress ────────────────────────────────────────────────────────
 
-router.post('/:id/start', async (req, res) => {
+router.post('/:id/start', requirePermission('jobs.edit'), async (req, res) => {
     try {
-        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
-        const existing = await jobsService.getJobById(req.params.id, companyId);
+        const companyId = req.companyFilter?.company_id || null;
+        const existing = await jobsService.getJobById(req.params.id, companyId, getProviderScope(req));
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
         const result = await jobsService.markInProgress(parseInt(req.params.id, 10));
         res.json({ ok: true, data: result });
@@ -361,10 +371,10 @@ router.post('/:id/start', async (req, res) => {
 
 // ─── Mark Complete ───────────────────────────────────────────────────────────
 
-router.post('/:id/complete', async (req, res) => {
+router.post('/:id/complete', requirePermission('jobs.close', 'jobs.done_pending_approval'), async (req, res) => {
     try {
-        const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
-        const existing = await jobsService.getJobById(req.params.id, companyId);
+        const companyId = req.companyFilter?.company_id || null;
+        const existing = await jobsService.getJobById(req.params.id, companyId, getProviderScope(req));
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
         const result = await jobsService.markComplete(parseInt(req.params.id, 10));
         res.json({ ok: true, data: result });
@@ -375,12 +385,17 @@ router.post('/:id/complete', async (req, res) => {
 });
 // ─── Reschedule ──────────────────────────────────────────────────────────────
 
-router.post('/:id/reschedule', async (req, res) => {
+router.post('/:id/reschedule', requirePermission('jobs.edit'), async (req, res) => {
     const jobId = parseInt(req.params.id, 10);
-    const companyId = req.companyFilter?.company_id || req.user?.company_id || null;
-    const existing = await jobsService.getJobById(jobId, companyId);
+    const companyId = req.companyFilter?.company_id || null;
+    const existing = await jobsService.getJobById(jobId, companyId, getProviderScope(req));
     if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
     const { start_date, arrival_window_minutes = 120, tech_id } = req.body;
+
+    // Changing the assigned technician is a dispatch action (PF007)
+    if (tech_id && !req.user?._devMode && !(req.authz?.permissions || []).includes('jobs.assign')) {
+        return res.status(403).json({ ok: false, error: 'Insufficient permissions to reassign jobs' });
+    }
 
     if (!start_date) {
         return res.status(400).json({ ok: false, error: 'start_date is required (ISO 8601)' });
@@ -430,9 +445,10 @@ router.post('/:id/reschedule', async (req, res) => {
                     try {
                         const freshJob = await zenbookerClient.getJob(zbJobId);
                         if (freshJob?.assigned_providers?.length > 0) {
+                            const mirror = await jobsService.resolveAssignedProviderUserIds(companyId, freshJob.assigned_providers);
                             await db.query(
-                                `UPDATE jobs SET assigned_techs = $1::jsonb, updated_at = NOW() WHERE id = $2`,
-                                [JSON.stringify(freshJob.assigned_providers), jobId]
+                                `UPDATE jobs SET assigned_techs = $1::jsonb, assigned_provider_user_ids = $2::jsonb, updated_at = NOW() WHERE id = $3`,
+                                [JSON.stringify(freshJob.assigned_providers), mirror, jobId]
                             );
                             console.log(`[Jobs API] Immediately updated assigned_techs for job ${jobId}`);
                         }

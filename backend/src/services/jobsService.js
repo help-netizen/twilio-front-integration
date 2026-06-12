@@ -306,12 +306,19 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
     return rowToJob(rows[0]);
 }
 
-async function getJobById(id, companyId = null) {
+async function getJobById(id, companyId = null, providerScope = null) {
     const conditions = ['j.id = $1'];
     const params = [id];
     if (companyId) {
         conditions.push('j.company_id = $2');
         params.push(companyId);
+    }
+    // assigned_only providers see only jobs whose internal assignee mirror
+    // contains their crm_users.id; without a resolved user — nothing (PF007).
+    if (providerScope?.assignedOnly) {
+        if (!providerScope.userId) return null;
+        params.push(JSON.stringify([providerScope.userId]));
+        conditions.push(`j.assigned_provider_user_ids @> $${params.length}::jsonb`);
     }
     const { rows } = await db.query(
         `SELECT j.*, l.serial_id AS lead_serial_id
@@ -332,13 +339,23 @@ async function getJobByZbId(zbJobId) {
     return rowToJob(rows[0]);
 }
 
-async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 50, companyId, contactId, sortBy, sortOrder, onlyOpen, startDate, endDate, serviceName, provider, tagIds, tagMatch } = {}) {
+async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 50, companyId, contactId, sortBy, sortOrder, onlyOpen, startDate, endDate, serviceName, provider, tagIds, tagMatch, providerScope } = {}) {
     const conditions = [];
     const params = [];
     let idx = 0;
 
     if (companyId) {
         idx++; conditions.push(`j.company_id = $${idx}`); params.push(companyId);
+    }
+    // assigned_only visibility (PF007): only jobs whose internal assignee
+    // mirror contains the current crm_users.id. No user → empty result.
+    if (providerScope?.assignedOnly) {
+        if (!providerScope.userId) {
+            conditions.push('FALSE');
+        } else {
+            idx++; conditions.push(`j.assigned_provider_user_ids @> $${idx}::jsonb`);
+            params.push(JSON.stringify([providerScope.userId]));
+        }
     }
     if (blancStatus) {
         // Support comma-separated multi-value: "Submitted,Rescheduled"

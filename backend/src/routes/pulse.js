@@ -8,6 +8,42 @@ const router = express.Router();
 const db = require('../db/connection');
 const queries = require('../db/queries');
 const convQueries = require('../db/conversationsQueries');
+const { requirePermission } = require('../middleware/authorization');
+const { getProviderScope } = require('../middleware/providerScope');
+
+// All Pulse surfaces require pulse.view (PF007-HARDENING-001 / TASK-RBAC-009)
+router.use(requirePermission('pulse.view'));
+
+// Tenant context comes only from requireCompanyAccess
+function tenantCompanyId(req) {
+    return req.companyFilter?.company_id || null;
+}
+
+// assigned_only providers may open Pulse only for contacts reachable from
+// their visible assigned jobs. Orphan (contact-less) timelines are not
+// visible to providers at all.
+async function isContactVisibleToProvider(req, contactId) {
+    const scope = getProviderScope(req);
+    if (!scope.assignedOnly) return true;
+    if (!scope.userId || !contactId) return false;
+    const { rows } = await db.query(
+        `SELECT 1 FROM jobs pj
+         WHERE pj.contact_id = $1 AND pj.company_id = $2
+           AND pj.assigned_provider_user_ids @> $3::jsonb
+         LIMIT 1`,
+        [contactId, tenantCompanyId(req), JSON.stringify([scope.userId])]
+    );
+    return rows.length > 0;
+}
+
+// Tenant-safe timeline ownership check for thread mutations → null = 404
+async function getTimelineInCompany(timelineId, companyId) {
+    const { rows } = await db.query(
+        `SELECT * FROM timelines WHERE id = $1 AND company_id = $2`,
+        [timelineId, companyId]
+    );
+    return rows[0] || null;
+}
 
 // =============================================================================
 // GET /api/pulse/timeline/:contactId — combined calls + SMS for a contact
@@ -22,18 +58,26 @@ router.get('/timeline-by-id/:timelineId', async (req, res) => {
             return res.status(400).json({ error: 'Invalid timelineId' });
         }
 
-        // Get timeline info
-        const tlResult = await db.query('SELECT * FROM timelines WHERE id = $1', [timelineId]);
-        const timeline = tlResult.rows[0];
+        // Get timeline info (tenant-scoped: foreign timelines look missing)
+        const timeline = await getTimelineInCompany(timelineId, tenantCompanyId(req));
         if (!timeline) {
             return res.status(404).json({ error: 'Timeline not found' });
         }
 
-        // Get contact if linked
+        // Get contact if linked (same tenant)
         let contact = null;
         if (timeline.contact_id) {
-            const contactResult = await db.query('SELECT * FROM contacts WHERE id = $1', [timeline.contact_id]);
+            const contactResult = await db.query(
+                'SELECT * FROM contacts WHERE id = $1 AND company_id = $2',
+                [timeline.contact_id, tenantCompanyId(req)]
+            );
             contact = contactResult.rows[0] || null;
+        }
+
+        // Provider scope: only own clients, and never orphan timelines
+        if (getProviderScope(req).assignedOnly) {
+            const visible = await isContactVisibleToProvider(req, contact?.id || null);
+            if (!visible) return res.status(404).json({ error: 'Timeline not found' });
         }
 
         return await buildTimeline(req, res, contact, timeline);
@@ -51,16 +95,26 @@ router.get('/timeline/:contactId', async (req, res) => {
             return res.status(400).json({ error: 'Invalid contactId' });
         }
 
-        // Get contact info
-        const contactResult = await db.query('SELECT * FROM contacts WHERE id = $1', [contactId]);
+        // Get contact info (tenant-scoped)
+        const contactResult = await db.query(
+            'SELECT * FROM contacts WHERE id = $1 AND company_id = $2',
+            [contactId, tenantCompanyId(req)]
+        );
         const contact = contactResult.rows[0] || null;
+        if (!contact) return res.status(404).json({ error: 'Contact not found' });
 
-        // Find timeline linked to this contact
-        let timeline = null;
-        if (contact) {
-            const tlResult = await db.query('SELECT * FROM timelines WHERE contact_id = $1 LIMIT 1', [contactId]);
-            timeline = tlResult.rows[0] || null;
+        // Provider scope: only own clients
+        if (getProviderScope(req).assignedOnly) {
+            const visible = await isContactVisibleToProvider(req, contact.id);
+            if (!visible) return res.status(404).json({ error: 'Contact not found' });
         }
+
+        // Find timeline linked to this contact (same tenant)
+        const tlResult = await db.query(
+            'SELECT * FROM timelines WHERE contact_id = $1 AND company_id = $2 LIMIT 1',
+            [contactId, tenantCompanyId(req)]
+        );
+        const timeline = tlResult.rows[0] || null;
 
         return await buildTimeline(req, res, contact, timeline);
     } catch (error) {
@@ -159,8 +213,9 @@ async function buildTimeline(req, res, contact, timeline) {
         const convResult = await db.query(
             `SELECT * FROM sms_conversations
              WHERE regexp_replace(customer_e164, '\\D', '', 'g') = ANY($1)
+               AND company_id = $2
              ORDER BY last_message_at DESC NULLS LAST`,
-            [phoneDigits]
+            [phoneDigits, tenantCompanyId(req)]
         );
         conversations = convResult.rows;
 
@@ -181,8 +236,10 @@ async function buildTimeline(req, res, contact, timeline) {
 
     // Financial events: estimates + invoices for this contact
     let financialEvents = [];
-    if (contact?.id) {
-        const companyId = req.companyId || req.user?.company_id || null;
+    const canViewFinancials = req.user?._devMode
+        || (req.authz?.permissions || []).includes('financial_data.view');
+    if (contact?.id && canViewFinancials) {
+        const companyId = tenantCompanyId(req);
         try {
             if (companyId) {
                 const [estimateRows, invoiceRows] = await Promise.all([
@@ -299,11 +356,11 @@ router.get('/unread-count', async (req, res) => {
         // Count contacts that have unread in EITHER sms_conversations OR contacts
         const result = await db.query(`
             SELECT COUNT(DISTINCT phone) as count FROM (
-                SELECT customer_e164 as phone FROM sms_conversations WHERE has_unread = true
+                SELECT customer_e164 as phone FROM sms_conversations WHERE has_unread = true AND company_id = $1
                 UNION
-                SELECT phone_e164 as phone FROM contacts WHERE has_unread = true
+                SELECT phone_e164 as phone FROM contacts WHERE has_unread = true AND company_id = $1
             ) unread_phones
-        `);
+        `, [tenantCompanyId(req)]);
         res.json({ count: parseInt(result.rows[0].count) });
     } catch (error) {
         console.error('Error fetching unread count:', error);
@@ -324,11 +381,12 @@ router.get('/timeline-by-phone', async (req, res) => {
         // Find timeline + contact name by phone
         const result = await db.query(
             `SELECT t.id, c.full_name FROM timelines t
-             LEFT JOIN contacts c ON t.contact_id = c.id
-             WHERE regexp_replace(COALESCE(t.phone_e164, c.phone_e164), '\\D', '', 'g') = $1
-                OR regexp_replace(c.secondary_phone, '\\D', '', 'g') = $1
+             LEFT JOIN contacts c ON t.contact_id = c.id AND c.company_id = t.company_id
+             WHERE t.company_id = $2
+               AND (regexp_replace(COALESCE(t.phone_e164, c.phone_e164), '\\D', '', 'g') = $1
+                OR regexp_replace(c.secondary_phone, '\\D', '', 'g') = $1)
              LIMIT 1`,
-            [digits]
+            [digits, tenantCompanyId(req)]
         );
         const row = result.rows[0];
         res.json({
@@ -349,9 +407,10 @@ router.get('/default-proxy', async (req, res) => {
     try {
         const result = await db.query(
             `SELECT proxy_e164 FROM sms_conversations
-             WHERE proxy_e164 IS NOT NULL
+             WHERE proxy_e164 IS NOT NULL AND company_id = $1
              ORDER BY last_message_at DESC NULLS LAST
-             LIMIT 1`
+             LIMIT 1`,
+            [tenantCompanyId(req)]
         );
         res.json({ proxy_e164: result.rows[0]?.proxy_e164 || null });
     } catch (error) {
@@ -373,13 +432,20 @@ router.post('/ensure-timeline', async (req, res) => {
             return res.status(400).json({ error: 'phone is required' });
         }
 
-        const companyId = req.user?.company_id || null;
+        const companyId = tenantCompanyId(req);
 
         // If contactId is provided, resolve timeline for this specific contact
         if (contactId) {
+            // Contact must live in the current tenant
+            const owned = await db.query(
+                'SELECT id FROM contacts WHERE id = $1 AND company_id = $2',
+                [contactId, companyId]
+            );
+            if (!owned.rows[0]) return res.status(404).json({ error: 'Contact not found' });
+
             const existing = await db.query(
-                'SELECT id FROM timelines WHERE contact_id = $1 LIMIT 1',
-                [contactId]
+                'SELECT id FROM timelines WHERE contact_id = $1 AND company_id = $2 LIMIT 1',
+                [contactId, companyId]
             );
             if (existing.rows[0]) {
                 return res.json({
@@ -405,10 +471,11 @@ router.post('/ensure-timeline', async (req, res) => {
                     const orphan = await db.query(
                         `SELECT id FROM timelines
                          WHERE contact_id IS NULL
+                           AND company_id = $2
                            AND regexp_replace(phone_e164, '\\D', '', 'g') = ANY($1)
                          ORDER BY updated_at DESC NULLS LAST
                          LIMIT 1`,
-                        [phonesToCheck]
+                        [phonesToCheck, companyId]
                     );
                     if (orphan.rows[0]) {
                         // Adopt the orphan: link it to this contact
@@ -465,6 +532,9 @@ router.post('/threads/:id/mark-handled', async (req, res) => {
         const timelineId = parseInt(req.params.id);
         if (isNaN(timelineId)) return res.status(400).json({ error: 'Invalid timeline id' });
 
+        const inCompany = await getTimelineInCompany(timelineId, tenantCompanyId(req));
+        if (!inCompany) return res.status(404).json({ error: 'Timeline not found' });
+
         const tl = await queries.markThreadHandled(timelineId);
         if (!tl) return res.status(404).json({ error: 'Timeline not found' });
 
@@ -488,6 +558,9 @@ router.post('/threads/:id/snooze', async (req, res) => {
 
         const { snoozed_until } = req.body;
         if (!snoozed_until) return res.status(400).json({ error: 'snoozed_until is required' });
+
+        const inCompany = await getTimelineInCompany(timelineId, tenantCompanyId(req));
+        if (!inCompany) return res.status(404).json({ error: 'Timeline not found' });
 
         const tl = await queries.snoozeThread(timelineId, snoozed_until);
         if (!tl) return res.status(404).json({ error: 'Timeline not found' });
@@ -513,6 +586,9 @@ router.post('/threads/:id/assign', async (req, res) => {
         const { owner_user_id } = req.body;
         if (!owner_user_id) return res.status(400).json({ error: 'owner_user_id is required' });
 
+        const inCompany = await getTimelineInCompany(timelineId, tenantCompanyId(req));
+        if (!inCompany) return res.status(404).json({ error: 'Timeline not found' });
+
         const tl = await queries.assignThread(timelineId, owner_user_id);
         if (!tl) return res.status(404).json({ error: 'Timeline not found' });
 
@@ -537,9 +613,8 @@ router.post('/threads/:id/tasks', async (req, res) => {
         const { title, description, priority, due_at } = req.body;
         if (!title) return res.status(400).json({ error: 'title is required' });
 
-        // Get timeline to resolve company_id and subject
-        const tlResult = await db.query('SELECT * FROM timelines WHERE id = $1', [timelineId]);
-        const tl = tlResult.rows[0];
+        // Get timeline to resolve company_id and subject (tenant-scoped)
+        const tl = await getTimelineInCompany(timelineId, tenantCompanyId(req));
         if (!tl) return res.status(404).json({ error: 'Timeline not found' });
 
         const task = await queries.createTask({
@@ -577,6 +652,9 @@ router.post('/threads/:id/set-action-required', async (req, res) => {
     try {
         const timelineId = parseInt(req.params.id);
         if (isNaN(timelineId)) return res.status(400).json({ error: 'Invalid timeline id' });
+
+        const inCompany = await getTimelineInCompany(timelineId, tenantCompanyId(req));
+        if (!inCompany) return res.status(404).json({ error: 'Timeline not found' });
 
         const tl = await queries.setActionRequired(timelineId, 'manual', 'user');
         if (!tl) return res.status(404).json({ error: 'Timeline not found' });

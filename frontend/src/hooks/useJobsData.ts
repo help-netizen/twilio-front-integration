@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
 import { useLeadFormSettings } from '../hooks/useLeadFormSettings';
+import { useAuthz } from './useAuthz';
 import * as jobsApi from '../services/jobsApi';
 import type { LocalJob, JobsListParams, JobTag } from '../services/jobsApi';
 import {
@@ -44,6 +45,10 @@ export function useJobsData() {
 
     // Custom fields from shared settings hook
     const { customFields } = useLeadFormSettings();
+    const { hasPermission } = useAuthz();
+    // Tag catalog and list-field settings live under tenant management APIs —
+    // don't even request them without the backing permission (PF007).
+    const canManageCompany = hasPermission('tenant.company.manage');
 
     // ─── Derived data ────────────────────────────────────────────────
 
@@ -102,19 +107,21 @@ export function useJobsData() {
         }
     }, [searchQuery, sortBy, sortOrder, onlyOpen, startDate, endDate, statusFilter, jobTypeFilter, providerFilter, tagFilter]);
 
-    // Load tag catalog on mount
+    // Load tag catalog on mount (management API — permission-gated)
     useEffect(() => {
+        if (!canManageCompany) return;
         jobsApi.listJobTags().then(setAllTags).catch(() => { });
-    }, []);
+    }, [canManageCompany]);
 
-    // Load column config on mount
+    // Load column config on mount (management API — permission-gated)
     useEffect(() => {
+        if (!canManageCompany) return;
         jobsApi.getJobsListFields()
             .then(fields => {
                 if (fields.length > 0) setVisibleFields(fields);
             })
             .catch(() => { });
-    }, []);
+    }, [canManageCompany]);
 
     useEffect(() => { loadJobs(0); }, [loadJobs]);
 

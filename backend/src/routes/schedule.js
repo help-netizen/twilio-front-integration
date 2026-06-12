@@ -5,13 +5,15 @@
 const express = require('express');
 const router = express.Router();
 const scheduleService = require('../services/scheduleService');
+const { requirePermission } = require('../middleware/authorization');
+const { getProviderScope } = require('../middleware/providerScope');
 
 // =============================================================================
 // Schedule items (unified read model over jobs + leads + tasks)
 // =============================================================================
 
 // GET /api/schedule — List schedule items with filters
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('schedule.view'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
         const {
@@ -37,7 +39,7 @@ router.get('/', async (req, res) => {
         if (limit)           filters.limit = parseInt(limit, 10);
         if (offset)          filters.offset = parseInt(offset, 10);
 
-        const result = await scheduleService.getScheduleItems(companyId, filters);
+        const result = await scheduleService.getScheduleItems(companyId, filters, getProviderScope(req));
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Schedule] GET / error:', err.message);
@@ -47,12 +49,12 @@ router.get('/', async (req, res) => {
 });
 
 // GET /api/schedule/items/:entityType/:entityId — Single schedule item detail
-router.get('/items/:entityType/:entityId', async (req, res) => {
+router.get('/items/:entityType/:entityId', requirePermission('schedule.view'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
         const { entityType, entityId } = req.params;
 
-        const result = await scheduleService.getScheduleItemDetail(companyId, entityType, entityId);
+        const result = await scheduleService.getScheduleItemDetail(companyId, entityType, entityId, getProviderScope(req));
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Schedule] GET /items detail error:', err.message);
@@ -62,7 +64,7 @@ router.get('/items/:entityType/:entityId', async (req, res) => {
 });
 
 // PATCH /api/schedule/items/:entityType/:entityId/reschedule — Reschedule item
-router.patch('/items/:entityType/:entityId/reschedule', async (req, res) => {
+router.patch('/items/:entityType/:entityId/reschedule', requirePermission('schedule.dispatch'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
         const { entityType, entityId } = req.params;
@@ -82,7 +84,7 @@ router.patch('/items/:entityType/:entityId/reschedule', async (req, res) => {
 });
 
 // PATCH /api/schedule/items/:entityType/:entityId/reassign — Reassign item
-router.patch('/items/:entityType/:entityId/reassign', async (req, res) => {
+router.patch('/items/:entityType/:entityId/reassign', requirePermission('schedule.dispatch'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
         const { entityType, entityId } = req.params;
@@ -102,7 +104,7 @@ router.patch('/items/:entityType/:entityId/reassign', async (req, res) => {
 });
 
 // POST /api/schedule/items/from-slot — Create entity from schedule slot
-router.post('/items/from-slot', async (req, res) => {
+router.post('/items/from-slot', requirePermission('schedule.dispatch'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
         const { entity_type, ...slotData } = req.body;
@@ -125,7 +127,7 @@ router.post('/items/from-slot', async (req, res) => {
 // =============================================================================
 
 // GET /api/schedule/settings — Get dispatch settings
-router.get('/settings', async (req, res) => {
+router.get('/settings', requirePermission('schedule.dispatch'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
         const settings = await scheduleService.getDispatchSettings(companyId);
@@ -138,7 +140,7 @@ router.get('/settings', async (req, res) => {
 });
 
 // PATCH /api/schedule/settings — Update dispatch settings
-router.patch('/settings', async (req, res) => {
+router.patch('/settings', requirePermission('schedule.dispatch'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
         const updates = req.body;

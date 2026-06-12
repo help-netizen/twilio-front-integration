@@ -9,6 +9,7 @@ import { JobMetadataSection } from './JobMetadataSection';
 import { JobFinancialsTab } from './JobFinancialsTab';
 import { JobDescription } from './JobNotesSection';
 import { NotesHistoryTabs } from '../shared/NotesHistoryTabs';
+import { useAuthz } from '../../hooks/useAuthz';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -42,6 +43,9 @@ export function JobDetailPanel({
     navigate, allTags, onTagsChange, onJobUpdated,
 }: JobDetailPanelProps) {
     const [rightTab, setRightTab] = useState<'notes' | 'financials'>('notes');
+    const { hasAnyPermission } = useAuthz();
+    // Finance surface renders only with finance visibility (PF007)
+    const canViewFinancials = hasAnyPermission('financial_data.view', 'estimates.view', 'invoices.view');
 
     useEffect(() => {
         setRightTab('notes');
@@ -78,8 +82,12 @@ export function JobDetailPanel({
                             <JobDescription job={job} />
                             <NotesHistoryTabs entityType="job" entityId={job.id} onNoteAdded={onJobUpdated ? () => onJobUpdated(job) : undefined} />
                             <JobMetadataSection job={job} />
-                            <p className="blanc-eyebrow pt-2">Estimates &amp; Invoices</p>
-                            <JobFinancialsTab jobId={job.id} leadSerialId={job.lead_serial_id} />
+                            {canViewFinancials && (
+                                <>
+                                    <p className="blanc-eyebrow pt-2">Estimates &amp; Invoices</p>
+                                    <JobFinancialsTab jobId={job.id} leadSerialId={job.lead_serial_id} />
+                                </>
+                            )}
                         </div>
                     </>
                 )}
@@ -94,7 +102,7 @@ export function JobDetailPanel({
                     <div className="shrink-0" style={{ padding: '8px 16px 0' }}>
                         <TabsList className="h-9">
                             <TabsTrigger value="notes" className="text-xs">Details</TabsTrigger>
-                            <TabsTrigger value="financials" className="text-xs">Finance</TabsTrigger>
+                            {canViewFinancials && <TabsTrigger value="financials" className="text-xs">Finance</TabsTrigger>}
                         </TabsList>
                     </div>
 
@@ -106,9 +114,11 @@ export function JobDetailPanel({
                         </div>
                     </TabsContent>
 
-                    <TabsContent value="financials" className="flex-1 flex flex-col mt-0 data-[state=inactive]:hidden">
-                        <JobFinancialsTab jobId={job.id} leadSerialId={job.lead_serial_id} />
-                    </TabsContent>
+                    {canViewFinancials && (
+                        <TabsContent value="financials" className="flex-1 flex flex-col mt-0 data-[state=inactive]:hidden">
+                            <JobFinancialsTab jobId={job.id} leadSerialId={job.lead_serial_id} />
+                        </TabsContent>
+                    )}
                 </Tabs>
             </div>
         </div>

@@ -29,6 +29,8 @@ export function SchedulePage() {
     const schedule = useScheduleData();
     const navigate = useNavigate();
     const [settingsOpen, setSettingsOpen] = useState(false);
+    // Dispatch-only controls hidden for providers without schedule.dispatch (PF007)
+    const canDispatch = schedule.canDispatch;
     const [showAIAssistant, setShowAIAssistant] = useState(false);
 
     // ─── Job detail floating panel (same as Jobs page) ───────────────
@@ -98,17 +100,17 @@ export function SchedulePage() {
 
         switch (schedule.viewMode) {
             case 'week':
-                return <WeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onReschedule={schedule.handleReschedule} onCreateFromSlot={handleCreateFromSlot} />;
+                return <WeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
             case 'day':
-                return <DayView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onReschedule={schedule.handleReschedule} onCreateFromSlot={handleCreateFromSlot} />;
+                return <DayView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
             case 'month':
                 return <MonthView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectDay={handleMonthDaySelect} onSelectItem={handleSelectItem} />;
             case 'timeline':
-                return <TimelineView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} onSelectItem={handleSelectItem} onReschedule={schedule.handleReschedule} onReassign={schedule.handleReassign} onCreateFromSlot={handleCreateFromSlot} />;
+                return <TimelineView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} onSelectItem={handleSelectItem} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
             case 'timeline-week':
-                return <TimelineWeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} onSelectItem={handleSelectItem} onReassign={schedule.handleReassign} onCreateFromSlot={handleCreateFromSlot} />;
+                return <TimelineWeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} onSelectItem={handleSelectItem} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
             case 'list':
-                return <ListView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} onSelectItem={handleSelectItem} onReassign={schedule.handleReassign} onCreateFromSlot={handleCreateFromSlot} />;
+                return <ListView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} onSelectItem={handleSelectItem} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
             default:
                 return null;
         }
@@ -172,7 +174,7 @@ export function SchedulePage() {
                         onViewModeChange={schedule.setViewMode}
                         onNavigateDate={schedule.navigateDate}
                         onFiltersChange={schedule.setFilters}
-                        onOpenSettings={() => setSettingsOpen(true)}
+                        onOpenSettings={canDispatch ? () => setSettingsOpen(true) : undefined}
                     />
 
                     {/* Calendar view */}

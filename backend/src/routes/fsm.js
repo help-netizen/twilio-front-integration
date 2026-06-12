@@ -9,6 +9,31 @@ const router = express.Router();
 const { requirePermission } = require('../middleware/authorization');
 const fsmService = require('../services/fsmService');
 const jobsService = require('../services/jobsService');
+const { getProviderScope } = require('../middleware/providerScope');
+
+/**
+ * Server-derived roles for FSM action filtering (PF007-HARDENING-001):
+ * client-supplied role hints are ignored; roles come from req.authz/req.user.
+ */
+function getServerRoles(req) {
+    const roles = new Set(req.user?.roles || []);
+    const roleKey = req.authz?.membership?.role_key;
+    if (roleKey) {
+        roles.add(roleKey);
+        const legacy = {
+            tenant_admin: 'company_admin',
+            manager: 'company_admin',
+            dispatcher: 'company_member',
+            provider: 'company_member',
+        }[roleKey];
+        if (legacy) roles.add(legacy);
+    }
+    if (req.user?._devMode) {
+        roles.add('company_admin');
+        roles.add('company_member');
+    }
+    return [...roles];
+}
 
 // Feature flags — default to true (enabled) during development
 const FSM_EDITOR_ENABLED = process.env.FSM_EDITOR_ENABLED !== 'false';
@@ -176,7 +201,7 @@ router.post('/:machineKey/versions/:versionId/restore', requireEditorEnabled, re
 
 // ─── Apply transition (placeholder) ────────────────────────────────────────────
 
-router.post('/:machineKey/apply', async (req, res) => {
+router.post('/:machineKey/apply', requirePermission('jobs.edit'), async (req, res) => {
   try {
     const companyId = req.companyFilter?.company_id;
     const { machineKey } = req.params;
@@ -189,7 +214,8 @@ router.post('/:machineKey/apply', async (req, res) => {
     // Load entity's current state based on machine type
     let currentState;
     if (machineKey === 'job') {
-      const job = await jobsService.getJobById(entityId, companyId);
+      // Tenant + provider scoped: non-visible jobs read as missing (404)
+      const job = await jobsService.getJobById(entityId, companyId, getProviderScope(req));
       if (!job) return res.status(404).json({ ok: false, error: `Job #${entityId} not found` });
       currentState = job.blanc_status;
     } else {
@@ -198,13 +224,24 @@ router.post('/:machineKey/apply', async (req, res) => {
 
     const result = await fsmService.resolveTransition(companyId, machineKey, currentState, event);
 
-    // If no published graph exists, allow as fallback
+    // If no published graph exists, the fallback must not widen permissions:
+    // it only reports "no graph" — it never mutates entity state.
     if (result.valid === null && result.fallback) {
       return res.json({ ok: true, data: { targetState: null, event, fallback: true } });
     }
 
     if (!result.valid) {
       return res.status(400).json({ ok: false, error: result.error || 'Transition not allowed' });
+    }
+
+    // Closing transitions require a closing permission (PF007)
+    if (machineKey === 'job'
+        && ['Job is Done', 'Canceled'].includes(result.targetState)
+        && !req.user?._devMode) {
+      const perms = req.authz?.permissions || [];
+      if (!perms.includes('jobs.close') && !perms.includes('jobs.done_pending_approval')) {
+        return res.status(403).json({ ok: false, error: 'Insufficient permissions to close jobs' });
+      }
     }
 
     // Apply the transition — update the entity's status
@@ -256,11 +293,11 @@ router.post('/:machineKey/override', requirePermission('fsm.override'), async (r
 
 // ─── Get available actions for a state ──────────────────────────────────────────
 
-router.get('/:machineKey/actions', async (req, res) => {
+router.get('/:machineKey/actions', requirePermission('jobs.view', 'fsm.viewer'), async (req, res) => {
   try {
     const companyId = req.companyFilter?.company_id;
     const { machineKey } = req.params;
-    const { state, roles } = req.query;
+    const { state } = req.query;
 
     if (!state) {
       return res.status(400).json({ ok: false, error: 'state query parameter is required' });
@@ -296,14 +333,12 @@ router.get('/:machineKey/actions', async (req, res) => {
         roles: tr.roles.length > 0 ? tr.roles : null,
       }));
 
-    // Filter by roles if provided
-    if (roles) {
-      const userRoles = roles.split(',').map(r => r.trim());
-      actions = actions.filter(a => {
-        if (!a.roles) return true; // no role restriction
-        return a.roles.some(r => userRoles.includes(r));
-      });
-    }
+    // Filter by SERVER-derived roles — query-string role hints are ignored (PF007)
+    const userRoles = getServerRoles(req);
+    actions = actions.filter(a => {
+      if (!a.roles) return true; // no role restriction
+      return a.roles.some(r => userRoles.includes(r));
+    });
 
     // Sort by order
     actions.sort((a, b) => {
@@ -320,7 +355,7 @@ router.get('/:machineKey/actions', async (req, res) => {
 });
 
 // ── GET /:machineKey/states — all state names from published workflow ────────
-router.get('/:machineKey/states', async (req, res) => {
+router.get('/:machineKey/states', requirePermission('jobs.view', 'fsm.viewer'), async (req, res) => {
   try {
     const companyId = req.companyFilter?.company_id;
     const { machineKey } = req.params;

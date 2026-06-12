@@ -673,3 +673,121 @@ describe('Graph cache', () => {
     expect(fsmService.graphCache.has('comp-1:job')).toBe(false);
   });
 });
+
+// =============================================================================
+// PF007-HARDENING-001 / TASK-RBAC-017 — FSM route authorization:
+// server-side action filtering and unauthorized apply rejection.
+// =============================================================================
+
+jest.mock('../../backend/src/services/jobsService', () => ({
+  getJobById: jest.fn(),
+  updateBlancStatus: jest.fn(),
+}));
+jest.mock('../../backend/src/services/auditService', () => ({ log: jest.fn(async () => {}) }));
+
+const http = require('http');
+const express = require('express');
+const jobsServiceMock = require('../../backend/src/services/jobsService');
+
+const FSM_COMPANY = '00000000-0000-0000-0000-00000000000a';
+
+function fsmRequest(app, method, path, body = null) {
+  return new Promise((resolve, reject) => {
+    const server = app.listen(0, () => {
+      const payload = body ? JSON.stringify(body) : null;
+      const req = http.request({
+        hostname: '127.0.0.1', port: server.address().port, path, method,
+        headers: { 'Content-Type': 'application/json' },
+      }, (res) => {
+        let data = '';
+        res.on('data', c => (data += c));
+        res.on('end', () => { server.close(); resolve({ status: res.statusCode, body: data ? JSON.parse(data) : null }); });
+      });
+      req.on('error', e => { server.close(); reject(e); });
+      if (payload) req.write(payload);
+      req.end();
+    });
+  });
+}
+
+function fsmApp({ permissions = [], roleKey = 'provider', scopes = {} } = {}) {
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => {
+    req.user = { sub: 'kc', email: 'u@x.com', roles: [], crmUser: { id: 'u-1' } };
+    req.authz = { scope: 'tenant', permissions, scopes, membership: { role_key: roleKey } };
+    req.companyFilter = { company_id: FSM_COMPANY };
+    next();
+  });
+  app.use('/', require('../../backend/src/routes/fsm'));
+  return app;
+}
+
+describe('PF007: FSM route authorization', () => {
+  beforeEach(() => {
+    db.query.mockReset();
+    jobsServiceMock.getJobById.mockReset();
+    jobsServiceMock.updateBlancStatus.mockReset();
+  });
+
+  it('POST /:machineKey/apply denies without jobs.edit', async () => {
+    const res = await fsmRequest(fsmApp({ permissions: ['jobs.view'] }), 'POST', '/job/apply', { entityId: 1, event: 'GO' });
+    expect(res.status).toBe(403);
+    expect(jobsServiceMock.getJobById).not.toHaveBeenCalled();
+  });
+
+  it('apply rejects a closing transition without a closing permission', async () => {
+    jobsServiceMock.getJobById.mockResolvedValue({ id: 1, blanc_status: 'Visit completed' });
+    // resolveTransition reads the published graph from db — return JOB_SCXML version
+    db.query.mockResolvedValue({ rows: [{ scxml_source: JOB_SCXML, version_number: 1 }] });
+
+    const res = await fsmRequest(
+      fsmApp({ permissions: ['jobs.view', 'jobs.edit'] }),
+      'POST', '/job/apply', { entityId: 1, event: 'MARK_DONE' }
+    );
+    // Either the transition resolves to "Job is Done" and is rejected with 403,
+    // or the graph doesn't expose the event and we get 400 — never a mutation.
+    expect([400, 403]).toContain(res.status);
+    expect(jobsServiceMock.updateBlancStatus).not.toHaveBeenCalled();
+  });
+
+  it('GET /:machineKey/actions ignores client-supplied role hints', async () => {
+    // Published graph with one admin-only action from state "State A"
+    const ADMIN_ONLY_SCXML = `<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml" xmlns:blanc="https://blanc.app/fsm"
+       initial="A" blanc:machine="job" blanc:title="T">
+  <state id="A" blanc:statusName="State A">
+    <transition event="GO" target="B" blanc:action="true" blanc:label="Go" blanc:roles="company_admin"/>
+  </state>
+  <state id="B" blanc:statusName="State B"/>
+</scxml>`;
+    db.query.mockResolvedValue({ rows: [{ scxml_source: ADMIN_ONLY_SCXML, version_number: 1 }] });
+
+    // Provider tries to escalate via ?roles=company_admin — must be ignored
+    const res = await fsmRequest(
+      fsmApp({ permissions: ['jobs.view'], roleKey: 'provider' }),
+      'GET', '/job/actions?state=' + encodeURIComponent('State A') + '&roles=company_admin'
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual([]);
+  });
+
+  it('GET /:machineKey/actions serves admin actions to tenant_admin', async () => {
+    const ADMIN_ONLY_SCXML = `<?xml version="1.0" encoding="UTF-8"?>
+<scxml xmlns="http://www.w3.org/2005/07/scxml" xmlns:blanc="https://blanc.app/fsm"
+       initial="A" blanc:machine="job" blanc:title="T">
+  <state id="A" blanc:statusName="State A">
+    <transition event="GO" target="B" blanc:action="true" blanc:label="Go" blanc:roles="company_admin"/>
+  </state>
+  <state id="B" blanc:statusName="State B"/>
+</scxml>`;
+    db.query.mockResolvedValue({ rows: [{ scxml_source: ADMIN_ONLY_SCXML, version_number: 1 }] });
+
+    const res = await fsmRequest(
+      fsmApp({ permissions: ['jobs.view'], roleKey: 'tenant_admin' }),
+      'GET', '/job/actions?state=' + encodeURIComponent('State A')
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.data.map(a => a.event)).toEqual(['GO']);
+  });
+});

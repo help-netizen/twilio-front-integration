@@ -4,46 +4,50 @@ import { useAuthz } from '../hooks/useAuthz';
 
 interface ProtectedRouteProps {
     children: ReactNode;
+    /** Legacy tenant role names (compatibility only — no super_admin bypass). */
     roles?: string[];
+    /** Canonical permission keys; access granted if the user has any of them. */
     permissions?: string[];
+    /** Platform roles for platform-only routes (e.g. super_admin). */
+    platformRoles?: string[];
 }
 
 /**
- * Wraps a route to check that the user has at least one of the required roles OR permissions.
- * If no roles/permissions specified, just checks that user is authenticated.
- * Shows "Access Denied" if the user lacks access.
+ * Permission-aware route guard (PF007-HARDENING-001).
+ *
+ * - permissions: checked against effective permissions from GET /api/auth/me
+ * - roles: legacy compatibility check; a legacy `super_admin` token role does
+ *   NOT grant tenant access anymore
+ * - platformRoles: for platform-only surfaces; accepts the resolved platform
+ *   role (with a legacy-token fallback during rollout)
+ *
+ * The backend stays authoritative — this guard only prevents loading hidden UI.
  */
-export function ProtectedRoute({ children, roles, permissions }: ProtectedRouteProps) {
+export function ProtectedRoute({ children, roles, permissions, platformRoles }: ProtectedRouteProps) {
     const { authenticated, hasRole } = useAuth();
-    const { hasAnyPermission } = useAuthz();
+    const { hasAnyPermission, hasPlatformRole } = useAuthz();
 
     if (!authenticated) {
         return null; // AuthProvider handles redirect
     }
 
-    let hasAccess = true;
+    const checks: boolean[] = [];
 
-    // Check legacy roles if provided
+    if (platformRoles && platformRoles.length > 0) {
+        // Rollout fallback: legacy realm super_admin still reaches the
+        // platform page; it grants no tenant capability anywhere else.
+        checks.push(hasPlatformRole(...platformRoles) || hasRole(...platformRoles));
+    }
     if (roles && roles.length > 0) {
-        hasAccess = hasRole(...roles);
+        checks.push(hasRole(...roles));
+    }
+    if (permissions && permissions.length > 0) {
+        checks.push(hasAnyPermission(...permissions));
     }
 
-    // Check new permissions if provided (combinative logic: if roles failed, check permissions)
-    if (!hasAccess && permissions && permissions.length > 0) {
-        hasAccess = hasAnyPermission(...permissions);
-    }
+    const hasAccess = checks.length === 0 ? true : checks.some(Boolean);
 
-    // Default: if permissions provided but roles not provided
-    if ((!roles || roles.length === 0) && permissions && permissions.length > 0) {
-        hasAccess = hasAnyPermission(...permissions);
-    }
-    
-    // Exception for super_admin on legacy roles check
-    if (roles && roles.length > 0 && hasRole('super_admin')) {
-         hasAccess = true;
-    }
-
-    if (!hasAccess && ((roles && roles.length > 0) || (permissions && permissions.length > 0))) {
+    if (!hasAccess) {
         return (
             <div style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -59,6 +63,7 @@ export function ProtectedRoute({ children, roles, permissions }: ProtectedRouteP
                         {roles && roles.length > 0 && <span>Required role: {roles.join(' or ')}</span>}
                         {roles && permissions && <br />}
                         {permissions && permissions.length > 0 && <span>Required permission: {permissions.join(' or ')}</span>}
+                        {platformRoles && platformRoles.length > 0 && <span>Platform role required: {platformRoles.join(' or ')}</span>}
                     </p>
                 </div>
             </div>

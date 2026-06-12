@@ -3,22 +3,44 @@ import { useNavigate } from 'react-router-dom';
 import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '../ui/dropdown-menu';
 import { Phone, PhoneIncoming, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase, Bell, CalendarDays, MapPin, Mail, FileCog } from 'lucide-react';
+import { useAuthz } from '../../hooks/useAuthz';
 
 interface AppNavProps { activeTab: string; pulseUnreadCount: number; hasRole: (r: string) => boolean; logout: () => void; }
 
+// Top-level workspaces, each backed by a canonical permission key (PF007).
+// Navigation is built from effective permissions — hidden UI is convenience,
+// the backend stays authoritative.
+const WORKSPACE_TABS = [
+    { key: 'pulse', label: 'Pulse', icon: Activity, path: '/pulse', permission: 'pulse.view' },
+    { key: 'leads', label: 'Leads', icon: Users, path: '/leads', permission: 'leads.view' },
+    { key: 'jobs', label: 'Jobs', icon: Briefcase, path: '/jobs', permission: 'jobs.view' },
+    { key: 'schedule', label: 'Schedule', icon: CalendarDays, path: '/schedule', permission: 'schedule.view' },
+    { key: 'contacts', label: 'Contacts', icon: Contact2, path: '/contacts', permission: 'contacts.view' },
+    { key: 'payments', label: 'Payments', icon: DollarSign, path: '/payments', permission: 'payments.view' },
+] as const;
+
+function useVisibleTabs() {
+    const { hasPermission } = useAuthz();
+    return WORKSPACE_TABS.filter(t => hasPermission(t.permission));
+}
+
 export const AppNavTabs: React.FC<AppNavProps> = ({ activeTab, pulseUnreadCount }) => {
     const navigate = useNavigate();
+    const tabs = useVisibleTabs();
     return (
         <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
             <h1 className="text-2xl font-semibold" style={{ margin: 0, color: '#202223' }}>Blanc</h1>
             <Tabs value={activeTab} className="w-auto hidden md:block">
                 <TabsList>
-                    <TabsTrigger value="pulse" className="flex items-center gap-2" onClick={() => navigate('/pulse')} style={{ position: 'relative' }}><Activity className="size-4" />Pulse{pulseUnreadCount > 0 && <span className="pulse-unread-badge" title={`${pulseUnreadCount} unread`}>{pulseUnreadCount > 9 ? '9+' : pulseUnreadCount}</span>}</TabsTrigger>
-                    <TabsTrigger value="leads" className="flex items-center gap-2" onClick={() => navigate('/leads')}><Users className="size-4" />Leads</TabsTrigger>
-                    <TabsTrigger value="jobs" className="flex items-center gap-2" onClick={() => navigate('/jobs')}><Briefcase className="size-4" />Jobs</TabsTrigger>
-                    <TabsTrigger value="schedule" className="flex items-center gap-2" onClick={() => navigate('/schedule')}><CalendarDays className="size-4" />Schedule</TabsTrigger>
-                    <TabsTrigger value="contacts" className="flex items-center gap-2" onClick={() => navigate('/contacts')}><Contact2 className="size-4" />Contacts</TabsTrigger>
-                    <TabsTrigger value="payments" className="flex items-center gap-2" onClick={() => navigate('/payments')}><DollarSign className="size-4" />Payments</TabsTrigger>
+                    {tabs.map(t => {
+                        const Icon = t.icon;
+                        return (
+                            <TabsTrigger key={t.key} value={t.key} className="flex items-center gap-2" onClick={() => navigate(t.path)} style={t.key === 'pulse' ? { position: 'relative' } : undefined}>
+                                <Icon className="size-4" />{t.label}
+                                {t.key === 'pulse' && pulseUnreadCount > 0 && <span className="pulse-unread-badge" title={`${pulseUnreadCount} unread`}>{pulseUnreadCount > 9 ? '9+' : pulseUnreadCount}</span>}
+                            </TabsTrigger>
+                        );
+                    })}
                 </TabsList>
             </Tabs>
         </div>
@@ -27,20 +49,12 @@ export const AppNavTabs: React.FC<AppNavProps> = ({ activeTab, pulseUnreadCount 
 
 // ─── Bottom Navigation Bar (mobile) ─────────────────────────────────────────
 
-const NAV_TABS = [
-    { key: 'pulse', label: 'Pulse', icon: Activity, path: '/pulse' },
-    { key: 'leads', label: 'Leads', icon: Users, path: '/leads' },
-    { key: 'jobs', label: 'Jobs', icon: Briefcase, path: '/jobs' },
-    { key: 'schedule', label: 'Schedule', icon: CalendarDays, path: '/schedule' },
-    { key: 'contacts', label: 'Contacts', icon: Contact2, path: '/contacts' },
-    { key: 'payments', label: 'Payments', icon: DollarSign, path: '/payments' },
-] as const;
-
 export const BottomNavBar: React.FC<{ activeTab: string; pulseUnreadCount: number }> = ({ activeTab, pulseUnreadCount }) => {
     const navigate = useNavigate();
+    const tabs = useVisibleTabs();
     return (
         <nav className="app-bottom-nav">
-            {NAV_TABS.map(t => {
+            {tabs.map(t => {
                 const Icon = t.icon;
                 return (
                     <button
@@ -65,25 +79,49 @@ export const BottomNavBar: React.FC<{ activeTab: string; pulseUnreadCount: numbe
     );
 };
 
-export const SettingsMenu: React.FC<{ activeTab: string; hasRole: (r: string) => boolean; logout: () => void }> = ({ activeTab, hasRole, logout }) => {
+// Settings menu entries with their backing permissions (PF007)
+const SETTINGS_ITEMS = [
+    { label: 'Integrations', icon: Key, path: '/settings/integrations', permission: 'tenant.integrations.manage' },
+    { label: 'Lead & Job', icon: FileText, path: '/settings/lead-form', permission: 'tenant.company.manage' },
+    { label: 'Quick Messages', icon: MessageSquareText, path: '/settings/quick-messages', permission: 'tenant.company.manage' },
+    { label: 'API Docs', icon: BookOpen, path: '/settings/api-docs', permission: 'tenant.integrations.manage' },
+    { label: 'Users', icon: Users, path: '/settings/users', permission: 'tenant.users.manage' },
+    { label: 'Providers', icon: Wrench, path: '/settings/providers', permission: 'tenant.company.manage' },
+    { label: 'Telephony', icon: PhoneIncoming, path: '/settings/telephony', permission: 'tenant.telephony.manage' },
+    { label: 'Phone Calls', icon: Phone, path: '/settings/phone-calls', permission: 'tenant.telephony.manage' },
+    { label: 'Actions & Notifications', icon: Bell, path: '/settings/actions-notifications', permission: 'tenant.company.manage' },
+    { label: 'Service Territories', icon: MapPin, path: '/settings/service-territories', permission: 'tenant.company.manage' },
+    { label: 'Email', icon: Mail, path: '/settings/email', permission: 'tenant.integrations.manage' },
+    { label: 'Document Templates', icon: FileCog, path: '/settings/document-templates', permission: 'tenant.integrations.manage' },
+] as const;
+
+export const SettingsMenu: React.FC<{ activeTab: string; hasRole: (r: string) => boolean; logout: () => void }> = ({ activeTab, logout }) => {
     const navigate = useNavigate();
+    const { hasPermission, hasPlatformRole } = useAuthz();
+    const items = SETTINGS_ITEMS.filter(i => hasPermission(i.permission));
+    // Platform admin entry is platform-role based, never a tenant capability
+    const isPlatformAdmin = hasPlatformRole('super_admin');
+
+    if (items.length === 0 && !isPlatformAdmin) {
+        return (
+            <button className="user-menu" style={{ cursor: 'pointer' }} onClick={logout}>
+                <LogOut className="size-4" style={{ display: 'inline', verticalAlign: 'middle', marginRight: '4px' }} />
+                <span className="hidden md:inline">Log Out</span>
+            </button>
+        );
+    }
+
     return (
         <DropdownMenu>
             <DropdownMenuTrigger asChild><button className="user-menu" style={{ cursor: 'pointer', fontWeight: activeTab === 'settings' ? 600 : 400 }}><Settings className="size-4" style={{ display: 'inline', verticalAlign: 'middle', marginRight: '4px' }} /><span className="hidden md:inline">Settings</span></button></DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
-                <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/integrations')}><Key className="size-4" />Integrations</DropdownMenuItem>
-                <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/lead-form')}><FileText className="size-4" />Lead & Job</DropdownMenuItem>
-                <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/quick-messages')}><MessageSquareText className="size-4" />Quick Messages</DropdownMenuItem>
-                <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/api-docs')}><BookOpen className="size-4" />API Docs</DropdownMenuItem>
-                <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/users')}><Users className="size-4" />Users</DropdownMenuItem>
-                <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/providers')}><Wrench className="size-4" />Providers</DropdownMenuItem>
-                <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/telephony')}><PhoneIncoming className="size-4" />Telephony</DropdownMenuItem>
-                <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/phone-calls')}><Phone className="size-4" />Phone Calls</DropdownMenuItem>
-                <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/actions-notifications')}><Bell className="size-4" />Actions &amp; Notifications</DropdownMenuItem>
-                <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/service-territories')}><MapPin className="size-4" />Service Territories</DropdownMenuItem>
-                <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/email')}><Mail className="size-4" />Email</DropdownMenuItem>
-                <DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/document-templates')}><FileCog className="size-4" />Document Templates</DropdownMenuItem>
-                {hasRole('super_admin') && <><DropdownMenuSeparator /><DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/admin')}><Shield className="size-4" />Super Admin</DropdownMenuItem></>}
+                {items.map(i => {
+                    const Icon = i.icon;
+                    return (
+                        <DropdownMenuItem key={i.path} className="flex items-center gap-2 cursor-pointer" onClick={() => navigate(i.path)}><Icon className="size-4" />{i.label}</DropdownMenuItem>
+                    );
+                })}
+                {isPlatformAdmin && <><DropdownMenuSeparator /><DropdownMenuItem className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/settings/admin')}><Shield className="size-4" />Super Admin</DropdownMenuItem></>}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem className="flex items-center gap-2 cursor-pointer text-red-600" onClick={logout}><LogOut className="size-4" />Log Out</DropdownMenuItem>
             </DropdownMenuContent>

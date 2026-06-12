@@ -38,11 +38,19 @@ async function getScheduleItems(opts) {
         search,
         limit = 200,
         offset = 0,
+        providerScope = null,
     } = opts;
+
+    // assigned_only provider scope (PF007-HARDENING-001):
+    //  - jobs: only rows whose internal assignee mirror contains the user
+    //  - tasks: only rows assigned to the user
+    //  - leads: excluded entirely
+    const assignedOnly = !!providerScope?.assignedOnly;
+    const scopeUserId = providerScope?.userId || null;
 
     // Build each sub-query independently so we can skip entire UNION branches
     const wantJob  = !entityTypes || entityTypes.includes('job');
-    const wantLead = !entityTypes || entityTypes.includes('lead');
+    const wantLead = (!entityTypes || entityTypes.includes('lead')) && !assignedOnly;
     const wantTask = !entityTypes || entityTypes.includes('task');
 
     const unions = [];
@@ -53,6 +61,14 @@ async function getScheduleItems(opts) {
     if (wantJob) {
         const jobConds = [`j.company_id = $1`, `LOWER(j.blanc_status) NOT IN ('cancelled', 'canceled')`];
 
+        if (assignedOnly) {
+            if (scopeUserId) {
+                idx++; jobConds.push(`j.assigned_provider_user_ids @> $${idx}::jsonb`);
+                params.push(JSON.stringify([scopeUserId]));
+            } else {
+                jobConds.push('FALSE');
+            }
+        }
         if (startDate) {
             idx++; jobConds.push(`j.start_date >= $${idx}::date`); params.push(startDate);
         }
@@ -150,6 +166,14 @@ async function getScheduleItems(opts) {
     if (wantTask) {
         const taskConds = [`t.company_id = $1`, `t.show_on_schedule = true`, `t.status = 'open'`];
 
+        if (assignedOnly) {
+            if (scopeUserId) {
+                idx++; taskConds.push(`t.assigned_provider_id = $${idx}`);
+                params.push(scopeUserId);
+            } else {
+                taskConds.push('FALSE');
+            }
+        }
         if (startDate) {
             idx++; taskConds.push(`t.start_at >= $${idx}::date`); params.push(startDate);
         }

@@ -335,7 +335,7 @@ async function handleMessageAdded(payload) {
     // Mark contact unread for inbound SMS (if contact exists — do NOT create)
     if (isInbound && conv.customer_e164) {
         try {
-            const contact = await queries.findContactByPhoneOrSecondary(conv.customer_e164);
+            const contact = await queries.findContactByPhoneOrSecondary(conv.customer_e164, conv.company_id);
             if (contact) {
                 await queries.markContactUnread(contact.id, new Date(payload.DateCreated || Date.now()));
             }
@@ -361,7 +361,7 @@ async function handleMessageAdded(payload) {
                     // Create task if configured
                     if (triggerCfg.create_task) {
                         const contactName = await (async () => {
-                            const c = await queries.findContactByPhoneOrSecondary(conv.customer_e164);
+                            const c = await queries.findContactByPhoneOrSecondary(conv.customer_e164, conv.company_id);
                             return c?.full_name || conv.customer_e164;
                         })();
                         const slaMs = (triggerCfg.task_sla_minutes || 10) * 60 * 1000;
@@ -397,7 +397,7 @@ async function handleMessageAdded(payload) {
         try {
             const { sendPushToCompany } = require('./pushService');
             const senderName = await (async () => {
-                const c = await queries.findContactByPhoneOrSecondary(conv.customer_e164);
+                const c = await queries.findContactByPhoneOrSecondary(conv.customer_e164, conv.company_id);
                 return c?.full_name || conv.customer_e164 || 'Unknown';
             })();
             const timeline = await queries.findOrCreateTimeline(conv.customer_e164, conv.company_id);

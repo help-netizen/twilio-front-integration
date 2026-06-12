@@ -1519,7 +1519,7 @@ TASK-021 + TASK-017 ──► TASK-030 (component tests) │
 
 ### TASK-RBAC-004: Jobs API — enforce `assigned_only` provider visibility
 **Phase:** 2
-**Status:** pending
+**Status:** done (2026-06-12)
 **Dependencies:** TASK-RBAC-003
 **Files to modify:**
 - `backend/src/routes/jobs.js` — enforce visibility checks on list/detail/history/notes surfaces
@@ -1538,7 +1538,7 @@ TASK-021 + TASK-017 ──► TASK-030 (component tests) │
 
 ### TASK-RBAC-005: Schedule read model — provider sees only own work
 **Phase:** 2
-**Status:** pending
+**Status:** done (2026-06-12)
 **Dependencies:** TASK-RBAC-003
 **Files to modify:**
 - `backend/src/db/scheduleQueries.js` — filter `job` and `task` rows by current assignee for provider scope
@@ -1558,7 +1558,7 @@ TASK-021 + TASK-017 ──► TASK-030 (component tests) │
 
 ### TASK-RBAC-006: Contacts API — tenant-safe queries and provider client scope
 **Phase:** 2
-**Status:** pending
+**Status:** done (2026-06-12)
 **Dependencies:** TASK-RBAC-004
 **Files to modify:**
 - `backend/src/routes/contacts.js` — require tenant-safe list/detail/update flows
@@ -1578,7 +1578,7 @@ TASK-021 + TASK-017 ──► TASK-030 (component tests) │
 
 ### TASK-RBAC-007: Pulse timeline access — own clients only
 **Phase:** 2
-**Status:** pending
+**Status:** done (2026-06-12)
 **Dependencies:** TASK-RBAC-004, TASK-RBAC-006
 **Files to modify:**
 - `backend/src/routes/pulse.js` — enforce tenant-safe timeline/contact lookup and provider client scope
@@ -1600,7 +1600,7 @@ TASK-021 + TASK-017 ──► TASK-030 (component tests) │
 
 ### TASK-RBAC-008: Route permissions — Jobs and Schedule
 **Phase:** 3
-**Status:** pending
+**Status:** done (2026-06-12)
 **Dependencies:** TASK-RBAC-004, TASK-RBAC-005
 **Files to modify:**
 - `backend/src/routes/jobs.js` — add granular permission guards per read/write action
@@ -1619,7 +1619,7 @@ TASK-021 + TASK-017 ──► TASK-030 (component tests) │
 
 ### TASK-RBAC-009: Route permissions — Contacts and Pulse
 **Phase:** 3
-**Status:** pending
+**Status:** done (2026-06-12)
 **Dependencies:** TASK-RBAC-006, TASK-RBAC-007
 **Files to modify:**
 - `backend/src/routes/contacts.js` — require `contacts.view` / `contacts.edit`
@@ -1637,7 +1637,7 @@ TASK-021 + TASK-017 ──► TASK-030 (component tests) │
 
 ### TASK-RBAC-010: Finance routes — tenant context fix and granular permission checks
 **Phase:** 3
-**Status:** pending
+**Status:** done (2026-06-12)
 **Dependencies:** none
 **Files to modify:**
 - `backend/src/routes/estimates.js` — replace `req.companyId` and add per-action permission guards
@@ -1657,7 +1657,7 @@ TASK-021 + TASK-017 ──► TASK-030 (component tests) │
 
 ### TASK-RBAC-011: FSM backend — server-side action filtering and apply authorization
 **Phase:** 3
-**Status:** pending
+**Status:** done (2026-06-12)
 **Dependencies:** none
 **Files to modify:**
 - `backend/src/routes/fsm.js` — stop trusting client-supplied `roles`, enforce server authz on `/actions` and `/apply`
@@ -1674,7 +1674,7 @@ TASK-021 + TASK-017 ──► TASK-030 (component tests) │
 
 ### TASK-RBAC-012: Tenant access middleware cleanup — remove remaining platform bypass assumptions
 **Phase:** 3
-**Status:** pending
+**Status:** done (2026-06-12)
 **Dependencies:** none
 **Files to modify:**
 - `backend/src/middleware/keycloakAuth.js` — stop leaking legacy `is_super_admin` assumptions into tenant access
@@ -1695,7 +1695,7 @@ TASK-021 + TASK-017 ──► TASK-030 (component tests) │
 
 ### TASK-RBAC-013: Navigation and route alignment by permissions
 **Phase:** 4
-**Status:** pending
+**Status:** done (2026-06-12)
 **Dependencies:** TASK-RBAC-008, TASK-RBAC-009, TASK-RBAC-012
 **Files to modify:**
 - `frontend/src/components/layout/appLayoutNavigation.tsx` — build top nav and settings menu from effective permissions
@@ -1715,7 +1715,7 @@ TASK-021 + TASK-017 ──► TASK-030 (component tests) │
 
 ### TASK-RBAC-014: Jobs UI — stop loading forbidden finance and admin data
 **Phase:** 4
-**Status:** pending
+**Status:** done (2026-06-12)
 **Dependencies:** TASK-RBAC-008, TASK-RBAC-010, TASK-RBAC-013
 **Files to modify:**
 - `frontend/src/hooks/useJobsData.ts` — gate tag/settings preloads by permission
@@ -1734,7 +1734,7 @@ TASK-021 + TASK-017 ──► TASK-030 (component tests) │
 
 ### TASK-RBAC-015: Schedule UI — provider-safe loading and controls
 **Phase:** 4
-**Status:** pending
+**Status:** done (2026-06-12)
 **Dependencies:** TASK-RBAC-005, TASK-RBAC-013
 **Files to modify:**
 - `frontend/src/hooks/useScheduleData.ts` — gate provider roster and dispatch settings fetches by permission
@@ -1755,7 +1755,7 @@ TASK-021 + TASK-017 ──► TASK-030 (component tests) │
 
 ### TASK-RBAC-016: Backend automated tests — provider scope and tenant isolation
 **Phase:** 5
-**Status:** pending
+**Status:** done (2026-06-12)
 **Dependencies:** TASK-RBAC-004, TASK-RBAC-005, TASK-RBAC-006, TASK-RBAC-007, TASK-RBAC-008, TASK-RBAC-009
 **Files to modify:**
 - `tests/jobsProviderScope.test.js` — **NEW**
@@ -1774,7 +1774,7 @@ TASK-021 + TASK-017 ──► TASK-030 (component tests) │
 
 ### TASK-RBAC-017: Regression verification — finance, FSM, and frontend gating
 **Phase:** 5
-**Status:** pending
+**Status:** done (2026-06-12)
 **Dependencies:** TASK-RBAC-010, TASK-RBAC-011, TASK-RBAC-013, TASK-RBAC-014, TASK-RBAC-015
 **Files to modify:**
 - `tests/paymentsRoute.test.js` — extend for tenant context and finance permission denials

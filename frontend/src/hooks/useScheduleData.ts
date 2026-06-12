@@ -9,6 +9,7 @@ import {
     addDays, addWeeks, addMonths, subDays, subWeeks, subMonths,
     format,
 } from 'date-fns';
+import { useAuthz } from './useAuthz';
 import {
     fetchScheduleItems, fetchDispatchSettings, updateDispatchSettings,
     rescheduleItem, reassignItem, createFromSlot,
@@ -124,18 +125,27 @@ export function useScheduleData() {
     useEffect(() => { loadItems(); }, [loadItems]);
 
     // ── Fetch settings (once) ────────────────────────────────────────────────
+    // Dispatch settings and the full provider roster are dispatch-only data:
+    // providers without schedule.dispatch never request them (PF007).
+    const { hasPermission } = useAuthz();
+    const canDispatch = hasPermission('schedule.dispatch');
 
     useEffect(() => {
+        if (!canDispatch) {
+            setSettings(DEFAULT_SETTINGS);
+            return;
+        }
         fetchDispatchSettings()
             .then(setSettings)
             .catch(() => setSettings(DEFAULT_SETTINGS));
-    }, []);
+    }, [canDispatch]);
 
     // ── Fetch providers (once) ────────────────────────────────────────────────
 
     const [providers, setProviders] = useState<ProviderInfo[]>([]);
 
     useEffect(() => {
+        if (!canDispatch) return;
         authedFetch('/api/zenbooker/team-members')
             .then(r => r.json())
             .then(j => {
@@ -143,7 +153,7 @@ export function useScheduleData() {
                 setProviders(list.map((p: any) => ({ id: String(p.id), name: p.name || '' })));
             })
             .catch(() => setProviders([]));
-    }, []);
+    }, [canDispatch]);
 
     // ── SSE Realtime refresh (debounced) ─────────────────────────────────────
 
@@ -324,6 +334,7 @@ export function useScheduleData() {
         allTags,
         settings: effectiveSettings,
         providers,
+        canDispatch,
         loading,
         error,
         currentDate,

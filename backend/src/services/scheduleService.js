@@ -53,11 +53,14 @@ function rowToScheduleItem(row) {
 
 /**
  * List schedule items with filters.
+ * providerScope ({assignedOnly, userId}) restricts visibility for
+ * assigned_only providers: own jobs, own tasks, no leads (PF007).
  */
-async function getScheduleItems(companyId, filters = {}) {
+async function getScheduleItems(companyId, filters = {}, providerScope = null) {
     const result = await scheduleQueries.getScheduleItems({
         companyId,
         ...filters,
+        providerScope,
     });
     return {
         items: result.rows.map(rowToScheduleItem),
@@ -66,9 +69,30 @@ async function getScheduleItems(companyId, filters = {}) {
 }
 
 /**
+ * Check whether a fetched row is visible under the provider scope.
+ * Non-visible entities are indistinguishable from missing ones (404).
+ */
+function isRowVisibleToProvider(entityType, row, providerScope) {
+    if (!providerScope?.assignedOnly) return true;
+    if (!providerScope.userId) return false;
+    switch (entityType) {
+        case 'job': {
+            const mirror = Array.isArray(row.assigned_provider_user_ids) ? row.assigned_provider_user_ids : [];
+            return mirror.includes(providerScope.userId);
+        }
+        case 'task':
+            return String(row.assigned_provider_id || '') === providerScope.userId;
+        case 'lead':
+            return false; // providers never see leads in the schedule
+        default:
+            return false;
+    }
+}
+
+/**
  * Get full detail for a single schedule entity.
  */
-async function getScheduleItemDetail(companyId, entityType, entityId) {
+async function getScheduleItemDetail(companyId, entityType, entityId, providerScope = null) {
     let row;
     switch (entityType) {
         case 'job':
@@ -84,7 +108,7 @@ async function getScheduleItemDetail(companyId, entityType, entityId) {
             throw new ScheduleServiceError('INVALID_ENTITY_TYPE', `Unknown entity type: ${entityType}`, 400);
     }
 
-    if (!row) {
+    if (!row || !isRowVisibleToProvider(entityType, row, providerScope)) {
         throw new ScheduleServiceError('NOT_FOUND', `${entityType} ${entityId} not found`, 404);
     }
 

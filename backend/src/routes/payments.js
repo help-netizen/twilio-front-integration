@@ -7,15 +7,16 @@
 const express = require('express');
 const router = express.Router();
 const paymentsService = require('../services/paymentsService');
+const { requirePermission } = require('../middleware/authorization');
 
 // =============================================================================
 // Payment transactions
 // =============================================================================
 
 // GET /api/payments — List payment transactions
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('payments.view'), async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = req.companyFilter?.company_id;
         const {
             status,
             transaction_type,
@@ -55,9 +56,9 @@ router.get('/', async (req, res) => {
 });
 
 // POST /api/payments — Create payment transaction
-router.post('/', async (req, res) => {
+router.post('/', requirePermission('payments.collect_online'), async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = req.companyFilter?.company_id;
         const userId = req.user?.sub || req.userId;
         const data = req.body;
 
@@ -71,9 +72,9 @@ router.post('/', async (req, res) => {
 });
 
 // GET /api/payments/summary — Aggregate summary (BEFORE /:id to avoid conflict)
-router.get('/summary', async (req, res) => {
+router.get('/summary', requirePermission('payments.view'), async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = req.companyFilter?.company_id;
         const { start_date, end_date } = req.query;
 
         const filters = {};
@@ -90,9 +91,9 @@ router.get('/summary', async (req, res) => {
 });
 
 // POST /api/payments/manual — Record manual/offline payment (BEFORE /:id routes)
-router.post('/manual', async (req, res) => {
+router.post('/manual', requirePermission('payments.collect_offline'), async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = req.companyFilter?.company_id;
         const userId = req.user?.sub || req.userId;
         const data = req.body;
 
@@ -106,9 +107,9 @@ router.post('/manual', async (req, res) => {
 });
 
 // GET /api/payments/:id — Get payment transaction by ID
-router.get('/:id', async (req, res) => {
+router.get('/:id', requirePermission('payments.view'), async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = req.companyFilter?.company_id;
         const { id } = req.params;
 
         const result = await paymentsService.getTransaction(companyId, id);
@@ -125,9 +126,9 @@ router.get('/:id', async (req, res) => {
 // =============================================================================
 
 // POST /api/payments/:id/refund — Initiate refund
-router.post('/:id/refund', async (req, res) => {
+router.post('/:id/refund', requirePermission('payments.refund'), async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = req.companyFilter?.company_id;
         const userId = req.user?.sub || req.userId;
         const { id } = req.params;
         const { amount, reason } = req.body;
@@ -142,9 +143,9 @@ router.post('/:id/refund', async (req, res) => {
 });
 
 // POST /api/payments/:id/void — Void payment
-router.post('/:id/void', async (req, res) => {
+router.post('/:id/void', requirePermission('payments.refund'), async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = req.companyFilter?.company_id;
         const userId = req.user?.sub || req.userId;
         const { id } = req.params;
 
@@ -162,9 +163,9 @@ router.post('/:id/void', async (req, res) => {
 // =============================================================================
 
 // GET /api/payments/:id/receipt — Get receipt
-router.get('/:id/receipt', async (req, res) => {
+router.get('/:id/receipt', requirePermission('payments.view'), async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = req.companyFilter?.company_id;
         const { id } = req.params;
 
         const result = await paymentsService.getReceipt(companyId, id);
@@ -177,9 +178,9 @@ router.get('/:id/receipt', async (req, res) => {
 });
 
 // POST /api/payments/:id/receipt/send — Send receipt to client
-router.post('/:id/receipt/send', async (req, res) => {
+router.post('/:id/receipt/send', requirePermission('payments.collect_online', 'payments.collect_offline'), async (req, res) => {
     try {
-        const companyId = req.companyId;
+        const companyId = req.companyFilter?.company_id;
         const userId = req.user?.sub || req.userId;
         const { id } = req.params;
         const { channel, recipient } = req.body;
