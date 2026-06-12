@@ -5,6 +5,25 @@
  */
 const express = require('express');
 const router = express.Router();
+const { requirePermission } = require('../middleware/authorization');
+const { getProviderScope } = require('../middleware/providerScope');
+
+// Tenant + provider visibility for a conversation by id → null contract = 404
+async function loadVisibleConversation(req) {
+    const companyId = req.companyFilter?.company_id;
+    const conv = await convQueries.getConversationById(req.params.id, companyId);
+    if (!conv) return null;
+    const scope = getProviderScope(req);
+    if (scope.assignedOnly) {
+        const ok = await convQueries.isConversationVisibleToProvider(conv.id, companyId, scope.userId);
+        if (!ok) return null;
+    }
+    return conv;
+}
+
+// PF007-HARDENING-002: client SMS threads need message visibility; sending
+// needs messages.send.
+const msgRead = requirePermission('messages.view_client', 'messages.view_internal', 'pulse.view');
 const multer = require('multer');
 const convQueries = require('../db/conversationsQueries');
 const conversationsService = require('../services/conversationsService');
@@ -13,7 +32,7 @@ const conversationsService = require('../services/conversationsService');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 // GET /api/messaging — list conversations
-router.get('/', async (req, res) => {
+router.get('/', msgRead, async (req, res) => {
     try {
         const { limit = 30, cursor, state } = req.query;
         const conversations = await convQueries.getConversations({
@@ -33,9 +52,9 @@ router.get('/', async (req, res) => {
 });
 
 // GET /api/messaging/:id — single conversation
-router.get('/:id', async (req, res) => {
+router.get('/:id', msgRead, async (req, res) => {
     try {
-        const conv = await convQueries.getConversationById(req.params.id);
+        const conv = await loadVisibleConversation(req);
         if (!conv) return res.status(404).json({ error: 'Conversation not found' });
         res.json({ conversation: conv });
     } catch (err) {
@@ -45,8 +64,10 @@ router.get('/:id', async (req, res) => {
 });
 
 // GET /api/messaging/:id/messages — messages in a conversation
-router.get('/:id/messages', async (req, res) => {
+router.get('/:id/messages', msgRead, async (req, res) => {
     try {
+        const conv = await loadVisibleConversation(req);
+        if (!conv) return res.status(404).json({ error: 'Conversation not found' });
         const { limit = 50, cursor } = req.query;
         const messages = await convQueries.getMessages(req.params.id, {
             limit: parseInt(limit),
@@ -60,8 +81,10 @@ router.get('/:id/messages', async (req, res) => {
 });
 
 // POST /api/messaging/:id/messages — send a message (supports file attachment)
-router.post('/:id/messages', upload.single('file'), async (req, res) => {
+router.post('/:id/messages', requirePermission('messages.send'), upload.single('file'), async (req, res) => {
     try {
+        const conv = await loadVisibleConversation(req);
+        if (!conv) return res.status(404).json({ error: 'Conversation not found' });
         const body = req.body.body || '';
         const file = req.file;
         if (!body && !file) {
@@ -100,8 +123,10 @@ router.post('/:id/messages', upload.single('file'), async (req, res) => {
 });
 
 // POST /api/messaging/:id/mark-read — mark conversation as read
-router.post('/:id/mark-read', async (req, res) => {
+router.post('/:id/mark-read', msgRead, async (req, res) => {
     try {
+        const owned = await loadVisibleConversation(req);
+        if (!owned) return res.status(404).json({ error: 'Conversation not found' });
         const conv = await convQueries.markConversationRead(req.params.id);
         if (!conv) return res.status(404).json({ error: 'Conversation not found' });
         // SSE push updated conversation
@@ -115,8 +140,10 @@ router.post('/:id/mark-read', async (req, res) => {
 });
 
 // POST /api/messaging/:id/mark-unread — mark conversation as unread
-router.post('/:id/mark-unread', async (req, res) => {
+router.post('/:id/mark-unread', msgRead, async (req, res) => {
     try {
+        const owned = await loadVisibleConversation(req);
+        if (!owned) return res.status(404).json({ error: 'Conversation not found' });
         const conv = await convQueries.markConversationUnread(req.params.id);
         if (!conv) return res.status(404).json({ error: 'Conversation not found' });
         const realtimeService = require('../services/realtimeService');
@@ -129,7 +156,7 @@ router.post('/:id/mark-unread', async (req, res) => {
 });
 
 // POST /api/messaging/start — start new conversation
-router.post('/start', async (req, res) => {
+router.post('/start', requirePermission('messages.send'), async (req, res) => {
     try {
         const { customerE164, proxyE164, initialMessage } = req.body;
         if (!customerE164 || !proxyE164) {

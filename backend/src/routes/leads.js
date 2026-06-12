@@ -10,6 +10,7 @@
 const express = require('express');
 const multer = require('multer');
 const router = express.Router();
+const { requirePermission } = require('../middleware/authorization');
 const leadsService = require('../services/leadsService');
 const noteAttachmentsService = require('../services/noteAttachmentsService');
 const db = require('../db/connection');
@@ -56,7 +57,7 @@ function errorResponse(code, message, reqId, details = null) {
 // =============================================================================
 // GET /api/leads — List leads
 // =============================================================================
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('leads.view'), async (req, res) => {
     const reqId = requestId();
     try {
         const { start_date, end_date, offset, records, only_open, status } = req.query;
@@ -98,7 +99,7 @@ router.get('/', async (req, res) => {
 // =============================================================================
 // GET /api/leads/by-phone/:phone — Find newest lead by phone number
 // =============================================================================
-router.get('/by-phone/:phone', async (req, res) => {
+router.get('/by-phone/:phone', requirePermission('leads.view', 'pulse.view'), async (req, res) => {
     const reqId = requestId();
     try {
         const { phone } = req.params;
@@ -116,7 +117,7 @@ router.get('/by-phone/:phone', async (req, res) => {
 // =============================================================================
 // POST /api/leads/by-phones — Batch lookup leads by phone numbers
 // =============================================================================
-router.post('/by-phones', async (req, res) => {
+router.post('/by-phones', requirePermission('leads.view', 'pulse.view'), async (req, res) => {
     const reqId = requestId();
     try {
         const { phones } = req.body;
@@ -137,7 +138,7 @@ router.post('/by-phones', async (req, res) => {
 // =============================================================================
 // GET /api/leads/by-id/:id — Get lead by numeric ID
 // =============================================================================
-router.get('/by-id/:id', async (req, res) => {
+router.get('/by-id/:id', requirePermission('leads.view'), async (req, res) => {
     const reqId = requestId();
     try {
         const id = Number(req.params.id);
@@ -155,7 +156,7 @@ router.get('/by-id/:id', async (req, res) => {
 // =============================================================================
 // GET /api/leads/:uuid — Get lead details
 // =============================================================================
-router.get('/:uuid', async (req, res) => {
+router.get('/:uuid', requirePermission('leads.view'), async (req, res) => {
     const reqId = requestId();
     try {
         const { uuid } = req.params;
@@ -173,7 +174,7 @@ router.get('/:uuid', async (req, res) => {
 // =============================================================================
 // POST /api/leads — Create lead (with contact resolution)
 // =============================================================================
-router.post('/', async (req, res) => {
+router.post('/', requirePermission('leads.create'), async (req, res) => {
     const reqId = requestId();
     try {
         const body = req.body;
@@ -453,7 +454,7 @@ router.post('/', async (req, res) => {
 // =============================================================================
 // PATCH /api/leads/:uuid — Update lead
 // =============================================================================
-router.patch('/:uuid', async (req, res) => {
+router.patch('/:uuid', requirePermission('leads.edit'), async (req, res) => {
     const reqId = requestId();
     try {
         const { uuid } = req.params;
@@ -614,7 +615,7 @@ router.patch('/:uuid', async (req, res) => {
 // =============================================================================
 // POST /api/leads/:uuid/mark-lost
 // =============================================================================
-router.post('/:uuid/mark-lost', async (req, res) => {
+router.post('/:uuid/mark-lost', requirePermission('leads.edit'), async (req, res) => {
     const reqId = requestId();
     try {
         const result = await leadsService.markLost(req.params.uuid, req.companyFilter?.company_id);
@@ -629,7 +630,7 @@ router.post('/:uuid/mark-lost', async (req, res) => {
 // =============================================================================
 // POST /api/leads/:uuid/activate
 // =============================================================================
-router.post('/:uuid/activate', async (req, res) => {
+router.post('/:uuid/activate', requirePermission('leads.edit'), async (req, res) => {
     const reqId = requestId();
     try {
         const result = await leadsService.activateLead(req.params.uuid, req.companyFilter?.company_id);
@@ -644,7 +645,7 @@ router.post('/:uuid/activate', async (req, res) => {
 // =============================================================================
 // POST /api/leads/:uuid/assign
 // =============================================================================
-router.post('/:uuid/assign', async (req, res) => {
+router.post('/:uuid/assign', requirePermission('leads.edit'), async (req, res) => {
     const reqId = requestId();
     try {
         const { User } = req.body;
@@ -663,7 +664,7 @@ router.post('/:uuid/assign', async (req, res) => {
 // =============================================================================
 // POST /api/leads/:uuid/unassign
 // =============================================================================
-router.post('/:uuid/unassign', async (req, res) => {
+router.post('/:uuid/unassign', requirePermission('leads.edit'), async (req, res) => {
     const reqId = requestId();
     try {
         const { User } = req.body;
@@ -682,7 +683,7 @@ router.post('/:uuid/unassign', async (req, res) => {
 // =============================================================================
 // POST /api/leads/:uuid/convert
 // =============================================================================
-router.post('/:uuid/convert', async (req, res) => {
+router.post('/:uuid/convert', requirePermission('leads.convert'), async (req, res) => {
     const reqId = requestId();
     try {
         const result = await leadsService.convertLead(req.params.uuid, req.body || {}, req.companyFilter?.company_id);
@@ -710,7 +711,7 @@ function handleError(err, reqId, res) {
 // Structured Notes (with file attachments)
 // =============================================================================
 
-router.get('/:uuid/history', async (req, res) => {
+router.get('/:uuid/history', requirePermission('leads.view'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
         const lead = await leadsService.getLeadByUUID(req.params.uuid, companyId);
@@ -724,7 +725,7 @@ router.get('/:uuid/history', async (req, res) => {
     }
 });
 
-router.get('/:uuid/notes', async (req, res) => {
+router.get('/:uuid/notes', requirePermission('leads.view'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
         const lead = await leadsService.getLeadByUUID(req.params.uuid, companyId);
@@ -752,7 +753,7 @@ router.get('/:uuid/notes', async (req, res) => {
     }
 });
 
-router.post('/:uuid/notes', upload.array('attachments', noteAttachmentsService.MAX_FILES_PER_NOTE), async (req, res) => {
+router.post('/:uuid/notes', requirePermission('leads.edit'), upload.array('attachments', noteAttachmentsService.MAX_FILES_PER_NOTE), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
         const userId = req.user?.sub || null;

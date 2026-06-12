@@ -52,9 +52,39 @@ async function getConversations({ limit = 30, cursor, state, company_id } = {}) 
     return result.rows;
 }
 
-async function getConversationById(id) {
+async function getConversationById(id, companyId = null) {
+    // Tenant scope (PF007-HARDENING-002): foreign conversations read as missing
+    if (companyId) {
+        const r = await db.query('SELECT * FROM sms_conversations WHERE id = $1 AND company_id = $2', [id, companyId]);
+        return r.rows[0] || null;
+    }
     const result = await db.query('SELECT * FROM sms_conversations WHERE id = $1', [id]);
     return result.rows[0] || null;
+}
+
+/**
+ * Is this conversation visible to an assigned_only provider?
+ * Only when its customer phone maps to a contact reachable from the provider's
+ * visible assigned jobs.
+ */
+async function isConversationVisibleToProvider(conversationId, companyId, userId) {
+    if (!companyId || !userId) return false;
+    const r = await db.query(
+        `SELECT 1
+         FROM sms_conversations sc
+         JOIN contacts c
+           ON c.company_id = sc.company_id
+          AND regexp_replace(c.phone_e164, '\\D', '', 'g') = regexp_replace(sc.customer_e164, '\\D', '', 'g')
+         WHERE sc.id = $1 AND sc.company_id = $2
+           AND EXISTS (
+             SELECT 1 FROM jobs pj
+             WHERE pj.contact_id = c.id AND pj.company_id = sc.company_id
+               AND pj.assigned_provider_user_ids @> $3::jsonb
+           )
+         LIMIT 1`,
+        [conversationId, companyId, JSON.stringify([userId])]
+    );
+    return r.rows.length > 0;
 }
 
 async function getConversationBySid(sid) {
@@ -222,7 +252,7 @@ async function markEventProcessed(eventId, error = null) {
 }
 
 module.exports = {
-    upsertConversation, getConversations, getConversationById, getConversationBySid,
+    upsertConversation, getConversations, getConversationById, isConversationVisibleToProvider, getConversationBySid,
     findActiveConversation, updateConversationPreview, updateConversationState, markConversationRead, markConversationUnread,
     upsertMessage, getMessages, updateDeliveryStatus,
     insertMedia, getMediaById,

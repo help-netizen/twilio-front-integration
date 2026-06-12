@@ -95,12 +95,27 @@ async function getCallByCallSid(callSid, companyId = null) {
     return result.rows[0];
 }
 
-async function getCalls({ cursor, limit = 50, status, hasRecording, hasTranscript, contactId, companyId, dateFrom, dateTo, rootOnly, groupId } = {}) {
+async function getCalls({ cursor, limit = 50, status, hasRecording, hasTranscript, contactId, companyId, dateFrom, dateTo, rootOnly, groupId, providerScope } = {}) {
     const conditions = [];
     const params = [];
     let paramIdx = 1;
 
     if (companyId) { conditions.push(`c.company_id = $${paramIdx++}`); params.push(companyId); }
+    // assigned_only providers: only calls of clients reachable from their
+    // visible assigned jobs (PF007-HARDENING-002)
+    if (providerScope?.assignedOnly) {
+        if (!providerScope.userId) {
+            conditions.push('FALSE');
+        } else {
+            conditions.push(`EXISTS (
+                SELECT 1 FROM jobs pj
+                WHERE pj.contact_id = c.contact_id
+                  AND pj.company_id = c.company_id
+                  AND pj.assigned_provider_user_ids @> $${paramIdx++}::jsonb
+            )`);
+            params.push(JSON.stringify([providerScope.userId]));
+        }
+    }
     if (cursor) { conditions.push(`c.id < $${paramIdx++}`); params.push(cursor); }
     if (status) { conditions.push(`c.status = $${paramIdx++}`); params.push(status); }
     if (contactId) { conditions.push(`c.contact_id = $${paramIdx++}`); params.push(contactId); }

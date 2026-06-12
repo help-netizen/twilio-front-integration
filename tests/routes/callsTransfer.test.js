@@ -29,6 +29,8 @@ function makeApp(companyId = 'company-1') {
     app.use(express.json());
     app.use((req, _res, next) => {
         req.companyFilter = { company_id: companyId };
+        // PF007: transfer requires phone_calls.use
+        req.authz = { scope: 'tenant', permissions: ['phone_calls.use', 'reports.calls.view'], scopes: {} };
         next();
     });
     app.use('/api/calls', callsRouter);

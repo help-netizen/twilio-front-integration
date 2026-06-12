@@ -1,5 +1,15 @@
 const express = require('express');
 const router = express.Router();
+const { requirePermission } = require('../middleware/authorization');
+const { getProviderScope } = require('../middleware/providerScope');
+
+// PF007-HARDENING-002: calls surface requires call-history visibility
+// (reports.calls.view) or pulse access; telephony actions need phone perms.
+const callsRead = requirePermission('reports.calls.view', 'pulse.view');
+router.use((req, res, next) => {
+    if (req.method === 'GET' || req.method === 'HEAD') return callsRead(req, res, next);
+    return next(); // writes guarded per-route below
+});
 const queries = require('../db/queries');
 const db = require('../db/connection');
 const fetch = require('node-fetch');
@@ -44,6 +54,7 @@ router.get('/', async (req, res) => {
             dateTo,
             rootOnly: root_only === 'true' ? true : undefined,
             groupId: group_id || undefined,
+            providerScope: getProviderScope(req),
         });
 
         res.json({
@@ -397,7 +408,7 @@ router.get('/by-contact', async (req, res) => {
 // =============================================================================
 // POST /api/calls/contact/:contactId/mark-read — team-wide mark read
 // =============================================================================
-router.post('/contact/:contactId/mark-read', async (req, res) => {
+router.post('/contact/:contactId/mark-read', requirePermission('pulse.view', 'reports.calls.view'), async (req, res) => {
     try {
         const { contactId } = req.params;
         console.log(`[MARK-READ-DEBUG] POST /contact/${contactId}/mark-read called`, {
@@ -422,7 +433,7 @@ router.post('/contact/:contactId/mark-read', async (req, res) => {
 // =============================================================================
 // POST /api/calls/contact/:contactId/mark-unread — team-wide mark unread
 // =============================================================================
-router.post('/contact/:contactId/mark-unread', async (req, res) => {
+router.post('/contact/:contactId/mark-unread', requirePermission('pulse.view', 'reports.calls.view'), async (req, res) => {
     try {
         const { contactId } = req.params;
         const contact = await queries.markContactUnread(parseInt(contactId));
@@ -442,7 +453,7 @@ router.post('/contact/:contactId/mark-unread', async (req, res) => {
 // =============================================================================
 // POST /api/calls/timeline/:timelineId/mark-read — mark timeline as read
 // =============================================================================
-router.post('/timeline/:timelineId/mark-read', async (req, res) => {
+router.post('/timeline/:timelineId/mark-read', requirePermission('pulse.view', 'reports.calls.view'), async (req, res) => {
     try {
         const { timelineId } = req.params;
         const tl = await queries.markTimelineRead(parseInt(timelineId));
@@ -487,7 +498,7 @@ router.post('/timeline/:timelineId/mark-read', async (req, res) => {
 // =============================================================================
 // POST /api/calls/timeline/:timelineId/mark-unread — mark timeline as unread
 // =============================================================================
-router.post('/timeline/:timelineId/mark-unread', async (req, res) => {
+router.post('/timeline/:timelineId/mark-unread', requirePermission('pulse.view', 'reports.calls.view'), async (req, res) => {
     try {
         const { timelineId } = req.params;
         const tl = await queries.markTimelineUnread(parseInt(timelineId));
@@ -521,7 +532,7 @@ router.get('/contact/:contactId', async (req, res) => {
 // =============================================================================
 // POST /api/calls/:callSid/transfer — F017 cold transfer to another group agent
 // =============================================================================
-router.post('/:callSid/transfer', async (req, res) => {
+router.post('/:callSid/transfer', requirePermission('phone_calls.use'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
         const { callSid } = req.params;
@@ -739,7 +750,7 @@ router.get('/:callSid/media', async (req, res) => {
 // =============================================================================
 // DELETE /api/calls/:callSid/transcript — remove all transcripts (for reset)
 // =============================================================================
-router.delete('/:callSid/transcript', async (req, res) => {
+router.delete('/:callSid/transcript', requirePermission('reports.calls.view'), async (req, res) => {
     try {
         const callSid = req.params.callSid;
         const db = require('../db/connection');
@@ -759,7 +770,7 @@ router.delete('/:callSid/transcript', async (req, res) => {
 // =============================================================================
 // POST /api/calls/:callSid/transcribe — generate transcription via AssemblyAI
 // =============================================================================
-router.post('/:callSid/transcribe', async (req, res) => {
+router.post('/:callSid/transcribe', requirePermission('reports.calls.view', 'pulse.view'), async (req, res) => {
     const callSid = req.params.callSid;
     try {
         // Get recording for this call
@@ -781,7 +792,7 @@ router.post('/:callSid/transcribe', async (req, res) => {
 // =============================================================================
 // POST /api/calls/:callSid/summarize — (re-)generate Gemini summary
 // =============================================================================
-router.post('/:callSid/summarize', async (req, res) => {
+router.post('/:callSid/summarize', requirePermission('reports.calls.view', 'pulse.view'), async (req, res) => {
     const callSid = req.params.callSid;
     try {
         // 1. Load existing transcript
