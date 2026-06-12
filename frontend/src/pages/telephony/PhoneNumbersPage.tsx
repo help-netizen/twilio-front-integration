@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Phone, Search, Plus, Trash2, Loader2, PlugZap, MapPin } from 'lucide-react';
+import { Phone, Search, Plus, Trash2, Loader2, PlugZap, MapPin, ShieldCheck, ShieldAlert, MessageSquareText } from 'lucide-react';
 import { telephonyApi } from '../../services/telephonyApi';
 import { authedFetch } from '../../services/apiClient';
 import type { PhoneNumber, UserGroup } from '../../types/telephony';
@@ -23,6 +23,58 @@ export default function PhoneNumbersPage() {
     const [buyingNum, setBuyingNum] = useState<string | null>(null);
     const [releasingSid, setReleasingSid] = useState<string | null>(null);
 
+    // Phase 2: usage + A2P compliance
+    const [usage, setUsage] = useState<{ total_usd: number; calls: { count: number }; sms: { count: number }; numbers: { count: number } } | null>(null);
+    const [a2p, setA2p] = useState<any>(null);
+    const [a2pOpen, setA2pOpen] = useState(false);
+    const [a2pBusy, setA2pBusy] = useState(false);
+    const [biz, setBiz] = useState<Record<string, string>>({
+        legal_name: '', ein: '', website: '', address_street: '', address_city: '',
+        address_state: '', address_zip: '', contact_first_name: '', contact_last_name: '',
+        contact_email: '', contact_phone: '',
+    });
+
+    const loadPhase2 = async () => {
+        try {
+            const [u, a] = await Promise.all([
+                authedFetch('/api/telephony/numbers/usage').then(r => r.json()).catch(() => null),
+                authedFetch('/api/telephony/numbers/a2p').then(r => r.json()).catch(() => null),
+            ]);
+            if (u?.usage) setUsage(u.usage);
+            if (a?.registration) setA2p(a.registration);
+        } catch { /* non-blocking */ }
+    };
+    useEffect(() => { loadPhase2(); }, []);
+
+    const submitA2p = async () => {
+        setA2pBusy(true);
+        try {
+            const r = await authedFetch('/api/telephony/numbers/a2p/register', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ business: biz }),
+            });
+            const j = await r.json();
+            if (!r.ok) throw new Error(j.error || 'Registration failed');
+            setA2p(j.registration);
+            setA2pOpen(false);
+        } catch (e: any) { alert(e.message || 'Registration failed'); }
+        finally { setA2pBusy(false); }
+    };
+
+    const submitCampaign = async () => {
+        setA2pBusy(true);
+        try {
+            const r = await authedFetch('/api/telephony/numbers/a2p/campaign', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ campaign: {} }),
+            });
+            const j = await r.json();
+            if (!r.ok) throw new Error(j.error || 'Campaign failed');
+            setA2p(j.registration);
+        } catch (e: any) { alert(e.message || 'Campaign failed'); }
+        finally { setA2pBusy(false); }
+    };
+
     const loadTelState = async () => {
         try {
             const r = await authedFetch('/api/telephony/numbers/status');
@@ -39,6 +91,9 @@ export default function PhoneNumbersPage() {
             const j = await r.json();
             if (!r.ok) throw new Error(j.error || 'Failed');
             setTelState(j.state);
+            // Provision browser-softphone creds in the new subaccount (best-effort)
+            authedFetch('/api/telephony/numbers/softphone/setup', { method: 'POST' }).catch(() => {});
+            loadPhase2();
         } catch (e: any) {
             alert(e.message || 'Failed to connect telephony');
         } finally { setConnecting(false); }
@@ -176,6 +231,69 @@ export default function PhoneNumbersPage() {
                     <button onClick={connectTelephony} disabled={connecting} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 18px', background: '#111827', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', opacity: connecting ? 0.7 : 1 }}>
                         {connecting ? <Loader2 size={14} className="animate-spin" /> : <PlugZap size={14} />} Connect
                     </button>
+                </div>
+            )}
+
+            {telState?.connected && (
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', margin: '0 0 18px' }}>
+                    {usage && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 10, fontSize: 12.5, color: '#374151' }}>
+                            <span style={{ fontWeight: 700 }}>${usage.total_usd?.toFixed?.(2) ?? usage.total_usd}</span> this month ·
+                            {' '}{usage.calls.count} calls · {usage.sms.count} SMS · {usage.numbers.count} numbers
+                        </div>
+                    )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderRadius: 10, fontSize: 12.5,
+                        background: a2p?.status === 'approved' ? '#ecfdf5' : '#fffbeb',
+                        border: `1px solid ${a2p?.status === 'approved' ? '#a7f3d0' : '#fde68a'}`,
+                        color: a2p?.status === 'approved' ? '#065f46' : '#92400e' }}>
+                        {a2p?.status === 'approved' ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
+                        {a2p?.status === 'approved' && 'SMS fully enabled (A2P registered)'}
+                        {(!a2p || a2p.status === 'not_started') && <>SMS limited — carriers filter unregistered traffic. <button onClick={() => setA2pOpen(true)} style={{ border: 'none', background: 'none', color: '#92400e', fontWeight: 700, cursor: 'pointer', textDecoration: 'underline', padding: 0 }}>Register for A2P</button></>}
+                        {a2p?.status === 'brand_pending' && (a2p.brand_status === 'APPROVED'
+                            ? <>Brand approved — <button onClick={submitCampaign} disabled={a2pBusy} style={{ border: 'none', background: 'none', color: '#92400e', fontWeight: 700, cursor: 'pointer', textDecoration: 'underline', padding: 0 }}>{a2pBusy ? 'Submitting…' : 'create the messaging campaign'}</button></>
+                            : 'Brand registration in review (usually minutes to a few days)')}
+                        {a2p?.status === 'campaign_pending' && 'Campaign in carrier review'}
+                        {(a2p?.status === 'brand_failed' || a2p?.status === 'campaign_failed') && <>Registration failed — <button onClick={() => setA2pOpen(true)} style={{ border: 'none', background: 'none', color: '#92400e', fontWeight: 700, cursor: 'pointer', textDecoration: 'underline', padding: 0 }}>review and resubmit</button></>}
+                    </div>
+                </div>
+            )}
+
+            {a2pOpen && (
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(17,24,39,0.45)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setA2pOpen(false)}>
+                    <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 620, background: '#fff', borderRadius: 16, padding: 24, maxHeight: '88vh', overflowY: 'auto' }}>
+                        <h2 style={{ margin: '0 0 4px', fontSize: 17, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}><MessageSquareText size={18} /> A2P 10DLC registration</h2>
+                        <p style={{ margin: '0 0 16px', fontSize: 13, color: '#6b7280' }}>
+                            US carriers require business verification for SMS. One-time setup; review usually takes minutes to a few days.
+                        </p>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                            {[
+                                ['legal_name', 'Legal business name', '1fr 1fr'],
+                                ['ein', 'EIN (XX-XXXXXXX)'],
+                                ['website', 'Website'],
+                                ['address_street', 'Street address'],
+                                ['address_city', 'City'],
+                                ['address_state', 'State (e.g. MA)'],
+                                ['address_zip', 'ZIP'],
+                                ['contact_first_name', 'Contact first name'],
+                                ['contact_last_name', 'Contact last name'],
+                                ['contact_email', 'Contact email'],
+                                ['contact_phone', 'Contact phone (+1…)'],
+                            ].map(([key, label]) => (
+                                <div key={key} style={{ gridColumn: ['legal_name', 'website', 'address_street'].includes(key) ? '1 / -1' : undefined }}>
+                                    <label style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#6b7280', display: 'block', marginBottom: 4 }}>{label}</label>
+                                    <input value={biz[key] || ''} onChange={e => setBiz(prev => ({ ...prev, [key]: e.target.value }))}
+                                        style={{ width: '100%', padding: '9px 12px', border: '1px solid #d1d5db', borderRadius: 8, fontSize: 13 }} />
+                                </div>
+                            ))}
+                        </div>
+                        {a2p?.last_error && <div style={{ marginTop: 12, fontSize: 12.5, color: '#b91c1c' }}>Last error: {a2p.last_error}</div>}
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
+                            <button onClick={() => setA2pOpen(false)} style={{ padding: '9px 16px', background: '#fff', border: '1px solid #d1d5db', borderRadius: 8, fontSize: 13, cursor: 'pointer' }}>Cancel</button>
+                            <button onClick={submitA2p} disabled={a2pBusy} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', background: '#111827', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', opacity: a2pBusy ? 0.7 : 1 }}>
+                                {a2pBusy ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />} Submit registration
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
 

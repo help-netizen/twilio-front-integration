@@ -302,6 +302,96 @@ async function setSubaccountStatus(companyId, status, { actorId } = {}) {
     return { ok: true };
 }
 
+// ── Softphone per tenant (Voice SDK creds in the subaccount) ─────────────────
+
+/**
+ * Ensure the tenant subaccount has an API Key + TwiML App for the browser
+ * softphone. Idempotent; returns decrypted creds for token minting.
+ */
+async function ensureSoftphoneSetup(companyId) {
+    const { rows } = await db.query(
+        `SELECT twilio_subaccount_sid, twilio_auth_token_enc, twiml_app_sid, api_key_sid, api_key_secret_enc, status
+         FROM company_telephony WHERE company_id = $1`,
+        [companyId]
+    );
+    if (!rows[0]?.twilio_subaccount_sid) {
+        const err = new Error('Telephony is not connected'); err.code = 'TELEPHONY_NOT_CONNECTED'; err.httpStatus = 409; throw err;
+    }
+    const row = rows[0];
+    const { client } = await getClientForCompany(companyId);
+    const base = webhookBase();
+
+    let twimlAppSid = row.twiml_app_sid;
+    if (!twimlAppSid) {
+        const app = await client.applications.create({
+            friendlyName: 'Albusto SoftPhone',
+            voiceUrl: `${base}/api/voice/twiml/outbound`,
+            voiceMethod: 'POST',
+        });
+        twimlAppSid = app.sid;
+    }
+
+    let apiKeySid = row.api_key_sid;
+    let apiKeySecret = row.api_key_secret_enc ? decryptToken(row.api_key_secret_enc) : null;
+    if (!apiKeySid || !apiKeySecret) {
+        const key = await client.newKeys.create({ friendlyName: 'Albusto SoftPhone' });
+        apiKeySid = key.sid;
+        apiKeySecret = key.secret;
+    }
+
+    await db.query(
+        `UPDATE company_telephony SET twiml_app_sid = $2, api_key_sid = $3, api_key_secret_enc = $4, updated_at = now()
+         WHERE company_id = $1`,
+        [companyId, twimlAppSid, apiKeySid, encryptToken(apiKeySecret)]
+    );
+
+    return {
+        accountSid: row.twilio_subaccount_sid,
+        apiKeySid,
+        apiKeySecret,
+        twimlAppSid,
+    };
+}
+
+/** Softphone creds for token minting; null when not set up (caller falls back to env). */
+async function getSoftphoneCreds(companyId) {
+    if (!companyId || companyId === DEFAULT_COMPANY_ID) return null;
+    const { rows } = await db.query(
+        `SELECT twilio_subaccount_sid, twiml_app_sid, api_key_sid, api_key_secret_enc
+         FROM company_telephony WHERE company_id = $1 AND status = 'connected'`,
+        [companyId]
+    );
+    const r = rows[0];
+    if (!r?.twiml_app_sid || !r?.api_key_sid || !r?.api_key_secret_enc) return null;
+    return {
+        accountSid: r.twilio_subaccount_sid,
+        apiKeySid: r.api_key_sid,
+        apiKeySecret: decryptToken(r.api_key_secret_enc),
+        twimlAppSid: r.twiml_app_sid,
+    };
+}
+
+// ── Usage (this month) per tenant subaccount ─────────────────────────────────
+
+async function getUsageSummary(companyId) {
+    const { client } = await getClientForCompany(companyId);
+    const records = await client.usage.records.thisMonth.list({ limit: 200 });
+    const pick = (cat) => records.find(r => r.category === cat);
+    const totals = records.find(r => r.category === 'totalprice');
+    const out = {
+        period: records[0] ? { start: records[0].startDate, end: records[0].endDate } : null,
+        total_usd: totals ? Number(totals.price || 0) : null,
+        calls: { count: Number(pick('calls')?.count || 0), usd: Number(pick('calls')?.price || 0) },
+        sms: { count: Number(pick('sms')?.count || 0), usd: Number(pick('sms')?.price || 0) },
+        numbers: { count: Number(pick('phonenumbers')?.count || 0), usd: Number(pick('phonenumbers')?.price || 0) },
+        recordings_usd: Number(pick('recordings')?.price || 0),
+    };
+    if (out.total_usd === null) {
+        out.total_usd = +(out.calls.usd + out.sms.usd + out.numbers.usd + out.recordings_usd).toFixed(2);
+    }
+    return out;
+}
+
 module.exports = {
     getTelephonyState,
     connectTelephony,
@@ -313,6 +403,9 @@ module.exports = {
     listNumbers,
     releaseNumber,
     setSubaccountStatus,
+    ensureSoftphoneSetup,
+    getSoftphoneCreds,
+    getUsageSummary,
     DEFAULT_COMPANY_ID,
     _encryptToken: encryptToken,
     _decryptToken: decryptToken,

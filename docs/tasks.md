@@ -2633,3 +2633,9 @@ Albusto brand, Blanc design tokens, Google Places autocomplete
 Files: migration 098, services/telephonyTenantService.js, routes/telephonyNumbers.js,
 webhooks signature multi-account, inboxWorker AccountSid attribution,
 PhoneNumbersPage (connect/buy/release), tests/telephonyTenantService.test.js
+
+### TASK-ALB-017: ALB-107 phase 2 — A2P 10DLC, softphone per tenant, usage
+**Status:** done (2026-06-12)
+Files: migration 099, services/a2pService.js, telephonyTenantService (softphone/usage),
+voiceService.generateTokenForCompany, routes/telephonyNumbers (usage/softphone/a2p),
+PhoneNumbersPage (usage chip, A2P banner+wizard), tests

@@ -1396,11 +1396,22 @@ Auth Token (API Keys не работают) — подтверждено (20003 
 номеру (phone_number_settings). Подпись валидируется токеном соответствующего
 субаккаунта.
 
-### Roadmap (phase 2, не в этой итерации)
-- A2P 10DLC ISV-регистрация (Brand/Campaign per subaccount) — без неё SMS с
-  local-номеров США ограничены carrier-фильтрами; в UI бейдж "SMS limited".
-- Softphone per tenant (API Key + TwiML App в субаккаунте).
-- Port-in номеров, международные номера, usage-отчёт per tenant.
+### Phase 2 (реализовано 2026-06-12)
+- **A2P 10DLC ISV-регистрация**: TrustHub secondary customer profile + A2P
+  trust product + Brand (Low-Volume Standard, skipAutomaticSecVet) + tenant
+  Messaging Service (пул номеров) + US A2P campaign. State machine в
+  company_a2p_registrations, polling статусов; UI: баннер "SMS limited /
+  registered" + wizard бизнес-данных (legal name, EIN, адрес, контакт) +
+  one-click создание кампании после approve бренда.
+- **Softphone per tenant**: API Key + TwiML App создаются в субаккаунте при
+  подключении; /api/voice/token минтит Access Token кредами субаккаунта
+  (legacy-компания остаётся на env).
+- **Usage per tenant**: this-month сводка из Usage Records ($total, звонки,
+  SMS, номера) — чип на странице номеров.
+
+### Roadmap (phase 3)
+- Port-in номеров (LOA-флоу), международные номера, billing-марж и инвойсинг
+  поверх usage, campaign-вердикты web-hook'ом вместо polling.
 
 ### Protected
 Существующий call flow (F017), webhooks контракт, master-номера Boston Masters.

@@ -8,7 +8,7 @@
  */
 
 const express = require('express');
-const { generateToken } = require('../services/voiceService');
+const { generateToken, generateTokenForCompany } = require('../services/voiceService');
 const { toE164 } = require('../utils/phoneUtils');
 const { isContactBusy } = require('../services/callAvailability');
 const { groupsForUser } = require('../services/groupRouting');
@@ -125,7 +125,7 @@ tokenRouter.get('/token', async (req, res) => {
         }
 
         const identity = buildSoftphoneIdentity(companyId, userId);
-        const result = generateToken(identity);
+        const result = await generateTokenForCompany(req.companyFilter?.company_id, identity);
 
         res.json({ ...result, allowed: true });
     } catch (err) {

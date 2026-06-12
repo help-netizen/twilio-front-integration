@@ -54,4 +54,26 @@ function generateToken(identity) {
     };
 }
 
-module.exports = { generateToken };
+/**
+ * ALB-107 phase 2: mint a token with the tenant subaccount's own creds when
+ * the company has softphone setup; legacy/default company uses env creds.
+ */
+async function generateTokenForCompany(companyId, identity) {
+    const telephonyTenantService = require('./telephonyTenantService');
+    const creds = await telephonyTenantService.getSoftphoneCreds(companyId);
+    if (!creds) return generateToken(identity);
+
+    const voiceGrant = new VoiceGrant({
+        outgoingApplicationSid: creds.twimlAppSid,
+        incomingAllow: true,
+    });
+    const token = new AccessToken(creds.accountSid, creds.apiKeySid, creds.apiKeySecret, { identity, ttl: TOKEN_TTL });
+    token.addGrant(voiceGrant);
+    return {
+        token: token.toJwt(),
+        identity,
+        expiresAt: new Date(Date.now() + TOKEN_TTL * 1000).toISOString(),
+    };
+}
+
+module.exports = { generateToken, generateTokenForCompany };

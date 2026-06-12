@@ -92,3 +92,63 @@ describe('buyNumber validation', () => {
             .rejects.toMatchObject({ httpStatus: 422 });
     });
 });
+
+// ── Phase 2 ──────────────────────────────────────────────────────────────────
+
+describe('getSoftphoneCreds', () => {
+    it('default company → null (env-based legacy path)', async () => {
+        expect(await svc.getSoftphoneCreds(svc.DEFAULT_COMPANY_ID)).toBeNull();
+        expect(db.query).not.toHaveBeenCalled();
+    });
+
+    it('returns decrypted creds when the subaccount is provisioned', async () => {
+        db.query.mockResolvedValueOnce({
+            rows: [{
+                twilio_subaccount_sid: 'ACsub',
+                twiml_app_sid: 'APx',
+                api_key_sid: 'SKx',
+                api_key_secret_enc: svc._encryptToken('key-secret'),
+            }],
+        });
+        const creds = await svc.getSoftphoneCreds(COMPANY);
+        expect(creds).toEqual({ accountSid: 'ACsub', apiKeySid: 'SKx', apiKeySecret: 'key-secret', twimlAppSid: 'APx' });
+    });
+
+    it('returns null when softphone is not provisioned yet', async () => {
+        db.query.mockResolvedValueOnce({ rows: [{ twilio_subaccount_sid: 'ACsub', twiml_app_sid: null, api_key_sid: null, api_key_secret_enc: null }] });
+        expect(await svc.getSoftphoneCreds(COMPANY)).toBeNull();
+    });
+});
+
+describe('a2pService.validateBusinessInfo', () => {
+    const a2p = require('../backend/src/services/a2pService');
+    const valid = {
+        legal_name: 'Acme LLC', ein: '12-3456789', website: 'https://acme.com',
+        address_street: '1 Main St', address_city: 'Boston', address_state: 'MA', address_zip: '02101',
+        contact_first_name: 'Jane', contact_last_name: 'Doe',
+        contact_email: 'j@acme.com', contact_phone: '+16175550100',
+    };
+
+    it('accepts a complete profile', () => {
+        expect(() => a2p.validateBusinessInfo(valid)).not.toThrow();
+    });
+
+    it('rejects missing fields with a 422', () => {
+        try {
+            a2p.validateBusinessInfo({ ...valid, ein: '' });
+            throw new Error('should have thrown');
+        } catch (err) {
+            expect(err.httpStatus).toBe(422);
+            expect(err.message).toContain('ein');
+        }
+    });
+
+    it('rejects malformed EIN', () => {
+        try {
+            a2p.validateBusinessInfo({ ...valid, ein: '12345' });
+            throw new Error('should have thrown');
+        } catch (err) {
+            expect(err.httpStatus).toBe(422);
+        }
+    });
+});
