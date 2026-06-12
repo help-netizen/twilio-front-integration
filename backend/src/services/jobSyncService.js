@@ -100,7 +100,15 @@ async function handleJobWebhook(payload) {
     } else if (event === 'job.service_providers.assigned' ||
         event === 'job.rated' ||
         event === 'job.auto_assign_failed') {
-        // These events don't change the parent status
+        // These events don't change the parent status, but provider assignment
+        // must still refresh the internal assignee mirror (PF007-HARDENING-001).
+        if (event === 'job.service_providers.assigned') {
+            try {
+                await refreshAssigneeMirrorFromAssignment(jobId, payload.data);
+            } catch (mirrorErr) {
+                console.error(`[JobSync] Assignee mirror update failed for job ${jobId}:`, mirrorErr.message);
+            }
+        }
         console.log(`[JobSync] Event ${event} for job ${jobId} — no status change needed`);
         return { updated: false, reason: 'no_status_change', event };
     } else {
@@ -139,6 +147,44 @@ async function handleJobWebhook(payload) {
     console.log(`[JobSync] Updated lead ${lead.uuid}: sub_status '${lead.sub_status}' → '${newSubStatus}' (event=${event})`);
 
     return { updated: true, lead_uuid: lead.uuid, sub_status: newSubStatus };
+}
+
+/**
+ * Refresh jobs.assigned_techs + the internal assignee mirror when Zenbooker
+ * reports a provider assignment change (PF007-HARDENING-001 / TASK-RBAC-003).
+ *
+ * External provider ids are resolved to crm_users.id strictly inside the
+ * job's own company; unmapped ids resolve to nothing. Idempotent.
+ */
+async function refreshAssigneeMirrorFromAssignment(zbJobId, eventData) {
+    const assignedProviders = eventData?.assigned_providers;
+    if (!Array.isArray(assignedProviders)) {
+        // Partial webhook payload — the full job sync path (syncFromZenbooker,
+        // fed by the fetched full ZB job) covers the mirror in this case.
+        return { updated: false, reason: 'no_assignment_payload' };
+    }
+
+    const { rows } = await db.query(
+        `SELECT id, company_id FROM jobs WHERE zenbooker_job_id = $1 LIMIT 1`,
+        [String(zbJobId)]
+    );
+    if (rows.length === 0) return { updated: false, reason: 'job_not_found' };
+
+    const job = rows[0];
+    const jobsService = require('./jobsService');
+    const mirror = await jobsService.resolveAssignedProviderUserIds(job.company_id, assignedProviders);
+
+    await db.query(
+        `UPDATE jobs
+         SET assigned_techs = $1::jsonb,
+             assigned_provider_user_ids = $2::jsonb,
+             updated_at = NOW()
+         WHERE id = $3`,
+        [JSON.stringify(assignedProviders), mirror, job.id]
+    );
+
+    console.log(`[JobSync] Assignee mirror updated for job ${job.id} (zb=${zbJobId}): ${mirror}`);
+    return { updated: true, job_id: job.id };
 }
 
 // =============================================================================
@@ -208,6 +254,7 @@ async function syncBlancStatusToZenbooker(leadUuid, newSubStatus) {
 module.exports = {
     handleJobWebhook,
     syncBlancStatusToZenbooker,
+    refreshAssigneeMirrorFromAssignment,
     BLANC_JOB_STATUSES,
     EVENT_TO_STATUS,
 };

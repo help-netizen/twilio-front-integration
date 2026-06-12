@@ -14,6 +14,7 @@ const db = require('../db/connection');
 const zenbookerClient = require('./zenbookerClient');
 const fsmService = require('./fsmService');
 const eventService = require('./eventService');
+const membershipQueries = require('../db/membershipQueries');
 
 // =============================================================================
 // Constants
@@ -92,6 +93,7 @@ function rowToJob(row) {
         invoice_total: row.invoice_total,
         invoice_status: row.invoice_status,
         assigned_techs: row.assigned_techs || [],
+        assigned_provider_user_ids: row.assigned_provider_user_ids || [],
         notes: row.notes || [],
         tags: row.tags || [],
 
@@ -178,6 +180,73 @@ function computeBlancStatusFromZb(zbStatus, zbCanceled, zbRescheduled, eventType
 }
 
 // =============================================================================
+// Provider assignee mirror (PF007-HARDENING-001)
+// =============================================================================
+
+/**
+ * Resolve a job's external assigned_techs to internal crm_users.id values
+ * through the company-scoped provider bridge. Returns a JSON string for the
+ * jobs.assigned_provider_user_ids JSONB column.
+ *
+ * Unmapped external provider ids resolve to nothing — they must never grant
+ * visibility to any CRM user. Without a company the mirror stays empty.
+ *
+ * @param {string|null} companyId
+ * @param {Array|string|null} assignedTechs - assigned_techs array or JSON string
+ * @returns {Promise<string>} JSON array of crm_users.id strings
+ */
+async function resolveAssignedProviderUserIds(companyId, assignedTechs) {
+    if (!companyId) return '[]';
+    let techs = assignedTechs;
+    if (typeof techs === 'string') {
+        try { techs = JSON.parse(techs); } catch { techs = []; }
+    }
+    if (!Array.isArray(techs) || techs.length === 0) return '[]';
+    const externalIds = techs.map(t => t?.id).filter(Boolean);
+    const userIds = await membershipQueries.resolveProviderUserIds(companyId, externalIds);
+    return JSON.stringify(userIds);
+}
+
+/**
+ * Recompute the internal assignee mirror for every job in a company.
+ * Called when a tenant admin changes a provider bridge mapping so existing
+ * jobs immediately reflect the new ownership. Idempotent and company-scoped.
+ */
+async function refreshCompanyProviderMirror(companyId) {
+    if (!companyId) return { updated: 0 };
+    const { rowCount } = await db.query(
+        `UPDATE jobs j
+         SET assigned_provider_user_ids = sub.user_ids, updated_at = NOW()
+         FROM (
+             SELECT j2.id AS job_id,
+                    COALESCE(
+                        jsonb_agg(DISTINCT to_jsonb(m.user_id::text))
+                            FILTER (WHERE m.user_id IS NOT NULL),
+                        '[]'::jsonb
+                    ) AS user_ids
+             FROM jobs j2
+             LEFT JOIN LATERAL jsonb_array_elements(
+                 CASE WHEN jsonb_typeof(j2.assigned_techs) = 'array'
+                      THEN j2.assigned_techs ELSE '[]'::jsonb END
+             ) AS tech(value) ON TRUE
+             LEFT JOIN company_user_profiles p
+                 ON p.zenbooker_team_member_id = tech.value->>'id'
+             LEFT JOIN company_memberships m
+                 ON m.id = p.membership_id
+                AND m.company_id = j2.company_id
+                AND m.status = 'active'
+             WHERE j2.company_id = $1
+             GROUP BY j2.id
+         ) sub
+         WHERE j.id = sub.job_id
+           AND j.assigned_provider_user_ids IS DISTINCT FROM sub.user_ids`,
+        [companyId]
+    );
+    console.log(`[JobsService] Provider mirror refresh for company ${companyId}: ${rowCount} job(s) updated`);
+    return { updated: rowCount };
+}
+
+// =============================================================================
 // CRUD
 // =============================================================================
 
@@ -187,14 +256,16 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
         ? computeBlancStatusFromZb(cols.zb_status, cols.zb_canceled, cols.zb_rescheduled)
         : 'Submitted';
 
+    const assignedProviderUserIds = await resolveAssignedProviderUserIds(companyId, cols.assigned_techs);
+
     const { rows } = await db.query(`
         INSERT INTO jobs (lead_id, contact_id, zenbooker_job_id, blanc_status,
             zb_status, zb_canceled, zb_rescheduled,
             job_number, service_name, start_date, end_date,
             customer_name, customer_phone, customer_email, address,
             territory, invoice_total, invoice_status, assigned_techs, notes,
-            zb_raw, company_id, lat, lng)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+            zb_raw, company_id, lat, lng, assigned_provider_user_ids)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
         ON CONFLICT (zenbooker_job_id) DO UPDATE SET
             lead_id = COALESCE(EXCLUDED.lead_id, jobs.lead_id),
             contact_id = COALESCE(EXCLUDED.contact_id, jobs.contact_id),
@@ -218,6 +289,7 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
             zb_raw = EXCLUDED.zb_raw,
             lat = EXCLUDED.lat,
             lng = EXCLUDED.lng,
+            assigned_provider_user_ids = EXCLUDED.assigned_provider_user_ids,
             updated_at = NOW()
         RETURNING *
     `, [
@@ -228,6 +300,7 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
         cols.territory || null, cols.invoice_total || null, cols.invoice_status || null,
         cols.assigned_techs || '[]', cols.notes || '[]',
         cols.zb_raw || '{}', companyId || null, cols.lat || null, cols.lng || null,
+        assignedProviderUserIds,
     ]);
 
     return rowToJob(rows[0]);
@@ -648,6 +721,14 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
         const mergedNotes = mergeNotes(existing.notes || [], incomingZbNotes);
         cols.notes = JSON.stringify(mergedNotes);
 
+        // Internal assignee mirror (PF007): must mirror the EFFECTIVE techs value —
+        // when the incoming list is empty we keep the existing assigned_techs,
+        // so the mirror has to be computed from the kept value too.
+        const incomingTechs = JSON.parse(cols.assigned_techs || '[]');
+        const effectiveTechs = incomingTechs.length === 0 ? (existing.assigned_techs || []) : incomingTechs;
+        const effectiveCompanyId = companyId || existing.company_id || null;
+        const assignedProviderUserIds = await resolveAssignedProviderUserIds(effectiveCompanyId, effectiveTechs);
+
         // Update existing job + link contact if not already linked
         await db.query(`
             UPDATE jobs SET
@@ -671,6 +752,7 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
                 lat = COALESCE($21, lat),
                 lng = COALESCE($22, lng),
                 company_id = COALESCE($23, company_id),
+                assigned_provider_user_ids = $24::jsonb,
                 updated_at = NOW()
             WHERE zenbooker_job_id = $19
         `, [
@@ -681,6 +763,7 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
             cols.territory, cols.invoice_total, cols.invoice_status,
             cols.assigned_techs, cols.notes, cols.zb_raw,
             zbJobId, contactId, cols.lat, cols.lng, companyId,
+            assignedProviderUserIds,
         ]);
 
         if (!shouldUpdateBlancStatus) {
@@ -701,9 +784,13 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
                     await new Promise(r => setTimeout(r, 5000));
                     const zbRefresh = await zenbookerClient.getJob(zbJobId);
                     if (zbRefresh?.assigned_providers?.length > 0) {
+                        const refreshedMirror = await resolveAssignedProviderUserIds(
+                            companyId || job.company_id,
+                            zbRefresh.assigned_providers
+                        );
                         await db.query(
-                            `UPDATE jobs SET assigned_techs = $1::jsonb, zb_raw = $2::jsonb, updated_at = NOW() WHERE zenbooker_job_id = $3`,
-                            [JSON.stringify(zbRefresh.assigned_providers), JSON.stringify(zbRefresh), zbJobId]
+                            `UPDATE jobs SET assigned_techs = $1::jsonb, zb_raw = $2::jsonb, assigned_provider_user_ids = $3::jsonb, updated_at = NOW() WHERE zenbooker_job_id = $4`,
+                            [JSON.stringify(zbRefresh.assigned_providers), JSON.stringify(zbRefresh), refreshedMirror, zbJobId]
                         );
                         console.log(`[JobsService] Delayed re-fetch: auto-assigned ${zbRefresh.assigned_providers.length} provider(s) for job ${job.id}`);
                     }
@@ -980,4 +1067,6 @@ module.exports = {
     getTagsForJob,
     updateCoords,
     getJobTransitions,
+    resolveAssignedProviderUserIds,
+    refreshCompanyProviderMirror,
 };

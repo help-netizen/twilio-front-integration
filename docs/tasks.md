@@ -1451,7 +1451,7 @@ TASK-021 + TASK-017 ──► TASK-030 (component tests) │
 # PF007-HARDENING-001: Provider Scope, Tenant Isolation & RBAC Hardening — Task Breakdown
 
 **Feature:** Enforce provider-assigned-only visibility, close tenant isolation gaps, and make backend/frontend RBAC deny-by-default
-**Migration range:** 080
+**Migration range:** 096 (originally planned as 080 — that number was already taken by 080_seed_analytics_scope.sql)
 **Total tasks:** 17
 **Phases:** 5
 
@@ -1461,7 +1461,7 @@ TASK-021 + TASK-017 ──► TASK-030 (component tests) │
 
 ### TASK-RBAC-001: Migration — provider bridge and internal assignee mirrors
 **Phase:** 1
-**Status:** pending
+**Status:** done (2026-06-12)
 **Dependencies:** none
 **Files to modify:**
 - `backend/db/migrations/080_pf007_provider_scope_hardening.sql` — **NEW**: add provider bridge field on `company_user_profiles`, add internal assignee mirror on `jobs`, create indexes/backfill
@@ -1479,7 +1479,7 @@ TASK-021 + TASK-017 ──► TASK-030 (component tests) │
 
 ### TASK-RBAC-002: Team Management API — expose provider bridge in user profile
 **Phase:** 1
-**Status:** pending
+**Status:** done (2026-06-12)
 **Dependencies:** TASK-RBAC-001
 **Files to modify:**
 - `backend/src/routes/users.js` — expose provider bridge field in user read/update flows
@@ -1498,7 +1498,7 @@ TASK-021 + TASK-017 ──► TASK-030 (component tests) │
 
 ### TASK-RBAC-003: Job sync — map external provider assignments to internal CRM users
 **Phase:** 1
-**Status:** pending
+**Status:** done (2026-06-12)
 **Dependencies:** TASK-RBAC-001, TASK-RBAC-002
 **Files to modify:**
 - `backend/src/services/jobsService.js` — populate `assigned_provider_user_ids` during upsert/sync

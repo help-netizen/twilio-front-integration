@@ -271,6 +271,7 @@ async function updateMembershipAndProfile(userId, companyId, updates) {
         const membershipId = memRows[0].id;
 
         // Update profile
+        const changes = { membershipId, providerBridgeChanged: false, previousTeamMemberId: undefined, newTeamMemberId: undefined };
         if (updates.profile) {
             const p = updates.profile;
             const fields = [];
@@ -282,6 +283,29 @@ async function updateMembershipAndProfile(userId, companyId, updates) {
             if (p.schedule_color) { fields.push(`schedule_color = $${i++}`); values.push(p.schedule_color); }
             if (typeof p.call_masking_enabled === 'boolean') { fields.push(`call_masking_enabled = $${i++}`); values.push(p.call_masking_enabled); }
             if (typeof p.location_tracking_enabled === 'boolean') { fields.push(`location_tracking_enabled = $${i++}`); values.push(p.location_tracking_enabled); }
+
+            // Provider bridge (PF007-HARDENING-001): external Zenbooker team member id.
+            // Integration mapping only — ownership stays on crm_users.id.
+            if ('zenbooker_team_member_id' in p) {
+                const raw = p.zenbooker_team_member_id;
+                const normalized = (raw === null || raw === undefined || String(raw).trim() === '')
+                    ? null
+                    : String(raw).trim();
+
+                const { rows: prevRows } = await client.query(
+                    `SELECT zenbooker_team_member_id FROM company_user_profiles WHERE membership_id = $1`,
+                    [membershipId]
+                );
+                const previous = prevRows[0]?.zenbooker_team_member_id ?? null;
+
+                if (previous !== normalized) {
+                    changes.providerBridgeChanged = true;
+                    changes.previousTeamMemberId = previous;
+                    changes.newTeamMemberId = normalized;
+                }
+                fields.push(`zenbooker_team_member_id = $${i++}`);
+                values.push(normalized);
+            }
 
             if (fields.length > 0) {
                 // Upsert logic for profile
@@ -297,13 +321,52 @@ async function updateMembershipAndProfile(userId, companyId, updates) {
         }
 
         await client.query('COMMIT');
-        return true;
+        return changes;
     } catch (err) {
         await client.query('ROLLBACK');
         throw err;
     } finally {
         client.release();
     }
+}
+
+/**
+ * Get one user's membership + profile inside the current company (tenant-safe).
+ * Returns null when the user does not belong to the company — the route maps
+ * that to 404 so foreign-company user ids are indistinguishable from missing.
+ */
+async function getUserDetail(userId, companyId) {
+    const membershipQueries = require('../db/membershipQueries');
+    const row = await membershipQueries.getMembershipWithProfile(userId, companyId);
+    if (!row) return null;
+    return {
+        id: userId,
+        email: row.email,
+        full_name: row.full_name,
+        last_login_at: row.last_login_at,
+        created_at: row.user_created_at,
+        membership: {
+            id: row.membership_id,
+            role_key: row.role_key,
+            legacy_role: row.legacy_role,
+            status: row.membership_status,
+            is_primary: row.is_primary,
+            invited_at: row.invited_at,
+            activated_at: row.activated_at,
+            disabled_at: row.disabled_at,
+            disabled_reason: row.disabled_reason,
+        },
+        profile: {
+            phone: row.phone,
+            schedule_color: row.schedule_color,
+            is_provider: row.is_provider,
+            call_masking_enabled: row.call_masking_enabled,
+            location_tracking_enabled: row.location_tracking_enabled,
+            phone_calls_allowed: row.phone_calls_allowed,
+            job_close_mode: row.job_close_mode,
+            zenbooker_team_member_id: row.zenbooker_team_member_id,
+        },
+    };
 }
 
 /**
@@ -352,5 +415,6 @@ module.exports = {
     updateMembershipAndProfile,
     updateMembershipStatus,
     countCompanyAdmins,
+    getUserDetail,
     ROLE_HIERARCHY,
 };

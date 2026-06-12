@@ -24,10 +24,26 @@ const { generateTempPassword: sharedGenerateTempPassword } = require('../service
  * Creates user in Keycloak (via Admin API) and CRM DB with membership.
  * Temp password returned once (§6).
  */
+// Tenant context comes ONLY from requireCompanyAccess (PF007-HARDENING-001).
+// No fallback to req.user.company_id — missing tenant context is an error.
+function getTenantCompanyId(req, res) {
+    const companyId = req.companyFilter?.company_id;
+    if (!companyId) {
+        res.status(403).json({
+            code: 'TENANT_CONTEXT_REQUIRED',
+            message: 'No company association found',
+            trace_id: req.traceId,
+        });
+        return null;
+    }
+    return companyId;
+}
+
 router.post('/', async (req, res) => {
     try {
         const { email, full_name, role = 'company_member', role_key, profile } = req.body;
-        const companyId = req.user.company_id;
+        const companyId = getTenantCompanyId(req, res);
+        if (!companyId) return;
 
         if (!email || !full_name) {
             return res.status(422).json({
@@ -105,7 +121,10 @@ router.post('/', async (req, res) => {
  */
 router.get('/', async (req, res) => {
     try {
-        const companyId = req.user.is_super_admin ? null : req.user.company_id;
+        // Always tenant-scoped: super_admin has no implicit all-companies view here
+        // (platform scope is rejected earlier by requireCompanyAccess).
+        const companyId = getTenantCompanyId(req, res);
+        if (!companyId) return;
         const { search, role, status, page, limit } = req.query;
         const result = await userService.listUsers(companyId, {
             search,
@@ -126,13 +145,51 @@ router.get('/', async (req, res) => {
 });
 
 /**
+ * GET /:id — Get one user's membership + profile (tenant-scoped).
+ * Foreign-company user ids return 404 (PF007-HARDENING-001).
+ */
+router.get('/:id', async (req, res) => {
+    try {
+        const companyId = getTenantCompanyId(req, res);
+        if (!companyId) return;
+
+        const user = await userService.getUserDetail(req.params.id, companyId);
+        if (!user) {
+            return res.status(404).json({
+                code: 'NOT_FOUND',
+                message: 'User not found',
+                trace_id: req.traceId,
+            });
+        }
+        res.json({ ok: true, user });
+    } catch (err) {
+        console.error('[Users] Get failed:', err.message);
+        // Invalid uuid in :id must look like a missing user, not a server error
+        if (err.code === '22P02') {
+            return res.status(404).json({
+                code: 'NOT_FOUND',
+                message: 'User not found',
+                trace_id: req.traceId,
+            });
+        }
+        res.status(500).json({
+            code: 'INTERNAL_ERROR',
+            message: 'Failed to get user',
+            trace_id: req.traceId,
+        });
+    }
+});
+
+/**
  * PATCH /:id — Update user role and profile
+ * Accepts profile.zenbooker_team_member_id (provider bridge, PF007-HARDENING-001).
  */
 router.patch('/:id', async (req, res) => {
     try {
         const { role_key, profile } = req.body;
         const userId = req.params.id;
-        const companyId = req.user.company_id;
+        const companyId = getTenantCompanyId(req, res);
+        if (!companyId) return;
 
         if (role_key && !['tenant_admin', 'manager', 'dispatcher', 'provider'].includes(role_key)) {
             return res.status(422).json({
@@ -142,7 +199,30 @@ router.patch('/:id', async (req, res) => {
             });
         }
 
-        await userService.updateMembershipAndProfile(userId, companyId, { role_key, profile });
+        if (profile && 'zenbooker_team_member_id' in profile) {
+            const v = profile.zenbooker_team_member_id;
+            const isValid = v === null || v === '' ||
+                (['string', 'number'].includes(typeof v) && String(v).trim().length <= 64);
+            if (!isValid) {
+                return res.status(422).json({
+                    code: 'VALIDATION_ERROR',
+                    message: 'zenbooker_team_member_id must be a string up to 64 chars or null',
+                    trace_id: req.traceId,
+                });
+            }
+        }
+
+        const changes = await userService.updateMembershipAndProfile(userId, companyId, { role_key, profile });
+
+        // Keep the internal job assignee mirror consistent with the new bridge
+        if (changes.providerBridgeChanged) {
+            try {
+                const jobsService = require('../services/jobsService');
+                await jobsService.refreshCompanyProviderMirror(companyId);
+            } catch (mirrorErr) {
+                console.error('[Users] Provider mirror refresh failed:', mirrorErr.message);
+            }
+        }
 
         await auditService.log({
             actor_id: req.user.crmUser?.id,
@@ -152,7 +232,16 @@ router.patch('/:id', async (req, res) => {
             target_type: 'user',
             target_id: userId,
             company_id: companyId,
-            details: { role_key, profile_updated: !!profile },
+            details: {
+                role_key,
+                profile_updated: !!profile,
+                ...(changes.providerBridgeChanged ? {
+                    zenbooker_team_member_id: {
+                        from: changes.previousTeamMemberId,
+                        to: changes.newTeamMemberId,
+                    },
+                } : {}),
+            },
             trace_id: req.traceId,
         });
 
@@ -163,6 +252,13 @@ router.patch('/:id', async (req, res) => {
             return res.status(409).json({
                 code: 'LAST_ADMIN_REQUIRED',
                 message: 'Cannot remove the last company admin',
+                trace_id: req.traceId,
+            });
+        }
+        if (err.message.includes('Membership not found') || err.code === '22P02') {
+            return res.status(404).json({
+                code: 'NOT_FOUND',
+                message: 'User not found',
                 trace_id: req.traceId,
             });
         }
@@ -180,7 +276,8 @@ router.patch('/:id', async (req, res) => {
 router.patch('/:id/status', async (req, res) => {
     try {
         const userId = req.params.id;
-        const companyId = req.user.company_id;
+        const companyId = getTenantCompanyId(req, res);
+        if (!companyId) return;
         const { status, reason } = req.body;
 
         if (!['active', 'inactive'].includes(status)) {
@@ -223,6 +320,13 @@ router.patch('/:id/status', async (req, res) => {
         res.json({ ok: true, message: `User ${status}` });
     } catch (err) {
         console.error('[Users] Status change failed:', err.message);
+        if (err.message.includes('Membership not found') || err.code === '22P02') {
+            return res.status(404).json({
+                code: 'NOT_FOUND',
+                message: 'User not found',
+                trace_id: req.traceId,
+            });
+        }
         res.status(500).json({
             code: 'INTERNAL_ERROR',
             message: 'Failed to change user status',
