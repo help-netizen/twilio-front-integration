@@ -4,9 +4,86 @@ import { Label } from '../components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Switch } from '../components/ui/switch';
-import { Copy } from 'lucide-react';
+import { Copy, Link2, Unlink } from 'lucide-react';
 import { toast } from 'sonner';
+import { useEffect, useState } from 'react';
+import { authedFetch } from '../services/apiClient';
 import type { CompanyUser, EditUserForm } from '../hooks/useCompanyUsers';
+
+// ─── Provider bridge (ALB-104) ───────────────────────────────────────────────
+// Maps a CRM user to a Zenbooker team member so the assigned-only provider
+// scope (PF007) can resolve job assignments to this user.
+
+interface RosterMember { id: string; name: string }
+
+function ZenbookerLinkField({ value, onChange }: { value: string | null; onChange: (v: string | null) => void }) {
+    const [roster, setRoster] = useState<RosterMember[] | null>(null);
+    const [rosterError, setRosterError] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        authedFetch('/api/zenbooker/team-members')
+            .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+            .then(j => { if (!cancelled) setRoster((j.data || []).map((m: any) => ({ id: String(m.id), name: m.name || String(m.id) }))); })
+            .catch(() => { if (!cancelled) { setRoster([]); setRosterError(true); } });
+        return () => { cancelled = true; };
+    }, []);
+
+    const linked = !!value;
+    const linkedName = roster?.find(m => m.id === value)?.name;
+
+    return (
+        <div className="space-y-2 rounded-xl p-3" style={{ background: 'rgba(117, 106, 89, 0.04)' }}>
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                    <span className={`inline-block size-2 rounded-full ${linked ? 'bg-green-500' : 'bg-amber-400'}`} />
+                    <Label className="text-sm">Zenbooker team member</Label>
+                </div>
+                {linked && (
+                    <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground" onClick={() => onChange(null)}>
+                        <Unlink className="size-3.5 mr-1" />Unlink
+                    </Button>
+                )}
+            </div>
+
+            {rosterError ? (
+                <>
+                    <Input
+                        placeholder="Zenbooker team member ID"
+                        value={value || ''}
+                        onChange={e => onChange(e.target.value.trim() || null)}
+                    />
+                    <p className="text-[12px] text-muted-foreground">
+                        Couldn't load the roster — paste the team member ID from Zenbooker.
+                    </p>
+                </>
+            ) : roster === null ? (
+                <div className="text-[13px] text-muted-foreground">Loading roster…</div>
+            ) : (
+                <>
+                    <Select value={value || '__none__'} onValueChange={v => onChange(v === '__none__' ? null : v)}>
+                        <SelectTrigger>
+                            <SelectValue>
+                                {linked
+                                    ? <span className="flex items-center gap-1.5"><Link2 className="size-3.5" />{linkedName || value}</span>
+                                    : 'Not linked'}
+                            </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="__none__">Not linked</SelectItem>
+                            {roster.map(m => <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>)}
+                        </SelectContent>
+                    </Select>
+                    <p className="text-[12px] text-muted-foreground">
+                        {linked
+                            ? 'Jobs assigned to this technician in Zenbooker are visible to this user.'
+                            : 'Without a link, a provider with "assigned jobs only" sees no jobs.'}
+                    </p>
+                </>
+            )}
+        </div>
+    );
+}
 
 interface CreateDialogProps { open: boolean; setOpen: (v: boolean) => void; createForm: { full_name: string; email: string; role_key: string }; setCreateForm: (fn: (f: { full_name: string; email: string; role_key: string }) => { full_name: string; email: string; role_key: string }) => void; creating: boolean; tempPassword: string | null; setTempPassword: (v: string | null) => void; handleCreate: () => void; }
 
@@ -100,6 +177,13 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
                             </div>
                             <Switch checked={form.is_provider} onCheckedChange={v => setForm(f => ({ ...f, is_provider: v }))} />
                         </div>
+
+                        {form.is_provider && (
+                            <ZenbookerLinkField
+                                value={form.zenbooker_team_member_id}
+                                onChange={v => setForm(f => ({ ...f, zenbooker_team_member_id: v }))}
+                            />
+                        )}
 
                         <div className="flex items-center justify-between">
                             <div className="space-y-0.5">

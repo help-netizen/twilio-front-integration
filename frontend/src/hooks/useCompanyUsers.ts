@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
-export interface CompanyUser { id: string; email: string; full_name: string; membership_role: string; role_key: string; legacy_role: string; membership_status: string; phone_calls_allowed: boolean; is_provider: boolean; schedule_color: string; call_masking_enabled: boolean; location_tracking_enabled: boolean; last_login_at: string | null; created_at: string; }
+export interface CompanyUser { id: string; email: string; full_name: string; membership_role: string; role_key: string; legacy_role: string; membership_status: string; phone_calls_allowed: boolean; is_provider: boolean; schedule_color: string; call_masking_enabled: boolean; location_tracking_enabled: boolean; zenbooker_team_member_id: string | null; last_login_at: string | null; created_at: string; }
 interface PaginatedResponse { ok: boolean; users: CompanyUser[]; total: number; page: number; limit: number; }
 
 export type EditUserForm = {
@@ -14,6 +14,7 @@ export type EditUserForm = {
     schedule_color: string;
     call_masking_enabled: boolean;
     location_tracking_enabled: boolean;
+    zenbooker_team_member_id: string | null;
 };
 
 export function useCompanyUsers() {
@@ -34,7 +35,7 @@ export function useCompanyUsers() {
     // Edit Mode
     const [editOpen, setEditOpen] = useState(false);
     const [editUser, setEditUser] = useState<CompanyUser | null>(null);
-    const [editForm, setEditForm] = useState<EditUserForm>({ role_key: 'dispatcher', phone_calls_allowed: false, is_provider: false, schedule_color: '#3B82F6', call_masking_enabled: false, location_tracking_enabled: false });
+    const [editForm, setEditForm] = useState<EditUserForm>({ role_key: 'dispatcher', phone_calls_allowed: false, is_provider: false, schedule_color: '#3B82F6', call_masking_enabled: false, location_tracking_enabled: false, zenbooker_team_member_id: null });
 
     // Status / Misc
     const [confirmDialog, setConfirmDialog] = useState<{ open: boolean; title: string; description: string; onConfirm: () => void }>({ open: false, title: '', description: '', onConfirm: () => { } });
@@ -81,7 +82,9 @@ export function useCompanyUsers() {
                         is_provider: editForm.is_provider,
                         schedule_color: editForm.schedule_color,
                         call_masking_enabled: editForm.call_masking_enabled,
-                        location_tracking_enabled: editForm.location_tracking_enabled
+                        location_tracking_enabled: editForm.location_tracking_enabled,
+                        // Provider bridge: null when not a provider or unlinked
+                        zenbooker_team_member_id: editForm.is_provider ? (editForm.zenbooker_team_member_id || null) : null
                     }
                 })
             });
@@ -122,7 +125,8 @@ export function useCompanyUsers() {
             is_provider: !!u.is_provider,
             schedule_color: u.schedule_color || '#3B82F6',
             call_masking_enabled: !!u.call_masking_enabled,
-            location_tracking_enabled: !!u.location_tracking_enabled
+            location_tracking_enabled: !!u.location_tracking_enabled,
+            zenbooker_team_member_id: u.zenbooker_team_member_id || null
         });
         setEditOpen(true);
     };

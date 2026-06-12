@@ -129,7 +129,8 @@ async function listUsers(companyId, opts = {}) {
                 COALESCE(p.is_provider, false) as is_provider,
                 p.schedule_color,
                 COALESCE(p.call_masking_enabled, false) as call_masking_enabled,
-                COALESCE(p.location_tracking_enabled, false) as location_tracking_enabled
+                COALESCE(p.location_tracking_enabled, false) as location_tracking_enabled,
+                p.zenbooker_team_member_id
          FROM crm_users u 
          ${join}
          LEFT JOIN company_user_profiles p ON p.membership_id = m.id
