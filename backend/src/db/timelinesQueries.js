@@ -66,31 +66,36 @@ async function findOrCreateTimeline(phoneE164, companyId = null) {
         return findOrCreateAnonymousTimeline(companyId);
     }
     const digits = phoneE164.replace(/\D/g, '');
+    // Tenant scope (PF007-HARDENING-001): a phone match must never resolve to
+    // another company's contact or timeline.
+    const cid = companyId || DEFAULT_COMPANY_ID;
 
     const contactResult = await db.query(
         `SELECT * FROM contacts
-         WHERE regexp_replace(phone_e164, '\\D', '', 'g') = $1
-            OR regexp_replace(secondary_phone, '\\D', '', 'g') = $1
+         WHERE company_id = $2
+           AND (regexp_replace(phone_e164, '\\D', '', 'g') = $1
+            OR regexp_replace(secondary_phone, '\\D', '', 'g') = $1)
          ORDER BY updated_at DESC NULLS LAST
          LIMIT 1`,
-        [digits]
+        [digits, cid]
     );
     const contact = contactResult.rows[0] || null;
 
     if (contact) {
         let tl = await db.query(
-            `SELECT * FROM timelines WHERE contact_id = $1 LIMIT 1`,
-            [contact.id]
+            `SELECT * FROM timelines WHERE contact_id = $1 AND company_id = $2 LIMIT 1`,
+            [contact.id, cid]
         );
         if (tl.rows[0]) return { ...tl.rows[0], contact_id: contact.id };
 
         const orphan = await db.query(
             `SELECT id FROM timelines
              WHERE contact_id IS NULL
+               AND company_id = $2
                AND regexp_replace(phone_e164, '\\D', '', 'g') = $1
              ORDER BY updated_at DESC NULLS LAST
              LIMIT 1`,
-            [digits]
+            [digits, cid]
         );
         if (orphan.rows[0]) {
             await db.query(
@@ -120,9 +125,10 @@ async function findOrCreateTimeline(phoneE164, companyId = null) {
     let tl = await db.query(
         `SELECT * FROM timelines
          WHERE contact_id IS NULL
+           AND company_id = $2
            AND regexp_replace(phone_e164, '\\D', '', 'g') = $1
          LIMIT 1`,
-        [digits]
+        [digits, cid]
     );
     if (tl.rows[0]) return tl.rows[0];
 

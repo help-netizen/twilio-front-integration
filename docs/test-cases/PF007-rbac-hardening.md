@@ -65,6 +65,14 @@ And a second tenant (Company B) with its own admin and data.
       `/api/zenbooker/team-members`; reassign/create-from-slot controls absent
 - [ ] Direct URL navigation to a hidden page shows Access Denied
 
+## Audit follow-up fixes (2026-06-12, post-implementation review)
+
+- `findOrCreateTimeline` phone matching is company-scoped (was a cross-tenant
+  resolution path via `POST /api/pulse/ensure-timeline`)
+- `contactDedupeService` company filter is parameterized (was string-interpolated)
+- `GET /api/zenbooker/team-members` (full roster) and `POST /api/zenbooker/jobs`
+  are permission-guarded server-side
+
 ## Known gaps / rollout risks
 
 1. **Migration 096 must be applied before deploy** (and the provider bridge mapped in
@@ -78,3 +86,9 @@ And a second tenant (Company B) with its own admin and data.
    scope and keep their current behavior (follow-up hardening candidates).
 5. Provider scope for contacts/pulse depends on `jobs.assigned_provider_user_ids`
    freshness; it is refreshed on every Zenbooker sync and on bridge-mapping changes.
+6. Team Management UI has no field yet for `profile.zenbooker_team_member_id` —
+   the bridge is settable only via `PATCH /api/users/:id` (frontend wiring was
+   deliberately deferred by TASK-RBAC-002).
+7. Pulse `unread-count` relies on `sms_conversations.company_id` /
+   `contacts.company_id` being populated; legacy NULL-company rows are excluded
+   from counts by design.

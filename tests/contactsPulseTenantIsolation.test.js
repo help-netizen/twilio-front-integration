@@ -158,3 +158,33 @@ describe('pulse tenant isolation', () => {
         expect(params).toEqual([9, COMPANY_A]);
     });
 });
+
+// ─── Gap fixes from the PF007 audit ──────────────────────────────────────────
+
+describe('timelinesQueries.findOrCreateTimeline tenant scope', () => {
+    const timelinesQueries = require('../backend/src/db/timelinesQueries');
+
+    it('contact and timeline phone matches are company-scoped', async () => {
+        db.query.mockResolvedValue({ rows: [] });
+        await timelinesQueries.findOrCreateTimeline('+15085140320', COMPANY_A);
+        // First call: contact lookup; later: orphan timeline lookup + insert.
+        const contactCall = db.query.mock.calls[0];
+        expect(contactCall[0]).toContain('company_id = $2');
+        expect(contactCall[1]).toEqual(['15085140320', COMPANY_A]);
+        const orphanCall = db.query.mock.calls[1];
+        expect(orphanCall[0]).toContain('company_id = $2');
+    });
+});
+
+describe('contactDedupeService company filter', () => {
+    const dedupe = require('../backend/src/services/contactDedupeService');
+
+    it('searchCandidates parameterizes the company filter', async () => {
+        db.query.mockResolvedValue({ rows: [] });
+        await dedupe.searchCandidates({ first_name: 'John', last_name: 'Doe', phone: null, email: null }, COMPANY_A);
+        const [sql, params] = db.query.mock.calls[0];
+        expect(sql).not.toContain(COMPANY_A); // never interpolated into SQL text
+        expect(sql).toContain('c.company_id = $1');
+        expect(params[0]).toBe(COMPANY_A);
+    });
+});

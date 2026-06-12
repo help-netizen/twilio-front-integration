@@ -5,6 +5,7 @@
 
 const express = require('express');
 const router = express.Router();
+const { requirePermission } = require('../middleware/authorization');
 const zenbookerClient = require('../services/zenbookerClient');
 
 // GET /api/zenbooker/service-area-check?postal_code=02101  OR  ?address=Boston+MA
@@ -103,7 +104,7 @@ router.get('/services', async (req, res) => {
 });
 
 // POST /api/zenbooker/jobs  — create job with direct payload
-router.post('/jobs', async (req, res) => {
+router.post('/jobs', requirePermission('jobs.create', 'leads.convert'), async (req, res) => {
     try {
         const data = await zenbookerClient.createJob(req.body);
         res.status(201).json({ ok: true, data });
@@ -118,7 +119,7 @@ router.post('/jobs', async (req, res) => {
 });
 
 // GET /api/zenbooker/team-members — Fetch service providers
-router.get('/team-members', async (req, res) => {
+router.get('/team-members', requirePermission('schedule.dispatch', 'jobs.assign', 'tenant.company.manage'), async (req, res) => {
     try {
         const members = await zenbookerClient.getTeamMembers({
             service_provider: true,

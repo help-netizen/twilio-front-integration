@@ -159,8 +159,13 @@ async function searchCandidates({ first_name, last_name, phone, email }, company
     const allParams = [];
     let paramIdx = 1;
 
-    // Company filter helper
-    const companyCondition = companyId ? `AND c.company_id = '${companyId}'` : '';
+    // Company filter — parameterized, never string-interpolated (PF007)
+    let companyCondition = '';
+    if (companyId) {
+        companyCondition = `AND c.company_id = $${paramIdx}`;
+        allParams.push(companyId);
+        paramIdx += 1;
+    }
 
     // 1. Name search (requires at least one name, min 2 chars)
     if (hasName) {
