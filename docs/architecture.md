@@ -1904,3 +1904,84 @@ Authenticated backend MCP / public HTTP / legacy SSE / stdio
 - Workflow calendar windows use company timezone from MCP context. `my_open_deals` requires the current actor and rejects cross-owner scoping to avoid returning all open deals by accident.
 - Rollout mounts `/api/crm` and `/api/crm/mcp` through `authenticate, requireCompanyAccess`; `/mcp/crm` is mounted separately and guarded by public MCP token/env context.
 - Bulk/delete MCP tools are not registered. Public/stdio write calls remain disabled unless explicitly enabled by environment flags.
+
+---
+
+## ALB-100: Albusto Commercial Platform Program
+
+**Date:** 2026-06-12 · **Requirements:** `docs/requirements.md` §ALB-100 · **Spec:** `docs/specs/ALB-100-platform-program.md`
+
+### Identity & registration plane
+
+```
+Browser (custom pages, Albusto brand)
+  /signup /signin /verify-phone /onboarding   ← frontend/src/pages/auth/*
+        │ JSON
+        ▼
+backend/src/routes/publicAuth.js  (NO authenticate; strict rate limits)
+  POST /api/public/signup            → keycloakService.createUser + email verify
+  POST /api/public/otp/send|verify   → otpService (Twilio SMS, hashed codes)
+  POST /api/public/onboarding        → platformCompanyService.bootstrapCompany
+  GET  /api/public/places/suggest    → googlePlacesService (server-side key)
+  GET  /api/public/places/resolve    → place → {city,state,zip,lat,lng,timezone}
+        │
+        ▼
+Keycloak (crm-prod realm): users, passwords, Google IdP, email verification.
+Frontend obtains tokens via standard Keycloak OIDC (unchanged authedFetch).
+```
+
+- **2FA enforcement point:** `keycloakAuth.authenticate()` — after token
+  verification, when the request carries no valid trusted-device proof for the
+  crm_user, API responds `401 PHONE_VERIFICATION_REQUIRED`; frontend
+  AuthProvider intercepts → OTP screen → `POST /api/auth/trust-device` issues
+  `albusto_td` httpOnly cookie (random id, 30d) + row in `trusted_devices`.
+  SSE/static paths exempt. Dev mode exempt.
+- **otpService:** codes 6 digits, sha256(pepper+code), tables `phone_otp`
+  (id, phone, purpose signup|login|change, code_hash, attempts, expires_at,
+  consumed_at) and `trusted_devices` (id, user_id, device_id_hash, label,
+  last_used_at, expires_at, revoked_at). Migration **097**.
+- **platformCompanyService.bootstrapCompany:** transaction — companies row
+  (city/state/zip/lat/lng/timezone from Places) + membership(tenant_admin) +
+  seed company_role_configs/permissions (copy of canonical defaults) +
+  company_user_profiles + audit `company.created`. Idempotent by
+  (created_by_user_id, name) for retry safety.
+
+### Platform admin plane (ALB-102)
+
+- `backend/src/routes/platformCompanies.js` mounted at `/api/platform/companies`
+  with `authenticate + requirePlatformRole('super_admin')`.
+- SuperAdminPage: new Companies tab → `frontend/src/components/admin/CompaniesTab.tsx`.
+- Suspend/restore = `companies.status` + `status_reason` (+ audit). Tenant deny
+  already enforced by PF007 (`COMPANY_SUSPENDED`).
+
+### HARDENING-002 (ALB-103)
+
+Same pattern as HARDENING-001: per-route `requirePermission`, queries scoped by
+`req.companyFilter`, provider scope via `getProviderScope(req)` + jobs mirror
+(calls/conversations join contacts → jobs). Files: routes/calls.js,
+routes/messaging.js, routes/conversations.js, routes/leads (src/routes/leads.js
+legacy + backend routes), routes/email.js + their query modules.
+
+### Provider bridge UI (ALB-104)
+
+CompanyUsersPage user drawer → new `FieldTechSection` component; roster via
+existing `GET /api/zenbooker/team-members` (admin has tenant.company.manage);
+save via existing `PATCH /api/users/:id`.
+
+### CI sanitizer (ALB-105)
+
+`tests/tenantSafetyLint.test.js` — static scan, allowlist inline.
+
+### super_admin completion + rebrand (ALB-106)
+
+- `/api/admin/*` → `requirePlatformRole('super_admin')`; drop ProtectedRoute
+  legacy fallback; platform account seeded via script
+  `backend/scripts/create-platform-admin.js` (Keycloak user + platform_role).
+- Rebrand: visible strings only (header, titles, manifest, auth pages, emails).
+
+### New env
+
+`GOOGLE_PLACES_KEY` (server; falls back to GOOGLE_GEOCODING_KEY),
+`OTP_PEPPER` (falls back to BLANC_SERVER_PEPPER), `TRUSTED_DEVICE_TTL_DAYS=30`,
+`FEATURE_SELF_SIGNUP` (kill-switch), `FEATURE_SMS_2FA` (kill-switch, default off
+until rollout), `SIGNUP_SMS_FROM` (defaults to SOFTPHONE_CALLER_ID).

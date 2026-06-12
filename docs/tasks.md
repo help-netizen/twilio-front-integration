@@ -2566,3 +2566,64 @@ CRM REST and authenticated MCP routes are mounted behind auth and tenant middlew
 
 **Verification:**
 Full rollout run passed: `npm test -- --runInBand tests/routes/crmAuthGate.test.js tests/routes/crm.test.js tests/routes/crmMcp.test.js tests/routes/crmMcpPublic.test.js tests/routes/crmServerMount.test.js tests/cli/crmMcpStdio.test.js tests/services/crmMcpToolRegistry.test.js tests/services/crmMcpSchemaValidator.test.js tests/services/crmMcpResponse.test.js tests/services/crmListsService.test.js tests/services/crmDealsService.test.js tests/services/crmTasksService.test.js tests/services/crmNotesService.test.js tests/services/crmWriteAuditService.test.js tests/services/crmPipelineService.test.js tests/db/crmQueries.test.js` — 16 suites / 105 tests.
+
+---
+
+# ALB-100: Albusto Commercial Platform Program — Task Breakdown
+
+**Migration range:** 097
+**Specs:** docs/specs/ALB-100-platform-program.md
+
+### TASK-ALB-001: CI tenant-safety sanitizer (ALB-105)
+**Status:** pending
+Files: tests/tenantSafetyLint.test.js — NEW
+
+### TASK-ALB-002: Provider bridge UI (ALB-104)
+**Status:** pending
+Files: frontend/src/components/admin/FieldTechSection.tsx — NEW;
+frontend/src/pages/CompanyUsersPage.tsx (+ data hook) — wire section
+
+### TASK-ALB-003: HARDENING-002 — calls (ALB-103)
+**Status:** pending
+Files: src routes for calls + query modules — permission reports.calls.view,
+tenant scope, provider scope
+
+### TASK-ALB-004: HARDENING-002 — messaging/conversations (ALB-103)
+**Status:** pending
+
+### TASK-ALB-005: HARDENING-002 — leads (ALB-103)
+**Status:** pending
+
+### TASK-ALB-006: HARDENING-002 — email (ALB-103)
+**Status:** pending
+
+### TASK-ALB-007: Migration 097 — phone_otp + trusted_devices + companies geo fields (ALB-101)
+**Status:** pending
+
+### TASK-ALB-008: otpService + publicAuth router (signup, otp, places proxy) (ALB-101)
+**Status:** pending
+Files: backend/src/services/otpService.js — NEW;
+backend/src/routes/publicAuth.js — NEW; backend/src/services/googlePlacesService.js — NEW;
+src/server.js — mount /api/public
+
+### TASK-ALB-009: platformCompanyService.bootstrapCompany + onboarding endpoint (ALB-101/102)
+**Status:** pending
+
+### TASK-ALB-010: Platform companies API + SuperAdminPage Companies tab (ALB-102)
+**Status:** pending
+
+### TASK-ALB-011: Trusted-device 2FA (authenticate hook + /api/auth/trust-device + frontend OTP modal) (ALB-101)
+**Status:** pending — flag FEATURE_SMS_2FA default off
+
+### TASK-ALB-012: Auth pages: /signup /signin /verify-phone /onboarding (ALB-101)
+**Status:** pending
+Albusto brand, Blanc design tokens, Google Places autocomplete
+
+### TASK-ALB-013: super_admin migration: /api/admin/* → requirePlatformRole; create-platform-admin script (ALB-106a)
+**Status:** pending
+
+### TASK-ALB-014: Albusto rebranding of visible UI strings (ALB-106b)
+**Status:** pending
+
+### TASK-ALB-015: Tests per test-cases doc; full suite green
+**Status:** pending

@@ -1237,3 +1237,121 @@ The descriptor is the canonical document model, equivalent to the current hardco
 - No MCP bulk/delete tools are registered.
 - Required typed MCP arguments reject `null` unless the specific write value schema is nullable for explicit field clearing. Legacy generic deal writes validate `value` against the selected allowlisted field before dispatch.
 - Current pipeline truth is `crm_deals`; changes/slippage use `crm_deal_history`; weekly snapshots are optional baselines only.
+
+---
+
+## ALB-100: Albusto Commercial Platform Program
+
+**Status:** Requirements
+**Priority:** P0
+**Owner:** Platform / Identity / RBAC
+**Date:** 2026-06-12
+**Predecessor:** PF007-HARDENING-001 (provider scope, tenant isolation, deny-by-default RBAC — done)
+**Decisions locked with product owner (2026-06-12):**
+SMS-код 6 цифр; 2FA на новом устройстве + раз в 30 дней (trusted device);
+новая компания активна сразу (super admin может suspend); отдельный платформенный
+аккаунт для super_admin; кастомные страницы auth (Keycloak под капотом); онбординг —
+минимум (название компании + город/zip через Google Places → таймзона выводится);
+Google-вход пропускает email-верификацию, телефон обязателен до входа;
+полный ребрендинг видимого UI в Albusto в этой итерации.
+
+Программа из шести воркстримов:
+
+### ALB-101: Self-Registration & Sign-In (Albusto Identity UX)
+
+**Description.** Публичные экраны `app.albusto.com`: регистрация компании и вход.
+Identity plane остаётся Keycloak (пользователи, пароли, Google IdP, сессии);
+вся видимая поверхность — кастомные React-страницы в дизайн-системе продукта
+(тёплая палитра Blanc-стиля, бренд Albusto). Backend оркестрирует Keycloak Admin API.
+
+**Scenarios.**
+- SC-01 Email-регистрация: email+пароль+имя → письмо-подтверждение (ссылка) →
+  телефон (E.164, с маской) → SMS-код 6 цифр (3 попытки, TTL 5 мин, resend c
+  countdown 30 сек) → онбординг-визард.
+- SC-02 Google-регистрация: кнопка "Continue with Google" → Keycloak Google IdP →
+  email уже подтверждён → шаг телефона + SMS-код → онбординг.
+- SC-03 Вход: email/пароль или Google; если устройство не доверено или
+  доверие старше 30 дней → SMS-код на привязанный номер → trusted-device cookie
+  (httpOnly, 30 дней, per-device id).
+- SC-04 Онбординг-визард (один экран): название компании + поле
+  "City or ZIP" c Google Places autocomplete (по мере ввода — подсказки);
+  выбор подсказки сохраняет city/state/zip/lat/lng и **выводит timezone**
+  (Google Time Zone API) — пользователь таймзону не выбирает. Сабмит →
+  POST /api/platform/companies (bootstrap: company + tenant_admin membership +
+  role configs) → редирект в продукт.
+- SC-05 Смена/потеря телефона: tenant_admin может сменить телефон сотрудника
+  (сбрасывает trusted devices); super admin — для tenant_admin.
+
+**Constraints.**
+- Телефон обязателен до первого входа в продукт (включая Google-путь).
+- OTP: 6 цифр, хранится хэш (та же pepper-схема, что api_integrations), max 3
+  проверки, max 5 отправок/номер/час, TTL 5 мин; SMS через существующий Twilio.
+- Rate limiting на /signup и /otp эндпоинтах; коды в audit_log не пишутся.
+- Новые публичные роуты не требуют auth, но живут отдельным router'ом с
+  жёсткими лимитами; никакие tenant-данные через них недоступны.
+- Email-верификация — стандартный Keycloak flow (required action), Google — нет.
+
+### ALB-102: Platform Companies API + Super Admin Panel
+
+**Description.** PF103 §2: `POST /api/platform/companies` (self-service bootstrap,
+вызывается signup-флоу без platform-роли — internal path), а также
+`GET/PATCH /api/platform/companies[...]` для платформенного super admin.
+SuperAdminPage получает таб Companies: список (имя, город, статус, дата,
+кол-во пользователей, последняя активность), suspend/restore c reason,
+карточка компании (метаданные + audit summary; НЕ бизнес-данные тенанта).
+
+**Constraints.** Bootstrap-флоу идемпотентен (повторный сабмит не плодит
+компании); company.created/suspended → domain events в audit_log;
+суспенд → COMPANY_SUSPENDED на всех tenant-роутах (уже реализовано в PF007).
+
+### ALB-103: PF007-HARDENING-002 — calls/messaging/leads/email
+
+**Description.** Тот же метод, что HARDENING-001: аудит внутренних запросов на
+tenant-фильтры + granular permissions на роутах `/api/calls`,
+`/api/messaging`, `/api/conversations`, `/api/leads`, `/api/email`.
+Ключи: `reports.calls.view` (звонки), `messages.view_internal/send`,
+`leads.view/create/edit/convert`, email → `messages.view_client`.
+Provider (assigned_only) видит звонки/сообщения только своих клиентов
+(через jobs mirror, как contacts/pulse).
+
+### ALB-104: Provider Bridge UI (Team Management)
+
+**Description.** В карточке сотрудника CompanyUsersPage — секция Field tech:
+тумблер is_provider; при включении — селект "Zenbooker team member" (ростер из
+GET /api/zenbooker/team-members, поиск по имени), статус маппинга
+(зелёная точка = привязан), кнопка Unlink. Сохранение через существующий
+PATCH /api/users/:id (profile.zenbooker_team_member_id). После сохранения —
+toast "Provider linked — N jobs now visible to this user" (счётчик из
+refreshCompanyProviderMirror). Если ростер недоступен (нет Zenbooker
+интеграции) — поле ручного ввода id с подсказкой.
+
+### ALB-105: CI Tenant-Safety Sanitizer
+
+**Description.** Jest-тест `tests/tenantSafetyLint.test.js` (без новых dev-deps):
+сканирует backend/src/routes и backend/src/db на запрещённые паттерны:
+`req.user?.company_id` / `req.user.company_id` в роутах (кроме allowlist
+keycloakAuth/устаревших файлов с явным комментарием), `req.companyId`,
+интерполяция `${...}` внутри SQL-литералов с company/user переменными,
+`FROM contacts|jobs|leads|timelines...` без company-условия в новых query-файлах
+(эвристика + allowlist). Падает с понятным сообщением "tenant-safety violation".
+
+### ALB-106: super_admin Migration Completion + Albusto Rebranding
+
+**Description.**
+(a) `/api/admin/*` переводятся с requireRole('super_admin') на
+requirePlatformRole('super_admin'); создаётся платформенный аккаунт
+(admin@albusto.com, platform_role=super_admin, БЕЗ memberships); realm-роль
+super_admin перестаёт давать доступ (фронтовый legacy-fallback в
+ProtectedRoute удаляется); help@bostonmasters.com остаётся только tenant_admin.
+(b) Полный ребрендинг видимых строк UI: "Blanc" → "Albusto" (шапка, тайтлы,
+PWA-манифест, login/signup, письма); внутренние идентификаторы кода
+(blanc-* CSS-переменные, BLANC_* env) НЕ трогаем — только пользовательские строки.
+
+**Protected (program-wide):** src/server.js (точечные mount'ы — можно),
+frontend/src/lib/authedFetch.ts, frontend/src/hooks/useRealtimeEvents.ts,
+миграции 001–096, существующие Twilio webhook-флоу, integrations API (Service
+Direct/rely lead flow), VAPI tools endpoint.
+
+**Affected integrations:** Twilio (SMS OTP — новый usage), Google
+(Places/Time Zone API — новый usage; OAuth IdP через Keycloak), Keycloak
+(Google IdP, registration orchestration), Zenbooker (ростер — read-only).
