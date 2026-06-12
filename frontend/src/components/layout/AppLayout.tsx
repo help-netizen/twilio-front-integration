@@ -23,6 +23,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
     const location = useLocation();
     const navigate = useNavigate();
     const activeTab = getActiveTab(location.pathname);
+
     const { accessDeniedMessage, clearAccessDenied, logout, hasRole, company } = useAuth();
 
     const [softPhoneGroups, setSoftPhoneGroups] = useState<any[]>([]);
@@ -95,6 +96,12 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
         try { const r = await authedFetch('/api/sync/today', { method: 'POST', headers: { 'Content-Type': 'application/json' } }); const d = await r.json(); if (d.success) { await queryClient.invalidateQueries({ queryKey: ['calls-by-contact'] }); await queryClient.invalidateQueries({ queryKey: ['contact-calls'] }); alert(`✅ Synced ${d.synced} new calls from last 3 days (${d.total} total found)`); } else alert(`❌ Sync failed: ${d.error}`); }
         catch (error) { console.error('Refresh failed:', error); alert('❌ Failed to refresh calls.'); } finally { setIsRefreshing(false); }
     };
+
+    // ALB-101: auth pages render bare — no header/nav/softphone chrome.
+    // (After all hooks to keep the hook order stable.)
+    if (location.pathname.startsWith('/signup') || location.pathname.startsWith('/onboarding')) {
+        return <>{children}</>;
+    }
 
     return (
         <SoftPhoneProvider onOpenRequested={() => { setSoftPhoneOpen(true); setSoftPhoneMinimized(false); }}>

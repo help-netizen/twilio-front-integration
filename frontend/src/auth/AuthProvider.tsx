@@ -52,7 +52,7 @@ const KEYCLOAK_CLIENT_ID = import.meta.env.VITE_KEYCLOAK_CLIENT_ID || 'crm-web';
 let keycloakInstance: Keycloak | null = null;
 let kcInitialized = false;
 
-function getKeycloak(): Keycloak {
+export function getKeycloak(): Keycloak {
     if (!keycloakInstance) {
         keycloakInstance = new Keycloak({
             url: KEYCLOAK_URL,
@@ -82,13 +82,20 @@ function extractRoles(kc: Keycloak): string[] {
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
+// Paths that must render WITHOUT forcing a Keycloak login (ALB-101)
+const PUBLIC_AUTH_PATHS = ['/signup'];
+function isPublicAuthPath() {
+    return PUBLIC_AUTH_PATHS.some(p => window.location.pathname.startsWith(p));
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
+    const publicPage = isPublicAuthPath();
     const [authenticated, setAuthenticated] = useState(!FEATURE_AUTH);
     const [user, setUser] = useState<AuthUser | null>(
         FEATURE_AUTH ? null : { sub: 'dev', email: 'dev@localhost', name: 'Dev User', roles: ['super_admin', 'company_admin'] }
     );
     const [token, setToken] = useState<string | null>(null);
-    const [loading, setLoading] = useState(FEATURE_AUTH);
+    const [loading, setLoading] = useState(FEATURE_AUTH && !publicPage);
     const [accessDeniedMessage, setAccessDeniedMessage] = useState<string | null>(null);
 
     // PF007 Extended Profile state
@@ -174,6 +181,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             return;
         }
 
+        if (publicPage) return; // signup wizard is public — no login redirect
         if (kcInitialized) return;
         kcInitialized = true;
 

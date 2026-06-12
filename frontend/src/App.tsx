@@ -5,6 +5,25 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './auth/AuthProvider';
 import { ProtectedRoute } from './auth/ProtectedRoute';
+import SignupPage from './pages/auth/SignupPage';
+import OnboardingPage from './pages/auth/OnboardingPage';
+import { useAuth } from './auth/AuthProvider';
+import { useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+
+/** ALB-101: authenticated users without a company go to onboarding. */
+function OnboardingGate() {
+  const { authenticated, company, loading } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+  useEffect(() => {
+    const publicPath = location.pathname.startsWith('/signup') || location.pathname.startsWith('/onboarding');
+    if (!loading && authenticated && !company && !publicPath) {
+      navigate('/onboarding', { replace: true });
+    }
+  }, [authenticated, company, loading, location.pathname, navigate]);
+  return null;
+}
 import { AppLayout } from './components/layout/AppLayout';
 import { HomePage } from './pages/HomePage';
 import { ConversationPage } from './pages/ConversationPage';
@@ -68,8 +87,11 @@ function App() {
     <AuthProvider>
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
+          <OnboardingGate />
           <AppLayout>
             <Routes>
+              <Route path="/signup" element={<SignupPage />} />
+              <Route path="/onboarding" element={<OnboardingPage />} />
               <Route path="/" element={<Navigate to="/pulse" replace />} />
               <Route path="/pulse" element={<ProtectedRoute permissions={['pulse.view']}><PulsePage /></ProtectedRoute>} />
               <Route path="/pulse/contact/:id" element={<ProtectedRoute permissions={['pulse.view']}><PulsePage /></ProtectedRoute>} />
