@@ -1355,3 +1355,52 @@ Direct/rely lead flow), VAPI tools endpoint.
 **Affected integrations:** Twilio (SMS OTP — новый usage), Google
 (Places/Time Zone API — новый usage; OAuth IdP через Keycloak), Keycloak
 (Google IdP, registration orchestration), Zenbooker (ростер — read-only).
+
+---
+
+## ALB-107: Multi-tenant Telephony — Twilio Subaccounts
+
+**Status:** Requirements → In progress
+**Priority:** P0 (коммерческая платформа)
+**Date:** 2026-06-12
+**Verified live:** Subaccounts API (create/list, auth_token в ресурсе),
+AvailablePhoneNumbers search, Pricing API (US local $1.15/mo, toll-free $2.15/mo).
+Ограничение Twilio: операции с субаккаунтами требуют master Account SID +
+Auth Token (API Keys не работают) — подтверждено (20003 на CLI-профиле с ключом).
+
+### Модель
+Один master-аккаунт Twilio (ISV-модель) + **субаккаунт на каждую tenant-компанию**:
+полная изоляция номеров, звонков, usage и (suspend) биллинга. Boston Masters
+(legacy, company 0000…0001) остаётся на master-аккаунте.
+
+### Функционал tenant-кабинета (Settings → Telephony → Phone Numbers)
+1. **Connect telephony** — один клик: создаётся субаккаунт `Albusto <Company>`,
+   статус подключения отображается.
+2. **Поиск номеров**: по area code / городу / digits (contains), фильтры
+   voice/sms; показ locality + цены ($/mo из Pricing API).
+3. **Покупка номера** — в субаккаунт компании, webhooks настраиваются
+   автоматически (voice-inbound/status/fallback → api.albusto.com), запись в
+   phone_number_settings(company_id).
+4. **Список номеров компании**: номер, friendly name (inline rename),
+   город/возможности, назначенная группа/маршрут (существующий F017),
+   дата покупки.
+5. **Release номера** — confirm-диалог, освобождение в Twilio + удаление
+   настроек.
+6. **Изоляция**: tenant видит только свои номера; кросс-tenant id → 404.
+7. **Suspend компании** (platform admin) → suspend субаккаунта (звонки и
+   закупки блокируются Twilio-стороной).
+
+### Маршрутизация webhooks
+Все номера всех субаккаунтов указывают на одни URL. Компания определяется по
+`AccountSid` из webhook payload (company_telephony lookup), fallback — по `To`
+номеру (phone_number_settings). Подпись валидируется токеном соответствующего
+субаккаунта.
+
+### Roadmap (phase 2, не в этой итерации)
+- A2P 10DLC ISV-регистрация (Brand/Campaign per subaccount) — без неё SMS с
+  local-номеров США ограничены carrier-фильтрами; в UI бейдж "SMS limited".
+- Softphone per tenant (API Key + TwiML App в субаккаунте).
+- Port-in номеров, международные номера, usage-отчёт per tenant.
+
+### Protected
+Существующий call flow (F017), webhooks контракт, master-номера Boston Masters.

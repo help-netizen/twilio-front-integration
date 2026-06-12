@@ -145,6 +145,9 @@ app.use('/api/call-flows', authenticate, requireCompanyAccess, callFlowsRouter);
 app.use('/api/phone-numbers', authenticate, requireCompanyAccess, phoneNumbersRouter);
 app.use('/api/telephony/overview', authenticate, requireCompanyAccess, telephonyOverviewRouter);
 app.use('/api/telephony/provider', authenticate, requireCompanyAccess, telephonyProviderRouter);
+// ALB-107: tenant phone-number management (Twilio subaccount per company)
+const telephonyNumbersRouter = require('../backend/src/routes/telephonyNumbers');
+app.use('/api/telephony/numbers', authenticate, requirePermission('tenant.telephony.manage'), requireCompanyAccess, telephonyNumbersRouter);
 
 // Fast zip-code check (rely-lead-processor)
 const zipCheckRouter = require('../backend/src/routes/zip-check');

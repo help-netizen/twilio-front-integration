@@ -58,12 +58,12 @@ describe('Twilio webhook handlers', () => {
 
     describe('validateTwilioSignature', () => {
         test('returns false when signature header is missing', () => {
-            expect(validateTwilioSignature(makeReq())).toBe(false);
+            expect(await validateTwilioSignature(makeReq())).toBe(false);
         });
 
         test('returns false when auth token is missing', () => {
             delete process.env.TWILIO_AUTH_TOKEN;
-            expect(validateTwilioSignature(makeReq({}, { 'x-twilio-signature': 'sig' }))).toBe(false);
+            expect(await validateTwilioSignature(makeReq({}, { 'x-twilio-signature': 'sig' }))).toBe(false);
         });
     });
 

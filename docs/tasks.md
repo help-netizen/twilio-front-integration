@@ -2627,3 +2627,9 @@ Albusto brand, Blanc design tokens, Google Places autocomplete
 
 ### TASK-ALB-015: Tests per test-cases doc; full suite green
 **Status:** done (2026-06-12, night autorun)
+
+### TASK-ALB-016: Multi-tenant telephony — Twilio subaccounts (ALB-107)
+**Status:** done (2026-06-12) — core; phase 2 items in requirements roadmap
+Files: migration 098, services/telephonyTenantService.js, routes/telephonyNumbers.js,
+webhooks signature multi-account, inboxWorker AccountSid attribution,
+PhoneNumbersPage (connect/buy/release), tests/telephonyTenantService.test.js

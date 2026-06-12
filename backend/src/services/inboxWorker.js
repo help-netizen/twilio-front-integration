@@ -146,6 +146,15 @@ async function processEvent(inboxEvent) {
 async function processVoiceEvent(payload, eventType, traceId, source = 'webhook') {
     const normalized = normalizeVoiceEvent(payload);
 
+    // ALB-107: attribute the event to a tenant by the Twilio AccountSid
+    // (subaccount per company). Falls back to the legacy default inside
+    // findOrCreateTimeline when resolution fails.
+    let eventCompanyId = null;
+    try {
+        const telephonyTenantService = require('./telephonyTenantService');
+        eventCompanyId = await telephonyTenantService.resolveCompanyByAccountSid(payload.AccountSid);
+    } catch (e) { /* legacy fallback */ }
+
     // Resolve external party via CallProcessor
     const callData = {
         from: normalized.fromNumber,
@@ -164,8 +173,8 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
     let contactId = null;
     if (processed.direction !== 'internal' && (externalParty?.formatted || isAnonymous)) {
         const timeline = isAnonymous
-            ? await queries.findOrCreateAnonymousTimeline(null)
-            : await queries.findOrCreateTimeline(externalParty.formatted, null);
+            ? await queries.findOrCreateAnonymousTimeline(eventCompanyId)
+            : await queries.findOrCreateTimeline(externalParty.formatted, eventCompanyId);
         timelineId = timeline.id;
         contactId = timeline.contact_id || null;
 
@@ -330,6 +339,7 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
             parentCallSid: normalized.parentCallSid,
             contactId,
             timelineId,
+            companyId: eventCompanyId || undefined,
             direction: processed.direction,   // Use CallProcessor's direction
             fromNumber: (() => {
                 const extracted = extractPhoneFromSIP(normalized.fromNumber);

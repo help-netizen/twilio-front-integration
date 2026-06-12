@@ -6,14 +6,27 @@ const callFlowRuntime = require('../services/callFlowRuntime');
 /**
  * Validate Twilio webhook signature
  */
-function validateTwilioSignature(req) {
+async function validateTwilioSignature(req) {
     const signature = req.headers['x-twilio-signature'];
-    const authToken = process.env.TWILIO_AUTH_TOKEN;
-
-    if (!signature || !authToken) {
-        console.error('Missing signature or auth token');
+    if (!signature) {
+        console.error('Missing Twilio signature');
         return false;
     }
+
+    // ALB-107: webhooks may come from a tenant SUBACCOUNT — each is signed
+    // with its own auth token, resolved by the AccountSid in the payload.
+    let authToken = process.env.TWILIO_AUTH_TOKEN;
+    const accountSid = req.body?.AccountSid;
+    if (accountSid && accountSid !== process.env.TWILIO_ACCOUNT_SID) {
+        try {
+            const telephonyTenantService = require('../services/telephonyTenantService');
+            const subToken = await telephonyTenantService.getAuthTokenForAccountSid(accountSid);
+            if (subToken) authToken = subToken;
+        } catch (err) {
+            console.error('Subaccount token lookup failed:', err.message);
+        }
+    }
+    if (!authToken) return false;
 
     const protocol = req.headers['x-forwarded-proto'] || req.protocol;
     const host = req.headers['x-forwarded-host'] || req.get('host');
@@ -103,7 +116,7 @@ async function handleVoiceStatus(req, res) {
     console.log(`[${traceId}] Voice status webhook`, { callSid: req.body.CallSid, status: req.body.CallStatus });
 
     try {
-        if (process.env.NODE_ENV !== 'development' && !validateTwilioSignature(req)) {
+        if (process.env.NODE_ENV !== 'development' && !(await validateTwilioSignature(req))) {
             return res.status(403).json({ error: 'Invalid signature' });
         }
 
@@ -135,7 +148,7 @@ async function handleRecordingStatus(req, res) {
     console.log(`[${traceId}] Recording status webhook`, { recordingSid: req.body.RecordingSid, status: req.body.RecordingStatus });
 
     try {
-        if (process.env.NODE_ENV !== 'development' && !validateTwilioSignature(req)) {
+        if (process.env.NODE_ENV !== 'development' && !(await validateTwilioSignature(req))) {
             return res.status(403).json({ error: 'Invalid signature' });
         }
 
@@ -170,7 +183,7 @@ async function handleTranscriptionStatus(req, res) {
     });
 
     try {
-        if (process.env.NODE_ENV !== 'development' && !validateTwilioSignature(req)) {
+        if (process.env.NODE_ENV !== 'development' && !(await validateTwilioSignature(req))) {
             return res.status(403).json({ error: 'Invalid signature' });
         }
 
@@ -204,7 +217,7 @@ async function handleVoiceInbound(req, res) {
     });
 
     try {
-        if (process.env.NODE_ENV !== 'development' && !validateTwilioSignature(req)) {
+        if (process.env.NODE_ENV !== 'development' && !(await validateTwilioSignature(req))) {
             return res.status(403).send('<Response><Reject/></Response>');
         }
 
@@ -311,7 +324,7 @@ async function handleDialAction(req, res) {
     });
 
     try {
-        if (process.env.NODE_ENV !== 'development' && !validateTwilioSignature(req)) {
+        if (process.env.NODE_ENV !== 'development' && !(await validateTwilioSignature(req))) {
             return res.status(403).send('<Response></Response>');
         }
 
@@ -424,7 +437,7 @@ async function handleVoicemailComplete(req, res) {
     });
 
     try {
-        if (process.env.NODE_ENV !== 'development' && !validateTwilioSignature(req)) {
+        if (process.env.NODE_ENV !== 'development' && !(await validateTwilioSignature(req))) {
             return res.status(403).send('<Response></Response>');
         }
 
