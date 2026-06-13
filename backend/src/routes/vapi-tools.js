@@ -21,6 +21,7 @@ const https = require('https');
 const stQueries = require('../db/serviceTerritoryQueries');
 const leadsService = require('../services/leadsService');
 const scheduleService = require('../services/scheduleService');
+const jobsService = require('../services/jobsService');
 
 const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 const AVAILABILITY_DAYS = 5;
@@ -192,6 +193,70 @@ async function handleCreateLead(args) {
     return { success: false, error: 'Lead creation failed after retry' };
 }
 
+// ─── Tool: identifyCaller (v3 P1 — read-only) ─────────────────────────────────
+
+// Internal blanc_status → caller-friendly phrase. The bot must never read raw codes.
+const JOB_STATUS_PHRASE = {
+    'Submitted': "we've got your request and are getting it scheduled",
+    'Review': "our team is reviewing the details and will confirm shortly",
+    'Scheduled': "you're scheduled — a technician is set for your window",
+    'Enroute': "your technician is on the way",
+    'In Progress': "the technician is working on it now",
+    'Waiting for parts': "we're waiting on a part to finish the repair",
+    'Job is Done': "the job is complete",
+    'Canceled': "that appointment is canceled",
+};
+function jobStatusPhrase(s) { return JOB_STATUS_PHRASE[s] || 'in progress'; }
+
+/**
+ * Identify the caller as a NEW or EXISTING customer so the assistant can greet
+ * them by name and route the conversation. Soft (phone-only) match — writes in
+ * later phases require a second factor. Never throws; returns a safe summary.
+ */
+async function handleIdentifyCaller(args, call) {
+    const phone = (args?.phone || call?.customer?.number || '').trim();
+
+    let lead = null;
+    if (phone) {
+        try { lead = await leadsService.getLeadByPhone(phone, DEFAULT_COMPANY_ID); }
+        catch (e) { console.error('[vapi-tools] identifyCaller lead lookup:', e.message); }
+    }
+
+    let jobs = [];
+    if (phone) {
+        try {
+            const r = await jobsService.listJobs({ companyId: DEFAULT_COMPANY_ID, search: phone, onlyOpen: true, limit: 10 });
+            jobs = r?.results || [];
+        } catch (e) { console.error('[vapi-tools] identifyCaller jobs lookup:', e.message); }
+    }
+
+    if (!lead && jobs.length === 0) {
+        return { matchType: 'new' };
+    }
+
+    const fullName = lead
+        ? [lead.first_name, lead.last_name].filter(Boolean).join(' ').trim()
+        : (jobs[0]?.customer_name || '');
+    const firstName = (fullName || '').split(' ')[0] || null;
+
+    // nearest upcoming job by start_date
+    const dated = jobs.filter(j => j.start_date).sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
+    const nextJob = dated[0] || jobs[0] || null;
+
+    return {
+        matchType: 'existing',
+        customerName: fullName || null,
+        firstName,
+        openJobsCount: jobs.length,
+        nextAppointment: nextJob ? {
+            service: nextJob.service_name || null,
+            statusLabel: jobStatusPhrase(nextJob.blanc_status),
+            date: nextJob.start_date || null,
+        } : null,
+        verified: false, // phone-only soft match; verify name/ZIP before any writes (P2)
+    };
+}
+
 // ─── Router ───────────────────────────────────────────────────────────────────
 
 router.post('/', vapiSecretAuth, async (req, res) => {
@@ -218,7 +283,9 @@ router.post('/', vapiSecretAuth, async (req, res) => {
 
             let result;
             try {
-                if (name === 'checkServiceArea') {
+                if (name === 'identifyCaller') {
+                    result = await handleIdentifyCaller(args, message.call);
+                } else if (name === 'checkServiceArea') {
                     result = await handleCheckServiceArea(args);
                 } else if (name === 'validateAddress') {
                     result = await handleValidateAddress(args);
