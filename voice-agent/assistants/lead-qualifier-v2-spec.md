@@ -8,7 +8,7 @@ persona_name: "Alex"
 platform: vapi
 voice: azure/andrew
 model: gpt-4o
-server_url: "https://abc-metrics.fly.dev"
+server_url: "https://api.albusto.com"
 predecessor: "Lead Qualifier v1 (48844b0e-93aa-4d32-aab9-81a3972e9502)"
 
 company:

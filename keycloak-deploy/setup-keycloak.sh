@@ -63,15 +63,15 @@ HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$KC_URL/admin/realms
     \"directAccessGrantsEnabled\": true,
     \"standardFlowEnabled\": true,
     \"implicitFlowEnabled\": false,
-    \"rootUrl\": \"https://abc-metrics.fly.dev\",
-    \"baseUrl\": \"https://abc-metrics.fly.dev\",
+    \"rootUrl\": \"https://app.albusto.com\",
+    \"baseUrl\": \"https://app.albusto.com\",
     \"redirectUris\": [
-      \"https://abc-metrics.fly.dev/*\",
+      \"https://app.albusto.com/*\",
       \"http://localhost:3003/*\",
       \"http://localhost:5173/*\"
     ],
     \"webOrigins\": [
-      \"https://abc-metrics.fly.dev\",
+      \"https://app.albusto.com\",
       \"http://localhost:3003\",
       \"http://localhost:5173\"
     ],

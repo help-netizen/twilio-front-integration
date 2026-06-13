@@ -125,13 +125,13 @@ function getTwilioClient(): TwilioClient
 
 1. **TCP-соединения:**
    ```
-   fly ssh console -a abc-metrics -C "grep ' 01 ' /proc/net/tcp" \
+   ssh deploy@108.61.87.117 "cd /opt/albusto && docker compose exec -T app grep ' 01 ' /proc/net/tcp" \
      | awk '$3 ~ /:01BB$/' | wc -l
    ```
    ≤ 30 в течение 6 часов (было 199+).
 2. **CLOSE_WAIT:**
    ```
-   fly ssh console -a abc-metrics -C "grep ' 08 ' /proc/net/tcp"
+   ssh deploy@108.61.87.117 "cd /opt/albusto && docker compose exec -T app grep ' 08 ' /proc/net/tcp"
    ```
    ≤ 5 (было 28).
 3. **Поведение Twilio API**: никаких регрессий — звонки/SMS/reconcile отрабатывают как раньше (метрики successful API calls в логах не падают).

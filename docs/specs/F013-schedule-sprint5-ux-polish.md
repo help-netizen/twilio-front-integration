@@ -4,7 +4,7 @@
 
 Sprint 5 фокусируется на UX-полировке schedule surface: устранение дублирующей информации на карточках, улучшение читаемости при collision lanes, повышение accessibility (touch targets, font sizes, keyboard navigation), и финальные визуальные доработки для dispatch-ready состояния.
 
-**Источник:** Аудит визуального дизайна 2026-03-30, analysis Week View на реальных данных (abc-metrics.fly.dev/schedule).
+**Источник:** Аудит визуального дизайна 2026-03-30, analysis Week View на реальных данных (app.albusto.com/schedule).
 
 ---
 

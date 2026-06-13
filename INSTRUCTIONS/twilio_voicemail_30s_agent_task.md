@@ -12,7 +12,7 @@ objective: >
 scope:
   in:
     - "Twilio Incoming Phone Numbers: Voice URL / Voice Fallback URL / Status Callback"
-    - "Webhook-логика в приложении abc-metrics.fly.dev"
+    - "Webhook-логика в приложении api.albusto.com"
     - "Голосовое приветствие и запись voicemail"
   out:
     - "Изменение логики CRM-интерфейса по отображению legs/interactions"
@@ -26,13 +26,13 @@ inputs:
     - "+16179927291"   # (617) 992-7291
   sip_domain: "abchomes.sip.twilio.com"
   current_urls:
-    voice_url: "https://abc-metrics.fly.dev/webhooks/twilio/voice-inbound"
+    voice_url: "https://api.albusto.com/webhooks/twilio/voice-inbound"
     voice_fallback_url: ""
-    status_callback: "https://abc-metrics.fly.dev/webhooks/twilio/voice-status"
+    status_callback: "https://api.albusto.com/webhooks/twilio/voice-status"
   target_urls:
-    voice_url: "https://abc-metrics.fly.dev/webhooks/twilio/voice-inbound"
-    voice_fallback_url: "https://abc-metrics.fly.dev/webhooks/twilio/voice-fallback"
-    status_callback: "https://abc-metrics.fly.dev/webhooks/twilio/voice-status"
+    voice_url: "https://api.albusto.com/webhooks/twilio/voice-inbound"
+    voice_fallback_url: "https://api.albusto.com/webhooks/twilio/voice-fallback"
+    status_callback: "https://api.albusto.com/webhooks/twilio/voice-status"
   voicemail:
     enabled: true
     dial_timeout_config_value_seconds: 25
@@ -108,7 +108,7 @@ done
 > Применить для всех 3 номеров одинаковую конфигурацию.
 
 ```bash
-BASE_URL="https://abc-metrics.fly.dev"
+BASE_URL="https://api.albusto.com"
 
 for NUM in +18774194983 +16175006181 +16179927291; do
   PN_SID=$(twilio api:core:incoming-phone-numbers:list --phone-number "$NUM" --limit 1 -o json | jq -r '.[0].sid')
@@ -142,8 +142,8 @@ done
 # 5) SIP Domain (abchomes.sip.twilio.com)
 
 Если SIP Domain используется для **входящих SIP INVITE в Twilio**, привести его URL к тем же endpoint-ам:
-- Voice URL: `https://abc-metrics.fly.dev/webhooks/twilio/voice-inbound`
-- Voice Fallback URL: `https://abc-metrics.fly.dev/webhooks/twilio/voice-fallback`
+- Voice URL: `https://api.albusto.com/webhooks/twilio/voice-inbound`
+- Voice Fallback URL: `https://api.albusto.com/webhooks/twilio/voice-fallback`
 
 Сначала получить SID SIP Domain и текущие параметры.  
 Если в конкретной версии CLI команды отличаются — использовать `--help` и задокументировать итоговую команду в отчете.
@@ -169,7 +169,7 @@ const twiml = new Twilio.twiml.VoiceResponse();
 const dial = twiml.dial({
   timeout: 25,
   answerOnBridge: true,
-  action: "https://abc-metrics.fly.dev/webhooks/twilio/voice-dial-action",
+  action: "https://api.albusto.com/webhooks/twilio/voice-dial-action",
   method: "POST",
 });
 

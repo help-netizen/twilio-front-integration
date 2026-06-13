@@ -179,7 +179,7 @@ Pipeline работает так:
 
 ```bash
 # 1. Создать лид с gclid
-curl -X POST https://abc-metrics.fly.dev/api/v1/integrations/leads \
+curl -X POST https://api.albusto.com/api/v1/integrations/leads \
   -H "X-BLANC-API-KEY: <key>" \
   -H "X-BLANC-API-SECRET: <secret>" \
   -H "Content-Type: application/json" \
@@ -193,12 +193,12 @@ curl -X POST https://abc-metrics.fly.dev/api/v1/integrations/leads \
   }'
 
 # 2. Проверить что gclid вернулся
-curl "https://abc-metrics.fly.dev/api/v1/integrations/analytics/leads?has_gclid=true&limit=5" \
+curl "https://api.albusto.com/api/v1/integrations/analytics/leads?has_gclid=true&limit=5" \
   -H "X-BLANC-API-KEY: blanc_ana_<key>" \
   -H "X-BLANC-API-SECRET: <secret>"
 
 # 3. Проверить amount_paid в jobs
-curl "https://abc-metrics.fly.dev/api/v1/integrations/analytics/jobs?limit=5" \
+curl "https://api.albusto.com/api/v1/integrations/analytics/jobs?limit=5" \
   -H "X-BLANC-API-KEY: blanc_ana_<key>" \
   -H "X-BLANC-API-SECRET: <secret>"
 ```

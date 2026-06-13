@@ -12,7 +12,7 @@ security rules, and protected files that ALL agents must respect.
 | Integrations | Twilio (Voice SDK, SMS/Conversations API), Front (Channel API, JWT), Zenbooker (Booking/Contacts API), Google Places |
 | Real-time | SSE (Server-Sent Events), WebSocket (Twilio Device) |
 | Tests | Jest |
-| Deploy | Fly.io (Docker) |
+| Deploy | Vultr (Docker Compose) |
 | AI | Gemini API (summaries, transcripts, polish) |
 
 ## Architecture Overview

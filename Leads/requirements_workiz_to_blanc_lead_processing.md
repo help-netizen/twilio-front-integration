@@ -137,7 +137,7 @@ implementation_requirements_node_express:
     framework: "Express v5"
     db: "PostgreSQL (pg)"
     tests: "Jest"
-    deploy: ["Docker", "Fly.io"]
+    deploy: ["Docker", "Vultr"]
   tasks:
     - "Добавить BlancClient модуль (axios/node-fetch) для POST /api/v1/integrations/leads."
     - "Заменить вызов Workiz в Lead Processing на BlancClient без изменения parser/data-prep модулей."
@@ -179,7 +179,7 @@ deliverables:
   - "BlancClient + конфигурация ENV"
   - "Обновлённый Lead Processing service (без изменений parser/data-prep)"
   - "Jest unit/integration tests"
-  - "Краткая runbook-инструкция для prod env на Fly.io"
+  - "Краткая runbook-инструкция для prod env на Vultr"
 
 issue_task_requirements_section:
   Requirements:
@@ -288,11 +288,11 @@ BLANC_TIMEOUT_MS=30000
 
 | Параметр | Значение |
 |---|---|
-| Production URL | `https://abc-metrics.fly.dev` |
-| API Docs UI | `https://abc-metrics.fly.dev/settings/api-docs` |
-| Integrations UI | `https://abc-metrics.fly.dev/settings/integrations` |
-| Deploy | Fly.io (`fly deploy`) |
-| Database | PostgreSQL (Fly.io managed) |
+| Production URL | `https://app.albusto.com` |
+| API Docs UI | `https://app.albusto.com/settings/api-docs` |
+| Integrations UI | `https://app.albusto.com/settings/integrations` |
+| Deploy | Vultr (`./scripts/prod-deploy.sh`) |
+| Database | PostgreSQL (docker compose on Vultr) |
 
 ## A.2) Аутентификация
 
@@ -379,7 +379,7 @@ X-BLANC-API-SECRET: <48_hex_chars>
 
 #### Пример curl
 ```bash
-curl -X POST https://abc-metrics.fly.dev/api/v1/integrations/leads \
+curl -X POST https://api.albusto.com/api/v1/integrations/leads \
   -H "Content-Type: application/json" \
   -H "X-BLANC-API-KEY: blanc_e34540fce903196c8eeb4461" \
   -H "X-BLANC-API-SECRET: <your_secret>" \
@@ -403,7 +403,7 @@ curl -X POST https://abc-metrics.fly.dev/api/v1/integrations/leads \
 Возвращает все зарегистрированные API интеграции. Внутренний эндпоинт (без JWT).
 
 ```bash
-curl https://abc-metrics.fly.dev/api/admin/integrations
+curl https://api.albusto.com/api/admin/integrations
 ```
 
 ### A.3.3) POST /api/admin/integrations — Создание интеграции
@@ -411,7 +411,7 @@ curl https://abc-metrics.fly.dev/api/admin/integrations
 Создаёт новые API credentials. **Секрет возвращается один раз!**
 
 ```bash
-curl -X POST https://abc-metrics.fly.dev/api/admin/integrations \
+curl -X POST https://api.albusto.com/api/admin/integrations \
   -H "Content-Type: application/json" \
   -d '{"client_name": "Service Direct", "scopes": ["leads:create"]}'
 ```
@@ -435,7 +435,7 @@ curl -X POST https://abc-metrics.fly.dev/api/admin/integrations \
 ### A.3.4) DELETE /api/admin/integrations/:keyId — Отзыв интеграции
 
 ```bash
-curl -X DELETE https://abc-metrics.fly.dev/api/admin/integrations/blanc_e8055f58c35d
+curl -X DELETE https://api.albusto.com/api/admin/integrations/blanc_e8055f58c35d
 ```
 
 ## A.4) Схема БД

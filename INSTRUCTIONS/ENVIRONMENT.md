@@ -28,8 +28,8 @@ npm run deploy:prod
 ```
 
 This:
-1. Updates all Twilio phone number webhooks to `https://abc-metrics.fly.dev`
-2. Deploys to Fly.io
+1. Updates all Twilio phone number webhooks to `https://api.albusto.com`
+2. Deploys to the Vultr server (ssh + docker compose)
 
 ### Switch Webhooks Only (no deploy)
 
@@ -53,9 +53,9 @@ npm run dev:local         # Point webhooks to ngrok (local)
 | Variable | Development | Production |
 |----------|-------------|------------|
 | `NODE_ENV` | `development` | `production` |
-| `WEBHOOK_BASE_URL` | `https://*.ngrok-free.dev` (auto-set) | `https://abc-metrics.fly.dev` |
+| `WEBHOOK_BASE_URL` | `https://*.ngrok-free.dev` (auto-set) | `https://api.albusto.com` |
 | `CALLBACK_HOSTNAME` | Same as WEBHOOK_BASE_URL | Same as WEBHOOK_BASE_URL |
-| `DATABASE_URL` | `postgresql://localhost/twilio_calls` | Fly.io secret |
+| `DATABASE_URL` | `postgresql://localhost/twilio_calls` | docker compose postgres (server `.env`) |
 | `FEATURE_AUTH_ENABLED` | `true` | `true` |
 
 ### How Webhook URLs Work
@@ -74,7 +74,7 @@ TwiML Response (generated per call):
 
 The `WEBHOOK_BASE_URL` must match where Twilio can reach the server:
 - **Local dev**: ngrok URL (set automatically by `dev-start.sh`)
-- **Production**: `https://abc-metrics.fly.dev` (set via Fly.io secret)
+- **Production**: `https://api.albusto.com` (set in the server `.env`)
 
 ---
 
@@ -94,9 +94,9 @@ The `WEBHOOK_BASE_URL` must match where Twilio can reach the server:
 |--------|---------|-------------|
 | `dev:local` | `./scripts/dev-start.sh` | Full local dev (ngrok + backend + frontend) |
 | `dev:backend` | `./scripts/dev-start.sh --backend-only` | Backend + ngrok only |
-| `deploy:prod` | `./scripts/prod-deploy.sh` | Deploy to Fly.io + update webhooks |
+| `deploy:prod` | `./scripts/prod-deploy.sh` | Deploy to Vultr + update webhooks |
 | `webhooks:prod` | `./scripts/prod-deploy.sh --webhooks-only` | Just switch webhooks to prod |
-| `start` | `node src/server.js` | Start backend only (used by Fly.io) |
+| `start` | `node src/server.js` | Start backend only (used in the prod container) |
 | `dev` | `nodemon src/server.js` | Start backend with auto-reload |
 
 ---

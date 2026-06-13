@@ -20,7 +20,7 @@
 - **Интеграции:** Twilio (Voice SDK, SMS/Conversations API), Front (Channel API, JWT), Zenbooker (Booking/Contacts API), Google Places
 - **Real-time:** SSE (Server-Sent Events), WebSocket (Twilio Device)
 - **Тесты:** Jest
-- **Деплой:** Fly.io (Docker)
+- **Деплой:** Vultr (Docker Compose)
 
 ### Ключевые принципы:
 - **Модульная структура** — backend routes/services/db, frontend pages/components/hooks

@@ -82,7 +82,7 @@ This is a **new feature** in the `voice-agent/` domain. It extends the existing 
 - `firstResponseLatency < 1200ms`
 - Tool call p95 < 2000ms
 - Concurrent calls: ≥ 10 simultaneous inbound calls supported
-- Uptime SLA: 99.9% (VAPI SLA + backend Fly.io SLA)
+- Uptime SLA: 99.9% (VAPI SLA + backend Vultr SLA)
 - Lead creation must never block call completion
 - `VAPI_TOOLS_SECRET` header required on all tool calls (already implemented in v1 handler)
 - VAPI `x-vapi-secret` validated server-side before processing any tool call

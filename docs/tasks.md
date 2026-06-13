@@ -8,7 +8,7 @@
 
 **Feature:** VAPI assistant with full lead qualification, address validation, schedule booking, CRM creation
 **Status:** implemented (deployed — assistant `30e85a87-9d7e-4694-828e-1fea7d10f3ef`; 42 Jest tests passing)
-**Pending ops:** set `VAPI_TOOLS_SECRET` on Fly.io; deploy backend; assign profile `lead_qualifier_v2` to a call-flow `vapi_agent` node
+**Pending ops:** set `VAPI_TOOLS_SECRET` on Vultr (`/opt/albusto/.env`); deploy backend; assign profile `lead_qualifier_v2` to a call-flow `vapi_agent` node
 **Related docs:**
 - Requirements: `Docs/requirements.md#LQV2`
 - Architecture: `Docs/architecture.md#LQV2`
@@ -152,7 +152,7 @@
   - FR-11b escalation flow (1 retention attempt, затем callback)
   - FR-12 disqualification scripts
   - Current time injection: `{{now}}` variable для определения 14:00 ET cutoff
-- 4 tools: `checkServiceArea`, `validateAddress`, `checkAvailability`, `createLead` — каждый с `server.url: "https://abc-metrics.fly.dev/api/vapi-tools"` и `server.secret: "{{VAPI_TOOLS_SECRET}}"`
+- 4 tools: `checkServiceArea`, `validateAddress`, `checkAvailability`, `createLead` — каждый с `server.url: "https://api.albusto.com/api/vapi-tools"` и `server.secret: "{{VAPI_TOOLS_SECRET}}"`
 - `metadata.slug: "lead_qualifier_v2"`, `metadata.stage: "2"`, `metadata.version: "2.0.0"`
 - После создания файла — деплой: `curl -X POST https://api.vapi.ai/assistant -H "Authorization: Bearer $VAPI_API_KEY" -d @lead-qualifier-v2.json` и обновление секрета через PATCH
 
@@ -162,9 +162,9 @@
 
 ---
 
-### TASK-LQV2-006: Ops — добавить env vars на Fly.io и в .env.example
+### TASK-LQV2-006: Ops — добавить env vars на Vultr и в .env.example
 
-**Цель:** Добавить `VITE_GOOGLE_MAPS_API_KEY` в `.env.example` и установить на Fly.io продакшн.
+**Цель:** Добавить `VITE_GOOGLE_MAPS_API_KEY` в `.env.example` и установить на Vultr продакшн.
 
 **Файлы, которые можно менять:**
 - `.env.example`
@@ -179,7 +179,7 @@
 
 **Зависимости:** Нет (можно сделать первым)
 
-**Статус:** done (key VITE_GOOGLE_MAPS_API_KEY exists; VAPI_TOOLS_SECRET still to set on Fly.io)
+**Статус:** done (key VITE_GOOGLE_MAPS_API_KEY exists; VAPI_TOOLS_SECRET still to set on Vultr (`/opt/albusto/.env`))
 
 ---
 

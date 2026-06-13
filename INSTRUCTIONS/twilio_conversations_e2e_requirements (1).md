@@ -7,7 +7,7 @@ priority: "high"
 status: "ready_for_implementation"
 context:
   current_state:
-    - "В проде уже работает Twilio SMS/Voice на abc-metrics.fly.dev"
+    - "В проде уже работает Twilio SMS/Voice на api.albusto.com"
     - "Нужно добавить Conversations без даунтайма и без остановки текущих SMS потоков"
   goal:
     - "Единый inbox в UI"

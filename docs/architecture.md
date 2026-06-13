@@ -1579,7 +1579,7 @@ phoneSettings.js      conversationsService.js    twilioSync.js
 
 Steady-state on prod:
 ```
-fly ssh console -a abc-metrics -C "grep ' 01 ' /proc/net/tcp" | awk '$3 ~ /:01BB$/' | wc -l
+ssh deploy@108.61.87.117 "cd /opt/albusto && docker compose exec -T app grep ' 01 ' /proc/net/tcp" | awk '$3 ~ /:01BB$/' | wc -l
 ```
 should report ≤ ~20 (was ≥ 199). CLOSE_WAIT count should be 0–2 (was 28).
 
