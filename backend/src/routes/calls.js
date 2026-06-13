@@ -589,7 +589,7 @@ router.post('/:callSid/transfer', requirePermission('phone_calls.use'), async (r
             return res.status(503).json({ ok: false, error: 'Twilio REST credentials are not configured' });
         }
 
-        const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
+        const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://api.albusto.com';
         const targetIdentity = buildSoftphoneIdentity(companyId, target_user_id);
         const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>

@@ -8,7 +8,7 @@
  *
  * Usage:
  *   node backend/src/cli/backfill_stuck_transcripts.js
- *   fly ssh console -a abc-metrics -C "node src/cli/backfill_stuck_transcripts.js"
+ *   ssh deploy@108.61.87.117 'cd /opt/albusto && docker compose exec app node src/cli/backfill_stuck_transcripts.js'
  */
 
 require('dotenv').config();

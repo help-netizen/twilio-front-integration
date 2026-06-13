@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
-# prod-deploy.sh — Deploy to production (Fly.io)
+# prod-deploy.sh — Deploy to production (Vultr)
 # =============================================================================
-# Repoints Twilio webhooks to production, then deploys to Fly.io
+# Repoints Twilio webhooks to production, then deploys to the Vultr server
+# (app.albusto.com / api.albusto.com, /opt/albusto via docker compose).
 #
 # Usage:
 #   ./scripts/prod-deploy.sh             # Deploy + update webhooks
@@ -13,12 +14,18 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-PROD_URL="https://abc-metrics.fly.dev"
+PROD_URL="https://api.albusto.com"
+PROD_SSH="deploy@108.61.87.117"
+PROD_APP_DIR="/opt/albusto"
 
-# Twilio phone number SIDs (prod only — +16179927291 reserved for dev/testing)
+# Twilio phone number SIDs (prod only — +16179927291 reserved for dev/ngrok)
 PHONE_SIDS=(
-    "PNd4a275cf0cd02292bc69df105b4e6b7d"  # +1 (877) 419-4983
+    "PN898f143454169b9af67b0561163e7ac2"  # +1 (508) 682-5820
+    "PN0d551425c8ac99cb7186efa356d315ed"  # +1 (617) 644-4408
+    "PN32e839a2db0bb7035357c78cf5749f82"  # +1 (508) 444-0808
+    "PN5962e36c39c4530a072cdeb968eb7c08"  # +1 (508) 290-4442
     "PNec159049f9d2a07f464d9d0b9fe9c30a"  # +1 (617) 500-6181
+    "PNdcd4e308ee3e26987e98434d81784446"  # +1 (617) 404-4425
 )
 
 # Colors
@@ -60,16 +67,20 @@ for arg in "$@"; do
 done
 
 # =============================================================================
-# Step 2: Deploy to Fly.io
+# Step 2: Deploy to Vultr (git archive over ssh + docker compose rebuild)
 # =============================================================================
-log "Deploying to Fly.io..."
+log "Deploying master to $PROD_SSH:$PROD_APP_DIR/app ..."
 cd "$PROJECT_DIR"
-fly deploy
+git archive master | ssh "$PROD_SSH" "tar -x -C $PROD_APP_DIR/app"
+
+log "Rebuilding and restarting app container..."
+ssh "$PROD_SSH" "cd $PROD_APP_DIR && docker compose build app && docker compose up -d app"
 
 echo ""
 echo -e "${GREEN}═══════════════════════════════════════════════════${NC}"
 echo -e "${GREEN} ✅ Production deployment complete${NC}"
 echo -e "${GREEN}═══════════════════════════════════════════════════${NC}"
-echo -e " App:      ${BLUE}$PROD_URL${NC}"
+echo -e " App:      ${BLUE}https://app.albusto.com${NC}"
+echo -e " API:      ${BLUE}$PROD_URL${NC}"
 echo -e " Webhooks: ${BLUE}$PROD_URL/webhooks/twilio/*${NC}"
 echo -e "${GREEN}═══════════════════════════════════════════════════${NC}"

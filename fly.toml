@@ -1,5 +1,9 @@
-# fly.toml app configuration file  
+# fly.toml app configuration file
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+# LEGACY: production moved to the Vultr server (app.albusto.com / api.albusto.com)
+# on 2026-06-11. This Fly app is kept alive ONLY to serve /pulse on a frozen DB.
+# Do not deploy production changes here — use scripts/prod-deploy.sh instead.
 
 app = 'abc-metrics'
 primary_region = 'ewr'

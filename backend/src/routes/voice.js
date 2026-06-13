@@ -265,7 +265,7 @@ const twimlRouter = express.Router();
 twimlRouter.post('/twiml/outbound', async (req, res) => {
     const to = req.body.To;
     const requestedCallerId = req.body.CallerId || process.env.SOFTPHONE_CALLER_ID || process.env.TWILIO_PHONE_NUMBER;
-    const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
+    const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://api.albusto.com';
     const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
     const dialActionUrl = `${baseUrl}/webhooks/twilio/voice-dial-action`;
     const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;
@@ -385,7 +385,7 @@ twimlRouter.post('/twiml/outbound', async (req, res) => {
  */
 twimlRouter.post('/twiml/inbound', async (req, res) => {
     const defaultIdentity = process.env.SOFTPHONE_DEFAULT_IDENTITY || 'user_1';
-    const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
+    const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://api.albusto.com';
     const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
     const dialActionUrl = `${baseUrl}/webhooks/twilio/voice-dial-action`;
     const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;
