@@ -2648,3 +2648,11 @@ PhoneNumbersPage (usage chip, A2P banner+wizard), tests
 - TASK-AUTO-04: rulesSeed.js + POST /rules/seed-defaults; emit sms.inbound/call.missed; FEATURE_RULES_ENGINE_AR gate
 - TASK-AUTO-05: frontend AutomationPage + RuleEditor + RuleRunsPanel + automationApi + route/nav
 - TASK-AUTO-06: tests per test-cases; full suite green
+
+---
+# BILLING-UI — Tasks
+- [x] TASK-BILL-01: migration 103 (billing_plans.included_units) + billingService.getInvoices + GET /api/billing returns invoices + GET /invoices — DONE (migration idempotent on prod-schema copy)
+- [x] TASK-BILL-02: routes/billingWebhook.js (raw body, no auth) + mount in src/server.js before json + degraded-mode checkout 422 — DONE (also hardened stripeProvider.parseWebhook against length-mismatch RangeError)
+- [x] TASK-BILL-03: bootstrapCompany → startTrial (idempotent, non-blocking) — DONE
+- [x] TASK-BILL-04: frontend BillingPage + billingApi + route /settings/billing + nav — DONE (Blanc design system, no technical IDs)
+- [x] TASK-BILL-05: tests per test-cases; full suite green — DONE (tests/billingUI.test.js, 8/8; no new regressions vs master)

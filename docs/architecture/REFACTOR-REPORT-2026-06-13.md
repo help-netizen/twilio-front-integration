@@ -105,13 +105,34 @@
   текущие AR-триггеры до миграции конфигов в правила.
 
 ## 7. Долг / следующие шаги
-1. UI-редактор правил (визуальный конструктор trigger→conditions→actions).
-2. Agent-worker (исполнитель `kind=agent` задач через MCP-инструменты).
-3. Миграция AR-конфигов из `arConfigHelper` в seed-правила, затем удаление.
-4. Stripe `provider_price_id` в планах + webhook-эндпоинт (raw body) + UI
-   биллинга/`/settings/billing`.
-5. Очередь (BullMQ/Redis) для event-dispatch при росте объёма.
-6. Консолидация `payment_transactions`↔`zb_payments` с регрессом analytics-вьюх.
+1. ✅ UI-редактор правил (визуальный конструктор trigger→conditions→actions) — AUTO-001.
+2. ✅ Agent-worker (исполнитель `kind=agent` задач через MCP-инструменты) — AUTO-001.
+3. ⏳ Миграция AR-конфигов из `arConfigHelper` в seed-правила, затем удаление.
+   - ✅ ARM-001: верная per-company миграция — `rulesSeed.migrateCompanyARConfig`
+     читает реальный `action_required_config` (priority/SLA/enabled) и
+     перезаписывает system-правила (POST `/api/automation/rules/migrate-ar`);
+     `create_task` теперь несёт `sla_minutes`→`due_at`. Cutover больше не лоссовый.
+   - ⏳ Осталось (заблокировано прод-флагом): проверить `FEATURE_RULES_ENGINE_AR`
+     на проде, прогнать `migrate-ar` по компаниям, затем физически удалить
+     `arConfigHelper` из `inboxWorker`/`conversationsService`.
+   - 📝 `voicemail`-триггер не мигрирован: нет источника domain-события (нечего
+     слушать) — требует отдельного события до миграции.
+4. ✅ Stripe `provider_price_id` + webhook-эндпоинт (raw body) + UI
+   `/settings/billing` — BILLING-UI. Осталось: завести реальные Stripe-продукты
+   и проставить `provider_price_id` (внешняя конфигурация).
+5. ⏳ Очередь (BullMQ/Redis) для event-dispatch при росте объёма — отложено.
+6. ✅ Консолидация `payment_transactions`↔`zb_payments` — PAY-CONS-001 (миграция 104).
+   - Zenbooker = master по оплатам → его данные авторитетны
+     (`external_source='zenbooker'`, `payment_method='zenbooker_sync'`).
+   - `zb_payments` сохранён как staging-кэш Zenbooker (UI оплат читает его
+     denormalized-поля); миграция только проецирует его в канонический ledger.
+   - Write-through в `zenbookerPaymentsSyncService.projectCompanyLedger` держит
+     ledger актуальным при каждом синке (идемпотентно, ZB-priority on conflict).
+   - `analyticsService.listJobs` читает единственный источник
+     `payment_transactions` (ZB-priority), fallback на `zb_payments` убран.
+   - `fact_payments`/marts НЕ тронуты (их кормит внешний /pulse ETL).
+   - Проверено на копии прод-данных: backfill 1027 строк, **0/1164 расхождений**
+     по job-суммам, grand total $197 253.26 совпадает до цента.
 
 ## Миграции этого прохода
 - `100_platform_core_event_rules_agent.sql`

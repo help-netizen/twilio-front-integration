@@ -44,6 +44,7 @@ import ProvidersPage from './pages/ProvidersPage';
 import PhoneCallsSettingsPage from './pages/PhoneCallsSettingsPage';
 import ActionRequiredSettingsPage from './pages/ActionRequiredSettingsPage';
 import AutomationPage from './pages/AutomationPage';
+import BillingPage from './pages/BillingPage';
 import EmailSettingsPage from './pages/EmailSettingsPage';
 import DocumentTemplatesPage from './pages/DocumentTemplatesPage';
 import DocumentTemplateEditorPage from './pages/DocumentTemplateEditorPage';
@@ -127,6 +128,7 @@ function App() {
               <Route path="/settings/phone-calls" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><PhoneCallsSettingsPage /></ProtectedRoute>} />
               
               <Route path="/settings/automation" element={<ProtectedRoute permissions={['tenant.company.manage']}><AutomationPage /></ProtectedRoute>} />
+              <Route path="/settings/billing" element={<ProtectedRoute permissions={['tenant.company.manage']}><BillingPage /></ProtectedRoute>} />
               <Route path="/settings/action-required" element={<Navigate to="/settings/actions-notifications" replace />} />
               <Route path="/settings/actions-notifications" element={<ProtectedRoute permissions={['tenant.company.manage']}><ActionRequiredSettingsPage /></ProtectedRoute>} />
               

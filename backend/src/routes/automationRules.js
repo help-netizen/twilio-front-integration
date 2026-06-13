@@ -135,6 +135,17 @@ router.post('/rules/seed-defaults', async (req, res) => {
     }
 });
 
+// POST /api/automation/rules/migrate-ar — ARM-001 cutover: rebuild the system
+// rules from this company's real action_required_config (faithful priority/SLA).
+router.post('/rules/migrate-ar', async (req, res) => {
+    try {
+        const result = await rulesSeed.migrateCompanyARConfig(companyId(req));
+        res.json({ ok: true, ...result });
+    } catch (e) {
+        res.status(500).json({ ok: false, error: 'Failed to migrate AR config' });
+    }
+});
+
 // GET /api/automation/agent-tasks?status= — list agent tasks (company-scoped)
 router.get('/agent-tasks', async (req, res) => {
     try {

@@ -41,8 +41,18 @@ async function startTrial(companyId, planId = 'trial') {
     return getSubscription(companyId);
 }
 
+/** True when the active billing provider has real credentials configured. */
+function providerConfigured() {
+    return Boolean(process.env.STRIPE_SECRET_KEY);
+}
+
 /** Create a Stripe Checkout session to move a company onto a paid plan. */
 async function createCheckout(companyId, planId, { successUrl, cancelUrl }) {
+    if (!providerConfigured()) {
+        const e = new Error('Billing is not enabled yet');
+        e.httpStatus = 422; e.code = 'PROVIDER_NOT_CONFIGURED';
+        throw e;
+    }
     const provider = getProvider();
     const { rows: companyRows } = await db.query(
         'SELECT id, name, contact_email FROM companies WHERE id = $1', [companyId]
@@ -92,6 +102,24 @@ async function recordUsage(companyId, metric, quantity) {
          DO UPDATE SET quantity = billing_usage_records.quantity + $4, updated_at = now()`,
         [companyId, metric, periodStart(), quantity]
     );
+}
+
+/** Recent invoices for the company cabinet (most recent first). */
+async function getInvoices(companyId, limit = 24) {
+    const { rows } = await db.query(
+        `SELECT amount_due_usd, amount_paid_usd, status, hosted_url, issued_at, created_at
+         FROM billing_invoices
+         WHERE company_id = $1
+         ORDER BY COALESCE(issued_at, created_at) DESC
+         LIMIT $2`,
+        [companyId, limit]
+    );
+    return rows.map(r => ({
+        date: r.issued_at || r.created_at,
+        amount: Number(r.amount_due_usd || r.amount_paid_usd || 0),
+        status: r.status,
+        hosted_url: r.hosted_url,
+    }));
 }
 
 async function getUsage(companyId, period = periodStart()) {
@@ -156,7 +184,7 @@ async function companyByCustomer(customerId) {
 }
 
 module.exports = {
-    getSubscription, startTrial, createCheckout,
-    recordUsageEvent, recordUsage, getUsage,
+    getSubscription, startTrial, createCheckout, providerConfigured,
+    recordUsageEvent, recordUsage, getUsage, getInvoices,
     handleProviderWebhook,
 };

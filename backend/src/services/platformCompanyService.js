@@ -110,6 +110,12 @@ async function bootstrapCompany({ userId, name, geo = {}, phone, email }) {
             details: { name, slug, timezone: company.timezone, source: 'self_signup' },
         }).catch(() => {});
 
+        // Start the 14-day platform trial. Non-blocking and idempotent
+        // (ON CONFLICT DO NOTHING) — a billing hiccup must not fail signup.
+        require('./billingService').startTrial(company.id, 'trial').catch((e) => {
+            console.error('startTrial on bootstrap failed:', e.message);
+        });
+
         return { company, created: true };
     } catch (err) {
         await client.query('ROLLBACK');

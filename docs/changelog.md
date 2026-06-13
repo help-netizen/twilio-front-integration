@@ -4,6 +4,122 @@
 
 ---
 
+## 2026-06-13 — PAY-CONS-001: consolidate zb_payments into the canonical ledger (debt #6)
+
+Zenbooker is the master payment system, so its data is authoritative. The legacy
+`zb_payments` cache is now projected into the canonical `payment_transactions`
+ledger, removing the dual-source read in analytics. `zb_payments` is kept as the
+Zenbooker staging cache (the payments UI reads its denormalised fields).
+
+### Backend
+- Migration `104_consolidate_zb_payments_into_ledger.sql` — partial unique index
+  `uq_payment_tx_external_zb (company_id, external_id) WHERE external_source='zenbooker'`
+  + idempotent backfill of `zb_payments` → `payment_transactions`
+  (`payment_method='zenbooker_sync'`, status mapped succeeded→completed /
+  failed / voided, job resolved via `jobs.zenbooker_job_id`). Zenbooker-priority
+  on conflict. Does NOT touch `fact_payments`/marts (external /pulse ETL).
+- `zenbookerPaymentsSyncService.projectCompanyLedger(companyId)` — write-through
+  called after each sync so the ledger stays current (idempotent, non-fatal).
+- `analyticsService.listJobs` now reads only `payment_transactions` with
+  Zenbooker-priority (prefer `zenbooker_sync` rows when present, else native);
+  the `zb_payments` fallback is gone.
+
+### Validation (prod-data copy)
+- Backfill 1027 rows; ran twice — idempotent. Per-job paid totals **0/1164
+  mismatches** vs the legacy path; grand total $197,253.26 identical to the cent.
+- Write-through projection re-verified independently: 1027 rows, ledger total =
+  zb succeeded total.
+
+### Tests
+- `tests/paymentsConsolidation.test.js` — projection SQL (Zenbooker-priority
+  upsert, status mapping, company scope) + analytics single-source read. Full
+  suite: 699 pass, 22 pre-existing failures unchanged (no new regressions).
+
+### Decisions (owner-confirmed mapping; recommended defaults elsewhere)
+- Master = Zenbooker → zb data wins on conflict (owner, 2026-06-13).
+- Keep `zb_payments` as staging (not dropped) — reversible, UI depends on it.
+- `fact_payments`/marts untouched (fed externally).
+
+---
+
+## 2026-06-13 — ARM-001: faithful AR-config → rules migration (debt #3)
+
+Closes the un-blocked half of refactor debt #3 so flipping
+`FEATURE_RULES_ENGINE_AR` on prod no longer silently resets customised
+action-required behaviour.
+
+### Backend
+- `ruleActions.create_task` now accepts `sla_minutes` → computes a relative
+  `due_at` (an explicit `due_at` still wins). Carries the legacy AR
+  `task_sla_minutes` faithfully.
+- `rulesSeed.js` refactored around a shared `buildRulesFromConfig(config)`:
+  - `seedDefaultRules` — static defaults for fresh companies, `ON CONFLICT DO
+    NOTHING` (never clobbers admin edits).
+  - `migrateCompanyARConfig` — reads the company's real
+    `action_required_config` (priority / SLA / enabled) and upserts the system
+    rules `DO UPDATE` (authoritative cutover).
+- `POST /api/automation/rules/migrate-ar` (`tenant.company.manage`) triggers the
+  per-company cutover.
+- `voicemail` trigger intentionally not migrated — no domain-event source yet
+  (documented in REFACTOR-REPORT §7).
+
+### Tests
+- `tests/arConfigMigration.test.js` — 8 tests: config→rule mapping (custom
+  priority/SLA, disabled propagation, legacy defaults), `migrate-ar` DO UPDATE +
+  scope, `seed-defaults` DO NOTHING, and `create_task` SLA→dueAt (relative,
+  explicit-wins, null). Existing `automationE2E` still green. Full suite: 696
+  pass, 22 pre-existing failures unchanged (no new regressions).
+
+### Still open (not done tonight)
+- Debt #3 physical removal: gated on prod verification of
+  `FEATURE_RULES_ENGINE_AR` (no deploy per owner).
+- Debt #5 (Redis/BullMQ queue): deferred until load grows.
+- Debt #6 (`payment_transactions`↔`zb_payments` consolidation): needs owner
+  sign-off on mapping semantics — analytics-regression risk.
+
+---
+
+## 2026-06-12 — BILLING-UI: subscription & billing cabinet (tenant-admin)
+
+UX-first subscription cabinet at `/settings/billing` (`tenant.company.manage`),
+completing the Stripe foundation from ADR-001 / commit 588c0d8.
+
+### Frontend
+- New `frontend/src/pages/BillingPage.tsx` — owner-facing cabinet on the Blanc
+  design system: plan + status (trial "N days left", human "Free until <date>"),
+  this-month usage bars (Text messages / Call minutes / Automations run) with
+  green/amber/red thresholds against per-plan allowances, plan cards with Stripe
+  Checkout upgrade, and an invoice list (date · amount · status · hosted link).
+  No technical IDs (customer_id / subscription_id) surfaced.
+- `frontend/src/services/billingApi.ts` client; route in `App.tsx`; "Billing"
+  entry in the settings nav (`appLayoutNavigation.tsx`).
+- Degraded mode: when online payments aren't enabled, upgrade buttons disable
+  with an explanatory note; status/usage/invoices still render.
+
+### Backend
+- Migration `103_billing_included_units.sql` — `billing_plans.included_units`
+  jsonb allowances (sms / call_minutes / agent_runs) backfilled for
+  trial/starter/pro. Idempotent; verified on a prod-schema copy.
+- `billingService.getInvoices`, `providerConfigured`; `GET /api/billing` now
+  returns `invoices` + `billing_enabled`; new `GET /api/billing/invoices`.
+- `routes/billingWebhook.js` — Stripe webhook (raw body, no auth, signature
+  verified), mounted in `src/server.js` before `express.json` (path-scoped, no
+  effect on other routes).
+- `createCheckout` returns 422 `PROVIDER_NOT_CONFIGURED` when `STRIPE_SECRET_KEY`
+  is absent (degraded mode).
+- `bootstrapCompany` starts the 14-day trial on signup (idempotent, non-blocking).
+- Hardened `stripeProvider.parseWebhook`: length-guard before `timingSafeEqual`
+  (a malformed signature now rejects cleanly instead of throwing `RangeError`)
+  and a try/catch around `JSON.parse`.
+
+### Tests
+- `tests/billingUI.test.js` — 8 tests: trial start idempotency, usage/invoice
+  mapping + tenant scope, degraded-mode 422, webhook signature accept/reject,
+  route isolation. Full suite: no new regressions vs `master` (22 pre-existing
+  failures unchanged, unrelated to billing).
+
+---
+
 ## 2026-06-03 — CRM-SALES-MCP Stage 6 Testing and Rollout
 
 ### Backend

@@ -95,8 +95,13 @@ function parseWebhook(rawBody, signatureHeader) {
     if (!parts.t || !parts.v1) return null;
     const expected = crypto.createHmac('sha256', secret)
         .update(`${parts.t}.${rawBody}`).digest('hex');
-    if (!crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(parts.v1))) return null;
-    const evt = JSON.parse(rawBody);
+    const a = Buffer.from(expected);
+    const b = Buffer.from(parts.v1);
+    // timingSafeEqual throws on length mismatch — guard so a malformed
+    // signature is a clean rejection, not an unhandled exception.
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+    let evt;
+    try { evt = JSON.parse(rawBody); } catch { return null; }
     return { type: evt.type, data: evt.data?.object || {}, id: evt.id };
 }
 

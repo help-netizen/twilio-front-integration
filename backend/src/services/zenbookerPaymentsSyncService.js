@@ -379,7 +379,58 @@ async function syncPayments(companyId, dateFrom, dateTo) {
     }
 
     console.log(`[PaymentsService] Upserted ${upsertedCount} payments`);
+
+    // Debt #6: project this company's Zenbooker payments into the canonical
+    // payment_transactions ledger (Zenbooker = master, so its rows win on
+    // conflict). Idempotent; keeps the ledger in sync without dropping the
+    // zb_payments staging cache. Best-effort — a projection hiccup must not fail
+    // the Zenbooker sync itself.
+    try {
+        const { rowCount } = await projectCompanyLedger(companyId);
+        console.log(`[PaymentsService] Projected ${rowCount} payments into the ledger`);
+    } catch (e) {
+        console.error('[PaymentsService] Ledger projection failed (non-fatal):', e.message);
+    }
+
     return { synced: upsertedCount, total_transactions: transactions.length };
+}
+
+/**
+ * Debt #6 — upsert all of a company's zb_payments into payment_transactions.
+ * Mirrors migration 104's mapping. Zenbooker-priority via ON CONFLICT DO UPDATE.
+ * Idempotent and self-healing (re-projects the whole company each call).
+ */
+async function projectCompanyLedger(companyId) {
+    return db.query(`
+        INSERT INTO payment_transactions (
+            company_id, job_id, transaction_type, payment_method, status,
+            amount, currency, reference_number, external_id, external_source,
+            memo, metadata, processed_at, created_at, updated_at
+        )
+        SELECT zp.company_id,
+               j.id,
+               'payment', 'zenbooker_sync',
+               CASE zp.transaction_status
+                   WHEN 'succeeded' THEN 'completed'
+                   WHEN 'failed'    THEN 'failed'
+                   WHEN 'voided'    THEN 'voided'
+                   ELSE 'pending' END,
+               COALESCE(zp.amount_paid, 0), 'USD',
+               NULLIF(zp.invoice_id, ''), zp.transaction_id, 'zenbooker',
+               NULLIF(zp.client, '—'),
+               jsonb_build_object('zb_job_id', zp.job_id, 'job_number', zp.job_number,
+                   'job_type', zp.job_type, 'display_payment_method', zp.display_payment_method,
+                   'invoice_status', zp.invoice_status, 'source', 'zb_sync_writethrough'),
+               zp.payment_date, zp.created_at, now()
+        FROM zb_payments zp
+        LEFT JOIN jobs j ON j.zenbooker_job_id = zp.job_id AND j.company_id = zp.company_id
+        WHERE zp.company_id = $1
+        ON CONFLICT (company_id, external_id) WHERE external_source = 'zenbooker'
+        DO UPDATE SET job_id = EXCLUDED.job_id, status = EXCLUDED.status,
+            amount = EXCLUDED.amount, payment_method = EXCLUDED.payment_method,
+            memo = EXCLUDED.memo, metadata = EXCLUDED.metadata,
+            processed_at = EXCLUDED.processed_at, updated_at = now()
+    `, [companyId]);
 }
 
 // =============================================================================
@@ -666,6 +717,7 @@ async function updateCheckDeposited(companyId, paymentId, deposited) {
 
 module.exports = {
     syncPayments,
+    projectCompanyLedger,
     listPayments,
     listPaymentsForExport,
     getPaymentDetail,

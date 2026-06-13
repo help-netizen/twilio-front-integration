@@ -53,6 +53,12 @@ app.use((req, res, next) => {
     next();
 });
 
+// Billing webhook (Stripe) MUST receive the raw, unparsed body for HMAC
+// signature verification, so it is mounted before express.json. Path-scoped:
+// every other route is unaffected and still gets parsed JSON below.
+app.use('/api/billing/webhook', express.raw({ type: '*/*', limit: '1mb' }),
+    require('../backend/src/routes/billingWebhook'));
+
 // Middleware
 // 2mb limit covers document-template descriptors that may embed a base64 logo
 // (logo_url.maxLength = 500_000 chars ≈ 370KB + descriptor JSON overhead).

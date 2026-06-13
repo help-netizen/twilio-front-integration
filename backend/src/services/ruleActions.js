@@ -56,6 +56,13 @@ const REGISTRY = {
 
     async create_task({ params, companyId, context }) {
         const queries = require('../db/queries');
+        // sla_minutes → relative due date (carries the legacy AR task_sla_minutes
+        // faithfully). An explicit due_at always wins.
+        let dueAt = params.due_at || null;
+        if (!dueAt && params.sla_minutes != null) {
+            const mins = parseInt(params.sla_minutes, 10);
+            if (Number.isFinite(mins) && mins > 0) dueAt = new Date(Date.now() + mins * 60000).toISOString();
+        }
         const task = await queries.createTask({
             companyId,
             threadId: params.thread_id || context.timeline_id || null,
@@ -64,7 +71,7 @@ const REGISTRY = {
             title: params.title || 'Automated task',
             description: params.description || null,
             priority: params.priority || 'p2',
-            dueAt: params.due_at || null,
+            dueAt,
             ownerUserId: params.owner_user_id || null,
             createdBy: 'automation',
         });

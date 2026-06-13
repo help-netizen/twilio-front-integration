@@ -357,31 +357,30 @@ async function listJobs({ from, to, trackingNumber, companyId, limit, cursor }) 
     let cursorClause = '';
     if (cursorTs) { params.push(cursorTs); cursorClause = `AND j.created_at < $${params.length}`; }
 
-    // Net "Paid" per job — supports partial payments.
-    // Prefer the canonical payment_transactions ledger when any row links to this job;
-    // otherwise fall back to the legacy zb_payments cache (Zenbooker sync) so historical
-    // jobs still report their paid totals. Refunds / voids / failures are excluded.
+    // Net "Paid" per job — supports partial payments. Single canonical source:
+    // the payment_transactions ledger (debt #6). Zenbooker is the master payment
+    // system, so when a job carries zenbooker_sync rows those are authoritative
+    // and native rows are ignored to avoid double counting; otherwise native
+    // rows are summed. Refunds/voids/failures excluded. Numbers verified
+    // identical to the legacy zb_payments path on a prod-data copy (migration 104).
+    const ledgerSum = (scope) => `
+      COALESCE((
+        SELECT SUM(
+          CASE
+            WHEN pt.transaction_type = 'payment' AND pt.status = 'completed' THEN pt.amount
+            WHEN pt.transaction_type = 'refund'  AND pt.status = 'completed' THEN -ABS(pt.amount)
+            ELSE 0
+          END
+        )
+        FROM payment_transactions pt
+        WHERE pt.job_id = j.id ${scope}
+      ), 0)`;
     const paidExpr = `
       CASE
-        WHEN EXISTS (SELECT 1 FROM payment_transactions pt WHERE pt.job_id = j.id) THEN
-          COALESCE((
-            SELECT SUM(
-              CASE
-                WHEN pt.transaction_type = 'payment' AND pt.status = 'completed' THEN pt.amount
-                WHEN pt.transaction_type = 'refund'  AND pt.status = 'completed' THEN -ABS(pt.amount)
-                ELSE 0
-              END
-            )
-            FROM payment_transactions pt
-            WHERE pt.job_id = j.id
-          ), 0)
-        ELSE
-          COALESCE((
-            SELECT SUM(zp.amount_paid)
-            FROM zb_payments zp
-            WHERE zp.job_id = j.zenbooker_job_id
-              AND zp.transaction_status = 'succeeded'
-          ), 0)
+        WHEN EXISTS (SELECT 1 FROM payment_transactions pt
+                     WHERE pt.job_id = j.id AND pt.payment_method = 'zenbooker_sync')
+          THEN ${ledgerSum("AND pt.payment_method = 'zenbooker_sync'")}
+        ELSE ${ledgerSum('')}
       END
     `;
 

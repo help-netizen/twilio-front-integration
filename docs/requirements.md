@@ -1459,3 +1459,44 @@ usable end-to-end.
 - Сложные visual flow-граф редакторы (форма-конструктор достаточно).
 - Реальные LLM-агенты (worker вызывает существующие сервисы/MCP; LLM-агенты —
   отдельная фича).
+
+---
+
+## BILLING-UI: Subscription & Billing Cabinet (UX-first)
+
+**Status:** Requirements · **Priority:** P1 · **Date:** 2026-06-13
+**Foundation:** ADR-001 §2.4 (billingService, /api/billing, stripeProvider) — commit 588c0d8.
+
+### UX intent (designed first)
+Владелец компании, не разработчик. Экран `/settings/billing` отвечает на 4 вопроса
+без технического шума (без id подписки/клиента/счёта):
+1. В каком я состоянии? — крупный статус (Trial · N days left / Active / Past due)
+   с человеческой датой окончания.
+2. Сколько потратил? — usage-полоски (Text messages / Call minutes / Automations
+   run) против лимитов плана; зелёный <80%, янтарный 80-100%, красный при превышении.
+3. Как продолжить/апгрейдиться? — карточки планов (Pro = Most popular), кнопка →
+   Stripe Checkout.
+4. Где мои счета? — список: дата, статус (Paid/зелёный, Failed/красный), сумма,
+   View → hosted invoice.
+
+### Scenarios
+- SC-01: Новая компания после онбординга — trial автоматически стартовал
+  (14 дней), баннер «9 days left».
+- SC-02: Апгрейд — клик Upgrade → Checkout redirect → возврат `?status=success`
+  → подписка active (через webhook).
+- SC-03: Просмотр счетов — клик View открывает hosted invoice Stripe в новой вкладке.
+- SC-04: Неоплата — Stripe webhook `invoice.payment_failed` → статус past_due →
+  баннер с просьбой обновить карту (через Customer Portal/Checkout).
+
+### Constraints
+- RBAC `tenant.company.manage`; tenant-изоляция; webhook — без auth, raw body,
+  проверка подписи Stripe v1.
+- Без технических идентификаторов в UI (дизайн-принципы CLAUDE.md).
+- Trial стартует в bootstrapCompany (онбординг), идемпотентно.
+- FEATURE-флаг не нужен (read-only пока нет STRIPE_SECRET_KEY: UI деградирует —
+  показывает trial/usage, кнопки апгрейда disabled с подсказкой).
+- Тесты: webhook-подпись, trial-старт, usage-расчёт, RBAC.
+
+### Out of scope
+- Customer Portal управление картой (фаза 2 — пока через повторный Checkout).
+- Proration/downgrade-флоу.

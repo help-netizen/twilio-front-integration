@@ -2024,3 +2024,30 @@ subscription.past_due, agent_task.succeeded, agent_task.failed.
 
 **Protected:** src/server.js (only boot-block addition for worker, like existing
 workers), eventBus/rulesEngine/ruleActions (extend via registry, not rewrite).
+
+---
+
+## BILLING-UI (ADR-001 §2.4 completion)
+**Backend:**
+- `routes/billing.js` EXTEND: GET / уже отдаёт subscription+usage+plans; добавить
+  invoices в ответ; GET /invoices (отдельный, пагинация); POST /checkout есть.
+- `routes/billingWebhook.js` NEW: POST /api/billing/webhook — express.raw body,
+  no auth, Stripe signature → billingService.handleProviderWebhook. Mounted in
+  src/server.js BEFORE express.json (needs raw body).
+- `platformCompanyService.bootstrapCompany` EXTEND: вызвать billingService.startTrial
+  после создания компании (идемпотентно, non-blocking).
+- `billingService` уже имеет getSubscription/getUsage/createCheckout/
+  handleProviderWebhook; добавить getInvoices(companyId).
+- Plan limits для usage-полосок: billing_plans.metered + included семантика;
+  усиление: добавить included_units в plan (sms/calls/agent) — migration 103.
+
+**Frontend (UX-first):**
+- `pages/BillingPage.tsx` NEW — статус-карта, usage-полоски, планы, инвойсы.
+- `services/billingApi.ts` NEW — authedFetch wrappers.
+- Route `/settings/billing` (tenant.company.manage), nav entry.
+
+**Plan limits source:** migration 103 adds `billing_plans.included_units` jsonb
+{sms, call_minutes, agent_runs} so usage bars show real caps (trial: generous).
+
+**Protected:** src/server.js (webhook mount needs raw-body — careful ordering,
+additive); existing billing schema (extend via migration only).

@@ -10,17 +10,28 @@ const billingService = require('../services/billingService');
 
 function companyId(req) { return req.companyFilter?.company_id; }
 
-// GET /api/billing — subscription + this-period usage + plan catalog
+// GET /api/billing — subscription + this-period usage + plan catalog + invoices
 router.get('/', async (req, res) => {
     try {
-        const [subscription, usage, plans] = await Promise.all([
+        const [subscription, usage, plans, invoices] = await Promise.all([
             billingService.getSubscription(companyId(req)),
             billingService.getUsage(companyId(req)),
-            db.query('SELECT id, name, monthly_base_usd, included_seats, per_seat_usd, metered FROM billing_plans WHERE is_active ORDER BY monthly_base_usd').then(r => r.rows),
+            db.query('SELECT id, name, monthly_base_usd, included_seats, per_seat_usd, metered, included_units FROM billing_plans WHERE is_active ORDER BY monthly_base_usd').then(r => r.rows),
+            billingService.getInvoices(companyId(req)),
         ]);
-        res.json({ ok: true, subscription, usage, plans });
+        res.json({ ok: true, subscription, usage, plans, invoices, billing_enabled: billingService.providerConfigured() });
     } catch (err) {
         res.status(500).json({ ok: false, error: 'Failed to load billing' });
+    }
+});
+
+// GET /api/billing/invoices — company-scoped invoice history
+router.get('/invoices', async (req, res) => {
+    try {
+        const invoices = await billingService.getInvoices(companyId(req));
+        res.json({ ok: true, invoices });
+    } catch (err) {
+        res.status(500).json({ ok: false, error: 'Failed to load invoices' });
     }
 });
 
@@ -35,7 +46,7 @@ router.post('/checkout', async (req, res) => {
         });
         res.json({ ok: true, ...out });
     } catch (err) {
-        res.status(err.httpStatus || 500).json({ ok: false, error: err.message });
+        res.status(err.httpStatus || 500).json({ ok: false, code: err.code, error: err.message });
     }
 });
 
