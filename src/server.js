@@ -148,6 +148,11 @@ app.use('/api/telephony/provider', authenticate, requireCompanyAccess, telephony
 // ALB-107: tenant phone-number management (Twilio subaccount per company)
 const telephonyNumbersRouter = require('../backend/src/routes/telephonyNumbers');
 app.use('/api/telephony/numbers', authenticate, requirePermission('tenant.telephony.manage'), requireCompanyAccess, telephonyNumbersRouter);
+// ADR-001: automation rules (rules-engine editor) + platform billing
+const automationRulesRouter = require('../backend/src/routes/automationRules');
+app.use('/api/automation', authenticate, requirePermission('tenant.company.manage'), requireCompanyAccess, automationRulesRouter);
+const billingRouter = require('../backend/src/routes/billing');
+app.use('/api/billing', authenticate, requirePermission('tenant.company.manage'), requireCompanyAccess, billingRouter);
 
 // Fast zip-code check (rely-lead-processor)
 const zipCheckRouter = require('../backend/src/routes/zip-check');
@@ -341,6 +346,16 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
     startWorker().catch(error => {
         console.error('❌ Worker error:', error);
     });
+
+    // ADR-001: wire event-bus subscribers (rules engine, billing meter)
+    require('../backend/src/services/eventSubscribers').registerSubscribers();
+
+    // ADR-001: rules-engine scheduler tick (timer-triggered + delayed rules)
+    const rulesEngine = require('../backend/src/services/rulesEngine');
+    setInterval(() => {
+        rulesEngine.tickScheduler().catch(e => console.error('[rulesEngine] tick error:', e.message));
+    }, 60 * 1000);
+    console.log('⚙️  Rules engine scheduler started (60s tick)');
 
     // Start daily Zenbooker jobs sync cron
     const zbSyncCron = require('../backend/src/services/zbJobsSyncCron');

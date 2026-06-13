@@ -208,6 +208,11 @@ async function buyNumber(companyId, { phoneNumber, friendlyName, actorId } = {})
             company_id = EXCLUDED.company_id,
             twilio_number_sid = EXCLUDED.twilio_number_sid,
             friendly_name = COALESCE(EXCLUDED.friendly_name, phone_number_settings.friendly_name),
+            -- QA-MIG-004: when a number moves to a new company, drop the old
+            -- tenant-scoped routing group and metadata to avoid stale scope.
+            group_id = CASE WHEN phone_number_settings.company_id IS DISTINCT FROM EXCLUDED.company_id
+                            THEN NULL ELSE phone_number_settings.group_id END,
+            capabilities = EXCLUDED.capabilities,
             updated_at = now()`,
         [purchased.phoneNumber, friendlyName || null, companyId, purchased.sid,
          null, JSON.stringify({ voice: true, sms: true })]

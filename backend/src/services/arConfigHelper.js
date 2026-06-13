@@ -1,6 +1,11 @@
 /**
  * Action Required Config Helper
  *
+ * @deprecated ADR-001 — hardcoded triggers (missed_call / inbound_sms) are
+ * superseded by the rules engine (automation_rules). Kept for backward
+ * compatibility while AR config migrates to seed rules; new trigger logic
+ * must go through the rules engine, not this helper.
+ *
  * Loads per-company AR trigger config from company_settings.
  * Used by conversationsService (SMS) and inboxWorker (calls) to decide
  * whether to auto-trigger AR and what priority/SLA to use.

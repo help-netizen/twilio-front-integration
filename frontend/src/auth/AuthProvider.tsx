@@ -47,6 +47,32 @@ const KEYCLOAK_URL = import.meta.env.VITE_KEYCLOAK_URL || 'http://localhost:8080
 const KEYCLOAK_REALM = import.meta.env.VITE_KEYCLOAK_REALM || 'crm-prod';
 const KEYCLOAK_CLIENT_ID = import.meta.env.VITE_KEYCLOAK_CLIENT_ID || 'crm-web';
 
+const DEV_COMPANY = { id: '00000000-0000-0000-0000-000000000001', name: 'Boston Masters', slug: 'boston-masters', status: 'active', timezone: 'America/New_York' };
+const DEV_MEMBERSHIP = { id: 'dev-membership', role_key: 'tenant_admin', role_name: 'Tenant Admin', is_primary: true, status: 'active' };
+const DEV_PERMISSIONS = [
+    'tenant.company.view', 'tenant.company.manage',
+    'tenant.users.view', 'tenant.users.manage',
+    'tenant.roles.view', 'tenant.roles.manage',
+    'tenant.integrations.manage', 'tenant.telephony.manage',
+    'dashboard.view', 'pulse.view',
+    'messages.view_internal', 'messages.view_client', 'messages.send',
+    'contacts.view', 'contacts.edit',
+    'leads.view', 'leads.create', 'leads.edit', 'leads.convert',
+    'jobs.view', 'jobs.create', 'jobs.edit', 'jobs.assign',
+    'jobs.close', 'jobs.done_pending_approval',
+    'schedule.view', 'schedule.dispatch',
+    'financial_data.view',
+    'estimates.view', 'estimates.create', 'estimates.send',
+    'invoices.view', 'invoices.create', 'invoices.send',
+    'payments.view', 'payments.collect_online', 'payments.collect_offline', 'payments.refund',
+    'reports.dashboard.view', 'reports.jobs.view', 'reports.leads.view',
+    'reports.calls.view', 'reports.payments.view', 'reports.financial.view',
+    'client_job_history.view',
+    'provider.enabled', 'phone_calls.use', 'call_masking.use',
+    'gps_tracking.view', 'gps_tracking.collect',
+];
+const DEV_SCOPES = { job_visibility: 'all', financial_scope: 'full', dashboard_scope: 'all_widgets', report_scope: 'all', job_close_scope: 'close_allowed' };
+
 // ─── Keycloak instance (singleton) ───────────────────────────────────────────
 
 let keycloakInstance: Keycloak | null = null;
@@ -100,10 +126,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // PF007 Extended Profile state
     const [platformRole, setPlatformRole] = useState<string>('none');
-    const [company, setCompany] = useState<any>(null);
-    const [membership, setMembership] = useState<any>(null);
-    const [permissions, setPermissions] = useState<string[]>([]);
-    const [scopes, setScopes] = useState<Record<string, any>>({});
+    const [company, setCompany] = useState<any>(FEATURE_AUTH ? null : DEV_COMPANY);
+    const [membership, setMembership] = useState<any>(FEATURE_AUTH ? null : DEV_MEMBERSHIP);
+    const [permissions, setPermissions] = useState<string[]>(FEATURE_AUTH ? [] : DEV_PERMISSIONS);
+    const [scopes, setScopes] = useState<Record<string, any>>(FEATURE_AUTH ? {} : DEV_SCOPES);
 
     // Listen for 401/403 events dispatched by API interceptors
     useEffect(() => {
@@ -153,31 +179,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!FEATURE_AUTH) {
             // Dev mode mock context
             setPlatformRole('none');
-            setCompany({ id: '00000000-0000-0000-0000-000000000001', name: 'Boston Masters', slug: 'boston-masters', status: 'active', timezone: 'America/New_York' });
-            setMembership({ id: 'dev-membership', role_key: 'tenant_admin', role_name: 'Tenant Admin', is_primary: true, status: 'active' });
-            setPermissions([
-                'tenant.company.view', 'tenant.company.manage',
-                'tenant.users.view', 'tenant.users.manage',
-                'tenant.roles.view', 'tenant.roles.manage',
-                'tenant.integrations.manage', 'tenant.telephony.manage',
-                'dashboard.view', 'pulse.view',
-                'messages.view_internal', 'messages.view_client', 'messages.send',
-                'contacts.view', 'contacts.edit',
-                'leads.view', 'leads.create', 'leads.edit', 'leads.convert',
-                'jobs.view', 'jobs.create', 'jobs.edit', 'jobs.assign',
-                'jobs.close', 'jobs.done_pending_approval',
-                'schedule.view', 'schedule.dispatch',
-                'financial_data.view',
-                'estimates.view', 'estimates.create', 'estimates.send',
-                'invoices.view', 'invoices.create', 'invoices.send',
-                'payments.view', 'payments.collect_online', 'payments.collect_offline', 'payments.refund',
-                'reports.dashboard.view', 'reports.jobs.view', 'reports.leads.view',
-                'reports.calls.view', 'reports.payments.view', 'reports.financial.view',
-                'client_job_history.view',
-                'provider.enabled', 'phone_calls.use', 'call_masking.use',
-                'gps_tracking.view', 'gps_tracking.collect',
-            ]);
-            setScopes({ job_visibility: 'all', financial_scope: 'full', dashboard_scope: 'all_widgets', report_scope: 'all', job_close_scope: 'close_allowed' });
+            setCompany(DEV_COMPANY);
+            setMembership(DEV_MEMBERSHIP);
+            setPermissions(DEV_PERMISSIONS);
+            setScopes(DEV_SCOPES);
             return;
         }
 

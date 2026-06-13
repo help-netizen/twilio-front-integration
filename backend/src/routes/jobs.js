@@ -170,6 +170,13 @@ router.patch('/:id/status', requirePermission('jobs.edit'), async (req, res) => 
         const result = await jobsService.updateBlancStatus(parseInt(req.params.id, 10), blanc_status, companyId);
         eventService.logEvent(companyId, 'job', req.params.id, 'status_changed',
             { from: existing.blanc_status, to: blanc_status, actor_name: eventService.actorName(req) }, 'user', req.user?.sub);
+        // ADR-001: publish to the event bus so automation rules can react
+        require('../services/eventBus').emit(companyId, 'job.status_changed', {
+            id: req.params.id, from: existing.blanc_status, to: blanc_status,
+            contact_id: existing.contact_id, customer_name: existing.customer_name,
+            customer_phone: existing.customer_phone, service_name: existing.service_name,
+        }, { actorType: 'user', actorId: req.user?.sub, aggregateType: 'job', aggregateId: req.params.id })
+            .catch(e => console.error('[eventBus] job.status_changed emit failed:', e.message));
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Jobs API] Status update error:', err.message);
