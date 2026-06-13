@@ -350,6 +350,9 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
     // ADR-001: wire event-bus subscribers (rules engine, billing meter)
     require('../backend/src/services/eventSubscribers').registerSubscribers();
 
+    // AUTO-001: agent task worker (executes kind=agent tasks)
+    require('../backend/src/services/agentWorker').startWorker();
+
     // ADR-001: rules-engine scheduler tick (timer-triggered + delayed rules)
     const rulesEngine = require('../backend/src/services/rulesEngine');
     setInterval(() => {

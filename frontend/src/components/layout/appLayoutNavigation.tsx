@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '../ui/dropdown-menu';
-import { Phone, PhoneIncoming, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase, Bell, CalendarDays, MapPin, Mail, FileCog } from 'lucide-react';
+import { Phone, PhoneIncoming, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase, Bell, CalendarDays, MapPin, Mail, FileCog, Zap } from 'lucide-react';
 import { useAuthz } from '../../hooks/useAuthz';
 
 interface AppNavProps { activeTab: string; pulseUnreadCount: number; hasRole: (r: string) => boolean; logout: () => void; }
@@ -90,6 +90,7 @@ const SETTINGS_ITEMS = [
     { label: 'Telephony', icon: PhoneIncoming, path: '/settings/telephony', permission: 'tenant.telephony.manage' },
     { label: 'Phone Calls', icon: Phone, path: '/settings/phone-calls', permission: 'tenant.telephony.manage' },
     { label: 'Actions & Notifications', icon: Bell, path: '/settings/actions-notifications', permission: 'tenant.company.manage' },
+    { label: 'Automation', icon: Zap, path: '/settings/automation', permission: 'tenant.company.manage' },
     { label: 'Service Territories', icon: MapPin, path: '/settings/service-territories', permission: 'tenant.company.manage' },
     { label: 'Email', icon: Mail, path: '/settings/email', permission: 'tenant.integrations.manage' },
     { label: 'Document Templates', icon: FileCog, path: '/settings/document-templates', permission: 'tenant.integrations.manage' },

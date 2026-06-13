@@ -343,6 +343,17 @@ async function handleMessageAdded(payload) {
             console.error('[ConvService] Failed to mark contact unread for SMS:', e.message);
         }
 
+        // ADR-001/AUTO-001: publish sms.inbound so the rules engine can react.
+        try {
+            require('./eventBus').emit(conv.company_id, 'sms.inbound', {
+                from: conv.customer_e164, to: conv.proxy_e164, body: payload.Body,
+                contact_id: conv.contact_id || null, conversation_id: conv.id,
+            }, { actorType: 'webhook', aggregateType: 'sms', aggregateId: conv.id }).catch(() => {});
+        } catch (e) { /* non-blocking */ }
+
+        // Legacy hardcoded AR path — superseded by rules engine when
+        // FEATURE_RULES_ENGINE_AR is on (the seeded rule handles it).
+        if (process.env.FEATURE_RULES_ENGINE_AR === 'true') { /* handled by rules engine */ } else
         // Action Required auto-trigger: check per-company settings before firing
         try {
             const { getTriggerConfig } = require('./arConfigHelper');

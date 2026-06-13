@@ -1415,3 +1415,47 @@ Auth Token (API Keys не работают) — подтверждено (20003 
 
 ### Protected
 Существующий call flow (F017), webhooks контракт, master-номера Boston Masters.
+
+---
+
+## AUTO-001: Automation/Rules Engine — End-to-End
+
+**Status:** Requirements · **Priority:** P1 · **Date:** 2026-06-13
+**Foundation:** ADR-001 (commit 588c0d8) — eventBus, rulesEngine, ruleActions,
+automation_* tables, /api/automation CRUD already exist. This feature makes it
+usable end-to-end.
+
+### Description
+Превратить заложенный rules-engine в рабочую фичу: визуальный редактор правил
+для tenant-админа, фоновый исполнитель agent-задач, и перенос хардкод-триггеров
+(`arConfigHelper`) на правила.
+
+### User scenarios
+- **SC-01 (редактор):** Tenant-админ открывает Settings → Automation, видит
+  список правил, создаёт правило мастером: выбирает триггер (событие из
+  каталога ИЛИ таймер «через N после события»/cron), задаёт условия
+  (field/op/value, AND/OR), добавляет действия (send_sms/email/create_task/…)
+  с превью подстановки `{{...}}`, сохраняет, включает/выключает.
+- **SC-02 (история):** В карточке правила — последние запуски
+  (`automation_rule_runs`): статус, время, результат действий, ошибка.
+- **SC-03 (agent-задача):** Правило с действием `run_agent_task` создаёт
+  задачу kind=agent; фоновый worker берёт её (queued→running), вызывает
+  agent-логику (включая MCP-инструменты в tenant-контексте), пишет
+  output/status (succeeded/failed), эмитит `agent_task.succeeded|failed`.
+- **SC-04 (миграция AR):** Существующие AR-триггеры (inbound_sms, missed_call)
+  доступны как преднастроенные seed-правила; старый `arConfigHelper`-путь
+  помечен к удалению (за фиче-флагом переключается на rules-engine).
+
+### Constraints
+- RBAC: всё под `tenant.company.manage`; tenant-изоляция (company_id из
+  `req.companyFilter`); чужие правила/runs/задачи → 404.
+- Не ломать существующий AR-флоу: миграция за флагом
+  `FEATURE_RULES_ENGINE_AR` (default off), старый путь работает пока флаг off.
+- Agent-worker идемпотентен (claim через UPDATE…RETURNING, без двойного
+  исполнения), ошибки не валят процесс.
+- Тесты обязательны (RBAC 401/403, изоляция, worker-claim, миграция AR).
+
+### Out of scope
+- Сложные visual flow-граф редакторы (форма-конструктор достаточно).
+- Реальные LLM-агенты (worker вызывает существующие сервисы/MCP; LLM-агенты —
+  отдельная фича).

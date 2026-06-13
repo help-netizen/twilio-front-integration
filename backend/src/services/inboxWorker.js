@@ -223,6 +223,16 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
                 // Resolve company_id from timeline
                 const tlRow = await db.query('SELECT company_id FROM timelines WHERE id = $1', [timelineId]);
                 const companyId = tlRow.rows[0]?.company_id || null;
+
+                // AUTO-001: publish call.missed for the rules engine.
+                if (companyId) {
+                    require('./eventBus').emit(companyId, 'call.missed', {
+                        call_sid: normalized.callSid, from: normalized.fromNumber, to: normalized.toNumber,
+                        contact_id: contactId || null, timeline_id: timelineId,
+                    }, { actorType: 'webhook', aggregateType: 'call', aggregateId: normalized.callSid }).catch(() => {});
+                }
+                if (process.env.FEATURE_RULES_ENGINE_AR === 'true') throw { __skipLegacyAR: true };
+
                 const triggerCfg = await getTriggerConfig(companyId, 'missed_call');
 
                 if (triggerCfg.enabled) {
@@ -259,7 +269,8 @@ async function processVoiceEvent(payload, eventType, traceId, source = 'webhook'
                     console.log(`[${traceId}] Action Required set for inbound call on timeline ${timelineId}`);
                 }
             } catch (e) {
-                console.warn(`[${traceId}] Failed to set AR for inbound call:`, e.message);
+                if (e && e.__skipLegacyAR) { /* rules engine handles AR */ }
+                else console.warn(`[${traceId}] Failed to set AR for inbound call:`, e.message);
             }
         }
     }

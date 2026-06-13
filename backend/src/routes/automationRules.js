@@ -7,6 +7,8 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db/connection');
 const { ACTION_TYPES } = require('../services/ruleActions');
+const { getCatalog, EVENT_TYPE_KEYS, AGENT_TYPE_KEYS } = require('../services/eventCatalog');
+const rulesSeed = require('../services/rulesSeed');
 
 function companyId(req) { return req.companyFilter?.company_id; }
 
@@ -18,8 +20,12 @@ function validate(body) {
     if (body.trigger_kind === 'event' && !body.event_type) return 'event_type required for event trigger';
     if (body.trigger_kind === 'schedule' && !body.schedule_cron && !body.delay_after_event_type)
         return 'schedule needs schedule_cron or delay_after_event_type';
+    if (body.trigger_kind === 'event' && body.event_type && !EVENT_TYPE_KEYS.includes(body.event_type))
+        return `unknown event_type: ${body.event_type}`;
     for (const a of (body.actions || [])) {
         if (!ACTION_TYPES.includes(a.type)) return `unknown action type: ${a.type}`;
+        if (a.type === 'run_agent_task' && a.params?.agent_type && !AGENT_TYPE_KEYS.includes(a.params.agent_type))
+            return `unknown agent_type: ${a.params.agent_type}`;
     }
     return null;
 }
@@ -112,6 +118,59 @@ router.get('/rules/:id/runs', async (req, res) => {
         [req.params.id, companyId(req)]
     );
     res.json({ ok: true, runs: rows });
+});
+
+// GET /api/automation/catalog — event/action/agent types for the editor
+router.get('/catalog', (req, res) => {
+    res.json({ ok: true, ...getCatalog() });
+});
+
+// POST /api/automation/rules/seed-defaults — create AR-equivalent system rules
+router.post('/rules/seed-defaults', async (req, res) => {
+    try {
+        const inserted = await rulesSeed.seedDefaultRules(companyId(req));
+        res.json({ ok: true, inserted });
+    } catch (e) {
+        res.status(500).json({ ok: false, error: 'Failed to seed rules' });
+    }
+});
+
+// GET /api/automation/agent-tasks?status= — list agent tasks (company-scoped)
+router.get('/agent-tasks', async (req, res) => {
+    try {
+        const conds = ["company_id = $1", "kind = 'agent'"];
+        const params = [companyId(req)];
+        if (req.query.status) { conds.push(`agent_status = $${params.length + 1}`); params.push(req.query.status); }
+        const { rows } = await db.query(
+            `SELECT id, agent_type, agent_status, agent_input, agent_output, source_rule_id, created_at, completed_at
+             FROM tasks WHERE ${conds.join(' AND ')} ORDER BY created_at DESC LIMIT 100`,
+            params
+        );
+        res.json({ ok: true, tasks: rows });
+    } catch (e) {
+        res.status(500).json({ ok: false, error: 'Failed to list agent tasks' });
+    }
+});
+
+// POST /api/automation/agent-tasks/:id/retry — re-queue a failed agent task
+router.post('/agent-tasks/:id/retry', async (req, res) => {
+    try {
+        const { rows } = await db.query(
+            `SELECT agent_status FROM tasks WHERE id = $1 AND company_id = $2 AND kind = 'agent'`,
+            [req.params.id, companyId(req)]
+        );
+        if (!rows[0]) return res.status(404).json({ ok: false, error: 'Agent task not found' });
+        if (rows[0].agent_status === 'running')
+            return res.status(409).json({ ok: false, error: 'Task is currently running' });
+        await db.query(
+            `UPDATE tasks SET agent_status = 'queued', status = 'open', agent_output = NULL, completed_at = NULL, updated_at = now()
+             WHERE id = $1 AND company_id = $2`,
+            [req.params.id, companyId(req)]
+        );
+        res.json({ ok: true });
+    } catch (e) {
+        res.status(500).json({ ok: false, error: 'Failed to retry' });
+    }
 });
 
 module.exports = router;

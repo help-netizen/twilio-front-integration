@@ -1985,3 +1985,42 @@ save via existing `PATCH /api/users/:id`.
 `OTP_PEPPER` (falls back to BLANC_SERVER_PEPPER), `TRUSTED_DEVICE_TTL_DAYS=30`,
 `FEATURE_SELF_SIGNUP` (kill-switch), `FEATURE_SMS_2FA` (kill-switch, default off
 until rollout), `SIGNUP_SMS_FROM` (defaults to SOFTPHONE_CALLER_ID).
+
+---
+
+## AUTO-001: Automation/Rules Engine E2E (ADR-001 §2.2-2.3)
+
+**Backend (new/extend):**
+- `backend/src/services/agentWorker.js` — NEW. Polls tasks(kind=agent,
+  agent_status=queued), claims via `UPDATE…SET agent_status='running'…RETURNING`
+  (FOR UPDATE SKIP LOCKED semantics через atomic UPDATE), dispatches by
+  agent_type to handlers (`agentHandlers.js`), writes output/status, emits
+  `agent_task.succeeded|failed` to eventBus. Started in src/server.js boot.
+- `backend/src/services/agentHandlers.js` — NEW. Registry of agent_type →
+  handler. Built-in: `summarize_thread`, `mcp_tool` (calls crmMcpToolExecutor
+  with a synthetic tenant context), `noop`. Adding a handler = one registry entry.
+- `backend/src/routes/automationRules.js` — EXTEND: add GET catalog endpoint
+  (event types + action types + agent types) for the editor; GET /agent-tasks
+  list.
+- `backend/src/services/rulesSeed.js` — NEW. Seed/templates for AR-equivalent
+  rules (inbound_sms, missed_call); applied per-company on demand or by flag.
+- Migration 102: index for agent worker claim already from 100
+  (idx_tasks_agent_queue); add `automation_rules.is_system` marker + seed flag
+  on company; nothing destructive.
+
+**Frontend (new):**
+- `frontend/src/pages/AutomationPage.tsx` — NEW. Rules list + create/edit drawer.
+- `frontend/src/components/automation/RuleEditor.tsx` — NEW. Trigger picker
+  (event/timer), ConditionBuilder, ActionList with template preview.
+- `frontend/src/components/automation/RuleRunsPanel.tsx` — NEW. Run history.
+- `frontend/src/services/automationApi.ts` — NEW. authedFetch wrappers.
+- Route `/settings/automation` (permission `tenant.company.manage`), nav entry.
+
+**Event catalog** (stable, exported from a shared module
+`backend/src/services/eventCatalog.js`): job.status_changed, job.created,
+lead.created, lead.status_changed, call.completed, call.missed, sms.inbound,
+sms.outbound, provider.assigned, payment.succeeded, invoice.payment_failed,
+subscription.past_due, agent_task.succeeded, agent_task.failed.
+
+**Protected:** src/server.js (only boot-block addition for worker, like existing
+workers), eventBus/rulesEngine/ruleActions (extend via registry, not rewrite).

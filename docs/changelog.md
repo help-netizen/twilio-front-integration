@@ -483,3 +483,13 @@ Allow users to create invoices from approved estimates with full UX parity to th
 **Architecture**
 - Connection flow: `POST /api/vapi/connections` → `POST /api/vapi/resources` → `POST /api/marketplace/apps/vapi-ai/install` (provisioning_mode: none → instant connected).
 - Disconnect: standard `POST /api/marketplace/installations/:id/disconnect`.
+
+## AUTO-001 — Automation/Rules Engine E2E (2026-06-13)
+Делает заложенный в ADR-001 rules-engine рабочим end-to-end.
+- **eventCatalog.js** + `GET /api/automation/catalog` — каталог событий/действий/agent-типов для редактора.
+- **agentWorker.js** + **agentHandlers.js** — фоновый исполнитель kind=agent задач (atomic claim FOR UPDATE SKIP LOCKED, queued→running→succeeded/failed, эмит agent_task.*); хендлеры mcp_tool (вызов CRM MCP в tenant-контексте), summarize_thread, noop.
+- **rulesSeed.js** + `POST /rules/seed-defaults` — AR-эквивалентные системные правила (sms.inbound, call.missed), идемпотентно.
+- conversationsService/inboxWorker эмитят `sms.inbound`/`call.missed`; legacy AR за флагом FEATURE_RULES_ENGINE_AR; arConfigHelper → @deprecated.
+- Frontend: AutomationPage + RuleEditor (trigger→conditions→actions, превью шаблонов) + run history + nav `/settings/automation` (tenant.company.manage).
+- API: agent-tasks list + retry (409 на running, 404 на чужой).
+- Миграция 102 (is_system marker). Тесты: 13 новых (worker claim, handlers, route guards 422/404/409, seed идемпотентность). Полный сьют 687 pass.

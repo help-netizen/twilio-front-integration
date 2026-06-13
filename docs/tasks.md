@@ -2639,3 +2639,12 @@ PhoneNumbersPage (connect/buy/release), tests/telephonyTenantService.test.js
 Files: migration 099, services/a2pService.js, telephonyTenantService (softphone/usage),
 voiceService.generateTokenForCompany, routes/telephonyNumbers (usage/softphone/a2p),
 PhoneNumbersPage (usage chip, A2P banner+wizard), tests
+
+---
+# AUTO-001: Automation/Rules Engine E2E — Tasks
+- TASK-AUTO-01: eventCatalog.js + GET /catalog endpoint + is_system column (migration 102)
+- TASK-AUTO-02: agentHandlers.js (mcp_tool/summarize_thread/noop) + agentWorker.js + boot wiring
+- TASK-AUTO-03: agent-tasks list + retry endpoints
+- TASK-AUTO-04: rulesSeed.js + POST /rules/seed-defaults; emit sms.inbound/call.missed; FEATURE_RULES_ENGINE_AR gate
+- TASK-AUTO-05: frontend AutomationPage + RuleEditor + RuleRunsPanel + automationApi + route/nav
+- TASK-AUTO-06: tests per test-cases; full suite green
