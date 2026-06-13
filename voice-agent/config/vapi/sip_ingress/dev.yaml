@@ -17,7 +17,7 @@ sip_ingress:
   # Vapi will call serverUrl with assistant-request event.
   # Blanc runtime resolver returns the correct assistantId.
   assistantId: null
-  serverUrl: "https://abc-metrics.fly.dev/api/vapi/runtime"
+  serverUrl: "https://api.albusto.com/api/vapi/runtime"
 
   # --- Provisioned in Vapi ---
   vapi_phone_number_id: "d446b324-f016-48ba-b536-78c61652184d"
