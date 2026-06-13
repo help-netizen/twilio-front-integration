@@ -466,6 +466,7 @@ async function renderVapiNode({ execution, node, context, traceId }) {
     return xmlResponse(`
     <Dial action="${actionUrl}"
           method="POST"
+          answerOnBridge="true"
           timeout="${Number(cfg.timeout_sec || 60)}"
           timeLimit="${VAPI_MAX_DURATION_SECONDS}"
           record="record-from-answer-dual"

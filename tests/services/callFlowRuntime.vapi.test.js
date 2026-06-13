@@ -105,3 +105,43 @@ describe('advance() — vapi_agent routing', () => {
         expect(twiml).toContain('FALLBACK_REACHED');
     });
 });
+
+describe('renderVapiNode TwiML', () => {
+    // Regression: the VAPI <Dial> must carry answerOnBridge="true" (like the
+    // queue/transfer dials). Without it Twilio answers the inbound leg and
+    // plays ringback while the SIP leg connects; the assistant speaks its
+    // firstMessage greeting before the bridge completes, so the caller never
+    // hears it and ends up talking first.
+    test('VAPI dial sets answerOnBridge so the assistant greeting is not clipped', async () => {
+        const vapiGraph = {
+            states: [
+                { id: 'entry', name: 'Entry', kind: 'branch', config: {} },
+                { id: 'ai', name: 'AI Agent', kind: 'vapi_agent', config: { sip_uri: 'sip:blanc-ai@sip.vapi.ai' } },
+            ],
+            transitions: [
+                { id: 'entry-ai', from_state_id: 'entry', to_state_id: 'ai', transitionMode: 'event', event_key: 'node.completed' },
+            ],
+        };
+        const execution = {
+            call_sid: 'CA_vapi_bridge',
+            company_id: 'company-1',
+            group_id: 'ug-1',
+            current_node_id: 'entry',
+            status: 'active',
+            context_json: JSON.stringify({
+                graph: vapiGraph,
+                groupId: 'ug-1',
+                companyId: 'company-1',
+                callerNumber: '+15551112222',
+                calledNumber: '+16175550100',
+                baseUrl: 'https://example.test',
+            }),
+        };
+        mockQuery.mockImplementation(() => ({ rows: [execution] }));
+
+        const twiml = await advance('CA_vapi_bridge', 'node.completed', 'test');
+        expect(twiml).toContain('<Sip');
+        expect(twiml).toContain('sip:blanc-ai@sip.vapi.ai');
+        expect(twiml).toContain('answerOnBridge="true"');
+    });
+});
