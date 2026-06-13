@@ -1,7 +1,7 @@
 // export-prod-transcripts.js
 //
 // Run against prod without copying database credentials locally:
-//   fly ssh console -a abc-metrics -C "node -" < scripts/export-prod-transcripts.js > exports/prod-transcripts.jsonl
+//   ssh deploy@108.61.87.117 'cd /opt/albusto && docker compose exec -T app node -' < scripts/export-prod-transcripts.js > exports/prod-transcripts.jsonl
 //
 // Output:
 //   JSONL by default: one JSON object per transcript row with non-empty text.

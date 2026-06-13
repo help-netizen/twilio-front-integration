@@ -22,8 +22,8 @@
     "test": "node --experimental-vm-modules node_modules/.bin/jest",
     "test:watch": "node --experimental-vm-modules node_modules/.bin/jest --watch",
     "test:coverage": "node --experimental-vm-modules node_modules/.bin/jest --coverage",
-    "monitor:errors": "node scripts/fly-error-monitor.js",
-    "monitor:replay": "node scripts/fly-error-monitor.js --replay"
+    "monitor:errors": "node scripts/prod-error-monitor.js",
+    "monitor:replay": "node scripts/prod-error-monitor.js --replay"
   },
   "keywords": [],
   "author": "",

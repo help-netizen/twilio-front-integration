@@ -1,15 +1,21 @@
 #!/usr/bin/env node
 
 /**
- * Fly.io Error Log Monitor
+ * Production Error Log Monitor (Vultr / docker compose)
  *
- * Streams live logs from Fly.io and captures errors into a structured JSON file.
- * Each error entry includes timestamp, source, category, severity, and surrounding
- * context lines so issues can be analyzed and fixed offline.
+ * Streams live logs from the prod app container on the Vultr server (via
+ * `ssh … docker compose logs -f app`) and captures errors into a structured
+ * JSON file. Each error entry includes timestamp, source, category, severity,
+ * and surrounding context lines so issues can be analyzed and fixed offline.
  *
  * Usage:
- *   node scripts/fly-error-monitor.js          # stream & capture
- *   node scripts/fly-error-monitor.js --replay  # show captured errors
+ *   node scripts/prod-error-monitor.js          # stream & capture
+ *   node scripts/prod-error-monitor.js --replay  # show captured errors
+ *
+ * Config (env overrides):
+ *   PROD_SSH      ssh target            (default deploy@108.61.87.117)
+ *   PROD_APP_DIR  compose dir on server (default /opt/albusto)
+ *   PROD_SERVICE  compose service name  (default app)
  */
 
 const { spawn } = require('child_process');
@@ -18,8 +24,10 @@ const path = require('path');
 const readline = require('readline');
 
 // ── Config ───────────────────────────────────────────────────────────────────
-const APP_NAME = 'abc-metrics';
-const FLYCTL = process.env.FLYCTL_PATH || 'flyctl';
+const PROD_SSH = process.env.PROD_SSH || 'deploy@108.61.87.117';
+const PROD_APP_DIR = process.env.PROD_APP_DIR || '/opt/albusto';
+const PROD_SERVICE = process.env.PROD_SERVICE || 'app';
+const HOST_LABEL = PROD_SSH.replace(/^.*@/, '');
 const LOG_DIR = path.join(__dirname, '..', 'logs');
 const LOG_FILE = path.join(LOG_DIR, 'errors.json');
 const ARCHIVE_DIR = path.join(LOG_DIR, 'archive');
@@ -27,6 +35,11 @@ const MAX_LOG_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 const CONTEXT_LINES_BEFORE = 5;
 const CONTEXT_LINES_AFTER = 5;
 const INCIDENT_GROUP_WINDOW_MS = 2000;
+
+// Stream new log lines only (--tail=0) so the auto-restart loop never
+// re-captures historical errors. --no-log-prefix drops the "app-1  | " prefix.
+const REMOTE_LOG_CMD =
+  `cd ${PROD_APP_DIR} && docker compose logs -f --no-log-prefix --tail=0 ${PROD_SERVICE}`;
 
 // ── Error-detection patterns ─────────────────────────────────────────────────
 const ERROR_PATTERNS = [
@@ -97,19 +110,24 @@ function extractSource(message) {
 }
 
 // ── ANSI escape-code stripper ────────────────────────────────────────────────
-// flyctl outputs colored text; we strip it for clean parsing and storage
+// app/docker output may be colored; we strip it for clean parsing and storage
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 function stripAnsi(str) { return str.replace(ANSI_RE, ''); }
 
-// ── Fly.io log-line parser ───────────────────────────────────────────────────
-// Format: 2026-03-20T21:17:32Z app[28632e4ce51068] ewr [info]<message>
-const FLY_LOG_RE = /^(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s+\w+\[([a-f0-9]+)\]\s+(\w+)\s+\[(\w+)\](.*)$/;
+// ── Log-line parser ──────────────────────────────────────────────────────────
+// With `docker compose logs --no-log-prefix` each line is the app's raw stdout.
+// The app prefixes its own lines with an ISO timestamp; fall back to now() if not.
+const ISO_RE = /^(\d{4}-\d{2}-\d{2}[T ][\d:.]+Z?)/;
 
-function parseFlyLine(raw) {
+function parseLogLine(raw) {
   const clean = stripAnsi(raw);
-  const m = clean.match(FLY_LOG_RE);
-  if (!m) return { timestamp: new Date().toISOString(), machine: '?', region: '?', level: 'info', message: clean, raw: clean };
-  return { timestamp: m[1], machine: m[2], region: m[3], level: m[4], message: m[5], raw: clean };
+  const m = clean.match(ISO_RE);
+  return {
+    timestamp: m ? m[1] : new Date().toISOString(),
+    host: HOST_LABEL,
+    message: clean,
+    raw: clean,
+  };
 }
 
 // ── Ring buffer for context tracking ─────────────────────────────────────────
@@ -172,21 +190,21 @@ function showReplay() {
 
 // ── Main monitor ─────────────────────────────────────────────────────────────
 function startMonitor() {
-  console.log(`\n🔍 Fly.io Error Monitor — streaming logs for ${APP_NAME}...`);
+  console.log(`\n🔍 Production Error Monitor — streaming docker logs from ${PROD_SSH} (${PROD_SERVICE})...`);
   console.log(`   Output: ${LOG_FILE}`);
   console.log(`   Press Ctrl+C to stop\n`);
 
-  const flyProcess = spawn(FLYCTL, ['logs', '-a', APP_NAME], {
+  const logProcess = spawn('ssh', [PROD_SSH, REMOTE_LOG_CMD], {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
-  flyProcess.on('error', (err) => {
-    console.error(`❌ Failed to start flyctl: ${err.message}`);
-    console.error(`   Make sure flyctl is installed and you are authenticated (flyctl auth login)`);
+  logProcess.on('error', (err) => {
+    console.error(`❌ Failed to start ssh: ${err.message}`);
+    console.error(`   Make sure you can reach the server: ssh ${PROD_SSH} 'echo ok'`);
     process.exit(1);
   });
 
-  const rl = readline.createInterface({ input: flyProcess.stdout });
+  const rl = readline.createInterface({ input: logProcess.stdout });
 
   const contextBuf = new RingBuffer(CONTEXT_LINES_BEFORE);
   let pendingAfterLines = 0;
@@ -225,7 +243,7 @@ function startMonitor() {
   }
 
   rl.on('line', (raw) => {
-    const parsed = parseFlyLine(raw.trim());
+    const parsed = parseLogLine(raw.trim());
     const msg = parsed.message;
 
     // If we are collecting "after" context for a pending error
@@ -247,8 +265,7 @@ function startMonitor() {
         currentEntry = {
           id: generateId(),
           timestamp: parsed.timestamp,
-          machine: parsed.machine,
-          region: parsed.region,
+          host: parsed.host,
           errorLine: msg.trim(),
           context: [...contextBuf.snapshot()],
           category: categorise(msg),
@@ -274,8 +291,7 @@ function startMonitor() {
       currentEntry = {
         id: generateId(),
         timestamp: parsed.timestamp,
-        machine: parsed.machine,
-        region: parsed.region,
+        host: parsed.host,
         errorLine: msg.trim(),
         context: [...contextBuf.snapshot()],
         category: categorise(msg),
@@ -291,15 +307,15 @@ function startMonitor() {
   });
 
   // Handle process exit
-  flyProcess.on('close', (code) => {
+  logProcess.on('close', (code) => {
     flushEntry();
-    console.log(`\n⚠️  flyctl exited with code ${code}. Restarting in 5s...`);
+    console.log(`\n⚠️  ssh log stream exited with code ${code}. Restarting in 5s...`);
     setTimeout(startMonitor, 5000);
   });
 
-  flyProcess.stderr.on('data', (chunk) => {
+  logProcess.stderr.on('data', (chunk) => {
     const text = chunk.toString().trim();
-    if (text) console.error(`[flyctl stderr] ${text}`);
+    if (text) console.error(`[ssh stderr] ${text}`);
   });
 
   // Graceful shutdown
@@ -307,8 +323,8 @@ function startMonitor() {
     flushEntry();
     const elapsed = Math.round((Date.now() - sessionStart.getTime()) / 1000);
     console.log(`\n✅ Monitor stopped. Captured ${totalErrors} error(s) in ${elapsed}s.`);
-    console.log(`   View with: node scripts/fly-error-monitor.js --replay`);
-    flyProcess.kill();
+    console.log(`   View with: node scripts/prod-error-monitor.js --replay`);
+    logProcess.kill();
     process.exit(0);
   };
   process.on('SIGINT', shutdown);

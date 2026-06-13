@@ -2,7 +2,8 @@
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 # LEGACY: production moved to the Vultr server (app.albusto.com / api.albusto.com)
-# on 2026-06-11. This Fly app is kept alive ONLY to serve /pulse on a frozen DB.
+# on 2026-06-11. This Fly app is a frozen, read-only historical snapshot (stale
+# DB); all live traffic and new events go to Vultr.
 # Do not deploy production changes here — use scripts/prod-deploy.sh instead.
 
 app = 'abc-metrics'

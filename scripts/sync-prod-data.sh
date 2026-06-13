@@ -2,12 +2,15 @@
 # =============================================================================
 # sync-prod-data.sh — Copy last 100 calls + 100 SMS from prod to local DB.
 #
-# Prerequisites: fly CLI authenticated, local PostgreSQL running with schema.
+# Prerequisites: ssh access to the Vultr prod server, local PostgreSQL running
+# with schema.
 # Usage: ./scripts/sync-prod-data.sh
 # =============================================================================
 set -euo pipefail
 
-FLY_APP="abc-metrics"
+PROD_SSH="${PROD_SSH:-deploy@108.61.87.117}"
+PROD_APP_DIR="${PROD_APP_DIR:-/opt/albusto}"
+PROD_SERVICE="${PROD_SERVICE:-app}"
 DUMP_FILE="/tmp/crm-prod-export.json"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -19,17 +22,18 @@ fail()  { echo -e "\033[1;31m✗\033[0m $*" >&2; exit 1; }
 # 1. Pre-flight
 # ---------------------------------------------------------------------------
 info "Pre-flight checks…"
-command -v fly  >/dev/null 2>&1 || fail "fly CLI not found"
+command -v ssh  >/dev/null 2>&1 || fail "ssh not found"
 command -v node >/dev/null 2>&1 || fail "node not found"
-fly ssh console -a "$FLY_APP" -C "echo ok" >/dev/null 2>&1 \
-  || fail "Cannot ssh to $FLY_APP. Run: fly auth login"
+ssh "$PROD_SSH" "echo ok" >/dev/null 2>&1 \
+  || fail "Cannot ssh to $PROD_SSH. Check your SSH key / access."
 ok "Ready"
 
 # ---------------------------------------------------------------------------
 # 2. Export from prod (run export script on prod server via stdin)
 # ---------------------------------------------------------------------------
 info "Exporting from production…"
-fly ssh console -a "$FLY_APP" -C "node -" < "$SCRIPT_DIR/export-prod-data.js" > "$DUMP_FILE" 2>/dev/null
+ssh "$PROD_SSH" "cd $PROD_APP_DIR && docker compose exec -T $PROD_SERVICE node -" \
+  < "$SCRIPT_DIR/export-prod-data.js" > "$DUMP_FILE" 2>/dev/null
 ok "Export saved to $DUMP_FILE ($(du -h "$DUMP_FILE" | cut -f1))"
 
 # ---------------------------------------------------------------------------

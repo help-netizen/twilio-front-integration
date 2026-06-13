@@ -37,7 +37,7 @@ Production runs on Vultr with docker compose (app + postgres:17 + keycloak):
 - API / webhooks: https://api.albusto.com
 - Keycloak: https://auth.albusto.com
 
-> The old Fly.io app (`abc-metrics.fly.dev`) is kept alive only to serve `/pulse` on a frozen DB — do not deploy to it.
+> The old Fly.io app (`abc-metrics.fly.dev`) is a frozen, read-only historical snapshot (stale DB) — all live traffic and new events go to Vultr. Do not deploy to it.
 
 ### Switch Webhooks Only (no deploy)
 

@@ -1,4 +1,4 @@
-// export-prod-data.js — Run on prod via: fly ssh console -a abc-metrics -C "node -" < scripts/export-prod-data.js
+// export-prod-data.js — Run on prod via: ssh deploy@108.61.87.117 'cd /opt/albusto && docker compose exec -T app node -' < scripts/export-prod-data.js
 // Exports: last 100 calls + 100 SMS conversations, ALL leads/jobs/estimates/invoices/payments.
 const { Pool } = require('pg');
 
