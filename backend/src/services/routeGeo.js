@@ -84,26 +84,29 @@ const pairKey = (p) => `${p[0]}->${p[1]}`;
  *   toCalc — pairs to (re)calculate or reuse from cache
  */
 function computeAffectedPairs(oldSeq = [], newSeq = [], changedJobIds = []) {
+    return diffPairs(adjacentPairs(oldSeq), adjacentPairs(newSeq), changedJobIds);
+}
+
+/**
+ * Pair-level diff (used by the reconcile path, which already has the active and
+ * desired pair sets). Same semantics as computeAffectedPairs but takes pairs
+ * directly instead of sequences.
+ */
+function diffPairs(oldPairs = [], newPairs = [], changedJobIds = []) {
     const changed = new Set((changedJobIds || []).map(String));
-    const oldPairs = adjacentPairs(oldSeq);
-    const newPairs = adjacentPairs(newSeq);
-    const oldByKey = new Map(oldPairs.map((p) => [pairKey(p), p]));
-    const newByKey = new Map(newPairs.map((p) => [pairKey(p), p]));
+    const norm = (p) => [String(p[0]), String(p[1])];
+    const oldByKey = new Map(oldPairs.map((p) => [pairKey(norm(p)), norm(p)]));
+    const newByKey = new Map(newPairs.map((p) => [pairKey(norm(p)), norm(p)]));
 
     const stale = [];
     const toCalc = [];
-
-    // Pairs that disappeared, or that survived but touch a coord-changed job.
     for (const [k, p] of oldByKey) {
-        const survived = newByKey.has(k);
-        const touchesChanged = changed.has(String(p[0])) || changed.has(String(p[1]));
-        if (!survived || touchesChanged) stale.push(p);
+        const touchesChanged = changed.has(p[0]) || changed.has(p[1]);
+        if (!newByKey.has(k) || touchesChanged) stale.push(p);
     }
-    // Pairs that are new, or that survived but touch a coord-changed job (recalc).
     for (const [k, p] of newByKey) {
-        const existed = oldByKey.has(k);
-        const touchesChanged = changed.has(String(p[0])) || changed.has(String(p[1]));
-        if (!existed || touchesChanged) toCalc.push(p);
+        const touchesChanged = changed.has(p[0]) || changed.has(p[1]);
+        if (!oldByKey.has(k) || touchesChanged) toCalc.push(p);
     }
     return { stale, toCalc };
 }
@@ -117,4 +120,5 @@ module.exports = {
     companyDay,
     adjacentPairs,
     computeAffectedPairs,
+    diffPairs,
 };
