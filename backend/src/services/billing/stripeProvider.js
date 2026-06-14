@@ -109,7 +109,7 @@ async function chargeOffSession(customerId, paymentMethodId, amountUsd, descript
 }
 
 /** Hosted Checkout to top up the wallet and save the card for future off-session charges. */
-async function createTopupCheckout(customerId, amountUsd, { successUrl, cancelUrl }) {
+async function createTopupCheckout(customerId, amountUsd, { successUrl, cancelUrl, metadata = {} }) {
     const session = await call('POST', '/checkout/sessions', {
         mode: 'payment',
         customer: customerId,
@@ -120,9 +120,14 @@ async function createTopupCheckout(customerId, amountUsd, { successUrl, cancelUr
             quantity: 1,
             price_data: { currency: 'usd', unit_amount: Math.round(Number(amountUsd) * 100), product_data: { name: 'Wallet top-up' } },
         }],
-        metadata: { wallet_topup: 'manual' },
+        metadata: { wallet_topup: 'manual', ...metadata },
     });
     return { url: session.url, sessionId: session.id, amountUsd: Number(amountUsd) };
+}
+
+/** Retrieve a PaymentIntent (used to read the saved payment_method after a top-up). */
+async function getPaymentIntent(id) {
+    return call('GET', `/payment_intents/${id}`);
 }
 
 async function reportUsage(subscriptionItemId, quantity, timestamp) {
@@ -153,5 +158,5 @@ function parseWebhook(rawBody, signatureHeader) {
 
 module.exports = {
     ensureCustomer, createSubscription, createCheckoutSession, createPortalSession,
-    chargeOffSession, createTopupCheckout, reportUsage, parseWebhook,
+    chargeOffSession, createTopupCheckout, getPaymentIntent, reportUsage, parseWebhook,
 };

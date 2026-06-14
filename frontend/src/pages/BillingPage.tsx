@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react';
 import { Loader2, Check, ExternalLink, CreditCard, AlertTriangle, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../components/ui/button';
-import { billingApi, type BillingOverview, type Plan } from '../services/billingApi';
+import { billingApi, type BillingOverview, type Plan, type WalletInfo } from '../services/billingApi';
 
 const METRIC_LABELS: Record<string, string> = {
     sms: 'Text messages',
@@ -67,12 +67,13 @@ const KPI: React.CSSProperties = { background: CARD_BG, borderRadius: 16, paddin
 
 export default function BillingPage() {
     const [data, setData] = useState<BillingOverview | null>(null);
+    const [wallet, setWallet] = useState<WalletInfo | null>(null);
     const [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState<string | null>(null);
 
     useEffect(() => {
-        billingApi.overview()
-            .then(setData)
+        Promise.all([billingApi.overview(), billingApi.wallet().catch(() => null)])
+            .then(([ov, w]) => { setData(ov); setWallet(w); })
             .catch((e: any) => toast.error(e.message || 'Failed to load billing'))
             .finally(() => setLoading(false));
     }, []);
@@ -80,10 +81,24 @@ export default function BillingPage() {
     const checkout = async (planId: string) => {
         setBusy(planId);
         try {
-            const { url } = await billingApi.checkout(planId);
-            window.location.href = url;
+            const out = await billingApi.checkout(planId);
+            if (out.url) { window.location.href = out.url; return; }
+            toast.success('Plan activated');
+            window.location.reload();
         } catch (e: any) {
-            toast.error(e.code === 'PROVIDER_NOT_CONFIGURED' ? 'Billing is not enabled yet.' : (e.message || 'Could not start checkout'));
+            toast.error(e.code === 'PROVIDER_NOT_CONFIGURED' ? 'Billing is not enabled yet.' : (e.message || 'Could not change plan'));
+            setBusy(null);
+        }
+    };
+
+    const topUp = async (amount: number) => {
+        setBusy('topup');
+        try {
+            const { url } = await billingApi.topup(amount);
+            if (url) window.location.href = url;
+            else setBusy(null);
+        } catch (e: any) {
+            toast.error(e.code === 'PROVIDER_NOT_CONFIGURED' ? 'Billing is not enabled yet.' : (e.message || 'Could not start top-up'));
             setBusy(null);
         }
     };
@@ -139,6 +154,46 @@ export default function BillingPage() {
                     {STATUS_LABEL[status] || status}
                 </span>
             </div>
+
+            {/* Wallet */}
+            {wallet && (
+                <div style={{ background: 'var(--blanc-surface-strong, #fffdf9)', border: `1px solid ${wallet.blocked ? 'rgba(212,77,60,0.5)' : 'var(--blanc-line)'}`, borderRadius: 18, padding: 18 }}>
+                    {wallet.blocked && (
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', color: 'var(--blanc-danger)', fontSize: 13, marginBottom: 14, background: 'rgba(212,77,60,0.10)', borderRadius: 12, padding: '10px 12px' }}>
+                            <AlertTriangle size={15} /> Calls and texts are paused — your balance is below {usd(wallet.grace_floor_usd)}. Top up to resume service.
+                        </div>
+                    )}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap' }}>
+                        <div>
+                            <div className="blanc-eyebrow">Wallet balance</div>
+                            <div style={{ fontSize: 30, fontWeight: 600, fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: wallet.balance_usd < 0 ? 'var(--blanc-danger)' : 'var(--blanc-ink-1)' }}>{usd(wallet.balance_usd, true)}</div>
+                            <div style={{ fontSize: 12, color: 'var(--blanc-ink-3)', marginTop: 2 }}>
+                                {wallet.auto_recharge.enabled
+                                    ? `Auto top-up ${usd(wallet.auto_recharge.amount_usd)} when below ${usd(wallet.auto_recharge.threshold_usd)}`
+                                    : 'Auto top-up off'}
+                                {wallet.has_card ? '' : ' · no card on file'}
+                            </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>Add funds</span>
+                            {[10, 25, 50, 100].map(a => (
+                                <Button key={a} size="sm" variant={a === 25 ? 'default' : 'outline'} disabled={busy === 'topup' || !billing_enabled} onClick={() => topUp(a)}>
+                                    {busy === 'topup' && a === 25 ? <Loader2 size={14} className="animate-spin" /> : <CreditCard size={14} />} {usd(a)}
+                                </Button>
+                            ))}
+                        </div>
+                    </div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, fontSize: 13, color: 'var(--blanc-ink-2)', cursor: 'pointer' }}>
+                        <input type="checkbox" checked={wallet.auto_recharge.enabled}
+                            onChange={async e => {
+                                const enabled = e.target.checked;
+                                setWallet({ ...wallet, auto_recharge: { ...wallet.auto_recharge, enabled } });
+                                await billingApi.setAutoRecharge({ enabled }).catch(() => toast.error('Could not update auto-recharge'));
+                            }} />
+                        Auto-recharge from my saved card when the balance runs low
+                    </label>
+                </div>
+            )}
 
             {/* Money-first KPIs */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
@@ -311,6 +366,24 @@ export default function BillingPage() {
                     </div>
                 )}
             </section>
+
+            {/* Wallet activity */}
+            {wallet && wallet.ledger.length > 0 && (
+                <section>
+                    <div className="blanc-eyebrow" style={{ marginBottom: 10 }}>Wallet activity</div>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        {wallet.ledger.slice(0, 12).map((e, i) => (
+                            <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 12, alignItems: 'center', padding: '10px 2px' }}>
+                                <span style={{ fontSize: 13, color: 'var(--blanc-ink-1)' }}>{e.description || e.type}</span>
+                                <span style={{ fontSize: 13, fontWeight: 600, color: e.amount_usd >= 0 ? 'var(--blanc-success)' : 'var(--blanc-ink-1)' }}>
+                                    {e.amount_usd >= 0 ? '+' : ''}{usd(e.amount_usd, true)}
+                                </span>
+                                <span style={{ fontSize: 12, color: 'var(--blanc-ink-3)', justifySelf: 'end' }}>{usd(e.balance_after, true)}</span>
+                            </div>
+                        ))}
+                    </div>
+                </section>
+            )}
         </div>
     );
 }

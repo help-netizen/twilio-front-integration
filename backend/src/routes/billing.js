@@ -7,6 +7,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db/connection');
 const billingService = require('../services/billingService');
+const walletService = require('../services/walletService');
 
 function companyId(req) { return req.companyFilter?.company_id; }
 
@@ -35,18 +36,62 @@ router.get('/invoices', async (req, res) => {
     }
 });
 
-// POST /api/billing/checkout — Stripe Checkout session for a paid plan
+// POST /api/billing/checkout — subscribe to a plan (charged via the wallet/card)
 router.post('/checkout', async (req, res) => {
     try {
-        const { plan_id, success_url, cancel_url } = req.body || {};
+        const { plan_id } = req.body || {};
         if (!plan_id) return res.status(422).json({ ok: false, error: 'plan_id required' });
-        const out = await billingService.createCheckout(companyId(req), plan_id, {
-            successUrl: success_url || 'https://app.albusto.com/settings/billing?status=success',
-            cancelUrl: cancel_url || 'https://app.albusto.com/settings/billing?status=cancel',
-        });
+        const out = await billingService.subscribe(companyId(req), plan_id);
         res.json({ ok: true, ...out });
     } catch (err) {
         res.status(err.httpStatus || 500).json({ ok: false, code: err.code, error: err.message });
+    }
+});
+
+// GET /api/billing/wallet — balance, auto-recharge settings, recent ledger
+router.get('/wallet', async (req, res) => {
+    try {
+        const [wallet, ledger] = await Promise.all([
+            walletService.getWallet(companyId(req)),
+            walletService.getLedger(companyId(req), 30),
+        ]);
+        res.json({
+            ok: true,
+            balance_usd: Number(wallet.balance_usd),
+            blocked: Number(wallet.balance_usd) <= walletService.GRACE_FLOOR_USD,
+            grace_floor_usd: walletService.GRACE_FLOOR_USD,
+            min_topup_usd: walletService.MIN_TOPUP_USD,
+            auto_recharge: {
+                enabled: wallet.auto_recharge_enabled,
+                threshold_usd: Number(wallet.auto_recharge_threshold_usd),
+                amount_usd: Number(wallet.auto_recharge_amount_usd),
+            },
+            has_card: !!wallet.default_payment_method_id,
+            ledger,
+        });
+    } catch (err) {
+        res.status(500).json({ ok: false, error: 'Failed to load wallet' });
+    }
+});
+
+// POST /api/billing/wallet/topup — hosted Checkout to add funds (min $10)
+router.post('/wallet/topup', async (req, res) => {
+    try {
+        const out = await billingService.createWalletTopup(companyId(req), req.body?.amount);
+        res.json({ ok: true, ...out });
+    } catch (err) {
+        res.status(err.httpStatus || 500).json({ ok: false, code: err.code, error: err.message });
+    }
+});
+
+// PATCH /api/billing/wallet/auto-recharge — update auto-recharge settings
+router.patch('/wallet/auto-recharge', async (req, res) => {
+    try {
+        const { enabled, threshold, amount } = req.body || {};
+        await walletService.updateSettings(companyId(req), { enabled, threshold, amount });
+        res.json({ ok: true });
+    } catch (err) {
+        res.status(err.httpStatus || 500).json({ ok: false, error: err.message });
     }
 });
 

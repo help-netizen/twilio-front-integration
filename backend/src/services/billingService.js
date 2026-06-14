@@ -103,6 +103,61 @@ async function getPlanForCompany(companyId) {
     return rows[0] || null;
 }
 
+/** Ensure a Stripe customer exists for the company; store and return its id. */
+async function ensureCustomerId(companyId, planId = null) {
+    const sub = await getSubscription(companyId);
+    if (sub?.provider_customer_id) return sub.provider_customer_id;
+    const { rows: [company] } = await db.query('SELECT id, name, contact_email FROM companies WHERE id = $1', [companyId]);
+    if (!company) { const e = new Error('Company not found'); e.httpStatus = 404; throw e; }
+    const { customerId } = await getProvider().ensureCustomer(company);
+    await db.query(
+        `INSERT INTO billing_subscriptions (company_id, plan_id, provider_customer_id, status)
+         VALUES ($1, $2, $3, 'incomplete')
+         ON CONFLICT (company_id) DO UPDATE SET provider_customer_id = $3, updated_at = now()`,
+        [companyId, planId || 'trial', customerId]
+    );
+    return customerId;
+}
+
+/** Top up the wallet via hosted Checkout (min $10). Saves the card for auto-recharge. */
+async function createWalletTopup(companyId, amountUsd, { successUrl, cancelUrl } = {}) {
+    if (!providerConfigured()) { const e = new Error('Billing is not enabled yet'); e.httpStatus = 422; e.code = 'PROVIDER_NOT_CONFIGURED'; throw e; }
+    const amount = Math.max(10, Number(amountUsd) || 0);
+    const customerId = await ensureCustomerId(companyId);
+    return getProvider().createTopupCheckout(customerId, amount, {
+        successUrl: successUrl || 'https://app.albusto.com/settings/billing?status=topup',
+        cancelUrl: cancelUrl || 'https://app.albusto.com/settings/billing',
+        metadata: { albusto_company_id: companyId },
+    });
+}
+
+/** Subscribe to a plan, paying the plan price from the card (charged immediately). */
+async function subscribe(companyId, planId) {
+    if (!providerConfigured()) { const e = new Error('Billing is not enabled yet'); e.httpStatus = 422; e.code = 'PROVIDER_NOT_CONFIGURED'; throw e; }
+    const { rows: [plan] } = await db.query('SELECT * FROM billing_plans WHERE id = $1 AND is_active', [planId]);
+    if (!plan) { const e = new Error('Plan not available'); e.httpStatus = 404; throw e; }
+    const price = Number(plan.monthly_base_usd);
+    const customerId = await ensureCustomerId(companyId, planId);
+    const walletService = require('./walletService');
+    const wallet = await walletService.getWallet(companyId);
+
+    if (wallet.default_payment_method_id) {
+        // Card on file → charge the plan price now, then activate + debit the fee.
+        const r = await getProvider().chargeOffSession(customerId, wallet.default_payment_method_id, price, `${plan.name} plan`);
+        await walletService.credit(companyId, price, { type: 'topup', description: `Charge for ${plan.name} plan`, ref: r.paymentIntentId });
+        await db.query(`UPDATE billing_subscriptions SET plan_id = $2, status = 'active', updated_at = now() WHERE company_id = $1`, [companyId, planId]);
+        await billPlanFee(companyId);
+        return { activated: true };
+    }
+    // No card yet → hosted Checkout for the plan price (saves the card); webhook activates.
+    const out = await getProvider().createTopupCheckout(customerId, price, {
+        successUrl: 'https://app.albusto.com/settings/billing?status=success',
+        cancelUrl: 'https://app.albusto.com/settings/billing?status=cancel',
+        metadata: { albusto_company_id: companyId, plan_id: planId },
+    });
+    return { url: out.url };
+}
+
 // ── Usage metering (called by the billing-meter event subscriber) ────────────
 
 const EVENT_TO_METRIC = {
@@ -285,6 +340,30 @@ async function handleProviderWebhook(rawBody, signature) {
             await eventBus.emit(companyId, type, { invoice_id: obj.id, amount: (obj.amount_due || 0) / 100 },
                 { actorType: 'system', aggregateType: 'billing', aggregateId: obj.id });
         }
+    } else if (evt.type === 'checkout.session.completed' && obj.mode === 'payment') {
+        // Wallet top-up (and, when metadata.plan_id is set, a plan subscribe).
+        const walletService = require('./walletService');
+        const companyId = obj.metadata?.albusto_company_id || obj.metadata?.company_id || (await companyByCustomer(obj.customer));
+        if (companyId) {
+            const amountUsd = (obj.amount_total || 0) / 100;
+            const ref = obj.payment_intent || obj.id;
+            if (amountUsd > 0) {
+                await walletService.credit(companyId, amountUsd, { type: 'topup', description: `Wallet top-up $${amountUsd.toFixed(2)}`, ref });
+            }
+            // Save the card for future off-session auto-recharge.
+            try {
+                if (obj.payment_intent) {
+                    const pi = await getProvider().getPaymentIntent(obj.payment_intent);
+                    if (pi.payment_method) await walletService.setDefaultPaymentMethod(companyId, pi.payment_method);
+                }
+            } catch (e) { console.error('[billing] save card after top-up failed:', e.message); }
+            // Activate the plan if this top-up was a subscribe.
+            if (obj.metadata?.plan_id) {
+                await db.query(`UPDATE billing_subscriptions SET plan_id = $2, status = 'active', updated_at = now() WHERE company_id = $1`, [companyId, obj.metadata.plan_id]);
+                await billPlanFee(companyId).catch(e => console.error('[billing] plan fee on activate failed:', e.message));
+            }
+            await eventBus.emit(companyId, 'wallet.topup', { amount: amountUsd }, { actorType: 'system', aggregateType: 'billing', aggregateId: ref });
+        }
     }
     return { ok: true, type: evt.type };
 }
@@ -298,7 +377,7 @@ async function companyByCustomer(customerId) {
 }
 
 module.exports = {
-    getSubscription, startTrial, createCheckout, createPortal, getPlanForCompany, providerConfigured,
+    getSubscription, startTrial, createCheckout, subscribe, createWalletTopup, createPortal, getPlanForCompany, providerConfigured,
     recordUsageEvent, recordUsage, getUsage, getInvoices,
     computeOverage, billOverage, billPlanFee, billPreviousPeriodOverages, billCurrentPeriodPlanFees,
     handleProviderWebhook,
