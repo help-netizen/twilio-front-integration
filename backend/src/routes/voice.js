@@ -14,6 +14,7 @@ const { isContactBusy } = require('../services/callAvailability');
 const { groupsForUser } = require('../services/groupRouting');
 const agentPresence = require('../services/agentPresence');
 const { buildSoftphoneIdentity, parseSoftphoneIdentity } = require('../services/softphoneIdentity');
+const walletService = require('../services/walletService');
 
 function getCompanyId(req) {
     return req.companyFilter?.company_id;
@@ -308,6 +309,12 @@ twimlRouter.post('/twiml/outbound', async (req, res) => {
         console.error('[Voice TwiML] Caller ID validation error:', err.message);
         res.status(500);
         res.type('text/xml').send(buildMessageTwiml('Caller ID validation failed.'));
+        return;
+    }
+
+    // Wallet gate: block outbound calls when the balance is at/below the grace floor.
+    if (validatedCompanyId && await walletService.isServiceBlocked(validatedCompanyId).catch(() => false)) {
+        res.type('text/xml').send(buildMessageTwiml('Your account balance is too low to place calls. Please top up your wallet.'));
         return;
     }
 

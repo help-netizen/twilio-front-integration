@@ -105,6 +105,9 @@ async function sendMessage(conversationId, { body, author = 'agent', mediaSid, f
     const conv = await convQueries.getConversationById(conversationId);
     if (!conv) throw new Error(`Conversation ${conversationId} not found`);
 
+    // Wallet gate: block outbound SMS when the balance is at/below the grace floor.
+    await require('./walletService').assertServiceActive(conv.company_id);
+
     const params = { author };
     if (body) params.body = body;
     if (mediaSid) {
