@@ -4,6 +4,35 @@
 
 ---
 
+## 2026-06-14 — AUTH-2FA-GATE: global 2FA re-verification gate (P1 lockout fix)
+
+Functional testing of new-tenant signup found a P1 bug: the frontend had ZERO
+handling of `401 PHONE_VERIFICATION_REQUIRED`, so a user with a verified phone
+got locked out of the whole app (raw "HTTP 401") once the trusted-device cookie
+expired (30d) or on a new device.
+
+### Frontend
+- `services/twoFactorGate.ts` — coordinator deduping concurrent 401s into one
+  in-flight re-verification.
+- `services/apiClient.ts` `authedFetch` — intercepts 401
+  `PHONE_VERIFICATION_REQUIRED`, surfaces the gate, awaits re-trust, retries once.
+- `components/auth/TwoFactorGate.tsx` — Blanc overlay; auto-sends a code to the
+  user's stored phone (masked hint, no re-entry), 6-digit input + resend, verify
+  -> trust-device (30d cookie) -> unblock. Mounted at App root.
+
+### Confirmed (no change needed)
+- Phone reuse across accounts already works (identity = email; trusted-device
+  keyed by user.id; no phone uniqueness constraint or "in use" check).
+
+### Backend
+- Unchanged (authDevice.js endpoints already existed, 2FA-exempt).
+
+### Validation
+- tsc clean; browser E2E on prod (qa-test): gate -> auto-send -> resend -> verify
+  -> trusted -> billing loaded seamlessly, no re-login; device stays trusted.
+
+---
+
 ## 2026-06-13 — PAY-CONS-001: consolidate zb_payments into the canonical ledger (debt #6)
 
 Zenbooker is the master payment system, so its data is authoritative. The legacy
