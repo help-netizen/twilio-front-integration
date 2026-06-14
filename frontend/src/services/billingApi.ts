@@ -58,4 +58,10 @@ export const billingApi = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ plan_id: planId }),
         })),
+    portal: () =>
+        json<{ url: string }>(authedFetch(`${BASE}/portal`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        })),
 };

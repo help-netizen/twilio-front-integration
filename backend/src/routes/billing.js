@@ -50,4 +50,17 @@ router.post('/checkout', async (req, res) => {
     }
 });
 
+// POST /api/billing/portal — Stripe customer-portal session (manage card / plan)
+router.post('/portal', async (req, res) => {
+    try {
+        const { return_url } = req.body || {};
+        const out = await billingService.createPortal(companyId(req), {
+            returnUrl: return_url || 'https://app.albusto.com/settings/billing',
+        });
+        res.json({ ok: true, ...out });
+    } catch (err) {
+        res.status(err.httpStatus || 500).json({ ok: false, code: err.code, error: err.message });
+    }
+});
+
 module.exports = router;

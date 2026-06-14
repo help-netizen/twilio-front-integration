@@ -78,6 +78,23 @@ async function createCheckout(companyId, planId, { successUrl, cancelUrl }) {
     return provider.createCheckoutSession(customerId, plan.provider_price_id, { successUrl, cancelUrl });
 }
 
+/** Create a customer-portal session so the company can manage its card / plan / invoices. */
+async function createPortal(companyId, { returnUrl }) {
+    if (!providerConfigured()) {
+        const e = new Error('Billing is not enabled yet');
+        e.httpStatus = 422; e.code = 'PROVIDER_NOT_CONFIGURED';
+        throw e;
+    }
+    const sub = await getSubscription(companyId);
+    const customerId = sub?.provider_customer_id;
+    if (!customerId) {
+        const e = new Error('No billing account yet — choose a plan first');
+        e.httpStatus = 422; e.code = 'NO_CUSTOMER';
+        throw e;
+    }
+    return getProvider().createPortalSession(customerId, { returnUrl });
+}
+
 // ── Usage metering (called by the billing-meter event subscriber) ────────────
 
 const EVENT_TO_METRIC = {
@@ -184,7 +201,7 @@ async function companyByCustomer(customerId) {
 }
 
 module.exports = {
-    getSubscription, startTrial, createCheckout, providerConfigured,
+    getSubscription, startTrial, createCheckout, createPortal, providerConfigured,
     recordUsageEvent, recordUsage, getUsage, getInvoices,
     handleProviderWebhook,
 };

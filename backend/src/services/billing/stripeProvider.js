@@ -79,6 +79,15 @@ async function createCheckoutSession(customerId, priceId, { successUrl, cancelUr
     return { url: session.url, sessionId: session.id };
 }
 
+/** Stripe Billing customer portal — manage payment method, plan, invoices. */
+async function createPortalSession(customerId, { returnUrl }) {
+    const session = await call('POST', '/billing_portal/sessions', {
+        customer: customerId,
+        return_url: returnUrl,
+    });
+    return { url: session.url };
+}
+
 async function reportUsage(subscriptionItemId, quantity, timestamp) {
     return call('POST', `/subscription_items/${subscriptionItemId}/usage_records`, {
         quantity: Math.round(quantity),
@@ -106,5 +115,5 @@ function parseWebhook(rawBody, signatureHeader) {
 }
 
 module.exports = {
-    ensureCustomer, createSubscription, createCheckoutSession, reportUsage, parseWebhook,
+    ensureCustomer, createSubscription, createCheckoutSession, createPortalSession, reportUsage, parseWebhook,
 };
