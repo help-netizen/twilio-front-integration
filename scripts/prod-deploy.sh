@@ -76,6 +76,23 @@ git archive master | ssh "$PROD_SSH" "tar -x -C $PROD_APP_DIR/app"
 log "Rebuilding and restarting app container..."
 ssh "$PROD_SSH" "cd $PROD_APP_DIR && docker compose build app && docker compose up -d app"
 
+# =============================================================================
+# Step 3: Invalidate all Keycloak sessions so users re-login with fresh assets
+# =============================================================================
+# A frontend rebuild changes Vite bundle hashes; clients still running the old
+# bundle fail to lazy-load code-split chunks (blank sections). Forcing a global
+# logout makes everyone reload index.html + the new chunks on their next action.
+log "Invalidating all Keycloak sessions (force re-login after deploy)..."
+ssh "$PROD_SSH" 'sleep 4; docker exec albusto-app-1 node -e "
+(async () => {
+  const base = process.env.KEYCLOAK_REALM_URL.replace(/\/realms\/.*\$/, \"\");
+  const realm = process.env.KEYCLOAK_REALM || \"crm-prod\";
+  const tj = await (await fetch(base+\"/realms/master/protocol/openid-connect/token\",{method:\"POST\",headers:{\"Content-Type\":\"application/x-www-form-urlencoded\"},body:new URLSearchParams({grant_type:\"password\",client_id:\"admin-cli\",username:process.env.KEYCLOAK_ADMIN_USER||\"admin\",password:process.env.KEYCLOAK_ADMIN_PASSWORD||\"admin\"})})).json();
+  const r = await fetch(base+\"/admin/realms/\"+realm+\"/logout-all\",{method:\"POST\",headers:{Authorization:\"Bearer \"+tj.access_token}});
+  console.log(\"[prod] logout-all status \"+r.status);
+})().catch(e => console.error(\"[prod] logout-all failed (non-fatal):\", e.message));
+"' || warn "Session invalidation failed (non-fatal) — users may need to re-login manually"
+
 echo ""
 echo -e "${GREEN}═══════════════════════════════════════════════════${NC}"
 echo -e "${GREEN} ✅ Production deployment complete${NC}"
