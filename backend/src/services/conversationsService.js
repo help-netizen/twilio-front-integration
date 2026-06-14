@@ -389,11 +389,12 @@ async function handleMessageAdded(payload) {
                         });
                     }
 
-                    // SSE broadcast
+                    // SSE broadcast (tenant-scoped)
                     realtimeService.broadcast('thread.action_required', {
                         timelineId: timeline.id,
                         reason: 'new_message',
-                    });
+                        company_id: conv.company_id,
+                    }, conv.company_id);
                     console.log(`[ConvService] Action Required set on timeline ${timeline.id} for inbound SMS from ${conv.customer_e164}`);
                 }
             }

@@ -88,7 +88,8 @@ describe('F017 callFlowRuntime voicemail completion', () => {
         expect(mockBroadcast).toHaveBeenCalledWith('group.call.voicemail', expect.objectContaining({
             call_sid: 'CA_vm',
             group_id: 'ug-1',
-        }));
+            company_id: 'company-1',
+        }), 'company-1');
         expect(mockPublishCallUpdate).toHaveBeenCalledWith(expect.objectContaining({
             eventType: 'call.updated',
             call_sid: 'CA_vm',

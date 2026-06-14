@@ -10,13 +10,13 @@ let intervalHandle = null;
 
 async function tick() {
     try {
-        const unsnoozedIds = await queries.unsnoozeExpiredThreads();
-        if (unsnoozedIds.length > 0) {
+        const unsnoozed = await queries.unsnoozeExpiredThreads();
+        if (unsnoozed.length > 0) {
             const realtimeService = require('./realtimeService');
-            for (const timelineId of unsnoozedIds) {
-                realtimeService.broadcast('thread.unsnoozed', { timelineId });
+            for (const row of unsnoozed) {
+                realtimeService.broadcast('thread.unsnoozed', { timelineId: row.id, company_id: row.company_id }, row.company_id);
             }
-            console.log(`[SnoozeScheduler] Unsnoozed ${unsnoozedIds.length} thread(s): ${unsnoozedIds.join(', ')}`);
+            console.log(`[SnoozeScheduler] Unsnoozed ${unsnoozed.length} thread(s): ${unsnoozed.map(r => r.id).join(', ')}`);
         }
     } catch (error) {
         console.error('[SnoozeScheduler] tick error:', error.message);

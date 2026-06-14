@@ -82,8 +82,9 @@ function createSession(callSid, meta = {}) {
                 turnOrder: turnOrder,
                 startMs: turnData.startMs,
                 endMs: turnData.endMs,
-                receivedAt: turnData.receivedAt
-            });
+                receivedAt: turnData.receivedAt,
+                company_id: session.meta?.companyId || session.meta?.company_id,
+            }, session.meta?.companyId || session.meta?.company_id);
         };
     }
 
@@ -254,8 +255,9 @@ async function finalizeSession(callSid) {
             callSid,
             text: fullText,
             segmentCount: sorted.length,
-            finalizedAt: new Date().toISOString()
-        });
+            finalizedAt: new Date().toISOString(),
+            company_id: session.meta?.companyId || session.meta?.company_id,
+        }, session.meta?.companyId || session.meta?.company_id);
 
         console.log(`[TranscriptSvc:${callSid}] Finalized: ${sorted.length} segments, ${fullText.length} chars`);
 

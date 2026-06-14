@@ -208,7 +208,8 @@ async function completeVoicemailCall(execution, context) {
         group_id: context.groupId,
         from_number: context.callerNumber,
         to_number: context.calledNumber,
-    });
+        company_id: execution.company_id,
+    }, execution.company_id);
     if (result.rows[0]) {
         realtimeService.publishCallUpdate({ eventType: 'call.updated', ...result.rows[0] });
     }
@@ -237,7 +238,8 @@ async function renderQueueNode({ execution, node, context, traceId }) {
             from_number: context.callerNumber,
             to_number: context.calledNumber,
             status: 'no_available_agents',
-        });
+            company_id: execution.company_id,
+        }, execution.company_id);
         return followFailureEdge({
             execution,
             node,
@@ -261,7 +263,8 @@ async function renderQueueNode({ execution, node, context, traceId }) {
         from_number: context.callerNumber,
         to_number: context.calledNumber,
         agent_count: agents.length,
-    });
+        company_id: execution.company_id,
+    }, execution.company_id);
 
     return xmlResponse(`
     <Dial timeout="${timeout}"
@@ -586,7 +589,8 @@ async function advance(callSid, event, traceId = 'call-flow') {
             group_id: context.groupId,
             from_number: context.callerNumber,
             to_number: context.calledNumber,
-        });
+            company_id: execution.company_id,
+        }, execution.company_id);
         return buildHangupTwiml();
     }
 

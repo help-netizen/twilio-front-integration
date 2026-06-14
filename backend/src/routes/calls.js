@@ -422,7 +422,7 @@ router.post('/contact/:contactId/mark-read', requirePermission('pulse.view', 're
         }
         // SSE broadcast so all users see the read state
         const realtimeService = require('../services/realtimeService');
-        realtimeService.broadcast('contact.read', { contactId: parseInt(contactId) });
+        realtimeService.broadcast('contact.read', { contactId: parseInt(contactId) }, req.companyFilter?.company_id);
         res.json({ contact });
     } catch (error) {
         console.error('Error marking contact read:', error);
@@ -442,7 +442,7 @@ router.post('/contact/:contactId/mark-unread', requirePermission('pulse.view', '
         }
         // SSE broadcast so all users see the unread state
         const realtimeService = require('../services/realtimeService');
-        realtimeService.broadcast('contact.unread', { contactId: parseInt(contactId) });
+        realtimeService.broadcast('contact.unread', { contactId: parseInt(contactId) }, req.companyFilter?.company_id);
         res.json({ contact });
     } catch (error) {
         console.error('Error marking contact unread:', error);
@@ -487,7 +487,7 @@ router.post('/timeline/:timelineId/mark-read', requirePermission('pulse.view', '
             console.warn('[mark-read] SMS conversation mark-read failed:', smsErr.message);
         }
         const realtimeService = require('../services/realtimeService');
-        realtimeService.broadcast('timeline.read', { timelineId: parseInt(timelineId) });
+        realtimeService.broadcast('timeline.read', { timelineId: parseInt(timelineId) }, req.companyFilter?.company_id);
         res.json({ timeline: tl });
     } catch (error) {
         console.error('Error marking timeline read:', error);
@@ -508,7 +508,7 @@ router.post('/timeline/:timelineId/mark-unread', requirePermission('pulse.view',
             await queries.markContactUnread(tl.contact_id).catch(() => { });
         }
         const realtimeService = require('../services/realtimeService');
-        realtimeService.broadcast('timeline.unread', { timelineId: parseInt(timelineId) });
+        realtimeService.broadcast('timeline.unread', { timelineId: parseInt(timelineId) }, req.companyFilter?.company_id);
         res.json({ timeline: tl });
     } catch (error) {
         console.error('Error marking timeline unread:', error);
