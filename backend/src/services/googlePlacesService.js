@@ -6,6 +6,57 @@
  */
 
 const KEY = process.env.GOOGLE_PLACES_KEY || process.env.GOOGLE_GEOCODING_KEY || null;
+// Geocoding prefers the geocoding key; Places key is the fallback.
+const GEOCODE_KEY = () => process.env.GOOGLE_GEOCODING_KEY || process.env.GOOGLE_PLACES_KEY || null;
+
+/**
+ * SCHED-ROUTE-001 (C-5): geocode a raw service address (no place_id path).
+ * Returns coordinates + normalized address + confidence signals (location_type,
+ * partial_match, place_id) so callers can set jobs.geocoding_status. Returns
+ * { status:'failed', ... } on no result / missing key — never throws on a bad
+ * address. Key is read from env only (never hardcoded, never sent to the browser).
+ */
+async function geocodeAddress(address) {
+    const key = GEOCODE_KEY();
+    if (!key) return { status: 'failed', error_code: 'NO_KEY', error_message: 'Geocoding key not configured' };
+    if (!address || !String(address).trim()) {
+        return { status: 'failed', error_code: 'NO_ADDRESS', error_message: 'Empty address' };
+    }
+    try {
+        const url = new URL('https://maps.googleapis.com/maps/api/geocode/json');
+        url.searchParams.set('address', String(address).trim());
+        url.searchParams.set('key', key);
+        const res = await fetch(url);
+        const json = await res.json();
+        if (json.status === 'ZERO_RESULTS') {
+            return { status: 'failed', error_code: 'ZERO_RESULTS', error_message: 'No geocode result' };
+        }
+        if (json.status !== 'OK' || !json.results?.length) {
+            return { status: 'failed', error_code: json.status || 'ERROR', error_message: json.error_message || 'Geocode failed' };
+        }
+        const r = json.results[0];
+        const lat = r.geometry?.location?.lat ?? null;
+        const lng = r.geometry?.location?.lng ?? null;
+        if (lat == null || lng == null) {
+            return { status: 'failed', error_code: 'NO_COORDS', error_message: 'No coordinates in result' };
+        }
+        const { mapGeocodeConfidence } = require('./routeGeo');
+        const status = mapGeocodeConfidence({
+            partial_match: r.partial_match === true,
+            location_type: r.geometry?.location_type,
+        });
+        return {
+            status,                                   // 'success' | 'needs_review'
+            lat, lng,
+            normalized_address: r.formatted_address || null,
+            place_id: r.place_id || null,
+            location_type: r.geometry?.location_type || null,
+            partial_match: r.partial_match === true,
+        };
+    } catch (err) {
+        return { status: 'failed', error_code: 'EXCEPTION', error_message: err.message };
+    }
+}
 
 async function suggest(q) {
     if (!KEY || !q || q.trim().length < 2) return [];
@@ -66,4 +117,4 @@ async function resolve(placeId) {
     return { city, state, zip, lat, lng, timezone };
 }
 
-module.exports = { suggest, resolve, _hasKey: () => !!KEY };
+module.exports = { suggest, resolve, geocodeAddress, _hasKey: () => !!KEY };

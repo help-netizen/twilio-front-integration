@@ -2656,3 +2656,20 @@ PhoneNumbersPage (usage chip, A2P banner+wizard), tests
 - [x] TASK-BILL-03: bootstrapCompany → startTrial (idempotent, non-blocking) — DONE
 - [x] TASK-BILL-04: frontend BillingPage + billingApi + route /settings/billing + nav — DONE (Blanc design system, no technical IDs)
 - [x] TASK-BILL-05: tests per test-cases; full suite green — DONE (tests/billingUI.test.js, 8/8; no new regressions vs master)
+
+---
+# SCHED-ROUTE-001 — Schedule Routes & Address Management (backend foundation)
+Spec: docs/specs/SCHED-ROUTE-001-route-scheduling.md (+ Binding Corrections C-1..C-13).
+
+- [x] SR-01 (Ф1): migration 107 — jobs geocoding cols; schedule_route_segments (technician_id=crm_users.id, company-scoped, partial-unique idempotency idx); route_calculation_cache (GLOBAL). Idempotent, verified on prod-schema copy.
+- [x] SR-02 (Ф2/Ф3 core): backend/src/services/routeGeo.js — pure helpers: roundCoord/buildCacheKey (C-4), mapGeocodeConfidence (C-5), googleMapsUrl generated (C-6), companyDay tz-aware (C-3), computeAffectedPairs (insert/remove/reassign/address-change). 16 unit tests green.
+- [x] SR-03 (Ф2): googlePlacesService.geocodeAddress() — Geocoding API, confidence signals, env-key only.
+- [ ] SR-04 (Ф1.5): backend/src/db/routeQueries.js — tenant-safe segment upsert/markStale/read + GLOBAL cache get/put (by cache_key). All SQL company_id-scoped except cache (global by design, C-4).
+- [ ] SR-05 (Ф3): backend/src/services/routeDistanceService.js — Distance Matrix API (driving, no departure_time), BATCH adjacent pairs per tech/day in one call (C-8), cache-first (cache hit → no Google call). Mockable fetch.
+- [ ] SR-06 (Ф3): backend/src/services/routeSegmentService.js — recalc orchestration: build per-tech/day sequences from jobs (order start_date ASC, created_at DESC; exclude Canceled/Job is Done; company-tz day; fan-out by assigned_provider_user_ids), computeAffectedPairs, mark stale + upsert pending/missing_address/address_needs_review, enqueue route_calc.
+- [ ] SR-07 (Ф2/Ф3): agentHandlers — add agent_type 'job_geocode' (geocode → persist on jobs, then trigger recalc) and 'route_calc' (cache-first → Distance Matrix batch → upsert segments). Reuse agentWorker (FOR UPDATE SKIP LOCKED). Idempotent.
+- [ ] SR-08 (Ф4): jobsService.createJob manual path + PATCH route-affecting edit; scheduleService.createFromSlot(entity_type='job') (currently 501); detect route-affecting change set; enqueue job_geocode (skip if coords supplied & address unchanged) + recalc; ZB best-effort create under FEATURE_ZENBOOKER_SYNC with dedupe guard (store zenbooker_job_id, never rollback local on ZB fail).
+- [ ] SR-09 (Ф5): scheduleQueries — make day-filter tz-aware (C-3); expose job address fields (lat,lng,normalized_address,geocoding_status,address) + generated google_maps_url. GET /api/schedule/route-segments?from&to&technician_id — authenticate+requireCompanyAccess+requirePermission('schedule.view'), PF007 provider scope (assignedOnly→own crm_user technician_id). NO Google calls on read.
+- [ ] SR-10 (Ф7): migration/script backfill — geocoding_status='success' where lat/lng present (no paid call) else 'not_geocoded'; seed segments today+future only.
+- [ ] SR-11 (Ф6 frontend): clickable Google Maps address (job card + details, stopPropagation); route connectors in timeline/timeline-week/list (status→text); pending/error/stale states; AddressAutocomplete in create/edit; no client-side Google route calls.
+- [ ] SR-12 (Ф7 tests): integration tests — cache hit/miss, Google fail→Route unavailable, address change, reassign, insert/remove, multi-tech, company-tz day, provider-scope, idempotency (no dup active segment), tenant isolation, schedule-read makes no Google calls.
