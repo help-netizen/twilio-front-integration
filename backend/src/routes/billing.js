@@ -16,7 +16,7 @@ router.get('/', async (req, res) => {
         const [subscription, usage, plans, invoices] = await Promise.all([
             billingService.getSubscription(companyId(req)),
             billingService.getUsage(companyId(req)),
-            db.query('SELECT id, name, monthly_base_usd, included_seats, per_seat_usd, metered, included_units FROM billing_plans WHERE is_active ORDER BY monthly_base_usd').then(r => r.rows),
+            db.query('SELECT id, name, monthly_base_usd, included_seats, per_seat_usd, metered, included_units, max_phone_numbers FROM billing_plans WHERE is_active ORDER BY monthly_base_usd').then(r => r.rows),
             billingService.getInvoices(companyId(req)),
         ]);
         res.json({ ok: true, subscription, usage, plans, invoices, billing_enabled: billingService.providerConfigured() });

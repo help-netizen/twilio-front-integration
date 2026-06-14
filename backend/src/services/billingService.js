@@ -78,6 +78,31 @@ async function createCheckout(companyId, planId, { successUrl, cancelUrl }) {
     return provider.createCheckoutSession(customerId, plan.provider_price_id, { successUrl, cancelUrl });
 }
 
+/** Create a customer-portal session so the company can manage its card / plan / invoices. */
+async function createPortal(companyId, { returnUrl }) {
+    if (!providerConfigured()) {
+        const e = new Error('Billing is not enabled yet');
+        e.httpStatus = 422; e.code = 'PROVIDER_NOT_CONFIGURED';
+        throw e;
+    }
+    const sub = await getSubscription(companyId);
+    const customerId = sub?.provider_customer_id;
+    if (!customerId) {
+        const e = new Error('No billing account yet — choose a plan first');
+        e.httpStatus = 422; e.code = 'NO_CUSTOMER';
+        throw e;
+    }
+    return getProvider().createPortalSession(customerId, { returnUrl });
+}
+
+/** The company's current plan row (limits, bundles). Falls back to 'trial'. */
+async function getPlanForCompany(companyId) {
+    const sub = await getSubscription(companyId);
+    const planId = sub?.plan_id || 'trial';
+    const { rows } = await db.query('SELECT * FROM billing_plans WHERE id = $1', [planId]);
+    return rows[0] || null;
+}
+
 // ── Usage metering (called by the billing-meter event subscriber) ────────────
 
 const EVENT_TO_METRIC = {
@@ -128,6 +153,95 @@ async function getUsage(companyId, period = periodStart()) {
         [companyId, period]
     );
     return Object.fromEntries(rows.map(r => [r.metric, Number(r.quantity)]));
+}
+
+// ── Overage billing (in arrears, as Stripe invoice items) ────────────────────
+
+const OVERAGE_LABEL = { sms: 'text messages', call_minutes: 'call minutes', agent_runs: 'automations' };
+const OVERAGE_METRICS = ['sms', 'call_minutes', 'agent_runs'];
+
+function previousPeriodStart(d = new Date()) {
+    return new Date(d.getFullYear(), d.getMonth() - 1, 1).toISOString().slice(0, 10);
+}
+
+/** Per-metric overage = max(0, used − included) × the plan's metered rate. */
+async function computeOverage(companyId, period = periodStart()) {
+    const plan = await getPlanForCompany(companyId);
+    if (!plan) return [];
+    const usage = await getUsage(companyId, period);
+    const included = plan.included_units || {};
+    const rates = plan.metered || {};
+    const out = [];
+    for (const metric of OVERAGE_METRICS) {
+        const used = Number(usage[metric] || 0);
+        const cap = Number(included[metric] || 0);
+        const rate = Number(rates[metric] || 0);
+        const over = Math.max(0, used - cap);
+        if (over > 0 && rate > 0) out.push({ metric, overUnits: over, amountUsd: Math.round(over * rate * 100) / 100 });
+    }
+    return out;
+}
+
+/** Debit one company's overage for a closed period from its wallet. Idempotent via ledger ref. */
+async function billOverage(companyId, period) {
+    const walletService = require('./walletService');
+    const items = await computeOverage(companyId, period);
+    let billed = 0, amount = 0;
+    for (const it of items) {
+        if (it.amountUsd <= 0) continue;
+        const res = await walletService.debit(companyId, it.amountUsd, {
+            type: 'overage',
+            description: `Overage: ${it.overUnits} extra ${OVERAGE_LABEL[it.metric]} (${period})`,
+            ref: `overage:${it.metric}:${period}`,
+        });
+        if (res.applied) { billed++; amount += it.amountUsd; }
+    }
+    return { billed, amount };
+}
+
+/** Debit a company's monthly plan fee from its wallet (auto-recharges to cover). Idempotent per period. */
+async function billPlanFee(companyId, period = periodStart()) {
+    const walletService = require('./walletService');
+    const plan = await getPlanForCompany(companyId);
+    const fee = Number(plan?.monthly_base_usd || 0);
+    if (fee <= 0) return { billed: false, amount: 0 };
+    await walletService.ensureBalance(companyId, fee);
+    const res = await walletService.debit(companyId, fee, {
+        type: 'plan',
+        description: `${plan.name} plan — ${period}`,
+        ref: `plan:${period}`,
+    });
+    return { billed: res.applied, amount: res.applied ? fee : 0 };
+}
+
+/** Debit last month's overage for every paid company. Idempotent — safe to run daily. */
+async function billPreviousPeriodOverages() {
+    const period = previousPeriodStart();
+    const { rows } = await db.query(
+        `SELECT company_id FROM billing_subscriptions WHERE status IN ('active','past_due')`
+    );
+    let companies = 0;
+    for (const r of rows) {
+        const res = await billOverage(r.company_id, period)
+            .catch(e => { console.error('[billing] overage run error:', e.message); return null; });
+        if (res && res.billed > 0) companies++;
+    }
+    return { period, companies };
+}
+
+/** Debit this month's plan fee for every paid company. Idempotent — safe to run daily. */
+async function billCurrentPeriodPlanFees() {
+    const period = periodStart();
+    const { rows } = await db.query(
+        `SELECT company_id FROM billing_subscriptions WHERE status IN ('active','past_due')`
+    );
+    let companies = 0;
+    for (const r of rows) {
+        const res = await billPlanFee(r.company_id, period)
+            .catch(e => { console.error('[billing] plan fee run error:', e.message); return null; });
+        if (res && res.billed) companies++;
+    }
+    return { period, companies };
 }
 
 // ── Provider webhook → local state + domain events ───────────────────────────
@@ -184,7 +298,8 @@ async function companyByCustomer(customerId) {
 }
 
 module.exports = {
-    getSubscription, startTrial, createCheckout, providerConfigured,
+    getSubscription, startTrial, createCheckout, createPortal, getPlanForCompany, providerConfigured,
     recordUsageEvent, recordUsage, getUsage, getInvoices,
+    computeOverage, billOverage, billPlanFee, billPreviousPeriodOverages, billCurrentPeriodPlanFees,
     handleProviderWebhook,
 };

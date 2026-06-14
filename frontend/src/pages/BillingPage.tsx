@@ -147,6 +147,12 @@ export default function BillingPage() {
                                     </div>
                                 </div>
                                 <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                    {plan.max_phone_numbers != null && (
+                                        <li style={{ display: 'flex', gap: 7, fontSize: 13, color: 'var(--blanc-ink-2)' }}>
+                                            <Check size={15} style={{ color: 'var(--blanc-success)', flexShrink: 0, marginTop: 1 }} />
+                                            Up to {plan.max_phone_numbers} phone number{plan.max_phone_numbers === 1 ? '' : 's'}
+                                        </li>
+                                    )}
                                     {METRIC_ORDER.map(m => plan.included_units?.[m] != null && (
                                         <li key={m} style={{ display: 'flex', gap: 7, fontSize: 13, color: 'var(--blanc-ink-2)' }}>
                                             <Check size={15} style={{ color: '#16a34a', flexShrink: 0, marginTop: 1 }} />

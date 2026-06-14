@@ -142,3 +142,39 @@ describe('billing routes', () => {
         expect(db.query.mock.calls[0][1][0]).toBe(COMPANY_B);
     });
 });
+
+describe('billingService.computeOverage', () => {
+    const billing = require('../backend/src/services/billingService');
+
+    it('charges only metrics over the bundle, at the plan rate, skipping rate=0', async () => {
+        db.query
+            .mockResolvedValueOnce({ rows: [{ plan_id: 'pro', status: 'active' }] })             // getSubscription
+            .mockResolvedValueOnce({ rows: [{                                                      // billing_plans
+                id: 'pro',
+                included_units: { sms: 3000, call_minutes: 3000, agent_runs: 10000 },
+                metered: { sms: 0.01, call_minutes: 0.02, agent_runs: 0 },
+            }] })
+            .mockResolvedValueOnce({ rows: [                                                       // getUsage
+                { metric: 'sms', quantity: 3500 },
+                { metric: 'call_minutes', quantity: 3200 },
+                { metric: 'agent_runs', quantity: 50000 },
+            ] });
+
+        const out = await billing.computeOverage(COMPANY, '2026-05-01');
+        expect(out).toEqual([
+            { metric: 'sms', overUnits: 500, amountUsd: 5 },
+            { metric: 'call_minutes', overUnits: 200, amountUsd: 4 },
+        ]);
+        // agent_runs over by 40k but rate 0 → never billed
+        expect(out.find(o => o.metric === 'agent_runs')).toBeUndefined();
+    });
+
+    it('returns nothing when usage is within the bundle', async () => {
+        db.query
+            .mockResolvedValueOnce({ rows: [{ plan_id: 'pro', status: 'active' }] })
+            .mockResolvedValueOnce({ rows: [{ id: 'pro', included_units: { sms: 3000 }, metered: { sms: 0.01 } }] })
+            .mockResolvedValueOnce({ rows: [{ metric: 'sms', quantity: 1200 }] });
+        const out = await billing.computeOverage(COMPANY, '2026-05-01');
+        expect(out).toEqual([]);
+    });
+});

@@ -22,6 +22,7 @@ export interface Plan {
     per_seat_usd: number;
     metered: Record<string, number>;
     included_units: Record<string, number>;
+    max_phone_numbers: number | null;
 }
 
 export interface Invoice {
