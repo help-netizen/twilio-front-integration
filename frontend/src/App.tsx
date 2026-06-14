@@ -7,6 +7,7 @@ import { AuthProvider } from './auth/AuthProvider';
 import { ProtectedRoute } from './auth/ProtectedRoute';
 import SignupPage from './pages/auth/SignupPage';
 import OnboardingPage from './pages/auth/OnboardingPage';
+import TwoFactorGate from './components/auth/TwoFactorGate';
 import { useAuth } from './auth/AuthProvider';
 import { useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -90,6 +91,7 @@ function App() {
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
           <OnboardingGate />
+          <TwoFactorGate />
           <AppLayout>
             <Routes>
               <Route path="/signup" element={<SignupPage />} />
