@@ -306,6 +306,43 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
     return rowToJob(rows[0]);
 }
 
+/**
+ * SCHED-ROUTE-001 (FR-001): create a job manually in Albusto (no ZenBooker sync
+ * path). Assignment uses INTERNAL crm_users.id directly (C-2): provider lane id
+ * → assigned_provider_user_ids. If the caller already has trustworthy coordinates
+ * (e.g. from AddressAutocomplete), geocoding_status is set to 'success' so no
+ * paid geocode is needed; otherwise 'not_geocoded' and the caller enqueues one.
+ * Returns the raw job row.
+ */
+async function createManualJob(companyId, input = {}) {
+    if (!companyId) throw new Error('createManualJob requires companyId');
+    const blancStatus = input.blanc_status || 'Submitted';
+    const providerUserIds = Array.isArray(input.assigned_provider_user_ids)
+        ? input.assigned_provider_user_ids.map(String).filter(Boolean)
+        : (input.assignee_id ? [String(input.assignee_id)] : []);
+    const hasCoords = input.lat != null && input.lng != null;
+    const geocodingStatus = hasCoords ? 'success' : 'not_geocoded';
+
+    const { rows } = await db.query(
+        `INSERT INTO jobs
+            (company_id, blanc_status, zb_status, service_name, start_date, end_date,
+             customer_name, customer_phone, customer_email, address, lat, lng,
+             normalized_address, geocoding_status, geocoding_place_id, geocoded_at,
+             geocoding_provider, assigned_techs, assigned_provider_user_ids, notes, zb_raw)
+         VALUES ($1,$2,'scheduled',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+                 CASE WHEN $10 IS NOT NULL AND $11 IS NOT NULL THEN now() ELSE NULL END,
+                 'google_maps','[]'::jsonb,$15::jsonb,'[]'::jsonb,'{}'::jsonb)
+         RETURNING *`,
+        [companyId, blancStatus, input.service_name || null,
+         input.start_date || null, input.end_date || null,
+         input.customer_name || null, input.customer_phone || null, input.customer_email || null,
+         input.address || null, hasCoords ? input.lat : null, hasCoords ? input.lng : null,
+         input.normalized_address || null, geocodingStatus, input.geocoding_place_id || null,
+         JSON.stringify(providerUserIds)]
+    );
+    return rows[0];
+}
+
 async function getJobById(id, companyId = null, providerScope = null) {
     const conditions = ['j.id = $1'];
     const params = [id];
@@ -1066,6 +1103,7 @@ async function updateCoords(jobId, lat, lng) {
 
 module.exports = {
     createJob,
+    createManualJob,
     getJobById,
     getJobByZbId,
     listJobs,
