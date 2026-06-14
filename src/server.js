@@ -366,6 +366,9 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
     }, 60 * 1000);
     console.log('⚙️  Rules engine scheduler started (60s tick)');
 
+    // BILLING: monthly usage-overage billing (in arrears, dormant w/o Stripe key)
+    require('../backend/src/services/overageScheduler').start();
+
     // Start daily Zenbooker jobs sync cron
     const zbSyncCron = require('../backend/src/services/zbJobsSyncCron');
     zbSyncCron.start();

@@ -18,7 +18,11 @@ function form(obj, prefix = '') {
         if (v === undefined || v === null) continue;
         const key = prefix ? `${prefix}[${k}]` : k;
         if (typeof v === 'object' && !Array.isArray(v)) parts.push(form(v, key));
-        else if (Array.isArray(v)) v.forEach((item, i) => parts.push(`${encodeURIComponent(`${key}[${i}]`)}=${encodeURIComponent(item)}`));
+        else if (Array.isArray(v)) v.forEach((item, i) => {
+            // Recurse for object array items (e.g. line_items[0][price_data][...]).
+            if (item !== null && typeof item === 'object') parts.push(form(item, `${key}[${i}]`));
+            else parts.push(`${encodeURIComponent(`${key}[${i}]`)}=${encodeURIComponent(item)}`);
+        });
         else parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(v)}`);
     }
     return parts.filter(Boolean).join('&');
@@ -88,6 +92,39 @@ async function createPortalSession(customerId, { returnUrl }) {
     return { url: session.url };
 }
 
+/** Charge a saved card off-session (wallet auto-recharge). Throws on non-success. */
+async function chargeOffSession(customerId, paymentMethodId, amountUsd, description) {
+    const pi = await call('POST', '/payment_intents', {
+        customer: customerId,
+        amount: Math.round(Number(amountUsd) * 100),
+        currency: 'usd',
+        payment_method: paymentMethodId,
+        off_session: true,
+        confirm: true,
+        description,
+        metadata: { wallet_topup: 'auto' },
+    });
+    if (pi.status !== 'succeeded') { const e = new Error(`Card charge ${pi.status}`); e.code = 'CHARGE_FAILED'; throw e; }
+    return { paymentIntentId: pi.id };
+}
+
+/** Hosted Checkout to top up the wallet and save the card for future off-session charges. */
+async function createTopupCheckout(customerId, amountUsd, { successUrl, cancelUrl }) {
+    const session = await call('POST', '/checkout/sessions', {
+        mode: 'payment',
+        customer: customerId,
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+        payment_intent_data: { setup_future_usage: 'off_session' },
+        line_items: [{
+            quantity: 1,
+            price_data: { currency: 'usd', unit_amount: Math.round(Number(amountUsd) * 100), product_data: { name: 'Wallet top-up' } },
+        }],
+        metadata: { wallet_topup: 'manual' },
+    });
+    return { url: session.url, sessionId: session.id, amountUsd: Number(amountUsd) };
+}
+
 async function reportUsage(subscriptionItemId, quantity, timestamp) {
     return call('POST', `/subscription_items/${subscriptionItemId}/usage_records`, {
         quantity: Math.round(quantity),
@@ -115,5 +152,6 @@ function parseWebhook(rawBody, signatureHeader) {
 }
 
 module.exports = {
-    ensureCustomer, createSubscription, createCheckoutSession, createPortalSession, reportUsage, parseWebhook,
+    ensureCustomer, createSubscription, createCheckoutSession, createPortalSession,
+    chargeOffSession, createTopupCheckout, reportUsage, parseWebhook,
 };
