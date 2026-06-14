@@ -110,11 +110,23 @@ async function bootstrapCompany({ userId, name, geo = {}, phone, email }) {
             details: { name, slug, timezone: company.timezone, source: 'self_signup' },
         }).catch(() => {});
 
-        // Start the 14-day platform trial. Non-blocking and idempotent
-        // (ON CONFLICT DO NOTHING) — a billing hiccup must not fail signup.
-        require('./billingService').startTrial(company.id, 'trial').catch((e) => {
+        // Start the 14-day platform trial. Awaited (idempotent ON CONFLICT) so
+        // the billing cabinet has a subscription on first load — but a billing
+        // hiccup must not fail signup, hence the try/catch.
+        try {
+            await require('./billingService').startTrial(company.id, 'trial');
+        } catch (e) {
             console.error('startTrial on bootstrap failed:', e.message);
-        });
+        }
+
+        // Seed the AR-equivalent automation rules. With FEATURE_RULES_ENGINE_AR
+        // on, action-required automation runs through the rules engine, so a new
+        // tenant with no rules would have NO action-required behaviour at all.
+        try {
+            await require('./rulesSeed').seedDefaultRules(company.id);
+        } catch (e) {
+            console.error('seedDefaultRules on bootstrap failed:', e.message);
+        }
 
         return { company, created: true };
     } catch (err) {
