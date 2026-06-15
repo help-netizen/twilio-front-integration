@@ -31,7 +31,7 @@ interface TimelineViewProps {
     onSelectItem: (item: ScheduleItem) => void;
     onReschedule?: (entityType: string, entityId: number, startAt: string, endAt: string, title?: string) => void;
     onReassign?: (entityType: string, entityId: number, assigneeId: string | null, assigneeName?: string, title?: string) => void;
-    onCreateFromSlot?: (title: string, startAt: string, endAt: string) => void;
+    onCreateFromSlot?: (title: string, startAt: string, endAt: string, providerName?: string) => void;
     routeByPair?: Map<string, RouteSegment>;
 }
 
@@ -492,7 +492,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                     providerName={slotPlaceholder.providerName}
                                     timezone={tz}
                                     onCreate={() => {
-                                        onCreateFromSlot('', slotPlaceholder.startAt, slotPlaceholder.endAt);
+                                        onCreateFromSlot('', slotPlaceholder.startAt, slotPlaceholder.endAt, slotPlaceholder.providerName);
                                         setSlotPlaceholder(null);
                                     }}
                                     onClose={() => setSlotPlaceholder(null)}

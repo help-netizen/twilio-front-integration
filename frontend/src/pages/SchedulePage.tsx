@@ -17,6 +17,7 @@ import { MonthView } from '../components/schedule/MonthView';
 import { TimelineView } from '../components/schedule/TimelineView';
 import { TimelineWeekView } from '../components/schedule/TimelineWeekView';
 import { ListView } from '../components/schedule/ListView';
+import { NewJobModal } from '../components/schedule/NewJobModal';
 import { SidebarStack } from '../components/schedule/SidebarStack';
 import { UnscheduledPanel } from '../components/schedule/UnscheduledPanel';
 import { DispatchSettingsDialog } from '../components/schedule/DispatchSettingsDialog';
@@ -58,10 +59,14 @@ export function SchedulePage() {
         schedule.setViewMode('day');
     };
 
-    const handleCreateFromSlot = useCallback((title: string, startAt: string, endAt: string) => {
-        const payload: CreateFromSlotPayload = { title, start_at: startAt, end_at: endAt, entity_type: 'job' };
-        schedule.handleCreateFromSlot(payload);
-    }, [schedule.handleCreateFromSlot]);
+    // SCHED-ROUTE-001 FR-001: a slot click opens the New Job modal (title +
+    // address) rather than creating a bare job immediately, so the address can
+    // feed geocoding/routing.
+    const [newJobSlot, setNewJobSlot] = useState<{ startAt: string; endAt: string; providerName?: string } | null>(null);
+
+    const handleCreateFromSlot = useCallback((_title: string, startAt: string, endAt: string, providerName?: string) => {
+        setNewJobSlot({ startAt, endAt, providerName });
+    }, []);
 
     const renderCalendarView = () => {
         if (schedule.loading) {
@@ -233,6 +238,18 @@ export function SchedulePage() {
                 settings={schedule.settings}
                 onSave={schedule.handleUpdateSettings}
             />
+
+            {newJobSlot && (
+                <NewJobModal
+                    open
+                    startAt={newJobSlot.startAt}
+                    endAt={newJobSlot.endAt}
+                    timezone={schedule.settings.timezone}
+                    providerName={newJobSlot.providerName}
+                    onClose={() => setNewJobSlot(null)}
+                    onSubmit={(payload) => { schedule.handleCreateFromSlot(payload); setNewJobSlot(null); }}
+                />
+            )}
         </div>
     );
 }

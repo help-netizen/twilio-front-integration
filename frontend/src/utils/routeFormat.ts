@@ -57,6 +57,23 @@ export function routeSegmentTone(seg: RouteSegment | undefined): 'ok' | 'pending
     return 'warn';
 }
 
+/**
+ * Build a Google Maps search link from coords (preferred — pins the exact spot)
+ * or a free-text address. Mirrors the server-side generator; null if neither is
+ * usable. No Google call.
+ */
+export function googleMapsUrl(
+    { lat, lng, address }: { lat?: number | null; lng?: number | null; address?: string | null } = {},
+): string | null {
+    if (lat != null && lng != null) {
+        return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+    }
+    if (address && address.trim()) {
+        return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+    }
+    return null;
+}
+
 /** Short geocoding-state label for a job card; null when nothing to show. */
 export function geocodingLabel(status: GeocodingStatus | null | undefined): string | null {
     switch (status) {

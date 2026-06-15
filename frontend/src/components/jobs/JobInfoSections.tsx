@@ -8,6 +8,7 @@ import { ClickToCallButton } from '../softphone/ClickToCallButton';
 import { OpenTimelineButton } from '../softphone/OpenTimelineButton';
 import { CustomTimeModal } from '../conversations/CustomTimeModal';
 import { useNavigate } from 'react-router-dom';
+import { googleMapsUrl } from '../../utils/routeFormat';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -186,14 +187,20 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
                                     <span className="text-[11px] font-medium" style={{ color: 'var(--blanc-ink-3)' }}>· {job.territory}</span>
                                 )}
                             </div>
-                            {job.address && (
-                                <div
-                                    className="text-[15px] leading-snug font-semibold"
-                                    style={{ fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.02em', color: 'var(--blanc-ink-1)' }}
-                                >
-                                    {job.address}
-                                </div>
-                            )}
+                            {job.address && (() => {
+                                // SCHED-ROUTE-001 FR-003: clickable Maps link in job details
+                                // (prefers stored coords; generated, no Google call).
+                                const mapsUrl = googleMapsUrl({ lat: job.lat, lng: job.lng, address: job.address });
+                                const cls = 'text-[15px] leading-snug font-semibold';
+                                const sty = { fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.02em', color: 'var(--blanc-ink-1)' } as const;
+                                return mapsUrl ? (
+                                    <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className={`${cls} hover:underline`} style={sty}>
+                                        {job.address}
+                                    </a>
+                                ) : (
+                                    <div className={cls} style={sty}>{job.address}</div>
+                                );
+                            })()}
                         </div>
                     )}
 
