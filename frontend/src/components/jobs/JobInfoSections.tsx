@@ -1,8 +1,10 @@
 import { useState } from 'react';
-import { CalendarClock, Loader2, ChevronRight } from 'lucide-react';
+import { CalendarClock, Loader2, ChevronRight, Pencil, Check, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { LocalJob } from '../../services/jobsApi';
-import { rescheduleJob } from '../../services/jobsApi';
+import { rescheduleJob, updateJobLocation } from '../../services/jobsApi';
+import { AddressAutocomplete } from '../AddressAutocomplete';
+import { EMPTY_ADDRESS, type AddressFields } from '../addressAutoHelpers';
 import { formatPhoneDisplay as formatPhone } from '../../utils/phoneUtils';
 import { ClickToCallButton } from '../softphone/ClickToCallButton';
 import { OpenTimelineButton } from '../softphone/OpenTimelineButton';
@@ -56,7 +58,37 @@ const infoLabel: React.CSSProperties = {
 export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSectionsProps) {
     const [showReschedule, setShowReschedule] = useState(false);
     const [rescheduling, setRescheduling] = useState(false);
+    const [editingAddress, setEditingAddress] = useState(false);
+    const [savingAddress, setSavingAddress] = useState(false);
+    const [addrDraft, setAddrDraft] = useState<AddressFields>(EMPTY_ADDRESS);
     const navigate = useNavigate();
+
+    const beginEditAddress = () => {
+        setAddrDraft({ ...EMPTY_ADDRESS, street: job.address || '', lat: job.lat ?? null, lng: job.lng ?? null });
+        setEditingAddress(true);
+    };
+
+    const saveAddress = async () => {
+        const street = [addrDraft.street, addrDraft.apt].filter(Boolean).join(' ');
+        const composed = [street, addrDraft.city, addrDraft.state, addrDraft.zip].filter(Boolean).join(', ');
+        if (!composed.trim()) { setEditingAddress(false); return; }
+        setSavingAddress(true);
+        try {
+            const updated = await updateJobLocation(job.id, {
+                address: composed,
+                lat: addrDraft.lat ?? null,
+                lng: addrDraft.lng ?? null,
+                normalized_address: composed,
+            });
+            toast.success('Address updated', { description: 'Route is recalculating' });
+            onJobUpdated?.(updated);
+            setEditingAddress(false);
+        } catch (err) {
+            toast.error('Failed to update address', { description: err instanceof Error ? err.message : 'Unknown error' });
+        } finally {
+            setSavingAddress(false);
+        }
+    };
 
     const territoryId = job.zb_raw?.territory?.id || job.zb_raw?.service_territory?.id || undefined;
 
@@ -178,31 +210,71 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
                         </div>
                     )}
 
-                    {/* Location */}
-                    {(job.address || job.territory) && (
-                        <div style={{ paddingBottom: (job.assigned_techs?.length ?? 0) > 0 ? 14 : 0, marginBottom: (job.assigned_techs?.length ?? 0) > 0 ? 14 : 0, borderBottom: (job.assigned_techs?.length ?? 0) > 0 ? '1px dashed rgba(117,106,89,0.16)' : undefined }}>
-                            <div className="flex items-center gap-1.5 mb-1">
-                                <p style={{ ...eyebrow, marginBottom: 0 }}>Location</p>
-                                {job.territory && (
-                                    <span className="text-[11px] font-medium" style={{ color: 'var(--blanc-ink-3)' }}>· {job.territory}</span>
-                                )}
-                            </div>
-                            {job.address && (() => {
-                                // SCHED-ROUTE-001 FR-003: clickable Maps link in job details
-                                // (prefers stored coords; generated, no Google call).
-                                const mapsUrl = googleMapsUrl({ lat: job.lat, lng: job.lng, address: job.address });
-                                const cls = 'text-[15px] leading-snug font-semibold';
-                                const sty = { fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.02em', color: 'var(--blanc-ink-1)' } as const;
-                                return mapsUrl ? (
-                                    <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className={`${cls} hover:underline`} style={sty}>
-                                        {job.address}
-                                    </a>
-                                ) : (
-                                    <div className={cls} style={sty}>{job.address}</div>
-                                );
-                            })()}
+                    {/* Location — SCHED-ROUTE-001 FR-002/FR-003: clickable Maps link + inline edit */}
+                    <div style={{ paddingBottom: (job.assigned_techs?.length ?? 0) > 0 ? 14 : 0, marginBottom: (job.assigned_techs?.length ?? 0) > 0 ? 14 : 0, borderBottom: (job.assigned_techs?.length ?? 0) > 0 ? '1px dashed rgba(117,106,89,0.16)' : undefined }}>
+                        <div className="flex items-center gap-1.5 mb-1">
+                            <p style={{ ...eyebrow, marginBottom: 0 }}>Location</p>
+                            {job.territory && (
+                                <span className="text-[11px] font-medium" style={{ color: 'var(--blanc-ink-3)' }}>· {job.territory}</span>
+                            )}
+                            {!editingAddress && (
+                                <button
+                                    type="button"
+                                    onClick={beginEditAddress}
+                                    className="ml-auto inline-flex items-center gap-1 text-[11px] font-medium hover:opacity-100 opacity-70"
+                                    style={{ color: 'var(--blanc-ink-3)' }}
+                                    title="Edit address"
+                                >
+                                    <Pencil className="size-3" /> {job.address ? 'Edit' : 'Add address'}
+                                </button>
+                            )}
                         </div>
-                    )}
+
+                        {editingAddress ? (
+                            <div className="space-y-2">
+                                <AddressAutocomplete
+                                    idPrefix="job-addr"
+                                    defaultUseDetails
+                                    value={addrDraft}
+                                    onChange={setAddrDraft}
+                                />
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        disabled={savingAddress}
+                                        onClick={saveAddress}
+                                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-bold text-white disabled:opacity-60"
+                                        style={{ background: 'var(--blanc-ink-1)' }}
+                                    >
+                                        {savingAddress ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />} Save
+                                    </button>
+                                    <button
+                                        type="button"
+                                        disabled={savingAddress}
+                                        onClick={() => setEditingAddress(false)}
+                                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium"
+                                        style={{ color: 'var(--blanc-ink-2)' }}
+                                    >
+                                        <X className="size-3.5" /> Cancel
+                                    </button>
+                                </div>
+                            </div>
+                        ) : job.address ? (() => {
+                            // FR-003: clickable Maps link (prefers stored coords; generated, no Google call).
+                            const mapsUrl = googleMapsUrl({ lat: job.lat, lng: job.lng, address: job.address });
+                            const cls = 'text-[15px] leading-snug font-semibold';
+                            const sty = { fontFamily: 'var(--blanc-font-heading)', letterSpacing: '-0.02em', color: 'var(--blanc-ink-1)' } as const;
+                            return mapsUrl ? (
+                                <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className={`${cls} hover:underline`} style={sty}>
+                                    {job.address}
+                                </a>
+                            ) : (
+                                <div className={cls} style={sty}>{job.address}</div>
+                            );
+                        })() : (
+                            <p className="text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>No address</p>
+                        )}
+                    </div>
 
                     {/* Providers */}
                     {job.assigned_techs && job.assigned_techs.length > 0 && (

@@ -108,6 +108,70 @@ const HANDLERS = {
         return { technician_id: technicianId, schedule_date: scheduleDate, segments: segments.length, success, failed, fromCache };
     },
 
+    // SCHED-ROUTE-001 C-12: best-effort, dedupe-guarded create of a locally-made
+    // Albusto job into ZenBooker. One attempt per local job; the local job is
+    // never rolled back on failure (status recorded in jobs.zb_sync_status).
+    async zb_job_sync(task) {
+        const input = task.agent_input || {};
+        const jobId = input.job_id;
+        if (!jobId) throw new Error('zb_job_sync requires input.job_id');
+        const { rows } = await db.query(
+            `SELECT id, zenbooker_job_id, service_name, address,
+                    customer_name, customer_phone, customer_email, start_date, end_date
+             FROM jobs WHERE id = $1 AND company_id = $2`,
+            [jobId, task.company_id]
+        );
+        const job = rows[0];
+        if (!job) return { job_id: jobId, skipped: 'job_not_found' };
+        // Dedupe: never create a second external job for one local job.
+        if (job.zenbooker_job_id) {
+            return { job_id: jobId, skipped: 'already_synced', zenbooker_job_id: job.zenbooker_job_id };
+        }
+
+        const zb = require('./zenbookerClient');
+        const addr = input.address || {};
+        let territoryId;
+        try { if (addr.postal_code) territoryId = await zb.findTerritoryByPostalCode(addr.postal_code); }
+        catch { /* best-effort: ZB still accepts jobs without a resolved territory */ }
+
+        const start = job.start_date ? new Date(job.start_date) : null;
+        const end = job.end_date ? new Date(job.end_date)
+            : (start ? new Date(start.getTime() + 2 * 60 * 60 * 1000) : null);
+        const payload = {
+            territory_id: territoryId || undefined,
+            timeslot: start ? { type: 'arrival_window', start: start.toISOString(), end: (end || start).toISOString() } : undefined,
+            customer: {
+                name: job.customer_name || 'Unknown',
+                phone: job.customer_phone || undefined,
+                email: job.customer_email || undefined,
+            },
+            address: {
+                line1: addr.line1 || job.address || undefined,
+                line2: addr.line2 || undefined,
+                city: addr.city || undefined,
+                state: addr.state || undefined,
+                postal_code: addr.postal_code || undefined,
+            },
+            service: job.service_name || undefined,
+        };
+
+        try {
+            const res = await zb.createJob(payload);
+            const zbId = res?.job_id ?? res?.id ?? null;
+            await db.query(
+                `UPDATE jobs SET zenbooker_job_id = $3, zb_sync_status = 'synced', updated_at = now()
+                 WHERE id = $1 AND company_id = $2`,
+                [jobId, task.company_id, zbId != null ? String(zbId) : null]);
+            return { job_id: jobId, status: 'synced', zenbooker_job_id: zbId };
+        } catch (err) {
+            // Best-effort: record the failure, keep the local job, do NOT fail the task.
+            await db.query(
+                `UPDATE jobs SET zb_sync_status = 'failed', updated_at = now()
+                 WHERE id = $1 AND company_id = $2`, [jobId, task.company_id]);
+            return { job_id: jobId, status: 'failed', error: (err.message || '').slice(0, 200) };
+        }
+    },
+
     // Summarize a conversation thread (heuristic; LLM provider optional).
     async summarize_thread(task) {
         const input = task.agent_input || {};

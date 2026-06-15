@@ -62,10 +62,10 @@ export function SchedulePage() {
     // SCHED-ROUTE-001 FR-001: a slot click opens the New Job modal (title +
     // address) rather than creating a bare job immediately, so the address can
     // feed geocoding/routing.
-    const [newJobSlot, setNewJobSlot] = useState<{ startAt: string; endAt: string; providerName?: string } | null>(null);
+    const [newJobSlot, setNewJobSlot] = useState<{ startAt: string; endAt: string; providerId?: string; providerName?: string } | null>(null);
 
-    const handleCreateFromSlot = useCallback((_title: string, startAt: string, endAt: string, providerName?: string) => {
-        setNewJobSlot({ startAt, endAt, providerName });
+    const handleCreateFromSlot = useCallback((_title: string, startAt: string, endAt: string, providerId?: string, providerName?: string) => {
+        setNewJobSlot({ startAt, endAt, providerId, providerName });
     }, []);
 
     const renderCalendarView = () => {
@@ -245,6 +245,7 @@ export function SchedulePage() {
                     startAt={newJobSlot.startAt}
                     endAt={newJobSlot.endAt}
                     timezone={schedule.settings.timezone}
+                    providerId={newJobSlot.providerId}
                     providerName={newJobSlot.providerName}
                     onClose={() => setNewJobSlot(null)}
                     onSubmit={(payload) => { schedule.handleCreateFromSlot(payload); setNewJobSlot(null); }}

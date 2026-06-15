@@ -22,6 +22,7 @@ interface NewJobModalProps {
     startAt: string;
     endAt: string;
     timezone: string;
+    providerId?: string;
     providerName?: string;
     onClose: () => void;
     onSubmit: (payload: CreateFromSlotPayload) => void;
@@ -32,7 +33,7 @@ function composeAddress(a: AddressFields): string {
     return [street, a.city, a.state, a.zip].filter(Boolean).join(', ');
 }
 
-export function NewJobModal({ open, startAt, endAt, timezone, providerName, onClose, onSubmit }: NewJobModalProps) {
+export function NewJobModal({ open, startAt, endAt, timezone, providerId, providerName, onClose, onSubmit }: NewJobModalProps) {
     const [title, setTitle] = useState('');
     const [addr, setAddr] = useState<AddressFields>(EMPTY_ADDRESS);
 
@@ -46,10 +47,19 @@ export function NewJobModal({ open, startAt, endAt, timezone, providerName, onCl
             start_at: startAt,
             end_at: endAt,
             entity_type: 'job',
+            // Assign to the lane's provider (ZenBooker shape; server resolves the
+            // internal crm_users.id mirror so routing + grouping line up).
+            assigned_techs: providerId ? [{ id: providerId, name: providerName || '' }] : undefined,
             address: address || undefined,
             lat: addr.lat ?? null,
             lng: addr.lng ?? null,
             normalized_address: address || null,
+            zb_address: {
+                line1: [addr.street, addr.apt].filter(Boolean).join(' ') || undefined,
+                city: addr.city || undefined,
+                state: addr.state || undefined,
+                postal_code: addr.zip || undefined,
+            },
         });
         reset();
     };

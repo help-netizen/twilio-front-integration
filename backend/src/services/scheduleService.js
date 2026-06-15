@@ -233,6 +233,8 @@ async function createFromSlot(companyId, entityType, slotData) {
                 customer_name: slotData.customer_name, customer_phone: slotData.customer_phone,
                 customer_email: slotData.customer_email,
                 assignee_id: slotData.assignee_id,           // internal crm_users.id (C-2)
+                assigned_techs: slotData.assigned_techs,     // ZB-shaped lane provider (FR-001.4)
+                zb_address: slotData.zb_address,             // structured parts for ZB sync (C-12)
             });
             await triggerJobRouteSideEffects(companyId, job.id, {
                 hasAddress: !!(slotData.address && String(slotData.address).trim()),

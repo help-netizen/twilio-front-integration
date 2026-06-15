@@ -41,6 +41,32 @@ Completes the route-scheduling feature on top of the backend foundation
   zero Google calls. Full suite 85/85 green. Frontend: `tsc` + production build
   clean (no frontend test runner in this project).
 
+### Gap closure (SR-13…SR-16) — full implementation before deploy
+- **FR-002 job location editing** — `PATCH /api/jobs/:id/location` +
+  `jobsService.updateJobLocation`: edits the service address (and/or coords from
+  AddressAutocomplete), sets `geocoding_status`, enqueues async geocode when an
+  address arrives without coords, and recalcs the affected technician/day
+  segments (capturing before-tech-days so a moved job repairs its old sequence).
+  `/:id/coords` is now recalc-aware. Inline AddressAutocomplete editor added to
+  the job detail Location section.
+- **FR-001.4 assign-on-create** — NewJobModal passes the lane provider (ZenBooker
+  shape); `createManualJob` resolves the internal crm_users.id mirror via the
+  provider bridge, so a job created in a lane is both assigned and routed
+  correctly (C-2).
+- **C-12 ZenBooker best-effort sync** (enabled) — `FEATURE_ZENBOOKER_SYNC`
+  (default ON) + async `zb_job_sync` agent: one-shot, dedupe-guarded (skips if a
+  `zenbooker_job_id` already exists), stores the returned id, marks
+  `jobs.zb_sync_status`, and never rolls back the local job on ZB failure.
+  Migration 109 adds `jobs.zb_sync_status`.
+- **C-13 retention** — `purgeStaleSegments(>30d)` + `pruneRouteCache(>180d)` +
+  `scripts/purge-route-data.js` (`--dry-run`) so neither table grows unbounded.
+- Tests: +10 gap cases (location edit, assign resolve, ZB dedupe/success/failure,
+  flag default, retention SQL). Full SCHED-ROUTE-001 suite 95/95 green; migration
+  109 idempotency verified on ephemeral postgres; frontend `tsc` + build clean.
+- Known follow-up: distance units still `mi`-only (no company unit/locale field
+  yet); ZB job-address PATCH not available in their API, so address edits on an
+  already-synced job are recorded locally only.
+
 ---
 
 ## 2026-06-14 — AUTH-2FA-GATE: global 2FA re-verification gate (P1 lockout fix)

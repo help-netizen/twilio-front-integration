@@ -212,11 +212,35 @@ async function putCache(entry) {
     );
 }
 
+// ── Retention (C-13: keep both tables from growing unbounded) ─────────────────
+/** Delete stale route segments older than N days (default 30). Returns count. */
+async function purgeStaleSegments(days = 30) {
+    const { rowCount } = await db.query(
+        `DELETE FROM schedule_route_segments
+         WHERE status = 'stale'
+           AND COALESCE(stale_at, updated_at, calculated_at) < now() - ($1 || ' days')::interval`,
+        [String(days)]
+    );
+    return rowCount;
+}
+
+/** Prune GLOBAL route cache entries untouched for N days (default 180). Returns count. */
+async function pruneRouteCache(days = 180) {
+    const { rowCount } = await db.query(
+        `DELETE FROM route_calculation_cache
+         WHERE COALESCE(updated_at, calculated_at) < now() - ($1 || ' days')::interval`,
+        [String(days)]
+    );
+    return rowCount;
+}
+
 module.exports = {
     EXCLUDED_STATUSES,
     getCompanyTimezone,
     getCompaniesWithTimezone,
     getSeedTechDays,
+    purgeStaleSegments,
+    pruneRouteCache,
     getParticipatingJobsForTechDay,
     getTechDaysForJob,
     getActiveSegments,

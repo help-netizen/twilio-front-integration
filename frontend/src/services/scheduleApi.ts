@@ -208,12 +208,17 @@ export interface CreateFromSlotPayload {
     end_at: string;
     entity_type?: string;
     assigned_provider_id?: string | null;
+    // SCHED-ROUTE-001 FR-001.4: provider lane the job was created in (ZenBooker
+    // team-member shape); the server resolves the internal crm_users.id mirror.
+    assigned_techs?: Array<{ id: string; name: string }>;
     // SCHED-ROUTE-001 FR-001: optional address for the new job. When lat/lng are
     // supplied (from AddressAutocomplete) the server skips the paid geocode.
     address?: string;
     lat?: number | null;
     lng?: number | null;
     normalized_address?: string | null;
+    // Structured address parts for best-effort ZenBooker sync (C-12).
+    zb_address?: { line1?: string; line2?: string; city?: string; state?: string; postal_code?: string };
 }
 
 export async function createFromSlot(payload: CreateFromSlotPayload): Promise<ScheduleItem> {
