@@ -12,10 +12,10 @@ import {
 import { useAuthz } from './useAuthz';
 import {
     fetchScheduleItems, fetchDispatchSettings, updateDispatchSettings,
-    rescheduleItem, reassignItem, createFromSlot,
+    rescheduleItem, reassignItem, createFromSlot, fetchRouteSegments,
     loadPersistedFilters, persistFilters,
     type ScheduleItem, type DispatchSettings, type ScheduleFilters,
-    type CreateFromSlotPayload,
+    type CreateFromSlotPayload, type RouteSegment,
 } from '../services/scheduleApi';
 import { authedFetch } from '../services/apiClient';
 import { useRealtimeEvents } from './useRealtimeEvents';
@@ -105,6 +105,10 @@ export function useScheduleData() {
 
     // ── Fetch items ──────────────────────────────────────────────────────────
 
+    // SCHED-ROUTE-001 FR-009: pre-computed route legs for the visible range
+    // (no Google call on read; provider scope enforced server-side).
+    const [routeSegments, setRouteSegments] = useState<RouteSegment[]>([]);
+
     const loadItems = useCallback(async () => {
         setLoading(true);
         setError(null);
@@ -120,9 +124,30 @@ export function useScheduleData() {
         } finally {
             setLoading(false);
         }
+        // Route segments are best-effort decoration — never block or fail the
+        // schedule on their account.
+        try {
+            const segs = await fetchRouteSegments(dateRange.startDate, dateRange.endDate);
+            setRouteSegments(segs);
+        } catch { setRouteSegments([]); }
     }, [dateRange, filters]);
 
     useEffect(() => { loadItems(); }, [loadItems]);
+
+    // Lookup by job pair "from->to". Distance is technician-independent, so the
+    // pair key is enough to annotate a connector between two consecutive cards;
+    // prefer the most informative status when a pair recurs (success > pending).
+    const routeByPair = useMemo(() => {
+        const rank = (s: RouteSegment['status']) =>
+            s === 'success' ? 3 : s === 'pending' ? 2 : s === 'stale' ? 0 : 1;
+        const map = new Map<string, RouteSegment>();
+        for (const seg of routeSegments) {
+            const key = `${seg.from_job_id}->${seg.to_job_id}`;
+            const cur = map.get(key);
+            if (!cur || rank(seg.status) > rank(cur.status)) map.set(key, seg);
+        }
+        return map;
+    }, [routeSegments]);
 
     // ── Fetch settings (once) ────────────────────────────────────────────────
     // Dispatch settings and the full provider roster are dispatch-only data:
@@ -330,6 +355,7 @@ export function useScheduleData() {
         items,
         scheduledItems,
         unscheduledItems,
+        routeByPair,
         itemCounts,
         allTags,
         settings: effectiveSettings,

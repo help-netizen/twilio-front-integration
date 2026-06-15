@@ -7,7 +7,8 @@
 import React, { useMemo, useState, useCallback } from 'react';
 import { startOfWeek, addDays, format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
-import type { ScheduleItem, DispatchSettings } from '../../services/scheduleApi';
+import { RouteConnector } from './RouteConnector';
+import type { ScheduleItem, DispatchSettings, RouteSegment } from '../../services/scheduleApi';
 import type { ProviderInfo } from '../../hooks/useScheduleData';
 import { todayInTZ, dateKeyInTZ } from '../../utils/companyTime';
 import { setDragData, getDragData, hasDragData } from '../../hooks/useScheduleDnD';
@@ -21,6 +22,7 @@ interface ListViewProps {
     onSelectItem: (item: ScheduleItem) => void;
     onReassign?: (entityType: string, entityId: number, assigneeId: string | null, assigneeName?: string, title?: string) => void;
     onCreateFromSlot?: (title: string, startAt: string, endAt: string) => void;
+    routeByPair?: Map<string, RouteSegment>;
 }
 
 interface ProviderGroup {
@@ -44,9 +46,11 @@ function formatDayHeading(day: Date, todayStr: string, _tz: string): string {
 }
 
 export const ListView: React.FC<ListViewProps> = ({
-    currentDate, items, settings, allProviders = [], onSelectItem, onReassign,
+    currentDate, items, settings, allProviders = [], onSelectItem, onReassign, routeByPair,
 }) => {
     const tz = settings.timezone || 'America/New_York';
+    // TODO(SCHED-ROUTE-001): switch to km once a company unit/locale field exists.
+    const unit = 'mi' as const;
     const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
     const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
     const dayKeys = useMemo(() => days.map(d => format(d, 'yyyy-MM-dd')), [days]);
@@ -196,9 +200,9 @@ export const ListView: React.FC<ListViewProps> = ({
                                         </h3>
                                     </div>
 
-                                    {/* Items */}
+                                    {/* Items + route connectors between consecutive jobs */}
                                     <div className="px-1.5 pb-1 space-y-1">
-                                        {dayItems.map(item => {
+                                        {dayItems.map((item, itemIdx) => {
                                             const isDraggable = item.entity_type !== 'lead';
                                             let durationMin = 60;
                                             if (item.start_at && item.end_at) {
@@ -207,27 +211,34 @@ export const ListView: React.FC<ListViewProps> = ({
                                                     60,
                                                 );
                                             }
+                                            // Leg from this job to the next consecutive job in the column.
+                                            const next = dayItems[itemIdx + 1];
+                                            const seg = (routeByPair && item.entity_type === 'job' && next?.entity_type === 'job')
+                                                ? routeByPair.get(`${item.entity_id}->${next.entity_id}`)
+                                                : undefined;
                                             return (
-                                                <div
-                                                    key={`${item.entity_type}-${item.entity_id}`}
-                                                    data-schedule-item
-                                                    draggable={isDraggable}
-                                                    className={isDraggable ? 'cursor-grab active:cursor-grabbing' : ''}
-                                                    onDragStart={isDraggable ? (e) => {
-                                                        setDragData(e, item, durationMin);
-                                                        (e.target as HTMLElement).style.opacity = '0.5';
-                                                    } : undefined}
-                                                    onDragEnd={(e) => {
-                                                        (e.target as HTMLElement).style.opacity = '1';
-                                                        setDropHighlightCol(null);
-                                                    }}
-                                                >
-                                                    <ScheduleItemCard
-                                                        item={item}
-                                                        onClick={onSelectItem}
-                                                        timezone={tz}
-                                                    />
-                                                </div>
+                                                <React.Fragment key={`${item.entity_type}-${item.entity_id}`}>
+                                                    <div
+                                                        data-schedule-item
+                                                        draggable={isDraggable}
+                                                        className={isDraggable ? 'cursor-grab active:cursor-grabbing' : ''}
+                                                        onDragStart={isDraggable ? (e) => {
+                                                            setDragData(e, item, durationMin);
+                                                            (e.target as HTMLElement).style.opacity = '0.5';
+                                                        } : undefined}
+                                                        onDragEnd={(e) => {
+                                                            (e.target as HTMLElement).style.opacity = '1';
+                                                            setDropHighlightCol(null);
+                                                        }}
+                                                    >
+                                                        <ScheduleItemCard
+                                                            item={item}
+                                                            onClick={onSelectItem}
+                                                            timezone={tz}
+                                                        />
+                                                    </div>
+                                                    {seg && <RouteConnector segment={seg} unit={unit} />}
+                                                </React.Fragment>
                                             );
                                         })}
                                     </div>

@@ -8,8 +8,9 @@
 import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { startOfWeek, addDays, format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
+import { RouteConnector } from './RouteConnector';
 import { NewJobPlaceholder, NEW_JOB_DEFAULT_DURATION_MIN } from './NewJobPlaceholder';
-import type { ScheduleItem, DispatchSettings } from '../../services/scheduleApi';
+import type { ScheduleItem, DispatchSettings, RouteSegment } from '../../services/scheduleApi';
 import type { ProviderInfo } from '../../hooks/useScheduleData';
 import { todayInTZ, dateKeyInTZ, dateInTZ } from '../../utils/companyTime';
 import { setDragData, getDragData, hasDragData } from '../../hooks/useScheduleDnD';
@@ -28,6 +29,7 @@ interface TimelineWeekViewProps {
     onSelectItem: (item: ScheduleItem) => void;
     onReassign?: (entityType: string, entityId: number, assigneeId: string | null, assigneeName?: string, title?: string) => void;
     onCreateFromSlot?: (title: string, startAt: string, endAt: string) => void;
+    routeByPair?: Map<string, RouteSegment>;
 }
 
 interface ProviderGroup {
@@ -37,9 +39,10 @@ interface ProviderGroup {
 }
 
 export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
-    currentDate, items, settings, allProviders = [], onSelectItem, onReassign, onCreateFromSlot,
+    currentDate, items, settings, allProviders = [], onSelectItem, onReassign, onCreateFromSlot, routeByPair,
 }) => {
     const tz = settings.timezone || 'America/New_York';
+    const unit = 'mi' as const;   // TODO(SCHED-ROUTE-001): km once company unit field exists
     const workStartHour = parseTime(settings.work_start_time);
     const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
     const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
@@ -248,9 +251,9 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
 
                         {/* Provider cells for this day */}
                         {providerGroups.map(group => {
-                            const cellItems = group.items.filter(
-                                item => item.start_at && dateKeyInTZ(item.start_at, tz) === dayKey,
-                            );
+                            const cellItems = group.items
+                                .filter(item => item.start_at && dateKeyInTZ(item.start_at, tz) === dayKey)
+                                .sort((a, b) => new Date(a.start_at!).getTime() - new Date(b.start_at!).getTime());
                             return (
                                 <div
                                     key={group.id}
@@ -264,7 +267,7 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
                                     onDragLeave={() => setDropHighlightCol(null)}
                                     onClick={(e) => handleSlotClick(dayKey, group, e)}
                                 >
-                                    {cellItems.map(item => {
+                                    {cellItems.map((item, itemIdx) => {
                                         const isDraggable = item.entity_type !== 'lead';
                                         let durationMin = 60;
                                         if (item.start_at && item.end_at) {
@@ -273,28 +276,34 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
                                                 60,
                                             );
                                         }
+                                        const next = cellItems[itemIdx + 1];
+                                        const seg = (routeByPair && item.entity_type === 'job' && next?.entity_type === 'job')
+                                            ? routeByPair.get(`${item.entity_id}->${next.entity_id}`)
+                                            : undefined;
                                         return (
-                                            <div
-                                                key={`${item.entity_type}-${item.entity_id}`}
-                                                data-schedule-item
-                                                draggable={isDraggable}
-                                                className={isDraggable ? 'cursor-grab active:cursor-grabbing' : ''}
-                                                onDragStart={isDraggable ? (e) => {
-                                                    setDragData(e, item, durationMin);
-                                                    (e.target as HTMLElement).style.opacity = '0.5';
-                                                } : undefined}
-                                                onDragEnd={(e) => {
-                                                    (e.target as HTMLElement).style.opacity = '1';
-                                                    setDropHighlightCol(null);
-                                                }}
-                                            >
-                                                <ScheduleItemCard
-                                                    item={item}
-                                                    compact
-                                                    onClick={onSelectItem}
-                                                    timezone={tz}
-                                                />
-                                            </div>
+                                            <React.Fragment key={`${item.entity_type}-${item.entity_id}`}>
+                                                <div
+                                                    data-schedule-item
+                                                    draggable={isDraggable}
+                                                    className={isDraggable ? 'cursor-grab active:cursor-grabbing' : ''}
+                                                    onDragStart={isDraggable ? (e) => {
+                                                        setDragData(e, item, durationMin);
+                                                        (e.target as HTMLElement).style.opacity = '0.5';
+                                                    } : undefined}
+                                                    onDragEnd={(e) => {
+                                                        (e.target as HTMLElement).style.opacity = '1';
+                                                        setDropHighlightCol(null);
+                                                    }}
+                                                >
+                                                    <ScheduleItemCard
+                                                        item={item}
+                                                        compact
+                                                        onClick={onSelectItem}
+                                                        timezone={tz}
+                                                    />
+                                                </div>
+                                                {seg && <RouteConnector segment={seg} unit={unit} />}
+                                            </React.Fragment>
                                         );
                                     })}
 
