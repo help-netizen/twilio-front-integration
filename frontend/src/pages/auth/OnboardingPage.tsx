@@ -1,36 +1,81 @@
 /**
  * OnboardingPage — ALB-101 (authenticated, pre-tenant).
  *
- * One flowing screen, two steps:
- *  1. Phone + 6-digit SMS code (possession proof → otp_token)
+ * One flowing screen, three steps:
+ *  1. Phone, then a 6-digit SMS code (possession proof → otp_token)
  *  2. Company name + "City or ZIP" with Google Places autocomplete
  *     (timezone derived server-side — never asked).
  */
 
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, MapPin, ArrowRight, ShieldCheck } from 'lucide-react';
+import { Loader2, MapPin, ArrowRight, ArrowLeft, ShieldCheck } from 'lucide-react';
 import { authedFetch } from '../../services/apiClient';
 
 const card: React.CSSProperties = {
-    width: '100%', maxWidth: 460, background: 'var(--blanc-surface-strong, #fffdf9)',
-    borderRadius: 22, padding: '36px 32px', border: '1px solid rgba(117, 106, 89, 0.18)',
+    width: '100%', maxWidth: 440, background: 'var(--blanc-surface-strong, #fdf8f0)',
+    borderRadius: 22, padding: '30px 32px', border: '1px solid var(--blanc-line, rgba(117,106,89,0.18))',
 };
 const inputStyle: React.CSSProperties = {
     width: '100%', height: 44, borderRadius: 10, padding: '0 14px',
-    border: '1px solid rgba(117, 106, 89, 0.25)', fontSize: 15, background: '#fff', outline: 'none',
+    border: '1px solid var(--blanc-line, rgba(117,106,89,0.25))', fontSize: 15, background: '#fff',
+    outline: 'none', color: 'var(--blanc-ink-1, #202734)', boxSizing: 'border-box',
 };
 const labelStyle: React.CSSProperties = {
-    fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.14em',
-    color: 'rgba(60, 54, 44, 0.55)', display: 'block', marginBottom: 6,
+    fontSize: 12.5, color: 'var(--blanc-ink-2, #536070)', display: 'block', marginBottom: 6,
 };
 const primaryBtn: React.CSSProperties = {
     width: '100%', height: 46, borderRadius: 12, border: 'none', cursor: 'pointer',
-    background: '#3c362c', color: '#fffdf9', fontSize: 15, fontWeight: 600,
+    background: 'var(--blanc-job, #2f63d8)', color: '#fff', fontSize: 15, fontWeight: 600,
     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
 };
 
 interface Suggestion { place_id: string; description: string }
+
+function OtpCells({ value, onChange, disabled }: { value: string; onChange: (v: string) => void; disabled?: boolean }) {
+    const refs = useRef<Array<HTMLInputElement | null>>([]);
+    useEffect(() => { refs.current[0]?.focus(); }, []);
+    useEffect(() => { if (value === '') refs.current[0]?.focus(); }, [value]);
+
+    const setCell = (i: number, raw: string) => {
+        const c = raw.replace(/\D/g, '').slice(-1);
+        if (!c) return;
+        const arr = value.split('');
+        while (arr.length < i) arr.push('');
+        arr[i] = c;
+        onChange(arr.join('').slice(0, 6));
+        if (i < 5) refs.current[i + 1]?.focus();
+    };
+    const onKey = (i: number, e: React.KeyboardEvent) => {
+        if (e.key !== 'Backspace') return;
+        const arr = value.split('');
+        if (value[i]) { arr[i] = ''; onChange(arr.join('')); }
+        else if (i > 0) { e.preventDefault(); arr[i - 1] = ''; onChange(arr.join('')); refs.current[i - 1]?.focus(); }
+    };
+    const onPaste = (e: React.ClipboardEvent) => {
+        const t = (e.clipboardData.getData('text') || '').replace(/\D/g, '').slice(0, 6);
+        if (!t) return;
+        e.preventDefault();
+        onChange(t);
+        refs.current[Math.min(t.length, 5)]?.focus();
+    };
+    return (
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between' }} onPaste={onPaste}>
+            {Array.from({ length: 6 }).map((_, i) => (
+                <input key={i} ref={el => { refs.current[i] = el; }} value={value[i] || ''} disabled={disabled}
+                    inputMode="numeric" maxLength={1} autoComplete={i === 0 ? 'one-time-code' : 'off'}
+                    aria-label={`Digit ${i + 1}`}
+                    onChange={e => setCell(i, e.target.value)} onKeyDown={e => onKey(i, e)}
+                    style={{
+                        width: 46, height: 54, textAlign: 'center', fontSize: 22, fontWeight: 600,
+                        fontFamily: 'Manrope, sans-serif', color: 'var(--blanc-ink-1, #202734)',
+                        border: '1px solid var(--blanc-line, rgba(117,106,89,0.25))', borderRadius: 12,
+                        background: '#fff', outline: 'none',
+                    }} />
+            ))}
+        </div>
+    );
+}
 
 export function OnboardingPage() {
     const navigate = useNavigate();
@@ -45,34 +90,26 @@ export function OnboardingPage() {
     const [picked, setPicked] = useState<Suggestion | null>(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const codeRef = useRef<HTMLInputElement>(null);
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // Already onboarded → straight to the product
     useEffect(() => {
-        authedFetch('/api/onboarding/status')
-            .then(r => r.json())
-            .then(j => { if (j.onboarded) navigate('/pulse', { replace: true }); })
-            .catch(() => {});
+        authedFetch('/api/onboarding/status').then(r => r.json())
+            .then(j => { if (j.onboarded) navigate('/pulse', { replace: true }); }).catch(() => {});
     }, [navigate]);
 
-    // Resend countdown
     useEffect(() => {
         if (resendIn <= 0) return;
         const t = setTimeout(() => setResendIn(s => s - 1), 1000);
         return () => clearTimeout(t);
     }, [resendIn]);
 
-    // Places autocomplete (debounced)
     useEffect(() => {
         if (picked) return;
         if (debounceRef.current) clearTimeout(debounceRef.current);
         if (placeQuery.trim().length < 2) { setSuggestions([]); return; }
         debounceRef.current = setTimeout(() => {
             fetch(`/api/public/places/suggest?q=${encodeURIComponent(placeQuery.trim())}`)
-                .then(r => r.json())
-                .then(j => setSuggestions(j.suggestions || []))
-                .catch(() => setSuggestions([]));
+                .then(r => r.json()).then(j => setSuggestions(j.suggestions || [])).catch(() => setSuggestions([]));
         }, 250);
     }, [placeQuery, picked]);
 
@@ -85,9 +122,8 @@ export function OnboardingPage() {
             });
             const json = await res.json();
             if (!res.ok) { setError(json.message || 'Could not send the code'); return; }
-            setStep('code');
+            setStep('code'); setCode('');
             setResendIn(json.resend_after_sec || 30);
-            setTimeout(() => codeRef.current?.focus(), 50);
         } catch { setError('Connection error'); } finally { setBusy(false); }
     };
 
@@ -100,9 +136,8 @@ export function OnboardingPage() {
             });
             const json = await res.json();
             if (!res.ok) {
-                setError(json.code === 'OTP_EXPIRED'
-                    ? 'Code expired — request a new one'
-                    : `Incorrect code${json.attempts_left ? ` — ${json.attempts_left} attempts left` : ''}`);
+                if (json.code === 'OTP_EXPIRED') { setError('Code expired — request a new one'); setResendIn(0); }
+                else setError(`Incorrect code${json.attempts_left ? ` — ${json.attempts_left} attempts left` : ''}`);
                 setCode('');
                 return;
             }
@@ -111,10 +146,9 @@ export function OnboardingPage() {
         } catch { setError('Connection error'); } finally { setBusy(false); }
     };
 
-    const onCodeChange = (v: string) => {
-        const digits = v.replace(/\D/g, '').slice(0, 6);
+    const onCodeChange = (digits: string) => {
         setCode(digits);
-        if (digits.length === 6) verifyCode(digits); // auto-submit
+        if (digits.length === 6) verifyCode(digits);
     };
 
     const createCompany = async (e: React.FormEvent) => {
@@ -133,38 +167,41 @@ export function OnboardingPage() {
             const json = await res.json();
             if (!res.ok) {
                 if (json.code === 'ALREADY_ONBOARDED') { navigate('/pulse', { replace: true }); return; }
-                setError(json.message || 'Could not create the company');
-                return;
+                setError(json.message || 'Could not create the company'); return;
             }
             window.location.href = json.redirect || '/pulse';
         } catch { setError('Connection error'); } finally { setBusy(false); }
     };
 
+    const stepNo = step === 'phone' ? 1 : step === 'code' ? 2 : 3;
+
     return (
         <div style={{
             minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: 'linear-gradient(180deg, #f7f3ec 0%, #f1ebe1 100%)',
-            fontFamily: '"IBM Plex Sans", "Segoe UI", sans-serif', padding: 16,
+            background: 'var(--blanc-bg, #efe9df)', fontFamily: '"IBM Plex Sans", "Segoe UI", sans-serif', padding: 16,
         }}>
             <div style={card}>
-                <h1 style={{ fontFamily: 'Manrope, sans-serif', fontSize: 26, margin: '0 0 4px', color: '#2c2722' }}>Albusto</h1>
-                <p style={{ margin: '0 0 24px', color: 'rgba(60,54,44,0.65)', fontSize: 14 }}>
-                    {step === 'company' ? 'Last step — your company' : 'Secure your account'}
-                </p>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                    <span style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--blanc-ink-3, #7d8796)', fontWeight: 500 }}>Step {stepNo} of 3</span>
+                    <span style={{ display: 'flex', gap: 6 }}>
+                        {[1, 2, 3].map(n => (
+                            <span key={n} style={{ width: 7, height: 7, borderRadius: 99, background: n <= stepNo ? 'var(--blanc-job, #2f63d8)' : 'rgba(117,106,89,0.22)' }} />
+                        ))}
+                    </span>
+                </div>
 
                 {step === 'phone' && (
                     <form onSubmit={e => { e.preventDefault(); sendCode(); }} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                        <h1 style={{ fontFamily: 'Manrope, sans-serif', fontSize: 22, fontWeight: 600, margin: 0, color: 'var(--blanc-ink-1, #202734)' }}>Verify your phone</h1>
                         <div>
                             <label style={labelStyle}>Mobile phone</label>
-                            <input style={inputStyle} type="tel" value={phone} autoFocus required
-                                placeholder="(617) 555-0142"
-                                onChange={e => setPhone(e.target.value)} />
-                            <p style={{ margin: '8px 0 0', fontSize: 12.5, color: 'rgba(60,54,44,0.5)', display: 'flex', gap: 6, alignItems: 'center' }}>
+                            <input style={inputStyle} type="tel" value={phone} autoFocus required placeholder="(617) 555-0142" onChange={e => setPhone(e.target.value)} />
+                            <p style={{ margin: '8px 0 0', fontSize: 12.5, color: 'var(--blanc-ink-3, #7d8796)', display: 'flex', gap: 6, alignItems: 'center' }}>
                                 <ShieldCheck size={14} /> Used to confirm sign-ins with a 6-digit SMS code
                             </p>
                         </div>
-                        {error && <div style={{ color: '#b3422f', fontSize: 13 }}>{error}</div>}
-                        <button type="submit" disabled={busy} style={{ ...primaryBtn, opacity: busy ? 0.7 : 1 }}>
+                        {error && <div role="alert" style={{ color: 'var(--blanc-danger, #d44d3c)', fontSize: 13 }}>{error}</div>}
+                        <button type="submit" disabled={busy} aria-busy={busy} style={{ ...primaryBtn, opacity: busy ? 0.7 : 1 }}>
                             {busy ? <Loader2 size={17} className="animate-spin" /> : <>Send code <ArrowRight size={16} /></>}
                         </button>
                     </form>
@@ -173,63 +210,56 @@ export function OnboardingPage() {
                 {step === 'code' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                         <div>
-                            <label style={labelStyle}>Enter the 6-digit code sent to {phone}</label>
-                            <input ref={codeRef} style={{ ...inputStyle, letterSpacing: '0.5em', textAlign: 'center', fontSize: 20, fontVariantNumeric: 'tabular-nums' }}
-                                inputMode="numeric" autoComplete="one-time-code"
-                                value={code} onChange={e => onCodeChange(e.target.value)} />
+                            <h1 style={{ fontFamily: 'Manrope, sans-serif', fontSize: 22, fontWeight: 600, margin: '0 0 6px', color: 'var(--blanc-ink-1, #202734)' }}>Enter your code</h1>
+                            <p style={{ margin: 0, fontSize: 13.5, color: 'var(--blanc-ink-3, #7d8796)' }}>We texted a 6-digit code to <strong style={{ color: 'var(--blanc-ink-1, #202734)', fontWeight: 500 }}>{phone}</strong>.</p>
                         </div>
-                        {error && <div style={{ color: '#b3422f', fontSize: 13 }}>{error}</div>}
-                        {busy && <div style={{ display: 'flex', justifyContent: 'center' }}><Loader2 size={18} className="animate-spin" /></div>}
-                        <button type="button" disabled={resendIn > 0}
-                            onClick={sendCode}
-                            style={{ background: 'none', border: 'none', cursor: resendIn > 0 ? 'default' : 'pointer', color: resendIn > 0 ? 'rgba(60,54,44,0.4)' : '#3c362c', fontSize: 13, fontWeight: 600 }}>
-                            {resendIn > 0 ? `Resend code in ${resendIn}s` : 'Resend code'}
-                        </button>
-                        <button type="button" onClick={() => { setStep('phone'); setCode(''); setError(null); }}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(60,54,44,0.5)', fontSize: 13 }}>
-                            Change phone number
-                        </button>
+                        <OtpCells value={code} onChange={onCodeChange} disabled={busy} />
+                        <div aria-live="polite" style={{ minHeight: 18, fontSize: 13, color: error ? 'var(--blanc-danger, #d44d3c)' : 'var(--blanc-ink-3, #7d8796)' }}>
+                            {busy ? 'Verifying…' : error || 'Paste works too — submits automatically at 6 digits.'}
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <button type="button" onClick={() => { setStep('phone'); setCode(''); setError(null); }}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--blanc-ink-2, #536070)', fontSize: 13, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <ArrowLeft size={14} /> Change number
+                            </button>
+                            <button type="button" disabled={resendIn > 0} onClick={sendCode}
+                                style={{ background: 'none', border: 'none', cursor: resendIn > 0 ? 'default' : 'pointer', color: resendIn > 0 ? 'var(--blanc-ink-3, #7d8796)' : 'var(--blanc-job, #2f63d8)', fontSize: 13, fontWeight: 600 }}>
+                                {resendIn > 0 ? `Resend in ${resendIn}s` : 'Resend code'}
+                            </button>
+                        </div>
                     </div>
                 )}
 
                 {step === 'company' && (
                     <form onSubmit={createCompany} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                        <h1 style={{ fontFamily: 'Manrope, sans-serif', fontSize: 22, fontWeight: 600, margin: 0, color: 'var(--blanc-ink-1, #202734)' }}>Your company</h1>
                         <div>
                             <label style={labelStyle}>Company name</label>
-                            <input style={inputStyle} value={companyName} autoFocus required minLength={2}
-                                placeholder="Acme Appliance Repair" onChange={e => setCompanyName(e.target.value)} />
+                            <input style={inputStyle} value={companyName} autoFocus required minLength={2} placeholder="Acme Appliance Repair" onChange={e => setCompanyName(e.target.value)} />
                         </div>
                         <div style={{ position: 'relative' }}>
                             <label style={labelStyle}>City or ZIP code</label>
-                            <input style={inputStyle} value={picked ? picked.description : placeQuery} required
-                                placeholder="Boston or 02101"
+                            <input style={inputStyle} value={picked ? picked.description : placeQuery} required placeholder="Boston or 02101"
+                                role="combobox" aria-expanded={!picked && suggestions.length > 0} aria-autocomplete="list"
                                 onChange={e => { setPicked(null); setPlaceQuery(e.target.value); }} />
                             {!picked && suggestions.length > 0 && (
-                                <div style={{
-                                    position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 10,
-                                    background: '#fff', border: '1px solid rgba(117,106,89,0.18)',
-                                    borderRadius: 10, marginTop: 4, overflow: 'hidden',
-                                    boxShadow: '0 8px 24px rgba(60,54,44,0.08)',
+                                <div role="listbox" style={{
+                                    position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 10, background: '#fff',
+                                    border: '1px solid var(--blanc-line, rgba(117,106,89,0.18))', borderRadius: 10, marginTop: 4, overflow: 'hidden',
                                 }}>
                                     {suggestions.map(sg => (
-                                        <button key={sg.place_id} type="button"
+                                        <button key={sg.place_id} type="button" role="option" aria-selected={false}
                                             onClick={() => { setPicked(sg); setSuggestions([]); }}
-                                            style={{
-                                                display: 'flex', alignItems: 'center', gap: 8, width: '100%',
-                                                padding: '10px 12px', border: 'none', background: 'none',
-                                                cursor: 'pointer', fontSize: 14, textAlign: 'left', color: '#2c2722',
-                                            }}>
-                                            <MapPin size={14} color="rgba(60,54,44,0.45)" />{sg.description}
+                                            style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '10px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 14, textAlign: 'left', color: 'var(--blanc-ink-1, #202734)' }}>
+                                            <MapPin size={14} style={{ color: 'var(--blanc-ink-3, #7d8796)' }} />{sg.description}
                                         </button>
                                     ))}
                                 </div>
                             )}
-                            <p style={{ margin: '8px 0 0', fontSize: 12.5, color: 'rgba(60,54,44,0.5)' }}>
-                                We'll set your timezone and service area from this
-                            </p>
+                            <p style={{ margin: '8px 0 0', fontSize: 12.5, color: 'var(--blanc-ink-3, #7d8796)' }}>We'll set your timezone and service area from this.</p>
                         </div>
-                        {error && <div style={{ color: '#b3422f', fontSize: 13 }}>{error}</div>}
-                        <button type="submit" disabled={busy || !companyName.trim()} style={{ ...primaryBtn, opacity: busy ? 0.7 : 1 }}>
+                        {error && <div role="alert" style={{ color: 'var(--blanc-danger, #d44d3c)', fontSize: 13 }}>{error}</div>}
+                        <button type="submit" disabled={busy || !companyName.trim()} aria-busy={busy} style={{ ...primaryBtn, opacity: busy ? 0.7 : 1 }}>
                             {busy ? <Loader2 size={17} className="animate-spin" /> : <>Open my workspace <ArrowRight size={16} /></>}
                         </button>
                     </form>
