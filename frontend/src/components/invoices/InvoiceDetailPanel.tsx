@@ -173,7 +173,6 @@ export function InvoiceDetailPanel({
 
     const isVoid = invoice.status === 'void' || invoice.status === 'refunded';
     const readOnly = isVoid;
-    const isDraft = invoice.status === 'draft';
     // Send is always available for non-void invoices (re-sends are a normal workflow).
     const canSend = !invoice.status || (invoice.status !== 'void' && invoice.status !== 'refunded');
     const canVoid = !isVoid;

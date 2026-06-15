@@ -133,7 +133,7 @@ export function useTransactions() {
         const target = selectedTransaction?.id === id ? selectedTransaction : transactions.find(t => t.id === id);
         if (target?.external_source === 'stripe') {
             const { invoiceStripeApi } = await import('../services/stripePaymentsApi');
-            await invoiceStripeApi.refund(id, data.amount, data.reason);
+            await invoiceStripeApi.refund(id, data.amount != null ? Number(data.amount) : undefined, data.reason);
             toast.success('Refund initiated via Stripe');
         } else {
             await paymentsApi.refundTransaction(id, data);
