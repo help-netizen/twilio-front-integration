@@ -156,8 +156,10 @@ export default function PhoneNumbersPage() {
                 billingApi.overview().catch(() => null),
             ]);
             if (billing) {
-                const cur = billing.subscription?.plan_id || 'trial';
-                const p = billing.plans.find((x) => x.id === cur);
+                // Only cap when the company actually has a billing subscription;
+                // unbilled/platform companies (no subscription) have no limit.
+                const cur = billing.subscription?.plan_id;
+                const p = cur ? billing.plans.find((x) => x.id === cur) : null;
                 setNumberLimit(p?.max_phone_numbers ?? null);
             }
             if (tenantRes?.ok && !tenantRes.not_connected && Array.isArray(tenantRes.numbers) && tenantRes.numbers.length > 0) {

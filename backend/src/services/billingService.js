@@ -95,11 +95,16 @@ async function createPortal(companyId, { returnUrl }) {
     return getProvider().createPortalSession(customerId, { returnUrl });
 }
 
-/** The company's current plan row (limits, bundles). Falls back to 'trial'. */
+/**
+ * The company's current plan row (limits, bundles), or null when the company
+ * has no billing subscription (unbilled / platform companies) — those are not
+ * subject to plan limits or overage. Trial companies have a real subscription
+ * row (plan_id 'trial') and ARE limited.
+ */
 async function getPlanForCompany(companyId) {
     const sub = await getSubscription(companyId);
-    const planId = sub?.plan_id || 'trial';
-    const { rows } = await db.query('SELECT * FROM billing_plans WHERE id = $1', [planId]);
+    if (!sub?.plan_id) return null;
+    const { rows } = await db.query('SELECT * FROM billing_plans WHERE id = $1', [sub.plan_id]);
     return rows[0] || null;
 }
 
