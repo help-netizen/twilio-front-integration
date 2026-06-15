@@ -4,6 +4,45 @@
 
 ---
 
+## 2026-06-14 — SCHED-ROUTE-001: Schedule routes & address geocoding (SR-09…SR-12)
+
+Completes the route-scheduling feature on top of the backend foundation
+(migration 107, route engine, workers). Branch-only — NOT deployed; migrations
+107 + 108 and the seed script run on prod only after explicit approval.
+
+### Backend
+- **C-3 tz-aware day filter** (`scheduleQueries.getScheduleItems`) — jobs/leads/
+  tasks day boundaries are grouped in the company timezone (sargable `AT TIME
+  ZONE` on the date bounds only) so the route day matches the visible day.
+  Validated against ephemeral postgres (a 22:00-local job no longer leaks into
+  the next UTC day).
+- **Schedule read exposes geocoding state** — `lat/lng/normalized_address/
+  geocoding_status` added to the unified UNION (jobs real, leads lat/lng, tasks
+  null) plus a generated `google_maps_url`; zero Google calls on read.
+- **SR-10 backfill** — migration 108 marks coord-bearing jobs
+  `geocoding_status='success'` with no paid call (idempotent); `scripts/
+  backfill-route-segments.js` seeds today+future tech-days per company-local tz
+  via the idempotent `reconcileTechDay` (with `--dry-run`).
+
+### Frontend
+- Clickable Google Maps address on schedule cards (stopPropagation) + job
+  detail panel; subtle geocoding hint (Locating… / Approx. / No location).
+- Route connectors between consecutive jobs in List / Timeline-Week (stacked)
+  and Timeline (hourly grid — leg label anchored to each card, pointer-events
+  -none); shows `distance · duration` or a human status. Pure formatters in
+  `utils/routeFormat.ts`. No client-side Google calls.
+- New Job modal (title + AddressAutocomplete) on slot click → `createFromSlot`
+  with address/coords (server skips paid geocode when coords present). Created
+  unassigned by design (slot ids are ZenBooker ids, not crm_users.id).
+
+### Tests
+- SR-12 fills recalc edge cases: address-change re-stale+recalc, reconcile
+  idempotency, multi-tech fan-out + before/after dedupe, schedule-read makes
+  zero Google calls. Full suite 85/85 green. Frontend: `tsc` + production build
+  clean (no frontend test runner in this project).
+
+---
+
 ## 2026-06-14 — AUTH-2FA-GATE: global 2FA re-verification gate (P1 lockout fix)
 
 Functional testing of new-tenant signup found a P1 bug: the frontend had ZERO
