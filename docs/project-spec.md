@@ -49,6 +49,39 @@ Direct construction of a Twilio REST client (`twilio(sid, token)`) inside servic
 
 ---
 
+## Stripe Payments — Tenant Customer Payments (F018 / STRIPE-PAY-001, Phases 1–2)
+
+A marketplace integration that lets each tenant company connect its own Stripe
+account (Stripe Connect, direct charges, tenant = merchant of record, no application
+fee) and collect customer payments. Strictly separate from platform subscription
+billing (ADR-001): a dedicated `stripeConnectProvider` and a distinct webhook secret
+(`STRIPE_CONNECT_WEBHOOK_SECRET`).
+
+**Setup:** marketplace card `stripe-payments` → `/settings/integrations/stripe-payments`
+(`tenant.integrations.manage`). A readiness state machine (`not_connected` →
+`onboarding_incomplete` → `action_required` → `payments_disabled` → `payouts_disabled`
+→ `connected_ready`) gates online collection; status is refreshed from Stripe via
+`refresh-status` and `account.updated` webhooks.
+
+**Collection:** authorized users create/reuse a Stripe Checkout payment link per
+invoice (`payments.collect_online`); public customers pay via an opaque-token Pay-now
+endpoint. Successful payments are written once to the canonical `payment_transactions`
+ledger (`external_source='stripe'`) through `paymentsService.createTransaction`, with
+invoice paid/balance updated via the canonical invoice path.
+
+**Storage:** `stripe_connected_accounts` (one per company), `stripe_payment_sessions`,
+`stripe_webhook_events`. Idempotency is enforced at two layers: per Stripe event id
+(`stripe_webhook_events` unique) and per payment (`payment_transactions(company_id,
+external_id) WHERE external_source='stripe'`). Webhook objects are tenant-scoped by
+resolving the connected-account id to a company before any ledger mutation; unknown
+accounts are rejected without mutation. Card data never touches Albusto (Stripe-hosted
+Checkout only); secrets live in env, not tenant metadata.
+
+**Out of scope (later phases):** manual card entry (Payment Element), Tap to Pay /
+Terminal, refunds, dispute visibility, expanded reporting filters, application fees.
+
+---
+
 ## Document Templates (F015)
 
 Per-company, versioned, JSON-encoded descriptors that drive client-facing document rendering. P0 covers `document_type='estimate'`; the registry, factory, and Settings UI are designed so adding `invoice` and `work_order` is a data-only follow-up.

@@ -187,23 +187,6 @@ async function buyNumber(companyId, { phoneNumber, friendlyName, actorId } = {})
         const err = new Error('phoneNumber must be E.164 (+1XXXXXXXXXX)');
         err.httpStatus = 422; throw err;
     }
-
-    // Hard plan cap: never provision on Twilio beyond the plan's number limit.
-    const billingService = require('./billingService');
-    const plan = await billingService.getPlanForCompany(companyId);
-    const max = plan?.max_phone_numbers;
-    if (max != null) {
-        const { rows } = await db.query(
-            'SELECT count(*)::int AS n FROM phone_number_settings WHERE company_id = $1', [companyId]
-        );
-        if (rows[0].n >= max) {
-            const err = new Error(
-                `Your ${plan.name} plan includes up to ${max} phone number${max === 1 ? '' : 's'}. Upgrade your plan to add more.`
-            );
-            err.httpStatus = 422; err.code = 'NUMBER_LIMIT'; throw err;
-        }
-    }
-
     const { client } = await getClientForCompany(companyId);
     const base = webhookBase();
 

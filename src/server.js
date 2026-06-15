@@ -59,6 +59,11 @@ app.use((req, res, next) => {
 app.use('/api/billing/webhook', express.raw({ type: '*/*', limit: '1mb' }),
     require('../backend/src/routes/billingWebhook'));
 
+// F018 Stripe Payments (tenant customer payments) webhook — also needs the raw
+// body, mounted before express.json and SEPARATE from the platform billing webhook.
+app.use('/api/stripe-payments/webhook', express.raw({ type: '*/*', limit: '1mb' }),
+    require('../backend/src/routes/stripePaymentsWebhook'));
+
 // Middleware
 // 2mb limit covers document-template descriptors that may embed a base64 logo
 // (logo_url.maxLength = 500_000 chars ≈ 370KB + descriptor JSON overhead).
@@ -216,6 +221,13 @@ app.use('/api/integrations/zenbooker', integrationsZenbookerRouter);
 // Integration settings API (§15)
 app.use('/api/admin/integrations', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess, integrationsAdminRouter);
 app.use('/api/marketplace', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess, marketplaceRouter);
+// F018 Stripe Payments settings/onboarding (the /webhook subpath is mounted earlier,
+// before express.json, so it is unaffected by this authed mount).
+app.use('/api/stripe-payments', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess,
+    require('../backend/src/routes/stripePayments'));
+// F018 Phase 4: Terminal / Tap to Pay backend (per-route permission gating inside).
+app.use('/api/stripe-terminal', authenticate, requireCompanyAccess,
+    require('../backend/src/routes/stripeTerminal'));
 // F015: Document templates customization (estimates first; designed to extend to invoice/work_order)
 require('../backend/src/services/documentTemplates'); // bootstrap renderer registry
 const documentTemplatesRouter = require('../backend/src/routes/document-templates');
@@ -365,9 +377,6 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
         rulesEngine.tickScheduler().catch(e => console.error('[rulesEngine] tick error:', e.message));
     }, 60 * 1000);
     console.log('⚙️  Rules engine scheduler started (60s tick)');
-
-    // BILLING: monthly usage-overage billing (in arrears, dormant w/o Stripe key)
-    require('../backend/src/services/overageScheduler').start();
 
     // Start daily Zenbooker jobs sync cron
     const zbSyncCron = require('../backend/src/services/zbJobsSyncCron');

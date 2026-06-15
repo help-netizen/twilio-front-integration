@@ -264,6 +264,14 @@ export function IntegrationsPage() {
                                                 >
                                                     {app.installation?.status === 'connected' ? 'Manage' : 'Configure'}
                                                 </Button>
+                                            ) : app.app_key === 'stripe-payments' ? (
+                                                <Button
+                                                    size="sm"
+                                                    variant={app.installation?.status === 'connected' ? 'outline' : 'default'}
+                                                    onClick={() => navigate('/settings/integrations/stripe-payments')}
+                                                >
+                                                    {app.installation?.status === 'connected' || app.installation?.status === 'provisioning_failed' ? 'Manage' : 'Configure'}
+                                                </Button>
                                             ) : (
                                                 <>
                                                     {app.installation?.status === 'provisioning_failed' && (

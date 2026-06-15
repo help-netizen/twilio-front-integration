@@ -9,7 +9,7 @@ stack:
   frontend: "React 19 + TypeScript + Vite"
   backend: "Node.js + Express + PostgreSQL"
   auth: "Keycloak"
-  deploy: "Vultr (Docker Compose)"
+  deploy: "Fly.io (Docker)"
 dependencies:
   editor: "Monaco Editor"
   diagram_render: "state-machine-cat (inpage preview + optional server render)"

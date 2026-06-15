@@ -5,7 +5,8 @@
  */
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
+const GEMINI_FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || 'gemini-flash-lite-latest';
 const PROVIDER_TIMEOUT_MS = parseInt(process.env.POLISH_PROVIDER_TIMEOUT_MS || '10000', 10);
 const MAX_RETRIES = parseInt(process.env.POLISH_RETRY_MAX || '2', 10);
 const BACKOFF_MS = [200, 500];
@@ -59,83 +60,95 @@ async function polishText(text, options = {}) {
         },
     };
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+    const models = [...new Set([GEMINI_MODEL, GEMINI_FALLBACK_MODEL].filter(Boolean))];
 
     let lastError = null;
 
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        if (attempt > 0) {
-            const delay = BACKOFF_MS[attempt - 1] || 500;
-            const jitter = Math.floor(Math.random() * delay * 0.3);
-            await sleep(delay + jitter);
+    for (let modelIndex = 0; modelIndex < models.length; modelIndex++) {
+        const model = models[modelIndex];
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
+
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            if (attempt > 0) {
+                const delay = BACKOFF_MS[attempt - 1] || 500;
+                const jitter = Math.floor(Math.random() * delay * 0.3);
+                await sleep(delay + jitter);
+            }
+
+            try {
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
+
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                    signal: controller.signal,
+                });
+                clearTimeout(timeout);
+
+                if (!response.ok) {
+                    const status = response.status;
+                    const body = await response.text().catch(() => '');
+                    console.warn(`[TextPolish] Gemini ${model} HTTP ${status} (attempt ${attempt + 1}): ${body.slice(0, 200)}`);
+
+                    // Retry transient provider errors on the same model, then move to fallback.
+                    if ([429, 500, 502, 503, 504].includes(status) && attempt < MAX_RETRIES) {
+                        lastError = new Error(`Gemini ${model} HTTP ${status}`);
+                        continue;
+                    }
+                    lastError = new Error(`Gemini ${model} HTTP ${status}: ${body.slice(0, 200)}`);
+                    break;
+                }
+
+                const data = await response.json();
+                const latencyMs = Date.now() - startTime;
+
+                // Extract text from Gemini response
+                const rawOutput = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (!rawOutput) {
+                    console.warn(`[TextPolish] Empty response from Gemini ${model}`);
+                    lastError = new Error(`Gemini ${model} empty response`);
+                    break;
+                }
+
+                // Parse JSON from Gemini output (may have markdown wrapping)
+                const polishedText = parsePolishedText(rawOutput, trimmed);
+
+                // Usage stats
+                const usage = data?.usageMetadata || {};
+                const usedProviderFallback = modelIndex > 0;
+
+                return {
+                    polished_text: polishedText,
+                    changed: polishedText !== trimmed,
+                    detected_language: 'auto',
+                    fallback_used: false,
+                    fallback_model_used: usedProviderFallback,
+                    warnings: usedProviderFallback ? [`primary_model_failed:${GEMINI_MODEL}`, 'provider_fallback_model_used'] : [],
+                    trace_id: traceId,
+                    provider: { name: 'gemini', model },
+                    usage: {
+                        input_tokens: usage.promptTokenCount || null,
+                        output_tokens: usage.candidatesTokenCount || null,
+                    },
+                    latency_ms: latencyMs,
+                };
+            } catch (err) {
+                if (err.name === 'AbortError') {
+                    console.warn(`[TextPolish] Gemini ${model} timeout (attempt ${attempt + 1})`);
+                    lastError = new Error(`Gemini ${model} provider timeout`);
+                    if (attempt < MAX_RETRIES) continue;
+                } else {
+                    console.error(`[TextPolish] Gemini ${model} fetch error (attempt ${attempt + 1}):`, err.message);
+                    lastError = err;
+                    if (attempt < MAX_RETRIES) continue;
+                }
+            }
         }
 
-        try {
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
-
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-                signal: controller.signal,
-            });
-            clearTimeout(timeout);
-
-            if (!response.ok) {
-                const status = response.status;
-                const body = await response.text().catch(() => '');
-                console.warn(`[TextPolish] Gemini HTTP ${status} (attempt ${attempt + 1}): ${body.slice(0, 200)}`);
-
-                // Retry on transient errors
-                if ([429, 500, 502, 503, 504].includes(status) && attempt < MAX_RETRIES) {
-                    lastError = new Error(`Gemini HTTP ${status}`);
-                    continue;
-                }
-                lastError = new Error(`Gemini HTTP ${status}: ${body.slice(0, 200)}`);
-                break;
-            }
-
-            const data = await response.json();
-            const latencyMs = Date.now() - startTime;
-
-            // Extract text from Gemini response
-            const rawOutput = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (!rawOutput) {
-                console.warn('[TextPolish] Empty response from Gemini');
-                return buildFallback(trimmed, traceId, startTime, ['empty_provider_response']);
-            }
-
-            // Parse JSON from Gemini output (may have markdown wrapping)
-            const polishedText = parsePolishedText(rawOutput, trimmed);
-
-            // Usage stats
-            const usage = data?.usageMetadata || {};
-
-            return {
-                polished_text: polishedText,
-                changed: polishedText !== trimmed,
-                detected_language: 'auto',
-                fallback_used: false,
-                warnings: [],
-                trace_id: traceId,
-                provider: { name: 'gemini', model: GEMINI_MODEL },
-                usage: {
-                    input_tokens: usage.promptTokenCount || null,
-                    output_tokens: usage.candidatesTokenCount || null,
-                },
-                latency_ms: latencyMs,
-            };
-        } catch (err) {
-            if (err.name === 'AbortError') {
-                console.warn(`[TextPolish] Timeout (attempt ${attempt + 1})`);
-                lastError = new Error('Provider timeout');
-                if (attempt < MAX_RETRIES) continue;
-            } else {
-                console.error(`[TextPolish] Fetch error (attempt ${attempt + 1}):`, err.message);
-                lastError = err;
-                if (attempt < MAX_RETRIES) continue;
-            }
+        if (modelIndex < models.length - 1) {
+            console.warn(`[TextPolish] ${model} failed (${lastError?.message}); trying fallback ${models[modelIndex + 1]}`);
         }
     }
 

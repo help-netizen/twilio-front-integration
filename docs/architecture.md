@@ -1579,7 +1579,7 @@ phoneSettings.js      conversationsService.js    twilioSync.js
 
 Steady-state on prod:
 ```
-ssh deploy@108.61.87.117 "cd /opt/albusto && docker compose exec -T app grep ' 01 ' /proc/net/tcp" | awk '$3 ~ /:01BB$/' | wc -l
+fly ssh console -a abc-metrics -C "grep ' 01 ' /proc/net/tcp" | awk '$3 ~ /:01BB$/' | wc -l
 ```
 should report ≤ ~20 (was ≥ 199). CLOSE_WAIT count should be 0–2 (was 28).
 
@@ -2051,3 +2051,121 @@ workers), eventBus/rulesEngine/ruleActions (extend via registry, not rewrite).
 
 **Protected:** src/server.js (webhook mount needs raw-body — careful ordering,
 additive); existing billing schema (extend via migration only).
+
+---
+
+## F018: Stripe Payments Marketplace — Tenant Customer Payments (Phases 1–2)
+
+**Источник требований:** requirements.md F018; spec STRIPE-PAY-001 (Phases 1–2).
+**Принцип:** расширяем существующий ledger/marketplace/invoice слой, НЕ создаём второй
+payment-center и НЕ трогаем платформенный billing (ADR-001).
+
+### Существующий функционал (расширяем, не дублируем)
+- `marketplaceQueries.ensureMarketplaceSchema()` (`backend/src/db/marketplaceQueries.js:12`)
+  — применяет seed-миграции маркетплейса; **добавить сюда новую seed-миграцию stripe**.
+- `marketplaceService` install/disconnect + `/api/marketplace/*` — переиспользуем для
+  install/disconnect плитки (provisioning_mode='none', как VAPI).
+- `paymentsService.createTransaction(companyId, userId, data)`
+  (`backend/src/services/paymentsService.js:64`) — уже пишет в `payment_transactions`
+  и обновляет invoice через `invoicesQueries.recordPayment`. Webhook ledger-sync ДОЛЖЕН
+  идти через него (`external_source='stripe'`, `external_id=<stripe id>`), а не плодить
+  свой INSERT. ⚠️ требуется идемпотентность — см. ниже.
+- `invoicesService.recordPayment` / `invoicesQueries.recordPayment` + `createEvent`
+  — invoice balance/status + timeline. Нельзя дублировать пересчёт.
+- `invoicesService.ensurePublicLink` + `public-invoices.js` (`/api/public/invoices/:token/pdf`,
+  short `/i/:token`) — основа public `Pay now`. ⚠️ сейчас public-слой ТОЛЬКО PDF, JSON-
+  эндпоинтов нет — добавляем новые public-token эндпоинты.
+- `stripeProvider.parseWebhook` (`backend/src/services/billing/stripeProvider.js`) —
+  HMAC-SHA256 v1 паттерн как **референс**; для Connect делаем ОТДЕЛЬНЫЙ provider
+  (другой webhook secret, Stripe-Account scoping). Платформенный provider не трогаем.
+- `billingWebhook` mount в `src/server.js` (express.raw до express.json) — паттерн
+  монтирования для нового tenant-payments webhook.
+
+### Нельзя дублировать
+- Второй INSERT в `payment_transactions` в обход `paymentsService`.
+- Свой пересчёт invoice paid/balance (только через `invoicesQueries.recordPayment`).
+- Свой marketplace install-flow (используем `/api/marketplace/*`).
+- Платформенный `stripeProvider`/`billingService`/`/api/billing/webhook`.
+
+### Новые компоненты
+
+**Database (миграции 107–110, idempotent, добавить в ensureMarketplaceSchema где нужно):**
+- `107_create_stripe_connected_accounts.sql` — per-company connected account
+  (`company_id` UNIQUE, `marketplace_installation_id`, `stripe_account_id`, `livemode`,
+  `charges_enabled`, `payouts_enabled`, `details_submitted`, `requirements_currently_due`
+  jsonb, `requirements_past_due` jsonb, `capabilities` jsonb, `status`, timestamps).
+- `108_create_stripe_payment_sessions.sql` — (`company_id`, `invoice_id`, `job_id`,
+  `contact_id`, `created_by`, `surface` ['checkout_link'|'manual_card'|'tap_to_pay'],
+  `amount`, `currency`, `status`, `stripe_checkout_session_id`, `stripe_payment_intent_id`,
+  `stripe_charge_id`, `stripe_account_id`, `url`, `expires_at`, `metadata`, timestamps).
+- `109_create_stripe_webhook_events.sql` — (`stripe_event_id` UNIQUE, `livemode`,
+  `event_type`, `stripe_account_id`, `company_id`, `processing_status`, `payload` jsonb,
+  `error`, `processed_at`, `created_at`) — идемпотентность + аудит.
+- `110_seed_stripe_payments_marketplace_app.sql` — `marketplace_apps` row
+  `app_key='stripe-payments'`, category 'payments', provisioning_mode='none',
+  status='published', metadata.setup_path='/settings/integrations/stripe-payments'.
+- Ledger идемпотентность: partial UNIQUE index `(company_id, external_id) WHERE
+  external_source='stripe'` (по образцу 104) — добавить в 107 или отдельной строкой.
+
+Backend:
+- `backend/src/services/stripeConnectProvider.js` — zero-SDK REST к Stripe (fetch +
+  `Stripe-Account` header для connected-account ops + HMAC verify Connect webhook).
+  Методы: createAccount(v2, direct charges), createAccountLink(onboarding), getAccount,
+  createCheckoutSession, retrieveCheckoutSession, parseConnectWebhook.
+- `backend/src/services/stripePaymentsService.js` — доменная логика: connect/onboarding-
+  link/refresh-status/disconnect; readiness state machine; ensure/reuse checkout session
+  по invoice; webhook dispatch → ledger через `paymentsService.createTransaction`
+  (идемпотентно); audit events. Хранит connected-account + sessions через новые queries.
+- `backend/src/db/stripePaymentsQueries.js` — CRUD по 3 новым таблицам (все запросы
+  фильтруют по `company_id`; webhook lookup по stripe ids → затем company-scope verify).
+- `backend/src/routes/stripePayments.js` — settings/onboarding API.
+- `backend/src/routes/stripePaymentsWebhook.js` — tenant-payments webhook (raw body).
+- Расширения: `backend/src/routes/invoices.js` (+payment-link эндпоинты),
+  `backend/src/routes/public-invoices.js` (+public summary/pay эндпоинты).
+
+Frontend:
+- `frontend/src/pages/StripePaymentsSettingsPage.tsx` — по образцу `VapiSettingsPage`.
+- `frontend/src/services/stripePaymentsApi.ts` — authedFetch wrappers.
+- Правки: `IntegrationsPage.tsx` (плитка stripe-payments → navigate на setup, статус-
+  бейджи), `App.tsx` (route, guard `tenant.integrations.manage`),
+  `components/invoices/InvoiceDetailPanel.tsx` (Collect payment vs Record offline,
+  readiness banner, link/attempt блоки), invoice send dialog (Include payment link).
+- Public `Pay now`: минимальная public pay-страница или редирект-флоу через токен.
+
+### API endpoints (middleware: authenticate, requireCompanyAccess; company_id ←
+`req.companyFilter?.company_id`; все SQL по company_id)
+- `GET  /api/stripe-payments/status` — readiness + checklist (perm tenant.integrations.manage)
+- `POST /api/stripe-payments/connect` — создать/найти connected account
+- `POST /api/stripe-payments/onboarding-link` — account link (resume onboarding)
+- `POST /api/stripe-payments/refresh-status` — pull из Stripe, обновить локально
+- `POST /api/stripe-payments/disconnect` — выключить новые платежи (история остаётся)
+- `POST /api/invoices/:id/stripe-payment-link` — create/reuse checkout session
+  (perm payments.collect_online; чужой invoice → 404)
+- `GET  /api/invoices/:id/stripe-payment-link` — активная сессия/история (perm payments.view)
+- `POST /api/invoices/:id/send-payment-link` — email/SMS + invoice_event (perm payments.collect_online)
+- `POST /api/stripe-payments/webhook` — **NO auth**, express.raw, signature verify
+  (`STRIPE_CONNECT_WEBHOOK_SECRET`), идемпотентно по stripe_event_id; mount в server.js
+  ДО express.json и ОТДЕЛЬНО от `/api/billing/webhook`.
+- Public (no auth, token=credential): `GET /api/public/invoices/:token/pay-info`
+  (summary+balance), `POST /api/public/invoices/:token/pay` (create/reuse session → url).
+
+### Readiness state machine (gating, FR-003)
+`not_connected → onboarding_incomplete → action_required(requirements due) →
+payments_disabled → connected_ready` (+ `payouts_disabled`, `disconnected`).
+Online collection разрешён только при `charges_enabled && card capability active`.
+Marketplace плитка маппит state → бейдж (Available/Setup incomplete/Connected/Action
+required/Payouts disabled/Disconnected).
+
+### Файлы для изменений (точные пути)
+- NEW backend: migrations 107–110; services/stripeConnectProvider.js,
+  stripePaymentsService.js; db/stripePaymentsQueries.js; routes/stripePayments.js,
+  routes/stripePaymentsWebhook.js.
+- EDIT backend: db/marketplaceQueries.js (ensureMarketplaceSchema += 110 seed),
+  routes/invoices.js (+3 эндпоинта), routes/public-invoices.js (+2 public эндпоинта),
+  src/server.js (mount-only: webhook raw до json + 2 router'а).
+- NEW frontend: pages/StripePaymentsSettingsPage.tsx, services/stripePaymentsApi.ts.
+- EDIT frontend: pages/IntegrationsPage.tsx, App.tsx,
+  components/invoices/InvoiceDetailPanel.tsx (+ invoice send dialog, public invoice).
+
+**Защищённые:** src/server.js (mount-only), authedFetch.ts, useRealtimeEvents.ts,
+backend/db schema (только новые миграции), платформенный billing — не трогать.

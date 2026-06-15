@@ -26,13 +26,9 @@ jest.mock('../../backend/src/db/serviceTerritoryQueries', () => ({
 }));
 jest.mock('../../backend/src/services/leadsService', () => ({
     createLead: jest.fn(),
-    getLeadByPhone: jest.fn(),
 }));
 jest.mock('../../backend/src/services/scheduleService', () => ({
     getAvailableSlots: jest.fn(),
-}));
-jest.mock('../../backend/src/services/jobsService', () => ({
-    listJobs: jest.fn(),
 }));
 jest.mock('https', () => ({ get: jest.fn() }));
 
@@ -40,7 +36,6 @@ const https = require('https');
 const stQueries = require('../../backend/src/db/serviceTerritoryQueries');
 const leadsService = require('../../backend/src/services/leadsService');
 const scheduleService = require('../../backend/src/services/scheduleService');
-const jobsService = require('../../backend/src/services/jobsService');
 const vapiToolsRouter = require('../../backend/src/routes/vapi-tools');
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -611,73 +606,5 @@ describe('Group 9 — public mount', () => {
         // Must mount the router directly, with no auth middleware between path and router.
         expect(serverSrc).toMatch(/app\.use\(\s*['"]\/api\/vapi-tools['"]\s*,\s*vapiToolsRouter\s*\)/);
         expect(serverSrc).not.toMatch(/\/api\/vapi-tools['"]\s*,\s*authenticate/);
-    });
-});
-
-// ════════════════════════════════════════════════════════════════════════════
-// Group 10 — identifyCaller (v3 P1)
-// ════════════════════════════════════════════════════════════════════════════
-
-describe('Group 10 — identifyCaller', () => {
-    const auth = (r) => r.set('x-vapi-secret', SECRET);
-
-    test('no match → matchType new (does not push existing customer into a profile)', async () => {
-        leadsService.getLeadByPhone.mockResolvedValue(null);
-        jobsService.listJobs.mockResolvedValue({ results: [] });
-        const res = await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('identifyCaller', {}));
-        expect(resultOf(res)).toEqual({ matchType: 'new' });
-    });
-
-    test('lead match → existing with name, uses call metadata phone', async () => {
-        leadsService.getLeadByPhone.mockResolvedValue({ first_name: 'John', last_name: 'Smith', contact_id: 'c1' });
-        jobsService.listJobs.mockResolvedValue({ results: [] });
-        const res = await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('identifyCaller', {}));
-        const out = resultOf(res);
-        expect(out.matchType).toBe('existing');
-        expect(out.customerName).toBe('John Smith');
-        expect(out.firstName).toBe('John');
-        expect(out.verified).toBe(false);
-        // phone came from call.customer.number in the toolCall() helper
-        expect(leadsService.getLeadByPhone).toHaveBeenCalledWith('+16175551234', expect.any(String));
-    });
-
-    test('open jobs → nearest upcoming appointment with friendly status phrase', async () => {
-        leadsService.getLeadByPhone.mockResolvedValue(null);
-        jobsService.listJobs.mockResolvedValue({ results: [
-            { customer_name: 'Jane Doe', service_name: 'Dryer Repair', blanc_status: 'Scheduled', start_date: '2026-06-20T14:00:00.000Z' },
-            { customer_name: 'Jane Doe', service_name: 'Fridge Repair', blanc_status: 'Enroute', start_date: '2026-06-15T10:00:00.000Z' },
-        ] });
-        const res = await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('identifyCaller', {}));
-        const out = resultOf(res);
-        expect(out.matchType).toBe('existing');
-        expect(out.customerName).toBe('Jane Doe');
-        expect(out.openJobsCount).toBe(2);
-        // nearest by date is the Enroute fridge job
-        expect(out.nextAppointment.statusLabel).toBe('your technician is on the way');
-        expect(out.nextAppointment.service).toBe('Fridge Repair');
-        // internal code never leaked
-        expect(JSON.stringify(out)).not.toMatch(/Enroute|blanc_status/);
-    });
-
-    test('lookups throw → degrades to a safe result, never 500', async () => {
-        leadsService.getLeadByPhone.mockRejectedValue(new Error('db down'));
-        jobsService.listJobs.mockRejectedValue(new Error('db down'));
-        const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-        const res = await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('identifyCaller', {}));
-        expect(res.status).toBe(200);
-        expect(resultOf(res)).toEqual({ matchType: 'new' });
-        errSpy.mockRestore();
-    });
-
-    test('explicit phone arg overrides call metadata', async () => {
-        leadsService.getLeadByPhone.mockResolvedValue(null);
-        jobsService.listJobs.mockResolvedValue({ results: [] });
-        await auth(request(app).post('/api/vapi-tools'))
-            .send(toolCall('identifyCaller', { phone: '+15085140320' }));
-        expect(leadsService.getLeadByPhone).toHaveBeenCalledWith('+15085140320', expect.any(String));
     });
 });

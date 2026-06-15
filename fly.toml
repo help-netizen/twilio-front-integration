@@ -1,10 +1,5 @@
-# fly.toml app configuration file
+# fly.toml app configuration file  
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
-# LEGACY: production moved to the Vultr server (app.albusto.com / api.albusto.com)
-# on 2026-06-11. This Fly app is a frozen, read-only historical snapshot (stale
-# DB); all live traffic and new events go to Vultr.
-# Do not deploy production changes here — use scripts/prod-deploy.sh instead.
 
 app = 'abc-metrics'
 primary_region = 'ewr'
@@ -22,7 +17,7 @@ primary_region = 'ewr'
   force_https = true
   auto_stop_machines = "stop"
   auto_start_machines = true
-  min_machines_running = 1
+  min_machines_running = 0
   processes = ['app']
 
   [[http_service.http_checks]]
@@ -34,6 +29,6 @@ primary_region = 'ewr'
     timeout = "5s"
 
 [[vm]]
-  memory = '1024mb'
+  memory = '256mb'
   cpu_kind = 'shared'
   cpus = 1

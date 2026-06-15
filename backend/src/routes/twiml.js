@@ -10,7 +10,7 @@ const router = express.Router();
  * 3. Routes to voice-dial-action for voicemail on no-answer
  */
 router.post('/voice', (req, res) => {
-    const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://api.albusto.com';
+    const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
     const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
 
     // Twilio SIP domain - connects to Bria softphone

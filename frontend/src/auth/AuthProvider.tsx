@@ -109,7 +109,8 @@ function extractRoles(kc: Keycloak): string[] {
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
 // Paths that must render WITHOUT forcing a Keycloak login (ALB-101)
-const PUBLIC_AUTH_PATHS = ['/signup'];
+// /pay/:token is the customer-facing Stripe Pay-now page (F018) — opaque token is the credential.
+const PUBLIC_AUTH_PATHS = ['/signup', '/pay'];
 function isPublicAuthPath() {
     return PUBLIC_AUTH_PATHS.some(p => window.location.pathname.startsWith(p));
 }
@@ -257,12 +258,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return (
             <div style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                height: '100vh', background: 'var(--blanc-bg, #efe9df)', color: 'var(--blanc-ink-2, #536070)',
-                fontFamily: '"IBM Plex Sans", system-ui, sans-serif',
+                height: '100vh', background: '#0a0a0a', color: '#888',
+                fontFamily: 'Inter, system-ui, sans-serif',
             }}>
                 <div style={{ textAlign: 'center' }}>
-                    <div className="animate-spin" style={{ width: 22, height: 22, border: '2px solid var(--blanc-line, rgba(117,106,89,0.25))', borderTopColor: 'var(--blanc-ink-2, #536070)', borderRadius: '50%', margin: '0 auto 12px' }} />
-                    <div style={{ fontSize: 14 }}>Authenticating…</div>
+                    <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>🔐</div>
+                    <div>Authenticating…</div>
                 </div>
             </div>
         );

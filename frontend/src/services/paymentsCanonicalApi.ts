@@ -56,6 +56,7 @@ export interface TransactionsListParams {
     status?: string;
     transaction_type?: string;
     payment_method?: string;
+    source?: string;
     contact_id?: number;
     invoice_id?: number;
     search?: string;
@@ -118,6 +119,7 @@ export async function fetchTransactions(filters: TransactionsListParams = {}): P
     if (filters.status) params.set('status', filters.status);
     if (filters.transaction_type) params.set('transaction_type', filters.transaction_type);
     if (filters.payment_method) params.set('payment_method', filters.payment_method);
+    if (filters.source) params.set('source', filters.source);
     if (filters.contact_id) params.set('contact_id', String(filters.contact_id));
     if (filters.invoice_id) params.set('invoice_id', String(filters.invoice_id));
     if (filters.search) params.set('search', filters.search);

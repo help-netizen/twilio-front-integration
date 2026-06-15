@@ -28,16 +28,8 @@ npm run deploy:prod
 ```
 
 This:
-1. Updates all Twilio phone number webhooks to `https://api.albusto.com`
-2. Deploys `master` to the Vultr server (`deploy@108.61.87.117`) via `git archive | ssh ... tar -x -C /opt/albusto/app`
-3. Rebuilds and restarts the app container: `cd /opt/albusto && docker compose build app && docker compose up -d app`
-
-Production runs on Vultr with docker compose (app + postgres:17 + keycloak):
-- App: https://app.albusto.com
-- API / webhooks: https://api.albusto.com
-- Keycloak: https://auth.albusto.com
-
-> The old Fly.io app (`abc-metrics.fly.dev`) is a frozen, read-only historical snapshot (stale DB) — all live traffic and new events go to Vultr. Do not deploy to it.
+1. Updates all Twilio phone number webhooks to `https://abc-metrics.fly.dev`
+2. Deploys to Fly.io
 
 ### Switch Webhooks Only (no deploy)
 
@@ -61,9 +53,9 @@ npm run dev:local         # Point webhooks to ngrok (local)
 | Variable | Development | Production |
 |----------|-------------|------------|
 | `NODE_ENV` | `development` | `production` |
-| `WEBHOOK_BASE_URL` | `https://*.ngrok-free.dev` (auto-set) | `https://api.albusto.com` |
+| `WEBHOOK_BASE_URL` | `https://*.ngrok-free.dev` (auto-set) | `https://abc-metrics.fly.dev` |
 | `CALLBACK_HOSTNAME` | Same as WEBHOOK_BASE_URL | Same as WEBHOOK_BASE_URL |
-| `DATABASE_URL` | `postgresql://localhost/twilio_calls` | docker compose postgres (set in `/opt/albusto/.env` on the server) |
+| `DATABASE_URL` | `postgresql://localhost/twilio_calls` | Fly.io secret |
 | `FEATURE_AUTH_ENABLED` | `true` | `true` |
 
 ### How Webhook URLs Work
@@ -82,21 +74,17 @@ TwiML Response (generated per call):
 
 The `WEBHOOK_BASE_URL` must match where Twilio can reach the server:
 - **Local dev**: ngrok URL (set automatically by `dev-start.sh`)
-- **Production**: `https://api.albusto.com` (set in the server's environment, `/opt/albusto/.env`)
+- **Production**: `https://abc-metrics.fly.dev` (set via Fly.io secret)
 
 ---
 
 ## Managed Twilio Phone Numbers
 
-| Number | SID | Role |
-|--------|-----|------|
-| +1 (508) 682-5820 | `PN898f143454169b9af67b0561163e7ac2` | Production |
-| +1 (617) 644-4408 | `PN0d551425c8ac99cb7186efa356d315ed` | Production |
-| +1 (508) 444-0808 | `PN32e839a2db0bb7035357c78cf5749f82` | Production |
-| +1 (508) 290-4442 | `PN5962e36c39c4530a072cdeb968eb7c08` | Production |
-| +1 (617) 500-6181 | `PNec159049f9d2a07f464d9d0b9fe9c30a` | Production |
-| +1 (617) 404-4425 | `PNdcd4e308ee3e26987e98434d81784446` | Production |
-| +1 (617) 992-7291 | `PN334757241793e249e3f73c62cb88accc` | Dev/ngrok only |
+| Number | SID |
+|--------|-----|
+| +1 (877) 419-4983 | `PNd4a275cf0cd02292bc69df105b4e6b7d` |
+| +1 (617) 500-6181 | `PNec159049f9d2a07f464d9d0b9fe9c30a` |
+| +1 (617) 992-7291 | `PN334757241793e249e3f73c62cb88accc` |
 
 ---
 
@@ -106,9 +94,9 @@ The `WEBHOOK_BASE_URL` must match where Twilio can reach the server:
 |--------|---------|-------------|
 | `dev:local` | `./scripts/dev-start.sh` | Full local dev (ngrok + backend + frontend) |
 | `dev:backend` | `./scripts/dev-start.sh --backend-only` | Backend + ngrok only |
-| `deploy:prod` | `./scripts/prod-deploy.sh` | Deploy to Vultr + update webhooks |
+| `deploy:prod` | `./scripts/prod-deploy.sh` | Deploy to Fly.io + update webhooks |
 | `webhooks:prod` | `./scripts/prod-deploy.sh --webhooks-only` | Just switch webhooks to prod |
-| `start` | `node src/server.js` | Start backend only (used in the prod container) |
+| `start` | `node src/server.js` | Start backend only (used by Fly.io) |
 | `dev` | `nodemon src/server.js` | Start backend with auto-reload |
 
 ---

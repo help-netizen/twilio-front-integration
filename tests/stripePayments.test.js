@@ -1,0 +1,279 @@
+/**
+ * F018 STRIPE-PAY-001 — stripePaymentsService + Connect webhook provider.
+ * Covers: readiness state machine, webhook signature, event idempotency,
+ * tenant-scope rejection, ledger idempotency. (docs/test-cases/STRIPE-PAY-001.md)
+ */
+
+const crypto = require('crypto');
+
+// Mock all DB / service dependencies so the service can be unit-tested in isolation.
+jest.mock('../backend/src/db/stripePaymentsQueries');
+jest.mock('../backend/src/db/paymentsQueries');
+jest.mock('../backend/src/services/paymentsService');
+jest.mock('../backend/src/services/invoicesService');
+jest.mock('../backend/src/db/invoicesQueries');
+jest.mock('../backend/src/services/marketplaceService');
+jest.mock('../backend/src/db/marketplaceQueries', () => ({
+    ensureMarketplaceSchema: jest.fn().mockResolvedValue(undefined),
+    listInstallations: jest.fn().mockResolvedValue([]),
+}));
+jest.mock('../backend/src/services/auditService', () => ({ log: jest.fn().mockResolvedValue(undefined) }));
+
+const q = require('../backend/src/db/stripePaymentsQueries');
+const paymentsQueries = require('../backend/src/db/paymentsQueries');
+const paymentsService = require('../backend/src/services/paymentsService');
+const invoicesService = require('../backend/src/services/invoicesService');
+const invoicesQueries = require('../backend/src/db/invoicesQueries');
+
+const svc = require('../backend/src/services/stripePaymentsService');
+const provider = require('../backend/src/services/stripeConnectProvider');
+
+const COMPANY = '11111111-1111-1111-1111-111111111111';
+const ACCT = 'acct_test_123';
+
+beforeEach(() => { jest.clearAllMocks(); });
+
+// ── TC-01..06: readiness state machine (pure) ───────────────────────────────
+describe('computeReadiness', () => {
+    it('TC-01 no account → not_connected', () => expect(svc.computeReadiness(null)).toBe('not_connected'));
+    it('TC-02 no details → onboarding_incomplete', () =>
+        expect(svc.computeReadiness({ details_submitted: false })).toBe('onboarding_incomplete'));
+    it('TC-03 past_due → action_required', () =>
+        expect(svc.computeReadiness({ details_submitted: true, requirements_past_due: ['x'] })).toBe('action_required'));
+    it('TC-04 no charges → payments_disabled', () =>
+        expect(svc.computeReadiness({ details_submitted: true, charges_enabled: false, capabilities: {} })).toBe('payments_disabled'));
+    it('TC-05 charges but no payouts → payouts_disabled (collect allowed)', () => {
+        const r = svc.computeReadiness({ details_submitted: true, charges_enabled: true, capabilities: { card_payments: 'active' }, payouts_enabled: false });
+        expect(r).toBe('payouts_disabled');
+        expect(svc.canCollect(r)).toBe(true);
+    });
+    it('TC-06 fully ready → connected_ready', () => {
+        const r = svc.computeReadiness({ details_submitted: true, charges_enabled: true, capabilities: { card_payments: 'active' }, payouts_enabled: true });
+        expect(r).toBe('connected_ready');
+        expect(svc.canCollect(r)).toBe(true);
+    });
+    it('payments_disabled blocks collection', () => expect(svc.canCollect('payments_disabled')).toBe(false));
+});
+
+// ── TC-30: webhook signature ────────────────────────────────────────────────
+describe('parseConnectWebhook', () => {
+    const SECRET = 'whsec_connect_test';
+    beforeAll(() => { process.env.STRIPE_CONNECT_WEBHOOK_SECRET = SECRET; });
+
+    function sign(body, secret = SECRET) {
+        const t = 1700000000;
+        const v1 = crypto.createHmac('sha256', secret).update(`${t}.${body}`).digest('hex');
+        return `t=${t},v1=${v1}`;
+    }
+
+    it('TC-30 rejects missing signature', () => expect(provider.parseConnectWebhook('{}', null)).toBeNull());
+    it('TC-30 rejects bad signature', () => {
+        const body = JSON.stringify({ id: 'evt_1', type: 'x' });
+        expect(provider.parseConnectWebhook(body, sign(body, 'wrong'))).toBeNull();
+    });
+    it('accepts a valid signature and parses account/event', () => {
+        const body = JSON.stringify({ id: 'evt_1', type: 'account.updated', account: ACCT, data: { object: { id: ACCT } } });
+        const evt = provider.parseConnectWebhook(body, sign(body));
+        expect(evt).toMatchObject({ id: 'evt_1', type: 'account.updated', account: ACCT });
+    });
+});
+
+// ── TC-32/35: webhook idempotency + tenant scope ────────────────────────────
+describe('handleWebhook', () => {
+    const SECRET = 'whsec_connect_test';
+    beforeAll(() => { process.env.STRIPE_CONNECT_WEBHOOK_SECRET = SECRET; });
+    function signed(payload) {
+        const body = JSON.stringify(payload);
+        const t = 1700000000;
+        const v1 = crypto.createHmac('sha256', SECRET).update(`${t}.${body}`).digest('hex');
+        return { body, sig: `t=${t},v1=${v1}` };
+    }
+
+    it('TC-30 throws 400 on bad signature', async () => {
+        await expect(svc.handleWebhook('{}', null)).rejects.toMatchObject({ httpStatus: 400 });
+    });
+
+    it('TC-32 deduplicates a repeated event id', async () => {
+        q.getAccountByStripeId.mockResolvedValue({ company_id: COMPANY, stripe_account_id: ACCT });
+        q.insertWebhookEvent.mockResolvedValue({ inserted: false, row: null }); // already seen
+        const { body, sig } = signed({ id: 'evt_dup', type: 'checkout.session.completed', account: ACCT, data: { object: {} } });
+        const res = await svc.handleWebhook(body, sig);
+        expect(res).toEqual({ ok: true, deduped: true });
+        expect(paymentsService.createTransaction).not.toHaveBeenCalled();
+    });
+
+    it('TC-35 rejects an unknown connected account (no ledger mutation)', async () => {
+        q.getAccountByStripeId.mockResolvedValue(null); // account not mapped to a company
+        q.insertWebhookEvent.mockResolvedValue({ inserted: true, row: {} });
+        q.markWebhookEvent.mockResolvedValue(undefined);
+        const { body, sig } = signed({ id: 'evt_unknown', type: 'checkout.session.completed', account: 'acct_unknown', data: { object: {} } });
+        const res = await svc.handleWebhook(body, sig);
+        expect(res).toEqual({ ok: true, ignored: true });
+        expect(q.markWebhookEvent).toHaveBeenCalledWith('evt_unknown', 'failed', { error: 'unknown_connected_account' });
+        expect(paymentsService.createTransaction).not.toHaveBeenCalled();
+    });
+
+    it('TC-31 checkout.session.completed writes one ledger row + flips invoice to paid', async () => {
+        q.getAccountByStripeId.mockResolvedValue({ company_id: COMPANY, stripe_account_id: ACCT });
+        q.insertWebhookEvent.mockResolvedValue({ inserted: true, row: {} });
+        q.getSessionByCheckoutId.mockResolvedValue({ id: 7, invoice_id: 42, contact_id: 5, job_id: null });
+        q.updateSession.mockResolvedValue({});
+        q.markWebhookEvent.mockResolvedValue(undefined);
+        paymentsQueries.findByExternalSourceId.mockResolvedValue(null); // not seen
+        paymentsService.createTransaction.mockResolvedValue({ id: 100, external_id: 'pi_1' });
+        invoicesService.getInvoice.mockResolvedValue({ id: 42, balance_due: 0, amount_paid: 50 });
+        invoicesQueries.updateInvoiceStatus.mockResolvedValue({});
+        invoicesQueries.createEvent.mockResolvedValue({});
+
+        const { body, sig } = signed({
+            id: 'evt_ok', type: 'checkout.session.completed', account: ACCT,
+            data: { object: { id: 'cs_1', payment_intent: 'pi_1', amount_total: 5000, currency: 'usd', metadata: { invoice_id: '42' } } },
+        });
+        const res = await svc.handleWebhook(body, sig);
+        expect(res).toEqual({ ok: true });
+        expect(paymentsService.createTransaction).toHaveBeenCalledTimes(1);
+        const txArg = paymentsService.createTransaction.mock.calls[0][2];
+        expect(txArg).toMatchObject({ external_source: 'stripe', external_id: 'pi_1', invoice_id: 42, amount: 50 });
+        expect(invoicesQueries.updateInvoiceStatus).toHaveBeenCalledWith(42, COMPANY, 'paid', 'paid_at');
+    });
+
+    it('TC-33 idempotent on (company, external_id) — existing tx → no duplicate', async () => {
+        q.getAccountByStripeId.mockResolvedValue({ company_id: COMPANY, stripe_account_id: ACCT });
+        q.insertWebhookEvent.mockResolvedValue({ inserted: true, row: {} });
+        q.getSessionByPaymentIntent.mockResolvedValue({ id: 8, invoice_id: 42 });
+        q.updateSession.mockResolvedValue({});
+        q.markWebhookEvent.mockResolvedValue(undefined);
+        paymentsQueries.findByExternalSourceId.mockResolvedValue({ id: 100, external_id: 'pi_1' }); // already in ledger
+        const { body, sig } = signed({
+            id: 'evt_pi', type: 'payment_intent.succeeded', account: ACCT,
+            data: { object: { id: 'pi_1', amount_received: 5000, currency: 'usd', metadata: { invoice_id: '42' } } },
+        });
+        const res = await svc.handleWebhook(body, sig);
+        expect(res).toEqual({ ok: true });
+        expect(paymentsService.createTransaction).not.toHaveBeenCalled();
+    });
+
+    it('TC-34 payment_failed marks session failed, no completed ledger row', async () => {
+        q.getAccountByStripeId.mockResolvedValue({ company_id: COMPANY, stripe_account_id: ACCT });
+        q.insertWebhookEvent.mockResolvedValue({ inserted: true, row: {} });
+        q.getSessionByPaymentIntent.mockResolvedValue({ id: 9, invoice_id: 42 });
+        q.updateSession.mockResolvedValue({});
+        q.markWebhookEvent.mockResolvedValue(undefined);
+        const { body, sig } = signed({
+            id: 'evt_fail', type: 'payment_intent.payment_failed', account: ACCT,
+            data: { object: { id: 'pi_2', last_payment_error: { message: 'card_declined' } } },
+        });
+        const res = await svc.handleWebhook(body, sig);
+        expect(res).toEqual({ ok: true });
+        expect(q.updateSession).toHaveBeenCalledWith(9, { status: 'failed', failure_reason: 'card_declined' });
+        expect(paymentsService.createTransaction).not.toHaveBeenCalled();
+    });
+
+    it('TC-39 unknown event type → ignored', async () => {
+        q.getAccountByStripeId.mockResolvedValue({ company_id: COMPANY, stripe_account_id: ACCT });
+        q.insertWebhookEvent.mockResolvedValue({ inserted: true, row: {} });
+        q.markWebhookEvent.mockResolvedValue(undefined);
+        const { body, sig } = signed({ id: 'evt_x', type: 'invoice.created', account: ACCT, data: { object: {} } });
+        const res = await svc.handleWebhook(body, sig);
+        expect(res).toEqual({ ok: true, ignored: true });
+    });
+});
+
+// ── TC-20..23: payment link creation / reuse ────────────────────────────────
+describe('ensurePaymentLink', () => {
+    const readyAccount = { company_id: COMPANY, stripe_account_id: ACCT, details_submitted: true, charges_enabled: true, payouts_enabled: true, capabilities: { card_payments: 'active' }, status: 'connected_ready' };
+
+    it('TC-21 blocks when Stripe not ready', async () => {
+        q.getAccountByCompany.mockResolvedValue(null);
+        await expect(svc.ensurePaymentLink(COMPANY, { id: null }, 42)).rejects.toMatchObject({ code: 'NOT_READY', httpStatus: 409 });
+    });
+
+    it('TC-22 blocks void/paid invoice', async () => {
+        q.getAccountByCompany.mockResolvedValue(readyAccount);
+        invoicesService.getInvoice.mockResolvedValue({ id: 42, status: 'void', balance_due: 10, total: 10 });
+        await expect(svc.ensurePaymentLink(COMPANY, { id: null }, 42)).rejects.toMatchObject({ code: 'INVALID_STATUS' });
+    });
+
+    it('TC-23 reuses an existing open session (no duplicate)', async () => {
+        q.getAccountByCompany.mockResolvedValue(readyAccount);
+        invoicesService.getInvoice.mockResolvedValue({ id: 42, status: 'sent', balance_due: 100, total: 100, currency: 'USD' });
+        q.findOpenSession.mockResolvedValue({ id: 5, url: 'https://pay/existing', expires_at: null });
+        const link = await svc.ensurePaymentLink(COMPANY, { id: null }, 42);
+        expect(link).toMatchObject({ reused: true, url: 'https://pay/existing' });
+        expect(q.insertSession).not.toHaveBeenCalled();
+    });
+});
+
+// ── Phase 3: manual card session ────────────────────────────────────────────
+describe('createManualCardSession (Phase 3)', () => {
+    const readyAccount = { company_id: COMPANY, stripe_account_id: ACCT, details_submitted: true, charges_enabled: true, payouts_enabled: true, capabilities: { card_payments: 'active' }, status: 'connected_ready' };
+    beforeEach(() => { provider.createPaymentIntent = jest.fn(); });
+
+    it('creates a PaymentIntent + session and returns client_secret', async () => {
+        q.getAccountByCompany.mockResolvedValue(readyAccount);
+        invoicesService.getInvoice.mockResolvedValue({ id: 42, status: 'sent', balance_due: 80, total: 80, currency: 'USD', contact_id: 5 });
+        provider.createPaymentIntent.mockResolvedValue({ id: 'pi_m', client_secret: 'pi_m_secret' });
+        q.insertSession.mockResolvedValue({ id: 11 });
+        const res = await svc.createManualCardSession(COMPANY, { id: null }, { invoiceId: 42 });
+        expect(res).toMatchObject({ client_secret: 'pi_m_secret', payment_intent_id: 'pi_m', account_id: ACCT, amount: 80 });
+        expect(q.insertSession.mock.calls[0][1]).toMatchObject({ surface: 'manual_card' });
+    });
+
+    it('blocks when Stripe not ready', async () => {
+        q.getAccountByCompany.mockResolvedValue(null);
+        await expect(svc.createManualCardSession(COMPANY, { id: null }, { invoiceId: 42 })).rejects.toMatchObject({ code: 'NOT_READY' });
+    });
+});
+
+// ── Phase 4: terminal connection token ──────────────────────────────────────
+describe('getConnectionToken (Phase 4)', () => {
+    const readyAccount = { company_id: COMPANY, stripe_account_id: ACCT, details_submitted: true, charges_enabled: true, payouts_enabled: true, capabilities: { card_payments: 'active' }, status: 'connected_ready' };
+    beforeEach(() => { provider.createConnectionToken = jest.fn(); });
+
+    it('returns a connection token secret', async () => {
+        q.getAccountByCompany.mockResolvedValue(readyAccount);
+        q.listTerminalLocations.mockResolvedValue([{ stripe_location_id: 'tml_1' }]);
+        provider.createConnectionToken.mockResolvedValue({ secret: 'pst_secret' });
+        const res = await svc.getConnectionToken(COMPANY);
+        expect(res).toEqual({ secret: 'pst_secret', location_id: 'tml_1' });
+    });
+});
+
+// ── Phase 5: refunds ────────────────────────────────────────────────────────
+describe('refunds (Phase 5)', () => {
+    beforeEach(() => { provider.createRefund = jest.fn(); });
+
+    it('refundStripePayment calls Stripe then records idempotently', async () => {
+        paymentsQueries.getTransactionById.mockResolvedValue({ id: 100, external_source: 'stripe', external_id: 'pi_1', status: 'completed', amount: 50, invoice_id: 42 });
+        q.getAccountByCompany.mockResolvedValue({ company_id: COMPANY, stripe_account_id: ACCT });
+        provider.createRefund.mockResolvedValue({ id: 're_1' });
+        paymentsQueries.findByExternalSourceId
+            .mockResolvedValueOnce(null)                                   // applyStripeRefund: refund not seen
+            .mockResolvedValueOnce({ id: 100, invoice_id: 42, external_id: 'pi_1' }); // original lookup
+        paymentsQueries.createTransaction.mockResolvedValue({ id: 200, external_id: 're_1' });
+        paymentsQueries.updateTransactionStatus.mockResolvedValue({});
+        invoicesQueries.recordPayment.mockResolvedValue({});
+        invoicesService.getInvoice.mockResolvedValue({ id: 42, balance_due: 50, amount_paid: 0 });
+        invoicesQueries.updateInvoiceStatus.mockResolvedValue({});
+        invoicesQueries.createEvent.mockResolvedValue({});
+
+        const res = await svc.refundStripePayment(COMPANY, { id: null }, 100, { amount: 50 });
+        expect(provider.createRefund).toHaveBeenCalledWith(ACCT, expect.objectContaining({ paymentIntent: 'pi_1', amount: 50 }), expect.any(Object));
+        expect(res.refund_id).toBe('re_1');
+        const refundRow = paymentsQueries.createTransaction.mock.calls[0][1];
+        expect(refundRow).toMatchObject({ transaction_type: 'refund', external_id: 're_1', external_source: 'stripe' });
+        expect(Number(refundRow.amount)).toBeLessThan(0);
+    });
+
+    it('rejects refunding a non-Stripe transaction', async () => {
+        paymentsQueries.getTransactionById.mockResolvedValue({ id: 100, external_source: 'zenbooker', status: 'completed', amount: 50 });
+        await expect(svc.refundStripePayment(COMPANY, { id: null }, 100, {})).rejects.toMatchObject({ code: 'INVALID' });
+    });
+
+    it('applyStripeRefund is idempotent on refund id', async () => {
+        paymentsQueries.findByExternalSourceId.mockResolvedValueOnce({ id: 200, external_id: 're_1' });
+        const res = await svc.applyStripeRefund(COMPANY, { refundId: 're_1', paymentIntentId: 'pi_1', amount: 50 });
+        expect(res).toMatchObject({ deduped: true });
+        expect(paymentsQueries.createTransaction).not.toHaveBeenCalled();
+    });
+});

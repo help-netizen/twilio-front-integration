@@ -4,6 +4,98 @@
 
 ---
 
+## 2026-06-14 — F018 / STRIPE-PAY-001: Stripe Payments — Phases 3–5
+
+Completed the remaining phases on top of the Phase 1–2 foundation. Tap to Pay
+on-device NFC remains blocked on a native/RN mobile shell (web-only SPA); its
+backend is shipped so a mobile client can integrate without further backend work.
+
+### Backend
+- `stripeConnectProvider`: `createPaymentIntent` (direct-charge manual card),
+  `createConnectionToken`, `createTerminalLocation`, `createTerminalPaymentIntent`
+  (card_present), `cancelPaymentIntent`, `createRefund` (all with idempotency keys).
+- `stripePaymentsService`: `createManualCardSession` (Phase 3), `getConnectionToken` /
+  `createTapToPayIntent` / `cancelTerminalIntent` (Phase 4), `refundStripePayment` +
+  idempotent `applyStripeRefund` (Phase 5). Webhook now handles `charge.refunded`
+  (idempotent refund recording, invoice reversal) and `charge.dispute.created`
+  (marks tx, audit). Manual-card/Tap-to-Pay success reconciles via the existing
+  `payment_intent.succeeded` webhook path.
+- Migration 111 `stripe_terminal_locations`; migration 112 seeds
+  `payments.collect_keyed` / `payments.collect_terminal` to roles
+  (admin/manager both; dispatcher keyed; provider terminal) + dev-mode list.
+- Routes: invoice + job `stripe-manual-card-session` (`payments.collect_keyed`) and
+  `tap-to-pay/payment-intent` (`payments.collect_terminal`); `routes/stripeTerminal.js`
+  (`/connection-token`, `/payment-intents/:id/cancel`); `POST /api/payments/:id/stripe-refund`
+  (`payments.refund`). Ledger `source` filter (`stripe`/`zenbooker`/`manual`).
+
+### Frontend
+- `utils/loadStripe.ts` (dependency-free Stripe.js loader, direct-charge stripeAccount);
+  `components/invoices/ManualCardDialog.tsx` (Payment Element) wired into the Collect menu.
+- Public `pages/PublicInvoicePayPage.tsx` at unauthenticated `/pay/:token` (added to
+  `PUBLIC_AUTH_PATHS`); `InvoiceSendDialog` "Include payment link" toggle.
+- TransactionsPage **Source** filter (Stripe/Zenbooker/Manual); refunds on Stripe
+  payments routed through the Stripe refund endpoint in `useTransactions`.
+
+### Tests
+- `tests/stripePayments.test.js` now 26 passing (added manual-card session, terminal
+  connection token, refund flow + refund idempotency, non-Stripe refund rejection).
+  Frontend `tsc --noEmit` 0 errors. No billing/payments regressions.
+
+### Still requires a mobile shell
+- On-device Tap to Pay NFC UI (the web SPA cannot drive the Terminal SDK). Backend is
+  ready: connection-token + card_present payment-intent + cancel endpoints.
+
+---
+
+## 2026-06-14 — F018 / STRIPE-PAY-001: Stripe Payments Marketplace (Phases 1–2)
+
+Tenant customer payments via Stripe Connect (direct charges, no application fee),
+delivered through the `orchestrate` pipeline. Extends PF004's canonical ledger,
+reuses the F016 VAPI marketplace pattern, and stays fully separate from the
+platform-billing Stripe code (ADR-001 / BILLING-UI). Tap to Pay and manual card
+entry deferred; refunds/reporting are later phases.
+
+### Backend
+- Migrations 107–110: `stripe_connected_accounts`, `stripe_payment_sessions`,
+  `stripe_webhook_events`, seed `stripe-payments` marketplace app; partial unique
+  index `payment_transactions(company_id, external_id) WHERE external_source='stripe'`
+  for ledger idempotency. Wired into `marketplaceQueries.ensureMarketplaceSchema`.
+- `services/stripeConnectProvider.js` — zero-SDK Connect REST (account create,
+  account links, getAccount, direct-charge Checkout Session with `Stripe-Account`
+  header + idempotency key, `parseConnectWebhook` HMAC verify via a SEPARATE
+  `STRIPE_CONNECT_WEBHOOK_SECRET`).
+- `services/stripePaymentsService.js` — readiness state machine + gating,
+  connect/onboarding/refresh/disconnect, invoice payment-link create/reuse/send,
+  public Pay-now, and idempotent webhook → ledger sync via
+  `paymentsService.createTransaction` (`external_source='stripe'`), invoice
+  paid/partial via the canonical path. Tenant-scope verified by connected-account id.
+- `db/stripePaymentsQueries.js`; `paymentsQueries.findByExternalSourceId` (idempotency).
+- Routes: `routes/stripePayments.js` (`/api/stripe-payments/*`, `tenant.integrations.manage`),
+  `routes/stripePaymentsWebhook.js` (raw body, no auth, mounted before `express.json`,
+  separate from `/api/billing/webhook`), invoice payment-link endpoints in
+  `routes/invoices.js` (`payments.collect_online` / `payments.view`), public
+  `pay-info` / `pay` in `routes/public-invoices.js`. `src/server.js` mount-only.
+
+### Frontend
+- `pages/StripePaymentsSettingsPage.tsx` (Blanc design) — checklist, readiness
+  panels, Connect/Resume/Refresh/Dashboard/Disconnect; `services/stripePaymentsApi.ts`.
+- `pages/IntegrationsPage.tsx` — `stripe-payments` card → setup page (mirrors VAPI).
+- `App.tsx` route `/settings/integrations/stripe-payments` (guard `tenant.integrations.manage`).
+- `components/invoices/InvoiceDetailPanel.tsx` — split into **Collect payment**
+  (send/copy Stripe link; card/Tap to Pay shown "soon") and **Record offline payment**.
+
+### Tests
+- `tests/stripePayments.test.js` — 20 passing: readiness state machine, webhook
+  signature, event + ledger idempotency, tenant-scope rejection, link reuse, gating.
+  No regressions to platform billing / payments suites (pre-existing env-dependent
+  paymentsRoute failures unchanged).
+
+### Follow-ups (not in this run)
+- Public Pay-now has backend endpoints; a dedicated public pay page/CTA is a small
+  frontend follow-up. Invoice send-dialog "Include payment link" toggle to be wired
+  into the existing send dialog. Phases 3–5 (manual card, Tap to Pay, refunds,
+  reporting filters) tracked in STRIPE-PAY-001.
+
 ## 2026-06-14 — AUTH-2FA-GATE: global 2FA re-verification gate (P1 lockout fix)
 
 Functional testing of new-tenant signup found a P1 bug: the frontend had ZERO

@@ -34,6 +34,8 @@ import { PulsePage } from './pages/PulsePage';
 import { MessagesPage } from './pages/MessagesPage';
 import { IntegrationsPage } from './pages/IntegrationsPage';
 import VapiSettingsPage from './pages/VapiSettingsPage';
+import StripePaymentsSettingsPage from './pages/StripePaymentsSettingsPage';
+import PublicInvoicePayPage from './pages/PublicInvoicePayPage';
 import ApiDocsPage from './pages/ApiDocsPage';
 import LeadFormSettingsPage from './pages/LeadFormSettingsPage';
 import SuperAdminPage from './pages/SuperAdminPage';
@@ -95,6 +97,7 @@ function App() {
           <AppLayout>
             <Routes>
               <Route path="/signup" element={<SignupPage />} />
+              <Route path="/pay/:token" element={<PublicInvoicePayPage />} />
               <Route path="/onboarding" element={<OnboardingPage />} />
               <Route path="/" element={<Navigate to="/pulse" replace />} />
               <Route path="/pulse" element={<ProtectedRoute permissions={['pulse.view']}><PulsePage /></ProtectedRoute>} />
@@ -117,6 +120,7 @@ function App() {
               <Route path="/settings" element={<Navigate to="/settings/integrations" replace />} />
               <Route path="/settings/integrations" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><IntegrationsPage /></ProtectedRoute>} />
               <Route path="/settings/integrations/vapi-ai" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><VapiSettingsPage /></ProtectedRoute>} />
+              <Route path="/settings/integrations/stripe-payments" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><StripePaymentsSettingsPage /></ProtectedRoute>} />
               <Route path="/settings/api-docs" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><ApiDocsPage /></ProtectedRoute>} />
               
               <Route path="/settings/lead-form" element={<ProtectedRoute permissions={['tenant.company.manage']}><LeadFormSettingsPage /></ProtectedRoute>} />

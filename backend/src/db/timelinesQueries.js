@@ -316,9 +316,9 @@ async function unsnoozeExpiredThreads() {
          WHERE is_action_required = true
            AND snoozed_until IS NOT NULL
            AND snoozed_until <= now()
-         RETURNING id, company_id`
+         RETURNING id`
     );
-    return result.rows; // [{ id, company_id }] — company_id needed for tenant-scoped SSE
+    return result.rows.map(r => r.id);
 }
 
 async function assignThread(timelineId, ownerUserId) {

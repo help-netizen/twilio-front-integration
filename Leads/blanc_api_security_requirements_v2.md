@@ -19,7 +19,7 @@ project_stack:
     external_apis: ["Twilio SDK", "Axios", "node-fetch"]
     tests: "Jest"
     dev_server: "Nodemon"
-    deploy: ["Docker", "Vultr"]
+    deploy: ["Docker", "Fly.io"]
     infra_files: ["fly.toml", "Dockerfile"]
   frontend:
     framework: "React 19 + TypeScript"
