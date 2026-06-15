@@ -56,6 +56,38 @@ async function getTechDaysForJob(companyId, jobId, tz) {
     return rows.map(r => ({ technicianId: r.technician_id, scheduleDate: r.schedule_date }));
 }
 
+// ── Backfill / seed helpers (SR-10) ──────────────────────────────────────────
+/** Every company with its resolved routing timezone (dispatch override → company → default). */
+async function getCompaniesWithTimezone() {
+    const { rows } = await db.query(
+        `SELECT c.id AS company_id,
+                COALESCE(ds.timezone, c.timezone, 'America/New_York') AS tz
+         FROM companies c
+         LEFT JOIN dispatch_settings ds ON ds.company_id = c.id`
+    );
+    return rows.map(r => ({ companyId: r.company_id, tz: r.tz }));
+}
+
+/**
+ * Distinct (technician_id, company-local day) pairs to seed for ONE company:
+ * today + future only (company-local, C-3) so the one-time backfill never pays
+ * to route past days. Same participation rules as the live engine.
+ */
+async function getSeedTechDays(companyId, tz) {
+    const { rows } = await db.query(
+        `SELECT DISTINCT elem AS technician_id,
+                (start_date AT TIME ZONE $2)::date AS schedule_date
+         FROM jobs, jsonb_array_elements_text(assigned_provider_user_ids) elem
+         WHERE company_id = $1
+           AND start_date IS NOT NULL
+           AND blanc_status <> ALL($3)
+           AND (start_date AT TIME ZONE $2)::date >= (now() AT TIME ZONE $2)::date
+         ORDER BY schedule_date, technician_id`,
+        [companyId, tz, EXCLUDED_STATUSES]
+    );
+    return rows.map(r => ({ technicianId: r.technician_id, scheduleDate: r.schedule_date }));
+}
+
 // ── Segment reads ─────────────────────────────────────────────────────────────
 async function getActiveSegments(companyId, technicianId, scheduleDate) {
     const { rows } = await db.query(
@@ -183,6 +215,8 @@ async function putCache(entry) {
 module.exports = {
     EXCLUDED_STATUSES,
     getCompanyTimezone,
+    getCompaniesWithTimezone,
+    getSeedTechDays,
     getParticipatingJobsForTechDay,
     getTechDaysForJob,
     getActiveSegments,
