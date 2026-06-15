@@ -98,7 +98,11 @@ async function listUsers(companyId, opts = {}) {
         i++;
     }
     if (role) {
-        conditions.push(`m.role = $${i++}`);
+        // Filter by the modern role_key vocabulary (tenant_admin / manager /
+        // dispatcher / provider). Legacy rows (role_key IS NULL) are normalized
+        // from the old role column the same way the API/UI derive membership_role,
+        // so the filter matches exactly what the table renders.
+        conditions.push(`COALESCE(m.role_key, CASE WHEN m.role = 'company_admin' THEN 'tenant_admin' ELSE 'dispatcher' END) = $${i++}`);
         params.push(role);
     }
     if (status) {

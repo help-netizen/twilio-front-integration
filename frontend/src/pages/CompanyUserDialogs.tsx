@@ -136,7 +136,7 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>
-            <DialogContent className="max-w-md">
+            <DialogContent className="max-w-xl">
                 <DialogHeader>
                     <DialogTitle>Edit User Profile</DialogTitle>
                     <DialogDescription>
@@ -146,8 +146,8 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
                 
                 <div className="space-y-6 py-4">
                     {/* Role Selection */}
-                    <div className="space-y-3">
-                        <Label className="text-sm font-semibold">System Role</Label>
+                    <div className="space-y-2">
+                        <div className="blanc-eyebrow">Role</div>
                         <Select value={form.role_key} onValueChange={v => setForm(f => ({ ...f, role_key: v }))}>
                             <SelectTrigger><SelectValue /></SelectTrigger>
                             <SelectContent>
@@ -160,8 +160,8 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
                     </div>
 
                     <div className="space-y-4">
-                        <Label className="text-sm font-semibold">Operational Settings</Label>
-                        
+                        <div className="blanc-eyebrow">Operational settings</div>
+
                         <div className="flex items-center justify-between">
                             <div className="space-y-0.5">
                                 <Label>Softphone Access</Label>
@@ -202,8 +202,8 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
                         </div>
                     </div>
 
-                    <div className="space-y-3">
-                        <Label className="text-sm font-semibold">Schedule Color</Label>
+                    <div className="space-y-2">
+                        <div className="blanc-eyebrow">Schedule color</div>
                         <div className="flex items-center gap-3">
                             <Input type="color" className="w-14 h-9 p-1 cursor-pointer" value={form.schedule_color} onChange={e => setForm(f => ({ ...f, schedule_color: e.target.value }))} />
                             <div className="text-sm font-mono text-muted-foreground uppercase">{form.schedule_color}</div>

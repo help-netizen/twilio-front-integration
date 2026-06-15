@@ -211,7 +211,7 @@ router.patch('/:userId/status', async (req, res) => {
         if (status === 'inactive') {
             const adminCount = await userService.countCompanyAdmins(companyId);
             if (adminCount <= 1) {
-                const targetUsers = await userService.listUsers(companyId, { role: 'company_admin', status: 'active' });
+                const targetUsers = await userService.listUsers(companyId, { role: 'tenant_admin', status: 'active' });
                 const isTargetAdmin = targetUsers.users.some(u => u.id === userId);
                 if (isTargetAdmin) {
                     return res.status(409).json({ code: 'LAST_ADMIN_REQUIRED', message: 'Cannot disable the last company admin' });
