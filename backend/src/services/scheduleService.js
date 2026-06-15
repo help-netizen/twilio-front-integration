@@ -35,10 +35,20 @@ function rowToScheduleItem(row) {
         start_at: row.start_at ? row.start_at.toISOString ? row.start_at.toISOString() : row.start_at : null,
         end_at: row.end_at ? row.end_at.toISOString ? row.end_at.toISOString() : row.end_at : null,
         address_summary: row.address_summary || '',
-        // SCHED-ROUTE-001 (C-6/FR-003): clickable Maps link, generated (not persisted).
-        google_maps_url: row.address_summary
-            ? require('./routeGeo').googleMapsUrl({ address: row.address_summary })
-            : null,
+        // SCHED-ROUTE-001 (FR-002): geocoding state so the UI can show
+        // pending / needs-review / failed without any Google call on read.
+        lat: row.lat != null ? Number(row.lat) : null,
+        lng: row.lng != null ? Number(row.lng) : null,
+        normalized_address: row.normalized_address || null,
+        geocoding_status: row.geocoding_status || null,
+        // SCHED-ROUTE-001 (C-6/FR-003): clickable Maps link, generated (not
+        // persisted). Prefer coordinates when present — they pin the exact
+        // location; fall back to the free-text address otherwise.
+        google_maps_url: (row.lat != null && row.lng != null)
+            ? require('./routeGeo').googleMapsUrl({ lat: Number(row.lat), lng: Number(row.lng), address: row.address_summary })
+            : (row.address_summary
+                ? require('./routeGeo').googleMapsUrl({ address: row.address_summary })
+                : null),
         customer_name: row.customer_name || '',
         customer_phone: row.customer_phone || '',
         customer_email: row.customer_email || '',
