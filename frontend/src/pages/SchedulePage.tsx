@@ -24,7 +24,7 @@ import { DispatchSettingsDialog } from '../components/schedule/DispatchSettingsD
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 import { JobDetailPanel } from '../components/jobs/JobDetailPanel';
 import { Skeleton } from '../components/ui/skeleton';
-import type { ScheduleItem, CreateFromSlotPayload } from '../services/scheduleApi';
+import type { ScheduleItem } from '../services/scheduleApi';
 
 export function SchedulePage() {
     const schedule = useScheduleData();
