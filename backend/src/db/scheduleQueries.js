@@ -39,6 +39,7 @@ async function getScheduleItems(opts) {
         limit = 200,
         offset = 0,
         providerScope = null,
+        timezone = null,        // SCHED-ROUTE-001 C-3: group days in company-local tz
     } = opts;
 
     // assigned_only provider scope (PF007-HARDENING-001):
@@ -57,6 +58,18 @@ async function getScheduleItems(opts) {
     const params = [companyId]; // $1 is always companyId
     let idx = 1;
 
+    // SCHED-ROUTE-001 C-3: when a company timezone is supplied, group the day
+    // boundaries in that tz (NOT UTC) so route-day == visible-day. Sargable form
+    // — only the date boundaries are converted, the indexed column is untouched.
+    let tzIdx = null;
+    if (timezone) { idx++; params.push(timezone); tzIdx = idx; }
+    const dayLower = (col, dateIdx) => tzIdx
+        ? `${col} >= ($${dateIdx}::date::timestamp AT TIME ZONE $${tzIdx})`
+        : `${col} >= $${dateIdx}::date`;
+    const dayUpper = (col, dateIdx) => tzIdx
+        ? `${col} < (($${dateIdx}::date + INTERVAL '1 day')::timestamp AT TIME ZONE $${tzIdx})`
+        : `${col} < ($${dateIdx}::date + INTERVAL '1 day')`;
+
     // ── Jobs ────────────────────────────────────────────────────────────────
     if (wantJob) {
         const jobConds = [`j.company_id = $1`, `LOWER(j.blanc_status) NOT IN ('cancelled', 'canceled')`];
@@ -70,10 +83,10 @@ async function getScheduleItems(opts) {
             }
         }
         if (startDate) {
-            idx++; jobConds.push(`j.start_date >= $${idx}::date`); params.push(startDate);
+            idx++; jobConds.push(dayLower('j.start_date', idx)); params.push(startDate);
         }
         if (endDate) {
-            idx++; jobConds.push(`j.start_date < ($${idx}::date + INTERVAL '1 day')`); params.push(endDate);
+            idx++; jobConds.push(dayUpper('j.start_date', idx)); params.push(endDate);
         }
         if (statuses && statuses.length) {
             const ph = statuses.map(() => { idx++; return `$${idx}`; });
@@ -102,6 +115,9 @@ async function getScheduleItems(opts) {
                 j.start_date AS start_at,
                 j.end_date AS end_at,
                 j.address AS address_summary,
+                j.lat, j.lng,
+                j.normalized_address,
+                j.geocoding_status,
                 j.customer_name, j.customer_phone, j.customer_email,
                 j.assigned_techs,
                 j.job_type,
@@ -119,10 +135,10 @@ async function getScheduleItems(opts) {
         const leadConds = [`l.company_id = $1`, `l.status NOT IN ('converted','lost','spam')`];
 
         if (startDate) {
-            idx++; leadConds.push(`l.lead_date_time >= $${idx}::date`); params.push(startDate);
+            idx++; leadConds.push(dayLower('l.lead_date_time', idx)); params.push(startDate);
         }
         if (endDate) {
-            idx++; leadConds.push(`l.lead_date_time < ($${idx}::date + INTERVAL '1 day')`); params.push(endDate);
+            idx++; leadConds.push(dayUpper('l.lead_date_time', idx)); params.push(endDate);
         }
         if (statuses && statuses.length) {
             const ph = statuses.map(() => { idx++; return `$${idx}`; });
@@ -148,6 +164,9 @@ async function getScheduleItems(opts) {
                 l.lead_date_time AS start_at,
                 l.lead_end_date_time AS end_at,
                 COALESCE(l.address, '') || CASE WHEN l.city IS NOT NULL THEN ', ' || l.city ELSE '' END AS address_summary,
+                l.latitude AS lat, l.longitude AS lng,
+                NULL::text AS normalized_address,
+                NULL::text AS geocoding_status,
                 COALESCE(l.first_name || ' ' || l.last_name, '') AS customer_name,
                 l.phone AS customer_phone,
                 l.email AS customer_email,
@@ -175,10 +194,10 @@ async function getScheduleItems(opts) {
             }
         }
         if (startDate) {
-            idx++; taskConds.push(`t.start_at >= $${idx}::date`); params.push(startDate);
+            idx++; taskConds.push(dayLower('t.start_at', idx)); params.push(startDate);
         }
         if (endDate) {
-            idx++; taskConds.push(`t.start_at < ($${idx}::date + INTERVAL '1 day')`); params.push(endDate);
+            idx++; taskConds.push(dayUpper('t.start_at', idx)); params.push(endDate);
         }
         if (statuses && statuses.length) {
             const ph = statuses.map(() => { idx++; return `$${idx}`; });
@@ -207,6 +226,9 @@ async function getScheduleItems(opts) {
                 t.start_at,
                 t.end_at,
                 '' AS address_summary,
+                NULL::double precision AS lat, NULL::double precision AS lng,
+                NULL::text AS normalized_address,
+                NULL::text AS geocoding_status,
                 '' AS customer_name,
                 '' AS customer_phone,
                 '' AS customer_email,

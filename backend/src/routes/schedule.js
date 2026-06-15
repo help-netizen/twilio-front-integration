@@ -122,6 +122,21 @@ router.post('/items/from-slot', requirePermission('schedule.dispatch'), async (r
     }
 });
 
+// GET /api/schedule/route-segments — SCHED-ROUTE-001 FR-009 stored route segments
+// (no Google calls). Provider scope applied: assigned_only sees only own segments.
+router.get('/route-segments', requirePermission('schedule.view'), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const { from, to, technician_id } = req.query;
+        const result = await scheduleService.getRouteSegments(
+            companyId, { from, to, technicianId: technician_id }, getProviderScope(req));
+        res.json({ ok: true, data: result });
+    } catch (err) {
+        console.error('[Schedule] GET route-segments error:', err.message);
+        res.status(err.httpStatus || 500).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+    }
+});
+
 // =============================================================================
 // Dispatch settings
 // =============================================================================

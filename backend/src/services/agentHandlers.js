@@ -30,6 +30,148 @@ const HANDLERS = {
         return { tool: input.tool, result };
     },
 
+    // SCHED-ROUTE-001: geocode a job address, persist, then trigger route recalc.
+    async job_geocode(task) {
+        const input = task.agent_input || {};
+        const jobId = input.job_id;
+        if (!jobId) throw new Error('job_geocode requires input.job_id');
+        const { rows } = await db.query(
+            `SELECT id, address, lat, lng, normalized_address, geocoding_status
+             FROM jobs WHERE id = $1 AND company_id = $2`,
+            [jobId, task.company_id]
+        );
+        const job = rows[0];
+        if (!job) return { job_id: jobId, skipped: 'job_not_found' };
+
+        // Skip paid geocode if we already have usable coords and the address is
+        // unchanged since a successful/needs_review geocode (FR-004).
+        const already = job.lat != null && job.lng != null
+            && ['success', 'needs_review'].includes(job.geocoding_status);
+        if (already) return { job_id: jobId, skipped: 'already_geocoded', status: job.geocoding_status };
+
+        if (!job.address || !String(job.address).trim()) {
+            await db.query(
+                `UPDATE jobs SET geocoding_status='failed', geocoding_error_code='NO_ADDRESS', updated_at=now()
+                 WHERE id=$1 AND company_id=$2`, [jobId, task.company_id]);
+            return { job_id: jobId, status: 'failed', reason: 'no_address' };
+        }
+
+        const result = await require('./googlePlacesService').geocodeAddress(job.address);
+        if (result.status === 'failed') {
+            await db.query(
+                `UPDATE jobs SET geocoding_status='failed', geocoded_at=now(),
+                    geocoding_error_code=$3, geocoding_error_message=$4, updated_at=now()
+                 WHERE id=$1 AND company_id=$2`,
+                [jobId, task.company_id, result.error_code || 'ERROR', result.error_message || null]);
+            return { job_id: jobId, status: 'failed' };
+        }
+        await db.query(
+            `UPDATE jobs SET lat=$3, lng=$4, normalized_address=$5,
+                geocoding_status=$6, geocoding_place_id=$7, geocoded_at=now(),
+                geocoding_provider='google_maps', geocoding_error_code=NULL,
+                geocoding_error_message=NULL, updated_at=now()
+             WHERE id=$1 AND company_id=$2`,
+            [jobId, task.company_id, result.lat, result.lng, result.normalized_address || null,
+             result.status, result.place_id || null]);
+
+        // Coordinates changed → recalc affected technician/day segments.
+        await require('./routeSegmentService').recalcForJob(task.company_id, jobId, { coordsChanged: true });
+        return { job_id: jobId, status: result.status, lat: result.lat, lng: result.lng };
+    },
+
+    // SCHED-ROUTE-001: compute pending route segments for a technician/day,
+    // cache-first (Google only on cache miss). Idempotent.
+    async route_calc(task) {
+        const input = task.agent_input || {};
+        const technicianId = input.technician_id;
+        const scheduleDate = input.schedule_date;
+        if (!technicianId || !scheduleDate) throw new Error('route_calc requires technician_id + schedule_date');
+        const routeQueries = require('../db/routeQueries');
+        const distance = require('./routeDistanceService');
+        const segments = await routeQueries.getCalculableSegments(task.company_id, technicianId, scheduleDate);
+        let success = 0, failed = 0, fromCache = 0;
+        for (const seg of segments) {
+            const r = await distance.computePair(
+                { lat: seg.from_latitude, lng: seg.from_longitude },
+                { lat: seg.to_latitude, lng: seg.to_longitude },
+                seg.travel_mode || 'driving');
+            if (r.status === 'success') {
+                await routeQueries.setSegmentResult(task.company_id, seg.id, {
+                    status: 'success', distanceMeters: r.distanceMeters, durationMinutes: r.durationMinutes, cacheKey: r.cacheKey });
+                success++; if (r.fromCache) fromCache++;
+            } else {
+                await routeQueries.setSegmentResult(task.company_id, seg.id, {
+                    status: 'failed', cacheKey: r.cacheKey, errorCode: r.errorCode, errorMessage: r.errorMessage });
+                failed++;
+            }
+        }
+        return { technician_id: technicianId, schedule_date: scheduleDate, segments: segments.length, success, failed, fromCache };
+    },
+
+    // SCHED-ROUTE-001 C-12: best-effort, dedupe-guarded create of a locally-made
+    // Albusto job into ZenBooker. One attempt per local job; the local job is
+    // never rolled back on failure (status recorded in jobs.zb_sync_status).
+    async zb_job_sync(task) {
+        const input = task.agent_input || {};
+        const jobId = input.job_id;
+        if (!jobId) throw new Error('zb_job_sync requires input.job_id');
+        const { rows } = await db.query(
+            `SELECT id, zenbooker_job_id, service_name, address,
+                    customer_name, customer_phone, customer_email, start_date, end_date
+             FROM jobs WHERE id = $1 AND company_id = $2`,
+            [jobId, task.company_id]
+        );
+        const job = rows[0];
+        if (!job) return { job_id: jobId, skipped: 'job_not_found' };
+        // Dedupe: never create a second external job for one local job.
+        if (job.zenbooker_job_id) {
+            return { job_id: jobId, skipped: 'already_synced', zenbooker_job_id: job.zenbooker_job_id };
+        }
+
+        const zb = require('./zenbookerClient');
+        const addr = input.address || {};
+        let territoryId;
+        try { if (addr.postal_code) territoryId = await zb.findTerritoryByPostalCode(addr.postal_code); }
+        catch { /* best-effort: ZB still accepts jobs without a resolved territory */ }
+
+        const start = job.start_date ? new Date(job.start_date) : null;
+        const end = job.end_date ? new Date(job.end_date)
+            : (start ? new Date(start.getTime() + 2 * 60 * 60 * 1000) : null);
+        const payload = {
+            territory_id: territoryId || undefined,
+            timeslot: start ? { type: 'arrival_window', start: start.toISOString(), end: (end || start).toISOString() } : undefined,
+            customer: {
+                name: job.customer_name || 'Unknown',
+                phone: job.customer_phone || undefined,
+                email: job.customer_email || undefined,
+            },
+            address: {
+                line1: addr.line1 || job.address || undefined,
+                line2: addr.line2 || undefined,
+                city: addr.city || undefined,
+                state: addr.state || undefined,
+                postal_code: addr.postal_code || undefined,
+            },
+            service: job.service_name || undefined,
+        };
+
+        try {
+            const res = await zb.createJob(payload);
+            const zbId = res?.job_id ?? res?.id ?? null;
+            await db.query(
+                `UPDATE jobs SET zenbooker_job_id = $3, zb_sync_status = 'synced', updated_at = now()
+                 WHERE id = $1 AND company_id = $2`,
+                [jobId, task.company_id, zbId != null ? String(zbId) : null]);
+            return { job_id: jobId, status: 'synced', zenbooker_job_id: zbId };
+        } catch (err) {
+            // Best-effort: record the failure, keep the local job, do NOT fail the task.
+            await db.query(
+                `UPDATE jobs SET zb_sync_status = 'failed', updated_at = now()
+                 WHERE id = $1 AND company_id = $2`, [jobId, task.company_id]);
+            return { job_id: jobId, status: 'failed', error: (err.message || '').slice(0, 200) };
+        }
+    },
+
     // Summarize a conversation thread (heuristic; LLM provider optional).
     async summarize_thread(task) {
         const input = task.agent_input || {};

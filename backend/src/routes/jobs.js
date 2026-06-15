@@ -126,10 +126,32 @@ router.patch('/:id/coords', requirePermission('jobs.edit'), async (req, res) => 
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
         const { lat, lng } = req.body;
         if (lat == null || lng == null) return res.status(400).json({ ok: false, error: 'lat and lng required' });
-        await jobsService.updateCoords(req.params.id, lat, lng);
+        // SCHED-ROUTE-001 FR-002: also refresh geocoding_status + recalc routes.
+        await jobsService.updateJobLocation(companyId, req.params.id, { lat, lng });
         res.json({ ok: true });
     } catch (err) {
         console.error('[Jobs API] Coords update error:', err.message);
+        res.status(500).json({ ok: false, error: err.message });
+    }
+});
+
+// PATCH /:id/location — SCHED-ROUTE-001 FR-002: edit service address (+ optional
+// coords from AddressAutocomplete). Triggers geocode + route recalc + ZB sync.
+router.patch('/:id/location', requirePermission('jobs.edit'), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id || null;
+        const existing = await jobsService.getJobById(req.params.id, companyId, getProviderScope(req));
+        if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
+        const { address, lat, lng, normalized_address, place_id } = req.body;
+        if (!address && lat == null) {
+            return res.status(400).json({ ok: false, error: 'address or coordinates required' });
+        }
+        const job = await jobsService.updateJobLocation(companyId, req.params.id, {
+            address, lat, lng, normalized_address, place_id,
+        });
+        res.json({ ok: true, data: job });
+    } catch (err) {
+        console.error('[Jobs API] Location update error:', err.message);
         res.status(500).json({ ok: false, error: err.message });
     }
 });

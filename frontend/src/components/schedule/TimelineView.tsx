@@ -9,8 +9,9 @@ import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react'
 import { format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
 import { NewJobPlaceholder, NEW_JOB_DEFAULT_DURATION_MIN } from './NewJobPlaceholder';
-import type { ScheduleItem, DispatchSettings } from '../../services/scheduleApi';
+import type { ScheduleItem, DispatchSettings, RouteSegment } from '../../services/scheduleApi';
 import type { ProviderInfo } from '../../hooks/useScheduleData';
+import { routeSegmentLabel, routeSegmentTone } from '../../utils/routeFormat';
 import {
     todayInTZ, dateInTZ, minutesSinceMidnight,
     formatTimeInTZ, dateKeyInTZ,
@@ -30,7 +31,28 @@ interface TimelineViewProps {
     onSelectItem: (item: ScheduleItem) => void;
     onReschedule?: (entityType: string, entityId: number, startAt: string, endAt: string, title?: string) => void;
     onReassign?: (entityType: string, entityId: number, assigneeId: string | null, assigneeName?: string, title?: string) => void;
-    onCreateFromSlot?: (title: string, startAt: string, endAt: string) => void;
+    onCreateFromSlot?: (title: string, startAt: string, endAt: string, providerId?: string, providerName?: string) => void;
+    routeByPair?: Map<string, RouteSegment>;
+}
+
+const LEG_TONE_COLOR: Record<string, string> = {
+    ok: 'var(--sched-ink-2)', pending: 'var(--sched-ink-3)', warn: '#a65312', none: 'var(--sched-ink-3)',
+};
+
+/** Map each job → the route leg to the next consecutive job (by start order). */
+function buildLegByKey(items: ScheduleItem[], routeByPair?: Map<string, RouteSegment>): Map<string, RouteSegment> {
+    const out = new Map<string, RouteSegment>();
+    if (!routeByPair) return out;
+    const sorted = items
+        .filter(i => i.start_at)
+        .sort((a, b) => new Date(a.start_at!).getTime() - new Date(b.start_at!).getTime());
+    for (let i = 0; i < sorted.length - 1; i++) {
+        const cur = sorted[i], next = sorted[i + 1];
+        if (cur.entity_type !== 'job' || next.entity_type !== 'job') continue;
+        const seg = routeByPair.get(`${cur.entity_id}->${next.entity_id}`);
+        if (seg) out.set(`${cur.entity_type}-${cur.entity_id}`, seg);
+    }
+    return out;
 }
 
 function parseTime(t: string): number {
@@ -91,7 +113,7 @@ function layoutItems(items: ScheduleItem[], tz: string, startHour: number): Posi
 }
 
 export const TimelineView: React.FC<TimelineViewProps> = ({
-    currentDate, items, settings, allProviders = [], onSelectItem, onReschedule, onReassign, onCreateFromSlot,
+    currentDate, items, settings, allProviders = [], onSelectItem, onReschedule, onReassign, onCreateFromSlot, routeByPair,
 }) => {
     const tz = settings.timezone || 'America/New_York';
     const slotDuration = settings.slot_duration || 60;
@@ -398,14 +420,19 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                             )}
 
                             {/* Items — laid out into lanes so overlapping events split width instead of stacking */}
-                            {layoutItems(group.items, tz, startHour).map(({ item, topPx, heightPx, durationMin, lane, laneCount }) => {
+                            {(() => {
+                                const legByKey = buildLegByKey(group.items, routeByPair);
+                                return layoutItems(group.items, tz, startHour).map(({ item, topPx, heightPx, durationMin, lane, laneCount }) => {
                                 const isDraggable = item.entity_type !== 'lead';
                                 const widthPct = 100 / laneCount;
                                 const leftPct = lane * widthPct;
+                                const itemKey = `${item.entity_type}-${item.entity_id}`;
+                                const leg = legByKey.get(itemKey);
+                                const legLabel = leg ? routeSegmentLabel(leg, 'mi') : '';
 
                                 return (
+                                    <React.Fragment key={itemKey}>
                                     <div
-                                        key={`${item.entity_type}-${item.entity_id}`}
                                         data-schedule-item
                                         className={`absolute z-10 ${isDraggable ? 'cursor-grab active:cursor-grabbing' : ''}`}
                                         draggable={isDraggable}
@@ -426,8 +453,32 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                     >
                                         <ScheduleItemCard item={item} compact onClick={onSelectItem} timezone={tz} />
                                     </div>
+                                    {/* Route leg to the next job — anchored to this card's bottom edge.
+                                        pointer-events-none so it never blocks drag/click on the grid. */}
+                                    {legLabel && (
+                                        <div
+                                            className="absolute z-[9] pointer-events-none flex items-center"
+                                            style={{
+                                                top: topPx + heightPx - 9,
+                                                left: `calc(${leftPct}% + 6px)`,
+                                                width: `calc(${widthPct}% - 8px)`,
+                                            }}
+                                        >
+                                            <span
+                                                className="text-[9px] font-semibold tabular-nums truncate px-1 rounded"
+                                                style={{
+                                                    color: LEG_TONE_COLOR[routeSegmentTone(leg)],
+                                                    background: 'var(--sched-surface, rgba(255,253,249,0.9))',
+                                                }}
+                                            >
+                                                ↓ {legLabel}
+                                            </span>
+                                        </div>
+                                    )}
+                                    </React.Fragment>
                                 );
-                            })}
+                                });
+                            })()}
 
                             {/* New-job placeholder — inline, dashed border, sized to default arrival window.
                                 Vertically draggable within this column to fine-tune the time. */}
@@ -441,7 +492,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                     providerName={slotPlaceholder.providerName}
                                     timezone={tz}
                                     onCreate={() => {
-                                        onCreateFromSlot('', slotPlaceholder.startAt, slotPlaceholder.endAt);
+                                        onCreateFromSlot('', slotPlaceholder.startAt, slotPlaceholder.endAt, slotPlaceholder.providerId, slotPlaceholder.providerName);
                                         setSlotPlaceholder(null);
                                     }}
                                     onClose={() => setSlotPlaceholder(null)}

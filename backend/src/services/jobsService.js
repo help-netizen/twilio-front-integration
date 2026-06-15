@@ -15,6 +15,7 @@ const zenbookerClient = require('./zenbookerClient');
 const fsmService = require('./fsmService');
 const eventService = require('./eventService');
 const membershipQueries = require('../db/membershipQueries');
+const { isZenbookerSyncEnabled } = require('../config/featureFlags');
 
 // =============================================================================
 // Constants
@@ -304,6 +305,82 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
     ]);
 
     return rowToJob(rows[0]);
+}
+
+/**
+ * SCHED-ROUTE-001 (FR-001): create a job manually in Albusto (no ZenBooker sync
+ * path). Assignment uses INTERNAL crm_users.id directly (C-2): provider lane id
+ * → assigned_provider_user_ids. If the caller already has trustworthy coordinates
+ * (e.g. from AddressAutocomplete), geocoding_status is set to 'success' so no
+ * paid geocode is needed; otherwise 'not_geocoded' and the caller enqueues one.
+ * Returns the raw job row.
+ */
+async function createManualJob(companyId, input = {}) {
+    if (!companyId) throw new Error('createManualJob requires companyId');
+    const blancStatus = input.blanc_status || 'Submitted';
+
+    // Assignment (FR-001.4 / C-2): the UI groups by assigned_techs[].id (ZenBooker
+    // team-member id) but the route engine keys on the INTERNAL crm_users.id.
+    // Accept the ZB-shaped assigned_techs from the lane, store it for the UI, and
+    // resolve the internal mirror so routing works. A direct assignee_id (already
+    // an internal id) is still honoured for internal callers.
+    const assignedTechs = Array.isArray(input.assigned_techs) ? input.assigned_techs : [];
+    let providerUserIds;
+    if (assignedTechs.length) {
+        providerUserIds = JSON.parse(await resolveAssignedProviderUserIds(companyId, assignedTechs));
+    } else if (Array.isArray(input.assigned_provider_user_ids)) {
+        providerUserIds = input.assigned_provider_user_ids.map(String).filter(Boolean);
+    } else {
+        providerUserIds = input.assignee_id ? [String(input.assignee_id)] : [];
+    }
+    const hasCoords = input.lat != null && input.lng != null;
+    const geocodingStatus = hasCoords ? 'success' : 'not_geocoded';
+
+    const { rows } = await db.query(
+        `INSERT INTO jobs
+            (company_id, blanc_status, zb_status, service_name, start_date, end_date,
+             customer_name, customer_phone, customer_email, address, lat, lng,
+             normalized_address, geocoding_status, geocoding_place_id, geocoded_at,
+             geocoding_provider, assigned_techs, assigned_provider_user_ids, notes, zb_raw)
+         VALUES ($1,$2,'scheduled',$3,$4,$5,$6,$7,$8,$9,$10::double precision,$11::double precision,$12,$13,$14,
+                 CASE WHEN $10::double precision IS NOT NULL AND $11::double precision IS NOT NULL THEN now() ELSE NULL END,
+                 'google_maps',$16::jsonb,$15::jsonb,'[]'::jsonb,'{}'::jsonb)
+         RETURNING *`,
+        [companyId, blancStatus, input.service_name || null,
+         input.start_date || null, input.end_date || null,
+         input.customer_name || null, input.customer_phone || null, input.customer_email || null,
+         input.address || null, hasCoords ? input.lat : null, hasCoords ? input.lng : null,
+         input.normalized_address || null, geocodingStatus, input.geocoding_place_id || null,
+         JSON.stringify(providerUserIds), JSON.stringify(assignedTechs)]
+    );
+    const job = rows[0];
+
+    // C-12 / FR-001.4: best-effort, dedupe-guarded create back into ZenBooker
+    // during the wind-down (flag-gated; async so the HTTP save never blocks).
+    if (isZenbookerSyncEnabled() && !job.zenbooker_job_id) {
+        await enqueueZbJobSync(companyId, job.id, { address: input.zb_address || null })
+            .catch(e => console.error('[JobsService] zb sync enqueue failed (non-fatal):', e.message));
+    }
+    return job;
+}
+
+/**
+ * Enqueue a one-shot ZenBooker sync for a locally-created job on the agentWorker
+ * (kind='agent', FOR UPDATE SKIP LOCKED → processed once). Marks the job
+ * zb_sync_status='pending'. The dedupe-guard lives in the handler (skips if a
+ * zenbooker_job_id already exists). `parts.address` carries structured address
+ * fields (line1/city/state/postal_code) captured at create time.
+ */
+async function enqueueZbJobSync(companyId, jobId, parts = {}) {
+    await db.query(
+        `INSERT INTO tasks (company_id, kind, agent_type, agent_status, agent_input, status, title, created_by)
+         VALUES ($1,'agent','zb_job_sync','queued',$2::jsonb,'open',$3,'system')`,
+        [companyId, JSON.stringify({ job_id: jobId, ...parts }), `ZB sync job ${jobId}`]
+    );
+    await db.query(
+        `UPDATE jobs SET zb_sync_status='pending', updated_at=now() WHERE id=$1 AND company_id=$2`,
+        [jobId, companyId]
+    );
 }
 
 async function getJobById(id, companyId = null, providerScope = null) {
@@ -1064,8 +1141,72 @@ async function updateCoords(jobId, lat, lng) {
     await db.query('UPDATE jobs SET lat = $1, lng = $2, updated_at = NOW() WHERE id = $3', [lat, lng, jobId]);
 }
 
+/**
+ * SCHED-ROUTE-001 FR-002: edit a job's route-affecting location (service address
+ * and/or coordinates) in Albusto. Sets geocoding_status, triggers async geocode
+ * when an address arrives without coords, and recalculates the affected
+ * technician/day route segments (capturing the BEFORE tech-days so a moved job
+ * repairs the sequence it left). Best-effort ZB sync if the job is linked.
+ *
+ * Semantics: changing the address invalidates old coords — when no coords are
+ * supplied the stored lat/lng are cleared and a fresh geocode is enqueued.
+ */
+async function updateJobLocation(companyId, jobId, { address, lat, lng, normalized_address, place_id } = {}) {
+    if (!companyId) throw new Error('updateJobLocation requires companyId');
+    const routeQueries = require('../db/routeQueries');
+    const routeSeg = require('./routeSegmentService');
+
+    // Capture the tech/days this job currently occupies so vacated pairs repair.
+    let beforeTechDays = [];
+    try {
+        const tz = await routeQueries.getCompanyTimezone(companyId);
+        beforeTechDays = await routeQueries.getTechDaysForJob(companyId, jobId, tz);
+    } catch { /* non-fatal */ }
+
+    const hasCoords = lat != null && lng != null;
+    const geocodingStatus = hasCoords ? 'success' : 'not_geocoded';
+    const { rows } = await db.query(
+        `UPDATE jobs SET
+            address            = COALESCE($3::text, address),
+            lat                = $4::double precision,
+            lng                = $5::double precision,
+            normalized_address = $6::text,
+            geocoding_status   = $7::text,
+            geocoding_place_id = $8::text,
+            geocoded_at        = CASE WHEN $4::double precision IS NOT NULL AND $5::double precision IS NOT NULL THEN now() ELSE NULL END,
+            geocoding_provider = 'google_maps',
+            geocoding_error_code = NULL,
+            geocoding_error_message = NULL,
+            updated_at         = now()
+         WHERE id = $1 AND company_id = $2
+         RETURNING *`,
+        [jobId, companyId, address ?? null, hasCoords ? lat : null, hasCoords ? lng : null,
+         normalized_address ?? null, geocodingStatus, place_id ?? null]
+    );
+    const job = rows[0];
+    if (!job) return null;
+
+    // No coords but an address present → geocode async (FR-004).
+    if (!hasCoords && job.address && String(job.address).trim()) {
+        await routeSeg.enqueueGeocode(companyId, jobId).catch(() => {});
+    }
+    // Recalc affected route segments (coords changed → force surviving pairs).
+    await routeSeg.recalcForJob(companyId, jobId, { beforeTechDays, coordsChanged: true })
+        .catch(e => console.error('[JobsService] recalc after location edit failed (non-fatal):', e.message));
+
+    // FR-002: best-effort push the edit to ZenBooker if linked + flag on. ZB has
+    // no generic job-address PATCH, so a not-yet-synced job is (re)enqueued for
+    // create with the new address; an already-synced job records the local edit.
+    if (isZenbookerSyncEnabled() && !job.zenbooker_job_id && job.zb_sync_status !== 'pending') {
+        await enqueueZbJobSync(companyId, jobId, {})   // handler falls back to job.address
+            .catch(e => console.error('[JobsService] zb sync re-enqueue failed (non-fatal):', e.message));
+    }
+    return job;
+}
+
 module.exports = {
     createJob,
+    createManualJob,
     getJobById,
     getJobByZbId,
     listJobs,
@@ -1083,6 +1224,8 @@ module.exports = {
     updateJobTags,
     getTagsForJob,
     updateCoords,
+    updateJobLocation,
+    enqueueZbJobSync,
     getJobTransitions,
     resolveAssignedProviderUserIds,
     refreshCompanyProviderMirror,

@@ -148,6 +148,18 @@ export async function updateJobCoords(id: number | string, lat: number, lng: num
     });
 }
 
+// SCHED-ROUTE-001 FR-002: edit a job's service address (+ optional coords from
+// AddressAutocomplete). Server re-geocodes if needed and recalcs route segments.
+export async function updateJobLocation(
+    id: number | string,
+    data: { address?: string; lat?: number | null; lng?: number | null; normalized_address?: string | null; place_id?: string | null },
+): Promise<LocalJob> {
+    return jobsRequest<LocalJob>(`${JOBS_BASE}/${id}/location`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+    });
+}
+
 export async function addJobNote(id: number, text: string, files?: File[]): Promise<void> {
     if (files && files.length > 0) {
         const formData = new FormData();

@@ -35,6 +35,20 @@ function rowToScheduleItem(row) {
         start_at: row.start_at ? row.start_at.toISOString ? row.start_at.toISOString() : row.start_at : null,
         end_at: row.end_at ? row.end_at.toISOString ? row.end_at.toISOString() : row.end_at : null,
         address_summary: row.address_summary || '',
+        // SCHED-ROUTE-001 (FR-002): geocoding state so the UI can show
+        // pending / needs-review / failed without any Google call on read.
+        lat: row.lat != null ? Number(row.lat) : null,
+        lng: row.lng != null ? Number(row.lng) : null,
+        normalized_address: row.normalized_address || null,
+        geocoding_status: row.geocoding_status || null,
+        // SCHED-ROUTE-001 (C-6/FR-003): clickable Maps link, generated (not
+        // persisted). Prefer coordinates when present — they pin the exact
+        // location; fall back to the free-text address otherwise.
+        google_maps_url: (row.lat != null && row.lng != null)
+            ? require('./routeGeo').googleMapsUrl({ lat: Number(row.lat), lng: Number(row.lng), address: row.address_summary })
+            : (row.address_summary
+                ? require('./routeGeo').googleMapsUrl({ address: row.address_summary })
+                : null),
         customer_name: row.customer_name || '',
         customer_phone: row.customer_phone || '',
         customer_email: row.customer_email || '',
@@ -57,10 +71,15 @@ function rowToScheduleItem(row) {
  * assigned_only providers: own jobs, own tasks, no leads (PF007).
  */
 async function getScheduleItems(companyId, filters = {}, providerScope = null) {
+    // SCHED-ROUTE-001 C-3: group days in the company timezone so route-day matches
+    // the day the user sees. Falls back to the previous UTC behaviour if unresolved.
+    let timezone = null;
+    try { timezone = (await getDispatchSettings(companyId))?.timezone || null; } catch { /* keep UTC */ }
     const result = await scheduleQueries.getScheduleItems({
         companyId,
         ...filters,
         providerScope,
+        timezone,
     });
     return {
         items: result.rows.map(rowToScheduleItem),
@@ -119,6 +138,8 @@ async function getScheduleItemDetail(companyId, entityType, entityId, providerSc
  * Reschedule a schedule item (update start/end times).
  */
 async function rescheduleItem(companyId, entityType, entityId, newStartAt, newEndAt) {
+    // SCHED-ROUTE-001: capture the job's technician/days before the date change.
+    const before = entityType === 'job' ? await captureJobTechDays(companyId, entityId) : null;
     let updated;
     switch (entityType) {
         case 'job':
@@ -138,7 +159,17 @@ async function rescheduleItem(companyId, entityType, entityId, newStartAt, newEn
         throw new ScheduleServiceError('NOT_FOUND', `${entityType} ${entityId} not found`, 404);
     }
 
+    if (entityType === 'job') await recalcAfterJobChange(companyId, entityId, before);
     return { entity_type: entityType, entity_id: entityId, start_at: newStartAt, end_at: newEndAt };
+}
+
+/** Tech/day pairs a job currently belongs to (for repair-on-change). */
+async function captureJobTechDays(companyId, jobId) {
+    try {
+        const routeQueries = require('../db/routeQueries');
+        const tz = await routeQueries.getCompanyTimezone(companyId);
+        return await routeQueries.getTechDaysForJob(companyId, jobId, tz);
+    } catch { return []; }
 }
 
 /**
@@ -147,6 +178,8 @@ async function rescheduleItem(companyId, entityType, entityId, newStartAt, newEn
  * Leads do not support assignment in this version.
  */
 async function reassignItem(companyId, entityType, entityId, assigneeId) {
+    // SCHED-ROUTE-001: capture old technician/days so the vacated route repairs.
+    const before = entityType === 'job' ? await captureJobTechDays(companyId, entityId) : null;
     let updated;
     switch (entityType) {
         case 'job':
@@ -165,6 +198,7 @@ async function reassignItem(companyId, entityType, entityId, assigneeId) {
         throw new ScheduleServiceError('NOT_FOUND', `${entityType} ${entityId} not found`, 404);
     }
 
+    if (entityType === 'job') await recalcAfterJobChange(companyId, entityId, before);
     return { entity_type: entityType, entity_id: entityId, assignee_id: assigneeId };
 }
 
@@ -186,12 +220,79 @@ async function createFromSlot(companyId, entityType, slotData) {
             });
             return { entity_type: 'task', entity_id: row.id, data: row };
         }
+        case 'job': {
+            // SCHED-ROUTE-001 FR-001: create a local Albusto job from a slot.
+            const jobsService = require('./jobsService');
+            const job = await jobsService.createManualJob(companyId, {
+                service_name: slotData.title || slotData.service_name,
+                address: slotData.address,
+                lat: slotData.lat, lng: slotData.lng,
+                normalized_address: slotData.normalized_address,
+                geocoding_place_id: slotData.place_id,
+                start_date: slotData.start_at, end_date: slotData.end_at,
+                customer_name: slotData.customer_name, customer_phone: slotData.customer_phone,
+                customer_email: slotData.customer_email,
+                assignee_id: slotData.assignee_id,           // internal crm_users.id (C-2)
+                assigned_techs: slotData.assigned_techs,     // ZB-shaped lane provider (FR-001.4)
+                zb_address: slotData.zb_address,             // structured parts for ZB sync (C-12)
+            });
+            await triggerJobRouteSideEffects(companyId, job.id, {
+                hasAddress: !!(slotData.address && String(slotData.address).trim()),
+                hasCoords: slotData.lat != null && slotData.lng != null,
+            });
+            return { entity_type: 'job', entity_id: job.id, data: job };
+        }
         case 'lead':
-        case 'job':
             throw new ScheduleServiceError('NOT_IMPLEMENTED', `Creating ${entityType} from slot is not yet supported`, 501);
         default:
             throw new ScheduleServiceError('INVALID_ENTITY_TYPE', `Unknown entity type: ${entityType}`, 400);
     }
+}
+
+/**
+ * SCHED-ROUTE-001: async route side-effects after a job create. Never blocks the
+ * HTTP response on Google latency — geocode + route calc run on the agentWorker.
+ * Failures are logged, not fatal (the local job is already saved).
+ */
+async function triggerJobRouteSideEffects(companyId, jobId, { hasAddress, hasCoords } = {}) {
+    try {
+        const routeSeg = require('./routeSegmentService');
+        if (hasAddress && !hasCoords) await routeSeg.enqueueGeocode(companyId, jobId);
+        await routeSeg.recalcForJob(companyId, jobId, { coordsChanged: true });
+    } catch (e) {
+        console.error('[Schedule] job route side-effects failed (non-fatal):', e.message);
+    }
+}
+
+/**
+ * SCHED-ROUTE-001 FR-002: recalc a job's route segments after a reschedule or
+ * reassign. The caller captures the technician/days the job belonged to BEFORE
+ * the change so vacated sequences are repaired; reconcile runs over before ∪
+ * after. Non-fatal.
+ */
+async function recalcAfterJobChange(companyId, jobId, beforeTechDays) {
+    try {
+        const routeSeg = require('./routeSegmentService');
+        await routeSeg.recalcForJob(companyId, jobId, { beforeTechDays });
+    } catch (e) {
+        console.error('[Schedule] route recalc failed (non-fatal):', e.message);
+    }
+}
+
+/**
+ * SCHED-ROUTE-001 FR-009: read stored route segments for the Schedule. NO Google
+ * calls. PF007 provider scope: assigned_only providers see only their own
+ * (technician_id = their crm_users.id) segments.
+ */
+async function getRouteSegments(companyId, { from, to, technicianId } = {}, providerScope = null) {
+    const routeQueries = require('../db/routeQueries');
+    let techFilter = technicianId || null;
+    if (providerScope?.assignedOnly) {
+        if (!providerScope.userId) return { segments: [] };  // unresolved provider → nothing
+        techFilter = providerScope.userId;                   // force own scope
+    }
+    const segments = await routeQueries.getSegmentsForRange(companyId, { from, to, technicianId: techFilter });
+    return { segments };
 }
 
 /**
@@ -361,6 +462,7 @@ module.exports = {
     rescheduleItem,
     reassignItem,
     createFromSlot,
+    getRouteSegments,
     getDispatchSettings,
     updateDispatchSettings,
     getAvailableSlots,
