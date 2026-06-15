@@ -1,6 +1,6 @@
 /**
  * Backfill contact_id on jobs table.
- * Works from both project dir (local) and the prod container (docker compose exec on Vultr).
+ * Works from both project dir (local) and /tmp (prod via fly ssh).
  */
 try { require('dotenv').config(); } catch { }
 

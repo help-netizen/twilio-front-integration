@@ -14,7 +14,6 @@ const { isContactBusy } = require('../services/callAvailability');
 const { groupsForUser } = require('../services/groupRouting');
 const agentPresence = require('../services/agentPresence');
 const { buildSoftphoneIdentity, parseSoftphoneIdentity } = require('../services/softphoneIdentity');
-const walletService = require('../services/walletService');
 
 function getCompanyId(req) {
     return req.companyFilter?.company_id;
@@ -266,7 +265,7 @@ const twimlRouter = express.Router();
 twimlRouter.post('/twiml/outbound', async (req, res) => {
     const to = req.body.To;
     const requestedCallerId = req.body.CallerId || process.env.SOFTPHONE_CALLER_ID || process.env.TWILIO_PHONE_NUMBER;
-    const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://api.albusto.com';
+    const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
     const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
     const dialActionUrl = `${baseUrl}/webhooks/twilio/voice-dial-action`;
     const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;
@@ -309,12 +308,6 @@ twimlRouter.post('/twiml/outbound', async (req, res) => {
         console.error('[Voice TwiML] Caller ID validation error:', err.message);
         res.status(500);
         res.type('text/xml').send(buildMessageTwiml('Caller ID validation failed.'));
-        return;
-    }
-
-    // Wallet gate: block outbound calls when the balance is at/below the grace floor.
-    if (validatedCompanyId && await walletService.isServiceBlocked(validatedCompanyId).catch(() => false)) {
-        res.type('text/xml').send(buildMessageTwiml('Your account balance is too low to place calls. Please top up your wallet.'));
         return;
     }
 
@@ -392,7 +385,7 @@ twimlRouter.post('/twiml/outbound', async (req, res) => {
  */
 twimlRouter.post('/twiml/inbound', async (req, res) => {
     const defaultIdentity = process.env.SOFTPHONE_DEFAULT_IDENTITY || 'user_1';
-    const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://api.albusto.com';
+    const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
     const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
     const dialActionUrl = `${baseUrl}/webhooks/twilio/voice-dial-action`;
     const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;

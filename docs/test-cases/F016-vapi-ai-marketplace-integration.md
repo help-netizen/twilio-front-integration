@@ -17,7 +17,7 @@
   - display_name: `"My VAPI Prod"`
   - environment: `"prod"`
   - sip_uri: `"sip:tenant-abc@sip.vapi.ai"`
-  - server_url: `"https://api.albusto.com/api/vapi/runtime"`
+  - server_url: `"https://abc-metrics.fly.dev/api/vapi/runtime"`
 - **Моки:** `fetch('https://api.vapi.ai/assistant?limit=1')` → 200 OK
 - **Шаги:**
   1. POST /api/vapi/connections с api_key, display_name, environment

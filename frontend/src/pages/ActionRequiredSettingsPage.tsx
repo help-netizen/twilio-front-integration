@@ -1,7 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { authedFetch } from '../services/apiClient';
-import { MessageSquare, PhoneOff, Voicemail } from 'lucide-react';
+import { Separator } from '../components/ui/separator';
+import { MessageSquare, PhoneOff, Voicemail, Bell } from 'lucide-react';
 import NotificationsSection from './NotificationsSection';
 
 // Types
@@ -68,7 +69,7 @@ function TriggerRow({
                             checked={trigger.enabled}
                             onChange={(e) => onChange({ ...trigger, enabled: e.target.checked })}
                         />
-                        <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#2f63d8]" />
+                        <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-orange-500" />
                     </label>
                 </div>
                 {trigger.enabled && (
@@ -76,7 +77,7 @@ function TriggerRow({
                         <label className="flex items-center gap-1.5">
                             <input
                                 type="checkbox"
-                                className="rounded border-gray-300 text-[#2f63d8] focus:ring-[#2f63d8]"
+                                className="rounded border-gray-300 text-orange-500 focus:ring-orange-500"
                                 checked={trigger.create_task}
                                 onChange={(e) => onChange({ ...trigger, create_task: e.target.checked })}
                             />
@@ -171,15 +172,24 @@ export default function ActionRequiredSettingsPage() {
 
     return (
         <div className="max-w-2xl mx-auto p-6">
-            <div className="blanc-eyebrow">Settings</div>
-            <h1 className="text-2xl font-semibold mt-1 mb-1" style={{ fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1, #202734)' }}>Actions &amp; notifications</h1>
-            <p className="text-sm mb-7" style={{ color: 'var(--blanc-ink-3, #7d8796)' }}>
-                Flag threads that need attention, and manage browser push alerts.
+            <div className="flex items-center gap-3 mb-1">
+                <Bell className="size-6 text-orange-500" />
+                <h1 className="text-2xl font-semibold">Actions and Notifications</h1>
+            </div>
+            <p className="text-sm text-gray-500 mb-6">
+                Manage action triggers and browser push notification settings.
             </p>
 
-            <div className="blanc-eyebrow mb-1">Action triggers</div>
-            <p className="text-xs mb-1" style={{ color: 'var(--blanc-ink-3, #7d8796)' }}>
-                When enabled, matching events are flagged "Action Required" — optionally creating a task.
+            <h2 className="text-lg font-semibold text-gray-800 mb-1">Actions</h2>
+            <p className="text-xs text-gray-500 mb-3">
+                Configure when threads are automatically flagged as "Action Required" and tasks are created.
+            </p>
+
+            <Separator className="mb-2" />
+
+            <h2 className="text-sm font-semibold text-gray-700 mb-1">Automation Triggers</h2>
+            <p className="text-xs text-gray-500 mb-2">
+                When enabled, threads matching these events will be automatically flagged.
             </p>
 
             <TriggerRow
@@ -189,6 +199,7 @@ export default function ActionRequiredSettingsPage() {
                 trigger={config.triggers.inbound_sms}
                 onChange={(t) => handleTriggerChange('inbound_sms', t)}
             />
+            <Separator />
             <TriggerRow
                 icon={<PhoneOff className="size-5" />}
                 label="Missed Call"
@@ -196,6 +207,7 @@ export default function ActionRequiredSettingsPage() {
                 trigger={config.triggers.missed_call}
                 onChange={(t) => handleTriggerChange('missed_call', t)}
             />
+            <Separator />
             <TriggerRow
                 icon={<Voicemail className="size-5" />}
                 label="Voicemail"
@@ -205,16 +217,16 @@ export default function ActionRequiredSettingsPage() {
             />
 
             {saveMutation.isPending && (
-                <p className="text-xs mt-4" style={{ color: 'var(--blanc-ink-3, #7d8796)' }}>Saving…</p>
+                <p className="text-xs text-gray-400 mt-4">Saving…</p>
             )}
 
-            <div className="mt-9">
-                <div className="blanc-eyebrow mb-1">Notifications</div>
-                <p className="text-xs mb-4" style={{ color: 'var(--blanc-ink-3, #7d8796)' }}>
-                    Browser push notifications for real-time alerts.
-                </p>
-                <NotificationsSection />
-            </div>
+            <Separator className="my-8" />
+
+            <h2 className="text-lg font-semibold text-gray-800 mb-1">Notifications</h2>
+            <p className="text-xs text-gray-500 mb-4">
+                Browser push notifications for real-time alerts.
+            </p>
+            <NotificationsSection />
         </div>
     );
 }

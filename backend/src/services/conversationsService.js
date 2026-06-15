@@ -105,9 +105,6 @@ async function sendMessage(conversationId, { body, author = 'agent', mediaSid, f
     const conv = await convQueries.getConversationById(conversationId);
     if (!conv) throw new Error(`Conversation ${conversationId} not found`);
 
-    // Wallet gate: block outbound SMS when the balance is at/below the grace floor.
-    await require('./walletService').assertServiceActive(conv.company_id);
-
     const params = { author };
     if (body) params.body = body;
     if (mediaSid) {
@@ -392,12 +389,11 @@ async function handleMessageAdded(payload) {
                         });
                     }
 
-                    // SSE broadcast (tenant-scoped)
+                    // SSE broadcast
                     realtimeService.broadcast('thread.action_required', {
                         timelineId: timeline.id,
                         reason: 'new_message',
-                        company_id: conv.company_id,
-                    }, conv.company_id);
+                    });
                     console.log(`[ConvService] Action Required set on timeline ${timeline.id} for inbound SMS from ${conv.customer_e164}`);
                 }
             }

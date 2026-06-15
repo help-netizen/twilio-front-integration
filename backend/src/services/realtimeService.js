@@ -43,15 +43,12 @@ class RealtimeService extends EventEmitter {
         // Send initial connection event
         this.sendEvent(res, 'connected', { connectionId, timestamp: new Date() });
 
-        // Store client — tagged with the tenant so broadcasts stay company-scoped
-        // (PF007 / tenant isolation). The /events route runs `authenticate`, so
-        // req.companyFilter is resolved here.
+        // Store client
         this.clients.set(connectionId, {
             res,
             connectedAt: new Date(),
             lastEventAt: new Date(),
-            ip: req.ip || req.connection.remoteAddress,
-            companyId: req.companyFilter?.company_id || req.authz?.company?.id || null,
+            ip: req.ip || req.connection.remoteAddress
         });
 
         this.stats.connections = this.clients.size;
@@ -107,25 +104,11 @@ class RealtimeService extends EventEmitter {
     /**
      * Broadcast event to all connected clients
      */
-    broadcast(eventType, data, companyId) {
-        // Tenant isolation (PF007): an event is delivered ONLY to SSE clients of
-        // the same company. The target company is the explicit arg, else inferred
-        // from the payload. If none can be determined we FAIL CLOSED — drop the
-        // event rather than risk leaking it cross-tenant.
-        const target = companyId
-            ?? data?.company_id ?? data?.companyId
-            ?? data?.call?.company_id ?? data?.job?.company_id
-            ?? data?.conversation?.company_id ?? data?.message?.company_id
-            ?? null;
-        if (target == null) {
-            console.warn(`[SSE] DROP ${eventType}: no companyId — fail-closed (tenant isolation)`);
-            return { sent: 0, failed: 0, dropped: true };
-        }
-
+    broadcast(eventType, data) {
         let sent = 0;
         let failed = 0;
+
         for (const [connectionId, client] of this.clients.entries()) {
-            if (client.companyId == null || String(client.companyId) !== String(target)) continue;
             const success = this.sendEvent(client.res, eventType, data);
             if (success) {
                 client.lastEventAt = new Date();
@@ -137,7 +120,7 @@ class RealtimeService extends EventEmitter {
         }
 
         if (sent > 0 || failed > 0) {
-            console.log(`[SSE] Broadcast ${eventType} (company ${target}): ${sent} sent, ${failed} failed`);
+            console.log(`[SSE] Broadcast ${eventType}: ${sent} sent, ${failed} failed`);
         }
 
         return { sent, failed };
@@ -168,8 +151,7 @@ class RealtimeService extends EventEmitter {
             contact: data.contact ? (typeof data.contact === 'string' ? JSON.parse(data.contact) : data.contact) : undefined,
             updated_at: data.updated_at || new Date(),
             created_at: data.created_at,
-            company_id: data.company_id,
-        }, data.company_id);
+        });
     }
 
     /**
@@ -189,8 +171,7 @@ class RealtimeService extends EventEmitter {
             contact_id: call.contact_id,
             contact: call.contact ? (typeof call.contact === 'string' ? JSON.parse(call.contact) : call.contact) : undefined,
             created_at: call.started_at || call.created_at,
-            company_id: call.company_id,
-        }, call.company_id);
+        });
     }
 
     // ─── Messaging SSE events ───
@@ -199,33 +180,29 @@ class RealtimeService extends EventEmitter {
      * Broadcast new message to all connected clients
      */
     publishMessageAdded(message, conversation, timelineId) {
-        const companyId = conversation?.company_id || message?.company_id;
         this.broadcast('message.added', {
             message,
             conversationId: conversation.id,
             timelineId: timelineId || null,
-            company_id: companyId,
-        }, companyId);
+        });
     }
 
     /**
-     * Broadcast delivery status update. companyId is required for tenant
-     * isolation (the message/conversation's company).
+     * Broadcast delivery status update
      */
-    publishMessageDelivery(messageSid, status, errorCode, companyId) {
+    publishMessageDelivery(messageSid, status, errorCode) {
         this.broadcast('message.delivery', {
             messageSid,
             status,
             errorCode,
-            company_id: companyId,
-        }, companyId);
+        });
     }
 
     /**
      * Broadcast conversation update (new message preview, state change)
      */
     publishConversationUpdate(conversation) {
-        this.broadcast('conversation.updated', { conversation }, conversation?.company_id);
+        this.broadcast('conversation.updated', { conversation });
     }
 
     // ─── Jobs SSE events ───
@@ -234,7 +211,7 @@ class RealtimeService extends EventEmitter {
      * Broadcast job update to all connected clients
      */
     publishJobUpdate(job) {
-        this.broadcast('job.updated', { job }, job?.company_id);
+        this.broadcast('job.updated', { job });
     }
 
     /**

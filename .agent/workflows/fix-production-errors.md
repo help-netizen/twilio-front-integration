@@ -4,7 +4,7 @@ description: how to analyze error logs and fix production bugs one by one
 
 # Analyze & Fix Production Errors
 
-This workflow reads `logs/errors.json` (captured by `prod-error-monitor.js`) and fixes each error one at a time.
+This workflow reads `logs/errors.json` (captured by `fly-error-monitor.js`) and fixes each error one at a time.
 
 ## Prerequisites
 
@@ -48,10 +48,10 @@ Based on `category`:
 Apply the fix locally:
 - **Database schema issue** → create a new migration in `backend/db/migrations/` and apply to production via:
   ```bash
-  ssh deploy@108.61.87.117 "cd /opt/albusto && docker compose exec -T app node -e \"const {Pool}=require('pg'); const p=new Pool({connectionString:process.env.DATABASE_URL}); p.query('<YOUR SQL HERE>').then(r=>{console.log('✅ Done', JSON.stringify(r.rows||[]));p.end()}).catch(e=>{console.error('❌',e.message);p.end()})\""
+  flyctl ssh console -a abc-metrics -C "node -e \"const {Pool}=require('pg'); const p=new Pool({connectionString:process.env.DATABASE_URL}); p.query('<YOUR SQL HERE>').then(r=>{console.log('✅ Done', JSON.stringify(r.rows||[]));p.end()}).catch(e=>{console.error('❌',e.message);p.end()})\""
   ```
 - **Code bug** → fix the file in `backend/src/`, test locally with `npm run dev`
-- **Config issue** → edit `/opt/albusto/.env` on the server, then restart: `ssh deploy@108.61.87.117 "cd /opt/albusto && docker compose up -d app"`
+- **Config issue** → update Fly.io secrets: `flyctl secrets set KEY=VALUE -a abc-metrics`
 
 ### 5. Deploy the fix (if code was changed)
 

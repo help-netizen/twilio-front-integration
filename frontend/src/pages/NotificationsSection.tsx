@@ -10,6 +10,7 @@ import {
     sendTestNotification,
     type PermissionState,
 } from '../services/pushNotificationService';
+import { Separator } from '../components/ui/separator';
 import { Bell, BellOff, CheckCircle, AlertCircle, XCircle, Send, RefreshCw, Shield } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -159,10 +160,10 @@ export default function NotificationsSection() {
     return (
         <div className="space-y-5">
             {/* ── Card 1: Browser Push Status ─────────────────────────────── */}
-            <div className="rounded-xl p-4 bg-white border border-[rgba(117,106,89,0.18)]">
+            <div className="border rounded-lg p-4 bg-white">
                 <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
-                        <Bell className="size-5 text-[#2f63d8]" />
+                        <Bell className="size-5 text-orange-500" />
                         <h3 className="font-medium text-sm">Browser Push Notifications</h3>
                     </div>
                     <StatusBadge state={permState} hasSub={hasSub} />
@@ -180,7 +181,7 @@ export default function NotificationsSection() {
                     <div className="flex items-center gap-3">
                         <button
                             onClick={handleEnable}
-                            className="px-3 py-1.5 bg-[#2f63d8] text-white text-sm rounded-md hover:bg-[#234d9e] transition-colors"
+                            className="px-3 py-1.5 bg-orange-500 text-white text-sm rounded-md hover:bg-orange-600 transition-colors"
                         >
                             Enable notifications
                         </button>
@@ -194,7 +195,7 @@ export default function NotificationsSection() {
                         {!hasSub && (
                             <button
                                 onClick={handleEnable}
-                                className="px-3 py-1.5 bg-[#2f63d8] text-white text-sm rounded-md hover:bg-[#234d9e] transition-colors"
+                                className="px-3 py-1.5 bg-orange-500 text-white text-sm rounded-md hover:bg-orange-600 transition-colors"
                             >
                                 Activate subscription
                             </button>
@@ -241,7 +242,7 @@ export default function NotificationsSection() {
 
             {/* ── Card 2: Company Notification Types ──────────────────────── */}
             {config && (
-                <div className="rounded-xl p-4 bg-white border border-[rgba(117,106,89,0.18)]">
+                <div className="border rounded-lg p-4 bg-white">
                     <div className="flex items-center gap-2 mb-1">
                         <Shield className="size-5 text-gray-500" />
                         <h3 className="font-medium text-sm">Company Notification Types</h3>
@@ -271,10 +272,11 @@ export default function NotificationsSection() {
                                 onChange={() => handleToggle('browser_push_new_text_message_enabled')}
                                 disabled={!isAdmin}
                             />
-                            <div className={`w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#2f63d8] ${!isAdmin ? 'opacity-60 cursor-not-allowed' : ''}`} />
+                            <div className={`w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-orange-500 ${!isAdmin ? 'opacity-60 cursor-not-allowed' : ''}`} />
                         </label>
                     </div>
 
+                    <Separator />
 
                     {/* Toggle: New lead */}
                     <div className="flex items-center justify-between py-2.5">
@@ -290,7 +292,7 @@ export default function NotificationsSection() {
                                 onChange={() => handleToggle('browser_push_new_lead_enabled')}
                                 disabled={!isAdmin}
                             />
-                            <div className={`w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#2f63d8] ${!isAdmin ? 'opacity-60 cursor-not-allowed' : ''}`} />
+                            <div className={`w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-orange-500 ${!isAdmin ? 'opacity-60 cursor-not-allowed' : ''}`} />
                         </label>
                     </div>
 

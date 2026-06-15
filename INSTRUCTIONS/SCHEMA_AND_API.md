@@ -1,7 +1,7 @@
 # Twilio-Front Integration — Schema & API Reference
 
 > **Last updated:** 2026-02-08  
-> **Base URL (prod):** `https://api.albusto.com`  
+> **Base URL (prod):** `https://abc-metrics.fly.dev`  
 > **Base URL (dev):** `http://localhost:3000`
 
 ---
@@ -338,7 +338,7 @@ OWNED_PHONE_NUMBERS=+16175006181
 | `TWILIO_ACCOUNT_SID` | ✅ | Twilio Account SID |
 | `TWILIO_AUTH_TOKEN` | ✅ | Twilio Auth Token |
 | `OWNED_PHONE_NUMBERS` | ✅ | Comma-separated owned numbers |
-| `WEBHOOK_BASE_URL` | ✅ (prod) | `https://api.albusto.com` |
+| `WEBHOOK_BASE_URL` | ✅ (prod) | `https://abc-metrics.fly.dev` |
 | `SIP_USER` | | SIP endpoint user (default: `dispatcher`) |
 | `SIP_DOMAIN` | | SIP domain (default: `abchomes.sip.us1.twilio.com`) |
 | `PORT` | | Server port (default: `3000`) |
@@ -351,6 +351,6 @@ OWNED_PHONE_NUMBERS=+16175006181
 | Setting | Value |
 |---------|-------|
 | Phone Number | `+16175006181` |
-| Voice URL | `https://api.albusto.com/webhooks/twilio/voice-inbound` |
+| Voice URL | `https://abc-metrics.fly.dev/webhooks/twilio/voice-inbound` |
 | SIP Domain | `abchomes.sip.twilio.com` |
-| SIP Call Control URL | `https://api.albusto.com/webhooks/twilio/voice-inbound` |
+| SIP Call Control URL | `https://abc-metrics.fly.dev/webhooks/twilio/voice-inbound` |

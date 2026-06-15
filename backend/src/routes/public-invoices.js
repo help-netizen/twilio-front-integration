@@ -27,6 +27,35 @@ router.get('/invoices/:token/pdf', async (req, res) => {
     }
 });
 
+const TOKEN_RE = /^[A-Za-z0-9_-]{6,64}$/;
+const stripePaymentsService = require('../services/stripePaymentsService');
+
+// GET /api/public/invoices/:token/pay-info — opaque summary + balance for Pay now.
+router.get('/invoices/:token/pay-info', async (req, res) => {
+    try {
+        const { token } = req.params;
+        if (!TOKEN_RE.test(token)) return res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Invalid link' } });
+        const info = await stripePaymentsService.getPublicPayInfo(token);
+        res.json({ ok: true, data: info });
+    } catch (err) {
+        const status = err.httpStatus || 500;
+        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+    }
+});
+
+// POST /api/public/invoices/:token/pay — create/reuse Checkout session, return url.
+router.post('/invoices/:token/pay', async (req, res) => {
+    try {
+        const { token } = req.params;
+        if (!TOKEN_RE.test(token)) return res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Invalid link' } });
+        const { url } = await stripePaymentsService.createPublicPaySession(token);
+        res.json({ ok: true, data: { url } });
+    } catch (err) {
+        const status = err.httpStatus || 500;
+        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+    }
+});
+
 /**
  * Short alias router (mounted at root): GET /i/:token → 302 to the full PDF URL.
  * Keeps customer-facing links short for SMS / pasted messages.

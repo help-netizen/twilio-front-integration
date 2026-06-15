@@ -8,7 +8,7 @@
 
 **Feature:** VAPI assistant with full lead qualification, address validation, schedule booking, CRM creation
 **Status:** implemented (deployed — assistant `30e85a87-9d7e-4694-828e-1fea7d10f3ef`; 42 Jest tests passing)
-**Pending ops:** set `VAPI_TOOLS_SECRET` on Vultr (`/opt/albusto/.env`); deploy backend; assign profile `lead_qualifier_v2` to a call-flow `vapi_agent` node
+**Pending ops:** set `VAPI_TOOLS_SECRET` on Fly.io; deploy backend; assign profile `lead_qualifier_v2` to a call-flow `vapi_agent` node
 **Related docs:**
 - Requirements: `Docs/requirements.md#LQV2`
 - Architecture: `Docs/architecture.md#LQV2`
@@ -152,7 +152,7 @@
   - FR-11b escalation flow (1 retention attempt, затем callback)
   - FR-12 disqualification scripts
   - Current time injection: `{{now}}` variable для определения 14:00 ET cutoff
-- 4 tools: `checkServiceArea`, `validateAddress`, `checkAvailability`, `createLead` — каждый с `server.url: "https://api.albusto.com/api/vapi-tools"` и `server.secret: "{{VAPI_TOOLS_SECRET}}"`
+- 4 tools: `checkServiceArea`, `validateAddress`, `checkAvailability`, `createLead` — каждый с `server.url: "https://abc-metrics.fly.dev/api/vapi-tools"` и `server.secret: "{{VAPI_TOOLS_SECRET}}"`
 - `metadata.slug: "lead_qualifier_v2"`, `metadata.stage: "2"`, `metadata.version: "2.0.0"`
 - После создания файла — деплой: `curl -X POST https://api.vapi.ai/assistant -H "Authorization: Bearer $VAPI_API_KEY" -d @lead-qualifier-v2.json` и обновление секрета через PATCH
 
@@ -162,9 +162,9 @@
 
 ---
 
-### TASK-LQV2-006: Ops — добавить env vars на Vultr и в .env.example
+### TASK-LQV2-006: Ops — добавить env vars на Fly.io и в .env.example
 
-**Цель:** Добавить `VITE_GOOGLE_MAPS_API_KEY` в `.env.example` и установить на Vultr продакшн.
+**Цель:** Добавить `VITE_GOOGLE_MAPS_API_KEY` в `.env.example` и установить на Fly.io продакшн.
 
 **Файлы, которые можно менять:**
 - `.env.example`
@@ -179,7 +179,7 @@
 
 **Зависимости:** Нет (можно сделать первым)
 
-**Статус:** done (key VITE_GOOGLE_MAPS_API_KEY exists; VAPI_TOOLS_SECRET still to set on Vultr (`/opt/albusto/.env`))
+**Статус:** done (key VITE_GOOGLE_MAPS_API_KEY exists; VAPI_TOOLS_SECRET still to set on Fly.io)
 
 ---
 
@@ -2656,3 +2656,121 @@ PhoneNumbersPage (usage chip, A2P banner+wizard), tests
 - [x] TASK-BILL-03: bootstrapCompany → startTrial (idempotent, non-blocking) — DONE
 - [x] TASK-BILL-04: frontend BillingPage + billingApi + route /settings/billing + nav — DONE (Blanc design system, no technical IDs)
 - [x] TASK-BILL-05: tests per test-cases; full suite green — DONE (tests/billingUI.test.js, 8/8; no new regressions vs master)
+
+---
+# F018: Stripe Payments Marketplace (STRIPE-PAY-001 Phases 1–2) — Tasks
+
+Spec: docs/specs/STRIPE-PAY-001-IMPL-phases-1-2.md · Tests: docs/test-cases/STRIPE-PAY-001.md
+Order = dependency order. Each task ≤3 files, isolated, testable. All new API routes:
+`authenticate, requireCompanyAccess`; company_id ← `req.companyFilter?.company_id`; all
+SQL filtered by company_id; foreign entity_id → 404.
+
+### TASK-STRIPE-01: DB migrations 107–110 + marketplace seed wiring
+**Цель:** Создать `stripe_connected_accounts` (107), `stripe_payment_sessions` (108),
+`stripe_webhook_events` (109), seed `stripe-payments` app (110) + ledger idempotency
+index. Зарегистрировать 110 seed в ensureMarketplaceSchema.
+**Файлы:** backend/db/migrations/107..110_*.sql (NEW); backend/src/db/marketplaceQueries.js (EDIT, +110 seed).
+**Нельзя трогать:** существующие миграции, backend/db schema вне новых файлов.
+**Результат:** миграции идемпотентны (IF NOT EXISTS / ON CONFLICT), таблицы созданы,
+плитка stripe-payments появляется в marketplace. partial unique index на
+payment_transactions(company_id, external_id) WHERE external_source='stripe'.
+**Зависимости:** —. **Статус:** done
+
+### TASK-STRIPE-02: stripeConnectProvider.js (REST client)
+**Цель:** zero-SDK REST: createAccount (v2 direct charges, no app fee), createAccountLink,
+getAccount(map flags/requirements/capabilities), createCheckoutSession (Stripe-Account
+header, idempotency key), retrieveCheckoutSession, parseConnectWebhook (HMAC verify via
+STRIPE_CONNECT_WEBHOOK_SECRET, length-safe).
+**Файлы:** backend/src/services/stripeConnectProvider.js (NEW).
+**Нельзя трогать:** backend/src/services/billing/stripeProvider.js (платформенный).
+**Результат:** изолированный provider; unit-тестируемый парс webhook.
+**Зависимости:** —. **Статус:** done
+
+### TASK-STRIPE-03: stripePaymentsQueries.js (DB access)
+**Цель:** CRUD по 3 таблицам; lookup connected account по company_id и по
+stripe_account_id (с последующей company-scope verify); session upsert/find-open;
+webhook event insert ON CONFLICT DO NOTHING.
+**Файлы:** backend/src/db/stripePaymentsQueries.js (NEW).
+**Результат:** все запросы фильтруют по company_id; данные изолированы.
+**Зависимости:** после 01. **Статус:** done
+
+### TASK-STRIPE-04: stripePaymentsService.js — onboarding & status
+**Цель:** getStatus/connect/getOnboardingLink/refreshStatus/disconnect + readiness state
+machine + gating helper. connect создаёт marketplace installation (provisioning_mode none).
+**Файлы:** backend/src/services/stripePaymentsService.js (NEW); может звать marketplaceService.
+**Результат:** readiness переходы соответствуют спеке §5; disconnect сохраняет историю.
+**Зависимости:** после 02, 03. **Статус:** done
+
+### TASK-STRIPE-05: routes/stripePayments.js + mount (settings API)
+**Цель:** GET /status, POST /connect, /onboarding-link, /refresh-status, /disconnect.
+Mount в src/server.js: `app.use('/api/stripe-payments', authenticate,
+requirePermission('tenant.integrations.manage'), requireCompanyAccess, router)`.
+**Файлы:** backend/src/routes/stripePayments.js (NEW); src/server.js (EDIT mount-only).
+**Результат:** 401 без auth, 403 без права; tenant-изоляция.
+**Зависимости:** после 04. **Статус:** done
+
+### TASK-STRIPE-06: invoice payment-link service + routes
+**Цель:** ensurePaymentLink/getPaymentLink/sendPaymentLink в stripePaymentsService;
+эндпоинты POST/GET /api/invoices/:id/stripe-payment-link, POST .../send-payment-link в
+routes/invoices.js. Reuse валидной open-сессии (FR-004); gating; чужой invoice → 404.
+**Файлы:** backend/src/routes/invoices.js (EDIT); backend/src/services/stripePaymentsService.js (EDIT).
+**Результат:** ссылка отражает текущий balance; send пишет invoice_event; perms
+payments.collect_online (write)/payments.view (read).
+**Зависимости:** после 04, 01. **Статус:** done
+
+### TASK-STRIPE-07: webhook route + ledger sync
+**Цель:** routes/stripePaymentsWebhook.js (raw body, no auth, signature verify,
+idempotent по stripe_event_id); handleWebhook dispatch → paymentsService.createTransaction
+(идемпотентно external_source='stripe'); invoice через canonical path; tenant-scope
+verify по stripe_account_id. Mount в src/server.js ДО express.json, отдельно от billing.
+**Файлы:** backend/src/routes/stripePaymentsWebhook.js (NEW); backend/src/services/stripePaymentsService.js (EDIT); src/server.js (EDIT mount-only); backend/src/services/paymentsService.js (EDIT: stripe-idempotent createTransaction).
+**Результат:** один ledger row на платёж; failed → нет completed row; дубли deduped;
+чужой account → reject без мутации.
+**Зависимости:** после 04, 06. **Статус:** done
+
+### TASK-STRIPE-08: public Pay now endpoints
+**Цель:** GET /api/public/invoices/:token/pay-info, POST /api/public/invoices/:token/pay
+в public-invoices.js (no auth, token credential, opaque, без internal ids, regex guard).
+**Файлы:** backend/src/routes/public-invoices.js (EDIT); backend/src/services/stripePaymentsService.js (EDIT, pay-by-token reuse).
+**Результат:** pay-info отдаёт summary+balance; pay создаёт/reuse session → url; paid/
+unavailable states.
+**Зависимости:** после 06. **Статус:** done
+
+### TASK-STRIPE-09: frontend settings page + API client + marketplace card + route
+**Цель:** StripePaymentsSettingsPage.tsx (по VapiSettingsPage), stripePaymentsApi.ts,
+плитка stripe-payments в IntegrationsPage (navigate + бейджи), route в App.tsx
+(guard tenant.integrations.manage).
+**Файлы:** frontend/src/pages/StripePaymentsSettingsPage.tsx (NEW), frontend/src/services/stripePaymentsApi.ts (NEW), frontend/src/pages/IntegrationsPage.tsx (EDIT), frontend/src/App.tsx (EDIT).
+**Нельзя трогать:** authedFetch.ts, MarketplaceConnectDialog (не менять).
+**Результат:** checklist + readiness panels + actions; Blanc design; TS strict.
+**Зависимости:** после 05. **Статус:** done
+
+### TASK-STRIPE-10: frontend invoice surfaces (Collect vs offline, send dialog, public)
+**Цель:** InvoiceDetailPanel — split Collect payment / Record offline; readiness banner;
+active link + latest attempt; invoice send dialog Include-payment-link toggle; public
+Pay now page/redirect.
+**Файлы:** frontend/src/components/invoices/InvoiceDetailPanel.tsx (EDIT) + invoice send dialog + public invoice page (≤3 логических узла, разнести при необходимости).
+**Результат:** flows из spec §4; deferred actions (card/tap) показаны disabled.
+**Зависимости:** после 06, 08, 09. **Статус:** done
+
+### TASK-STRIPE-11: tests per test-cases; full suite green
+**Цель:** Jest по docs/test-cases/STRIPE-PAY-001.md — все P0 + посильные P1; включая
+RBAC 401/403, изоляцию, webhook signature+idempotency, tenant-scope, session reuse,
+balance transitions, degraded mode. Регрессия billing/payments не падает.
+**Файлы:** tests/stripePayments*.test.js (NEW).
+**Результат:** новые suites зелёные; существующие suites без регрессий.
+**Зависимости:** после 05–10. **Статус:** done
+
+---
+# F018 Phases 3–5 — Tasks (done 2026-06-14)
+
+- TASK-STRIPE-12: migration 112 (payments.collect_keyed/collect_terminal seed) + dev-mode list — done
+- TASK-STRIPE-13: provider methods createPaymentIntent/createConnectionToken/createTerminalLocation/createTerminalPaymentIntent/cancelPaymentIntent/createRefund — done
+- TASK-STRIPE-14: migration 111 stripe_terminal_locations + terminal queries — done
+- TASK-STRIPE-15 (Phase 3): service createManualCardSession + invoice/job stripe-manual-card-session routes (payments.collect_keyed) — done
+- TASK-STRIPE-16 (Phase 4): service getConnectionToken/createTapToPayIntent/cancelTerminalIntent + routes/stripeTerminal.js + invoice/job tap-to-pay routes (payments.collect_terminal); NFC client BLOCKED (mobile shell) — backend done
+- TASK-STRIPE-17 (Phase 5): refundStripePayment + applyStripeRefund + webhook charge.refunded/charge.dispute.created + POST /api/payments/:id/stripe-refund — done
+- TASK-STRIPE-18 (Phase 5 reporting): listTransactions source filter + payments route + TransactionsPage Source filter + stripe-aware refund routing — done
+- TASK-STRIPE-19 (Phase 3 FE): loadStripe util + ManualCardDialog (Payment Element) wired into Collect menu — done
+- TASK-STRIPE-20 (follow-ups): public /pay/:token page (PUBLIC_AUTH_PATHS) + InvoiceSendDialog Include-payment-link toggle — done
+- TASK-STRIPE-21: tests extended to 26 (manual card, terminal token, refund flow + idempotency) — done

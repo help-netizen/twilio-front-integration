@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { Phone, Search, Plus, Trash2, Loader2, PlugZap, MapPin, ShieldCheck, ShieldAlert, MessageSquareText } from 'lucide-react';
 import { telephonyApi } from '../../services/telephonyApi';
 import { authedFetch } from '../../services/apiClient';
-import { billingApi } from '../../services/billingApi';
 import type { PhoneNumber, UserGroup } from '../../types/telephony';
 
 export default function PhoneNumbersPage() {
@@ -23,7 +22,6 @@ export default function PhoneNumbersPage() {
     const [found, setFound] = useState<Array<{ phone_number: string; locality: string | null; region: string | null; capabilities: { voice: boolean; sms: boolean }; monthly_price_usd: number }>>([]);
     const [buyingNum, setBuyingNum] = useState<string | null>(null);
     const [releasingSid, setReleasingSid] = useState<string | null>(null);
-    const [numberLimit, setNumberLimit] = useState<number | null>(null);
 
     // Phase 2: usage + A2P compliance
     const [usage, setUsage] = useState<{ total_usd: number; calls: { count: number }; sms: { count: number }; numbers: { count: number } } | null>(null);
@@ -150,18 +148,10 @@ export default function PhoneNumbersPage() {
         try {
             // ALB-107: subaccount tenants list numbers through the tenant API;
             // the legacy master-account company falls back to the old endpoint.
-            const [tenantRes, groupRes, billing] = await Promise.all([
+            const [tenantRes, groupRes] = await Promise.all([
                 authedFetch('/api/telephony/numbers').then(r => r.json()).catch(() => null),
                 authedFetch('/api/user-groups').then(r => r.json()).catch(() => ({ data: [] })),
-                billingApi.overview().catch(() => null),
             ]);
-            if (billing) {
-                // Only cap when the company actually has a billing subscription;
-                // unbilled/platform companies (no subscription) have no limit.
-                const cur = billing.subscription?.plan_id;
-                const p = cur ? billing.plans.find((x) => x.id === cur) : null;
-                setNumberLimit(p?.max_phone_numbers ?? null);
-            }
             if (tenantRes?.ok && !tenantRes.not_connected && Array.isArray(tenantRes.numbers) && tenantRes.numbers.length > 0) {
                 setNumbers(tenantRes.numbers.map((n: any) => ({
                     id: n.sid,
@@ -211,19 +201,13 @@ export default function PhoneNumbersPage() {
     };
 
     const filtered = numbers.filter(n => !search || n.number.includes(search) || n.friendly_name.toLowerCase().includes(search.toLowerCase()) || (n.group || '').toLowerCase().includes(search.toLowerCase()));
-    const atLimit = numberLimit != null && numbers.length >= numberLimit;
     return (
         <div style={{ padding: 24 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
                 <div><h1 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>Phone Numbers</h1><p style={{ fontSize: 13, color: '#6b7280', margin: '4px 0 0' }}>Manage Twilio numbers</p></div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    {telState?.connected && numberLimit != null && (
-                        <span style={{ fontSize: 12, fontWeight: 500, color: atLimit ? '#d44d3c' : '#6b7280' }}>{numbers.length} / {numberLimit} numbers</span>
-                    )}
                     {telState?.connected && (
-                        <button onClick={() => setBuyOpen(true)} disabled={atLimit}
-                            title={atLimit ? `Your plan includes up to ${numberLimit} numbers — upgrade to add more` : undefined}
-                            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', background: '#111827', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: atLimit ? 'default' : 'pointer', opacity: atLimit ? 0.45 : 1 }}>
+                        <button onClick={() => setBuyOpen(true)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', background: '#111827', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
                             <Plus size={14} /> Buy number
                         </button>
                     )}

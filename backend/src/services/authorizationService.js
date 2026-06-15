@@ -239,6 +239,7 @@ function buildDevAuthzContext() {
             'estimates.view', 'estimates.create', 'estimates.send',
             'invoices.view', 'invoices.create', 'invoices.send',
             'payments.view', 'payments.collect_online', 'payments.collect_offline', 'payments.refund',
+            'payments.collect_keyed', 'payments.collect_terminal',
             'reports.dashboard.view', 'reports.jobs.view', 'reports.leads.view',
             'reports.calls.view', 'reports.payments.view', 'reports.financial.view',
             'client_job_history.view',

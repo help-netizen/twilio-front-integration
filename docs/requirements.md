@@ -82,7 +82,7 @@ This is a **new feature** in the `voice-agent/` domain. It extends the existing 
 - `firstResponseLatency < 1200ms`
 - Tool call p95 < 2000ms
 - Concurrent calls: ≥ 10 simultaneous inbound calls supported
-- Uptime SLA: 99.9% (VAPI SLA + backend Vultr SLA)
+- Uptime SLA: 99.9% (VAPI SLA + backend Fly.io SLA)
 - Lead creation must never block call completion
 - `VAPI_TOOLS_SECRET` header required on all tool calls (already implemented in v1 handler)
 - VAPI `x-vapi-secret` validated server-side before processing any tool call
@@ -1500,3 +1500,104 @@ usable end-to-end.
 ### Out of scope
 - Customer Portal управление картой (фаза 2 — пока через повторный Checkout).
 - Proration/downgrade-флоу.
+
+---
+
+## F018: Stripe Payments Marketplace — Tenant Customer Payments (Phases 1–2)
+
+**Status:** Requirements · **Priority:** P0 · **Date:** 2026-06-14
+**Источник:** `docs/specs/STRIPE-PAY-001-stripe-payments-marketplace.md`
+**Статус реализации:** Phases 1–5 реализованы (2026-06-14). Исключение: on-device Tap
+to Pay NFC UI заблокирован отсутствием mobile shell (web-only SPA); backend Terminal
+(connection-token + card_present payment-intent + cancel) готов.
+
+**Scope (изначальный прогон):** Phase 1 (marketplace app + Stripe Connect onboarding +
+страница `/settings/integrations/stripe-payments` + readiness gating) и Phase 2
+(invoice payment links, public `Pay now`, webhook → canonical ledger sync). Phases 3–5
+(manual card / Payment Element, Terminal/Tap to Pay backend, refunds + disputes +
+reporting source filter) добавлены следующим прогоном.
+
+**Краткое описание:** Любая tenant-компания может подключить приём платежей Stripe
+из маркетплейса Albusto и собирать оплату от своих клиентов через invoice payment
+link (Stripe Checkout). Все успешные платежи попадают в canonical
+`payment_transactions` (`external_source='stripe'`). Это **tenant→customer** платежи,
+строго отделённые от **platform billing** (BILLING-UI / ADR-001 — оплата подписки
+Albusto самой компанией).
+
+**Связь с существующими фичами (НЕ дублирует):**
+- **Расширяет PF004 (Payment Collection):** PF004 явно вынес card processing,
+  provider webhooks, Tap to Pay, refunds за пределы P0 и писал только recorded/manual
+  платежи в `payment_transactions`. F018 добавляет Stripe-процессор поверх того же
+  ledger — не создаёт второй payment-center.
+- **Переиспользует паттерн F016 (VAPI marketplace):** marketplace плитка → отдельная
+  страница настройки `/settings/integrations/<app>` → `provisioning_mode='none'` seed →
+  install/disconnect через существующие `/api/marketplace/*`.
+- **Отдельно от BILLING-UI/ADR-001:** не трогает `billingService`, `/api/billing`,
+  `stripeProvider` платформенного биллинга и его webhook `/api/billing/webhook`.
+
+**Продуктовые решения (зафиксированы):**
+1. Charge model — **direct charges**, tenant = merchant of record, **без application
+   fee** (закрывает open decision §16 спеки).
+2. Stripe Connect Accounts v2, по одному connected account на компанию.
+3. **Tap to Pay отложен** (нет mobile shell; web-only Vite SPA). В этом прогоне — нет.
+4. Manual card entry (Payment Element), refunds, reporting-фильтры — следующие прогоны.
+
+**Пользовательские сценарии:**
+1. Tenant admin: `/settings/integrations` → плитка `Stripe Payments` (статус
+   `Available`) → `Configure` → `/settings/integrations/stripe-payments`.
+2. Admin запускает Stripe onboarding (Connect), возвращается, видит readiness states
+   (account connected / payments capability / payouts / requirements due / webhook /
+   test-vs-live) и setup checklist. Плитка отражает состояние (Available / Setup
+   incomplete / Connected / Action required / Payouts disabled / Disconnected).
+3. Online collection заблокирован, пока нет `charges_enabled` + card capability.
+4. По invoice с balance > 0 authorized user создаёт и копирует Stripe payment link
+   (Checkout Session от текущего balance); повторный запрос переиспользует валидную
+   сессию, не плодит дубликаты.
+5. Invoice send dialog: toggle `Include payment link` (по умолчанию on при balance>0 и
+   готовом Stripe), email/SMS, редактируемое тело, copy/preview, warning если не готов.
+6. Public invoice page: `Pay now` → создаёт/переиспользует Checkout Session по
+   opaque-токену (без internal id), redirect в Stripe.
+7. После оплаты Stripe webhook идемпотентно пишет одну строку в `payment_transactions`
+   и обновляет invoice `amount_paid`/`balance_due`/`status` через canonical path; failed
+   attempt виден в UI, но не создаёт completed-платёж.
+8. Admin может Disconnect: новые платежи выключаются, история сохраняется.
+
+**Ограничения и нефункциональные требования:**
+- Card data только через Stripe-controlled UI/SDK; Albusto не хранит/не логирует
+  PAN/CVC/bank data; secrets — в env, не в tenant metadata.
+- Tenant-payments webhook **отдельный** от platform billing webhook, mounted до JSON
+  parsing с raw body, проверка подписи (`STRIPE_CONNECT_WEBHOOK_SECRET`).
+- Каждый Stripe object проходит tenant-scope verification перед ledger mutation.
+- Идемпотентность: webhook по `stripe_event_id`; ledger по `(company_id, external_id)`;
+  payment initiation с idempotency keys; UI терпит webhook delay (processing state).
+- Все API: `authenticate, requireCompanyAccess`; `company_id` только из
+  `req.companyFilter.company_id`; все SQL фильтруют по `company_id`.
+- Blanc design system на странице настройки (без `<hr>`, без пустых полей).
+
+**Потенциально вовлечённые модули/части системы:**
+- Backend: новые миграции (`stripe_connected_accounts`, `stripe_payment_sessions`,
+  `stripe_webhook_events`, seed marketplace app); `backend/src/services/stripePaymentsService.js`,
+  `stripeConnectProvider.js`; `backend/src/routes/stripePayments.js`,
+  `stripePaymentsWebhook.js`; расширение `backend/src/routes/invoices.js`,
+  `backend/src/routes/public-invoices.js`; mount в `src/server.js` (mount-only).
+- Reuse: `paymentsService.createTransaction` (`external_source='stripe'`),
+  `invoicesService.recordPayment`, `invoicesQueries.createEvent`, `ensurePublicLink`,
+  marketplace install/disconnect, `marketplaceQueries.ensureMarketplaceSchema`.
+- Frontend: `frontend/src/pages/StripePaymentsSettingsPage.tsx`,
+  `frontend/src/services/stripePaymentsApi.ts`; правки `IntegrationsPage.tsx` (плитка),
+  `App.tsx` (роут), `components/invoices/InvoiceDetailPanel.tsx` (Collect vs Record
+  offline), invoice send dialog, public invoice page.
+
+**Затронутые интеграции:** Stripe (Connect, Checkout Sessions, webhooks). Не Twilio/
+Front/Zenbooker (SMS-отправка payment link использует существующий messaging path).
+
+**Защищённые части кода (НЕЛЬЗЯ ломать):**
+- `src/server.js` core middleware/SSE (только mount-only добавления).
+- `frontend/src/lib/authedFetch.ts`, `frontend/src/hooks/useRealtimeEvents.ts`.
+- `backend/db/` — только новые миграции по явному плану.
+- Платформенный billing: `billingService`, `/api/billing`, `stripeProvider`,
+  `/api/billing/webhook` — не изменять.
+
+### Out of scope (этот прогон)
+- Manual card / Payment Element (Phase 3); Tap to Pay / Terminal (Phase 4); refunds +
+  dispute visibility + расширенные reporting-фильтры (Phase 5); application-fee funds flow.

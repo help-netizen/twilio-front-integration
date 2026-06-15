@@ -17,7 +17,7 @@ function getCompanyId(req) {
 }
 
 function getBaseUrl() {
-    return process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://api.albusto.com';
+    return process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
 }
 
 async function syncTwilioVoiceWebhook(phoneNumber) {

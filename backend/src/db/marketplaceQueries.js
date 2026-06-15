@@ -27,6 +27,12 @@ async function ensureMarketplaceSchema(client = null) {
         await query(readMigration('083_create_marketplace_apps.sql'));
         await query(readMigration('087_seed_mail_secretary_marketplace_app.sql'));
         await query(readMigration('088_seed_vapi_ai_marketplace_app.sql'));
+        // F018 Stripe Payments: connected accounts, sessions, webhook log + seed app.
+        await query(readMigration('107_create_stripe_connected_accounts.sql'));
+        await query(readMigration('108_create_stripe_payment_sessions.sql'));
+        await query(readMigration('109_create_stripe_webhook_events.sql'));
+        await query(readMigration('110_seed_stripe_payments_marketplace_app.sql'));
+        await query(readMigration('111_create_stripe_terminal_locations.sql'));
         return;
     }
 

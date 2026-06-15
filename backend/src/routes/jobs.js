@@ -506,4 +506,33 @@ router.post('/:id/reschedule', requirePermission('jobs.edit'), async (req, res) 
     }
 });
 
+// =============================================================================
+// F018 Stripe Payments — collect from job context (manual card / Tap to Pay)
+// =============================================================================
+const stripePaymentsService = require('../services/stripePaymentsService');
+
+function jobStripeError(err, res) {
+    if (err instanceof stripePaymentsService.StripePaymentsError) {
+        return res.status(err.httpStatus || 400).json({ ok: false, error: { code: err.code, message: err.message } });
+    }
+    console.error('[Jobs API] stripe error:', err.message);
+    return res.status(err.httpStatus || 500).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+}
+
+router.post('/:id/stripe-manual-card-session', requirePermission('payments.collect_keyed'), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const data = await stripePaymentsService.createManualCardSession(companyId, { id: req.user?.sub }, { jobId: req.params.id, amount: req.body?.amount });
+        res.json({ ok: true, data });
+    } catch (err) { jobStripeError(err, res); }
+});
+
+router.post('/:id/tap-to-pay/payment-intent', requirePermission('payments.collect_terminal'), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const data = await stripePaymentsService.createTapToPayIntent(companyId, { id: req.user?.sub }, { jobId: req.params.id, amount: req.body?.amount });
+        res.json({ ok: true, data });
+    } catch (err) { jobStripeError(err, res); }
+});
+
 module.exports = router;

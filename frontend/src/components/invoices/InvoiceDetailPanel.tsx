@@ -27,6 +27,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { EstimateItemDialog, type ItemDraft } from '../estimates/EstimateItemDialog';
+import ManualCardDialog from './ManualCardDialog';
 import { EstimateSummaryDialog } from '../estimates/EstimateSummaryDialog';
 import { ItemPresetSearchCombobox } from '../estimates/ItemPresetSearchCombobox';
 import {
@@ -158,6 +159,8 @@ export function InvoiceDetailPanel({
     const [paymentAmount, setPaymentAmount] = useState<string>('');
     const [paymentMethod, setPaymentMethod] = useState<string>('card');
     const [recording, setRecording] = useState(false);
+    const [collecting, setCollecting] = useState(false);
+    const [manualCardOpen, setManualCardOpen] = useState(false);
 
     // Pre-fill the amount with the remaining balance whenever the popover opens
     // (or when the underlying balance changes while it's open).
@@ -175,6 +178,28 @@ export function InvoiceDetailPanel({
     const canSend = !invoice.status || (invoice.status !== 'void' && invoice.status !== 'refunded');
     const canVoid = !isVoid;
     const canRecordPayment = !isVoid && Number(invoice.balance_due) > 0;
+
+    // F018: Stripe "Collect payment" — create a payment link and copy/send it.
+    // Readiness is enforced by the backend (returns NOT_READY if Stripe isn't set up).
+    const collectPayment = async (mode: 'copy' | 'send') => {
+        setCollecting(true);
+        try {
+            const { invoiceStripeApi } = await import('../../services/stripePaymentsApi');
+            if (mode === 'send') {
+                await invoiceStripeApi.sendLink(invoice.id, { channel: 'email' });
+                toast.success('Payment link sent');
+            } else {
+                const link = await invoiceStripeApi.createLink(invoice.id);
+                await navigator.clipboard.writeText(link.url).catch(() => {});
+                toast.success('Payment link copied');
+            }
+        } catch (e: any) {
+            const msg = String(e?.message || '');
+            toast.error(/not ready|NOT_READY/i.test(msg) ? 'Connect Stripe in Integrations to collect online payments' : msg || 'Could not create payment link');
+        } finally {
+            setCollecting(false);
+        }
+    };
 
     // ── Item-edit handlers ───────────────────────────────────────────────────
 
@@ -663,14 +688,35 @@ export function InvoiceDetailPanel({
                                     </Button>
                                 )}
                                 {canRecordPayment && (
+                                    <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                            <Button variant="default" size="sm" disabled={collecting}>
+                                                <CreditCard className="mr-1 size-3.5" />Collect payment
+                                            </Button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent align="end" className="w-52">
+                                            <DropdownMenuItem onSelect={() => collectPayment('send')}>
+                                                <Send className="size-4" />Send payment link
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem onSelect={() => collectPayment('copy')}>
+                                                <CreditCard className="size-4" />Copy payment link
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem onSelect={() => setManualCardOpen(true)}>
+                                                <CreditCard className="size-4" />Enter card manually
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem disabled>Tap to Pay · mobile app</DropdownMenuItem>
+                                        </DropdownMenuContent>
+                                    </DropdownMenu>
+                                )}
+                                {canRecordPayment && (
                                     <Popover open={paymentOpen} onOpenChange={setPaymentOpen}>
                                         <PopoverTrigger asChild>
-                                            <Button variant={isDraft ? 'outline' : 'default'} size="sm">
-                                                <CreditCard className="mr-1 size-3.5" />Record payment
+                                            <Button variant="outline" size="sm">
+                                                <CreditCard className="mr-1 size-3.5" />Record offline payment
                                             </Button>
                                         </PopoverTrigger>
                                         <PopoverContent align="end" className="w-72">
-                                            <p className="mb-2 text-sm font-semibold">Record payment</p>
+                                            <p className="mb-2 text-sm font-semibold">Record offline payment</p>
                                             {paymentFormBody}
                                         </PopoverContent>
                                     </Popover>
@@ -713,6 +759,12 @@ export function InvoiceDetailPanel({
                 isEdit={itemEditingId != null}
                 initial={itemDraft}
                 onSave={saveItemDraft}
+            />
+            <ManualCardDialog
+                open={manualCardOpen}
+                onOpenChange={setManualCardOpen}
+                invoiceId={invoice.id}
+                onSuccess={() => { onChanged?.(invoice); }}
             />
         </div>
     );

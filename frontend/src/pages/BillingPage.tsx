@@ -1,15 +1,15 @@
 /**
- * BillingPage.tsx — BILLING-UI. Subscription & billing cabinet for the company
- * owner (tenant.company.manage). Blanc design system, money-first:
- * what do I pay, what's my next bill, how much have I used, how do I change.
+ * BillingPage.tsx — BILLING-UI. Subscription & billing cabinet for the
+ * company owner (tenant.company.manage). UX-first, Blanc design system:
+ * what plan am I on, how much is left, how do I upgrade, where are my invoices.
  * No technical IDs (customer_id / subscription_id) surface here.
  */
 import { useEffect, useState } from 'react';
-import { Loader2, Check, ExternalLink, CreditCard, AlertTriangle, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { Loader2, Check, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
-import { Button } from '../components/ui/button';
-import { billingApi, type BillingOverview, type Plan, type WalletInfo } from '../services/billingApi';
+import { billingApi, type BillingOverview } from '../services/billingApi';
 
+// Friendly, decision-useful labels for the metered metrics.
 const METRIC_LABELS: Record<string, string> = {
     sms: 'Text messages',
     call_minutes: 'Call minutes',
@@ -21,20 +21,6 @@ const STATUS_LABEL: Record<string, string> = {
     trialing: 'Trial', active: 'Active', past_due: 'Payment due',
     canceled: 'Canceled', unpaid: 'Unpaid', incomplete: 'Setup incomplete',
 };
-type Tone = 'ok' | 'info' | 'danger' | 'warn' | 'muted';
-const STATUS_TONE: Record<string, Tone> = {
-    active: 'ok', trialing: 'info', past_due: 'danger', unpaid: 'danger',
-    canceled: 'muted', incomplete: 'warn',
-};
-function toneStyle(tone: Tone): React.CSSProperties {
-    switch (tone) {
-        case 'ok': return { background: 'rgba(27,139,99,0.12)', color: 'var(--blanc-success)' };
-        case 'info': return { background: 'rgba(47,99,216,0.12)', color: 'var(--blanc-info)' };
-        case 'danger': return { background: 'rgba(212,77,60,0.12)', color: 'var(--blanc-danger)' };
-        case 'warn': return { background: 'rgba(178,106,29,0.12)', color: 'var(--blanc-warning)' };
-        default: return { background: 'rgba(117,106,89,0.10)', color: 'var(--blanc-ink-2)' };
-    }
-}
 
 function fmtDate(iso: string | null): string {
     if (!iso) return '';
@@ -44,77 +30,32 @@ function daysLeft(iso: string | null): number | null {
     if (!iso) return null;
     return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000));
 }
-function usd(n: number, cents = false): string {
-    return '$' + Number(n).toLocaleString(undefined, cents
-        ? { minimumFractionDigits: 2, maximumFractionDigits: 2 }
-        : { maximumFractionDigits: 0 });
+function barColor(pct: number): string {
+    if (pct > 100) return '#dc2626';
+    if (pct >= 80) return '#d97706';
+    return '#16a34a';
 }
-function usageBarColor(pct: number): string {
-    if (pct > 100) return 'var(--blanc-danger)';
-    if (pct >= 80) return 'var(--blanc-warning)';
-    return 'var(--blanc-success)';
-}
-function overageFor(plan: Plan | undefined, metric: string, used: number): number {
-    if (!plan) return 0;
-    const cap = Number(plan.included_units?.[metric] || 0);
-    const rate = Number(plan.metered?.[metric] || 0);
-    if (cap <= 0 || rate <= 0 || used <= cap) return 0;
-    return (used - cap) * rate;
-}
-
-const CARD_BG = 'rgba(117,106,89,0.05)';
-const KPI: React.CSSProperties = { background: CARD_BG, borderRadius: 16, padding: '14px 16px' };
 
 export default function BillingPage() {
     const [data, setData] = useState<BillingOverview | null>(null);
-    const [wallet, setWallet] = useState<WalletInfo | null>(null);
     const [loading, setLoading] = useState(true);
-    const [busy, setBusy] = useState<string | null>(null);
+    const [upgrading, setUpgrading] = useState<string | null>(null);
 
     useEffect(() => {
-        Promise.all([billingApi.overview(), billingApi.wallet().catch(() => null)])
-            .then(([ov, w]) => { setData(ov); setWallet(w); })
+        billingApi.overview()
+            .then(setData)
             .catch((e: any) => toast.error(e.message || 'Failed to load billing'))
             .finally(() => setLoading(false));
     }, []);
 
-    const checkout = async (planId: string) => {
-        setBusy(planId);
+    const upgrade = async (planId: string) => {
+        setUpgrading(planId);
         try {
-            const out = await billingApi.checkout(planId);
-            if (out.url) { window.location.href = out.url; return; }
-            toast.success('Plan activated');
-            window.location.reload();
-        } catch (e: any) {
-            toast.error(e.code === 'PROVIDER_NOT_CONFIGURED' ? 'Billing is not enabled yet.' : (e.message || 'Could not change plan'));
-            setBusy(null);
-        }
-    };
-
-    const topUp = async (amount: number) => {
-        setBusy('topup');
-        try {
-            const { url } = await billingApi.topup(amount);
-            if (url) window.location.href = url;
-            else setBusy(null);
-        } catch (e: any) {
-            toast.error(e.code === 'PROVIDER_NOT_CONFIGURED' ? 'Billing is not enabled yet.' : (e.message || 'Could not start top-up'));
-            setBusy(null);
-        }
-    };
-
-    const openPortal = async () => {
-        setBusy('portal');
-        try {
-            const { url } = await billingApi.portal();
+            const { url } = await billingApi.checkout(planId);
             window.location.href = url;
         } catch (e: any) {
-            toast.error(
-                e.code === 'NO_CUSTOMER' ? 'Choose a plan first to set up payment.'
-                    : e.code === 'PROVIDER_NOT_CONFIGURED' ? 'Billing is not enabled yet.'
-                        : (e.message || 'Could not open billing portal'),
-            );
-            setBusy(null);
+            toast.error(e.code === 'PROVIDER_NOT_CONFIGURED' ? 'Billing is not enabled yet.' : (e.message || 'Could not start checkout'));
+            setUpgrading(null);
         }
     };
 
@@ -128,153 +69,54 @@ export default function BillingPage() {
     const currentPlan = plans.find(p => p.id === currentPlanId);
     const status = subscription?.status || 'trialing';
     const isTrial = status === 'trialing';
-    const needsPayment = status === 'past_due' || status === 'unpaid';
     const trialDays = daysLeft(subscription?.trial_ends_at || null);
     const renews = subscription?.current_period_end || subscription?.trial_ends_at || null;
-    const monthlyBase = Number(currentPlan?.monthly_base_usd || 0);
-
-    const overageTotal = METRIC_ORDER.reduce((sum, m) => sum + overageFor(currentPlan, m, Number(usage[m] || 0)), 0);
-    const nextBill = monthlyBase + overageTotal;
-
-    const now = new Date();
-    const periodResets = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-    const tone = STATUS_TONE[status] || 'muted';
 
     return (
-        <div style={{ padding: '28px 24px', maxWidth: 1120, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 26 }}>
-            {/* Header */}
-            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-                <div>
-                    <div className="blanc-eyebrow">Billing</div>
-                    <h1 style={{ fontSize: 26, fontWeight: 600, margin: '4px 0 0', fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1)' }}>
-                        {currentPlan?.name || STATUS_LABEL[status]}{!isTrial && currentPlan ? ' plan' : ''}
-                    </h1>
-                </div>
-                <span style={{ fontSize: 12, fontWeight: 600, padding: '4px 12px', borderRadius: 999, ...toneStyle(tone) }}>
-                    {STATUS_LABEL[status] || status}
-                </span>
+        <div style={{ padding: '28px 24px', maxWidth: 880, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 28 }}>
+            <div>
+                <h1 style={{ fontSize: 26, fontWeight: 700, margin: 0, fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif' }}>Subscription</h1>
             </div>
 
-            {/* Wallet */}
-            {wallet && (
-                <div style={{ background: 'var(--blanc-surface-strong, #fffdf9)', border: `1px solid ${wallet.blocked ? 'rgba(212,77,60,0.5)' : 'var(--blanc-line)'}`, borderRadius: 18, padding: 18 }}>
-                    {wallet.blocked && (
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', color: 'var(--blanc-danger)', fontSize: 13, marginBottom: 14, background: 'rgba(212,77,60,0.10)', borderRadius: 12, padding: '10px 12px' }}>
-                            <AlertTriangle size={15} /> Calls and texts are paused — your balance is below {usd(wallet.grace_floor_usd)}. Top up to resume service.
-                        </div>
-                    )}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap' }}>
-                        <div>
-                            <div className="blanc-eyebrow">Wallet balance</div>
-                            <div style={{ fontSize: 30, fontWeight: 600, fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: wallet.balance_usd < 0 ? 'var(--blanc-danger)' : 'var(--blanc-ink-1)' }}>{usd(wallet.balance_usd, true)}</div>
-                            <div style={{ fontSize: 12, color: 'var(--blanc-ink-3)', marginTop: 2 }}>
-                                {wallet.auto_recharge.enabled
-                                    ? `Auto top-up ${usd(wallet.auto_recharge.amount_usd)} when below ${usd(wallet.auto_recharge.threshold_usd)}`
-                                    : 'Auto top-up off'}
-                                {wallet.has_card ? '' : ' · no card on file'}
-                            </div>
-                        </div>
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>Add funds</span>
-                            {[10, 25, 50, 100].map(a => (
-                                <Button key={a} size="sm" variant={a === 25 ? 'default' : 'outline'} disabled={busy === 'topup' || !billing_enabled} onClick={() => topUp(a)}>
-                                    {busy === 'topup' && a === 25 ? <Loader2 size={14} className="animate-spin" /> : <CreditCard size={14} />} {usd(a)}
-                                </Button>
-                            ))}
-                        </div>
-                    </div>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, fontSize: 13, color: 'var(--blanc-ink-2)', cursor: 'pointer' }}>
-                        <input type="checkbox" checked={wallet.auto_recharge.enabled}
-                            onChange={async e => {
-                                const enabled = e.target.checked;
-                                setWallet({ ...wallet, auto_recharge: { ...wallet.auto_recharge, enabled } });
-                                await billingApi.setAutoRecharge({ enabled }).catch(() => toast.error('Could not update auto-recharge'));
-                            }} />
-                        Auto-recharge from my saved card when the balance runs low
-                    </label>
+            {/* Status */}
+            <section>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 22, fontWeight: 700, color: 'var(--blanc-ink-1)' }}>
+                        {currentPlan?.name || STATUS_LABEL[status]} plan
+                    </span>
+                    <span style={{
+                        fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 999,
+                        background: status === 'past_due' || status === 'unpaid' ? '#fef2f2' : 'rgba(117,106,89,0.08)',
+                        color: status === 'past_due' || status === 'unpaid' ? '#dc2626' : 'var(--blanc-ink-2)',
+                    }}>{STATUS_LABEL[status] || status}</span>
                 </div>
-            )}
-
-            {/* Money-first KPIs */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-                <div style={KPI}>
-                    <div style={{ fontSize: 12, color: 'var(--blanc-ink-2)' }}>Monthly cost</div>
-                    <div style={{ fontSize: 23, fontWeight: 600, fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1)' }}>
-                        {monthlyBase > 0 ? usd(monthlyBase) : 'Free'}
-                    </div>
-                    <div style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>{monthlyBase > 0 ? 'per month' : isTrial ? 'during trial' : ' '}</div>
-                </div>
-
-                <div style={KPI}>
-                    <div style={{ fontSize: 12, color: 'var(--blanc-ink-2)' }}>{isTrial ? 'Trial' : 'Next bill'}</div>
-                    {isTrial ? (
-                        <>
-                            <div style={{ fontSize: 23, fontWeight: 600, fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1)' }}>
-                                {trialDays != null ? `${trialDays} day${trialDays === 1 ? '' : 's'}` : '—'}
-                            </div>
-                            <div style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>{renews ? `free until ${fmtDate(renews)}` : 'left'}</div>
-                        </>
-                    ) : (
-                        <>
-                            <div style={{ fontSize: 23, fontWeight: 600, fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1)' }}>{usd(nextBill)}</div>
-                            <div style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>
-                                {renews ? fmtDate(renews) : 'next cycle'}{overageTotal > 0 ? ` · incl. ${usd(overageTotal)} overage` : ''}
-                            </div>
-                        </>
-                    )}
-                </div>
-
-                <div style={{ ...KPI, ...(needsPayment ? { background: 'rgba(212,77,60,0.10)' } : {}) }}>
-                    <div style={{ fontSize: 12, color: needsPayment ? 'var(--blanc-danger)' : 'var(--blanc-ink-2)', display: 'flex', alignItems: 'center', gap: 5 }}>
-                        {needsPayment && <AlertTriangle size={13} />} Payment method
-                    </div>
-                    <div style={{ fontSize: 14, color: 'var(--blanc-ink-2)', margin: '5px 0 9px' }}>
-                        {needsPayment ? 'Update your card to keep service active.' : 'Card, plan changes, and receipts.'}
-                    </div>
-                    <Button
-                        size="sm"
-                        variant={needsPayment ? 'default' : 'outline'}
-                        disabled={busy === 'portal' || !billing_enabled}
-                        onClick={openPortal}
-                    >
-                        <CreditCard size={14} /> {needsPayment ? 'Update payment method' : 'Manage'}
-                    </Button>
-                </div>
-            </div>
+                <p style={{ margin: '6px 0 0', fontSize: 14, color: 'var(--blanc-ink-2)' }}>
+                    {isTrial && trialDays !== null
+                        ? <>Free trial — <strong>{trialDays} day{trialDays === 1 ? '' : 's'} left</strong>. Free until {fmtDate(renews)}.</>
+                        : renews ? <>Renews {fmtDate(renews)}.</> : null}
+                </p>
+            </section>
 
             {/* Usage */}
             <section>
-                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10, gap: 12, flexWrap: 'wrap' }}>
-                    <div className="blanc-eyebrow">This month's usage</div>
-                    <div style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>resets {fmtDate(periodResets.toISOString())}</div>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+                <div className="blanc-eyebrow" style={{ marginBottom: 12 }}>This month's usage</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                     {METRIC_ORDER.map(metric => {
                         const used = Number(usage[metric] || 0);
                         const cap = Number(currentPlan?.included_units?.[metric] || 0);
                         const pct = cap > 0 ? (used / cap) * 100 : 0;
-                        const overUnits = cap > 0 ? Math.max(0, used - cap) : 0;
-                        const overCost = overageFor(currentPlan, metric, used);
-                        const over = overUnits > 0;
+                        const over = cap > 0 && used > cap;
                         return (
-                            <div key={metric} style={{
-                                background: 'var(--blanc-surface-strong, #fffdf9)',
-                                border: `1px solid ${over ? 'rgba(212,77,60,0.4)' : 'var(--blanc-line)'}`,
-                                borderRadius: 16, padding: 16,
-                            }}>
-                                <div style={{ fontSize: 13, color: 'var(--blanc-ink-2)' }}>{METRIC_LABELS[metric] || metric}</div>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 3 }}>
-                                    <span style={{ fontSize: 18, fontWeight: 500, color: over ? 'var(--blanc-danger)' : 'var(--blanc-ink-1)' }}>{used.toLocaleString()}</span>
-                                    {cap > 0 && <span style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>/ {cap.toLocaleString()}</span>}
+                            <div key={metric}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13.5, marginBottom: 6 }}>
+                                    <span style={{ color: 'var(--blanc-ink-1)' }}>{METRIC_LABELS[metric] || metric}</span>
+                                    <span style={{ color: over ? '#dc2626' : 'var(--blanc-ink-2)' }}>
+                                        {used.toLocaleString()}{cap > 0 && <span style={{ color: 'var(--blanc-ink-3)' }}> / {cap.toLocaleString()}</span>}
+                                    </span>
                                 </div>
-                                <div style={{ height: 7, borderRadius: 999, background: 'rgba(117,106,89,0.12)', overflow: 'hidden', marginTop: 8 }}>
-                                    <div style={{ height: '100%', width: `${Math.min(100, pct)}%`, background: usageBarColor(pct), borderRadius: 999, transition: 'width .3s' }} />
+                                <div style={{ height: 8, borderRadius: 999, background: 'rgba(117,106,89,0.1)', overflow: 'hidden' }}>
+                                    <div style={{ height: '100%', width: `${Math.min(100, pct)}%`, background: barColor(pct), borderRadius: 999, transition: 'width .3s' }} />
                                 </div>
-                                {over && (
-                                    <div style={{ fontSize: 12, color: 'var(--blanc-danger)', marginTop: 7, display: 'flex', alignItems: 'center', gap: 5 }}>
-                                        <AlertTriangle size={12} />+{overUnits.toLocaleString()}{overCost > 0 ? ` · projected ${usd(overCost)} overage` : ''}
-                                    </div>
-                                )}
                             </div>
                         );
                     })}
@@ -283,107 +125,77 @@ export default function BillingPage() {
 
             {/* Plans */}
             <section>
-                <div className="blanc-eyebrow" style={{ marginBottom: 10 }}>{isTrial ? 'Choose a plan' : 'Change plan'}</div>
+                <div className="blanc-eyebrow" style={{ marginBottom: 12 }}>{isTrial ? 'Choose a plan' : 'Change plan'}</div>
                 {!billing_enabled && (
-                    <p style={{ fontSize: 13, color: 'var(--blanc-ink-3)', margin: '0 0 12px' }}>
-                        Online payments aren't enabled yet — <a href="mailto:support@albusto.com" style={{ color: 'var(--blanc-ink-2)' }}>contact us</a> to change plans.
-                    </p>
+                    <p style={{ fontSize: 13, color: 'var(--blanc-ink-3)', margin: '0 0 12px' }}>Online payments aren't enabled yet — contact us to upgrade.</p>
                 )}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 }}>
                     {plans.filter(p => p.id !== 'trial').map(plan => {
                         const isCurrent = plan.id === currentPlanId;
-                        const base = Number(plan.monthly_base_usd);
-                        const isUpgrade = base > monthlyBase;
-                        const cta = isCurrent ? 'Current plan' : isUpgrade ? 'Upgrade' : `Switch to ${plan.name}`;
+                        const popular = plan.id === 'pro';
                         return (
                             <div key={plan.id} style={{
-                                border: `${isCurrent ? 2 : 1}px solid ${isCurrent ? 'var(--blanc-info)' : 'var(--blanc-line)'}`,
+                                border: `1px solid ${popular ? 'rgba(117,106,89,0.4)' : 'var(--blanc-line)'}`,
                                 borderRadius: 16, padding: 18, background: 'var(--blanc-surface-strong, #fffdf9)',
-                                display: 'flex', flexDirection: 'column', gap: 12,
+                                display: 'flex', flexDirection: 'column', gap: 12, position: 'relative',
                             }}>
+                                {popular && <span style={{ position: 'absolute', top: -10, right: 14, fontSize: 10.5, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', background: 'var(--blanc-ink-1, #3c362c)', color: '#fff', padding: '3px 9px', borderRadius: 999 }}>Most popular</span>}
                                 <div>
-                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                                        <span style={{ fontSize: 17, fontWeight: 600, color: 'var(--blanc-ink-1)', fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif' }}>{plan.name}</span>
-                                        {isCurrent && <span style={{ fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 999, ...toneStyle('info') }}>Current</span>}
-                                    </div>
-                                    <div style={{ fontSize: 22, fontWeight: 600, marginTop: 2, fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1)' }}>
-                                        {usd(base)}<span style={{ fontSize: 13, fontWeight: 500, color: 'var(--blanc-ink-3)' }}>/mo</span>
+                                    <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--blanc-ink-1)' }}>{plan.name}</div>
+                                    <div style={{ fontSize: 22, fontWeight: 700, marginTop: 2 }}>
+                                        ${Number(plan.monthly_base_usd).toLocaleString()}<span style={{ fontSize: 13, fontWeight: 500, color: 'var(--blanc-ink-3)' }}>/mo</span>
                                     </div>
                                 </div>
                                 <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                    {plan.max_phone_numbers != null && (
-                                        <li style={{ display: 'flex', gap: 7, fontSize: 13, color: 'var(--blanc-ink-2)' }}>
-                                            <Check size={15} style={{ color: 'var(--blanc-success)', flexShrink: 0, marginTop: 1 }} />
-                                            Up to {plan.max_phone_numbers} phone number{plan.max_phone_numbers === 1 ? '' : 's'}
-                                        </li>
-                                    )}
                                     {METRIC_ORDER.map(m => plan.included_units?.[m] != null && (
                                         <li key={m} style={{ display: 'flex', gap: 7, fontSize: 13, color: 'var(--blanc-ink-2)' }}>
-                                            <Check size={15} style={{ color: 'var(--blanc-success)', flexShrink: 0, marginTop: 1 }} />
+                                            <Check size={15} style={{ color: '#16a34a', flexShrink: 0, marginTop: 1 }} />
                                             {Number(plan.included_units[m]).toLocaleString()} {METRIC_LABELS[m]?.toLowerCase()}
                                         </li>
                                     ))}
                                 </ul>
-                                <div style={{ marginTop: 'auto' }}>
-                                    <Button
-                                        className="w-full"
-                                        variant={isCurrent ? 'secondary' : isUpgrade ? 'default' : 'outline'}
-                                        disabled={isCurrent || !billing_enabled || busy === plan.id}
-                                        onClick={() => checkout(plan.id)}
-                                    >
-                                        {!isCurrent && (isUpgrade ? <ArrowUpRight size={15} /> : <ArrowDownRight size={15} />)}
-                                        {busy === plan.id ? 'Redirecting…' : cta}
-                                    </Button>
-                                </div>
+                                <button
+                                    disabled={isCurrent || !billing_enabled || upgrading === plan.id}
+                                    onClick={() => upgrade(plan.id)}
+                                    title={!billing_enabled ? 'Billing not enabled yet' : undefined}
+                                    style={{
+                                        marginTop: 'auto', padding: '10px 14px', borderRadius: 10, fontSize: 13.5, fontWeight: 600,
+                                        cursor: isCurrent || !billing_enabled ? 'default' : 'pointer',
+                                        border: isCurrent ? '1px solid var(--blanc-line)' : 'none',
+                                        background: isCurrent ? 'transparent' : 'var(--blanc-ink-1, #3c362c)',
+                                        color: isCurrent ? 'var(--blanc-ink-3)' : '#fff',
+                                        opacity: !billing_enabled && !isCurrent ? 0.5 : 1,
+                                    }}>
+                                    {isCurrent ? 'Current plan' : upgrading === plan.id ? 'Redirecting…' : 'Upgrade'}
+                                </button>
                             </div>
                         );
                     })}
                 </div>
             </section>
 
-            {/* Billing history */}
+            {/* Invoices */}
             <section>
-                <div className="blanc-eyebrow" style={{ marginBottom: 10 }}>Billing history</div>
+                <div className="blanc-eyebrow" style={{ marginBottom: 12 }}>Invoices</div>
                 {invoices.length === 0 ? (
-                    <p style={{ fontSize: 13.5, color: 'var(--blanc-ink-3)', margin: 0 }}>No charges yet.</p>
+                    <p style={{ fontSize: 13.5, color: 'var(--blanc-ink-3)', margin: 0 }}>No invoices yet.</p>
                 ) : (
                     <div style={{ display: 'flex', flexDirection: 'column' }}>
-                        {invoices.map((inv, i) => {
-                            const paid = inv.status === 'paid';
-                            return (
-                                <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto 72px', alignItems: 'center', gap: 12, padding: '11px 2px' }}>
-                                    <span style={{ fontSize: 13.5, color: 'var(--blanc-ink-1)' }}>{fmtDate(inv.date)}</span>
-                                    <span style={{ fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 999, textTransform: 'capitalize', ...toneStyle(paid ? 'ok' : 'muted') }}>{inv.status || 'pending'}</span>
-                                    <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--blanc-ink-1)' }}>{usd(inv.amount, true)}</span>
-                                    {inv.hosted_url ? (
-                                        <a href={inv.hosted_url} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12.5, color: 'var(--blanc-ink-2)', textDecoration: 'none', justifySelf: 'end' }}>
-                                            View <ExternalLink size={12} />
-                                        </a>
-                                    ) : <span />}
-                                </div>
-                            );
-                        })}
-                    </div>
-                )}
-            </section>
-
-            {/* Wallet activity */}
-            {wallet && wallet.ledger.length > 0 && (
-                <section>
-                    <div className="blanc-eyebrow" style={{ marginBottom: 10 }}>Wallet activity</div>
-                    <div style={{ display: 'flex', flexDirection: 'column' }}>
-                        {wallet.ledger.slice(0, 12).map((e, i) => (
-                            <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 12, alignItems: 'center', padding: '10px 2px' }}>
-                                <span style={{ fontSize: 13, color: 'var(--blanc-ink-1)' }}>{e.description || e.type}</span>
-                                <span style={{ fontSize: 13, fontWeight: 600, color: e.amount_usd >= 0 ? 'var(--blanc-success)' : 'var(--blanc-ink-1)' }}>
-                                    {e.amount_usd >= 0 ? '+' : ''}{usd(e.amount_usd, true)}
-                                </span>
-                                <span style={{ fontSize: 12, color: 'var(--blanc-ink-3)', justifySelf: 'end' }}>{usd(e.balance_after, true)}</span>
+                        {invoices.map((inv, i) => (
+                            <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', gap: 12 }}>
+                                <span style={{ fontSize: 13.5, color: 'var(--blanc-ink-1)', minWidth: 110 }}>{fmtDate(inv.date)}</span>
+                                <span style={{ fontSize: 13.5, fontWeight: 600 }}>${inv.amount.toFixed(2)}</span>
+                                <span style={{ fontSize: 12.5, fontWeight: 600, color: inv.status === 'paid' ? '#16a34a' : 'var(--blanc-ink-3)', textTransform: 'capitalize', flex: 1, textAlign: 'right' }}>{inv.status}</span>
+                                {inv.hosted_url && (
+                                    <a href={inv.hosted_url} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12.5, color: 'var(--blanc-ink-2)', textDecoration: 'none' }}>
+                                        View <ExternalLink size={12} />
+                                    </a>
+                                )}
                             </div>
                         ))}
                     </div>
-                </section>
-            )}
+                )}
+            </section>
         </div>
     );
 }
