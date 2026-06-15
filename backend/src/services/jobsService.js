@@ -342,8 +342,8 @@ async function createManualJob(companyId, input = {}) {
              customer_name, customer_phone, customer_email, address, lat, lng,
              normalized_address, geocoding_status, geocoding_place_id, geocoded_at,
              geocoding_provider, assigned_techs, assigned_provider_user_ids, notes, zb_raw)
-         VALUES ($1,$2,'scheduled',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-                 CASE WHEN $10 IS NOT NULL AND $11 IS NOT NULL THEN now() ELSE NULL END,
+         VALUES ($1,$2,'scheduled',$3,$4,$5,$6,$7,$8,$9,$10::double precision,$11::double precision,$12,$13,$14,
+                 CASE WHEN $10::double precision IS NOT NULL AND $11::double precision IS NOT NULL THEN now() ELSE NULL END,
                  'google_maps',$16::jsonb,$15::jsonb,'[]'::jsonb,'{}'::jsonb)
          RETURNING *`,
         [companyId, blancStatus, input.service_name || null,
@@ -1167,13 +1167,13 @@ async function updateJobLocation(companyId, jobId, { address, lat, lng, normaliz
     const geocodingStatus = hasCoords ? 'success' : 'not_geocoded';
     const { rows } = await db.query(
         `UPDATE jobs SET
-            address            = COALESCE($3, address),
-            lat                = $4,
-            lng                = $5,
-            normalized_address = $6,
-            geocoding_status   = $7,
-            geocoding_place_id = $8,
-            geocoded_at        = CASE WHEN $4 IS NOT NULL AND $5 IS NOT NULL THEN now() ELSE NULL END,
+            address            = COALESCE($3::text, address),
+            lat                = $4::double precision,
+            lng                = $5::double precision,
+            normalized_address = $6::text,
+            geocoding_status   = $7::text,
+            geocoding_place_id = $8::text,
+            geocoded_at        = CASE WHEN $4::double precision IS NOT NULL AND $5::double precision IS NOT NULL THEN now() ELSE NULL END,
             geocoding_provider = 'google_maps',
             geocoding_error_code = NULL,
             geocoding_error_message = NULL,
