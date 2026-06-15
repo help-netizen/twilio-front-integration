@@ -124,6 +124,8 @@ export function InvoiceSendDialog({ open, onOpenChange, invoiceId, contactEmail,
     const [sending, setSending] = useState(false);
     const [publicUrl, setPublicUrl] = useState<string>('');
     const [userEditedMessage, setUserEditedMessage] = useState(false);
+    // F018: include the customer pay/view link by default when there's a balance due.
+    const [includePaymentLink, setIncludePaymentLink] = useState<boolean>((Number(balanceDue) || 0) > 0);
 
     // Re-sync prefills when the dialog opens (or when the underlying contact changes).
     useEffect(() => {
@@ -131,6 +133,7 @@ export function InvoiceSendDialog({ open, onOpenChange, invoiceId, contactEmail,
             setEmailRecipient(contactEmail || '');
             setPhoneRecipient(contactPhone || '');
             setUserEditedMessage(false);
+            setIncludePaymentLink((Number(balanceDue) || 0) > 0);
         }
     }, [open, contactEmail, contactPhone]);
 
@@ -152,13 +155,13 @@ export function InvoiceSendDialog({ open, onOpenChange, invoiceId, contactEmail,
         setMessage(buildDefaultMessage(channel, {
             invoiceNumber: invoiceNumber || '',
             name: firstName(contactName),
-            url: publicUrl,
+            url: includePaymentLink ? publicUrl : '',
             balanceDue: Number(balanceDue) || 0,
             total: Number(total) || 0,
             dueDate: dueDate || null,
             signOff: operatorSignOff,
         }));
-    }, [open, channel, publicUrl, invoiceNumber, contactName, balanceDue, total, dueDate, operatorSignOff, userEditedMessage]);
+    }, [open, channel, publicUrl, includePaymentLink, invoiceNumber, contactName, balanceDue, total, dueDate, operatorSignOff, userEditedMessage]);
 
     const recipient = channel === 'email' ? emailRecipient : phoneRecipient;
     const setRecipient = (v: string) => {
@@ -211,6 +214,18 @@ export function InvoiceSendDialog({ open, onOpenChange, invoiceId, contactEmail,
                             </Button>
                         </div>
                     </div>
+
+                    {/* Include payment link (F018) */}
+                    {(Number(balanceDue) || 0) > 0 && (
+                        <label className="flex items-center gap-2 text-sm cursor-pointer select-none" style={{ color: 'var(--blanc-ink-2)' }}>
+                            <input
+                                type="checkbox"
+                                checked={includePaymentLink}
+                                onChange={e => { setIncludePaymentLink(e.target.checked); setUserEditedMessage(false); }}
+                            />
+                            Include payment link
+                        </label>
+                    )}
 
                     {/* Recipient */}
                     <div>

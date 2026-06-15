@@ -25,6 +25,7 @@ router.get('/', requirePermission('payments.view'), async (req, res) => {
             invoice_id,
             estimate_id,
             job_id,
+            source,
             search,
             start_date,
             end_date,
@@ -40,6 +41,7 @@ router.get('/', requirePermission('payments.view'), async (req, res) => {
         if (invoice_id)       filters.invoiceId = invoice_id;
         if (estimate_id)      filters.estimateId = estimate_id;
         if (job_id)           filters.jobId = job_id;
+        if (source)           filters.externalSource = source;
         if (search)           filters.search = search;
         if (start_date)       filters.startDate = start_date;
         if (end_date)         filters.endDate = end_date;
@@ -139,6 +141,23 @@ router.post('/:id/refund', requirePermission('payments.refund'), async (req, res
         console.error('[Payments] POST /:id/refund error:', err.message);
         const status = err.httpStatus || 500;
         res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+    }
+});
+
+// POST /api/payments/:id/stripe-refund — Refund a Stripe payment via Stripe, then ledger.
+router.post('/:id/stripe-refund', requirePermission('payments.refund'), async (req, res) => {
+    try {
+        const stripePaymentsService = require('../services/stripePaymentsService');
+        const companyId = req.companyFilter?.company_id;
+        const { amount, reason } = req.body || {};
+        const result = await stripePaymentsService.refundStripePayment(companyId, { id: req.user?.sub || req.userId }, req.params.id, { amount, reason });
+        res.status(201).json({ ok: true, data: result });
+    } catch (err) {
+        if (err.name === 'StripePaymentsError') {
+            return res.status(err.httpStatus || 400).json({ ok: false, error: { code: err.code, message: err.message } });
+        }
+        console.error('[Payments] POST /:id/stripe-refund error:', err.message);
+        res.status(err.httpStatus || 500).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
     }
 });
 

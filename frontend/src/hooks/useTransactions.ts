@@ -20,6 +20,7 @@ export interface TransactionFilters {
     search: string;
     status: string;
     transaction_type: string;
+    source: string;
     page: number;
     limit: number;
 }
@@ -28,6 +29,7 @@ const DEFAULT_FILTERS: TransactionFilters = {
     search: '',
     status: '',
     transaction_type: '',
+    source: '',
     page: 1,
     limit: 25,
 };
@@ -54,6 +56,7 @@ export function useTransactions() {
             };
             if (f.status) params.status = f.status;
             if (f.transaction_type) params.transaction_type = f.transaction_type;
+            if (f.source) params.source = f.source;
             if (f.search) params.search = f.search;
 
             const result: TransactionsListResult = await paymentsApi.fetchTransactions(params);
@@ -79,7 +82,7 @@ export function useTransactions() {
 
     useEffect(() => {
         loadTransactions();
-    }, [filters.status, filters.transaction_type, filters.search, filters.page, filters.limit]);
+    }, [filters.status, filters.transaction_type, filters.source, filters.search, filters.page, filters.limit]);
 
     useEffect(() => {
         loadSummary();
@@ -125,15 +128,24 @@ export function useTransactions() {
     }, [loadTransactions, loadSummary]);
 
     const handleRefund = useCallback(async (id: number, data: RefundData) => {
-        const txn = await paymentsApi.refundTransaction(id, data);
-        toast.success('Refund initiated');
+        // Stripe payments must be refunded THROUGH Stripe (the generic path only writes
+        // a ledger row); other sources use the canonical refund.
+        const target = selectedTransaction?.id === id ? selectedTransaction : transactions.find(t => t.id === id);
+        if (target?.external_source === 'stripe') {
+            const { invoiceStripeApi } = await import('../services/stripePaymentsApi');
+            await invoiceStripeApi.refund(id, data.amount, data.reason);
+            toast.success('Refund initiated via Stripe');
+        } else {
+            await paymentsApi.refundTransaction(id, data);
+            toast.success('Refund initiated');
+        }
         await loadTransactions();
         await loadSummary();
         if (selectedTransaction?.id === id) {
-            setSelectedTransaction(txn);
+            const fresh = await paymentsApi.fetchTransaction(id).catch(() => null);
+            if (fresh) setSelectedTransaction(fresh);
         }
-        return txn;
-    }, [loadTransactions, loadSummary, selectedTransaction]);
+    }, [loadTransactions, loadSummary, selectedTransaction, transactions]);
 
     const handleVoid = useCallback(async (id: number) => {
         const txn = await paymentsApi.voidTransaction(id);
@@ -168,6 +180,10 @@ export function useTransactions() {
         setFilters(f => ({ ...f, transaction_type, page: 1 }));
     }, []);
 
+    const setSource = useCallback((source: string) => {
+        setFilters(f => ({ ...f, source, page: 1 }));
+    }, []);
+
     const setPage = useCallback((page: number) => {
         setFilters(f => ({ ...f, page }));
     }, []);
@@ -196,6 +212,7 @@ export function useTransactions() {
         setSearch,
         setStatus,
         setType,
+        setSource,
         setPage,
     };
 }

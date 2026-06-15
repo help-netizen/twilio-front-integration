@@ -354,4 +354,60 @@ router.get('/:id/pdf', requirePermission('invoices.view'), async (req, res) => {
     }
 });
 
+// =============================================================================
+// F018 Stripe Payments — invoice payment links
+// =============================================================================
+const stripePaymentsService = require('../services/stripePaymentsService');
+
+function stripeError(err, req, res, tag) {
+    if (err instanceof stripePaymentsService.StripePaymentsError) {
+        return res.status(err.httpStatus || 400).json({ ok: false, error: { code: err.code, message: err.message } });
+    }
+    console.error(`[Invoices] ${tag} error:`, err.message);
+    return res.status(err.httpStatus || 500).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+}
+
+// POST /api/invoices/:id/stripe-payment-link — create or reuse a Checkout link.
+router.post('/:id/stripe-payment-link', requirePermission('payments.collect_online'), async (req, res) => {
+    try {
+        const actor = { id: getUserId(req) };
+        const link = await stripePaymentsService.ensurePaymentLink(getCompanyId(req), actor, req.params.id, { amount: req.body?.amount });
+        res.json({ ok: true, data: link });
+    } catch (err) { stripeError(err, req, res, 'stripe-payment-link POST'); }
+});
+
+// GET /api/invoices/:id/stripe-payment-link — active link + attempt history.
+router.get('/:id/stripe-payment-link', requirePermission('payments.view'), async (req, res) => {
+    try {
+        const data = await stripePaymentsService.getPaymentLink(getCompanyId(req), req.params.id);
+        res.json({ ok: true, data });
+    } catch (err) { stripeError(err, req, res, 'stripe-payment-link GET'); }
+});
+
+// POST /api/invoices/:id/send-payment-link — send link via email/SMS (event-logged).
+router.post('/:id/send-payment-link', requirePermission('payments.collect_online'), async (req, res) => {
+    try {
+        const actor = { id: getUserId(req) };
+        const { channel, message } = req.body || {};
+        const result = await stripePaymentsService.sendPaymentLink(getCompanyId(req), actor, req.params.id, { channel, message });
+        res.json({ ok: true, data: result });
+    } catch (err) { stripeError(err, req, res, 'send-payment-link'); }
+});
+
+// POST /api/invoices/:id/stripe-manual-card-session — Payment Element (keyed).
+router.post('/:id/stripe-manual-card-session', requirePermission('payments.collect_keyed'), async (req, res) => {
+    try {
+        const data = await stripePaymentsService.createManualCardSession(getCompanyId(req), { id: getUserId(req) }, { invoiceId: req.params.id, amount: req.body?.amount });
+        res.json({ ok: true, data });
+    } catch (err) { stripeError(err, req, res, 'manual-card-session'); }
+});
+
+// POST /api/invoices/:id/tap-to-pay/payment-intent — Terminal card_present intent.
+router.post('/:id/tap-to-pay/payment-intent', requirePermission('payments.collect_terminal'), async (req, res) => {
+    try {
+        const data = await stripePaymentsService.createTapToPayIntent(getCompanyId(req), { id: getUserId(req) }, { invoiceId: req.params.id, amount: req.body?.amount });
+        res.json({ ok: true, data });
+    } catch (err) { stripeError(err, req, res, 'tap-to-pay-intent'); }
+});
+
 module.exports = router;

@@ -38,6 +38,7 @@ async function listTransactions(companyId, filters = {}) {
         invoiceId,
         estimateId,
         jobId,
+        externalSource,
         search,
         startDate,
         endDate,
@@ -83,6 +84,14 @@ async function listTransactions(companyId, filters = {}) {
         idx++;
         conditions.push(`t.job_id = $${idx}`);
         params.push(jobId);
+    }
+    if (externalSource === 'manual') {
+        // "manual/offline" = locally recorded, not synced from an external processor.
+        conditions.push(`(t.external_source IS NULL OR t.external_source = '')`);
+    } else if (externalSource) {
+        idx++;
+        conditions.push(`t.external_source = $${idx}`);
+        params.push(externalSource);
     }
     if (search) {
         idx++;
@@ -184,6 +193,21 @@ async function createTransaction(companyId, data) {
     );
 
     return rows[0];
+}
+
+/**
+ * Idempotency lookup: find an existing transaction by external source + id, scoped
+ * to the company. Used by the Stripe webhook sync to avoid duplicate ledger rows.
+ */
+async function findByExternalSourceId(companyId, externalSource, externalId) {
+    if (!externalId) return null;
+    const { rows } = await db.query(
+        `SELECT * FROM payment_transactions
+         WHERE company_id = $1 AND external_source = $2 AND external_id = $3
+         LIMIT 1`,
+        [companyId, externalSource, externalId]
+    );
+    return rows[0] || null;
 }
 
 /**
@@ -392,6 +416,7 @@ module.exports = {
     listTransactions,
     getTransactionById,
     createTransaction,
+    findByExternalSourceId,
     updateTransactionStatus,
     voidTransaction,
     createRefundTransaction,

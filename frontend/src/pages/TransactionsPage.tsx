@@ -28,6 +28,13 @@ const TYPE_OPTIONS = [
     { value: 'adjustment', label: 'Adjustment' },
 ];
 
+const SOURCE_OPTIONS = [
+    { value: '', label: 'All Sources' },
+    { value: 'stripe', label: 'Stripe' },
+    { value: 'zenbooker', label: 'Zenbooker' },
+    { value: 'manual', label: 'Manual / Offline' },
+];
+
 const TYPE_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
     payment: 'default',
     refund: 'destructive',
@@ -120,6 +127,19 @@ export function TransactionsPage() {
                         </SelectTrigger>
                         <SelectContent>
                             {TYPE_OPTIONS.map(opt => (
+                                <SelectItem key={opt.value || '_all'} value={opt.value || '_all'}>{opt.label}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                    <Select
+                        value={page.filters.source || '_all'}
+                        onValueChange={v => page.setSource(v === '_all' ? '' : v)}
+                    >
+                        <SelectTrigger className="w-[140px]">
+                            <SelectValue placeholder="All Sources" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {SOURCE_OPTIONS.map(opt => (
                                 <SelectItem key={opt.value || '_all'} value={opt.value || '_all'}>{opt.label}</SelectItem>
                             ))}
                         </SelectContent>
