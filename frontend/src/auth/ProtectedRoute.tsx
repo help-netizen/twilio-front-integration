@@ -51,19 +51,13 @@ export function ProtectedRoute({ children, roles, permissions, platformRoles }: 
         return (
             <div style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                height: '100vh', background: '#0a0a0a', color: '#dc2626',
-                fontFamily: 'Inter, system-ui, sans-serif',
+                height: '100vh', background: 'var(--blanc-bg, #efe9df)',
+                fontFamily: '"IBM Plex Sans", system-ui, sans-serif', padding: 16,
             }}>
-                <div style={{ textAlign: 'center' }}>
-                    <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🚫</div>
-                    <h2 style={{ margin: '0 0 0.5rem', color: '#fff' }}>Access Denied</h2>
-                    <p style={{ color: '#888', fontSize: '0.875rem' }}>
-                        You don't have permission to view this page.
-                        <br />
-                        {roles && roles.length > 0 && <span>Required role: {roles.join(' or ')}</span>}
-                        {roles && permissions && <br />}
-                        {permissions && permissions.length > 0 && <span>Required permission: {permissions.join(' or ')}</span>}
-                        {platformRoles && platformRoles.length > 0 && <span>Platform role required: {platformRoles.join(' or ')}</span>}
+                <div style={{ textAlign: 'center', maxWidth: 360 }}>
+                    <h2 style={{ margin: '0 0 8px', fontFamily: 'Manrope, sans-serif', fontSize: 20, fontWeight: 600, color: 'var(--blanc-ink-1, #202734)' }}>You don't have access here</h2>
+                    <p style={{ color: 'var(--blanc-ink-2, #536070)', fontSize: 14, lineHeight: 1.6, margin: 0 }}>
+                        This area isn't part of your role. Ask an admin if you need access to it.
                     </p>
                 </div>
             </div>
