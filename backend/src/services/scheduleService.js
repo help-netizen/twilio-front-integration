@@ -61,10 +61,15 @@ function rowToScheduleItem(row) {
  * assigned_only providers: own jobs, own tasks, no leads (PF007).
  */
 async function getScheduleItems(companyId, filters = {}, providerScope = null) {
+    // SCHED-ROUTE-001 C-3: group days in the company timezone so route-day matches
+    // the day the user sees. Falls back to the previous UTC behaviour if unresolved.
+    let timezone = null;
+    try { timezone = (await getDispatchSettings(companyId))?.timezone || null; } catch { /* keep UTC */ }
     const result = await scheduleQueries.getScheduleItems({
         companyId,
         ...filters,
         providerScope,
+        timezone,
     });
     return {
         items: result.rows.map(rowToScheduleItem),
