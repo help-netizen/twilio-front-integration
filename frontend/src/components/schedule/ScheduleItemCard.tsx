@@ -7,6 +7,7 @@ import React from 'react';
 import type { ScheduleItem } from '../../services/scheduleApi';
 import { formatTimeInTZ } from '../../utils/companyTime';
 import { getProviderColor } from '../../utils/providerColors';
+import { geocodingLabel } from '../../utils/routeFormat';
 
 // Neutral style for unassigned items
 const UNASSIGNED_STYLE = {
@@ -59,10 +60,17 @@ export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({ item, compac
         ? `${item.assigned_techs![0].name}${techCount > 1 ? ` +${techCount - 1}` : ''}`
         : 'Unassigned';
 
+    // SCHED-ROUTE-001 FR-003: clickable Maps link (generated server-side from
+    // lat/lng/address — no Google call on render). FR-002: subtle geocoding hint.
+    const geoLabel = item.entity_type === 'job' ? geocodingLabel(item.geocoding_status) : null;
+    const stop = (e: React.MouseEvent) => e.stopPropagation();
+
     return (
-        <button
-            type="button"
+        <div
+            role="button"
+            tabIndex={0}
             onClick={() => onClick?.(item)}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.(item); } }}
             className={`
                 w-full h-full text-left overflow-hidden transition-shadow cursor-pointer
                 hover:shadow-xl
@@ -124,10 +132,32 @@ export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({ item, compac
                 {/* Footer meta */}
                 <div className="flex items-center justify-between gap-3 mt-auto text-[11px] font-semibold" style={{ color: 'var(--sched-ink-3)' }}>
                     <span className="truncate">{techSummary}</span>
-                    {item.address_summary && <span className="truncate">{item.address_summary}</span>}
+                    {item.address_summary && (
+                        item.google_maps_url ? (
+                            <a
+                                href={item.google_maps_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={stop}
+                                onKeyDown={stop as unknown as React.KeyboardEventHandler}
+                                className="truncate hover:underline"
+                                style={{ color: 'var(--sched-ink-2)' }}
+                                title={item.normalized_address || item.address_summary}
+                            >
+                                {item.address_summary}
+                            </a>
+                        ) : (
+                            <span className="truncate" title={item.address_summary}>{item.address_summary}</span>
+                        )
+                    )}
                 </div>
+                {geoLabel && (
+                    <span className="text-[10px] truncate" style={{ color: 'var(--sched-ink-3)', opacity: 0.85 }}>
+                        {geoLabel}
+                    </span>
+                )}
             </div>
-        </button>
+        </div>
     );
 };
 

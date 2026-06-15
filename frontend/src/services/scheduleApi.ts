@@ -18,6 +18,12 @@ export interface ScheduleItem {
     start_at: string | null;
     end_at: string | null;
     address_summary: string;
+    // SCHED-ROUTE-001: geocoding state + generated Maps link (no Google call on read).
+    lat: number | null;
+    lng: number | null;
+    normalized_address: string | null;
+    geocoding_status: GeocodingStatus | null;
+    google_maps_url: string | null;
     customer_name: string;
     customer_phone: string;
     customer_email: string;
@@ -25,6 +31,25 @@ export interface ScheduleItem {
     job_type: string | null;
     job_source: string | null;
     tags: string[] | null;
+}
+
+export type GeocodingStatus =
+    | 'not_geocoded' | 'pending' | 'success' | 'failed' | 'needs_review';
+
+// SCHED-ROUTE-001 FR-009 — a stored leg between two consecutive jobs for one
+// technician on one company-local day. Distance/duration are pre-computed
+// server-side; the client never calls Google.
+export interface RouteSegment {
+    id: number;
+    technician_id: string;
+    schedule_date: string;          // YYYY-MM-DD (company-local)
+    from_job_id: number;
+    to_job_id: number;
+    distance_meters: number | null;
+    duration_minutes: number | null;
+    travel_mode: string;
+    status: 'pending' | 'success' | 'failed' | 'missing_address' | 'address_needs_review' | 'stale';
+    calculated_at: string | null;
 }
 
 export interface DispatchSettings {
@@ -123,6 +148,26 @@ export async function fetchScheduleItems(filters: ScheduleFilters): Promise<Sche
     return result.items;
 }
 
+interface RouteSegmentsResponse {
+    segments: RouteSegment[];
+}
+
+/**
+ * Stored route legs for a date range (optionally one technician). No Google
+ * call — reads pre-computed segments. Provider scope is enforced server-side
+ * (assigned_only sees only own segments).
+ */
+export async function fetchRouteSegments(
+    from: string, to: string, technicianId?: string,
+): Promise<RouteSegment[]> {
+    const params = new URLSearchParams();
+    params.set('from', from);
+    params.set('to', to);
+    if (technicianId) params.set('technician_id', technicianId);
+    const result = await scheduleRequest<RouteSegmentsResponse>(`${SCHEDULE_BASE}/route-segments?${params.toString()}`);
+    return result.segments;
+}
+
 export async function fetchDispatchSettings(): Promise<DispatchSettings> {
     return scheduleRequest<DispatchSettings>(`${SCHEDULE_BASE}/settings`);
 }
@@ -163,6 +208,12 @@ export interface CreateFromSlotPayload {
     end_at: string;
     entity_type?: string;
     assigned_provider_id?: string | null;
+    // SCHED-ROUTE-001 FR-001: optional address for the new job. When lat/lng are
+    // supplied (from AddressAutocomplete) the server skips the paid geocode.
+    address?: string;
+    lat?: number | null;
+    lng?: number | null;
+    normalized_address?: string | null;
 }
 
 export async function createFromSlot(payload: CreateFromSlotPayload): Promise<ScheduleItem> {
