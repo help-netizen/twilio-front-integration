@@ -1,6 +1,6 @@
 import type {
     CallFlow, PhoneNumber, AudioAsset, RoutingLogEntry, AgentStatus,
-    QueuedCall, DashboardKPI, ProviderInfo, ActiveCallInfo, UserGroup,
+    QueuedCall, DashboardKPI, ProviderInfo, UserGroup,
     OperationsDashboardData, TelephonyTargetGroupOption, TelephonyTargetUserOption,
 } from '../types/telephony';
 
@@ -32,18 +32,6 @@ const MOCK_AUDIO: AudioAsset[] = [
     { id: 'a-4', name: 'After Hours Message', category: 'greeting', duration_sec: 15, format: 'mp3', created_at: '2026-03-01' },
     { id: 'a-5', name: 'Thank You TTS', category: 'tts', duration_sec: 3, format: 'wav', created_at: '2026-03-05' },
 ];
-
-const MOCK_ACTIVE_CALL: ActiveCallInfo = {
-    call_sid: 'CA-mock-001', caller: 'John Miller', caller_name: 'John Miller',
-    caller_phone: '+1 (555) 111-2222', agent: 'Sarah Johnson', duration_sec: 187,
-    direction: 'inbound', status: 'connected', notes: ['Customer asking about repair ETA'],
-    timeline: [
-        { time: '11:20:15', event: 'Call received' },
-        { time: '11:20:18', event: 'Greeting played' },
-        { time: '11:20:35', event: 'Transferred to queue' },
-        { time: '11:21:10', event: 'Agent answered' },
-    ],
-};
 
 // ─── Simulated delay ──────────────────────────────────────────────────────
 
@@ -177,7 +165,6 @@ export const telephonyApi = {
         const data = await telephonyApi.getOperationsDashboard();
         return data.kpis;
     },
-    getActiveCall: async (_id: string): Promise<ActiveCallInfo> => { await delay(); return MOCK_ACTIVE_CALL; },
 
     // Telephony Overview — real API
     getOverview: async (): Promise<{ user_groups_count: number; phone_numbers_count: number; call_flows_count: number }> => {

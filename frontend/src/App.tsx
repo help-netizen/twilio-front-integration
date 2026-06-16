@@ -66,8 +66,6 @@ import AudioLibraryPage from './pages/telephony/AudioLibraryPage';
 import ProviderSettingsPage from './pages/telephony/ProviderSettingsPage';
 import RoutingLogsPage from './pages/telephony/RoutingLogsPage';
 import OperationsDashboardPage from './pages/telephony/OperationsDashboardPage';
-
-import ActiveCallWorkspacePage from './pages/telephony/ActiveCallWorkspacePage';
 import UserGroupsPage from './pages/telephony/UserGroupsPage';
 import UserGroupDetailPage from './pages/telephony/UserGroupDetailPage';
 
@@ -165,9 +163,6 @@ function App() {
 
               {/* Backward-compatible operations URL */}
               <Route path="/calls/dashboard" element={<Navigate to="/settings/telephony/dashboard" replace />} />
-
-              {/* Active Call Workspace — full-screen */}
-              <Route path="/calls/live/:callId" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><ActiveCallWorkspacePage /></ProtectedRoute>} />
 
             </Routes>
           </AppLayout>
