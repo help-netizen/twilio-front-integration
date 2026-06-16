@@ -2,9 +2,23 @@ const mockInsertInboxEvent = jest.fn();
 const mockResolveGroupForNumber = jest.fn();
 const mockBuildVoicemailTwiml = jest.fn(() => '<?xml version="1.0" encoding="UTF-8"?><Response><Record /></Response>');
 const mockAdvance = jest.fn();
+const mockDbQuery = jest.fn();
+const mockIsServiceBlocked = jest.fn();
+const mockFindOrCreateTimeline = jest.fn();
+const mockUpsertCall = jest.fn();
 
 jest.mock('../backend/src/db/queries', () => ({
     insertInboxEvent: (...args) => mockInsertInboxEvent(...args),
+    findOrCreateTimeline: (...args) => mockFindOrCreateTimeline(...args),
+    upsertCall: (...args) => mockUpsertCall(...args),
+}));
+
+jest.mock('../backend/src/db/connection', () => ({
+    query: (...args) => mockDbQuery(...args),
+}));
+
+jest.mock('../backend/src/services/walletService', () => ({
+    isServiceBlocked: (...args) => mockIsServiceBlocked(...args),
 }));
 
 jest.mock('../backend/src/services/realtimeService', () => ({
@@ -54,6 +68,12 @@ describe('Twilio webhook handlers', () => {
         process.env.NODE_ENV = 'development';
         process.env.TWILIO_AUTH_TOKEN = 'test_auth_token';
         mockInsertInboxEvent.mockResolvedValue({ id: 123 });
+        // Defaults: number maps to no company / not blocked, so the wallet gate
+        // is a no-op unless a test overrides these.
+        mockDbQuery.mockResolvedValue({ rows: [] });
+        mockIsServiceBlocked.mockResolvedValue(false);
+        mockFindOrCreateTimeline.mockResolvedValue({ id: 'tl_1', contact_id: 'c_1' });
+        mockUpsertCall.mockResolvedValue({ id: 'call_1', status: 'no-answer' });
     });
 
     describe('validateTwilioSignature', () => {
@@ -134,6 +154,27 @@ describe('Twilio webhook handlers', () => {
             expect(res.send.mock.calls[0][0]).toContain('<Record');
             expect(res.send.mock.calls[0][0]).not.toContain('<Client');
             expect(res.send.mock.calls[0][0]).not.toContain('<Sip');
+        });
+
+        test('blocks inbound at the wallet grace floor: rejects without answering, logs a missed call', async () => {
+            mockDbQuery.mockResolvedValue({ rows: [{ company_id: 'company_1' }] });
+            mockIsServiceBlocked.mockResolvedValue(true);
+            mockFindOrCreateTimeline.mockResolvedValue({ id: 'tl_9', contact_id: 'contact_9' });
+            const req = makeReq({ CallSid: 'CA_blocked', From: '+15551112222', To: '+15553334444' });
+            req.originalUrl = '/webhooks/twilio/voice-inbound';
+            const res = makeRes();
+
+            await handleVoiceInbound(req, res);
+
+            // Rejected before answering → Twilio never meters the call; no group routing.
+            expect(mockIsServiceBlocked).toHaveBeenCalledWith('company_1');
+            expect(res.send.mock.calls[0][0]).toContain('<Reject');
+            expect(mockResolveGroupForNumber).not.toHaveBeenCalled();
+            // Logged as a missed (no-answer) inbound call on the caller's timeline.
+            expect(mockFindOrCreateTimeline).toHaveBeenCalledWith('+15551112222', 'company_1');
+            expect(mockUpsertCall).toHaveBeenCalledWith(expect.objectContaining({
+                callSid: 'CA_blocked', direction: 'inbound', status: 'no-answer', isFinal: true,
+            }));
         });
     });
 

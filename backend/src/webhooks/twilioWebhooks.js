@@ -2,6 +2,49 @@ const twilio = require('twilio');
 const queries = require('../db/queries');
 const groupRouting = require('../services/groupRouting');
 const callFlowRuntime = require('../services/callFlowRuntime');
+const walletService = require('../services/walletService');
+const db = require('../db/connection');
+
+/** Resolve the owning company for one of our Twilio numbers (inbound `To`). */
+async function companyIdForNumber(toNumber) {
+    if (!toNumber) return null;
+    const { rows } = await db.query(
+        'SELECT company_id FROM phone_number_settings WHERE phone_number = $1 LIMIT 1',
+        [toNumber]
+    );
+    return rows[0]?.company_id || null;
+}
+
+/**
+ * Record a wallet-blocked inbound call as a missed call so it shows in the
+ * caller's timeline. Final (is_final) so async inbox events can't downgrade it.
+ */
+async function recordMissedInbound({ callSid, from, to, companyId, payload }) {
+    const realtimeService = require('../services/realtimeService');
+    const now = new Date();
+    const timeline = await queries.findOrCreateTimeline(from, companyId);
+    const call = await queries.upsertCall({
+        callSid,
+        parentCallSid: null,
+        contactId: timeline.contact_id || null,
+        timelineId: timeline.id,
+        direction: 'inbound',
+        fromNumber: from,
+        toNumber: to,
+        status: 'no-answer',
+        isFinal: true,
+        startedAt: now,
+        answeredAt: null,
+        endedAt: now,
+        durationSec: 0,
+        price: 0,
+        priceUnit: null,
+        lastEventTime: now,
+        rawLastPayload: payload,
+        companyId,
+    });
+    if (call) realtimeService.publishCallUpdate({ eventType: 'call.updated', ...call });
+}
 
 /**
  * Validate Twilio webhook signature
@@ -286,6 +329,19 @@ async function handleVoiceInbound(req, res) {
     </Dial>
 </Response>`;
         } else {
+            // Wallet gate (−$5 grace floor): block inbound calls when the
+            // company can't pay. Reject BEFORE answering so Twilio never starts
+            // the per-minute meter — the caller gets a busy signal and we log a
+            // missed call in the timeline. (Mirrors the outbound/SMS gate.)
+            const blockedCompanyId = await companyIdForNumber(To).catch(() => null);
+            if (blockedCompanyId && await walletService.isServiceBlocked(blockedCompanyId).catch(() => false)) {
+                console.log(`[${traceId}] Inbound blocked — wallet at grace floor; rejecting ${From} → ${To}`);
+                await recordMissedInbound({ callSid: CallSid, from: From, to: To, companyId: blockedCompanyId, payload: req.body })
+                    .catch(e => console.warn(`[${traceId}] missed-call log failed (non-blocking):`, e.message));
+                res.type('text/xml');
+                return res.send('<Response><Reject reason="busy"/></Response>');
+            }
+
             const resolvedGroup = await groupRouting.resolveGroupForNumber(To);
             if (resolvedGroup) {
                 console.log(`[${traceId}] F017 inbound: ${From} → group ${resolvedGroup.group.name} (${resolvedGroup.group.id})`);
