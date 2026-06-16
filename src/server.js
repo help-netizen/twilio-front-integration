@@ -228,6 +228,9 @@ app.use('/api/stripe-payments', authenticate, requirePermission('tenant.integrat
 // F018 Phase 4: Terminal / Tap to Pay backend (per-route permission gating inside).
 app.use('/api/stripe-terminal', authenticate, requireCompanyAccess,
     require('../backend/src/routes/stripeTerminal'));
+// Technician display profiles (photo/name) for the public payment page.
+app.use('/api/settings/technicians', authenticate, requireCompanyAccess,
+    require('../backend/src/routes/technicians'));
 // F015: Document templates customization (estimates first; designed to extend to invoice/work_order)
 require('../backend/src/services/documentTemplates'); // bootstrap renderer registry
 const documentTemplatesRouter = require('../backend/src/routes/document-templates');

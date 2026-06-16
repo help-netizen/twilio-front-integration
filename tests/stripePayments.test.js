@@ -120,7 +120,8 @@ describe('handleWebhook', () => {
         q.updateSession.mockResolvedValue({});
         q.markWebhookEvent.mockResolvedValue(undefined);
         paymentsQueries.findByExternalSourceId.mockResolvedValue(null); // not seen
-        paymentsService.createTransaction.mockResolvedValue({ id: 100, external_id: 'pi_1' });
+        paymentsQueries.createTransaction.mockResolvedValue({ id: 100, external_id: 'pi_1' });
+        invoicesQueries.recordPayment.mockResolvedValue({});
         invoicesService.getInvoice.mockResolvedValue({ id: 42, balance_due: 0, amount_paid: 50 });
         invoicesQueries.updateInvoiceStatus.mockResolvedValue({});
         invoicesQueries.createEvent.mockResolvedValue({});
@@ -131,10 +132,37 @@ describe('handleWebhook', () => {
         });
         const res = await svc.handleWebhook(body, sig);
         expect(res).toEqual({ ok: true });
-        expect(paymentsService.createTransaction).toHaveBeenCalledTimes(1);
-        const txArg = paymentsService.createTransaction.mock.calls[0][2];
+        // Ledger write goes through the low-level query (so the service can split balance vs tip).
+        expect(paymentsQueries.createTransaction).toHaveBeenCalledTimes(1);
+        const txArg = paymentsQueries.createTransaction.mock.calls[0][1];
         expect(txArg).toMatchObject({ external_source: 'stripe', external_id: 'pi_1', invoice_id: 42, amount: 50 });
+        // No tip → full amount applied to the invoice.
+        expect(invoicesQueries.recordPayment).toHaveBeenCalledWith(42, COMPANY, 50);
         expect(invoicesQueries.updateInvoiceStatus).toHaveBeenCalledWith(42, COMPANY, 'paid', 'paid_at');
+    });
+
+    it('TC-31b tip is split: full charge to ledger, only balance applied to invoice', async () => {
+        q.getAccountByStripeId.mockResolvedValue({ company_id: COMPANY, stripe_account_id: ACCT });
+        q.insertWebhookEvent.mockResolvedValue({ inserted: true, row: {} });
+        q.getSessionByPaymentIntent.mockResolvedValue({ id: 9, invoice_id: 42 });
+        q.updateSession.mockResolvedValue({});
+        q.markWebhookEvent.mockResolvedValue(undefined);
+        paymentsQueries.findByExternalSourceId.mockResolvedValue(null);
+        paymentsQueries.createTransaction.mockResolvedValue({ id: 101, external_id: 'pi_tip' });
+        invoicesQueries.recordPayment.mockResolvedValue({});
+        invoicesService.getInvoice.mockResolvedValue({ id: 42, balance_due: 0, amount_paid: 100 });
+        invoicesQueries.updateInvoiceStatus.mockResolvedValue({});
+        invoicesQueries.createEvent.mockResolvedValue({});
+        // amount_received 11500 = $115 ($100 balance + $15 tip)
+        const { body, sig } = signed({
+            id: 'evt_tip', type: 'payment_intent.succeeded', account: ACCT,
+            data: { object: { id: 'pi_tip', amount_received: 11500, currency: 'usd', metadata: { invoice_id: '42', tip: '15', surface: 'public_pay' } } },
+        });
+        await svc.handleWebhook(body, sig);
+        const txArg = paymentsQueries.createTransaction.mock.calls[0][1];
+        expect(Number(txArg.amount)).toBe(115);            // full charge on ledger
+        expect(txArg.metadata.tip).toBe(15);               // tip recorded
+        expect(invoicesQueries.recordPayment).toHaveBeenCalledWith(42, COMPANY, 100); // only balance to invoice
     });
 
     it('TC-33 idempotent on (company, external_id) — existing tx → no duplicate', async () => {
