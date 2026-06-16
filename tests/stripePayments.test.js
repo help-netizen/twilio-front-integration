@@ -304,4 +304,23 @@ describe('refunds (Phase 5)', () => {
         expect(res).toMatchObject({ deduped: true });
         expect(paymentsQueries.createTransaction).not.toHaveBeenCalled();
     });
+
+    it('refunding a TIPPED payment reverses only the balance portion (not the tip)', async () => {
+        // Original $115 charge = $100 balance + $15 tip. Full refund of $115.
+        paymentsQueries.findByExternalSourceId
+            .mockResolvedValueOnce(null) // refund not seen
+            .mockResolvedValueOnce({ id: 100, invoice_id: 42, amount: 115, metadata: { tip: 15 } }); // original
+        paymentsQueries.createTransaction.mockResolvedValue({ id: 201, external_id: 're_tip' });
+        paymentsQueries.updateTransactionStatus.mockResolvedValue({});
+        invoicesQueries.recordPayment.mockResolvedValue({});
+        invoicesService.getInvoice.mockResolvedValue({ id: 42, balance_due: 100, amount_paid: 0 });
+        invoicesQueries.updateInvoiceStatus.mockResolvedValue({});
+        invoicesQueries.createEvent.mockResolvedValue({});
+
+        await svc.applyStripeRefund(COMPANY, { refundId: 're_tip', paymentIntentId: 'pi_tip', amount: 115 });
+        // Ledger refund row is the full -$115...
+        expect(Number(paymentsQueries.createTransaction.mock.calls[0][1].amount)).toBe(-115);
+        // ...but only the $100 balance portion is reversed against the invoice.
+        expect(invoicesQueries.recordPayment).toHaveBeenCalledWith(42, COMPANY, -100);
+    });
 });

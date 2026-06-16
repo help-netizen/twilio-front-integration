@@ -390,12 +390,22 @@ async function applyStripeRefund(companyId, { refundId, paymentIntentId, amount,
         await paymentsQueries.updateTransactionStatus(original.id, companyId, 'refunded').catch(() => {});
         if (original.invoice_id) {
             try {
-                await invoicesQueries.recordPayment(original.invoice_id, companyId, -Math.abs(Number(amount)));
+                // Only the invoice-balance portion of the original payment was applied to
+                // the invoice (the tip never touched it). Reverse that proportion of the
+                // refund so amount_paid can't go negative on a tipped payment.
+                const refundAmt = Math.abs(Number(amount));
+                const origTotal = Math.abs(Number(original.amount)) || refundAmt;
+                const origTip = Math.max(0, Number(original.metadata?.tip || 0) || 0);
+                const origBalancePortion = Math.max(0, origTotal - origTip);
+                const invoiceReversal = origTip > 0 && origTotal > 0
+                    ? Number((refundAmt * (origBalancePortion / origTotal)).toFixed(2))
+                    : refundAmt;
+                await invoicesQueries.recordPayment(original.invoice_id, companyId, -invoiceReversal);
                 const inv = await invoicesService.getInvoice(companyId, original.invoice_id);
                 if (inv && Number(inv.balance_due) > 0) {
                     await invoicesQueries.updateInvoiceStatus(original.invoice_id, companyId, Number(inv.amount_paid) > 0 ? 'partial' : 'sent', null);
                 }
-                await invoicesQueries.createEvent(original.invoice_id, 'payment_recorded', 'system', null, { amount: -Math.abs(Number(amount)), payment_method: 'credit_card', source: 'stripe', refund: true, external_id: refundId });
+                await invoicesQueries.createEvent(original.invoice_id, 'payment_recorded', 'system', null, { amount: -invoiceReversal, tip_refunded: Number((refundAmt - invoiceReversal).toFixed(2)), payment_method: 'credit_card', source: 'stripe', refund: true, external_id: refundId });
             } catch (e) { console.warn('[StripePayments] refund invoice adjust failed:', e.message); }
         }
     }
