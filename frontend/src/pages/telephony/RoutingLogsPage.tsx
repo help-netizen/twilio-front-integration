@@ -16,10 +16,10 @@ import { authedFetch } from '../../services/apiClient';
 // ── Result styling ───────────────────────────────────────────────────────
 
 const RESULT_CONFIG: Record<string, { bg: string; text: string; label: string }> = {
-    answered: { bg: 'rgba(16, 185, 129, 0.10)', text: '#065f46', label: 'Answered' },
-    voicemail: { bg: 'rgba(59, 130, 246, 0.10)', text: '#1e40af', label: 'Voicemail' },
-    abandoned: { bg: 'rgba(245, 158, 11, 0.10)', text: '#92400e', label: 'Missed' },
-    error: { bg: 'rgba(239, 68, 68, 0.10)', text: '#b91c1c', label: 'Error' },
+    answered: { bg: 'rgba(27, 139, 99, 0.12)', text: 'var(--blanc-success, #1b8b63)', label: 'Answered' },
+    voicemail: { bg: 'rgba(47, 99, 216, 0.12)', text: 'var(--blanc-job, #2f63d8)', label: 'Voicemail' },
+    abandoned: { bg: 'rgba(178, 106, 29, 0.12)', text: 'var(--blanc-warning, #b26a1d)', label: 'Missed' },
+    error: { bg: 'rgba(212, 77, 60, 0.12)', text: 'var(--blanc-danger, #d44d3c)', label: 'Error' },
 };
 
 // ── Date helpers ─────────────────────────────────────────────────────────
@@ -282,7 +282,7 @@ export default function RoutingLogsPage() {
                     groupId={groupId}
                     onGroupIdChange={setGroupId}
                 />
-                <div style={{ padding: 60, textAlign: 'center', color: '#b91c1c' }}>{error}</div>
+                <div style={{ padding: 60, textAlign: 'center', color: 'var(--blanc-danger, #d44d3c)' }}>{error}</div>
             </div>
         );
     }
@@ -301,8 +301,7 @@ export default function RoutingLogsPage() {
                 onGroupIdChange={setGroupId}
             />
 
-            <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ minWidth: 0 }}>
                     {/* Column headers — sticky */}
                     <div
                         style={{
@@ -388,11 +387,10 @@ export default function RoutingLogsPage() {
                     {logs.length === 0 && (
                         <div style={{ padding: 60, textAlign: 'center', color: 'var(--blanc-ink-3)' }}>No routing logs found</div>
                     )}
-                </div>
-
-                {/* Detail panel */}
-                {selected && <DetailPanel log={selected} onClose={() => setSelected(null)} />}
             </div>
+
+            {/* Detail drawer — overlay so the list keeps full width (no column crush) */}
+            {selected && <DetailPanel log={selected} onClose={() => setSelected(null)} />}
         </div>
     );
 }
@@ -514,7 +512,7 @@ function LogRow({ log, isSelected, onClick }: { log: RoutingLogEntry; isSelected
                     fontSize: 13, fontWeight: 600, color: 'var(--blanc-ink-1)',
                     whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                 }}>
-                    {log.contact_name || '—'}
+                    {log.contact_name || log.caller}
                 </span>
             </div>
 
@@ -566,11 +564,11 @@ function DetailPanel({ log, onClose }: { log: RoutingLogEntry; onClose: () => vo
     const rc = RESULT_CONFIG[log.result] || RESULT_CONFIG.error;
 
     return (
-        <div style={{
-            width: 300, flexShrink: 0,
+        <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(32,39,52,0.35)', zIndex: 50, display: 'flex', justifyContent: 'flex-end' }}>
+        <div onClick={e => e.stopPropagation()} style={{
+            width: 380, maxWidth: '100%', height: '100%',
             background: 'var(--blanc-surface-strong, #fffdf9)',
-            border: '1px solid var(--blanc-line)', borderRadius: 16, padding: 18,
-            position: 'sticky', top: 24,
+            borderLeft: '1px solid var(--blanc-line)', padding: 22, overflowY: 'auto',
         }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
                 <span style={{
@@ -616,7 +614,7 @@ function DetailPanel({ log, onClose }: { log: RoutingLogEntry; onClose: () => vo
             ))}
 
             {log.error && (
-                <div style={{ marginTop: 12, padding: '8px 12px', background: 'rgba(239, 68, 68, 0.06)', borderRadius: 10, fontSize: 12, color: '#b91c1c' }}>
+                <div style={{ marginTop: 12, padding: '8px 12px', background: 'rgba(212, 77, 60, 0.08)', borderRadius: 10, fontSize: 12, color: 'var(--blanc-danger, #d44d3c)' }}>
                     {log.error}
                 </div>
             )}
@@ -626,6 +624,7 @@ function DetailPanel({ log, onClose }: { log: RoutingLogEntry; onClose: () => vo
                     Ring time: {log.latency_ms > 1000 ? `${(log.latency_ms / 1000).toFixed(1)}s` : `${log.latency_ms}ms`}
                 </div>
             )}
+        </div>
         </div>
     );
 }
