@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Device, Call } from '@twilio/voice-sdk';
 import { fetchVoiceToken } from '../services/voiceApi';
 import { startRingtone, stopRingtone } from '../utils/ringtone';
-import type { CallState, UseTwilioDeviceReturn } from './twilioDeviceTypes';
+import type { CallState, UseTwilioDeviceReturn, MicPermission } from './twilioDeviceTypes';
 import { useRealtimeEvents } from './useRealtimeEvents';
 import { authedFetch } from '../services/apiClient';
 
@@ -40,6 +40,7 @@ export function useTwilioDevice(options: UseTwilioDeviceOptions = {}): UseTwilio
     const [pendingCount, setPendingCount] = useState(0);
     const [pendingCallerInfo, setPendingCallerInfo] = useState<{ number: string } | null>(null);
     const [holdingCallerInfo, setHoldingCallerInfo] = useState<{ number: string; callSid: string } | null>(null);
+    const [micPermission, setMicPermission] = useState<MicPermission>('unknown');
 
     const durationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const connectedAtRef = useRef<number | null>(null);
@@ -271,6 +272,32 @@ export function useTwilioDevice(options: UseTwilioDeviceOptions = {}): UseTwilio
         },
     });
 
+    // ── Microphone permission (calls need mic access) ──────────────────
+    // Read the current state via the Permissions API without prompting, and
+    // react to changes. Not all browsers support querying 'microphone'
+    // (e.g. Firefox) — we leave 'unknown' and rely on requestMic() there.
+    useEffect(() => {
+        if (!enabled || !navigator.permissions?.query) return;
+        let status: PermissionStatus | null = null;
+        const onChange = () => { if (status) setMicPermission(status.state as MicPermission); };
+        navigator.permissions.query({ name: 'microphone' as PermissionName })
+            .then(p => { status = p; setMicPermission(p.state as MicPermission); p.addEventListener('change', onChange); })
+            .catch(() => { /* not queryable — stay 'unknown' */ });
+        return () => { if (status) status.removeEventListener('change', onChange); };
+    }, [enabled]);
+
+    const requestMic = useCallback(async (): Promise<boolean> => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            stream.getTracks().forEach(t => t.stop()); // release immediately — the SDK opens its own
+            setMicPermission('granted');
+            return true;
+        } catch {
+            setMicPermission('denied');
+            return false;
+        }
+    }, []);
+
     const makeCall = useCallback(async (to: string, params?: Record<string, string>) => {
         if (!device) { setError('SoftPhone not ready'); return; }
         setError(null); setCallState('connecting'); setCallerInfo({ number: to }); busyRef.current = true;
@@ -299,5 +326,5 @@ export function useTwilioDevice(options: UseTwilioDeviceOptions = {}): UseTwilio
     const toggleMute = useCallback(() => { if (activeCall) { const newMuted = !activeCall.isMuted(); activeCall.mute(newMuted); setIsMuted(newMuted); } }, [activeCall]);
     const sendDigits = useCallback((digits: string) => { if (activeCall) activeCall.sendDigits(digits); }, [activeCall]);
 
-    return { device, activeCall, incomingCall, callState, callDuration, callerInfo, makeCall, acceptCall, declineCall, hangUp, toggleMute, isMuted, sendDigits, deviceReady, error, phoneAllowed, pendingCount, pendingCallerInfo, holdingCallerInfo };
+    return { device, activeCall, incomingCall, callState, callDuration, callerInfo, makeCall, acceptCall, declineCall, hangUp, toggleMute, isMuted, sendDigits, deviceReady, error, phoneAllowed, pendingCount, pendingCallerInfo, holdingCallerInfo, micPermission, requestMic };
 }

@@ -16,7 +16,7 @@ interface SoftPhoneWidgetProps { voice: UseTwilioDeviceReturn; open: boolean; mi
 
 export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({ voice, open, minimized, disabledReason, onClose, onMinimize }) => {
     const { inputValue, normalizedNumber, selectedContactName, showKeypad, setShowKeypad, showSearch, callError, blancNumbers, selectedCallerId, setSelectedCallerId, handleInputChange, handleContactSelect, handleCall, handleKeyDown, handleDtmf, setShowSearch } = useSoftPhoneWidget(voice, open);
-    const { callState, callDuration, callerInfo, deviceReady, error, isMuted, acceptCall, declineCall, hangUp, toggleMute, pendingCount, pendingCallerInfo, holdingCallerInfo } = voice;
+    const { callState, callDuration, callerInfo, deviceReady, error, isMuted, acceptCall, declineCall, hangUp, toggleMute, pendingCount, pendingCallerInfo, holdingCallerInfo, micPermission, requestMic } = voice;
 
     const formatDuration = (seconds: number) => { const m = Math.floor(seconds / 60); const s = seconds % 60; return `${m}:${s.toString().padStart(2, '0')}`; };
 
@@ -74,6 +74,17 @@ export const SoftPhoneWidget: React.FC<SoftPhoneWidgetProps> = ({ voice, open, m
                     <div className="softphone-input-wrapper"><input className="softphone-input" type="text" placeholder="Enter phone number or search contact..." value={inputValue} onChange={handleInputChange} onKeyDown={handleKeyDown} onFocus={() => { if (inputValue.trim().length >= 2) setShowSearch(true); }} autoFocus /><ContactSearchDropdown query={inputValue} onSelect={handleContactSelect} visible={showSearch} /></div>
                     <div className="softphone-contact-name-slot">{selectedContactName && <span>{selectedContactName} — {formatPhoneDisplay(normalizedNumber || '')}</span>}</div>
                     {callError && <div className="softphone-error">{callError}</div>}
+                    {micPermission === 'denied' && (
+                        <div className="softphone-mic-notice denied">
+                            <MicOff size={15} />
+                            <div><strong>Microphone blocked.</strong> Calls need mic access — allow it via the lock icon in your browser's address bar, then <button className="softphone-mic-link" onClick={requestMic}>re-check</button>.</div>
+                        </div>
+                    )}
+                    {(micPermission === 'prompt' || micPermission === 'unknown') && (
+                        <button className="softphone-mic-notice prompt" onClick={requestMic}>
+                            <Mic size={15} /> <span>Enable microphone for calls</span>
+                        </button>
+                    )}
                     <div className="softphone-actions"><button className="softphone-btn softphone-btn-call" onClick={handleCall} disabled={!canCall}><Phone size={18} />Call</button></div>
                 </>)}
                 {callState === 'incoming' && (<>

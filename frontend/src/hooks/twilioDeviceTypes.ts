@@ -2,6 +2,9 @@ import type { Device, Call } from '@twilio/voice-sdk';
 
 export type CallState = 'idle' | 'connecting' | 'ringing' | 'incoming' | 'connected' | 'ended' | 'failed';
 
+/** Microphone permission state (mirrors the Permissions API, 'unknown' when unqueryable). */
+export type MicPermission = 'unknown' | 'granted' | 'denied' | 'prompt';
+
 export interface UseTwilioDeviceReturn {
     device: Device | null;
     activeCall: Call | null;
@@ -19,6 +22,10 @@ export interface UseTwilioDeviceReturn {
     deviceReady: boolean;
     error: string | null;
     phoneAllowed: boolean;
+    /** Microphone permission state — calls need mic access. */
+    micPermission: MicPermission;
+    /** Prompt for / re-check microphone access. Resolves true when granted. */
+    requestMic: () => Promise<boolean>;
     /** Number of incoming calls queued while dispatcher is busy */
     pendingCount: number;
     /** Caller info of the first pending call (for UI display) */

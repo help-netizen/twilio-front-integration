@@ -576,3 +576,63 @@
     font-weight: 500;
     animation: softphone-pulse 1.5s ease-in-out infinite;
 }
+
+/* ─── Microphone permission notice (idle) ────────────────────────────────── */
+.softphone-mic-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    font-size: 12.5px;
+    line-height: 1.45;
+    text-align: left;
+}
+
+.softphone-mic-notice.denied {
+    background: rgba(212, 77, 60, 0.1);
+    border: 1px solid rgba(212, 77, 60, 0.28);
+    color: var(--blanc-danger, #d44d3c);
+}
+
+.softphone-mic-notice.prompt {
+    width: 100%;
+    align-items: center;
+    justify-content: center;
+    background: rgba(47, 99, 216, 0.08);
+    border: 1px solid rgba(47, 99, 216, 0.2);
+    color: var(--blanc-job, #2f63d8);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.12s;
+}
+
+.softphone-mic-notice.prompt:hover {
+    background: rgba(47, 99, 216, 0.14);
+}
+
+.softphone-mic-link {
+    border: none;
+    background: none;
+    padding: 0;
+    color: var(--blanc-danger, #d44d3c);
+    font-weight: 700;
+    text-decoration: underline;
+    cursor: pointer;
+    font-size: inherit;
+}
+
+/* ─── Distinct call-state treatments ─────────────────────────────────────── */
+/* Ringing / connecting: a quiet pulsing ring so the state reads at a glance. */
+.softphone-call-status.ringing,
+.softphone-call-status.connecting {
+    animation: softphone-pulse 1.4s ease-in-out infinite;
+}
+
+/* Connected: the live timer is the hero. */
+.softphone-call-status.connected {
+    font-size: 17px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
