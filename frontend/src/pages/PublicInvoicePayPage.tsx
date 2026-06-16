@@ -48,6 +48,10 @@ export default function PublicInvoicePayPage() {
     const elementsRef = useRef<any>(null);
 
     useEffect(() => {
+        // Returning from a redirect-based method (Stripe appends redirect_status).
+        if (new URLSearchParams(window.location.search).get('redirect_status') === 'succeeded') {
+            setStep('done');
+        }
         (async () => {
             try {
                 const res = await fetch(`/api/public/invoices/${token}/pay-info`);
@@ -86,7 +90,11 @@ export default function PublicInvoicePayPage() {
         if (!stripeRef.current || !elementsRef.current) return;
         setPaying(true); setError(null);
         try {
-            const { error: payErr } = await stripeRef.current.confirmPayment({ elements: elementsRef.current, redirect: 'if_required' });
+            const { error: payErr } = await stripeRef.current.confirmPayment({
+                elements: elementsRef.current,
+                confirmParams: { return_url: window.location.href.split('?')[0] },
+                redirect: 'if_required',
+            });
             if (payErr) { setError(payErr.message || 'Payment failed'); return; }
             setStep('done');
         } catch (e: any) { setError(e?.message || 'Payment failed'); }
@@ -167,7 +175,11 @@ export default function PublicInvoicePayPage() {
 
                         {step === 'pay' && (
                             <>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 17, margin: '14px 0' }}>
+                                <button onClick={() => { setStep('summary'); setError(null); }} disabled={paying}
+                                    style={{ background: 'none', border: 'none', color: '#8a7d68', cursor: 'pointer', padding: 0, marginTop: 10, fontSize: 13 }}>
+                                    ← Change tip
+                                </button>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 17, margin: '8px 0 14px' }}>
                                     <span>Total{tipValue > 0 ? ' (incl. tip)' : ''}</span><span>{money(total, info.currency)}</span>
                                 </div>
                                 <div ref={mountRef} style={{ minHeight: 40, marginBottom: 14 }} />
