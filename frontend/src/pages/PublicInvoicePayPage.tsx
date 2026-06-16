@@ -21,7 +21,7 @@ interface PayInfo {
     technician: Technician | null;
 }
 
-const TIP_PRESETS = [0.15, 0.18, 0.20];
+const TIP_PRESETS = [5, 10, 20]; // fixed-dollar tip amounts
 const money = (v: number, cur = 'USD') =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: cur }).format(Number(v || 0));
 
@@ -143,25 +143,26 @@ export default function PublicInvoicePayPage() {
                             <>
                                 <div style={{ marginTop: 14, fontSize: 13, color: '#a99e8a', fontWeight: 600 }}>ADD A TIP</div>
                                 <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                                    {TIP_PRESETS.map(p => {
-                                        const amt = Number((balance * p).toFixed(2));
+                                    {TIP_PRESETS.map(amt => {
                                         const active = tipMode === 'preset' && tip === amt;
                                         return (
-                                            <button key={p} onClick={() => { setTipMode('preset'); setTip(amt); }}
-                                                style={{ flex: 1, padding: '10px 6px', borderRadius: 12, cursor: 'pointer', border: active ? '2px solid #635bff' : '1px solid rgba(117,106,89,0.25)', background: active ? '#f3f1ff' : '#fff' }}>
-                                                <div style={{ fontWeight: 700 }}>{Math.round(p * 100)}%</div>
-                                                <div style={{ fontSize: 12, color: '#6b5f4c' }}>{money(amt, info.currency)}</div>
+                                            <button key={amt}
+                                                onClick={() => active ? (setTipMode('none'), setTip(0)) : (setTipMode('preset'), setTip(amt), setCustomTip(''))}
+                                                style={{ flex: 1, padding: '12px 6px', borderRadius: 12, cursor: 'pointer', fontWeight: 700, border: active ? '2px solid #635bff' : '1px solid rgba(117,106,89,0.25)', background: active ? '#f3f1ff' : '#fff' }}>
+                                                {money(amt, info.currency)}
                                             </button>
                                         );
                                     })}
+                                    <button onClick={() => setTipMode('custom')}
+                                        style={{ flex: 1, padding: '12px 6px', borderRadius: 12, cursor: 'pointer', fontWeight: 700, border: tipMode === 'custom' ? '2px solid #635bff' : '1px solid rgba(117,106,89,0.25)', background: tipMode === 'custom' ? '#f3f1ff' : '#fff' }}>
+                                        Other
+                                    </button>
                                 </div>
-                                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                                    <button onClick={() => { setTipMode('none'); setTip(0); setCustomTip(''); }}
-                                        style={{ flex: 1, padding: '8px', borderRadius: 12, cursor: 'pointer', border: tipMode === 'none' ? '2px solid #635bff' : '1px solid rgba(117,106,89,0.25)', background: tipMode === 'none' ? '#f3f1ff' : '#fff' }}>No tip</button>
-                                    <input inputMode="decimal" placeholder="Custom $" value={customTip}
-                                        onChange={e => { setCustomTip(e.target.value); setTipMode('custom'); }}
-                                        style={{ flex: 1, padding: '8px 12px', borderRadius: 12, border: tipMode === 'custom' ? '2px solid #635bff' : '1px solid rgba(117,106,89,0.25)' }} />
-                                </div>
+                                {tipMode === 'custom' && (
+                                    <input autoFocus inputMode="decimal" placeholder="Enter tip amount ($)" value={customTip}
+                                        onChange={e => setCustomTip(e.target.value.replace(/[^0-9.]/g, ''))}
+                                        style={{ width: '100%', padding: '11px 12px', borderRadius: 12, marginTop: 8, border: '2px solid #635bff', boxSizing: 'border-box' }} />
+                                )}
 
                                 <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 17, margin: '18px 0 14px' }}>
                                     <span>Total</span><span>{money(total, info.currency)}</span>
