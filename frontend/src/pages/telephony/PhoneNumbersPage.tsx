@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Phone, Search, Plus, Trash2, Loader2, PlugZap, MapPin } from 'lucide-react';
+import { Phone, Search, Plus, Trash2, Loader2, PlugZap, MapPin, Monitor, Headphones } from 'lucide-react';
 import { telephonyApi } from '../../services/telephonyApi';
 import { authedFetch } from '../../services/apiClient';
 import { billingApi } from '../../services/billingApi';
@@ -26,6 +26,9 @@ export default function PhoneNumbersPage() {
     const [buyingNum, setBuyingNum] = useState<string | null>(null);
     const [releasingSid, setReleasingSid] = useState<string | null>(null);
     const [numberLimit, setNumberLimit] = useState<number | null>(null);
+    // Routing mode per phone number (merged from the old Phone Calls page).
+    const [routing, setRouting] = useState<Record<string, { id: number; mode: 'sip' | 'client' }>>({});
+    const [routingBusy, setRoutingBusy] = useState<string | null>(null);
 
     // Phase 2: usage + A2P compliance
     const [usage, setUsage] = useState<{ total_usd: number; calls: { count: number }; sms: { count: number }; numbers: { count: number } } | null>(null);
@@ -159,16 +162,40 @@ export default function PhoneNumbersPage() {
         finally { setReleasingSid(null); }
     };
 
+    const toggleRouting = async (n: PhoneNumber) => {
+        const setting = routing[n.number];
+        if (!setting) { toast.error('Routing is not configured for this number yet'); return; }
+        const next = setting.mode === 'sip' ? 'client' : 'sip';
+        setRoutingBusy(n.number);
+        try {
+            const r = await authedFetch(`/api/phone-settings/${setting.id}`, {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ routing_mode: next }),
+            });
+            const j = await r.json();
+            if (!j.ok) throw new Error(j.error || 'Failed to update routing');
+            setRouting(prev => ({ ...prev, [n.number]: { ...setting, mode: next } }));
+            toast.success(`Calls ring on ${next === 'client' ? 'the browser SoftPhone' : 'Bria (SIP)'}`);
+        } catch (e: any) { toast.error(e.message || 'Failed to update routing'); }
+        finally { setRoutingBusy(null); }
+    };
+
     const loadData = async () => {
         setLoading(true);
         try {
             // ALB-107: subaccount tenants list numbers through the tenant API;
             // the legacy master-account company falls back to the old endpoint.
-            const [tenantRes, groupRes, billing] = await Promise.all([
+            const [tenantRes, groupRes, billing, settingsRes] = await Promise.all([
                 authedFetch('/api/telephony/numbers').then(r => r.json()).catch(() => null),
                 authedFetch('/api/user-groups').then(r => r.json()).catch(() => ({ data: [] })),
                 billingApi.overview().catch(() => null),
+                authedFetch('/api/phone-settings').then(r => r.json()).catch(() => null),
             ]);
+            // Routing mode (SoftPhone vs Bria/SIP) per number — merged in from the
+            // former standalone Phone Calls page. Keyed by phone number.
+            if (settingsRes?.ok && Array.isArray(settingsRes.data)) {
+                setRouting(Object.fromEntries(settingsRes.data.map((s: any) => [s.phone_number, { id: s.id, mode: s.routing_mode }])));
+            }
             if (billing) {
                 // Only cap when the company actually has a billing subscription;
                 // unbilled/platform companies (no subscription) have no limit.
@@ -325,14 +352,13 @@ export default function PhoneNumbersPage() {
 
             {loading ? <div style={{ padding: 40, textAlign: 'center', color: 'var(--blanc-ink-3, #7d8796)' }}>Loading...</div> : (
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                    <thead><tr style={{ borderBottom: '1px solid #e5e7eb' }}>
-                        {['Number', 'Name', 'Provider', 'Group', 'Status', 'Webhook', ''].map((h, i) => <th key={i} style={{ textAlign: 'left', padding: '8px 12px', fontSize: 11, fontWeight: 600, color: 'var(--blanc-ink-2, #536070)', textTransform: 'uppercase' }}>{h}</th>)}
+                    <thead><tr style={{ borderBottom: '1px solid var(--blanc-line, rgba(117,106,89,0.18))' }}>
+                        {['Number', 'Name', 'Group', 'Routing', 'Status', 'Webhook', ''].map((h, i) => <th key={i} style={{ textAlign: 'left', padding: '8px 12px', fontSize: 11, fontWeight: 600, color: 'var(--blanc-ink-2, #536070)', textTransform: 'uppercase' }}>{h}</th>)}
                     </tr></thead>
                     <tbody>{filtered.map(n => (
-                        <tr key={n.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                        <tr key={n.id} style={{ borderBottom: '1px solid rgba(117,106,89,0.1)' }}>
                             <td style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8 }}><Phone size={14} style={{ color: 'var(--blanc-job, #2f63d8)' }} />{n.number}</td>
                             <td style={{ padding: '10px 12px' }}>{n.friendly_name}</td>
-                            <td style={{ padding: '10px 12px' }}>{n.provider}</td>
                             <td style={{ padding: '10px 12px' }}>
                                 <select
                                     value={n.group_id || ''}
@@ -344,8 +370,18 @@ export default function PhoneNumbersPage() {
                                     {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
                                 </select>
                             </td>
+                            <td style={{ padding: '10px 12px' }}>
+                                {routing[n.number] ? (
+                                    <button onClick={() => toggleRouting(n)} disabled={routingBusy === n.number}
+                                        title="Switch where calls ring"
+                                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 999, border: '1px solid var(--blanc-line, rgba(117,106,89,0.18))', background: 'transparent', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: routing[n.number].mode === 'client' ? 'var(--blanc-job, #2f63d8)' : 'var(--blanc-ink-2, #536070)' }}>
+                                        {routing[n.number].mode === 'client' ? <Monitor size={13} /> : <Headphones size={13} />}
+                                        {routing[n.number].mode === 'client' ? 'SoftPhone' : 'Bria (SIP)'}
+                                    </button>
+                                ) : <span style={{ fontSize: 12, color: 'var(--blanc-ink-3, #7d8796)' }}>—</span>}
+                            </td>
                             <td style={{ padding: '10px 12px' }}><span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: n.status === 'active' ? 'rgba(27,139,99,0.12)' : 'rgba(178,106,29,0.12)', color: n.status === 'active' ? 'var(--blanc-success, #1b8b63)' : 'var(--blanc-warning, #b26a1d)' }}>{n.status}</span></td>
-                            <td style={{ padding: '10px 12px' }}>{n.webhook_configured ? '✓ Configured' : '✗ Not set'}</td>
+                            <td style={{ padding: '10px 12px' }}><span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: n.webhook_configured ? 'rgba(27,139,99,0.12)' : 'rgba(117,106,89,0.08)', color: n.webhook_configured ? 'var(--blanc-success, #1b8b63)' : 'var(--blanc-ink-3, #7d8796)' }}>{n.webhook_configured ? 'Configured' : 'Not set'}</span></td>
                             <td style={{ padding: '10px 12px' }}>
                                 <button title="Release number" onClick={() => releaseNumber(n)} disabled={releasingSid === ((n as any).twilio_sid || (n as any).sid)}
                                     style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--blanc-ink-3, #7d8796)', padding: 4 }}
