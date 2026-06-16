@@ -1,7 +1,7 @@
 /*
  * SoftPhone Widget — Styles
  *
- * Dark-themed softphone panel (non-blocking, no overlay).
+ * Light Blanc-themed softphone panel (non-blocking, no overlay).
  * Supports minimize-to-tray during active calls.
  */
 
@@ -11,11 +11,13 @@
     top: 56px;
     right: 16px;
     z-index: 9000;
-    background: #1a1a2e;
+    background: var(--blanc-surface-strong, #fffdf9);
     border-radius: 16px;
     width: 360px;
-    box-shadow: 0 25px 60px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--blanc-line, rgba(117, 106, 89, 0.18));
+    box-shadow: 0 24px 60px rgba(32, 39, 52, 0.18);
     overflow: visible;
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
     animation: softphone-slide-in 0.2s ease-out;
 }
 
@@ -41,8 +43,8 @@
     align-items: center;
     gap: 8px;
     padding: 4px 10px 4px 12px;
-    background: #1a1a2e;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: var(--blanc-surface-strong, #fffdf9);
+    border: 1px solid var(--blanc-line, rgba(117, 106, 89, 0.18));
     border-radius: 20px;
     cursor: pointer;
     transition: background 0.15s, box-shadow 0.15s;
@@ -50,8 +52,8 @@
 }
 
 .softphone-tray:hover {
-    background: #242445;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+    background: var(--blanc-bg, #efe9df);
+    box-shadow: 0 4px 16px rgba(32, 39, 52, 0.12);
 }
 
 .softphone-tray-status {
@@ -62,19 +64,19 @@
 }
 
 .softphone-tray-status.connected {
-    color: #66bb6a;
+    color: var(--blanc-success, #1b8b63);
 }
 
 .softphone-tray-status.connecting {
-    color: #ffa726;
+    color: var(--blanc-warning, #b26a1d);
 }
 
 .softphone-tray-status.ringing {
-    color: #42a5f5;
+    color: var(--blanc-job, #2f63d8);
 }
 
 .softphone-tray-status.incoming {
-    color: #ab47bc;
+    color: #6d4ec9;
     animation: softphone-pulse 1.5s ease-in-out infinite;
 }
 
@@ -86,19 +88,19 @@
     height: 26px;
     border-radius: 50%;
     border: none;
-    background: rgba(255, 255, 255, 0.08);
-    color: #ccc;
+    background: rgba(117, 106, 89, 0.1);
+    color: var(--blanc-ink-2, #536070);
     cursor: pointer;
     transition: background 0.12s, color 0.12s;
 }
 
 .softphone-tray-mute:hover {
-    background: rgba(255, 255, 255, 0.15);
+    background: rgba(117, 106, 89, 0.18);
 }
 
 .softphone-tray-mute.active {
-    background: rgba(244, 67, 54, 0.25);
-    color: #ef5350;
+    background: rgba(212, 77, 60, 0.14);
+    color: var(--blanc-danger, #d44d3c);
 }
 
 /* ─── Header ─────────────────────────────────────────────────────────────── */
@@ -107,14 +109,13 @@
     align-items: center;
     justify-content: space-between;
     padding: 12px 12px 12px 16px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .softphone-header-title {
     display: flex;
     align-items: center;
     gap: 8px;
-    color: #e0e0e0;
+    color: var(--blanc-ink-1, #202734);
     font-size: 14px;
     font-weight: 600;
     min-width: 0;
@@ -130,18 +131,18 @@
 .softphone-header-btn {
     background: none;
     border: none;
-    color: #888;
+    color: var(--blanc-ink-3, #7d8796);
     cursor: pointer;
-    padding: 4px;
-    border-radius: 4px;
+    padding: 6px;
+    border-radius: 8px;
     display: flex;
     align-items: center;
     transition: color 0.15s, background 0.15s;
 }
 
 .softphone-header-btn:hover {
-    color: #fff;
-    background: rgba(255, 255, 255, 0.1);
+    color: var(--blanc-ink-1, #202734);
+    background: rgba(117, 106, 89, 0.08);
 }
 
 /* ─── Header Caller ID ───────────────────────────────────────────────────── */
@@ -154,16 +155,16 @@
 
 .softphone-header-caller-label {
     font-size: 12px;
-    color: #888;
+    color: var(--blanc-ink-3, #7d8796);
     white-space: nowrap;
     font-weight: 400;
 }
 
 .softphone-header-caller-select {
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 6px;
-    color: #e0e0e0;
+    background: var(--blanc-surface-strong, #fffdf9);
+    border: 1px solid var(--blanc-line, rgba(117, 106, 89, 0.18));
+    border-radius: 8px;
+    color: var(--blanc-ink-1, #202734);
     font-size: 13px;
     font-weight: 600;
     padding: 3px 6px;
@@ -174,16 +175,16 @@
 }
 
 .softphone-header-caller-select:hover {
-    border-color: rgba(255, 255, 255, 0.2);
+    border-color: rgba(117, 106, 89, 0.3);
 }
 
 .softphone-header-caller-select:focus {
-    border-color: rgba(99, 102, 241, 0.5);
+    border-color: var(--blanc-job, #2f63d8);
 }
 
 .softphone-header-caller-select option {
-    background: #1a1a2e;
-    color: #e0e0e0;
+    background: var(--blanc-surface-strong, #fffdf9);
+    color: var(--blanc-ink-1, #202734);
 }
 
 /* ─── Status Dot ─────────────────────────────────────────────────────────── */
@@ -191,17 +192,17 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #4caf50;
+    background: var(--blanc-success, #1b8b63);
     flex-shrink: 0;
 }
 
 .softphone-status-dot.offline {
-    background: #f44336;
+    background: var(--blanc-ink-3, #7d8796);
 }
 
 /* ─── Body (Idle) ────────────────────────────────────────────────────────── */
 .softphone-body {
-    padding: 20px;
+    padding: 8px 20px 20px;
     overflow: visible;
 }
 
@@ -212,33 +213,34 @@
 .softphone-input {
     width: 100%;
     padding: 12px 16px;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: var(--blanc-bg, #efe9df);
+    border: 1px solid var(--blanc-line, rgba(117, 106, 89, 0.18));
     border-radius: 10px;
-    color: #fff;
+    color: var(--blanc-ink-1, #202734);
     font-size: 15px;
     outline: none;
-    transition: border-color 0.15s;
+    transition: border-color 0.15s, background 0.15s;
     box-sizing: border-box;
 }
 
 .softphone-input::placeholder {
-    color: #666;
+    color: var(--blanc-ink-3, #7d8796);
 }
 
 .softphone-input:focus {
-    border-color: rgba(99, 102, 241, 0.5);
+    border-color: var(--blanc-job, #2f63d8);
+    background: var(--blanc-surface-strong, #fffdf9);
 }
 
 .softphone-helper {
     margin-top: 8px;
     font-size: 12px;
-    color: #666;
+    color: var(--blanc-ink-3, #7d8796);
     padding: 0 4px;
 }
 
 .softphone-helper.error {
-    color: #f44336;
+    color: var(--blanc-danger, #d44d3c);
 }
 
 /* Reserved space for contact name — fixed height so Call button doesn't jump */
@@ -247,7 +249,7 @@
     margin-top: 6px;
     padding: 0 4px;
     font-size: 13px;
-    color: #aaa;
+    color: var(--blanc-ink-2, #536070);
     display: flex;
     align-items: center;
 }
@@ -255,10 +257,10 @@
 .softphone-error {
     margin-top: 8px;
     padding: 8px 12px;
-    background: rgba(239, 68, 68, 0.15);
-    border: 1px solid rgba(239, 68, 68, 0.3);
+    background: rgba(212, 77, 60, 0.1);
+    border: 1px solid rgba(212, 77, 60, 0.28);
     border-radius: 8px;
-    color: #fca5a5;
+    color: var(--blanc-danger, #d44d3c);
     font-size: 12px;
     line-height: 1.4;
     text-align: center;
@@ -284,7 +286,7 @@
     align-items: center;
     justify-content: center;
     gap: 8px;
-    transition: opacity 0.15s, transform 0.1s;
+    transition: opacity 0.15s, transform 0.1s, background 0.15s;
 }
 
 .softphone-btn:active {
@@ -298,44 +300,44 @@
 }
 
 .softphone-btn-call {
-    background: #4caf50;
+    background: var(--blanc-success, #1b8b63);
     color: #fff;
 }
 
 .softphone-btn-call:hover:not(:disabled) {
-    background: #43a047;
+    background: #15724f;
 }
 
 .softphone-btn-end {
-    background: #f44336;
+    background: var(--blanc-danger, #d44d3c);
     color: #fff;
 }
 
 .softphone-btn-end:hover:not(:disabled) {
-    background: #e53935;
+    background: #b93d2f;
 }
 
 .softphone-btn-accept {
-    background: #4caf50;
+    background: var(--blanc-success, #1b8b63);
     color: #fff;
 }
 
 .softphone-btn-accept:hover {
-    background: #43a047;
+    background: #15724f;
 }
 
 .softphone-btn-decline {
-    background: #f44336;
+    background: var(--blanc-danger, #d44d3c);
     color: #fff;
 }
 
 .softphone-btn-decline:hover {
-    background: #e53935;
+    background: #b93d2f;
 }
 
 .softphone-btn-secondary {
-    background: rgba(255, 255, 255, 0.08);
-    color: #ccc;
+    background: rgba(117, 106, 89, 0.1);
+    color: var(--blanc-ink-2, #536070);
     flex: none;
     padding: 12px;
     width: 44px;
@@ -343,12 +345,12 @@
 }
 
 .softphone-btn-secondary:hover {
-    background: rgba(255, 255, 255, 0.15);
+    background: rgba(117, 106, 89, 0.18);
 }
 
 .softphone-btn-secondary.active {
-    background: rgba(99, 102, 241, 0.3);
-    color: #818cf8;
+    background: rgba(47, 99, 216, 0.14);
+    color: var(--blanc-job, #2f63d8);
 }
 
 /* ─── Active Call View ───────────────────────────────────────────────────── */
@@ -360,13 +362,14 @@
 .softphone-call-number {
     font-size: 20px;
     font-weight: 600;
-    color: #fff;
+    color: var(--blanc-ink-1, #202734);
     margin-bottom: 4px;
+    font-family: var(--blanc-font-heading, Manrope), sans-serif;
 }
 
 .softphone-call-name {
     font-size: 14px;
-    color: #aaa;
+    color: var(--blanc-ink-2, #536070);
     margin-bottom: 12px;
 }
 
@@ -378,32 +381,33 @@
     font-weight: 500;
     padding: 6px 14px;
     border-radius: 20px;
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(117, 106, 89, 0.08);
+    color: var(--blanc-ink-2, #536070);
 }
 
 .softphone-call-status.connecting {
-    color: #ffa726;
+    color: var(--blanc-warning, #b26a1d);
 }
 
 .softphone-call-status.ringing {
-    color: #42a5f5;
+    color: var(--blanc-job, #2f63d8);
 }
 
 .softphone-call-status.connected {
-    color: #66bb6a;
+    color: var(--blanc-success, #1b8b63);
 }
 
 .softphone-call-status.incoming {
-    color: #ab47bc;
+    color: #6d4ec9;
     animation: softphone-pulse 1.5s ease-in-out infinite;
 }
 
 .softphone-call-status.ended {
-    color: #888;
+    color: var(--blanc-ink-3, #7d8796);
 }
 
 .softphone-call-status.failed {
-    color: #f44336;
+    color: var(--blanc-danger, #d44d3c);
 }
 
 @keyframes softphone-pulse {
@@ -423,18 +427,6 @@
     letter-spacing: 0.5px;
 }
 
-/* ─── Error Banner ───────────────────────────────────────────────────────── */
-.softphone-error {
-    margin: 12px 0 0;
-    padding: 8px 12px;
-    background: rgba(244, 67, 54, 0.15);
-    border: 1px solid rgba(244, 67, 54, 0.3);
-    border-radius: 8px;
-    color: #ef5350;
-    font-size: 13px;
-    text-align: center;
-}
-
 /* ─── Search Dropdown ────────────────────────────────────────────────────── */
 .softphone-search-dropdown {
     position: absolute;
@@ -442,18 +434,18 @@
     left: 0;
     right: 0;
     margin-top: 4px;
-    background: #16213e;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: var(--blanc-surface-strong, #fffdf9);
+    border: 1px solid var(--blanc-line, rgba(117, 106, 89, 0.18));
     border-radius: 10px;
     max-height: 240px;
     overflow-y: auto;
     z-index: 10;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 8px 24px rgba(32, 39, 52, 0.14);
 }
 
 .softphone-search-loading {
     padding: 12px 16px;
-    color: #888;
+    color: var(--blanc-ink-3, #7d8796);
     font-size: 13px;
     text-align: center;
 }
@@ -467,15 +459,15 @@
     text-align: left;
     cursor: pointer;
     transition: background 0.12s;
-    color: #fff;
+    color: var(--blanc-ink-1, #202734);
 }
 
 .softphone-search-row:hover {
-    background: rgba(99, 102, 241, 0.15);
+    background: rgba(47, 99, 216, 0.08);
 }
 
 .softphone-search-row+.softphone-search-row {
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    border-top: 1px solid var(--blanc-line, rgba(117, 106, 89, 0.18));
 }
 
 .softphone-search-row-name {
@@ -486,7 +478,7 @@
 
 .softphone-search-row-phone {
     font-size: 13px;
-    color: #aaa;
+    color: var(--blanc-ink-2, #536070);
     display: flex;
     align-items: center;
     gap: 8px;
@@ -494,8 +486,8 @@
 
 .softphone-search-row-label {
     font-size: 11px;
-    color: #666;
-    background: rgba(255, 255, 255, 0.06);
+    color: var(--blanc-ink-3, #7d8796);
+    background: rgba(117, 106, 89, 0.08);
     padding: 1px 6px;
     border-radius: 4px;
 }
@@ -514,7 +506,7 @@
     align-items: center;
     gap: 6px;
     padding: 6px 14px;
-    background: #4caf50;
+    background: var(--blanc-success, #1b8b63);
     color: #fff;
     border: none;
     border-radius: 8px;
@@ -525,18 +517,18 @@
 }
 
 .incoming-call-btn:hover {
-    background: #43a047;
+    background: #15724f;
 }
 
 @keyframes incoming-pulse {
 
     0%,
     100% {
-        box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.5);
+        box-shadow: 0 0 0 0 rgba(27, 139, 99, 0.5);
     }
 
     50% {
-        box-shadow: 0 0 0 8px rgba(76, 175, 80, 0);
+        box-shadow: 0 0 0 8px rgba(27, 139, 99, 0);
     }
 }
 
@@ -550,10 +542,10 @@
 
 .softphone-keypad-btn {
     padding: 12px;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(117, 106, 89, 0.08);
+    border: 1px solid var(--blanc-line, rgba(117, 106, 89, 0.18));
     border-radius: 10px;
-    color: #fff;
+    color: var(--blanc-ink-1, #202734);
     font-size: 18px;
     font-weight: 500;
     cursor: pointer;
@@ -562,11 +554,11 @@
 }
 
 .softphone-keypad-btn:hover {
-    background: rgba(255, 255, 255, 0.15);
+    background: rgba(117, 106, 89, 0.16);
 }
 
 .softphone-keypad-btn:active {
-    background: rgba(99, 102, 241, 0.3);
+    background: rgba(47, 99, 216, 0.16);
 }
 
 /* ─── Pending Call Banner (shown during active call) ─────────────────────── */
@@ -576,10 +568,10 @@
     gap: 8px;
     margin-top: 12px;
     padding: 10px 14px;
-    background: rgba(171, 71, 188, 0.12);
-    border: 1px solid rgba(171, 71, 188, 0.25);
+    background: rgba(109, 78, 201, 0.1);
+    border: 1px solid rgba(109, 78, 201, 0.24);
     border-radius: 10px;
-    color: #ce93d8;
+    color: #6d4ec9;
     font-size: 13px;
     font-weight: 500;
     animation: softphone-pulse 1.5s ease-in-out infinite;
