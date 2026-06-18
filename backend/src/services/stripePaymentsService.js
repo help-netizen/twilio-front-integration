@@ -20,6 +20,8 @@ const invoicesQueries = require('../db/invoicesQueries');
 const marketplaceService = require('./marketplaceService');
 const marketplaceQueries = require('../db/marketplaceQueries');
 const auditService = require('./auditService');
+const companyQueries = require('../db/companyQueries');
+const technicianProfilesService = require('./technicianProfilesService');
 
 const APP_KEY = 'stripe-payments';
 
@@ -388,12 +390,22 @@ async function applyStripeRefund(companyId, { refundId, paymentIntentId, amount,
         await paymentsQueries.updateTransactionStatus(original.id, companyId, 'refunded').catch(() => {});
         if (original.invoice_id) {
             try {
-                await invoicesQueries.recordPayment(original.invoice_id, companyId, -Math.abs(Number(amount)));
+                // Only the invoice-balance portion of the original payment was applied to
+                // the invoice (the tip never touched it). Reverse that proportion of the
+                // refund so amount_paid can't go negative on a tipped payment.
+                const refundAmt = Math.abs(Number(amount));
+                const origTotal = Math.abs(Number(original.amount)) || refundAmt;
+                const origTip = Math.max(0, Number(original.metadata?.tip || 0) || 0);
+                const origBalancePortion = Math.max(0, origTotal - origTip);
+                const invoiceReversal = origTip > 0 && origTotal > 0
+                    ? Number((refundAmt * (origBalancePortion / origTotal)).toFixed(2))
+                    : refundAmt;
+                await invoicesQueries.recordPayment(original.invoice_id, companyId, -invoiceReversal);
                 const inv = await invoicesService.getInvoice(companyId, original.invoice_id);
                 if (inv && Number(inv.balance_due) > 0) {
                     await invoicesQueries.updateInvoiceStatus(original.invoice_id, companyId, Number(inv.amount_paid) > 0 ? 'partial' : 'sent', null);
                 }
-                await invoicesQueries.createEvent(original.invoice_id, 'payment_recorded', 'system', null, { amount: -Math.abs(Number(amount)), payment_method: 'credit_card', source: 'stripe', refund: true, external_id: refundId });
+                await invoicesQueries.createEvent(original.invoice_id, 'payment_recorded', 'system', null, { amount: -invoiceReversal, tip_refunded: Number((refundAmt - invoiceReversal).toFixed(2)), payment_method: 'credit_card', source: 'stripe', refund: true, external_id: refundId });
             } catch (e) { console.warn('[StripePayments] refund invoice adjust failed:', e.message); }
         }
     }
@@ -430,6 +442,10 @@ async function getPublicPayInfo(token) {
     const readiness = computeReadiness(account);
     const balance = invoiceBalance(invoice);
     const payable = canCollect(readiness) && balance > 0 && !['void', 'refunded'].includes(invoice.status);
+    const company = await companyQueries.getCompanyById(invoice.company_id).catch(() => null);
+    let technician = null;
+    try { technician = await technicianProfilesService.getTechnicianForInvoice(invoice.company_id, invoice); } catch (e) { /* optional */ }
+    const companyName = company?.name || 'Our team';
     // Opaque: never expose internal ids.
     return {
         invoice_number: invoice.invoice_number,
@@ -438,6 +454,11 @@ async function getPublicPayInfo(token) {
         currency: (invoice.currency || 'USD'),
         paid: balance <= 0 || invoice.status === 'paid',
         payable,
+        company_name: companyName,
+        thank_you: technician?.name
+            ? `Thank you for choosing ${companyName}! ${technician.name} took care of your service.`
+            : `Thank you for choosing ${companyName}!`,
+        technician: technician ? { name: technician.name, photo_url: technician.photo_url } : null,
     };
 }
 
@@ -448,6 +469,44 @@ async function createPublicPaySession(token) {
     return { url: link.url };
 }
 
+/**
+ * Public embedded-pay flow: create a PaymentIntent on the connected account for the
+ * invoice balance + optional tip, returning the client_secret for the Payment Element.
+ */
+async function createPublicPayIntent(token, { tip = 0 } = {}) {
+    const invoice = await invoicesQueries.getInvoiceByPublicToken(token);
+    if (!invoice) throw new StripePaymentsError('NOT_FOUND', 'Invoice not found', 404);
+    const companyId = invoice.company_id;
+    const account = await assertCollectable(companyId);
+    if (['void', 'refunded', 'paid'].includes(invoice.status)) {
+        throw new StripePaymentsError('INVALID_STATUS', `Cannot pay an invoice with status '${invoice.status}'`, 400);
+    }
+    const balance = invoiceBalance(invoice);
+    const tipAmount = Math.max(0, Number(tip) || 0);
+    const total = Number((balance + tipAmount).toFixed(2));
+    if (!(balance > 0)) throw new StripePaymentsError('INVALID_AMOUNT', 'Nothing to pay', 400);
+
+    const metadata = {
+        company_id: companyId,
+        invoice_id: String(invoice.id),
+        job_id: invoice.job_id != null ? String(invoice.job_id) : '',
+        contact_id: invoice.contact_id != null ? String(invoice.contact_id) : '',
+        tip: String(tipAmount),
+        surface: 'public_pay',
+    };
+    const pi = await provider.createPaymentIntent(account.stripe_account_id,
+        { amount: total, currency: invoice.currency || 'usd', metadata },
+        { idempotencyKey: `public-${companyId}-${invoice.id}-${total}` });
+
+    await q.insertSession(companyId, {
+        invoice_id: invoice.id, job_id: invoice.job_id || null, contact_id: invoice.contact_id || null,
+        surface: 'manual_card', amount: total, status: 'open',
+        stripe_payment_intent_id: pi.id, stripe_account_id: account.stripe_account_id,
+        metadata: { tip: tipAmount, public: true },
+    });
+    return { client_secret: pi.client_secret, account_id: account.stripe_account_id, amount: total, tip: tipAmount, balance_due: balance, currency: (invoice.currency || 'USD') };
+}
+
 // ---- webhook → ledger sync --------------------------------------------------
 
 async function applyStripePayment(companyId, { externalId, invoiceId, contactId, jobId, amount, currency, metadata }) {
@@ -455,11 +514,20 @@ async function applyStripePayment(companyId, { externalId, invoiceId, contactId,
     const existing = await paymentsQueries.findByExternalSourceId(companyId, 'stripe', externalId);
     if (existing) return { tx: existing, deduped: true };
 
+    // Tip (from PaymentIntent/Checkout metadata) is part of the charge but is NOT
+    // applied to the invoice balance — only the (amount - tip) portion settles the
+    // invoice; the tip is recorded on the ledger row's metadata for reporting.
+    const tip = Math.max(0, Number(metadata?.tip || 0) || 0);
+    const balancePortion = Math.max(0, Number((amount - tip).toFixed(2)));
+
     let tx;
     try {
-        tx = await paymentsService.createTransaction(companyId, null, {
+        // Low-level insert (does NOT auto-apply to the invoice) so we control the
+        // balance vs tip split below.
+        tx = await paymentsQueries.createTransaction(companyId, {
             transaction_type: 'payment',
             payment_method: 'credit_card',
+            status: 'completed',
             amount,
             currency: (currency || 'USD').toUpperCase(),
             invoice_id: invoiceId || null,
@@ -467,7 +535,8 @@ async function applyStripePayment(companyId, { externalId, invoiceId, contactId,
             job_id: jobId || null,
             external_id: externalId,
             external_source: 'stripe',
-            metadata: metadata || {},
+            metadata: { ...(metadata || {}), tip },
+            processed_at: new Date().toISOString(),
         });
     } catch (err) {
         // Unique-violation race → another delivery won; treat as deduped.
@@ -478,9 +547,9 @@ async function applyStripePayment(companyId, { externalId, invoiceId, contactId,
         throw err;
     }
 
-    // Invoice status transition (createTransaction already updated balance_due).
     if (invoiceId) {
         try {
+            await invoicesQueries.recordPayment(invoiceId, companyId, balancePortion);
             const inv = await invoicesService.getInvoice(companyId, invoiceId);
             if (inv) {
                 if (Number(inv.balance_due) <= 0) {
@@ -489,7 +558,7 @@ async function applyStripePayment(companyId, { externalId, invoiceId, contactId,
                     await invoicesQueries.updateInvoiceStatus(invoiceId, companyId, 'partial', null);
                 }
                 await invoicesQueries.createEvent(invoiceId, 'payment_recorded', 'system', null, {
-                    amount, payment_method: 'credit_card', source: 'stripe', external_id: externalId,
+                    amount: balancePortion, tip, payment_method: 'credit_card', source: 'stripe', external_id: externalId,
                 });
             }
         } catch (err) {
@@ -546,7 +615,7 @@ async function handleWebhook(rawBody, signature) {
                     externalId, invoiceId: invId,
                     contactId: session?.contact_id || (meta.contact_id ? Number(meta.contact_id) : null),
                     jobId: session?.job_id || (meta.job_id ? Number(meta.job_id) : null),
-                    amount, currency: obj.currency, metadata: { surface: 'checkout_link', checkout_session_id: obj.id },
+                    amount, currency: obj.currency, metadata: { surface: meta.surface || 'checkout_link', checkout_session_id: obj.id, tip: meta.tip || 0 },
                 });
                 await auditService.log({ action: 'stripe_payments.payment_succeeded', target_type: 'invoice', target_id: invId ? String(invId) : null, company_id: companyId, details: { external_id: externalId } });
                 break;
@@ -562,7 +631,7 @@ async function handleWebhook(rawBody, signature) {
                     externalId: obj.id, invoiceId: invId,
                     contactId: session?.contact_id || null, jobId: session?.job_id || null,
                     amount: obj.amount_received != null ? obj.amount_received / 100 : (obj.amount / 100),
-                    currency: obj.currency, metadata: { surface: 'checkout_link', payment_intent_id: obj.id },
+                    currency: obj.currency, metadata: { surface: meta.surface || 'checkout_link', payment_intent_id: obj.id, tip: meta.tip || 0 },
                 });
                 await auditService.log({ action: 'stripe_payments.payment_succeeded', target_type: 'invoice', target_id: invId ? String(invId) : null, company_id: companyId, details: { external_id: obj.id } });
                 break;
@@ -629,6 +698,7 @@ module.exports = {
     sendPaymentLink,
     getPublicPayInfo,
     createPublicPaySession,
+    createPublicPayIntent,
     applyStripePayment,
     createManualCardSession,
     getConnectionToken,

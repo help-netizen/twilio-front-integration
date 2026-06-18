@@ -56,6 +56,19 @@ router.post('/invoices/:token/pay', async (req, res) => {
     }
 });
 
+// POST /api/public/invoices/:token/pay-intent — embedded Payment Element (balance + tip).
+router.post('/invoices/:token/pay-intent', async (req, res) => {
+    try {
+        const { token } = req.params;
+        if (!TOKEN_RE.test(token)) return res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Invalid link' } });
+        const data = await stripePaymentsService.createPublicPayIntent(token, { tip: req.body?.tip });
+        res.json({ ok: true, data });
+    } catch (err) {
+        const status = err.httpStatus || 500;
+        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+    }
+});
+
 /**
  * Short alias router (mounted at root): GET /i/:token → 302 to the full PDF URL.
  * Keeps customer-facing links short for SMS / pasted messages.
