@@ -7,6 +7,12 @@ const axios = require('axios');
 const ZENBOOKER_API_KEY = process.env.ZENBOOKER_API_KEY;
 const ZENBOOKER_API_BASE_URL = process.env.ZENBOOKER_API_BASE_URL || 'https://api.zenbooker.com/v1';
 
+// Request timeout. Job-create is non-idempotent (maxRetries=1), so a slow
+// Zenbooker response that exceeds this leaves the local job orphaned with no
+// zenbooker_job_id. Raised from 15s → 30s to cut timeout-caused orphans;
+// override with ZENBOOKER_TIMEOUT_MS without a code change.
+const ZENBOOKER_TIMEOUT_MS = Number(process.env.ZENBOOKER_TIMEOUT_MS) || 30000;
+
 let client = null;
 
 /**
@@ -20,7 +26,7 @@ function getClient() {
     }
     client = axios.create({
         baseURL: ZENBOOKER_API_BASE_URL,
-        timeout: 15000,
+        timeout: ZENBOOKER_TIMEOUT_MS,
         headers: {
             'Authorization': `Bearer ${ZENBOOKER_API_KEY}`,
             'Content-Type': 'application/json',
@@ -58,7 +64,7 @@ async function getClientForCompany(companyId) {
     // Create new client for this tenant
     const tenantClient = axios.create({
         baseURL: ZENBOOKER_API_BASE_URL,
-        timeout: 15000,
+        timeout: ZENBOOKER_TIMEOUT_MS,
         headers: {
             'Authorization': `Bearer ${tenantKey}`,
             'Content-Type': 'application/json',
