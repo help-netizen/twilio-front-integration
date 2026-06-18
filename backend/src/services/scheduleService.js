@@ -18,6 +18,7 @@ const DEFAULT_DISPATCH_SETTINGS = {
     work_days: [1, 2, 3, 4, 5],
     slot_duration: 60,
     buffer_minutes: 0,
+    distance_unit: 'mi',
     settings_json: {},
 };
 

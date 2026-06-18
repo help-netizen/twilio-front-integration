@@ -58,6 +58,7 @@ export const DispatchSettingsDialog: React.FC<DispatchSettingsDialogProps> = ({
     const [workEnd, setWorkEnd] = useState(settings.work_end_time);
     const [workDays, setWorkDays] = useState<number[]>(settings.work_days);
     const [slotDuration, setSlotDuration] = useState(settings.slot_duration);
+    const [distanceUnit, setDistanceUnit] = useState<'mi' | 'km'>(settings.distance_unit || 'mi');
     const [saving, setSaving] = useState(false);
     const [validationError, setValidationError] = useState('');
 
@@ -68,6 +69,7 @@ export const DispatchSettingsDialog: React.FC<DispatchSettingsDialogProps> = ({
             setWorkEnd(settings.work_end_time);
             setWorkDays(settings.work_days);
             setSlotDuration(settings.slot_duration);
+            setDistanceUnit(settings.distance_unit || 'mi');
             setValidationError('');
         }
     }, [open, settings]);
@@ -96,6 +98,7 @@ export const DispatchSettingsDialog: React.FC<DispatchSettingsDialogProps> = ({
                 work_end_time: workEnd,
                 work_days: workDays,
                 slot_duration: slotDuration,
+                distance_unit: distanceUnit,
             });
             onClose();
         } finally {
@@ -122,6 +125,20 @@ export const DispatchSettingsDialog: React.FC<DispatchSettingsDialogProps> = ({
                                 {POPULAR_TIMEZONES.map(tz => (
                                     <SelectItem key={tz} value={tz}>{tz.replace(/_/g, ' ')}</SelectItem>
                                 ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+
+                    {/* Distance unit (SCHED-ROUTE-001 C-13) */}
+                    <div className="space-y-1.5">
+                        <Label className="text-sm font-medium">Distance unit</Label>
+                        <Select value={distanceUnit} onValueChange={(v) => setDistanceUnit(v as 'mi' | 'km')}>
+                            <SelectTrigger className="h-9 text-sm">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="mi">Miles (mi)</SelectItem>
+                                <SelectItem value="km">Kilometers (km)</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>

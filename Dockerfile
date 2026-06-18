@@ -47,6 +47,7 @@ COPY src/ ./src/
 COPY backend/src/ ./backend/src/
 COPY backend/db/ ./backend/db/
 COPY migrate.js ./
+COPY scripts/ ./scripts/
 
 # Copy frontend build from previous stage
 COPY --from=frontend-builder /app/frontend/dist ./public

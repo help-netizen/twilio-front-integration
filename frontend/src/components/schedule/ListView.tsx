@@ -49,8 +49,7 @@ export const ListView: React.FC<ListViewProps> = ({
     currentDate, items, settings, allProviders = [], onSelectItem, onReassign, routeByPair,
 }) => {
     const tz = settings.timezone || 'America/New_York';
-    // TODO(SCHED-ROUTE-001): switch to km once a company unit/locale field exists.
-    const unit = 'mi' as const;
+    const unit = settings.distance_unit === 'km' ? 'km' : 'mi';
     const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
     const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
     const dayKeys = useMemo(() => days.map(d => format(d, 'yyyy-MM-dd')), [days]);
