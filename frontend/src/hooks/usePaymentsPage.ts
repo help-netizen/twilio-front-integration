@@ -42,9 +42,9 @@ export function usePaymentsPage() {
 
     const fetchPayments = useCallback(async () => {
         setLoading(true); setError(''); setPage(0);
-        try { const qs = new URLSearchParams({ date_from: dateFrom, date_to: dateTo }); if (methodFilter) qs.set('payment_method', methodFilter); if (searchQuery) qs.set('search', searchQuery); const res = await authedFetch(`${API_BASE}/api/zenbooker/payments?${qs.toString()}`); const json = await res.json(); if (!res.ok || !json.ok) throw new Error(json.error || `Request failed (${res.status})`); setRows(json.data.rows || []); }
+        try { const qs = new URLSearchParams({ date_from: dateFrom, date_to: dateTo }); if (methodFilter) qs.set('payment_method', methodFilter); if (quickFilter === 'new_checks') { qs.set('quick_filter', 'new_checks'); qs.set('limit', '1000'); } if (searchQuery) qs.set('search', searchQuery); const res = await authedFetch(`${API_BASE}/api/zenbooker/payments?${qs.toString()}`); const json = await res.json(); if (!res.ok || !json.ok) throw new Error(json.error || `Request failed (${res.status})`); setRows(json.data.rows || []); }
         catch (err: any) { setError(err.message || 'Failed to fetch payments'); setRows([]); } finally { setLoading(false); }
-    }, [dateFrom, dateTo, methodFilter, searchQuery]);
+    }, [dateFrom, dateTo, methodFilter, quickFilter, searchQuery]);
 
     useEffect(() => { fetchPayments(); }, [fetchPayments]);
 
@@ -90,7 +90,7 @@ export function usePaymentsPage() {
 
     const totalPages = Math.ceil(sortedRows.length / perPage);
     const pagedRows = sortedRows.slice(page * perPage, (page + 1) * perPage);
-    const totalAmount = useMemo(() => rows.reduce((sum, r) => sum + (parseFloat(r.amount_paid) || 0), 0), [rows]);
+    const totalAmount = useMemo(() => sortedRows.reduce((sum, r) => sum + (parseFloat(r.amount_paid) || 0), 0), [sortedRows]);
 
     // Export covers the entire selected date range — payment method / search
     // / paid / provider / quick filters are intentionally NOT applied so the
