@@ -116,6 +116,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     currentDate, items, settings, allProviders = [], onSelectItem, onReschedule, onReassign, onCreateFromSlot, routeByPair,
 }) => {
     const tz = settings.timezone || 'America/New_York';
+    const unit = settings.distance_unit === 'km' ? 'km' : 'mi';
     const slotDuration = settings.slot_duration || 60;
     const startHour = parseTime(settings.work_start_time);
     const endHour = parseTime(settings.work_end_time);
@@ -428,7 +429,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                 const leftPct = lane * widthPct;
                                 const itemKey = `${item.entity_type}-${item.entity_id}`;
                                 const leg = legByKey.get(itemKey);
-                                const legLabel = leg ? routeSegmentLabel(leg, 'mi') : '';
+                                const legLabel = leg ? routeSegmentLabel(leg, unit) : '';
 
                                 return (
                                     <React.Fragment key={itemKey}>

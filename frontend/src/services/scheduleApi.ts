@@ -58,6 +58,7 @@ export interface DispatchSettings {
     work_end_time: string;   // "18:00"
     work_days: number[];
     slot_duration: number;
+    distance_unit?: 'mi' | 'km';  // SCHED-ROUTE-001 C-13: route-leg distance unit
 }
 
 export interface ScheduleFilters {

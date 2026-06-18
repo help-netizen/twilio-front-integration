@@ -381,6 +381,9 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
     // BILLING: monthly usage-overage billing (in arrears, dormant w/o Stripe key)
     require('../backend/src/services/overageScheduler').start();
 
+    // SCHED-ROUTE-001 (C-13): daily retention — purge stale segments + prune route cache
+    require('../backend/src/services/routeRetentionScheduler').start();
+
     // Start daily Zenbooker jobs sync cron
     const zbSyncCron = require('../backend/src/services/zbJobsSyncCron');
     zbSyncCron.start();

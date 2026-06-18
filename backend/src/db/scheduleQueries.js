@@ -288,12 +288,13 @@ async function upsertDispatchSettings(companyId, settings) {
         work_days,
         slot_duration,
         buffer_minutes,
+        distance_unit,
         settings_json,
     } = settings;
 
     const { rows } = await db.query(
-        `INSERT INTO dispatch_settings (company_id, timezone, work_start_time, work_end_time, work_days, slot_duration, buffer_minutes, settings_json)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO dispatch_settings (company_id, timezone, work_start_time, work_end_time, work_days, slot_duration, buffer_minutes, distance_unit, settings_json)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, 'mi'), $9)
          ON CONFLICT (company_id)
          DO UPDATE SET
             timezone        = COALESCE($2, dispatch_settings.timezone),
@@ -302,7 +303,8 @@ async function upsertDispatchSettings(companyId, settings) {
             work_days       = COALESCE($5, dispatch_settings.work_days),
             slot_duration   = COALESCE($6, dispatch_settings.slot_duration),
             buffer_minutes  = COALESCE($7, dispatch_settings.buffer_minutes),
-            settings_json   = COALESCE($8, dispatch_settings.settings_json),
+            distance_unit   = COALESCE($8, dispatch_settings.distance_unit),
+            settings_json   = COALESCE($9, dispatch_settings.settings_json),
             updated_at      = NOW()
          RETURNING *`,
         [
@@ -313,6 +315,7 @@ async function upsertDispatchSettings(companyId, settings) {
             work_days || null,
             slot_duration != null ? slot_duration : null,
             buffer_minutes != null ? buffer_minutes : null,
+            distance_unit || null,
             settings_json ? JSON.stringify(settings_json) : null,
         ]
     );

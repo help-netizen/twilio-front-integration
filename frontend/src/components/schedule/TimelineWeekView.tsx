@@ -42,7 +42,7 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
     currentDate, items, settings, allProviders = [], onSelectItem, onReassign, onCreateFromSlot, routeByPair,
 }) => {
     const tz = settings.timezone || 'America/New_York';
-    const unit = 'mi' as const;   // TODO(SCHED-ROUTE-001): km once company unit field exists
+    const unit = settings.distance_unit === 'km' ? 'km' : 'mi';
     const workStartHour = parseTime(settings.work_start_time);
     const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
     const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
