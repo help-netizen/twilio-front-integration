@@ -202,7 +202,7 @@ function IconPicker({ value, onChange }: { value: string; onChange: (v: string) 
                     ? <CurrentIcon size={16} color="var(--blanc-ink-2)" />
                     : <span style={{ width: 16, height: 16, display: 'inline-block' }} />
                 }
-                <span style={{ flex: 1 }}>{value || 'Выбрать иконку...'}</span>
+                <span style={{ flex: 1 }}>{value || 'Choose an icon…'}</span>
                 {value && (
                     <span
                         role="button"
@@ -233,7 +233,7 @@ function IconPicker({ value, onChange }: { value: string; onChange: (v: string) 
                         <input
                             autoFocus
                             type="text"
-                            placeholder="Поиск..."
+                            placeholder="Search…"
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
                             style={{
@@ -274,19 +274,19 @@ function IconPicker({ value, onChange }: { value: string; onChange: (v: string) 
                                         width: '100%',
                                         aspectRatio: '1',
                                         borderRadius: 6,
-                                        border: selected ? '1.5px solid #6366f1' : '1.5px solid transparent',
-                                        background: selected ? 'rgba(99,102,241,0.08)' : 'transparent',
+                                        border: selected ? '1.5px solid var(--blanc-job, #2f63d8)' : '1.5px solid transparent',
+                                        background: selected ? 'rgba(47,99,216,0.08)' : 'transparent',
                                         cursor: 'pointer',
                                         padding: 4,
                                     }}
                                 >
-                                    <Icon size={16} color={selected ? '#6366f1' : 'var(--blanc-ink-2)'} />
+                                    <Icon size={16} color={selected ? 'var(--blanc-job, #2f63d8)' : 'var(--blanc-ink-2)'} />
                                 </button>
                             );
                         })}
                         {filtered.length === 0 && (
                             <div style={{ gridColumn: '1/-1', textAlign: 'center', fontSize: 12, color: 'var(--blanc-ink-3)', padding: '12px 0' }}>
-                                Ничего не найдено
+                                Nothing found
                             </div>
                         )}
                     </div>
@@ -369,10 +369,12 @@ export function FlowPropertiesPanel({
                 </div>
             ) : null}
 
-            {/* SCXML Preview */}
-            <div>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <div className="blanc-eyebrow">SCXML Output</div>
+            {/* Advanced: raw SCXML — technical, collapsed by default */}
+            <details>
+                <summary style={{ cursor: 'pointer', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--blanc-ink-3)' }}>
+                    Advanced · SCXML
+                </summary>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', margin: '8px 0' }}>
                     <button
                         onClick={handleCopy}
                         style={{
@@ -409,7 +411,7 @@ export function FlowPropertiesPanel({
                 >
                     {scxml}
                 </pre>
-            </div>
+            </details>
         </div>
     );
 }
@@ -462,10 +464,10 @@ export function StateInspector({
                 />
             </div>
 
-            {/* State ID (read-only) */}
+            {/* Status identifier (read-only) */}
             <div>
                 <label style={{ fontSize: 11, color: 'var(--blanc-ink-3)', display: 'block', marginBottom: 4 }}>
-                    State ID
+                    Status identifier
                 </label>
                 <div
                     style={{
@@ -491,10 +493,10 @@ export function StateInspector({
                             if (!d.isInitial) onSetInitial(node.id);
                         }}
                         disabled={d.isInitial}
-                        style={{ accentColor: '#6366f1' }}
+                        style={{ accentColor: 'var(--blanc-job, #2f63d8)' }}
                     />
                     <span style={{ fontSize: 13, color: 'var(--blanc-ink-2)' }}>
-                        Initial State
+                        Starting status
                     </span>
                 </div>
             )}
@@ -583,10 +585,10 @@ export function TransitionInspector({
                 />
             </div>
 
-            {/* Transition ID (read-only) */}
+            {/* Action identifier (read-only) */}
             <div>
                 <label style={{ fontSize: 11, color: 'var(--blanc-ink-3)', display: 'block', marginBottom: 4 }}>
-                    Transition ID
+                    Action identifier
                 </label>
                 <div
                     style={{
@@ -608,7 +610,7 @@ export function TransitionInspector({
                     type="checkbox"
                     checked={ed.isAction || false}
                     onChange={(e) => onUpdateEdge(edge.id, { isAction: e.target.checked })}
-                    style={{ accentColor: '#6366f1' }}
+                    style={{ accentColor: 'var(--blanc-job, #2f63d8)' }}
                 />
                 <span style={{ fontSize: 13, color: 'var(--blanc-ink-2)' }}>
                     Action Button
@@ -657,7 +659,7 @@ export function TransitionInspector({
                     type="checkbox"
                     checked={ed.confirm || false}
                     onChange={(e) => onUpdateEdge(edge.id, { confirm: e.target.checked })}
-                    style={{ accentColor: '#6366f1' }}
+                    style={{ accentColor: 'var(--blanc-job, #2f63d8)' }}
                 />
                 <span style={{ fontSize: 13, color: 'var(--blanc-ink-2)' }}>
                     Require Confirmation

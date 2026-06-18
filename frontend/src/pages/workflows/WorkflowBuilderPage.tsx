@@ -32,6 +32,7 @@ import {
     Plus,
     ShieldCheck,
     Download,
+    UploadCloud,
     X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -41,9 +42,9 @@ import {
     useFsmActiveVersion,
     useSaveDraft,
     useValidateScxml,
-    usePublishDraft,
     type ValidationResult,
 } from '../../hooks/useFsmEditor';
+import PublishDialog from '../../components/workflows/PublishDialog';
 
 import { layoutBipartite } from '../../utils/workflowElkLayout';
 import {
@@ -153,10 +154,9 @@ export default function WorkflowBuilderPage() {
 
     // ── Data hooks ────────────────────────────────────────────────────────
     const { data: draft, isLoading: draftLoading } = useFsmDraft(machineKey || null);
-    const { data: active, isLoading: activeLoading } = useFsmActiveVersion(machineKey || null);
+    const { data: active, isLoading: activeLoading, refetch: refetchActive } = useFsmActiveVersion(machineKey || null);
     const saveDraft = useSaveDraft(machineKey || '');
     const validateScxml = useValidateScxml(machineKey || '');
-    const publishDraft = usePublishDraft(machineKey || '');
     // canPublish check removed — Save auto-publishes
 
     // ── Graph state ───────────────────────────────────────────────────────
@@ -165,6 +165,7 @@ export default function WorkflowBuilderPage() {
     const [initialStateId, setInitialStateId] = useState('');
     const [machineTitle, setMachineTitle] = useState('');
     const [dirty, setDirty] = useState(false);
+    const [publishOpen, setPublishOpen] = useState(false);
     const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
     const [selectedNode, setSelectedNode] = useState<Node<WorkflowNodeData> | null>(null);
     const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
@@ -648,20 +649,19 @@ export default function WorkflowBuilderPage() {
     }, [pushSnap, applyBipartiteLayout]);
 
     const handleSave = useCallback(async () => {
-        if (!dirty || saveDraft.isPending || publishDraft.isPending) return;
+        if (!dirty || saveDraft.isPending) return;
         try {
             // Use logical model (original IDs) for SCXML generation
             const scxml = graphToScxml(logicalNodesRef.current, logicalEdgesRef.current, initialStateId, machineKey, machineTitle);
             await saveDraft.mutateAsync({ scxml_source: scxml });
             setDirty(false);
-
-            // Auto-publish after save
-            await publishDraft.mutateAsync({ change_note: 'Auto-publish on save' });
-            toast.success('Saved & published');
+            // Save stays a safe draft-only action — publishing to production is an
+            // explicit step via the Publish button (FSM-100: no silent auto-publish).
+            toast.success('Draft saved');
         } catch (err: unknown) {
             toast.error(err instanceof Error ? err.message : 'Failed to save');
         }
-    }, [dirty, saveDraft, publishDraft, initialStateId, machineKey, machineTitle]);
+    }, [dirty, saveDraft, initialStateId, machineKey, machineTitle]);
 
     const handleValidate = useCallback(async () => {
         // Use logical model for validation
@@ -806,10 +806,19 @@ export default function WorkflowBuilderPage() {
 
                 <button
                     onClick={handleSave}
-                    disabled={!dirty || saveDraft.isPending || publishDraft.isPending}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                    disabled={!dirty || saveDraft.isPending}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[rgba(117,106,89,0.06)] text-[var(--blanc-ink-2)] hover:bg-[rgba(117,106,89,0.12)] transition-colors disabled:opacity-50"
                 >
-                    <Save className="w-3.5 h-3.5" /> {saveDraft.isPending || publishDraft.isPending ? 'Saving...' : 'Save'}
+                    <Save className="w-3.5 h-3.5" /> {saveDraft.isPending ? 'Saving…' : 'Save draft'}
+                </button>
+
+                <button
+                    onClick={() => setPublishOpen(true)}
+                    disabled={dirty || saveDraft.isPending || !machineKey}
+                    title={dirty ? 'Save your changes first' : 'Publish this draft to production'}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-[var(--blanc-job,#2f63d8)] text-white hover:bg-[#234d9e] transition-colors disabled:opacity-50"
+                >
+                    <UploadCloud className="w-3.5 h-3.5" /> Publish
                 </button>
 
                 <button
@@ -944,9 +953,9 @@ export default function WorkflowBuilderPage() {
                                     type="checkbox"
                                     checked={newStateIsFinal}
                                     onChange={(e) => setNewStateIsFinal(e.target.checked)}
-                                    style={{ accentColor: '#6366f1' }}
+                                    style={{ accentColor: 'var(--blanc-job, #2f63d8)' }}
                                 />
-                                Final state (no outgoing transitions)
+                                Final status (end of the workflow — no further actions)
                             </label>
 
                             <div className="flex justify-end gap-2 mt-2">
@@ -969,6 +978,16 @@ export default function WorkflowBuilderPage() {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* Explicit publish (replaces silent auto-publish-on-save) */}
+            {machineKey && (
+                <PublishDialog
+                    machineKey={machineKey}
+                    open={publishOpen}
+                    onOpenChange={setPublishOpen}
+                    onPublished={() => { refetchActive(); }}
+                />
             )}
         </div>
     );
