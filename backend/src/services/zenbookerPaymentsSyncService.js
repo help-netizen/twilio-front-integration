@@ -658,7 +658,7 @@ async function reconcileJobLinks(companyId, { dryRun = false } = {}) {
 // =============================================================================
 
 async function listPayments(companyId, {
-    dateFrom, dateTo, paymentMethod, search,
+    dateFrom, dateTo, paymentMethod, quickFilter, search,
     sortField = 'payment_date', sortDir = 'desc',
     offset = 0, limit = 200,
 } = {}) {
@@ -681,6 +681,15 @@ async function listPayments(companyId, {
         conditions.push(`payment_methods ILIKE $${paramIdx}`);
         params.push(`%${paymentMethod}%`);
         paramIdx++;
+    }
+    if (quickFilter === 'new_checks') {
+        conditions.push(`(
+            payment_methods ILIKE $${paramIdx}
+            OR display_payment_method ILIKE $${paramIdx}
+        )`);
+        params.push('%check%');
+        paramIdx++;
+        conditions.push('check_deposited IS NOT TRUE');
     }
     if (search && search.trim()) {
         const q = `%${search.trim()}%`;

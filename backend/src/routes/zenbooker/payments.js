@@ -88,7 +88,7 @@ router.get('/', async (req, res) => {
             return res.status(403).json({ ok: false, error: 'No company context' });
         }
 
-        const { date_from, date_to, status, payment_method, search, sort_by, sort_order, offset, limit } = req.query;
+        const { date_from, date_to, status, payment_method, search, sort_by, sort_order, offset, limit, quick_filter } = req.query;
 
         if (!date_from || !date_to) {
             return res.status(400).json({ ok: false, error: 'date_from and date_to are required' });
@@ -98,6 +98,7 @@ router.get('/', async (req, res) => {
             dateFrom: date_from,
             dateTo: date_to,
             paymentMethod: payment_method || undefined,
+            quickFilter: quick_filter || undefined,
             search: search || undefined,
             sortField: sort_by || 'payment_date',
             sortDir: sort_order || 'desc',
