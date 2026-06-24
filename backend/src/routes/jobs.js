@@ -83,6 +83,20 @@ router.post('/sync', requirePermission('jobs.edit'), async (req, res) => {
     }
 });
 
+// ─── Create Job (directly, no lead) ──────────────────────────────────────────
+
+router.post('/', requirePermission('jobs.create'), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id;
+        if (!companyId) return res.status(403).json({ ok: false, error: 'Tenant context required' });
+        const result = await jobsService.createDirectJob(companyId, req.body || {});
+        res.json({ ok: true, data: result });
+    } catch (err) {
+        console.error('[Jobs API] Create error:', err.message);
+        res.status(err.httpStatus || 500).json({ ok: false, error: err.message });
+    }
+});
+
 // ─── List Jobs ───────────────────────────────────────────────────────────────
 
 router.get('/', requirePermission('jobs.view'), async (req, res) => {

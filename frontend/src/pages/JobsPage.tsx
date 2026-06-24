@@ -1,15 +1,18 @@
+import { useState } from 'react';
 import { useJobsPage } from '../hooks/useJobsPage';
 import { JobsFieldsButton } from '../components/jobs/JobsHeader';
 import { JobsFilters } from '../components/jobs/JobsFilters';
 import { JobsTable } from '../components/jobs/JobsTable';
 import { JobDetailPanel } from '../components/jobs/JobDetailPanel';
-import { Download, Loader2 } from 'lucide-react';
+import { NewJobDialog } from '../components/jobs/NewJobDialog';
+import { Download, Loader2, Plus } from 'lucide-react';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 
 // ─── Jobs Page ───────────────────────────────────────────────────────────────
 
 export function JobsPage() {
     const page = useJobsPage();
+    const [newJobOpen, setNewJobOpen] = useState(false);
 
     return (
         <div className="blanc-page-wrapper">
@@ -27,6 +30,14 @@ export function JobsPage() {
                 </div>
 
                 <div className="blanc-controls-group">
+                    <button
+                        onClick={() => setNewJobOpen(true)}
+                        className="blanc-control-chip"
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    >
+                        <Plus className="size-3.5" />
+                        New Job
+                    </button>
                     <JobsFilters
                         statusFilter={page.statusFilter}
                         onStatusFilterChange={page.setStatusFilter}
@@ -106,6 +117,7 @@ export function JobsPage() {
                     />
                 )}
             </FloatingDetailPanel>
+            <NewJobDialog open={newJobOpen} onClose={() => setNewJobOpen(false)} />
         </div>
     );
 }

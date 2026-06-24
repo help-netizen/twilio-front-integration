@@ -365,6 +365,177 @@ async function createManualJob(companyId, input = {}) {
 }
 
 /**
+ * Create a Job directly (no lead → job conversion path). Mirrors the ZenBooker
+ * create + sync-back block of leadsService.convertLead, but starting from a small
+ * structured input instead of a lead row.
+ *
+ * input = {
+ *   contact: { contact_id:number } | { name:string, phone:string, email?:string },
+ *   address: { line1?, line2?, city?, state?, postal_code?, lat?, lng? },
+ *   slot:    { start:ISO, end:ISO, tech_id?:string|null },
+ *   job_type: string,
+ *   description?: string,
+ * }
+ *
+ * Steps:
+ *   a. Resolve the contact (existing id is company-scoped; otherwise dedupe).
+ *   b. Build the ZB payload (territory from ZIP, custom service, arrival window).
+ *   c. Try to create the ZB job. On success: fetch detail (retry once for
+ *      job_number) and persist via createJob({ zbData }). On failure: create a
+ *      local job with the input data and surface a zb_warning.
+ *
+ * @param {string} companyId  — ONLY from req.companyFilter (never req.companyId)
+ * @param {Object} input
+ * @returns {Promise<{ job_id:number, zenbooker_job_id:string|null, zb_warning:string|null }>}
+ */
+async function createDirectJob(companyId, input = {}) {
+    if (!companyId) {
+        const err = new Error('createDirectJob requires companyId');
+        err.httpStatus = 403;
+        throw err;
+    }
+
+    const contactDedupeService = require('./contactDedupeService');
+    const contactInput = input.contact || {};
+    const address = input.address || {};
+    const slot = input.slot || {};
+    const jobType = input.job_type || 'General Service';
+    const description = input.description || '';
+
+    // ── a. Resolve contact ────────────────────────────────────────────────────
+    let contactId = null;
+    if (contactInput.contact_id != null) {
+        // Existing contact — must belong to this company (tenant isolation).
+        const { rows } = await db.query(
+            'SELECT id FROM contacts WHERE id = $1 AND company_id = $2',
+            [contactInput.contact_id, companyId]
+        );
+        if (rows.length === 0) {
+            const err = new Error('Contact not found');
+            err.httpStatus = 404;
+            throw err;
+        }
+        contactId = rows[0].id;
+    } else {
+        // New/unknown contact — split name on first space, dedupe-resolve.
+        const name = (contactInput.name || '').trim();
+        const spaceIdx = name.indexOf(' ');
+        const firstName = spaceIdx === -1 ? name : name.slice(0, spaceIdx);
+        const lastName = spaceIdx === -1 ? null : name.slice(spaceIdx + 1).trim() || null;
+        const resolved = await contactDedupeService.resolveContact({
+            first_name: firstName || null,
+            last_name: lastName,
+            phone: contactInput.phone || null,
+            email: contactInput.email || null,
+        }, companyId);
+        contactId = resolved.contact_id || null;
+    }
+
+    // ── b. Build ZB payload ───────────────────────────────────────────────────
+    // Contact display data for the customer block + local fallback insert.
+    let customerName = contactInput.name || null;
+    let customerPhone = contactInput.phone || null;
+    let customerEmail = contactInput.email || null;
+    if (contactInput.contact_id != null && contactId) {
+        const { rows } = await db.query(
+            'SELECT full_name, phone_e164, email FROM contacts WHERE id = $1 AND company_id = $2',
+            [contactId, companyId]
+        );
+        if (rows[0]) {
+            customerName = rows[0].full_name || customerName;
+            customerPhone = rows[0].phone_e164 || customerPhone;
+            customerEmail = rows[0].email || customerEmail;
+        }
+    }
+
+    const territoryId = await zenbookerClient.findTerritoryByPostalCode(address.postal_code);
+
+    const customer = {};
+    if (customerName) customer.name = customerName;
+    if (customerPhone) customer.phone = customerPhone;
+    if (customerEmail) customer.email = customerEmail;
+
+    // zenbookerClient.createJob → ensureAddressState backfills state from the ZIP.
+    const zbAddress = { country: 'US' };
+    if (address.line1) zbAddress.line1 = address.line1;
+    if (address.line2) zbAddress.line2 = address.line2;
+    if (address.city) zbAddress.city = address.city;
+    if (address.state) zbAddress.state = address.state;
+    if (address.postal_code) zbAddress.postal_code = address.postal_code;
+
+    const zbPayload = {
+        territory_id: territoryId,
+        customer,
+        address: zbAddress,
+        services: [{
+            custom_service: {
+                name: jobType,
+                description,
+                price: 0,
+                duration: 120,
+                taxable: false,
+            },
+        }],
+        timeslot: { type: 'arrival_window', start: slot.start, end: slot.end },
+        sms_notifications: true,
+        email_notifications: true,
+    };
+    if (slot.tech_id) {
+        // ZB rejects assigned_providers + assignment_method:'auto' together.
+        zbPayload.assigned_providers = [slot.tech_id];
+    } else {
+        zbPayload.assignment_method = 'auto';
+    }
+
+    // ── c. Create ZB job; persist local job either way ────────────────────────
+    let zenbookerJobId = null;
+    let zbWarning = null;
+    let localJob = null;
+
+    try {
+        const zbResult = await zenbookerClient.createJob(zbPayload);
+        zenbookerJobId = zbResult.job_id;
+
+        // ZB may not assign job_number immediately — retry once after a short delay.
+        let detail = await zenbookerClient.getJob(zenbookerJobId);
+        if (!detail?.job_number) {
+            await new Promise(r => setTimeout(r, 2000));
+            detail = await zenbookerClient.getJob(zenbookerJobId);
+        }
+
+        localJob = await createJob({ contactId, zenbookerJobId, zbData: detail, companyId });
+        console.log(`[CreateDirectJob] Zenbooker job ${zenbookerJobId} created → local job ${localJob.id}`);
+    } catch (err) {
+        // ZB nests the reason under error.message (e.g. INVALID_ADDRESS).
+        const errData = err.response?.data;
+        zbWarning = errData?.error?.message || errData?.message || err.message;
+        console.error('[CreateDirectJob] Zenbooker create error:', errData || err.message);
+
+        // No ZB link — persist a local-only job with the input data
+        // (mirror of claimLocalJobForConversion's local insert shape).
+        const addressStr = [address.line1, address.line2, address.city, address.state, address.postal_code]
+            .filter(Boolean).join(', ') || null;
+        const assignedTechs = slot.tech_id ? JSON.stringify([{ id: slot.tech_id }]) : '[]';
+        const { rows } = await db.query(`
+            INSERT INTO jobs (
+                contact_id, company_id, blanc_status, service_name,
+                customer_name, customer_phone, customer_email, address,
+                start_date, end_date, assigned_techs
+            ) VALUES ($1, $2, 'Submitted', $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+            RETURNING *
+        `, [
+            contactId, companyId, jobType,
+            customerName, customerPhone, customerEmail, addressStr,
+            slot.start || null, slot.end || null, assignedTechs,
+        ]);
+        localJob = rowToJob(rows[0]);
+        console.log(`[CreateDirectJob] Local job ${localJob.id} created without ZB link: ${zbWarning}`);
+    }
+
+    return { job_id: localJob.id, zenbooker_job_id: zenbookerJobId, zb_warning: zbWarning };
+}
+
+/**
  * Enqueue a one-shot ZenBooker sync for a locally-created job on the agentWorker
  * (kind='agent', FOR UPDATE SKIP LOCKED → processed once). Marks the job
  * zb_sync_status='pending'. The dedupe-guard lives in the handler (skips if a
@@ -1211,6 +1382,7 @@ async function updateJobLocation(companyId, jobId, { address, lat, lng, normaliz
 module.exports = {
     createJob,
     createManualJob,
+    createDirectJob,
     getJobById,
     getJobByZbId,
     listJobs,

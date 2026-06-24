@@ -4,6 +4,37 @@
 
 ---
 
+## 2026-06-24 — JOB-CREATE-001: Direct Job creation (one-form, Zenbooker-linked)
+
+Jobs can now be created directly (previously only via lead→job conversion), from
+a "+ New Job" button on the Jobs page. Single form, no steps, modeled on a phone
+call: **Contact · Address · Time & technician · Work**. Creating a job still
+creates the linked Zenbooker job (territory from ZIP, customer, address, service,
+the picked slot + technician); on a Zenbooker failure the local job is kept and a
+warning is surfaced. Built UI/UX-first — minimal fields only, no price/duration/
+territory/internal fields.
+
+### Backend
+- `jobsService.createDirectJob(companyId, input)` — verify an existing contact
+  (tenant-scoped) or dedupe-create, build the ZB payload, create the Zenbooker job
+  (reuses `zenbookerClient.createJob` + `ensureAddressState`), persist the local
+  job from the synced ZB detail; on ZB error persist a company-scoped local-only
+  job and return `zb_warning` (real reason via `error.message`).
+- `POST /api/jobs` — `requirePermission('jobs.create')`, company from
+  `req.companyFilter`; returns `{ job_id, zenbooker_job_id, zb_warning }`.
+- Tests `tests/jobsCreate.test.js` (8): permission gate, cross-company contact
+  isolation, ZB-failure keeps local + warns, happy path.
+
+### Frontend
+- `NewJobDialog` — one-screen form reusing `AddressAutocomplete`, contact search
+  (`contacts/search-candidates`), and the reschedule slot engine `CustomTimeModal`
+  (one slot pick = arrival window + technician). `+ New Job` button on the Jobs
+  page; `jobsApi.createJob`.
+
+Merge-to-master only — not deployed (pending broader QA).
+
+---
+
 ## 2026-06-14 — F018 / STRIPE-PAY-001: Stripe Payments — Phases 3–5
 
 Completed the remaining phases on top of the Phase 1–2 foundation. Tap to Pay

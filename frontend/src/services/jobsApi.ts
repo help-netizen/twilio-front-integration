@@ -122,6 +122,38 @@ export async function getJob(id: number): Promise<LocalJob> {
     return jobsRequest<LocalJob>(`${JOBS_BASE}/${id}`);
 }
 
+// ─── Create Job (direct, no lead) ─────────────────────────────────────────────
+
+export interface CreateJobBody {
+    contact: { contact_id: number } | { name: string; phone: string; email?: string };
+    address: {
+        line1?: string;
+        line2?: string;
+        city?: string;
+        state?: string;
+        postal_code?: string;
+        lat?: number | null;
+        lng?: number | null;
+    };
+    slot: { start: string; end: string; tech_id?: string | null };
+    job_type: string;
+    description?: string;
+}
+
+export interface CreateJobResult {
+    job_id: number;
+    zenbooker_job_id?: string;
+    zb_warning?: string;
+}
+
+/** Create a job directly (without a lead). POST /api/jobs. */
+export async function createJob(body: CreateJobBody): Promise<CreateJobResult> {
+    return jobsRequest<CreateJobResult>(JOBS_BASE, {
+        method: 'POST',
+        body: JSON.stringify(body),
+    });
+}
+
 export async function updateBlancStatus(id: number, blancStatus: string, options: { cancelReason?: string } = {}): Promise<LocalJob> {
     return jobsRequest<LocalJob>(`${JOBS_BASE}/${id}/status`, {
         method: 'PATCH',
