@@ -1,8 +1,24 @@
 const axios = require('axios');
+const { zipToState } = require('../utils/zipState');
 
 // =============================================================================
 // Zenbooker API Client — creates jobs via POST /v1/jobs
 // =============================================================================
+
+/**
+ * Zenbooker requires address.state on job creation. Leads/bookings sometimes
+ * arrive with only city + ZIP, which fails with 400 INVALID_ADDRESS. Backfill
+ * the state from the ZIP when it's missing (never override a provided state).
+ * Returns the payload (a shallow copy when it changes the address).
+ */
+function ensureAddressState(payload) {
+    const addr = payload && payload.address;
+    if (addr && !addr.state && addr.postal_code) {
+        const state = zipToState(addr.postal_code);
+        if (state) return { ...payload, address: { ...addr, state } };
+    }
+    return payload;
+}
 
 const ZENBOOKER_API_KEY = process.env.ZENBOOKER_API_KEY;
 const ZENBOOKER_API_BASE_URL = process.env.ZENBOOKER_API_BASE_URL || 'https://api.zenbooker.com/v1';
@@ -188,11 +204,12 @@ async function createJobFromLead(lead) {
         }
     }
 
-    console.log('[Zenbooker] Creating job:', JSON.stringify(payload, null, 2));
+    const finalPayload = ensureAddressState(payload);
+    console.log('[Zenbooker] Creating job:', JSON.stringify(finalPayload, null, 2));
 
     // Creating jobs is not idempotent in Zenbooker; retrying a timed-out POST can
     // create duplicate external jobs.
-    const res = await retryRequest(() => getClient().post('/jobs', payload), 1);
+    const res = await retryRequest(() => getClient().post('/jobs', finalPayload), 1);
     console.log('[Zenbooker] Job created:', res.data.job_id);
     return res.data;
 }
@@ -240,10 +257,11 @@ async function getServices() {
  * Unlike createJobFromLead, this takes a pre-built Zenbooker payload.
  */
 async function createJob(payload) {
-    console.log('[Zenbooker] Creating job (direct):', JSON.stringify(payload, null, 2));
+    const finalPayload = ensureAddressState(payload);
+    console.log('[Zenbooker] Creating job (direct):', JSON.stringify(finalPayload, null, 2));
     // Creating jobs is not idempotent in Zenbooker; retrying a timed-out POST can
     // create duplicate external jobs.
-    const res = await retryRequest(() => getClient().post('/jobs', payload), 1);
+    const res = await retryRequest(() => getClient().post('/jobs', finalPayload), 1);
     console.log('[Zenbooker] Job created:', res.data.job_id);
     return res.data;
 }
@@ -566,6 +584,7 @@ module.exports = {
     getClientForCompany,
     createJobFromLead,
     createJob,
+    ensureAddressState,
     getTerritories,
     findTerritoryByPostalCode,
     checkServiceArea,

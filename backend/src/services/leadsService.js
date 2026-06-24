@@ -853,7 +853,9 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
             console.log(`[ConvertLead] Zenbooker job created from booking: ${zenbookerJobId}`);
         } catch (err) {
             const errData = err.response?.data;
-            const errMsg = errData?.message || err.message;
+            // Zenbooker nests the reason under error.message (e.g. INVALID_ADDRESS);
+            // fall back through the common shapes so the real cause is surfaced.
+            const errMsg = errData?.error?.message || errData?.message || errData?.error || err.message;
             console.error('[ConvertLead] Zenbooker booking error:', errData || err.message);
             zbWarning = `Zenbooker job not created: ${errMsg}`;
             // Don't fail — local job is already created
