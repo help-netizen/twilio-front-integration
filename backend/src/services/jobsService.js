@@ -841,13 +841,17 @@ async function updateBlancStatus(jobId, newStatus, companyId) {
         }
     }
 
+    // $1 (blanc_status, varchar) must NOT be reused in the CASE comparison —
+    // Postgres then deduces two types for it ("inconsistent types deduced for
+    // parameter $1") and the whole UPDATE fails for every status change. Pass the
+    // canceled flag as its own boolean param.
     await db.query(
         `UPDATE jobs
          SET blanc_status = $1,
-             zb_canceled = CASE WHEN $1 = 'Canceled' THEN true ELSE zb_canceled END,
+             zb_canceled = CASE WHEN $2 THEN true ELSE zb_canceled END,
              updated_at = NOW()
-         WHERE id = $2`,
-        [newStatus, jobId]
+         WHERE id = $3`,
+        [newStatus, newStatus === 'Canceled', jobId]
     );
 
     // Outbound sync to Zenbooker — full mapping with no-op guards (§6).
