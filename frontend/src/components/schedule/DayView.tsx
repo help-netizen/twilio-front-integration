@@ -167,7 +167,7 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
         return (
             // Flat, full-width — no card chrome around the list (the job cards
             // are the content; they carry their own provider-coloured accent).
-            <div className="flex flex-col gap-2.5">
+            <div className="schedule-mobile-agenda flex flex-col gap-2.5">
                 {sorted.length === 0 ? (
                     <div className="py-12 text-center text-sm" style={{ color: 'var(--sched-ink-3)' }}>
                         No jobs scheduled for {format(currentDate, 'EEEE, MMM d')}

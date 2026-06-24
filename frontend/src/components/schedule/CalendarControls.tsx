@@ -205,7 +205,7 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
     return (
         // Mobile: flat, full-width — drop the frosted tile + inner gutter so the
         // controls sit directly on the page (no "плитка"). Desktop keeps the card.
-        <div style={isMobile ? undefined : frostedCard} className="overflow-visible">
+        <div style={isMobile ? undefined : frostedCard} className="schedule-calendar-controls relative z-[120] overflow-visible">
             <div className={isMobile ? 'px-0 py-1' : 'px-5 py-4'}>
                 {/* Main controls row */}
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -316,7 +316,7 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
                             {/* Filter Dropdown Panel */}
                             {filterDropdownOpen && (
                                 <div
-                                    className="absolute z-50 rounded-xl overflow-hidden"
+                                    className="absolute z-[130] rounded-xl overflow-hidden"
                                     style={{
                                         background: 'var(--blanc-surface-strong, #fffdf9)',
                                         border: '1px solid var(--blanc-line, rgba(117, 106, 89, 0.18))',

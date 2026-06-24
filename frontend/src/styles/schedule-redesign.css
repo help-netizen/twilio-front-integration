@@ -53,6 +53,11 @@
 
 /* Responsive breakpoints */
 
+.schedule-page-root {
+    overflow-x: clip;
+    overflow-y: visible;
+}
+
 @media (max-width: 1100px) {
     .schedule-workspace {
         padding: 18px !important;
@@ -67,5 +72,13 @@
        so the schedule + job cards use the full screen width. */
     .schedule-workspace {
         padding: 12px !important;
+    }
+
+    .schedule-page-root {
+        min-height: auto;
+    }
+
+    .schedule-mobile-agenda {
+        padding-bottom: calc(92px + env(safe-area-inset-bottom, 0px));
     }
 }

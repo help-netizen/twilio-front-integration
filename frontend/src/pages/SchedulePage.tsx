@@ -123,7 +123,7 @@ export function SchedulePage() {
 
     return (
         <div
-            className="min-h-screen relative overflow-x-hidden"
+            className="schedule-page-root min-h-screen relative"
             style={{
                 background: 'radial-gradient(circle at top left, rgba(255, 255, 255, 0.9), transparent 28%), linear-gradient(180deg, #f7f3ec 0%, var(--sched-bg) 44%, var(--sched-bg-deep) 100%)',
                 color: 'var(--sched-ink-1)',
