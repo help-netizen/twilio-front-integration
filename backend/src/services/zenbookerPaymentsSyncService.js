@@ -191,9 +191,49 @@ async function batchFetch(ids, fetchFn, concurrency = 5) {
     return cache;
 }
 
+// ─── Job / invoice id resolution ────────────────────────────────────────────
+//
+// A Zenbooker payment is linked to its job through the invoice
+// (job → invoice → transaction). The job id, however, can surface on more than
+// one place in the API payload depending on the transaction type, so resolving
+// it from a SINGLE hop (`invoice.job_id`) silently drops the link whenever that
+// one field is absent. We accept the id from the invoice OR the transaction,
+// and from either the flat `*_id` form or a nested object — whichever is
+// present. This is the core fix for payments that synced with no provider and
+// no linked job. See resolveZbInvoiceId/resolveZbJobId tests.
+
+function firstId(...candidates) {
+    for (const c of candidates) {
+        if (c === 0) continue;
+        if (c != null && c !== '') return String(c);
+    }
+    return '';
+}
+
+/** Resolve the Zenbooker invoice id for a transaction (flat id or nested object). */
+function resolveZbInvoiceId(txn) {
+    return firstId(txn?.invoice_id, txn?.invoice?.id);
+}
+
+/**
+ * Resolve the Zenbooker job id for a transaction, preferring the invoice's job
+ * reference and falling back to a job id carried directly on the transaction.
+ */
+function resolveZbJobId(txn, invoice) {
+    return firstId(
+        invoice?.job_id, invoice?.job?.id,
+        txn?.job_id, txn?.job?.id,
+    );
+}
+
 // ─── Assemble row from raw ZB data ──────────────────────────────────────────
 
 function assembleRow(txn, invoice, job) {
+    const resolvedJobId = resolveZbJobId(txn, invoice);
+    // missing_job_link drives the "details unavailable" warning + hides the job
+    // tile. It means the full job BODY wasn't attached at sync time. Even when
+    // it's true we now persist resolvedJobId below, so the row can still be
+    // linked to a local job by its stable zenbooker_job_id on read.
     const missingJobLink = !job;
 
     const rawAmount = txn.amount_collected || txn.amount || '0.00';
@@ -235,8 +275,8 @@ function assembleRow(txn, invoice, job) {
         tech,
         custom_fields: extractCustomFields(job),
         transaction_id: txn.id,
-        invoice_id: txn.invoice_id || '',
-        job_id: invoice?.job_id || '',
+        invoice_id: resolveZbInvoiceId(txn),
+        job_id: resolvedJobId,
         transaction_status: txn.status || '',
         missing_job_link: missingJobLink,
         // Invoice summary
@@ -286,24 +326,44 @@ async function syncPayments(companyId, dateFrom, dateTo) {
     console.log(`[PaymentsService] Got ${transactions.length} transactions`);
 
     // 2. Batch-fetch invoices
-    const invoiceIds = transactions.map(t => t.invoice_id).filter(Boolean);
+    const invoiceIds = transactions.map(t => resolveZbInvoiceId(t)).filter(Boolean);
     const invoiceCache = await batchFetch(invoiceIds, id => zenbookerClient.getInvoice(id));
-    console.log(`[PaymentsService] Fetched ${invoiceCache.size} invoices`);
+    console.log(`[PaymentsService] Fetched ${invoiceCache.size}/${new Set(invoiceIds).size} invoices`);
 
-    // 3. Batch-fetch jobs (from invoice.job_id)
+    // 3. Batch-fetch jobs. Resolve each job id from the invoice OR the
+    //    transaction (not invoice.job_id alone) so a payment still links when
+    //    the invoice hop is thin/absent. Fetching is keyed by the resolved id.
     const jobIds = [];
-    for (const inv of invoiceCache.values()) {
-        if (inv.job_id) jobIds.push(inv.job_id);
+    for (const txn of transactions) {
+        const invoice = invoiceCache.get(resolveZbInvoiceId(txn));
+        const jobId = resolveZbJobId(txn, invoice);
+        if (jobId) jobIds.push(jobId);
     }
     const jobCache = await batchFetch(jobIds, id => zenbookerClient.getJob(id));
-    console.log(`[PaymentsService] Fetched ${jobCache.size} jobs`);
+    console.log(`[PaymentsService] Fetched ${jobCache.size}/${new Set(jobIds).size} jobs`);
 
     // 4. Assemble and upsert rows
     let upsertedCount = 0;
+    let unresolvedJobIdCount = 0;   // couldn't even determine which ZB job
+    let unfetchedJobCount = 0;      // knew the job id but the fetch failed
+    const unlinkedTxnSamples = [];
 
     for (const txn of transactions) {
-        const invoice = txn.invoice_id ? invoiceCache.get(txn.invoice_id) : null;
-        const job = invoice?.job_id ? jobCache.get(invoice.job_id) : null;
+        const invoice = invoiceCache.get(resolveZbInvoiceId(txn)) || null;
+        const jobId = resolveZbJobId(txn, invoice);
+        const job = jobId ? jobCache.get(jobId) || null : null;
+
+        // Observability: a once-silent job-fetch miss is the reason payments
+        // landed with no provider/no linked job. Count + sample them so a bad
+        // sync is visible in the result and logs instead of failing quietly.
+        if (!jobId) {
+            unresolvedJobIdCount++;
+            if (unlinkedTxnSamples.length < 10) unlinkedTxnSamples.push({ txn: txn.id, reason: 'no_job_id' });
+        } else if (!job) {
+            unfetchedJobCount++;
+            if (unlinkedTxnSamples.length < 10) unlinkedTxnSamples.push({ txn: txn.id, job: jobId, reason: 'job_fetch_failed' });
+        }
+
         const row = assembleRow(txn, invoice, job);
 
         await db.query(`
@@ -380,19 +440,35 @@ async function syncPayments(companyId, dateFrom, dateTo) {
 
     console.log(`[PaymentsService] Upserted ${upsertedCount} payments`);
 
-    // Debt #6: project this company's Zenbooker payments into the canonical
-    // payment_transactions ledger (Zenbooker = master, so its rows win on
-    // conflict). Idempotent; keeps the ledger in sync without dropping the
-    // zb_payments staging cache. Best-effort — a projection hiccup must not fail
-    // the Zenbooker sync itself.
-    try {
-        const { rowCount } = await projectCompanyLedger(companyId);
-        console.log(`[PaymentsService] Projected ${rowCount} payments into the ledger`);
-    } catch (e) {
-        console.error('[PaymentsService] Ledger projection failed (non-fatal):', e.message);
+    const unlinkedCount = unresolvedJobIdCount + unfetchedJobCount;
+    if (unlinkedCount > 0) {
+        console.warn(
+            `[PaymentsService] ${unlinkedCount}/${transactions.length} payments synced WITHOUT a linked job ` +
+            `(${unresolvedJobIdCount} had no resolvable job id, ${unfetchedJobCount} had a job id but the fetch failed). ` +
+            `Run reconcilePaymentJobLinks to heal these. Samples: ${JSON.stringify(unlinkedTxnSamples)}`
+        );
     }
 
-    return { synced: upsertedCount, total_transactions: transactions.length };
+    // Re-link any still-broken payments to their jobs (heals rows synced before
+    // the resolver fix, and any job-fetch miss from THIS run, from already-synced
+    // local jobs) and project into the canonical payment_transactions ledger
+    // (Zenbooker = master, so its rows win on conflict). Idempotent and SQL-only;
+    // only touches rows still missing a link, so it never regresses fresh data.
+    // Best-effort — a reconcile/projection hiccup must not fail the sync itself.
+    try {
+        const recon = await reconcileJobLinks(companyId, { dryRun: false });
+        console.log('[PaymentsService] Post-sync reconcile + ledger projection:', recon);
+    } catch (e) {
+        console.error('[PaymentsService] Post-sync reconcile/projection failed (non-fatal):', e.message);
+    }
+
+    return {
+        synced: upsertedCount,
+        total_transactions: transactions.length,
+        unlinked: unlinkedCount,
+        unresolved_job_id: unresolvedJobIdCount,
+        job_fetch_failed: unfetchedJobCount,
+    };
 }
 
 /**
@@ -400,8 +476,8 @@ async function syncPayments(companyId, dateFrom, dateTo) {
  * Mirrors migration 104's mapping. Zenbooker-priority via ON CONFLICT DO UPDATE.
  * Idempotent and self-healing (re-projects the whole company each call).
  */
-async function projectCompanyLedger(companyId) {
-    return db.query(`
+async function projectCompanyLedger(companyId, exec = db) {
+    return exec.query(`
         INSERT INTO payment_transactions (
             company_id, job_id, transaction_type, payment_method, status,
             amount, currency, reference_number, external_id, external_source,
@@ -431,6 +507,113 @@ async function projectCompanyLedger(companyId) {
             memo = EXCLUDED.memo, metadata = EXCLUDED.metadata,
             processed_at = EXCLUDED.processed_at, updated_at = now()
     `, [companyId]);
+}
+
+// =============================================================================
+// reconcileJobLinks — heal payments that synced with no provider / no job link
+// =============================================================================
+
+// 1) Backfill a missing zb_payments.job_id from the raw payloads we already
+//    stored (no Zenbooker API calls). Covers rows synced before the resolver
+//    fix, where the job id lives in the raw invoice/transaction JSON.
+const RECONCILE_BACKFILL_JOB_ID_SQL = `
+    UPDATE zb_payments zp
+    SET job_id = COALESCE(
+            NULLIF(zp.zb_raw_invoice->>'job_id', ''),
+            NULLIF(zp.zb_raw_invoice->'job'->>'id', ''),
+            NULLIF(zp.zb_raw_transaction->>'job_id', ''),
+            NULLIF(zp.zb_raw_transaction->'job'->>'id', '')
+        ),
+        updated_at = now()
+    WHERE zp.company_id = $1
+      AND NULLIF(zp.job_id, '') IS NULL
+      AND COALESCE(
+            NULLIF(zp.zb_raw_invoice->>'job_id', ''),
+            NULLIF(zp.zb_raw_invoice->'job'->>'id', ''),
+            NULLIF(zp.zb_raw_transaction->>'job_id', ''),
+            NULLIF(zp.zb_raw_transaction->'job'->>'id', '')
+          ) IS NOT NULL`;
+
+// 2) For payments whose ZB job is already synced into the local jobs table,
+//    repopulate the denormalised display fields (provider/tech, job number,
+//    job tile) straight from that local job — again, no Zenbooker API calls.
+//    This is what makes the "no provider / no linked job" rows whole again.
+const RECONCILE_HEAL_FROM_LOCAL_JOBS_SQL = `
+    UPDATE zb_payments zp
+    SET missing_job_link = false,
+        job_number = COALESCE(NULLIF(j.job_number, ''), zp.job_number),
+        job_type   = COALESCE(NULLIF(j.service_name, ''), zp.job_type),
+        status     = CASE WHEN j.zb_canceled THEN 'Canceled'
+                          ELSE COALESCE(NULLIF(j.zb_status, ''), zp.status) END,
+        tech       = COALESCE((
+                        SELECT string_agg(elem->>'name', ', ')
+                        FROM jsonb_array_elements(COALESCE(j.assigned_techs, '[]'::jsonb)) elem
+                        WHERE COALESCE(elem->>'name', '') <> ''
+                     ), '—'),
+        job_detail = jsonb_build_object(
+                        'job_number',      j.job_number,
+                        'service_name',    j.service_name,
+                        'service_address', j.address,
+                        'providers',       COALESCE(j.assigned_techs, '[]'::jsonb)
+                     ),
+        updated_at = now()
+    FROM jobs j
+    WHERE zp.company_id = $1
+      AND j.company_id = zp.company_id
+      AND NULLIF(zp.job_id, '') IS NOT NULL
+      AND j.zenbooker_job_id = zp.job_id
+      AND (zp.missing_job_link = true OR zp.job_detail IS NULL OR zp.job_number = '—')`;
+
+/**
+ * Re-link a company's payments to their jobs and refresh the ledger.
+ *
+ * SQL-only and idempotent — it never calls the Zenbooker API; it reuses the
+ * raw payloads on zb_payments and the already-synced local jobs table. Run it
+ * after a sync that reported `unlinked > 0`, or to heal historically broken
+ * rows. Pass { dryRun: true } to preview counts without writing.
+ *
+ * Rows that remain unlinked are payments whose ZB job isn't in the local jobs
+ * table yet — sync those jobs first (scripts/zb-jobs-sync-full.js), then re-run.
+ */
+async function reconcileJobLinks(companyId, { dryRun = false } = {}) {
+    if (!companyId) throw new Error('reconcileJobLinks requires a companyId');
+
+    const client = await db.getClient();
+    try {
+        await client.query('BEGIN');
+
+        const backfilled = await client.query(RECONCILE_BACKFILL_JOB_ID_SQL, [companyId]);
+        const healed = await client.query(RECONCILE_HEAL_FROM_LOCAL_JOBS_SQL, [companyId]);
+        const projected = await projectCompanyLedger(companyId, client);
+
+        const { rows } = await client.query(
+            `SELECT
+                count(*) FILTER (WHERE missing_job_link = true)        AS still_missing_body,
+                count(*) FILTER (WHERE NULLIF(job_id, '') IS NULL)     AS still_no_job_id
+             FROM zb_payments WHERE company_id = $1`,
+            [companyId]
+        );
+
+        if (dryRun) await client.query('ROLLBACK');
+        else await client.query('COMMIT');
+
+        const summary = {
+            company_id: companyId,
+            dry_run: dryRun,
+            backfilled_job_id: backfilled.rowCount,
+            healed_from_local_jobs: healed.rowCount,
+            ledger_rows_projected: projected.rowCount,
+            still_missing_job_body: parseInt(rows[0].still_missing_body, 10),
+            still_no_job_id: parseInt(rows[0].still_no_job_id, 10),
+        };
+        console.log(`[PaymentsService] reconcileJobLinks ${dryRun ? '(dry-run) ' : ''}`, summary);
+        return summary;
+    } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+    } finally {
+        client.release();
+    }
 }
 
 // =============================================================================
@@ -583,7 +766,12 @@ async function listPaymentsForExport(companyId, { dateFrom, dateTo, paymentMetho
                 WHERE jta.job_id = j.id
             ) as blanc_tags
         FROM zb_payments p
-        LEFT JOIN jobs j ON j.job_number = p.job_number
+        LEFT JOIN jobs j
+          ON j.company_id = p.company_id
+         AND (CASE
+                WHEN NULLIF(p.job_id, '') IS NOT NULL THEN j.zenbooker_job_id = p.job_id
+                ELSE j.job_number = NULLIF(p.job_number, '—')
+              END)
         WHERE ${where}
         ORDER BY p.payment_date DESC`,
         params
@@ -654,7 +842,16 @@ async function getPaymentDetail(companyId, paymentId) {
             p.job_detail, p.invoice_detail, p.attachments, p.metadata,
             j.id as local_job_id
         FROM zb_payments p
-        LEFT JOIN jobs j ON j.job_number = p.job_number AND j.company_id = p.company_id
+        -- Link the local Blanc job by the STABLE zenbooker_job_id (same key the
+        -- ledger uses), falling back to job_number only when the id is unknown.
+        -- The old job_number-only join broke whenever the job body wasn't
+        -- fetched at sync time (job_number stayed '—').
+        LEFT JOIN jobs j
+          ON j.company_id = p.company_id
+         AND (CASE
+                WHEN NULLIF(p.job_id, '') IS NOT NULL THEN j.zenbooker_job_id = p.job_id
+                ELSE j.job_number = NULLIF(p.job_number, '—')
+              END)
         WHERE p.company_id = $1 AND p.id = $2`,
         [companyId, paymentId]
     );
@@ -718,12 +915,15 @@ async function updateCheckDeposited(companyId, paymentId, deposited) {
 module.exports = {
     syncPayments,
     projectCompanyLedger,
+    reconcileJobLinks,
     listPayments,
     listPaymentsForExport,
     getPaymentDetail,
     updateCheckDeposited,
     // Exported for testing
     assembleRow,
+    resolveZbJobId,
+    resolveZbInvoiceId,
     extractSource,
     extractTags,
     formatPaymentMethod,

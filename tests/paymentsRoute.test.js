@@ -9,10 +9,15 @@ const mockListPayments = jest.fn();
 const mockGetPaymentDetail = jest.fn();
 const mockSyncPayments = jest.fn();
 
-jest.mock('../backend/src/services/paymentsService', () => ({
+// The route imports services/zenbookerPaymentsSyncService (the Zenbooker sync
+// layer was relocated out of paymentsService). Mock the module the route
+// actually requires, or the real service runs and hits the live Zenbooker API.
+jest.mock('../backend/src/services/zenbookerPaymentsSyncService', () => ({
     listPayments: mockListPayments,
     getPaymentDetail: mockGetPaymentDetail,
     syncPayments: mockSyncPayments,
+    listPaymentsForExport: jest.fn(),
+    updateCheckDeposited: jest.fn(),
 }));
 
 const express = require('express');
@@ -196,18 +201,19 @@ describe('Payments Route (DB-backed)', () => {
         test('returns 404 when transaction not found', async () => {
             mockGetPaymentDetail.mockResolvedValue(null);
 
-            const res = await request(app, 'GET', '/txn_missing');
+            // Detail is keyed by the internal numeric Blanc payment id.
+            const res = await request(app, 'GET', '/999');
 
             expect(res.status).toBe(404);
             expect(res.body.ok).toBe(false);
-            expect(mockGetPaymentDetail).toHaveBeenCalledWith(TEST_COMPANY_ID, 'txn_missing');
+            expect(mockGetPaymentDetail).toHaveBeenCalledWith(TEST_COMPANY_ID, 999);
         });
 
         test('returns enriched detail with attachments', async () => {
             const detail = makeDetail();
             mockGetPaymentDetail.mockResolvedValue(detail);
 
-            const res = await request(app, 'GET', '/txn_001');
+            const res = await request(app, 'GET', '/10778');
 
             expect(res.status).toBe(200);
             expect(res.body.ok).toBe(true);
@@ -233,7 +239,7 @@ describe('Payments Route (DB-backed)', () => {
             expect(d.metadata.transaction_id).toBe('txn_001');
 
             // Company scoping
-            expect(mockGetPaymentDetail).toHaveBeenCalledWith(TEST_COMPANY_ID, 'txn_001');
+            expect(mockGetPaymentDetail).toHaveBeenCalledWith(TEST_COMPANY_ID, 10778);
         });
     });
 
