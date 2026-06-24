@@ -10,6 +10,7 @@ import {
     format,
 } from 'date-fns';
 import { useAuthz } from './useAuthz';
+import { useIsMobile } from './useIsMobile';
 import {
     fetchScheduleItems, fetchDispatchSettings, updateDispatchSettings,
     rescheduleItem, reassignItem, createFromSlot, fetchRouteSegments,
@@ -71,6 +72,13 @@ export function useScheduleData() {
         persistFilters(f);
     }, []);
     const [sidebarStack, setSidebarStack] = useState<SidebarLayer[]>([]);
+
+    // Mobile (phone-width): the schedule shows a single-day stacked agenda and
+    // hides the view switcher, so the active view is coerced to 'day'.
+    const isMobile = useIsMobile();
+    useEffect(() => {
+        if (isMobile) setViewMode(v => (v === 'day' ? v : 'day'));
+    }, [isMobile]);
 
     // ── Date range derived from viewMode + currentDate ───────────────────────
 
@@ -152,7 +160,7 @@ export function useScheduleData() {
     // ── Fetch settings (once) ────────────────────────────────────────────────
     // Dispatch settings and the full provider roster are dispatch-only data:
     // providers without schedule.dispatch never request them (PF007).
-    const { hasPermission } = useAuthz();
+    const { hasPermission, user } = useAuthz();
     const canDispatch = hasPermission('schedule.dispatch');
 
     useEffect(() => {
@@ -179,6 +187,27 @@ export function useScheduleData() {
             })
             .catch(() => setProviders([]));
     }, [canDispatch]);
+
+    // Mobile: default the provider filter to a SINGLE provider so the narrow
+    // day agenda shows one person's schedule — the current user when they're a
+    // technician (name matches a provider), otherwise the first alphabetically.
+    // Runs once per mount and only when no provider is already selected; uses
+    // the non-persisting setter so this mobile default never leaks to desktop.
+    // (Technicians without dispatch have no roster here; the server already
+    // scopes their items, so there's nothing to default.)
+    const didDefaultProviderRef = useRef(false);
+    useEffect(() => {
+        if (didDefaultProviderRef.current || !isMobile || providers.length === 0) return;
+        if (filters.providerIds?.length) { didDefaultProviderRef.current = true; return; }
+        const sorted = [...providers].sort((a, b) => a.name.localeCompare(b.name));
+        const norm = (s: string) => s.trim().toLowerCase();
+        const mine = user?.name ? sorted.find(p => norm(p.name) === norm(user.name)) : undefined;
+        const chosen = mine || sorted[0];
+        if (chosen) {
+            didDefaultProviderRef.current = true;
+            setFiltersRaw(prev => ({ ...prev, providerIds: [chosen.id] }));
+        }
+    }, [isMobile, providers, filters.providerIds, user]);
 
     // ── SSE Realtime refresh (debounced) ─────────────────────────────────────
 

@@ -17,6 +17,7 @@ import { serverDate } from '../../utils/serverClock';
 import { assignLanes } from '../../utils/scheduleLayout';
 import type { LayoutItem } from '../../utils/scheduleLayout';
 import { setDragData, getDragData, hasDragData } from '../../hooks/useScheduleDnD';
+import { useIsMobile } from '../../hooks/useIsMobile';
 
 interface DayViewProps {
     currentDate: Date;
@@ -45,6 +46,7 @@ const HOUR_HEIGHT = 86; // px per hour — Sprint 7 design refresh
 export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, onSelectItem, onReschedule, onCreateFromSlot }) => {
     const tz = settings.timezone || 'America/New_York';
     const slotDuration = settings.slot_duration || 60;
+    const isMobile = useIsMobile();
     const [dropHighlightMin, setDropHighlightMin] = useState<number | null>(null);
     const [slotPlaceholder, setSlotPlaceholder] = useState<{
         startMin: number; endMin: number; startAt: string; endAt: string;
@@ -152,6 +154,34 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
         const endAt = dateInTZ(dy, dm, dd, Math.floor(endMin / 60), endMin % 60, tz).toISOString();
         setSlotPlaceholder({ startMin: clickMin, endMin, startAt, endAt });
     }, [onCreateFromSlot, pxToMinutes, dy, dm, dd, tz]);
+
+    // ── Mobile: stacked single-day agenda ────────────────────────────────────
+    // A phone-width screen can't show a time grid (overlapping jobs would split
+    // the narrow column or scroll horizontally). Instead render every job for
+    // the day as a full-width card, one under another, sorted by start time —
+    // same-time jobs simply stack. Tap opens the job; no DnD / slot-create.
+    if (isMobile) {
+        const sorted = [...dayItems].sort(
+            (a, b) => (a.start_at ? +new Date(a.start_at) : 0) - (b.start_at ? +new Date(b.start_at) : 0),
+        );
+        return (
+            // Flat, full-width — no card chrome around the list (the job cards
+            // are the content; they carry their own provider-coloured accent).
+            <div className="flex flex-col gap-2.5">
+                {sorted.length === 0 ? (
+                    <div className="py-12 text-center text-sm" style={{ color: 'var(--sched-ink-3)' }}>
+                        No jobs scheduled for {format(currentDate, 'EEEE, MMM d')}
+                    </div>
+                ) : (
+                    sorted.map(item => (
+                        <div key={`${item.entity_type}-${item.entity_id}`} data-schedule-item>
+                            <ScheduleItemCard item={item} onClick={onSelectItem} timezone={tz} />
+                        </div>
+                    ))
+                )}
+            </div>
+        );
+    }
 
     return (
         <div

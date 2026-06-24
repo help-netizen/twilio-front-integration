@@ -10,6 +10,7 @@ import type { ViewMode, ProviderInfo } from '../../hooks/useScheduleData';
 import type { ScheduleFilters } from '../../services/scheduleApi';
 import { getProviderColor } from '../../utils/providerColors';
 import { Badge } from '../ui/badge';
+import { useIsMobile } from '../../hooks/useIsMobile';
 
 interface CalendarControlsProps {
     viewMode: ViewMode;
@@ -141,6 +142,7 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
 }) => {
     const [filterDropdownOpen, setFilterDropdownOpen] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
+    const isMobile = useIsMobile();
 
     // Close dropdown on outside click
     useEffect(() => {
@@ -201,12 +203,14 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
     for (const s of STATUS_OPTIONS) statusColorMap[s.label] = s.color;
 
     return (
-        <div style={frostedCard} className="overflow-visible">
-            <div className="px-5 py-4">
+        // Mobile: flat, full-width — drop the frosted tile + inner gutter so the
+        // controls sit directly on the page (no "плитка"). Desktop keeps the card.
+        <div style={isMobile ? undefined : frostedCard} className="overflow-visible">
+            <div className={isMobile ? 'px-0 py-1' : 'px-5 py-4'}>
                 {/* Main controls row */}
-                <div className="flex items-center justify-between gap-3">
-                    {/* Left: View Selector */}
-                    <div className="relative">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                    {/* Left: View Selector — hidden on mobile (Day-only there) */}
+                    <div className="relative hidden md:block">
                         <select
                             value={viewMode}
                             onChange={(e) => onViewModeChange(e.target.value as ViewMode)}
@@ -224,7 +228,7 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
                     </div>
 
                     {/* Center: Date navigation + label */}
-                    <div className="flex items-center gap-2.5">
+                    <div className="flex items-center gap-2.5 flex-wrap justify-center w-full md:flex-nowrap md:justify-start md:w-auto">
                         <button
                             type="button"
                             onClick={() => onNavigateDate('prev')}
@@ -267,14 +271,11 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
                     </div>
 
                     {/* Right: Search + Filters + Settings */}
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 w-full md:w-auto flex-wrap md:flex-nowrap">
                         {/* Inline search */}
                         <label
-                            className="flex items-center min-h-[42px] px-3 gap-2"
-                            style={{
-                                ...controlBtn,
-                                minWidth: 180,
-                            }}
+                            className="flex items-center min-h-[42px] px-3 gap-2 flex-1 md:flex-none w-full md:w-auto md:min-w-[180px]"
+                            style={controlBtn}
                         >
                             <svg className="size-4 shrink-0" style={{ color: 'var(--sched-ink-3)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                 <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
@@ -427,7 +428,7 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
 
                 {/* Provider chips — always visible below controls */}
                 {providers.length > 0 && (
-                    <div className="flex items-center gap-2 flex-wrap mt-3 pt-3" style={{ borderTop: '1px solid rgba(117, 106, 89, 0.08)' }}>
+                    <div className="flex items-center gap-2 flex-wrap mt-3 pt-3" style={{ borderTop: isMobile ? 'none' : '1px solid rgba(117, 106, 89, 0.08)' }}>
                         {providers.map(provider => {
                             const c = getProviderColor(provider.id);
                             const isActive = filters.providerIds?.includes(provider.id);

@@ -63,4 +63,9 @@
     .schedule-filter-field {
         min-width: 100% !important;
     }
+    /* Mobile: go edge-to-edge — tighter page gutter, flat sections (no tiles)
+       so the schedule + job cards use the full screen width. */
+    .schedule-workspace {
+        padding: 12px !important;
+    }
 }
