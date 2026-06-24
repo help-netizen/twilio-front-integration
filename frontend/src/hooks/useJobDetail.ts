@@ -42,7 +42,7 @@ export interface UseJobDetailResult {
     handleMarkEnroute: (id: number) => void;
     handleMarkInProgress: (id: number) => void;
     handleMarkComplete: (id: number) => void;
-    handleCancel: (id: number) => void;
+    handleCancel: (id: number, reason: string) => Promise<boolean>;
     handleTagsChange: (jobId: number, tagIds: number[]) => void;
     handleJobUpdated: (updatedJob: LocalJob) => void;
 }
@@ -163,14 +163,15 @@ export function useJobDetail({ jobId, onJobMutated }: UseJobDetailParams): UseJo
         }
     }, [afterMutation]);
 
-    const handleCancel = useCallback(async (id: number) => {
-        if (!confirm('Cancel this job?')) return;
+    const handleCancel = useCallback(async (id: number, reason: string) => {
         try {
-            await jobsApi.cancelJob(id);
+            await jobsApi.cancelJob(id, reason);
             toast.success('Job canceled');
             afterMutation(id);
+            return true;
         } catch (err) {
             toast.error('Failed to cancel job', { description: err instanceof Error ? err.message : '' });
+            return false;
         }
     }, [afterMutation]);
 

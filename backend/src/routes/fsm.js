@@ -9,6 +9,7 @@ const router = express.Router();
 const { requirePermission } = require('../middleware/authorization');
 const fsmService = require('../services/fsmService');
 const jobsService = require('../services/jobsService');
+const eventService = require('../services/eventService');
 const { getProviderScope } = require('../middleware/providerScope');
 
 /**
@@ -33,6 +34,17 @@ function getServerRoles(req) {
         roles.add('company_member');
     }
     return [...roles];
+}
+
+const CANCEL_REASON_MAX_LENGTH = 1000;
+
+function normalizeCancelReason(input) {
+    const reason = typeof input === 'string' ? input.trim() : '';
+    if (!reason) return { error: 'cancel reason is required' };
+    if (reason.length > CANCEL_REASON_MAX_LENGTH) {
+        return { error: `cancel reason must be ${CANCEL_REASON_MAX_LENGTH} characters or less` };
+    }
+    return { reason };
 }
 
 // Feature flags — default to true (enabled) during development
@@ -205,7 +217,7 @@ router.post('/:machineKey/apply', requirePermission('jobs.edit'), async (req, re
   try {
     const companyId = req.companyFilter?.company_id;
     const { machineKey } = req.params;
-    const { entityId, event } = req.body || {};
+    const { entityId, event, reason } = req.body || {};
 
     if (!entityId || !event) {
       return res.status(400).json({ ok: false, error: 'entityId and event are required' });
@@ -213,10 +225,12 @@ router.post('/:machineKey/apply', requirePermission('jobs.edit'), async (req, re
 
     // Load entity's current state based on machine type
     let currentState;
+    let currentJob = null;
     if (machineKey === 'job') {
       // Tenant + provider scoped: non-visible jobs read as missing (404)
       const job = await jobsService.getJobById(entityId, companyId, getProviderScope(req));
       if (!job) return res.status(404).json({ ok: false, error: `Job #${entityId} not found` });
+      currentJob = job;
       currentState = job.blanc_status;
     } else {
       return res.status(400).json({ ok: false, error: `Unsupported machine: ${machineKey}` });
@@ -244,12 +258,51 @@ router.post('/:machineKey/apply', requirePermission('jobs.edit'), async (req, re
       }
     }
 
-    // Apply the transition — update the entity's status
-    if (machineKey === 'job') {
-      await jobsService.updateBlancStatus(parseInt(entityId, 10), result.targetState, companyId);
+    let cancelReason = null;
+    if (machineKey === 'job' && result.targetState === 'Canceled') {
+      const parsedReason = normalizeCancelReason(reason);
+      if (parsedReason.error) return res.status(400).json({ ok: false, error: parsedReason.error });
+      cancelReason = parsedReason.reason;
     }
 
-    res.json({ ok: true, data: { targetState: result.targetState, event: result.event } });
+    // Apply the transition — update the entity's status
+    if (machineKey === 'job') {
+      if (result.targetState === 'Canceled') {
+        await jobsService.cancelJob(parseInt(entityId, 10));
+      } else {
+        await jobsService.updateBlancStatus(parseInt(entityId, 10), result.targetState, companyId);
+      }
+
+      const eventData = {
+        from: currentState,
+        to: result.targetState,
+        actor_name: eventService.actorName(req),
+        reason: cancelReason,
+      };
+      eventService.logEvent(
+        companyId,
+        'job',
+        entityId,
+        result.targetState === 'Canceled' ? 'canceled' : 'status_changed',
+        eventData,
+        'user',
+        req.user?.sub
+      );
+
+      require('../services/eventBus').emit(companyId, 'job.status_changed', {
+        id: entityId,
+        from: currentState,
+        to: result.targetState,
+        contact_id: currentJob?.contact_id,
+        customer_name: currentJob?.customer_name,
+        customer_phone: currentJob?.customer_phone,
+        service_name: currentJob?.service_name,
+        reason: cancelReason,
+      }, { actorType: 'user', actorId: req.user?.sub, aggregateType: 'job', aggregateId: entityId })
+        .catch(e => console.error('[eventBus] job.status_changed emit failed:', e.message));
+    }
+
+    res.json({ ok: true, data: { previousState: currentState, newState: result.targetState, targetState: result.targetState, entityId: Number(entityId), event: result.event } });
   } catch (err) {
     console.error('[FSM] apply error:', err);
     res.status(500).json({ ok: false, error: err.message || 'Internal error' });

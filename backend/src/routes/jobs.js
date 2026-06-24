@@ -19,6 +19,17 @@ const upload = multer({
     limits: { fileSize: noteAttachmentsService.MAX_FILE_SIZE },
 });
 
+const CANCEL_REASON_MAX_LENGTH = 1000;
+
+function normalizeCancelReason(input) {
+    const reason = typeof input === 'string' ? input.trim() : '';
+    if (!reason) return { error: 'cancel reason is required' };
+    if (reason.length > CANCEL_REASON_MAX_LENGTH) {
+        return { error: `cancel reason must be ${CANCEL_REASON_MAX_LENGTH} characters or less` };
+    }
+    return { reason };
+}
+
 // ─── Sync Jobs from Zenbooker ────────────────────────────────────────────────
 
 router.post('/sync', requirePermission('jobs.edit'), async (req, res) => {
@@ -182,6 +193,12 @@ router.patch('/:id/status', requirePermission('jobs.edit'), async (req, res) => 
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
         const { blanc_status } = req.body;
         if (!blanc_status) return res.status(400).json({ ok: false, error: 'blanc_status required' });
+        let cancelReason = null;
+        if (blanc_status === 'Canceled') {
+            const parsedReason = normalizeCancelReason(req.body.cancel_reason || req.body.reason);
+            if (parsedReason.error) return res.status(400).json({ ok: false, error: parsedReason.error });
+            cancelReason = parsedReason.reason;
+        }
         // Closing transitions require a closing permission (PF007-HARDENING-001)
         if (['Job is Done', 'Canceled'].includes(blanc_status) && !req.user?._devMode) {
             const perms = req.authz?.permissions || [];
@@ -191,12 +208,13 @@ router.patch('/:id/status', requirePermission('jobs.edit'), async (req, res) => 
         }
         const result = await jobsService.updateBlancStatus(parseInt(req.params.id, 10), blanc_status, companyId);
         eventService.logEvent(companyId, 'job', req.params.id, 'status_changed',
-            { from: existing.blanc_status, to: blanc_status, actor_name: eventService.actorName(req) }, 'user', req.user?.sub);
+            { from: existing.blanc_status, to: blanc_status, actor_name: eventService.actorName(req), reason: cancelReason }, 'user', req.user?.sub);
         // ADR-001: publish to the event bus so automation rules can react
         require('../services/eventBus').emit(companyId, 'job.status_changed', {
             id: req.params.id, from: existing.blanc_status, to: blanc_status,
             contact_id: existing.contact_id, customer_name: existing.customer_name,
             customer_phone: existing.customer_phone, service_name: existing.service_name,
+            reason: cancelReason,
         }, { actorType: 'user', actorId: req.user?.sub, aggregateType: 'job', aggregateId: req.params.id })
             .catch(e => console.error('[eventBus] job.status_changed emit failed:', e.message));
         res.json({ ok: true, data: result });
@@ -358,9 +376,11 @@ router.post('/:id/cancel', requirePermission('jobs.close'), async (req, res) => 
         const companyId = req.companyFilter?.company_id || null;
         const existing = await jobsService.getJobById(req.params.id, companyId, getProviderScope(req));
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
+        const parsedReason = normalizeCancelReason(req.body?.reason || req.body?.cancel_reason);
+        if (parsedReason.error) return res.status(400).json({ ok: false, error: parsedReason.error });
         const result = await jobsService.cancelJob(parseInt(req.params.id, 10));
         eventService.logEvent(companyId, 'job', req.params.id, 'canceled',
-            { actor_name: eventService.actorName(req) }, 'user', req.user?.sub);
+            { actor_name: eventService.actorName(req), reason: parsedReason.reason }, 'user', req.user?.sub);
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Jobs API] Cancel error:', err.message);

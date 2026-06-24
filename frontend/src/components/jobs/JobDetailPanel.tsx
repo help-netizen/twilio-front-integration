@@ -10,6 +10,9 @@ import { JobFinancialsTab } from './JobFinancialsTab';
 import { JobDescription } from './JobNotesSection';
 import { NotesHistoryTabs } from '../shared/NotesHistoryTabs';
 import { useAuthz } from '../../hooks/useAuthz';
+import {
+    Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from '../ui/dialog';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -27,7 +30,7 @@ export interface JobDetailPanelProps {
     onMarkEnroute: (id: number) => void;
     onMarkInProgress: (id: number) => void;
     onMarkComplete: (id: number) => void;
-    onCancel: (id: number) => void;
+    onCancel: (id: number, reason: string) => Promise<boolean> | boolean;
     navigate: (path: string) => void;
     allTags: JobTag[];
     onTagsChange: (jobId: number, tagIds: number[]) => void;
@@ -43,6 +46,9 @@ export function JobDetailPanel({
     navigate, allTags, onTagsChange, onJobUpdated,
 }: JobDetailPanelProps) {
     const [rightTab, setRightTab] = useState<'notes' | 'financials'>('notes');
+    const [cancelOpen, setCancelOpen] = useState(false);
+    const [cancelReason, setCancelReason] = useState('');
+    const [cancelSubmitting, setCancelSubmitting] = useState(false);
     const { hasAnyPermission } = useAuthz();
     // Finance surface renders only with finance visibility (PF007)
     const canViewFinancials = hasAnyPermission('financial_data.view', 'estimates.view', 'invoices.view');
@@ -51,7 +57,30 @@ export function JobDetailPanel({
         setRightTab('notes');
     }, [job.id]);
 
-    const opsProps = { job, allTags, onTagsChange, onMarkEnroute, onMarkInProgress, onMarkComplete, onCancel };
+    const requestCancel = (_id?: number) => {
+        setCancelReason('');
+        setCancelOpen(true);
+    };
+
+    const submitCancel = async () => {
+        const reason = cancelReason.trim();
+        if (!reason || cancelSubmitting) return;
+        setCancelSubmitting(true);
+        const ok = await onCancel(job.id, reason);
+        setCancelSubmitting(false);
+        if (ok) {
+            setCancelOpen(false);
+            setCancelReason('');
+        }
+    };
+
+    const closeCancelDialog = (open: boolean) => {
+        if (cancelSubmitting) return;
+        setCancelOpen(open);
+        if (!open) setCancelReason('');
+    };
+
+    const opsProps = { job, allTags, onTagsChange, onMarkEnroute, onMarkInProgress, onMarkComplete, onCancel: requestCancel };
 
     return (
         <div className="flex flex-col md:flex-row h-full overflow-hidden">
@@ -63,6 +92,7 @@ export function JobDetailPanel({
                     contactInfo={contactInfo}
                     navigate={navigate}
                     onBlancStatusChange={onBlancStatusChange}
+                    onCancel={requestCancel}
                 />
 
                 {/* Ops: status + tags + action chips — all in one compact band */}
@@ -121,6 +151,49 @@ export function JobDetailPanel({
                     )}
                 </Tabs>
             </div>
+
+            <Dialog open={cancelOpen} onOpenChange={closeCancelDialog}>
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Cancel Job</DialogTitle>
+                        <DialogDescription>
+                            Confirm cancellation and enter the reason for canceling this job.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-1.5 py-2">
+                        <label className="blanc-eyebrow" htmlFor="job-cancel-reason">Cancel reason</label>
+                        <textarea
+                            id="job-cancel-reason"
+                            value={cancelReason}
+                            onChange={(e) => setCancelReason(e.target.value)}
+                            placeholder="Enter the reason this job is being canceled..."
+                            rows={4}
+                            disabled={cancelSubmitting}
+                            className="w-full rounded-lg border border-[var(--blanc-line)] bg-transparent px-3 py-2 text-sm placeholder:text-[var(--blanc-ink-3)] focus:outline-none focus:ring-1 focus:ring-[var(--blanc-line)] resize-none disabled:opacity-60"
+                        />
+                    </div>
+                    <DialogFooter className="gap-2 sm:gap-0">
+                        <button
+                            type="button"
+                            disabled={cancelSubmitting}
+                            onClick={() => closeCancelDialog(false)}
+                            className="px-4 py-2 text-sm rounded-lg border border-[var(--blanc-line)] hover:bg-[rgba(117,106,89,0.04)] transition-colors disabled:opacity-50"
+                            style={{ color: 'var(--blanc-ink-2)' }}
+                        >
+                            Keep Job
+                        </button>
+                        <button
+                            type="button"
+                            disabled={!cancelReason.trim() || cancelSubmitting}
+                            onClick={submitCancel}
+                            className="px-4 py-2 text-sm rounded-lg border border-red-200 font-medium hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            style={{ color: '#dc2626' }}
+                        >
+                            {cancelSubmitting ? 'Canceling...' : 'Cancel Job'}
+                        </button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

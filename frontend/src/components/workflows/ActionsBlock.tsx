@@ -41,6 +41,7 @@ export function ActionsBlock({ machineKey, entityId, currentState, onTransitionC
 
     // Confirm dialog state
     const [confirmAction, setConfirmAction] = useState<FsmAction | null>(null);
+    const [confirmReason, setConfirmReason] = useState('');
 
     // Override dialog state
     const [overrideOpen, setOverrideOpen] = useState(false);
@@ -59,18 +60,20 @@ export function ActionsBlock({ machineKey, entityId, currentState, onTransitionC
 
     function handleActionClick(action: FsmAction) {
         if (action.confirm) {
+            setConfirmReason('');
             setConfirmAction(action);
         } else {
             executeTransition(action);
         }
     }
 
-    function executeTransition(action: FsmAction) {
+    function executeTransition(action: FsmAction, reason?: string) {
         applyMutation.mutate(
-            { entityId: Number(entityId), event: action.event },
+            { entityId: Number(entityId), event: action.event, reason },
             {
                 onSuccess: (data) => {
-                    toast.success(`Status changed to ${data.newState}`);
+                    const nextState = data.newState || data.targetState || action.target;
+                    toast.success(`Status changed to ${nextState}`);
                     onTransitionComplete?.();
                 },
                 onError: (err) => {
@@ -79,6 +82,7 @@ export function ActionsBlock({ machineKey, entityId, currentState, onTransitionC
             },
         );
         setConfirmAction(null);
+        setConfirmReason('');
     }
 
     function handleOverrideSubmit() {
@@ -145,14 +149,36 @@ export function ActionsBlock({ machineKey, entityId, currentState, onTransitionC
             )}
 
             {/* Confirm dialog */}
-            <Dialog open={!!confirmAction} onOpenChange={(open) => { if (!open) setConfirmAction(null); }}>
+            <Dialog
+                open={!!confirmAction}
+                onOpenChange={(open) => {
+                    if (!open) {
+                        setConfirmAction(null);
+                        setConfirmReason('');
+                    }
+                }}
+            >
                 <DialogContent className="sm:max-w-md">
                     <DialogHeader>
-                        <DialogTitle>Confirm Action</DialogTitle>
+                        <DialogTitle>{confirmAction?.target === 'Canceled' ? 'Cancel Job' : 'Confirm Action'}</DialogTitle>
                         <DialogDescription>
                             {confirmAction?.confirmText || 'Are you sure you want to perform this action?'}
                         </DialogDescription>
                     </DialogHeader>
+                    {confirmAction?.target === 'Canceled' && (
+                        <div className="space-y-1.5 py-2">
+                            <label className="blanc-eyebrow" htmlFor="fsm-cancel-reason">Cancel reason</label>
+                            <textarea
+                                id="fsm-cancel-reason"
+                                value={confirmReason}
+                                onChange={(e) => setConfirmReason(e.target.value)}
+                                placeholder="Enter the reason this job is being canceled..."
+                                rows={4}
+                                disabled={applyMutation.isPending}
+                                className="w-full rounded-lg border border-[var(--blanc-line)] bg-transparent px-3 py-2 text-sm placeholder:text-[var(--blanc-ink-3)] focus:outline-none focus:ring-1 focus:ring-[var(--blanc-line)] resize-none disabled:opacity-60"
+                            />
+                        </div>
+                    )}
                     <DialogFooter className="gap-2 sm:gap-0">
                         <DialogClose asChild>
                             <button
@@ -160,17 +186,21 @@ export function ActionsBlock({ machineKey, entityId, currentState, onTransitionC
                                 className="px-4 py-2 text-sm rounded-lg border border-[var(--blanc-line)] hover:bg-[rgba(117,106,89,0.04)] transition-colors"
                                 style={{ color: 'var(--blanc-ink-2)' }}
                             >
-                                Cancel
+                                {confirmAction?.target === 'Canceled' ? 'Keep Job' : 'Cancel'}
                             </button>
                         </DialogClose>
                         <button
                             type="button"
-                            disabled={applyMutation.isPending}
-                            onClick={() => confirmAction && executeTransition(confirmAction)}
+                            disabled={applyMutation.isPending || (confirmAction?.target === 'Canceled' && !confirmReason.trim())}
+                            onClick={() => confirmAction && executeTransition(confirmAction, confirmReason.trim() || undefined)}
                             className="px-4 py-2 text-sm rounded-lg border border-[var(--blanc-line)] font-medium hover:bg-[rgba(117,106,89,0.08)] transition-colors disabled:opacity-50"
-                            style={{ color: 'var(--blanc-ink-1)' }}
+                            style={{ color: confirmAction?.target === 'Canceled' ? '#dc2626' : 'var(--blanc-ink-1)' }}
                         >
-                            {applyMutation.isPending ? 'Applying...' : 'Confirm'}
+                            {applyMutation.isPending
+                                ? 'Applying...'
+                                : confirmAction?.target === 'Canceled'
+                                    ? 'Cancel Job'
+                                    : 'Confirm'}
                         </button>
                     </DialogFooter>
                 </DialogContent>

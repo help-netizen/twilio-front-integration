@@ -16,7 +16,7 @@ const DialogOverlay = React.forwardRef<
     <DialogPrimitive.Overlay
         ref={ref}
         className={cn(
-            "fixed inset-0 z-50 bg-black/50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+            "fixed inset-0 z-[140] bg-black/50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
             className
         )}
         {...props}
@@ -34,8 +34,8 @@ const DialogContent = React.forwardRef<
             ref={ref}
             className={cn(
                 // Mobile: bottom-sheet — full-width, pinned to bottom, slides up
-                "fixed z-50 grid w-full gap-4 border bg-background p-6 shadow-lg duration-200",
-                "max-md:bottom-0 max-md:left-0 max-md:right-0 max-md:top-auto max-md:translate-x-0 max-md:translate-y-0 max-md:max-w-full max-md:max-h-[92vh] max-md:overflow-y-auto max-md:rounded-t-[22px] max-md:rounded-b-none max-md:animate-[blancSlideUp_0.25s_ease-out]",
+                "fixed z-[140] grid w-full gap-4 border bg-background p-6 shadow-lg duration-200",
+                "max-md:bottom-0 max-md:left-0 max-md:right-0 max-md:top-auto max-md:translate-x-0 max-md:translate-y-0 max-md:max-w-full max-md:max-h-[calc(100dvh-16px)] max-md:overflow-y-auto max-md:rounded-t-[22px] max-md:rounded-b-none max-md:animate-[blancSlideUp_0.25s_ease-out]",
                 // Desktop: centered modal (original behavior)
                 "md:left-[50%] md:top-[50%] md:translate-x-[-50%] md:translate-y-[-50%] md:max-w-lg md:rounded-lg",
                 "md:data-[state=open]:animate-in md:data-[state=closed]:animate-out md:data-[state=closed]:fade-out-0 md:data-[state=open]:fade-in-0 md:data-[state=closed]:zoom-out-95 md:data-[state=open]:zoom-in-95 md:data-[state=closed]:slide-out-to-left-1/2 md:data-[state=closed]:slide-out-to-top-[48%] md:data-[state=open]:slide-in-from-left-1/2 md:data-[state=open]:slide-in-from-top-[48%]",

@@ -29,15 +29,16 @@ export function useJobsActions({
         } catch { /* ignore */ }
     };
 
-    const handleCancel = async (id: number) => {
-        if (!confirm('Cancel this job?')) return;
+    const handleCancel = async (id: number, reason: string) => {
         try {
-            await jobsApi.cancelJob(id);
+            await jobsApi.cancelJob(id, reason);
             toast.success('Job canceled');
             loadJobs(offset);
             if (selectedJob?.id === id) refreshSelected(id);
+            return true;
         } catch (err) {
             toast.error('Failed to cancel job', { description: err instanceof Error ? err.message : '' });
+            return false;
         }
     };
 

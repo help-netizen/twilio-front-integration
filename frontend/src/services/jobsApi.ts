@@ -122,15 +122,18 @@ export async function getJob(id: number): Promise<LocalJob> {
     return jobsRequest<LocalJob>(`${JOBS_BASE}/${id}`);
 }
 
-export async function updateBlancStatus(id: number, blancStatus: string): Promise<LocalJob> {
+export async function updateBlancStatus(id: number, blancStatus: string, options: { cancelReason?: string } = {}): Promise<LocalJob> {
     return jobsRequest<LocalJob>(`${JOBS_BASE}/${id}/status`, {
         method: 'PATCH',
-        body: JSON.stringify({ blanc_status: blancStatus }),
+        body: JSON.stringify({ blanc_status: blancStatus, cancel_reason: options.cancelReason }),
     });
 }
 
-export async function cancelJob(id: number): Promise<void> {
-    await jobsRequest(`${JOBS_BASE}/${id}/cancel`, { method: 'POST' });
+export async function cancelJob(id: number, reason: string): Promise<void> {
+    await jobsRequest(`${JOBS_BASE}/${id}/cancel`, {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+    });
 }
 
 export async function rescheduleJob(id: number, data: { start_date: string; arrival_window_minutes?: number; tech_id?: string }): Promise<LocalJob> {

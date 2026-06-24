@@ -682,12 +682,22 @@ describe('Graph cache', () => {
 jest.mock('../../backend/src/services/jobsService', () => ({
   getJobById: jest.fn(),
   updateBlancStatus: jest.fn(),
+  cancelJob: jest.fn(),
 }));
 jest.mock('../../backend/src/services/auditService', () => ({ log: jest.fn(async () => {}) }));
+jest.mock('../../backend/src/services/eventService', () => ({
+  actorName: jest.fn(() => 'Tester'),
+  logEvent: jest.fn(),
+}));
+jest.mock('../../backend/src/services/eventBus', () => ({
+  emit: jest.fn(() => Promise.resolve()),
+}));
 
 const http = require('http');
 const express = require('express');
 const jobsServiceMock = require('../../backend/src/services/jobsService');
+const eventServiceMock = require('../../backend/src/services/eventService');
+const eventBusMock = require('../../backend/src/services/eventBus');
 
 const FSM_COMPANY = '00000000-0000-0000-0000-00000000000a';
 
@@ -728,6 +738,9 @@ describe('PF007: FSM route authorization', () => {
     db.query.mockReset();
     jobsServiceMock.getJobById.mockReset();
     jobsServiceMock.updateBlancStatus.mockReset();
+    jobsServiceMock.cancelJob.mockReset();
+    eventServiceMock.logEvent.mockReset();
+    eventBusMock.emit.mockClear();
   });
 
   it('POST /:machineKey/apply denies without jobs.edit', async () => {
@@ -749,6 +762,59 @@ describe('PF007: FSM route authorization', () => {
     // or the graph doesn't expose the event and we get 400 — never a mutation.
     expect([400, 403]).toContain(res.status);
     expect(jobsServiceMock.updateBlancStatus).not.toHaveBeenCalled();
+  });
+
+  it('apply rejects a cancel transition without a cancel reason', async () => {
+    jobsServiceMock.getJobById.mockResolvedValue({ id: 1, blanc_status: 'Submitted' });
+    db.query.mockResolvedValue({ rows: [{ scxml_source: JOB_SCXML, version_number: 1 }] });
+
+    const res = await fsmRequest(
+      fsmApp({ permissions: ['jobs.view', 'jobs.edit', 'jobs.close'] }),
+      'POST', '/job/apply', { entityId: 1, event: 'TO_CANCELED' }
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/cancel reason is required/i);
+    expect(jobsServiceMock.cancelJob).not.toHaveBeenCalled();
+    expect(jobsServiceMock.updateBlancStatus).not.toHaveBeenCalled();
+  });
+
+  it('apply accepts a cancel transition with a reason and logs it', async () => {
+    jobsServiceMock.getJobById.mockResolvedValue({
+      id: 1,
+      blanc_status: 'Submitted',
+      contact_id: 22,
+      customer_name: 'Jane Customer',
+      customer_phone: '+15555550123',
+      service_name: 'COD Service',
+    });
+    jobsServiceMock.cancelJob.mockResolvedValue({ id: 1, blanc_status: 'Canceled', zb_canceled: true });
+    db.query.mockResolvedValue({ rows: [{ scxml_source: JOB_SCXML, version_number: 1 }] });
+
+    const res = await fsmRequest(
+      fsmApp({ permissions: ['jobs.view', 'jobs.edit', 'jobs.close'] }),
+      'POST', '/job/apply', { entityId: 1, event: 'TO_CANCELED', reason: 'Customer requested cancellation' }
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.newState).toBe('Canceled');
+    expect(jobsServiceMock.cancelJob).toHaveBeenCalledWith(1);
+    expect(jobsServiceMock.updateBlancStatus).not.toHaveBeenCalled();
+    expect(eventServiceMock.logEvent).toHaveBeenCalledWith(
+      FSM_COMPANY,
+      'job',
+      1,
+      'canceled',
+      expect.objectContaining({ reason: 'Customer requested cancellation' }),
+      'user',
+      'kc'
+    );
+    expect(eventBusMock.emit).toHaveBeenCalledWith(
+      FSM_COMPANY,
+      'job.status_changed',
+      expect.objectContaining({ to: 'Canceled', reason: 'Customer requested cancellation' }),
+      expect.any(Object)
+    );
   });
 
   it('GET /:machineKey/actions ignores client-supplied role hints', async () => {
