@@ -8,10 +8,9 @@
  * via the existing reassign DnD).
  */
 import { useState } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../ui/dialog';
+import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle, DialogDescription } from '../ui/dialog';
 import { Button } from '../ui/button';
-import { Input } from '../ui/input';
-import { Label } from '../ui/label';
+import { FloatingField } from '../ui/floating-field';
 import { AddressAutocomplete } from '../AddressAutocomplete';
 import { EMPTY_ADDRESS, type AddressFields } from '../addressAutoHelpers';
 import { formatTimeInTZ } from '../../utils/companyTime';
@@ -69,40 +68,41 @@ export function NewJobModal({ open, startAt, endAt, timezone, providerId, provid
     return (
         <Dialog open={open} onOpenChange={(o) => { if (!o) close(); }}>
             <DialogContent variant="panel">
-                <DialogHeader>
-                    <DialogTitle>New job</DialogTitle>
+                <DialogPanelHeader>
+                    <DialogTitle
+                        className="text-[22px] font-semibold leading-tight"
+                        style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
+                    >
+                        New job
+                    </DialogTitle>
                     <DialogDescription>
                         {timeLabel}{providerName ? ` · ${providerName}` : ''}
                     </DialogDescription>
-                </DialogHeader>
+                </DialogPanelHeader>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 py-1">
-                    <div className="space-y-1.5 sm:col-span-2">
-                        <Label htmlFor="njm-title" className="text-sm font-medium">Title</Label>
-                        <Input
-                            id="njm-title"
-                            value={title}
-                            autoFocus
-                            placeholder="e.g. Dishwasher repair"
-                            onChange={(e) => setTitle(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-                        />
-                    </div>
-                    <div className="sm:col-span-2">
-                        <AddressAutocomplete
-                            header={<Label className="text-sm font-medium">Address</Label>}
-                            idPrefix="njm"
-                            defaultUseDetails
-                            value={addr}
-                            onChange={setAddr}
-                        />
-                    </div>
-                </div>
+                <DialogBody className="md:px-8 md:py-7">
+                  <div className="mx-auto w-full max-w-[740px] space-y-6">
+                    <FloatingField
+                        id="njm-title"
+                        label="Title"
+                        value={title}
+                        onChange={(e) => setTitle(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+                    />
+                    <AddressAutocomplete
+                        idPrefix="njm"
+                        defaultUseDetails
+                        hideDetailsToggle
+                        value={addr}
+                        onChange={setAddr}
+                    />
+                  </div>
+                </DialogBody>
 
-                <DialogFooter>
+                <DialogPanelFooter>
                     <Button variant="ghost" onClick={close}>Cancel</Button>
                     <Button onClick={submit}>Create job</Button>
-                </DialogFooter>
+                </DialogPanelFooter>
             </DialogContent>
         </Dialog>
     );

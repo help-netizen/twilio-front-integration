@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../ui/dialog';
+import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle, DialogDescription } from '../ui/dialog';
 import { Button } from '../ui/button';
-import { Input } from '../ui/input';
-import { Label } from '../ui/label';
 import { PhoneInput, toE164 } from '../ui/PhoneInput';
-import { Textarea } from '../ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
+import { FloatingField } from '../ui/floating-field';
+import { FloatingSelect } from '../ui/floating-select';
+import { SelectItem } from '../ui/select';
 import { toast } from 'sonner';
 import * as leadsApi from '../../services/leadsApi';
 import * as contactsApi from '../../services/contactsApi';
@@ -48,21 +47,81 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent variant="panel">
-                <DialogHeader><DialogTitle>Edit Lead - {lead.SerialId}</DialogTitle><DialogDescription>Make changes to the lead details below.</DialogDescription></DialogHeader>
-                <form onSubmit={handleSubmit} className="space-y-6">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3"><h3 className="sm:col-span-2 font-medium">Contact Information</h3>
-                        <div><Label htmlFor="firstName" className="mb-2">First Name <span className="text-destructive">*</span></Label><Input id="firstName" value={formData.FirstName} onChange={e => update({ FirstName: e.target.value })} required /></div><div><Label htmlFor="lastName" className="mb-2">Last Name <span className="text-destructive">*</span></Label><Input id="lastName" value={formData.LastName} onChange={e => update({ LastName: e.target.value })} required /></div>
-                        <div><Label htmlFor="phone" className="mb-2">Phone <span className="text-destructive">*</span></Label><PhoneInput id="phone" value={formData.Phone || ''} onChange={formatted => update({ Phone: formatted })} required /></div><div><Label htmlFor="email" className="mb-2">Email</Label><Input id="email" type="email" value={formData.Email} onChange={e => update({ Email: e.target.value })} /></div>
-                        {!showSecondary ? <button type="button" onClick={() => setShowSecondary(true)} className="sm:col-span-2 justify-self-start text-xs text-primary hover:underline">+ Secondary Phone</button> : <><div><Label htmlFor="secondPhone" className="mb-2">Secondary Phone</Label><PhoneInput id="secondPhone" value={formData.SecondPhone || ''} onChange={formatted => update({ SecondPhone: formatted })} /></div><div><Label htmlFor="secondPhoneName" className="mb-2">Secondary Name</Label><Input id="secondPhoneName" value={formData.SecondPhoneName || ''} onChange={e => update({ SecondPhoneName: e.target.value })} placeholder="e.g. Tenant, Wife" /></div></>}
-                        <div className="sm:col-span-2"><Label htmlFor="company" className="mb-2">Company</Label><Input id="company" value={formData.Company} onChange={e => update({ Company: e.target.value })} /></div>
-                    </div>
-                    <div className="space-y-4"><AddressAutocomplete header={<h3 className="font-medium">Address</h3>} idPrefix="edit-lead" defaultUseDetails={true} savedAddresses={savedAddresses} onSelectSaved={id => setSelectedContactAddressId(id)} value={{ street: formData.Address || '', apt: formData.Unit || '', city: formData.City || '', state: formData.State || '', zip: formData.PostalCode || '' }} onChange={addr => update({ Address: addr.street, Unit: addr.apt || '', City: addr.city, State: addr.state, PostalCode: addr.zip, Latitude: addr.lat ?? null, Longitude: addr.lng ?? null })} /></div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3"><h3 className="sm:col-span-2 font-medium">Job Details</h3>
-                        <div><Label htmlFor="jobType" className="mb-2">Job Type</Label><Select value={formData.JobType} onValueChange={v => update({ JobType: v })}><SelectTrigger id="jobType"><SelectValue placeholder="Select job type" /></SelectTrigger><SelectContent>{jobTypes.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent></Select></div><div><Label htmlFor="jobSource" className="mb-2">Job Source</Label><Select value={formData.JobSource} onValueChange={v => update({ JobSource: v })}><SelectTrigger id="jobSource"><SelectValue placeholder="Select source" /></SelectTrigger><SelectContent>{JOB_SOURCES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div>
-                        <div className="sm:col-span-2"><Label htmlFor="leadNotes" className="mb-2">Description</Label><Textarea id="leadNotes" value={formData.Description} onChange={e => update({ Description: e.target.value })} rows={4} className="min-h-[80px] resize-y" placeholder="Enter job description..." /></div>
-                    </div>
-                    {customFields.length > 0 && <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3"><h3 className="sm:col-span-2 font-medium">Metadata</h3>{customFields.map(field => <div key={field.id} className={field.field_type === 'textarea' || field.field_type === 'richtext' ? 'sm:col-span-2' : ''}><Label htmlFor={`meta-${field.api_name}`} className="mb-2">{field.display_name}</Label>{field.field_type === 'textarea' || field.field_type === 'richtext' ? <Textarea id={`meta-${field.api_name}`} value={formData.Metadata?.[field.api_name] || ''} onChange={e => updateMetadata(field.api_name, e.target.value)} rows={3} /> : <Input id={`meta-${field.api_name}`} type={field.field_type === 'number' ? 'number' : 'text'} value={formData.Metadata?.[field.api_name] || ''} onChange={e => updateMetadata(field.api_name, e.target.value)} />}</div>)}</div>}
-                    <DialogFooter><Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>Cancel</Button><Button type="submit" disabled={loading}>{loading ? 'Saving...' : 'Save Changes'}</Button></DialogFooter>
+                <DialogPanelHeader>
+                    <DialogTitle
+                        className="text-[22px] font-semibold leading-tight"
+                        style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
+                    >
+                        Edit lead — {lead.SerialId}
+                    </DialogTitle>
+                    <DialogDescription className="sr-only">Make changes to the lead details below.</DialogDescription>
+                </DialogPanelHeader>
+
+                <form onSubmit={handleSubmit} className="contents">
+                    <DialogBody className="md:px-8 md:py-7">
+                      <div className="mx-auto w-full max-w-[740px] space-y-6">
+                        {/* Contact */}
+                        <div className="space-y-3.5">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                                <FloatingField id="firstName" label="First name *" value={formData.FirstName} onChange={e => update({ FirstName: e.target.value })} />
+                                <FloatingField id="lastName" label="Last name *" value={formData.LastName} onChange={e => update({ LastName: e.target.value })} />
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                                <PhoneInput id="phone" label="Phone *" value={formData.Phone || ''} onChange={formatted => update({ Phone: formatted })} required />
+                                <FloatingField id="email" label="Email" type="email" value={formData.Email} onChange={e => update({ Email: e.target.value })} />
+                            </div>
+                            {!showSecondary ? (
+                                <button type="button" onClick={() => setShowSecondary(true)} className="justify-self-start text-xs text-primary hover:underline">+ Secondary Phone</button>
+                            ) : (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                                    <PhoneInput id="secondPhone" label="Secondary phone" value={formData.SecondPhone || ''} onChange={formatted => update({ SecondPhone: formatted })} />
+                                    <FloatingField id="secondPhoneName" label="Secondary name" value={formData.SecondPhoneName || ''} onChange={e => update({ SecondPhoneName: e.target.value })} />
+                                </div>
+                            )}
+                            <FloatingField id="company" label="Company" value={formData.Company} onChange={e => update({ Company: e.target.value })} />
+                        </div>
+
+                        {/* Address */}
+                        <AddressAutocomplete idPrefix="edit-lead" defaultUseDetails={true} hideDetailsToggle savedAddresses={savedAddresses} onSelectSaved={id => setSelectedContactAddressId(id)} value={{ street: formData.Address || '', apt: formData.Unit || '', city: formData.City || '', state: formData.State || '', zip: formData.PostalCode || '' }} onChange={addr => update({ Address: addr.street, Unit: addr.apt || '', City: addr.city, State: addr.state, PostalCode: addr.zip, Latitude: addr.lat ?? null, Longitude: addr.lng ?? null })} />
+
+                        {/* Job details */}
+                        <div className="space-y-3.5">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                                <FloatingSelect id="jobType" label="Job type" value={formData.JobType} onValueChange={v => update({ JobType: v })}>
+                                    {jobTypes.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                                </FloatingSelect>
+                                <FloatingSelect id="jobSource" label="Job source" value={formData.JobSource} onValueChange={v => update({ JobSource: v })}>
+                                    {JOB_SOURCES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                                </FloatingSelect>
+                            </div>
+                            <FloatingField id="leadNotes" label="Description" textarea rows={4} value={formData.Description} onChange={e => update({ Description: e.target.value })} />
+                        </div>
+
+                        {/* Metadata */}
+                        {customFields.length > 0 && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                                {customFields.map(field => (
+                                    <div key={field.id} className={field.field_type === 'textarea' || field.field_type === 'richtext' ? 'sm:col-span-2' : ''}>
+                                        <FloatingField
+                                            id={`meta-${field.api_name}`}
+                                            label={field.display_name}
+                                            type={field.field_type === 'number' ? 'number' : 'text'}
+                                            textarea={field.field_type === 'textarea' || field.field_type === 'richtext'}
+                                            rows={3}
+                                            value={formData.Metadata?.[field.api_name] || ''}
+                                            onChange={e => updateMetadata(field.api_name, e.target.value)}
+                                        />
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                      </div>
+                    </DialogBody>
+
+                    <DialogPanelFooter>
+                        <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={loading}>Cancel</Button>
+                        <Button type="submit" disabled={loading}>{loading ? 'Saving...' : 'Save Changes'}</Button>
+                    </DialogPanelFooter>
                 </form>
             </DialogContent>
         </Dialog>

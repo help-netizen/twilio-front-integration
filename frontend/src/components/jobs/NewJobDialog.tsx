@@ -11,11 +11,10 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Check, X, Clock, Loader2 } from 'lucide-react';
 
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../ui/dialog';
+import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle, DialogDescription } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
-import { Label } from '../ui/label';
-import { Textarea } from '../ui/textarea';
+import { FloatingField } from '../ui/floating-field';
 import { AddressAutocomplete } from '../AddressAutocomplete';
 import { EMPTY_ADDRESS, type AddressFields } from '../addressAutoHelpers';
 import { CustomTimeModal } from '../conversations/CustomTimeModal';
@@ -41,6 +40,7 @@ function composeAddress(a: AddressFields): string {
     const street = [a.street, a.apt].filter(Boolean).join(' ');
     return [street, a.city, a.state, a.zip].filter(Boolean).join(', ');
 }
+
 
 export function NewJobDialog({ open, onClose }: NewJobDialogProps) {
     const navigate = useNavigate();
@@ -167,123 +167,108 @@ export function NewJobDialog({ open, onClose }: NewJobDialogProps) {
         <>
             <Dialog open={open} onOpenChange={(o) => { if (!o) close(); }}>
                 <DialogContent variant="panel">
-                    <DialogHeader>
-                        <DialogTitle>New Job</DialogTitle>
+                    <DialogPanelHeader>
+                        <DialogTitle
+                            className="text-[22px] font-semibold leading-tight"
+                            style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
+                        >
+                            New job
+                        </DialogTitle>
                         <DialogDescription className="sr-only">Create a job directly</DialogDescription>
-                    </DialogHeader>
+                    </DialogPanelHeader>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 py-1">
-                        {/* ── Contact ── */}
-                        <section className="space-y-2">
-                            <div className="blanc-eyebrow">Contact</div>
-                            {selectedContact ? (
-                                <div className="cld-contact-badge">
-                                    <Check style={{ width: 16, height: 16, color: 'var(--blanc-success)', flexShrink: 0 }} />
-                                    <span className="cld-contact-badge__text">{selectedContact.name}</span>
-                                    <button type="button" onClick={clearContact} className="cld-contact-badge__remove">
-                                        <X style={{ width: 12, height: 12 }} /> Remove
-                                    </button>
-                                </div>
-                            ) : (
-                                <>
-                                    <div className="relative">
-                                        <Input
-                                            placeholder="Search by name or phone…"
-                                            value={contactQuery}
-                                            onChange={(e) => handleQueryChange(e.target.value)}
-                                        />
-                                        {(searching || candidates.length > 0) && contactQuery.trim().length >= 2 && (
-                                            <div className="cld-candidates">
-                                                {searching && <div className="cld-candidates__header">Searching…</div>}
-                                                {!searching && candidates.length === 0 && (
-                                                    <div className="cld-candidates__header">No matches — fill the fields below to create a new contact</div>
-                                                )}
-                                                {candidates.map((c) => (
-                                                    <div key={c.id} onClick={() => pickContact(c)} className="cld-candidates__item">
-                                                        <div className="cld-candidates__info">
-                                                            <div className="cld-candidates__name">
-                                                                <span>{c.full_name || `${c.first_name || ''} ${c.last_name || ''}`.trim() || 'Unnamed'}</span>
-                                                            </div>
-                                                            <div className="cld-candidates__meta">
-                                                                {c.phone_e164 && <span className="cld-candidates__meta-item">{c.phone_e164}</span>}
-                                                                {c.email && <span className="cld-candidates__meta-item">{c.email}</span>}
-                                                            </div>
+                    <DialogBody className="md:px-8 md:py-7">
+                      <div className="mx-auto w-full max-w-[740px] space-y-6">
+                        {/* Contact */}
+                        {selectedContact ? (
+                            <div className="cld-contact-badge w-fit">
+                                <Check style={{ width: 16, height: 16, color: 'var(--blanc-success)', flexShrink: 0 }} />
+                                <span className="cld-contact-badge__text">{selectedContact.name}</span>
+                                <button type="button" onClick={clearContact} className="cld-contact-badge__remove">
+                                    <X style={{ width: 12, height: 12 }} /> Remove
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="space-y-3.5">
+                                <div className="relative">
+                                    <Input
+                                        className="h-[50px] rounded-xl bg-transparent text-[15px]"
+                                        placeholder="Search an existing contact by name or phone…"
+                                        value={contactQuery}
+                                        onChange={(e) => handleQueryChange(e.target.value)}
+                                    />
+                                    {(searching || candidates.length > 0) && contactQuery.trim().length >= 2 && (
+                                        <div className="cld-candidates">
+                                            {searching && <div className="cld-candidates__header">Searching…</div>}
+                                            {!searching && candidates.length === 0 && (
+                                                <div className="cld-candidates__header">No matches — fill the fields below to create a new contact</div>
+                                            )}
+                                            {candidates.map((c) => (
+                                                <div key={c.id} onClick={() => pickContact(c)} className="cld-candidates__item">
+                                                    <div className="cld-candidates__info">
+                                                        <div className="cld-candidates__name">
+                                                            <span>{c.full_name || `${c.first_name || ''} ${c.last_name || ''}`.trim() || 'Unnamed'}</span>
+                                                        </div>
+                                                        <div className="cld-candidates__meta">
+                                                            {c.phone_e164 && <span className="cld-candidates__meta-item">{c.phone_e164}</span>}
+                                                            {c.email && <span className="cld-candidates__meta-item">{c.email}</span>}
                                                         </div>
                                                     </div>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-2">
-                                        <div className="space-y-1.5">
-                                            <Label htmlFor="njd-name" className="text-sm font-medium">Name</Label>
-                                            <Input id="njd-name" value={newName} placeholder="Jane Doe" onChange={(e) => setNewName(e.target.value)} />
+                                                </div>
+                                            ))}
                                         </div>
-                                        <div className="space-y-1.5">
-                                            <Label htmlFor="njd-phone" className="text-sm font-medium">Phone</Label>
-                                            <Input id="njd-phone" value={newPhone} placeholder="(555) 123-4567" onChange={(e) => setNewPhone(e.target.value)} />
-                                        </div>
-                                        <div className="space-y-1.5 col-span-2">
-                                            <Label htmlFor="njd-email" className="text-sm font-medium">Email <span style={{ color: 'var(--blanc-ink-3)' }}>(optional)</span></Label>
-                                            <Input id="njd-email" value={newEmail} placeholder="jane@example.com" onChange={(e) => setNewEmail(e.target.value)} />
-                                        </div>
-                                    </div>
-                                </>
-                            )}
-                        </section>
-
-                        {/* ── Address ── */}
-                        <section className="space-y-2">
-                            <AddressAutocomplete
-                                header={<div className="blanc-eyebrow">Address</div>}
-                                idPrefix="njd"
-                                defaultUseDetails
-                                value={address}
-                                onChange={setAddress}
-                            />
-                        </section>
-
-                        {/* ── Time & technician ── */}
-                        <section className="space-y-2 sm:col-span-2">
-                            <div className="blanc-eyebrow">Time & technician</div>
-                            {slot ? (
-                                <button
-                                    type="button"
-                                    onClick={() => setTimeOpen(true)}
-                                    className="w-full text-left rounded-xl px-3 py-2.5 flex items-center gap-2"
-                                    style={{ border: '1px solid var(--blanc-line)' }}
-                                >
-                                    <Clock style={{ width: 16, height: 16, color: 'var(--blanc-ink-3)', flexShrink: 0 }} />
-                                    <span className="text-sm" style={{ color: 'var(--blanc-ink-1)' }}>{slot.formatted}</span>
-                                </button>
-                            ) : (
-                                <Button type="button" variant="outline" className="w-full" onClick={() => setTimeOpen(true)}>
-                                    <Clock className="size-4 mr-1.5" /> Pick time & technician
-                                </Button>
-                            )}
-                        </section>
-
-                        {/* ── Work ── */}
-                        <section className="space-y-2 sm:col-span-2">
-                            <div className="blanc-eyebrow">Work</div>
-                            <div className="space-y-1.5">
-                                <Label htmlFor="njd-type" className="text-sm font-medium">Job type</Label>
-                                <Input id="njd-type" value={jobType} placeholder="e.g. Dishwasher repair" onChange={(e) => setJobType(e.target.value)} />
+                                    )}
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                                    <FloatingField id="njd-name" label="Name" value={newName} onChange={(e) => setNewName(e.target.value)} />
+                                    <FloatingField id="njd-phone" label="Phone" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} />
+                                </div>
+                                <FloatingField id="njd-email" label="Email (optional)" type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} />
                             </div>
-                            <div className="space-y-1.5">
-                                <Label htmlFor="njd-desc" className="text-sm font-medium">Description <span style={{ color: 'var(--blanc-ink-3)' }}>(the problem)</span></Label>
-                                <Textarea id="njd-desc" value={description} placeholder="What's wrong / what needs doing" onChange={(e) => setDescription(e.target.value)} rows={3} />
-                            </div>
-                        </section>
-                    </div>
+                        )}
 
-                    <DialogFooter>
+                        {/* Address */}
+                        <AddressAutocomplete
+                            idPrefix="njd"
+                            defaultUseDetails
+                            hideDetailsToggle
+                            value={address}
+                            onChange={setAddress}
+                        />
+
+                        {/* Time & technician */}
+                        {slot ? (
+                            <button
+                                type="button"
+                                onClick={() => setTimeOpen(true)}
+                                className="w-full text-left rounded-xl px-4 h-[50px] flex items-center gap-3 transition-colors hover:bg-[rgba(117,106,89,0.04)]"
+                                style={{ border: '1.5px solid var(--blanc-line)' }}
+                            >
+                                <Clock style={{ width: 18, height: 18, color: 'var(--blanc-ink-3)', flexShrink: 0 }} />
+                                <span className="text-[15px]" style={{ color: 'var(--blanc-ink-1)' }}>{slot.formatted}</span>
+                                <span className="ml-auto text-[13px]" style={{ color: 'var(--blanc-ink-3)' }}>Change</span>
+                            </button>
+                        ) : (
+                            <Button type="button" variant="secondary" className="w-full justify-center h-[50px] text-[15px] rounded-xl" onClick={() => setTimeOpen(true)}>
+                                <Clock className="size-4 mr-2" /> Pick time &amp; technician
+                            </Button>
+                        )}
+
+                        {/* Work */}
+                        <div className="space-y-3.5">
+                            <FloatingField id="njd-type" label="Job type" value={jobType} onChange={(e) => setJobType(e.target.value)} />
+                            <FloatingField id="njd-desc" label="Details (the problem)" textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} />
+                        </div>
+                      </div>
+                    </DialogBody>
+
+                    <DialogPanelFooter>
                         <Button variant="ghost" onClick={close} disabled={submitting}>Cancel</Button>
                         <Button onClick={handleSubmit} disabled={!canSubmit}>
                             {submitting ? <Loader2 className="size-4 mr-1 animate-spin" /> : null}
                             Create job
                         </Button>
-                    </DialogFooter>
+                    </DialogPanelFooter>
                 </DialogContent>
             </Dialog>
 

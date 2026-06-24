@@ -5,14 +5,12 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-    Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+    Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle, DialogDescription,
 } from '../ui/dialog';
 import { Button } from '../ui/button';
-import { Label } from '../ui/label';
 import { Input } from '../ui/input';
-import {
-    Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '../ui/select';
+import { SelectItem } from '../ui/select';
+import { FloatingSelect } from '../ui/floating-select';
 import type { DispatchSettings } from '../../services/scheduleApi';
 
 interface DispatchSettingsDialogProps {
@@ -109,114 +107,102 @@ export const DispatchSettingsDialog: React.FC<DispatchSettingsDialogProps> = ({
     return (
         <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
             <DialogContent variant="panel">
-                <DialogHeader>
-                    <DialogTitle>Dispatch Settings</DialogTitle>
-                </DialogHeader>
+                <DialogPanelHeader>
+                    <DialogTitle
+                        className="text-[22px] font-semibold leading-tight"
+                        style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
+                    >
+                        Dispatch settings
+                    </DialogTitle>
+                    <DialogDescription className="sr-only">Company timezone, work hours, work days and slot duration</DialogDescription>
+                </DialogPanelHeader>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 py-2">
-                    {/* Timezone */}
-                    <div className="space-y-1.5">
-                        <Label className="text-sm font-medium">Timezone</Label>
-                        <Select value={timezone} onValueChange={setTimezone}>
-                            <SelectTrigger className="h-9 text-sm">
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {POPULAR_TIMEZONES.map(tz => (
-                                    <SelectItem key={tz} value={tz}>{tz.replace(/_/g, ' ')}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    </div>
-
-                    {/* Distance unit (SCHED-ROUTE-001 C-13) */}
-                    <div className="space-y-1.5">
-                        <Label className="text-sm font-medium">Distance unit</Label>
-                        <Select value={distanceUnit} onValueChange={(v) => setDistanceUnit(v as 'mi' | 'km')}>
-                            <SelectTrigger className="h-9 text-sm">
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="mi">Miles (mi)</SelectItem>
-                                <SelectItem value="km">Kilometers (km)</SelectItem>
-                            </SelectContent>
-                        </Select>
-                    </div>
-
-                    {/* Work Hours */}
-                    <div className="grid grid-cols-2 gap-3 sm:col-span-2">
-                        <div className="space-y-1.5">
-                            <Label className="text-sm font-medium">Work Start</Label>
-                            <Input
-                                type="time"
-                                className="h-9 text-sm"
-                                value={workStart}
-                                onChange={e => setWorkStart(e.target.value)}
-                            />
-                        </div>
-                        <div className="space-y-1.5">
-                            <Label className="text-sm font-medium">Work End</Label>
-                            <Input
-                                type="time"
-                                className="h-9 text-sm"
-                                value={workEnd}
-                                onChange={e => setWorkEnd(e.target.value)}
-                            />
-                        </div>
-                    </div>
-
-                    {/* Work Days */}
-                    <div className="space-y-1.5 sm:col-span-2">
-                        <Label className="text-sm font-medium">Work Days</Label>
-                        <div className="flex gap-1">
-                            {DAY_LABELS.map(day => (
-                                <button
-                                    key={day.value}
-                                    type="button"
-                                    className={`
-                                        flex-1 py-1.5 text-xs font-medium rounded-md border transition-colors
-                                        ${workDays.includes(day.value)
-                                            ? 'bg-blue-600 text-white border-blue-600'
-                                            : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
-                                        }
-                                    `}
-                                    onClick={() => toggleDay(day.value)}
-                                >
-                                    {day.short}
-                                </button>
+                <DialogBody className="md:px-8 md:py-7">
+                  <div className="mx-auto w-full max-w-[740px] space-y-6">
+                    {/* Timezone & distance unit */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                        <FloatingSelect label="Timezone" id="dsd-timezone" value={timezone} onValueChange={setTimezone}>
+                            {POPULAR_TIMEZONES.map(tz => (
+                                <SelectItem key={tz} value={tz}>{tz.replace(/_/g, ' ')}</SelectItem>
                             ))}
+                        </FloatingSelect>
+
+                        {/* Distance unit (SCHED-ROUTE-001 C-13) */}
+                        <FloatingSelect label="Distance unit" id="dsd-distance-unit" value={distanceUnit} onValueChange={(v) => setDistanceUnit(v as 'mi' | 'km')}>
+                            <SelectItem value="mi">Miles (mi)</SelectItem>
+                            <SelectItem value="km">Kilometers (km)</SelectItem>
+                        </FloatingSelect>
+                    </div>
+
+                    {/* Work hours — native time pickers kept as labeled controls */}
+                    <div className="space-y-3.5">
+                        <div className="grid grid-cols-2 gap-3.5">
+                            <div className="space-y-1.5">
+                                <span className="blanc-eyebrow">Work start</span>
+                                <Input
+                                    type="time"
+                                    className="h-[50px] rounded-xl border-[1.5px] bg-transparent text-[15px]"
+                                    value={workStart}
+                                    onChange={e => setWorkStart(e.target.value)}
+                                />
+                            </div>
+                            <div className="space-y-1.5">
+                                <span className="blanc-eyebrow">Work end</span>
+                                <Input
+                                    type="time"
+                                    className="h-[50px] rounded-xl border-[1.5px] bg-transparent text-[15px]"
+                                    value={workEnd}
+                                    onChange={e => setWorkEnd(e.target.value)}
+                                />
+                            </div>
+                        </div>
+
+                        {/* Work days — day-of-week toggle set kept as labeled control */}
+                        <div className="space-y-1.5">
+                            <span className="blanc-eyebrow">Work days</span>
+                            <div className="flex gap-1">
+                                {DAY_LABELS.map(day => (
+                                    <button
+                                        key={day.value}
+                                        type="button"
+                                        className={`
+                                            flex-1 py-2 text-xs font-medium rounded-md border-[1.5px] transition-colors
+                                            ${workDays.includes(day.value)
+                                                ? 'border-[var(--blanc-ink-1)] bg-[rgba(117,106,89,0.08)] text-[var(--blanc-ink-1)]'
+                                                : 'border-[var(--blanc-line)] bg-transparent text-[var(--blanc-ink-3)] hover:border-[var(--blanc-ink-3)]'
+                                            }
+                                        `}
+                                        onClick={() => toggleDay(day.value)}
+                                    >
+                                        {day.short}
+                                    </button>
+                                ))}
+                            </div>
                         </div>
                     </div>
 
-                    {/* Slot Duration */}
-                    <div className="space-y-1.5">
-                        <Label className="text-sm font-medium">Slot Duration</Label>
-                        <Select value={String(slotDuration)} onValueChange={v => setSlotDuration(Number(v))}>
-                            <SelectTrigger className="h-9 text-sm">
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {SLOT_DURATIONS.map(d => (
-                                    <SelectItem key={d} value={String(d)}>{d} min</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    </div>
+                    {/* Slot duration */}
+                    <FloatingSelect label="Slot duration" id="dsd-slot-duration" value={String(slotDuration)} onValueChange={v => setSlotDuration(Number(v))}>
+                        {SLOT_DURATIONS.map(d => (
+                            <SelectItem key={d} value={String(d)}>{d} min</SelectItem>
+                        ))}
+                    </FloatingSelect>
 
                     {/* Validation error */}
                     {validationError && (
-                        <p className="text-sm text-red-600 sm:col-span-2">{validationError}</p>
+                        <p className="text-sm text-red-600">{validationError}</p>
                     )}
-                </div>
+                  </div>
+                </DialogBody>
 
-                <DialogFooter>
-                    <Button variant="outline" size="sm" onClick={onClose} disabled={saving}>
+                <DialogPanelFooter>
+                    <Button variant="ghost" onClick={onClose} disabled={saving}>
                         Cancel
                     </Button>
-                    <Button size="sm" onClick={handleSave} disabled={saving}>
+                    <Button onClick={handleSave} disabled={saving}>
                         {saving ? 'Saving...' : 'Save'}
                     </Button>
-                </DialogFooter>
+                </DialogPanelFooter>
             </DialogContent>
         </Dialog>
     );

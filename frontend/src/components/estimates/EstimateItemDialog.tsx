@@ -1,9 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
+import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle, DialogDescription } from '../ui/dialog';
 import { Button } from '../ui/button';
-import { Input } from '../ui/input';
-import { Label } from '../ui/label';
-import { Textarea } from '../ui/textarea';
+import { FloatingField } from '../ui/floating-field';
 import { Checkbox } from '../ui/checkbox';
 
 export interface ItemDraft {
@@ -43,61 +41,67 @@ export function EstimateItemDialog({ open, onOpenChange, isEdit, initial, onSave
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent variant="panel" className="z-[70]">
-                <DialogHeader>
-                    <DialogTitle>{isEdit ? 'Edit item' : 'Add custom item'}</DialogTitle>
-                </DialogHeader>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
-                    <div className="sm:col-span-2">
-                        <Label>Title <span className="text-red-600">*</span></Label>
-                        <Input
+                <DialogPanelHeader>
+                    <DialogTitle
+                        className="text-[22px] font-semibold leading-tight"
+                        style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
+                    >
+                        {isEdit ? 'Edit item' : 'Add custom item'}
+                    </DialogTitle>
+                    <DialogDescription className="sr-only">Add or edit an estimate line item</DialogDescription>
+                </DialogPanelHeader>
+
+                <DialogBody className="md:px-8 md:py-7">
+                  <div className="mx-auto w-full max-w-[740px] space-y-6">
+                    <div className="space-y-3.5">
+                        <FloatingField
+                            id="eid-name"
+                            label="Title"
                             value={draft.name}
                             onChange={e => setDraft(prev => ({ ...prev, name: e.target.value }))}
-                            autoFocus
                         />
-                    </div>
-                    <div className="sm:col-span-2">
-                        <Label>Description</Label>
-                        <Textarea
+                        <FloatingField
+                            id="eid-description"
+                            label="Description"
+                            textarea
+                            rows={4}
                             value={draft.description}
                             onChange={e => setDraft(prev => ({ ...prev, description: e.target.value }))}
-                            rows={4}
-                            className="font-normal"
                         />
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                            <FloatingField
+                                id="eid-quantity"
+                                label="Qty"
+                                inputMode="decimal"
+                                value={draft.quantity}
+                                onChange={e => setDraft(prev => ({ ...prev, quantity: e.target.value }))}
+                            />
+                            <FloatingField
+                                id="eid-unit-price"
+                                label="Unit price"
+                                inputMode="decimal"
+                                value={draft.unit_price}
+                                onChange={e => setDraft(prev => ({ ...prev, unit_price: e.target.value }))}
+                            />
+                        </div>
                     </div>
-                    <div>
-                        <Label>Qty</Label>
-                        <Input
-                            type="number"
-                            min="0.01"
-                            step="any"
-                            value={draft.quantity}
-                            onChange={e => setDraft(prev => ({ ...prev, quantity: e.target.value }))}
-                        />
-                    </div>
-                    <div>
-                        <Label>Unit price <span className="text-red-600">*</span></Label>
-                        <Input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={draft.unit_price}
-                            onChange={e => setDraft(prev => ({ ...prev, unit_price: e.target.value }))}
-                        />
-                    </div>
-                    <label className="sm:col-span-2 flex items-center gap-2 text-sm cursor-pointer">
+
+                    <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: 'var(--blanc-ink-1)' }}>
                         <Checkbox
                             checked={draft.taxable}
                             onCheckedChange={checked => setDraft(prev => ({ ...prev, taxable: !!checked }))}
                         />
                         Service is taxable
                     </label>
-                </div>
-                <DialogFooter>
-                    <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+                  </div>
+                </DialogBody>
+
+                <DialogPanelFooter>
+                    <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
                     <Button type="button" onClick={handleSave} disabled={!canSave}>
                         {isEdit ? 'Save changes' : 'Add item'}
                     </Button>
-                </DialogFooter>
+                </DialogPanelFooter>
             </DialogContent>
         </Dialog>
     );

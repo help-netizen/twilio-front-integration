@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { Button } from '../ui/button';
-import { Input } from '../ui/input';
-import { Label } from '../ui/label';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
+import { FloatingField } from '../ui/floating-field';
+import { Dialog, DialogContent, DialogDescription, DialogPanelFooter, DialogPanelHeader, DialogBody, DialogTitle } from '../ui/dialog';
 import { toast } from 'sonner';
 import { authedFetch } from '../../services/apiClient';
 
@@ -69,47 +68,46 @@ export function CreateCompanyDialog({ open, onOpenChange, onSuccess }: CreateCom
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent variant="panel">
-                <form onSubmit={handleSubmit}>
-                    <DialogHeader>
-                        <DialogTitle>Create Company</DialogTitle>
-                        <DialogDescription>
+                <form onSubmit={handleSubmit} className="contents">
+                    <DialogPanelHeader>
+                        <DialogTitle
+                            className="text-[22px] font-semibold leading-tight"
+                            style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
+                        >
+                            Create Company
+                        </DialogTitle>
+                        <DialogDescription className="sr-only">
                             Create a new tenant company and bootstrap its first administrator.
                         </DialogDescription>
-                    </DialogHeader>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 py-4">
-                        <div className="grid gap-2">
-                            <Label htmlFor="name">Company Name</Label>
-                            <Input id="name" name="name" value={formData.name} onChange={handleChange} required placeholder="e.g. Acme Corp" />
-                        </div>
-                        <div className="grid gap-2">
-                            <Label htmlFor="slug">URL Slug</Label>
-                            <Input id="slug" name="slug" value={formData.slug} onChange={handleChange} required placeholder="acme-corp" />
-                        </div>
-                        <div className="grid gap-2">
-                            <Label htmlFor="timezone">Timezone</Label>
-                            <Input id="timezone" name="timezone" value={formData.timezone} onChange={handleChange} required />
-                        </div>
-                        <div className="grid gap-2">
-                            <Label htmlFor="locale">Locale</Label>
-                            <Input id="locale" name="locale" value={formData.locale} onChange={handleChange} required />
-                        </div>
-                        <div className="grid gap-2 sm:col-span-2">
-                            <Label htmlFor="admin_email">Admin Email</Label>
-                            <Input id="admin_email" name="admin_email" type="email" value={formData.admin_email} onChange={handleChange} required placeholder="admin@company.com" />
+                    </DialogPanelHeader>
+
+                    <DialogBody className="md:px-8 md:py-7">
+                      <div className="mx-auto w-full max-w-[740px] space-y-6">
+                        <div className="space-y-3.5">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                                <FloatingField id="name" name="name" label="Company Name" value={formData.name} onChange={(e) => handleChange(e as React.ChangeEvent<HTMLInputElement>)} />
+                                <FloatingField id="slug" name="slug" label="URL Slug" value={formData.slug} onChange={(e) => handleChange(e as React.ChangeEvent<HTMLInputElement>)} />
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                                <FloatingField id="timezone" name="timezone" label="Timezone" value={formData.timezone} onChange={(e) => handleChange(e as React.ChangeEvent<HTMLInputElement>)} />
+                                <FloatingField id="locale" name="locale" label="Locale" value={formData.locale} onChange={(e) => handleChange(e as React.ChangeEvent<HTMLInputElement>)} />
+                            </div>
+                            <FloatingField id="admin_email" name="admin_email" label="Admin Email" type="email" value={formData.admin_email} onChange={(e) => handleChange(e as React.ChangeEvent<HTMLInputElement>)} />
                             <p className="text-xs text-muted-foreground">First admin user will be created with this email.</p>
                         </div>
-                    </div>
-                    <DialogFooter>
-                        <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
+                      </div>
+                    </DialogBody>
+
+                    <DialogPanelFooter>
+                        <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={loading}>
                             Cancel
                         </Button>
                         <Button type="submit" disabled={loading}>
                             {loading ? 'Creating...' : 'Create Company'}
                         </Button>
-                    </DialogFooter>
+                    </DialogPanelFooter>
                 </form>
             </DialogContent>
         </Dialog>
     );
 }
-

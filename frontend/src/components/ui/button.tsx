@@ -9,15 +9,22 @@ const buttonVariants = cva(
     {
         variants: {
             variant: {
+                // PRIMARY — the one main action per surface (submit/confirm). Solid accent.
                 default: "bg-primary text-primary-foreground hover:bg-primary/90",
+                // DESTRUCTIVE — delete / cancel-entity. Solid danger.
                 destructive:
-                    "bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
-                outline:
-                    "border bg-background text-foreground hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50",
+                    "bg-[var(--blanc-danger)] text-white hover:bg-[var(--blanc-danger)]/90 focus-visible:ring-destructive/30",
+                // SECONDARY — emphasized non-primary action (tinted accent). Use for prominent
+                // in-form steps like "Pick time", "Add item" — colored, but not competing with primary.
                 secondary:
-                    "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+                    "bg-[var(--blanc-job-soft)] text-[var(--blanc-job)] hover:bg-[rgba(213,228,255,0.95)]",
+                // OUTLINE — neutral bordered action. Transparent so it sits on any surface.
+                outline:
+                    "border border-[var(--blanc-line-strong)] bg-transparent text-[var(--blanc-ink-1)] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]",
+                // GHOST — tertiary / cancel / dismiss. Text only.
                 ghost:
-                    "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
+                    "text-[var(--blanc-ink-2)] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]",
+                // LINK — inline textual action.
                 link: "text-primary underline-offset-4 hover:underline",
             },
             size: {

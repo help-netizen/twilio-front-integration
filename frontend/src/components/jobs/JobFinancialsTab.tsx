@@ -35,10 +35,10 @@ function money(v: string | number | null | undefined): string {
 }
 
 function MetricCell({ label, value, tone = 'default' }: { label: string; value: string; tone?: 'default' | 'warning' }) {
-    const valueClass = tone === 'warning' ? 'text-[#9a5b00]' : 'text-[#172033]';
+    const valueClass = tone === 'warning' ? 'text-[var(--blanc-warning)]' : 'text-[var(--blanc-ink-1)]';
     return (
-        <div className="min-w-0 bg-[#fbfcfe] px-4 py-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-[#65758b]">{label}</p>
+        <div className="min-w-0 bg-[var(--blanc-panel-surface,#fffdf9)] px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--blanc-ink-3)]">{label}</p>
             <p className={`mt-1 truncate font-mono text-lg font-semibold ${valueClass}`}>{value}</p>
         </div>
     );
@@ -101,9 +101,9 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
     const totalDue = Math.max(totalInvoiced - totalPaid, 0);
 
     return (
-        <div className="flex-1 overflow-y-auto bg-[#f3f6f9] p-5 text-[#172033]">
+        <div className="flex-1 overflow-y-auto bg-[var(--blanc-panel-surface,#fffdf9)] p-5 text-[var(--blanc-ink-1)]">
             <div className="mx-auto max-w-5xl space-y-5">
-                <div className="overflow-hidden rounded-md border border-[#d8e0ea] bg-[#d8e0ea]">
+                <div className="overflow-hidden rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-line)]">
                     <div className="grid grid-cols-3 gap-px">
                         <MetricCell label="Estimated" value={money(totalEstimated)} />
                         <MetricCell label="Invoiced" value={money(totalInvoiced)} />
@@ -113,24 +113,24 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
 
 
                 {loading && (
-                    <div className="flex items-center justify-center rounded-md border border-[#d8e0ea] bg-[#fbfcfe] py-6 text-sm text-[#5f7085]">
+                    <div className="flex items-center justify-center rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] py-6 text-sm text-[var(--blanc-ink-2)]">
                         <Loader2 className="mr-2 size-4 animate-spin" />Loading financials...
                     </div>
                 )}
 
-                <section className="rounded-md border border-[#d8e0ea] bg-[#fbfcfe]">
-                    <div className="flex items-start justify-between gap-3 border-b border-[#d8e0ea] px-4 py-3">
+                <section className="rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)]">
+                    <div className="flex items-start justify-between gap-3 border-b border-[var(--blanc-line)] px-4 py-3">
                         <div>
                             <h3 className="text-sm font-semibold">Estimate</h3>
-                            <p className="mt-0.5 text-xs text-[#5f7085]">Customer-facing repair proposal for this job.</p>
+                            <p className="mt-0.5 text-xs text-[var(--blanc-ink-2)]">Customer-facing repair proposal for this job.</p>
                         </div>
                     </div>
                     {estimates.length === 0 && !loading ? (
                         <div className="px-4 py-8">
-                            <div className="rounded-md border border-dashed border-[#c4cfdd] bg-[#f8fafc] px-4 py-6 text-center">
-                                <FileText className="mx-auto size-8 text-[#65758b]" />
+                            <div className="rounded-md border border-dashed border-[var(--blanc-line)] bg-[rgba(117,106,89,0.04)] px-4 py-6 text-center">
+                                <FileText className="mx-auto size-8 text-[var(--blanc-ink-3)]" />
                                 <p className="mt-3 text-sm font-medium">No estimate yet</p>
-                                <p className="mx-auto mt-1 max-w-md text-sm text-[#5f7085]">
+                                <p className="mx-auto mt-1 max-w-md text-sm text-[var(--blanc-ink-2)]">
                                     Start with one custom item or Summary. The estimate is saved only after useful content is added.
                                 </p>
                                 <Button className="mt-4" size="sm" onClick={() => { setEditingEstimate(null); setShowEstimateEditor(true); }}>
@@ -145,12 +145,12 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                                 return (
                                     <button
                                         key={e.id}
-                                        className={`group grid w-full grid-cols-[1fr_auto] items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[#eef3f8] ${archived ? 'grayscale opacity-60' : ''}`}
+                                        className={`group grid w-full grid-cols-[1fr_auto] items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[rgba(117,106,89,0.05)] ${archived ? 'grayscale opacity-60' : ''}`}
                                         onClick={() => openEstimate(e)}
                                     >
                                         <div className="flex min-w-0 items-start gap-3">
-                                            <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md bg-[#eef3f8]">
-                                                <FileText className="size-4 text-[#65758b]" />
+                                            <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md bg-[rgba(117,106,89,0.05)]">
+                                                <FileText className="size-4 text-[var(--blanc-ink-3)]" />
                                             </div>
                                             <div className="min-w-0">
                                                 <div className="flex flex-wrap items-center gap-2">
@@ -160,14 +160,14 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                                                     </Badge>
                                                     {archived && <Badge variant="outline"><Archive className="mr-1 size-3" />Archived</Badge>}
                                                 </div>
-                                                <p className="mt-1 truncate text-sm text-[#5f7085]">
+                                                <p className="mt-1 truncate text-sm text-[var(--blanc-ink-2)]">
                                                     {e.summary || e.contact_name || 'Estimate'}
                                                 </p>
                                             </div>
                                         </div>
                                         <div className="flex items-center gap-3">
                                             <span className="font-mono text-sm font-semibold">{money(e.total)}</span>
-                                            <ChevronRight className="size-4 text-[#65758b] transition-transform group-hover:translate-x-0.5" />
+                                            <ChevronRight className="size-4 text-[var(--blanc-ink-3)] transition-transform group-hover:translate-x-0.5" />
                                         </div>
                                     </button>
                                 );
@@ -177,11 +177,11 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                 </section>
 
 
-                <section className="rounded-md border border-[#d8e0ea] bg-[#fbfcfe]">
-                    <div className="flex items-start justify-between gap-3 border-b border-[#d8e0ea] px-4 py-3">
+                <section className="rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)]">
+                    <div className="flex items-start justify-between gap-3 border-b border-[var(--blanc-line)] px-4 py-3">
                         <div>
                             <h3 className="text-sm font-semibold">Invoices & payments</h3>
-                            <p className="mt-0.5 text-xs text-[#5f7085]">Billing documents created after approval.</p>
+                            <p className="mt-0.5 text-xs text-[var(--blanc-ink-2)]">Billing documents created after approval.</p>
                         </div>
                         {invoices.length > 0 && (
                             <Button variant="outline" size="sm" onClick={() => setShowInvoiceEditor(true)}>
@@ -191,10 +191,10 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                     </div>
                     {invoices.length === 0 && !loading ? (
                         <div className="px-4 py-8">
-                            <div className="rounded-md border border-dashed border-[#c4cfdd] bg-[#f8fafc] px-4 py-6 text-center">
-                                <Receipt className="mx-auto size-8 text-[#65758b]" />
+                            <div className="rounded-md border border-dashed border-[var(--blanc-line)] bg-[rgba(117,106,89,0.04)] px-4 py-6 text-center">
+                                <Receipt className="mx-auto size-8 text-[var(--blanc-ink-3)]" />
                                 <p className="mt-3 text-sm font-medium">No invoices yet</p>
-                                <p className="mx-auto mt-1 max-w-md text-sm text-[#5f7085]">
+                                <p className="mx-auto mt-1 max-w-md text-sm text-[var(--blanc-ink-2)]">
                                     Create an invoice once the work is ready to bill, or convert an approved estimate.
                                 </p>
                                 <Button className="mt-4" size="sm" onClick={() => setShowInvoiceEditor(true)}>
@@ -207,12 +207,12 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                             {invoices.map(i => (
                                 <button
                                     key={i.id}
-                                    className="group grid w-full grid-cols-[1fr_auto] items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[#eef3f8]"
+                                    className="group grid w-full grid-cols-[1fr_auto] items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[rgba(117,106,89,0.05)]"
                                     onClick={() => openInvoice(i)}
                                 >
                                     <div className="flex min-w-0 items-start gap-3">
-                                        <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md bg-[#eef3f8]">
-                                            <Receipt className="size-4 text-[#65758b]" />
+                                        <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md bg-[rgba(117,106,89,0.05)]">
+                                            <Receipt className="size-4 text-[var(--blanc-ink-3)]" />
                                         </div>
                                         <div className="min-w-0">
                                             <div className="flex flex-wrap items-center gap-2">
@@ -221,12 +221,12 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                                                     {i.status}
                                                 </Badge>
                                             </div>
-                                            <p className="mt-1 truncate text-sm text-[#5f7085]">{i.title || 'Invoice'}</p>
+                                            <p className="mt-1 truncate text-sm text-[var(--blanc-ink-2)]">{i.title || 'Invoice'}</p>
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-3">
                                         <span className="font-mono text-sm font-semibold">{money(i.total)}</span>
-                                        <ChevronRight className="size-4 text-[#65758b] transition-transform group-hover:translate-x-0.5" />
+                                        <ChevronRight className="size-4 text-[var(--blanc-ink-3)] transition-transform group-hover:translate-x-0.5" />
                                     </div>
                                 </button>
                             ))}

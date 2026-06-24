@@ -1,5 +1,7 @@
 import { useState, useCallback } from 'react';
 import { Input } from './input';
+import { FloatingLabel } from './floating-field';
+import { cn } from '../../lib/utils';
 
 // ── Utilities ────────────────────────────────────────────────────────────────
 
@@ -56,6 +58,8 @@ interface PhoneInputProps {
     onChange: (formatted: string) => void;
     onBlur?: () => void;
     placeholder?: string;
+    /** When set, renders as a floating-label field (Blanc canon). */
+    label?: string;
     required?: boolean;
     disabled?: boolean;
     className?: string;
@@ -68,6 +72,7 @@ export function PhoneInput({
     onChange,
     onBlur,
     placeholder = '(___) ___-____',
+    label,
     required,
     disabled,
     className,
@@ -90,8 +95,8 @@ export function PhoneInput({
         [onChange],
     );
 
-    return (
-        <div className="phone-input-wrapper" style={{ position: 'relative' }}>
+    const field = (
+        <>
             <Input
                 id={id}
                 name={name}
@@ -101,10 +106,10 @@ export function PhoneInput({
                 onChange={handleChange}
                 onFocus={() => setFocused(true)}
                 onBlur={() => { setFocused(false); onBlur?.(); }}
-                placeholder={placeholder}
+                placeholder={label ? ' ' : placeholder}
                 required={required}
                 disabled={disabled}
-                className={className}
+                className={cn(label && 'h-[50px] rounded-xl bg-transparent text-[15px]', className)}
                 style={
                     showWarning
                         ? { borderColor: '#d97706', boxShadow: '0 0 0 2px rgba(217,119,6,0.2)' }
@@ -132,6 +137,19 @@ export function PhoneInput({
                     This phone number looks incomplete. If it is correct, you may proceed.
                 </div>
             )}
+        </>
+    );
+
+    if (label) {
+        return (
+            <FloatingLabel label={label} htmlFor={id} filled={!!displayValue}>
+                {field}
+            </FloatingLabel>
+        );
+    }
+    return (
+        <div className="phone-input-wrapper" style={{ position: 'relative' }}>
+            {field}
         </div>
     );
 }

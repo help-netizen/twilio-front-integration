@@ -82,7 +82,7 @@ export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew }
     return (
         <div ref={boxRef} className="relative w-full max-w-md">
             <div className="relative">
-                <Plus className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-[#5f7085] pointer-events-none" />
+                <Plus className="absolute left-3 top-1/2 -translate-y-1/2 size-4 pointer-events-none" style={{ color: 'var(--blanc-ink-3)' }} />
                 <input
                     ref={inputRef}
                     type="text"
@@ -106,29 +106,29 @@ export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew }
                             setOpen(false);
                         }
                     }}
-                    className="h-9 w-full rounded-[10px] border-[1.5px] border-[#d8e0ea] bg-white pl-9 pr-3 text-sm outline-none focus-visible:border-[#172033] disabled:opacity-50"
+                    className="h-9 w-full rounded-[10px] border-[1.5px] border-[var(--blanc-line)] bg-transparent pl-9 pr-3 text-sm text-[var(--blanc-ink-1)] outline-none focus-visible:border-[var(--blanc-ink-2)] disabled:opacity-50"
                 />
             </div>
 
             {open && (
-                <div className="absolute left-0 right-0 top-full mt-1 z-30 max-h-80 overflow-y-auto rounded-xl border border-[#d8e0ea] bg-white shadow-md">
+                <div className="absolute left-0 right-0 top-full mt-1 z-30 max-h-80 overflow-y-auto rounded-xl border border-[var(--blanc-line)] shadow-md" style={{ background: 'var(--blanc-panel-surface,#fffdf9)' }}>
                     {loading && presets.length === 0 && (
-                        <div className="flex items-center gap-2 px-4 py-3 text-xs text-[#5f7085]">
+                        <div className="flex items-center gap-2 px-4 py-3 text-xs" style={{ color: 'var(--blanc-ink-3)' }}>
                             <Loader2 className="size-3.5 animate-spin" />
                             Searching…
                         </div>
                     )}
                     {!loading && presets.length === 0 && !trimmed && (
-                        <div className="px-4 py-3 text-xs text-[#5f7085]">
+                        <div className="px-4 py-3 text-xs" style={{ color: 'var(--blanc-ink-3)' }}>
                             No saved items yet. Type a name to create one.
                         </div>
                     )}
                     {!loading && presets.length === 0 && trimmed && !canCreate && (
-                        <div className="px-4 py-3 text-xs text-[#5f7085]">No matches.</div>
+                        <div className="px-4 py-3 text-xs" style={{ color: 'var(--blanc-ink-3)' }}>No matches.</div>
                     )}
 
                     {!trimmed && presets.length > 0 && (
-                        <div className="flex items-center gap-1.5 px-4 pt-2 pb-1 text-[10px] uppercase tracking-wider text-[#5f7085]">
+                        <div className="flex items-center gap-1.5 px-4 pt-2 pb-1 text-[10px] uppercase tracking-wider" style={{ color: 'var(--blanc-ink-3)' }}>
                             <Clock className="size-3" /> Frequently used
                         </div>
                     )}
@@ -139,23 +139,22 @@ export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew }
                             type="button"
                             onMouseDown={(e) => { e.preventDefault(); pickPreset(p); }}
                             onMouseEnter={() => setHighlighted(idx)}
-                            className={`w-full text-left px-4 py-2 text-sm flex items-center justify-between gap-3 ${
-                                highlighted === idx ? 'bg-[#f3f6f9]' : 'hover:bg-[#f3f6f9]'
-                            }`}
+                            className="w-full text-left px-4 py-2 text-sm flex items-center justify-between gap-3 transition-colors"
+                            style={{ background: highlighted === idx ? 'rgba(117,106,89,0.06)' : 'transparent' }}
                         >
                             <div className="min-w-0">
-                                <div className="font-medium truncate">{p.name}</div>
+                                <div className="font-medium truncate" style={{ color: 'var(--blanc-ink-1)' }}>{p.name}</div>
                                 {p.description && (
-                                    <div className="text-xs text-[#5f7085] truncate">{p.description}</div>
+                                    <div className="text-xs truncate" style={{ color: 'var(--blanc-ink-3)' }}>{p.description}</div>
                                 )}
                             </div>
-                            <div className="text-sm font-mono whitespace-nowrap shrink-0">{money(p.default_unit_price)}</div>
+                            <div className="text-sm font-mono whitespace-nowrap shrink-0" style={{ color: 'var(--blanc-ink-1)' }}>{money(p.default_unit_price)}</div>
                         </button>
                     ))}
 
                     {canCreate && (
                         <>
-                            {presets.length > 0 && <div className="border-t border-[#d8e0ea]" />}
+                            {presets.length > 0 && <div className="border-t border-[var(--blanc-line)]" />}
                             <button
                                 type="button"
                                 onMouseDown={(e) => { e.preventDefault(); createNew(); }}
@@ -169,7 +168,7 @@ export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew }
                                     <div className="text-blue-600 font-medium">
                                         Create new “{trimmed}”
                                     </div>
-                                    <div className="text-xs text-[#5f7085]">
+                                    <div className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>
                                         Will be saved to the catalog for future estimates
                                     </div>
                                 </div>

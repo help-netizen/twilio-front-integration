@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Loader2 } from 'lucide-react';
 import { Button } from '../ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle } from '../ui/dialog';
 import { invoiceStripeApi } from '../../services/stripePaymentsApi';
 import { loadStripe } from '../../utils/loadStripe';
 
@@ -70,22 +70,34 @@ export default function ManualCardDialog({ open, onOpenChange, invoiceId, onSucc
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent variant="panel">
-                <DialogHeader>
-                    <DialogTitle>Enter card manually</DialogTitle>
-                    <DialogDescription>
+                <DialogPanelHeader>
+                    <DialogTitle
+                        className="text-[22px] font-semibold leading-tight"
+                        style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
+                    >
+                        Enter card manually
+                    </DialogTitle>
+                    <DialogDescription className="sr-only">Charge a card via Stripe's secure form</DialogDescription>
+                </DialogPanelHeader>
+
+                <DialogBody className="md:px-8 md:py-7">
+                  <div className="mx-auto w-full max-w-[740px] space-y-6">
+                    <p className="text-sm" style={{ color: 'var(--blanc-ink-2)' }}>
                         Card details are entered securely in Stripe's form. Albusto never sees the card number.
                         Keyed entry may carry different fees/risk than a card-present payment.
-                    </DialogDescription>
-                </DialogHeader>
-                {loading && <div className="flex items-center gap-2 text-sm text-muted-foreground py-6"><Loader2 className="h-4 w-4 animate-spin" /> Preparing secure form…</div>}
-                <div ref={mountRef} className="min-h-[40px]" />
-                {error && <p className="text-sm text-red-600">{error}</p>}
-                <DialogFooter>
-                    <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>Cancel</Button>
+                    </p>
+                    {loading && <div className="flex items-center gap-2 text-sm text-muted-foreground py-6"><Loader2 className="h-4 w-4 animate-spin" /> Preparing secure form…</div>}
+                    <div ref={mountRef} className="min-h-[40px]" />
+                    {error && <p className="text-sm text-red-600">{error}</p>}
+                  </div>
+                </DialogBody>
+
+                <DialogPanelFooter>
+                    <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>Cancel</Button>
                     <Button onClick={submit} disabled={!ready || submitting}>
                         {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Charge card
                     </Button>
-                </DialogFooter>
+                </DialogPanelFooter>
             </DialogContent>
         </Dialog>
     );

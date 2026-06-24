@@ -1,10 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../ui/dialog';
+import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle, DialogDescription } from '../ui/dialog';
 import { Button } from '../ui/button';
-import { Input } from '../ui/input';
-import { Label } from '../ui/label';
+import { FloatingField } from '../ui/floating-field';
 import { PhoneInput, toE164, formatUSPhone } from '../ui/PhoneInput';
-import { Textarea } from '../ui/textarea';
 import { toast } from 'sonner';
 import * as contactsApi from '../../services/contactsApi';
 import type { Contact } from '../../types/contact';
@@ -75,124 +73,100 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent variant="panel">
-                <DialogHeader>
-                    <DialogTitle>Edit Contact</DialogTitle>
-                    <DialogDescription>
-                        Update contact details below.
-                    </DialogDescription>
-                </DialogHeader>
+                <DialogPanelHeader>
+                    <DialogTitle
+                        className="text-[22px] font-semibold leading-tight"
+                        style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
+                    >
+                        Edit contact
+                    </DialogTitle>
+                    <DialogDescription className="sr-only">Update contact details</DialogDescription>
+                </DialogPanelHeader>
 
-                <form onSubmit={handleSubmit} className="space-y-5">
-                    {/* Client Details */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
-                        <h3 className="sm:col-span-2 text-sm font-semibold text-gray-500 uppercase tracking-wider">
-                            Client Details
-                        </h3>
-                        <div>
-                            <Label htmlFor="ec-first-name" className="mb-1.5">First Name</Label>
-                            <Input
-                                id="ec-first-name"
-                                value={formData.first_name}
-                                onChange={(e) => setFormData({ ...formData, first_name: e.target.value })}
-                                placeholder="First Name"
-                            />
-                        </div>
-                        <div>
-                            <Label htmlFor="ec-last-name" className="mb-1.5">Last Name</Label>
-                            <Input
-                                id="ec-last-name"
-                                value={formData.last_name}
-                                onChange={(e) => setFormData({ ...formData, last_name: e.target.value })}
-                                placeholder="Last Name"
-                            />
-                        </div>
-                        <div className="sm:col-span-2">
-                            <Label htmlFor="ec-company" className="mb-1.5">Company Name</Label>
-                            <Input
+                <form onSubmit={handleSubmit} className="contents">
+                    <DialogBody className="md:px-8 md:py-7">
+                      <div className="mx-auto w-full max-w-[740px] space-y-6">
+                        {/* Client details */}
+                        <div className="space-y-3.5">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                                <FloatingField
+                                    id="ec-first-name"
+                                    label="First name"
+                                    value={formData.first_name}
+                                    onChange={(e) => setFormData({ ...formData, first_name: e.target.value })}
+                                />
+                                <FloatingField
+                                    id="ec-last-name"
+                                    label="Last name"
+                                    value={formData.last_name}
+                                    onChange={(e) => setFormData({ ...formData, last_name: e.target.value })}
+                                />
+                            </div>
+                            <FloatingField
                                 id="ec-company"
+                                label="Company name"
                                 value={formData.company_name}
                                 onChange={(e) => setFormData({ ...formData, company_name: e.target.value })}
-                                placeholder="Company Name"
                             />
                         </div>
-                    </div>
 
-                    {/* Contact Information */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
-                        <h3 className="sm:col-span-2 text-sm font-semibold text-gray-500 uppercase tracking-wider">
-                            Contact Information
-                        </h3>
-                        <div>
-                            <div className="flex items-center justify-between mb-1.5">
-                                <Label htmlFor="ec-phone">Phone Number</Label>
-                                {!showSecondary && (
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowSecondary(true)}
-                                        className="text-xs text-primary hover:underline"
-                                    >
-                                        + Secondary Phone
-                                    </button>
-                                )}
-                            </div>
+                        {/* Contact information */}
+                        <div className="space-y-3.5">
                             <PhoneInput
                                 id="ec-phone"
+                                label="Phone number"
                                 value={formData.phone_e164}
                                 onChange={(formatted) => setFormData({ ...formData, phone_e164: formatted })}
                             />
-                        </div>
-                        <div>
-                            <Label htmlFor="ec-email" className="mb-1.5">Email</Label>
-                            <Input
+                            <FloatingField
                                 id="ec-email"
+                                label="Email"
                                 type="email"
                                 value={formData.email}
                                 onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                                placeholder="email@example.com"
                             />
-                        </div>
-                        {showSecondary && (
-                            <>
-                                <div>
-                                    <Label htmlFor="ec-secondary-phone" className="mb-1.5">Secondary Phone</Label>
+                            {showSecondary ? (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                                     <PhoneInput
                                         id="ec-secondary-phone"
+                                        label="Secondary phone"
                                         value={formData.secondary_phone}
                                         onChange={(formatted) => setFormData({ ...formData, secondary_phone: formatted })}
                                     />
-                                </div>
-                                <div>
-                                    <Label htmlFor="ec-secondary-phone-name" className="mb-1.5">Secondary Name</Label>
-                                    <Input
+                                    <FloatingField
                                         id="ec-secondary-phone-name"
+                                        label="Secondary name"
                                         value={formData.secondary_phone_name}
                                         onChange={(e) => setFormData({ ...formData, secondary_phone_name: e.target.value })}
-                                        placeholder="e.g. Tenant, Wife"
                                     />
                                 </div>
-                            </>
-                        )}
-                    </div>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={() => setShowSecondary(true)}
+                                    className="text-xs text-primary hover:underline"
+                                >
+                                    + Secondary Phone
+                                </button>
+                            )}
+                        </div>
 
-                    {/* Notes */}
-                    <div className="space-y-3">
-                        <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
-                            Notes
-                        </h3>
-                        <Textarea
+                        {/* Notes */}
+                        <FloatingField
                             id="ec-notes"
+                            label="Notes"
+                            textarea
+                            rows={3}
                             value={formData.notes}
                             onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                            rows={3}
-                            className="min-h-[60px] resize-y"
-                            placeholder="Notes..."
                         />
-                    </div>
+                      </div>
+                    </DialogBody>
 
-                    <DialogFooter>
+                    <DialogPanelFooter>
                         <Button
                             type="button"
-                            variant="outline"
+                            variant="ghost"
                             onClick={() => onOpenChange(false)}
                             disabled={loading}
                         >
@@ -201,7 +175,7 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
                         <Button type="submit" disabled={loading}>
                             {loading ? 'Saving...' : 'Save Changes'}
                         </Button>
-                    </DialogFooter>
+                    </DialogPanelFooter>
                 </form>
             </DialogContent>
         </Dialog>

@@ -1,9 +1,7 @@
 import { useState } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog';
+import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle, DialogDescription } from '../ui/dialog';
 import { Button } from '../ui/button';
-import { Input } from '../ui/input';
-import { Label } from '../ui/label';
-import { Textarea } from '../ui/textarea';
+import { FloatingField } from '../ui/floating-field';
 import type { PaymentTransaction, RefundData } from '../../services/paymentsCanonicalApi';
 
 // -- Helpers ------------------------------------------------------------------
@@ -53,63 +51,72 @@ export function RefundDialog({ open, onOpenChange, transaction, onRefund }: Prop
     return (
         <Dialog open={open} onOpenChange={v => { onOpenChange(v); if (!v) { setAmount(transaction.amount); setReason(''); } }}>
             <DialogContent variant="panel">
-                <DialogHeader>
-                    <DialogTitle>Refund Transaction</DialogTitle>
-                </DialogHeader>
+                <DialogPanelHeader>
+                    <DialogTitle
+                        className="text-[22px] font-semibold leading-tight"
+                        style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
+                    >
+                        Refund Transaction
+                    </DialogTitle>
+                    <DialogDescription className="sr-only">Refund part or all of a payment transaction</DialogDescription>
+                </DialogPanelHeader>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 py-2">
+                <DialogBody className="md:px-8 md:py-7">
+                  <div className="mx-auto w-full max-w-[740px] space-y-6">
                     {/* Original info */}
-                    <div className="sm:col-span-2 bg-muted/50 rounded p-3 space-y-1">
+                    <div
+                        className="rounded-2xl p-4 space-y-1"
+                        style={{ background: 'rgba(117, 106, 89, 0.04)' }}
+                    >
                         <div className="flex justify-between text-sm">
-                            <span className="text-muted-foreground">Transaction</span>
+                            <span style={{ color: 'var(--blanc-ink-3)' }}>Transaction</span>
                             <span className="font-mono">#{transaction.id}</span>
                         </div>
                         <div className="flex justify-between text-sm">
-                            <span className="text-muted-foreground">Original Amount</span>
+                            <span style={{ color: 'var(--blanc-ink-3)' }}>Original Amount</span>
                             <span className="font-semibold">{money(transaction.amount)}</span>
                         </div>
                         <div className="flex justify-between text-sm">
-                            <span className="text-muted-foreground">Method</span>
+                            <span style={{ color: 'var(--blanc-ink-3)' }}>Method</span>
                             <span className="capitalize">{transaction.payment_method.replace('_', ' ')}</span>
                         </div>
                     </div>
 
-                    {/* Refund amount */}
-                    <div>
-                        <Label className="text-xs">Refund Amount (max {money(transaction.amount)})</Label>
-                        <Input
-                            type="number"
-                            step="0.01"
-                            min="0.01"
-                            max={transaction.amount}
-                            value={amount}
-                            onChange={e => setAmount(e.target.value)}
-                        />
-                        {currentAmount > maxAmount && (
-                            <p className="text-xs text-red-500 mt-1">Amount cannot exceed original transaction</p>
-                        )}
-                    </div>
+                    {/* Refund amount + reason */}
+                    <div className="space-y-3.5">
+                        <div>
+                            <FloatingField
+                                id="rfd-amount"
+                                label={`Refund amount (max ${money(transaction.amount)})`}
+                                inputMode="decimal"
+                                value={amount}
+                                onChange={e => setAmount(e.target.value)}
+                            />
+                            {currentAmount > maxAmount && (
+                                <p className="text-xs text-red-500 mt-1">Amount cannot exceed original transaction</p>
+                            )}
+                        </div>
 
-                    {/* Reason */}
-                    <div className="sm:col-span-2">
-                        <Label className="text-xs">Reason (optional)</Label>
-                        <Textarea
-                            placeholder="Reason for refund..."
+                        <FloatingField
+                            id="rfd-reason"
+                            label="Reason (optional)"
+                            textarea
                             rows={3}
                             value={reason}
                             onChange={e => setReason(e.target.value)}
                         />
                     </div>
-                </div>
+                  </div>
+                </DialogBody>
 
-                <DialogFooter>
-                    <Button variant="outline" onClick={() => onOpenChange(false)} disabled={processing}>
+                <DialogPanelFooter>
+                    <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={processing}>
                         Cancel
                     </Button>
                     <Button variant="destructive" onClick={handleRefund} disabled={processing || !isValid}>
                         {processing ? 'Processing...' : `Refund ${money(amount)}`}
                     </Button>
-                </DialogFooter>
+                </DialogPanelFooter>
             </DialogContent>
         </Dialog>
     );

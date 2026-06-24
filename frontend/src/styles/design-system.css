@@ -37,6 +37,10 @@
     --blanc-surface: rgba(252, 249, 244, 0.84);
     --blanc-surface-strong: #fdf8f0;
     --blanc-surface-muted: #f4ede2;
+    /* Form drawer surface: a near-white with just a whisper of warmth — whiter than
+       surface-strong (which reads creamy) but softer than pure #fff. Fields share it
+       and are drawn by border only, so floating labels notch the outline seamlessly. */
+    --blanc-panel-surface: #fffdf9;
 
     /* ── Borders ── */
     --blanc-line: rgba(117, 106, 89, 0.18);
@@ -791,10 +795,11 @@ table tbody tr:hover {
     width: 420px;
     height: 100%;
     pointer-events: auto;
-    background: var(--blanc-surface);
-    border: 1px solid rgba(255, 255, 255, 0.55);
+    /* Solid near-white — same surface as form drawers (no frosted glass), so all
+       "layers" (forms + view panels) read as one consistent surface. */
+    background: var(--blanc-panel-surface, #fffdf9);
+    border: 1px solid var(--blanc-line);
     border-radius: var(--blanc-radius-xl);
-    backdrop-filter: var(--blanc-glass-blur-strong);
     box-shadow: var(--blanc-shadow-main);
     display: flex;
     flex-direction: column;
@@ -861,6 +866,42 @@ table tbody tr:hover {
     .blanc-floating-hover-bridge {
         display: none;
     }
+}
+
+/* ── Comfortable form fields (panel drawers) ──
+   Taller, roomier controls than the dense table/list defaults — the panel has
+   the width to afford it. Scoped so it never touches compact toolbars/tables. */
+.blanc-form-comfortable input:not([type="checkbox"]):not([type="radio"]),
+.blanc-form-comfortable textarea,
+.blanc-form-comfortable [role="combobox"] {
+    min-height: 46px;
+    font-size: 15px;
+    border-radius: 12px;
+    padding-top: 0.625rem;
+    padding-bottom: 0.625rem;
+}
+.blanc-form-comfortable textarea {
+    min-height: 92px;
+    line-height: 1.5;
+}
+/* Label sitting to the LEFT of its field, vertically centered against it. */
+.blanc-field-row {
+    display: grid;
+    grid-template-columns: 104px minmax(0, 1fr);
+    align-items: center;
+    gap: 16px;
+}
+.blanc-field-row--top {
+    align-items: start;
+}
+.blanc-field-row--top > label {
+    padding-top: 13px;
+}
+.blanc-field-label {
+    font-size: 13px;
+    color: var(--blanc-ink-2);
+    font-weight: 500;
+    line-height: 1.3;
 }
 
 /* Warm table styles */

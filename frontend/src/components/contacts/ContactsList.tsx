@@ -70,7 +70,7 @@ export function ContactsList({
                             }}
                             onMouseEnter={(e) => {
                                 if (selectedContactId !== contact.id) {
-                                    e.currentTarget.style.backgroundColor = '#f8fafc';
+                                    e.currentTarget.style.backgroundColor = 'rgba(117,106,89,0.04)';
                                 }
                             }}
                             onMouseLeave={(e) => {

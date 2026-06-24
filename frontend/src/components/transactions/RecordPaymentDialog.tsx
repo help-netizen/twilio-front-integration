@@ -1,10 +1,9 @@
 import { useState } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog';
+import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle, DialogDescription } from '../ui/dialog';
 import { Button } from '../ui/button';
-import { Input } from '../ui/input';
-import { Label } from '../ui/label';
-import { Textarea } from '../ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
+import { FloatingField } from '../ui/floating-field';
+import { FloatingSelect } from '../ui/floating-select';
+import { SelectItem } from '../ui/select';
 import type { CreateTransactionData } from '../../services/paymentsCanonicalApi';
 
 // -- Props --------------------------------------------------------------------
@@ -64,93 +63,85 @@ export function RecordPaymentDialog({ open, onOpenChange, onSave, defaultInvoice
     return (
         <Dialog open={open} onOpenChange={v => { onOpenChange(v); if (!v) resetForm(); }}>
             <DialogContent variant="panel">
-                <DialogHeader>
-                    <DialogTitle>Record Payment</DialogTitle>
-                </DialogHeader>
+                <DialogPanelHeader>
+                    <DialogTitle
+                        className="text-[22px] font-semibold leading-tight"
+                        style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
+                    >
+                        Record Payment
+                    </DialogTitle>
+                    <DialogDescription className="sr-only">Record a manual payment transaction</DialogDescription>
+                </DialogPanelHeader>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 py-2">
-                    {/* Amount */}
-                    <div>
-                        <Label className="text-xs">Amount *</Label>
-                        <Input
-                            type="number"
-                            step="0.01"
-                            min="0.01"
-                            placeholder="0.00"
-                            value={amount}
-                            onChange={e => setAmount(e.target.value)}
-                        />
-                    </div>
-
-                    {/* Payment Method */}
-                    <div>
-                        <Label className="text-xs">Payment Method</Label>
-                        <Select value={paymentMethod} onValueChange={v => setPaymentMethod(v as CreateTransactionData['payment_method'])}>
-                            <SelectTrigger>
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
+                <DialogBody className="md:px-8 md:py-7">
+                  <div className="mx-auto w-full max-w-[740px] space-y-6">
+                    <div className="space-y-3.5">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                            <FloatingField
+                                id="rpd-amount"
+                                label="Amount *"
+                                inputMode="decimal"
+                                value={amount}
+                                onChange={e => setAmount(e.target.value)}
+                            />
+                            <FloatingSelect
+                                id="rpd-method"
+                                label="Payment method"
+                                value={paymentMethod}
+                                onValueChange={v => setPaymentMethod(v as CreateTransactionData['payment_method'])}
+                            >
                                 <SelectItem value="cash">Cash</SelectItem>
                                 <SelectItem value="check">Check</SelectItem>
                                 <SelectItem value="credit_card">Credit Card</SelectItem>
                                 <SelectItem value="ach">ACH</SelectItem>
                                 <SelectItem value="other">Other</SelectItem>
-                            </SelectContent>
-                        </Select>
-                    </div>
+                            </FloatingSelect>
+                        </div>
 
-                    {/* Invoice ID */}
-                    <div>
-                        <Label className="text-xs">Invoice ID (optional)</Label>
-                        <Input
-                            type="number"
-                            placeholder="e.g. 1234"
-                            value={invoiceId}
-                            onChange={e => setInvoiceId(e.target.value)}
-                        />
-                    </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                            <FloatingField
+                                id="rpd-invoice"
+                                label="Invoice ID (optional)"
+                                inputMode="numeric"
+                                value={invoiceId}
+                                onChange={e => setInvoiceId(e.target.value)}
+                            />
+                            <FloatingField
+                                id="rpd-contact"
+                                label="Contact ID (optional)"
+                                inputMode="numeric"
+                                value={contactId}
+                                onChange={e => setContactId(e.target.value)}
+                            />
+                        </div>
 
-                    {/* Contact ID */}
-                    <div>
-                        <Label className="text-xs">Contact ID (optional)</Label>
-                        <Input
-                            type="number"
-                            placeholder="e.g. 567"
-                            value={contactId}
-                            onChange={e => setContactId(e.target.value)}
-                        />
-                    </div>
-
-                    {/* Reference Number */}
-                    <div className="sm:col-span-2">
-                        <Label className="text-xs">Reference Number (optional)</Label>
-                        <Input
-                            placeholder="Check #, confirmation code, etc."
+                        <FloatingField
+                            id="rpd-reference"
+                            label="Reference number (optional)"
                             value={referenceNumber}
                             onChange={e => setReferenceNumber(e.target.value)}
                         />
-                    </div>
 
-                    {/* Memo */}
-                    <div className="sm:col-span-2">
-                        <Label className="text-xs">Memo / Notes (optional)</Label>
-                        <Textarea
-                            placeholder="Add notes about this payment..."
+                        <FloatingField
+                            id="rpd-memo"
+                            label="Memo / notes (optional)"
+                            textarea
                             rows={3}
                             value={memo}
                             onChange={e => setMemo(e.target.value)}
                         />
                     </div>
-                </div>
+                  </div>
+                </DialogBody>
 
-                <DialogFooter>
-                    <Button variant="outline" onClick={() => { onOpenChange(false); resetForm(); }} disabled={saving}>
+                <DialogPanelFooter>
+                    <Button variant="ghost" onClick={() => { onOpenChange(false); resetForm(); }} disabled={saving}>
                         Cancel
                     </Button>
                     <Button onClick={handleSave} disabled={saving || !amount.trim() || Number(amount) <= 0}>
                         {saving ? 'Saving...' : 'Record Payment'}
                     </Button>
-                </DialogFooter>
+                </DialogPanelFooter>
             </DialogContent>
         </Dialog>
     );

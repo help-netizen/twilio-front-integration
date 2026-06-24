@@ -267,8 +267,8 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
     };
 
     return (
-        <div className={`flex h-full min-h-0 flex-col bg-[#f3f6f9] text-[#172033] ${archived ? 'grayscale opacity-60' : ''}`}>
-            <div className="shrink-0 border-b border-[#d8e0ea] bg-[#fbfcfe] px-5 py-4 pr-14">
+        <div className={`flex h-full min-h-0 flex-col bg-[var(--blanc-panel-surface,#fffdf9)] text-[var(--blanc-ink-1)] ${archived ? 'grayscale opacity-60' : ''}`}>
+            <div className="shrink-0 border-b border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] px-5 py-4 pr-14">
                 <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
@@ -288,11 +288,11 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                         {archived && <Badge variant="outline">Archived</Badge>}
                         {estimate.invoice_number && <Badge variant="outline">Invoice #{estimate.invoice_number}</Badge>}
                     </div>
-                    <p className="mt-1 text-sm text-[#5f7085]">{estimate.contact_name || 'No customer linked'}</p>
+                    <p className="mt-1 text-sm text-[var(--blanc-ink-2)]">{estimate.contact_name || 'No customer linked'}</p>
                 </div>
                 <div className="flex items-start gap-3">
                     <div className="text-right">
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-[#65758b]">Total</p>
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--blanc-ink-3)]">Total</p>
                         <p className="font-mono text-xl font-semibold">{money(estimate.total)}</p>
                     </div>
                     <Button variant="ghost" size="sm" className="size-7 p-0 md:hidden" onClick={onClose}>
@@ -305,16 +305,16 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
             <div className="grid min-h-0 flex-1 overflow-hidden md:grid-cols-[minmax(0,1fr)_310px]">
                 <main className="min-h-0 space-y-6 overflow-y-auto p-5">
                     {/* Summary */}
-                    <section className="rounded-md border border-[#d8e0ea] bg-[#fbfcfe]">
+                    <section className="rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)]">
                         <div className="flex items-center justify-between px-4 py-3">
                             <button
                                 type="button"
                                 onClick={() => setSummaryOpen(o => !o)}
                                 className="flex flex-1 items-center gap-2 text-left text-sm font-medium"
                             >
-                                <ChevronDown className={`size-4 text-[#65758b] transition-transform ${summaryOpen ? 'rotate-180' : ''}`} />
+                                <ChevronDown className={`size-4 text-[var(--blanc-ink-3)] transition-transform ${summaryOpen ? 'rotate-180' : ''}`} />
                                 Summary
-                                {!estimate.summary && <span className="text-xs font-normal text-[#5f7085]">— add notes</span>}
+                                {!estimate.summary && <span className="text-xs font-normal text-[var(--blanc-ink-2)]">— add notes</span>}
                             </button>
                             {!readOnly && (
                                 <Button type="button" size="sm" variant="ghost" className="size-7 p-0" onClick={() => setSummaryDialogOpen(true)} title="Edit summary">
@@ -323,7 +323,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                             )}
                         </div>
                         {summaryOpen && estimate.summary && (
-                            <div className="border-t border-[#d8e0ea] px-4 py-4 text-sm whitespace-pre-wrap text-[#4f6176]">{estimate.summary}</div>
+                            <div className="border-t border-[var(--blanc-line)] px-4 py-4 text-sm whitespace-pre-wrap text-[var(--blanc-ink-2)]">{estimate.summary}</div>
                         )}
                     </section>
 
@@ -332,7 +332,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                         <div className="mb-3 flex items-end justify-between gap-3">
                             <div>
                                 <p className="text-sm font-semibold">Items</p>
-                                <p className="text-xs text-[#5f7085]">Line items shown in the estimate.</p>
+                                <p className="text-xs text-[var(--blanc-ink-2)]">Line items shown in the estimate.</p>
                             </div>
                         </div>
                         {hasItems ? (
@@ -340,13 +340,13 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 {estimate.items!.map(item => (
                                     <div
                                         key={item.id}
-                                        className={`grid grid-cols-[1fr_auto_auto_auto] gap-3 rounded-md border border-[#d8e0ea] bg-[#fbfcfe] p-4 text-sm transition-colors ${readOnly ? '' : 'cursor-pointer hover:bg-white'}`}
+                                        className={`grid grid-cols-[1fr_auto_auto_auto] gap-3 rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] p-4 text-sm transition-colors ${readOnly ? '' : 'cursor-pointer hover:bg-white'}`}
                                         onClick={() => { if (!readOnly) openEditItem(item); }}
                                     >
                                         <div className="min-w-0">
                                             <p className="font-medium">{item.name}</p>
-                                            {item.description && <p className="mt-1 whitespace-pre-wrap text-[#4f6176]">{item.description}</p>}
-                                            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[#5f7085]">
+                                            {item.description && <p className="mt-1 whitespace-pre-wrap text-[var(--blanc-ink-2)]">{item.description}</p>}
+                                            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--blanc-ink-2)]">
                                                 <span>{Number(item.quantity)} x {money(item.unit_price)}</span>
                                                 {item.taxable && <Badge variant="outline" className="text-[10px]">Taxable</Badge>}
                                             </div>
@@ -381,28 +381,28 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     </section>
 
                     {/* Totals (editable Tax rate / Discount) */}
-                    <section className="rounded-md border border-[#d8e0ea] bg-[#fbfcfe] p-4">
+                    <section className="rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] p-4">
                         <p className="mb-3 text-sm font-semibold">Totals</p>
                         <div className="space-y-2 text-sm">
                             <div className="flex justify-between">
-                                <span className="text-[#5f7085]">Subtotal</span>
+                                <span className="text-[var(--blanc-ink-2)]">Subtotal</span>
                                 <span className="font-mono">{money(estimate.subtotal)}</span>
                             </div>
                             {discountType ? (
                                 <div className="flex items-center gap-2 text-sm">
-                                    <span className="text-[#5f7085]">Discount</span>
-                                    <div className="inline-flex rounded-[10px] border border-[#d8e0ea] p-0.5 bg-white shrink-0">
+                                    <span className="text-[var(--blanc-ink-2)]">Discount</span>
+                                    <div className="inline-flex rounded-[10px] border border-[var(--blanc-line)] p-0.5 bg-white shrink-0">
                                         <button
                                             type="button"
                                             disabled={readOnly}
                                             onClick={() => { setDiscountType('fixed'); persist({ discount_type: 'fixed', discount_value: discountValue || '0' } as any); }}
-                                            className={`px-2.5 py-0.5 rounded-md text-sm transition-colors ${discountType === 'fixed' ? 'bg-[#172033] text-white' : 'text-[#5f7085] hover:text-[#172033]'}`}
+                                            className={`px-2.5 py-0.5 rounded-md text-sm transition-colors ${discountType === 'fixed' ? 'bg-[var(--blanc-ink-1)] text-white' : 'text-[var(--blanc-ink-2)] hover:text-[var(--blanc-ink-1)]'}`}
                                         >$</button>
                                         <button
                                             type="button"
                                             disabled={readOnly}
                                             onClick={() => { setDiscountType('percentage'); persist({ discount_type: 'percentage', discount_value: discountValue || '0' } as any); }}
-                                            className={`px-2.5 py-0.5 rounded-md text-sm transition-colors ${discountType === 'percentage' ? 'bg-[#172033] text-white' : 'text-[#5f7085] hover:text-[#172033]'}`}
+                                            className={`px-2.5 py-0.5 rounded-md text-sm transition-colors ${discountType === 'percentage' ? 'bg-[var(--blanc-ink-1)] text-white' : 'text-[var(--blanc-ink-2)] hover:text-[var(--blanc-ink-1)]'}`}
                                         >%</button>
                                     </div>
                                     <Input
@@ -426,7 +426,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 </button>
                             )}
                             <div className="grid grid-cols-[1fr_auto] items-center gap-3">
-                                <Label className="text-sm text-[#5f7085]">Tax rate</Label>
+                                <Label className="text-sm text-[var(--blanc-ink-2)]">Tax rate</Label>
                                 <Input
                                     type="number"
                                     min="0"
@@ -444,7 +444,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 />
                             </div>
                             <div className="flex justify-between">
-                                <span className="text-[#5f7085]">Tax</span>
+                                <span className="text-[var(--blanc-ink-2)]">Tax</span>
                                 <span className="font-mono">{money(estimate.tax_amount)}</span>
                             </div>
                             <div className="flex justify-between border-t pt-2 text-base font-semibold">
@@ -455,11 +455,11 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     </section>
                 </main>
 
-                <aside className="min-h-0 space-y-5 overflow-y-auto border-t border-[#d8e0ea] bg-[#eef3f8] p-5 md:border-l md:border-t-0">
+                <aside className="min-h-0 space-y-5 overflow-y-auto border-t border-[var(--blanc-line)] bg-[rgba(117,106,89,0.05)] p-5 md:border-l md:border-t-0">
                     <section className="space-y-2 text-sm">
                         <p className="text-sm font-semibold">Document settings</p>
                         <label className="flex items-center justify-between cursor-pointer">
-                            <span className="text-[#5f7085]">Require signature</span>
+                            <span className="text-[var(--blanc-ink-2)]">Require signature</span>
                             <Checkbox
                                 checked={!!estimate.signature_required}
                                 disabled={readOnly}
@@ -467,7 +467,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                             />
                         </label>
                         <div className="flex justify-between">
-                            <span className="text-[#5f7085]">Deposit required</span>
+                            <span className="text-[var(--blanc-ink-2)]">Deposit required</span>
                             <span>No</span>
                         </div>
                     </section>
@@ -501,10 +501,10 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                             <div className="space-y-2">
                                 {events.map(evt => (
                                     <div key={evt.id} className="flex items-start gap-2 text-xs">
-                                        <Clock className="mt-0.5 size-3 shrink-0 text-[#65758b]" />
+                                        <Clock className="mt-0.5 size-3 shrink-0 text-[var(--blanc-ink-3)]" />
                                         <div>
                                             <span className="font-medium capitalize">{evt.event_type.replace(/_/g, ' ')}</span>
-                                            <p className="text-[#5f7085]">{fmtDateTime(evt.created_at)}</p>
+                                            <p className="text-[var(--blanc-ink-2)]">{fmtDateTime(evt.created_at)}</p>
                                         </div>
                                     </div>
                                 ))}
@@ -514,7 +514,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                 </aside>
             </div>
 
-            <div className="shrink-0 border-t border-[#d8e0ea] bg-[#fbfcfe] px-5 py-3">
+            <div className="shrink-0 border-t border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)] px-5 py-3">
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div className="grid grid-cols-2 gap-2 md:flex">
                         <Button variant="outline" size="sm" onClick={() => window.open(`/api/estimates/${estimate.id}/pdf`, '_blank', 'noopener,noreferrer')}>
@@ -618,7 +618,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     <DialogHeader><DialogTitle>Decline estimate</DialogTitle></DialogHeader>
                     <Textarea value={declineReason} onChange={event => setDeclineReason(event.target.value)} rows={4} placeholder="Reason or comment" />
                     <DialogFooter>
-                        <Button variant="outline" onClick={() => setDeclineOpen(false)}>Cancel</Button>
+                        <Button variant="ghost" onClick={() => setDeclineOpen(false)}>Cancel</Button>
                         <Button onClick={submitDecline} disabled={!declineReason.trim()}>Decline</Button>
                     </DialogFooter>
                 </DialogContent>

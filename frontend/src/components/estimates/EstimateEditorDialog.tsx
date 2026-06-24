@@ -1,11 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, ChevronDown, Pencil, Plus, Trash2 } from 'lucide-react';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
-import { FloatingDetailPanel } from '../ui/FloatingDetailPanel';
+import {
+    Dialog,
+    DialogContent,
+    DialogPanelHeader,
+    DialogBody,
+    DialogPanelFooter,
+    DialogTitle,
+    DialogDescription,
+} from '../ui/dialog';
 import { Button } from '../ui/button';
-import { Input } from '../ui/input';
 import { Label } from '../ui/label';
-import { Textarea } from '../ui/textarea';
+import { FloatingField } from '../ui/floating-field';
 import { Checkbox } from '../ui/checkbox';
 import { Badge } from '../ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../ui/collapsible';
@@ -249,291 +255,344 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
 
     return (
         <>
-            <FloatingDetailPanel open={open} onClose={() => onOpenChange(false)} wide>
-                <div className="flex h-full min-h-0 flex-col bg-[#f3f6f9] text-[#172033]">
-                    <div className="shrink-0 border-b border-[#d8e0ea] bg-[#fbfcfe] px-5 py-4 pr-14">
-                        <div className="flex items-start justify-between gap-4">
+            <Dialog open={open} onOpenChange={onOpenChange}>
+                <DialogContent variant="panel" size="full">
+                    <DialogPanelHeader>
+                        <div className="flex items-start justify-between gap-4 pr-2">
                             <div className="min-w-0">
-                                <p className="font-mono text-sm font-semibold">{isEdit ? estimate?.estimate_number : 'New Estimate'}</p>
+                                <DialogTitle
+                                    className="text-[22px] font-semibold leading-tight"
+                                    style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
+                                >
+                                    {isEdit ? estimate?.estimate_number : 'New estimate'}
+                                </DialogTitle>
+                                <DialogDescription className="sr-only">Edit the estimate document, line items and totals</DialogDescription>
                                 {defaultContext && !isEdit && (
-                                    <p className="mt-1 text-xs font-medium text-[#5f7085]">{defaultContext}</p>
+                                    <p className="mt-1 text-xs font-medium" style={{ color: 'var(--blanc-ink-3)' }}>{defaultContext}</p>
                                 )}
                             </div>
                             <div className="flex shrink-0 items-start gap-3">
                                 {estimate?.archived_at && <Badge variant="outline">Archived</Badge>}
                                 <div className="text-right">
-                                    <p className="text-[11px] font-semibold uppercase tracking-wide text-[#65758b]">Total</p>
-                                    <p className="font-mono text-xl font-semibold">{money(total)}</p>
+                                    <p className="blanc-eyebrow">Total</p>
+                                    <p className="font-mono text-xl font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>{money(total)}</p>
                                 </div>
                             </div>
                         </div>
-                    </div>
+                    </DialogPanelHeader>
 
-                    <div className="grid min-h-0 flex-1 overflow-y-auto md:grid-cols-[minmax(0,1fr)_320px]">
-                        <main className="space-y-5 p-5">
-                            {estimate && estimate.status !== 'draft' && !estimate.archived_at && (
-                                <div className="flex gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                                    <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-                                    <span>This estimate is {estimate.status}. Editing will move it back to draft; send the updated version to the client after saving.</span>
-                                </div>
-                            )}
+                    <DialogBody className="md:px-8 md:py-7">
+                        <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_320px]">
+                            <main className="space-y-6">
+                                {estimate && estimate.status !== 'draft' && !estimate.archived_at && (
+                                    <div className="flex gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                                        <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                                        <span>This estimate is {estimate.status}. Editing will move it back to draft; send the updated version to the client after saving.</span>
+                                    </div>
+                                )}
 
-                            {summary ? (
-                                <Collapsible open={summaryOpen} onOpenChange={setSummaryOpen}>
-                                    <div className="rounded-md border border-[#d8e0ea] bg-[#fbfcfe]">
-                                        <div className="flex items-center justify-between px-4 py-3">
-                                            <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium">
-                                                <ChevronDown className={`size-4 transition-transform ${summaryOpen ? 'rotate-180' : ''}`} />
-                                                Summary
-                                            </CollapsibleTrigger>
-                                            <Button type="button" size="sm" variant="ghost" onClick={openSummaryDialog}>
-                                                <Pencil className="size-4" />
-                                            </Button>
+                                {summary ? (
+                                    <Collapsible open={summaryOpen} onOpenChange={setSummaryOpen}>
+                                        <div className="rounded-xl border border-[var(--blanc-line)]" style={{ background: 'rgba(117,106,89,0.04)' }}>
+                                            <div className="flex items-center justify-between px-4 py-3">
+                                                <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>
+                                                    <ChevronDown className={`size-4 transition-transform ${summaryOpen ? 'rotate-180' : ''}`} />
+                                                    Summary
+                                                </CollapsibleTrigger>
+                                                <Button type="button" size="sm" variant="ghost" onClick={openSummaryDialog}>
+                                                    <Pencil className="size-4" />
+                                                </Button>
+                                            </div>
+                                            <CollapsibleContent>
+                                                <div className="px-4 py-4 text-sm whitespace-pre-wrap" style={{ color: 'var(--blanc-ink-2)' }}>{summary}</div>
+                                            </CollapsibleContent>
                                         </div>
+                                    </Collapsible>
+                                ) : (
+                                    <div className="rounded-xl border border-dashed border-[var(--blanc-line)] px-4 py-5" style={{ background: 'rgba(117,106,89,0.04)' }}>
+                                        <p className="text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>Summary</p>
+                                        <p className="mt-1 text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Add make, model, issue, findings, needs, and cause when the estimate needs client context.</p>
+                                        <Button type="button" variant="outline" size="sm" className="mt-3" onClick={openSummaryDialog}>
+                                            <Plus className="mr-1 size-4" /> Add Summary
+                                        </Button>
+                                    </div>
+                                )}
+
+                                <section className="space-y-3">
+                                    <div>
+                                        <p className="blanc-eyebrow">Items</p>
+                                        <p className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>Title and unit price are required. Qty defaults to 1.</p>
+                                    </div>
+
+                                    <div className="flex flex-col gap-4">
+                                        {items.map(item => (
+                                            <div key={item.key} className="space-y-2">
+                                                <input
+                                                    placeholder="Item title"
+                                                    value={item.name}
+                                                    onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, name: e.target.value } : i))}
+                                                    className="h-[42px] w-full rounded-xl border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3.5 text-[15px] font-medium text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
+                                                />
+                                                <textarea
+                                                    placeholder="Description (optional)"
+                                                    value={item.description}
+                                                    onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, description: e.target.value } : i))}
+                                                    rows={2}
+                                                    className="w-full resize-none rounded-xl border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3.5 py-2.5 text-sm leading-relaxed text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
+                                                />
+                                                <div className="grid grid-cols-[80px_120px_1fr_auto_auto] items-center gap-3">
+                                                    <div className="flex flex-col gap-0.5">
+                                                        <span className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--blanc-ink-3)' }}>Qty</span>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            step="0.01"
+                                                            value={item.quantity}
+                                                            onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, quantity: e.target.value } : i))}
+                                                            className="h-[42px] w-full rounded-xl border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3 text-[15px] tabular-nums text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
+                                                        />
+                                                    </div>
+                                                    <div className="flex flex-col gap-0.5">
+                                                        <span className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--blanc-ink-3)' }}>Unit price</span>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            step="0.01"
+                                                            value={item.unit_price}
+                                                            onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, unit_price: e.target.value } : i))}
+                                                            className="h-[42px] w-full rounded-xl border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3 text-[15px] tabular-nums text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
+                                                        />
+                                                    </div>
+                                                    <label className="flex items-center gap-2 text-xs cursor-pointer" style={{ color: 'var(--blanc-ink-2)' }}>
+                                                        <Checkbox
+                                                            checked={item.taxable}
+                                                            onCheckedChange={checked => setItems(prev => prev.map(i => i.key === item.key ? { ...i, taxable: !!checked } : i))}
+                                                        />
+                                                        Taxable
+                                                    </label>
+                                                    <p className="font-mono text-sm font-semibold text-right whitespace-nowrap" style={{ color: 'var(--blanc-ink-1)' }}>{money(amount(item))}</p>
+                                                    <Button type="button" size="sm" variant="ghost" className="size-8 p-0 text-red-600 shrink-0" onClick={() => removeItem(item.key)} title="Remove item">
+                                                        <Trash2 className="size-4" />
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    <ItemPresetSearchCombobox
+                                        onPickPreset={pickPreset}
+                                        onCreateNew={startCreateFromName}
+                                    />
+                                </section>
+
+                                <section className="space-y-3 rounded-xl border border-[var(--blanc-line)] p-4" style={{ background: 'rgba(117,106,89,0.04)' }}>
+                                    <p className="blanc-eyebrow">Totals</p>
+                                    <div className="flex justify-between text-sm">
+                                        <span style={{ color: 'var(--blanc-ink-3)' }}>Subtotal</span>
+                                        <span className="font-mono" style={{ color: 'var(--blanc-ink-1)' }}>{money(subtotal)}</span>
+                                    </div>
+                                    {discountType ? (
+                                        <div className="space-y-1">
+                                            <div className="flex items-center gap-2 text-sm">
+                                                <span style={{ color: 'var(--blanc-ink-3)' }}>Discount</span>
+                                                <div className="inline-flex rounded-[10px] border border-[var(--blanc-line)] p-0.5 shrink-0" style={{ background: 'var(--blanc-panel-surface,#fffdf9)' }}>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setDiscountType('fixed')}
+                                                        className={`px-2.5 py-0.5 rounded-md text-sm transition-colors ${
+                                                            discountType === 'fixed'
+                                                                ? 'bg-[var(--blanc-ink-1)] text-white'
+                                                                : 'text-[var(--blanc-ink-3)] hover:text-[var(--blanc-ink-1)]'
+                                                        }`}
+                                                    >
+                                                        $
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setDiscountType('percentage')}
+                                                        className={`px-2.5 py-0.5 rounded-md text-sm transition-colors ${
+                                                            discountType === 'percentage'
+                                                                ? 'bg-[var(--blanc-ink-1)] text-white'
+                                                                : 'text-[var(--blanc-ink-3)] hover:text-[var(--blanc-ink-1)]'
+                                                        }`}
+                                                    >
+                                                        %
+                                                    </button>
+                                                </div>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    step="0.01"
+                                                    value={discountValue}
+                                                    onChange={event => setDiscountValue(event.target.value)}
+                                                    maxLength={6}
+                                                    className="w-24 h-8 rounded-xl border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3 text-right text-[15px] tabular-nums text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
+                                                />
+                                                <Button type="button" variant="ghost" size="sm" className="size-8 p-0 shrink-0" onClick={() => { setDiscountType(null); setDiscountValue('0'); }}>
+                                                    <Trash2 className="size-4" />
+                                                </Button>
+                                                <span className="font-mono text-red-600 ml-auto">-{money(discountAmount)}</span>
+                                            </div>
+                                            {discountError && <p className="text-xs text-red-600">{discountError}</p>}
+                                        </div>
+                                    ) : (
+                                        <button type="button" className="w-fit text-sm text-blue-600" onClick={() => { setDiscountType('fixed'); setDiscountValue('0'); }}>
+                                            Add Discount
+                                        </button>
+                                    )}
+                                    <div className="grid grid-cols-[1fr_auto] items-center gap-3">
+                                        <Label className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Tax rate</Label>
+                                        <input
+                                            className="w-24 h-9 rounded-xl border-[1.5px] border-[var(--blanc-line)] bg-transparent px-3 text-right text-[15px] tabular-nums text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-ink-2)]"
+                                            type="number"
+                                            min="0"
+                                            step="0.05"
+                                            value={taxRate}
+                                            onChange={event => setTaxRate(event.target.value)}
+                                            onBlur={() => {
+                                                const n = Number(taxRate);
+                                                if (Number.isFinite(n)) setTaxRate(n.toFixed(2));
+                                            }}
+                                        />
+                                    </div>
+                                    <div className="flex justify-between text-sm">
+                                        <span style={{ color: 'var(--blanc-ink-3)' }}>Tax</span>
+                                        <span className="font-mono" style={{ color: 'var(--blanc-ink-1)' }}>{money(taxAmount)}</span>
+                                    </div>
+                                    <div className="flex justify-between pt-2 text-base font-semibold" style={{ borderTop: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-1)' }}>
+                                        <span>Total</span>
+                                        <span className="font-mono">{money(total)}</span>
+                                    </div>
+                                </section>
+
+                                <Collapsible open={termsOpen} onOpenChange={setTermsOpen}>
+                                    <div className="rounded-xl border border-[var(--blanc-line)]" style={{ background: 'rgba(117,106,89,0.04)' }}>
+                                        <CollapsibleTrigger className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>
+                                            <ChevronDown className={`size-4 transition-transform ${termsOpen ? 'rotate-180' : ''}`} />
+                                            Terms & Warranty
+                                        </CollapsibleTrigger>
                                         <CollapsibleContent>
-                                            <div className="border-t border-[#d8e0ea] px-4 py-4 text-sm whitespace-pre-wrap text-[#4f6176]">{summary}</div>
+                                            <div className="px-4 py-4 text-sm whitespace-pre-wrap" style={{ color: 'var(--blanc-ink-2)' }}>{termsBody}</div>
                                         </CollapsibleContent>
                                     </div>
                                 </Collapsible>
-                            ) : (
-                                <div className="rounded-md border border-dashed border-[#c4cfdd] bg-[#f8fafc] px-4 py-5">
-                                    <p className="text-sm font-medium">Summary</p>
-                                    <p className="mt-1 text-sm text-[#5f7085]">Add make, model, issue, findings, needs, and cause when the estimate needs client context.</p>
-                                    <Button type="button" variant="outline" size="sm" className="mt-3" onClick={openSummaryDialog}>
-                                        <Plus className="mr-1 size-4" /> Add Summary
-                                    </Button>
-                                </div>
-                            )}
+                            </main>
 
-                            <section className="space-y-3">
-                                <div>
-                                    <p className="text-sm font-semibold">Items</p>
-                                    <p className="text-xs text-[#5f7085]">Title and unit price are required. Qty defaults to 1.</p>
-                                </div>
-
-                                <div className="flex flex-col divide-y divide-[#d8e0ea]">
-                                    {items.map(item => (
-                                        <div key={item.key} className="space-y-2 py-3 first:pt-0 last:pb-0">
-                                            <Input
-                                                placeholder="Item title"
-                                                value={item.name}
-                                                onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, name: e.target.value } : i))}
-                                                className="font-medium"
-                                            />
-                                            <Textarea
-                                                placeholder="Description (optional)"
-                                                value={item.description}
-                                                onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, description: e.target.value } : i))}
-                                                rows={2}
-                                                className="text-sm font-normal"
-                                            />
-                                            <div className="grid grid-cols-[80px_120px_1fr_auto_auto] items-center gap-3">
-                                                <div className="flex flex-col gap-0.5">
-                                                    <span className="text-[10px] uppercase tracking-wider text-[#5f7085]">Qty</span>
-                                                    <Input
-                                                        type="number"
-                                                        min="0"
-                                                        step="0.01"
-                                                        value={item.quantity}
-                                                        onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, quantity: e.target.value } : i))}
-                                                    />
-                                                </div>
-                                                <div className="flex flex-col gap-0.5">
-                                                    <span className="text-[10px] uppercase tracking-wider text-[#5f7085]">Unit price</span>
-                                                    <Input
-                                                        type="number"
-                                                        min="0"
-                                                        step="0.01"
-                                                        value={item.unit_price}
-                                                        onChange={e => setItems(prev => prev.map(i => i.key === item.key ? { ...i, unit_price: e.target.value } : i))}
-                                                    />
-                                                </div>
-                                                <label className="flex items-center gap-2 text-xs text-[#5f7085] cursor-pointer">
-                                                    <Checkbox
-                                                        checked={item.taxable}
-                                                        onCheckedChange={checked => setItems(prev => prev.map(i => i.key === item.key ? { ...i, taxable: !!checked } : i))}
-                                                    />
-                                                    Taxable
-                                                </label>
-                                                <p className="font-mono text-sm font-semibold text-right whitespace-nowrap">{money(amount(item))}</p>
-                                                <Button type="button" size="sm" variant="ghost" className="size-8 p-0 text-red-600 shrink-0" onClick={() => removeItem(item.key)} title="Remove item">
-                                                    <Trash2 className="size-4" />
-                                                </Button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-
-                                <ItemPresetSearchCombobox
-                                    onPickPreset={pickPreset}
-                                    onCreateNew={startCreateFromName}
-                                />
-                            </section>
-
-                            <section className="space-y-3 rounded-md border border-[#d8e0ea] bg-[#fbfcfe] p-4">
-                                <p className="text-sm font-semibold">Totals</p>
-                                <div className="flex justify-between text-sm">
-                                    <span className="text-[#5f7085]">Subtotal</span>
-                                    <span className="font-mono">{money(subtotal)}</span>
-                                </div>
-                                {discountType ? (
-                                    <div className="space-y-1">
-                                        <div className="flex items-center gap-2 text-sm">
-                                            <span className="text-[#5f7085]">Discount</span>
-                                            <div className="inline-flex rounded-[10px] border border-[#d8e0ea] p-0.5 bg-white shrink-0">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setDiscountType('fixed')}
-                                                    className={`px-2.5 py-0.5 rounded-md text-sm transition-colors ${
-                                                        discountType === 'fixed'
-                                                            ? 'bg-[#172033] text-white'
-                                                            : 'text-[#5f7085] hover:text-[#172033]'
-                                                    }`}
-                                                >
-                                                    $
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setDiscountType('percentage')}
-                                                    className={`px-2.5 py-0.5 rounded-md text-sm transition-colors ${
-                                                        discountType === 'percentage'
-                                                            ? 'bg-[#172033] text-white'
-                                                            : 'text-[#5f7085] hover:text-[#172033]'
-                                                    }`}
-                                                >
-                                                    %
-                                                </button>
-                                            </div>
-                                            <Input
-                                                type="number"
-                                                min="0"
-                                                step="0.01"
-                                                value={discountValue}
-                                                onChange={event => setDiscountValue(event.target.value)}
-                                                maxLength={6}
-                                                className="w-24 h-8 text-right tabular-nums"
-                                            />
-                                            <Button type="button" variant="ghost" size="sm" className="size-8 p-0 shrink-0" onClick={() => { setDiscountType(null); setDiscountValue('0'); }}>
-                                                <Trash2 className="size-4" />
-                                            </Button>
-                                            <span className="font-mono text-red-600 ml-auto">-{money(discountAmount)}</span>
-                                        </div>
-                                        {discountError && <p className="text-xs text-red-600">{discountError}</p>}
+                            <aside className="space-y-5">
+                                <section className="grid gap-3 rounded-xl border border-[var(--blanc-line)] p-4" style={{ background: 'rgba(117,106,89,0.04)' }}>
+                                    <p className="blanc-eyebrow">Document settings</p>
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Require signature</span>
+                                        <Checkbox checked={signatureRequired} onCheckedChange={checked => setSignatureRequired(!!checked)} />
                                     </div>
-                                ) : (
-                                    <button type="button" className="w-fit text-sm text-blue-600" onClick={() => { setDiscountType('fixed'); setDiscountValue('0'); }}>
-                                        Add Discount
-                                    </button>
-                                )}
-                                <div className="grid grid-cols-[1fr_auto] items-center gap-3">
-                                    <Label className="text-sm text-[#5f7085]">Tax rate</Label>
-                                    <Input
-                                        className="w-24 text-right tabular-nums"
-                                        type="number"
-                                        min="0"
-                                        step="0.05"
-                                        value={taxRate}
-                                        onChange={event => setTaxRate(event.target.value)}
-                                        onBlur={() => {
-                                            const n = Number(taxRate);
-                                            if (Number.isFinite(n)) setTaxRate(n.toFixed(2));
-                                        }}
-                                    />
-                                </div>
-                                <div className="flex justify-between text-sm">
-                                    <span className="text-[#5f7085]">Tax</span>
-                                    <span className="font-mono">{money(taxAmount)}</span>
-                                </div>
-                                <div className="flex justify-between border-t pt-2 text-base font-semibold">
-                                    <span>Total</span>
-                                    <span className="font-mono">{money(total)}</span>
-                                </div>
-                            </section>
-
-                            <Collapsible open={termsOpen} onOpenChange={setTermsOpen}>
-                                <div className="rounded-md border border-[#d8e0ea] bg-[#fbfcfe]">
-                                    <CollapsibleTrigger className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium">
-                                        <ChevronDown className={`size-4 transition-transform ${termsOpen ? 'rotate-180' : ''}`} />
-                                        Terms & Warranty
-                                    </CollapsibleTrigger>
-                                    <CollapsibleContent>
-                                        <div className="border-t border-[#d8e0ea] px-4 py-4 text-sm whitespace-pre-wrap text-[#4f6176]">{termsBody}</div>
-                                    </CollapsibleContent>
-                                </div>
-                            </Collapsible>
-                        </main>
-
-                        <aside className="space-y-5 border-t border-[#d8e0ea] bg-[#eef3f8] p-5 md:border-l md:border-t-0">
-                            <section className="grid gap-3 rounded-md border border-[#d8e0ea] bg-[#fbfcfe] p-4">
-                                <p className="text-sm font-semibold">Document settings</p>
-                                <div className="flex items-center justify-between">
-                                    <span className="text-sm text-[#5f7085]">Require signature</span>
-                                    <Checkbox checked={signatureRequired} onCheckedChange={checked => setSignatureRequired(!!checked)} />
-                                </div>
-                                <div className="flex items-center justify-between text-sm">
-                                    <span className="text-[#5f7085]">Deposit required</span>
-                                    <span className="font-medium">No</span>
-                                </div>
-                            </section>
-                        </aside>
-                    </div>
-
-                    <div className="shrink-0 border-t border-[#d8e0ea] bg-[#fbfcfe] px-5 py-3">
-                        <div className="flex flex-wrap items-center justify-end gap-2">
-                            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
-                            <Button type="button" variant="outline" onClick={() => setPreviewOpen(true)} disabled={!canSave}>
-                                Preview
-                            </Button>
-                            <Button type="button" onClick={handleSave} disabled={saving || !canSave || !!estimate?.archived_at}>
-                                {saving ? 'Saving...' : 'Save Estimate'}
-                            </Button>
+                                    <div className="flex items-center justify-between text-sm">
+                                        <span style={{ color: 'var(--blanc-ink-3)' }}>Deposit required</span>
+                                        <span className="font-medium" style={{ color: 'var(--blanc-ink-1)' }}>No</span>
+                                    </div>
+                                </section>
+                            </aside>
                         </div>
-                    </div>
-                </div>
-            </FloatingDetailPanel>
+                    </DialogBody>
+
+                    <DialogPanelFooter>
+                        <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
+                        <Button type="button" variant="outline" onClick={() => setPreviewOpen(true)} disabled={!canSave}>
+                            Preview
+                        </Button>
+                        <Button type="button" onClick={handleSave} disabled={saving || !canSave || !!estimate?.archived_at}>
+                            {saving ? 'Saving...' : 'Save Estimate'}
+                        </Button>
+                    </DialogPanelFooter>
+                </DialogContent>
+            </Dialog>
 
             <Dialog open={summaryDialogOpen} onOpenChange={setSummaryDialogOpen}>
                 <DialogContent variant="panel">
-                    <DialogHeader><DialogTitle>Summary</DialogTitle></DialogHeader>
-                    <Textarea value={summaryDraft} onChange={event => setSummaryDraft(event.target.value)} rows={10} placeholder="Make, model, serial, failure issue, findings, needs, cause..." />
-                    <DialogFooter>
-                        <Button type="button" variant="outline" onClick={() => setSummaryDialogOpen(false)}>Cancel</Button>
+                    <DialogPanelHeader>
+                        <DialogTitle
+                            className="text-[22px] font-semibold leading-tight"
+                            style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
+                        >
+                            Summary
+                        </DialogTitle>
+                        <DialogDescription className="sr-only">Edit the estimate summary</DialogDescription>
+                    </DialogPanelHeader>
+                    <DialogBody className="md:px-8 md:py-7">
+                        <div className="mx-auto w-full max-w-[740px]">
+                            <FloatingField
+                                textarea
+                                rows={10}
+                                id="estimate-summary"
+                                label="Make, model, serial, failure issue, findings, needs, cause…"
+                                value={summaryDraft}
+                                onChange={event => setSummaryDraft(event.target.value)}
+                            />
+                        </div>
+                    </DialogBody>
+                    <DialogPanelFooter>
+                        <Button type="button" variant="ghost" onClick={() => setSummaryDialogOpen(false)}>Cancel</Button>
                         <Button type="button" onClick={saveSummary}>Save Summary</Button>
-                    </DialogFooter>
+                    </DialogPanelFooter>
                 </DialogContent>
             </Dialog>
 
             <Dialog open={itemDialogOpen} onOpenChange={setItemDialogOpen}>
                 <DialogContent variant="panel">
-                    <DialogHeader><DialogTitle>{editingItemKey ? 'Edit custom item' : 'Add custom item'}</DialogTitle></DialogHeader>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
-                        <div className="sm:col-span-2">
-                            <Label>Title <span className="text-red-600">*</span></Label>
-                            <Input value={itemDraft.name} onChange={event => setItemDraft(prev => ({ ...prev, name: event.target.value }))} autoFocus />
+                    <DialogPanelHeader>
+                        <DialogTitle
+                            className="text-[22px] font-semibold leading-tight"
+                            style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
+                        >
+                            {editingItemKey ? 'Edit custom item' : 'Add custom item'}
+                        </DialogTitle>
+                        <DialogDescription className="sr-only">Define a custom line item</DialogDescription>
+                    </DialogPanelHeader>
+                    <DialogBody className="md:px-8 md:py-7">
+                        <div className="mx-auto w-full max-w-[740px] grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                            <FloatingField
+                                containerClassName="sm:col-span-2"
+                                id="item-title"
+                                label="Title"
+                                value={itemDraft.name}
+                                onChange={event => setItemDraft(prev => ({ ...prev, name: event.target.value }))}
+                            />
+                            <FloatingField
+                                containerClassName="sm:col-span-2"
+                                textarea
+                                rows={4}
+                                id="item-description"
+                                label="Description"
+                                value={itemDraft.description}
+                                onChange={event => setItemDraft(prev => ({ ...prev, description: event.target.value }))}
+                            />
+                            <FloatingField
+                                id="item-qty"
+                                label="Qty"
+                                type="number"
+                                inputMode="decimal"
+                                value={itemDraft.quantity}
+                                onChange={event => setItemDraft(prev => ({ ...prev, quantity: event.target.value }))}
+                            />
+                            <FloatingField
+                                id="item-unit-price"
+                                label="Unit price"
+                                type="number"
+                                inputMode="decimal"
+                                value={itemDraft.unit_price}
+                                onChange={event => setItemDraft(prev => ({ ...prev, unit_price: event.target.value }))}
+                            />
+                            <label className="sm:col-span-2 flex items-center gap-2 text-sm cursor-pointer" style={{ color: 'var(--blanc-ink-2)' }}>
+                                <Checkbox checked={itemDraft.taxable} onCheckedChange={checked => setItemDraft(prev => ({ ...prev, taxable: !!checked }))} />
+                                Service is taxable
+                            </label>
                         </div>
-                        <div className="sm:col-span-2">
-                            <Label>Description</Label>
-                            <Textarea value={itemDraft.description} onChange={event => setItemDraft(prev => ({ ...prev, description: event.target.value }))} rows={4} />
-                        </div>
-                        <div>
-                            <Label>Qty</Label>
-                            <Input type="number" min="0.01" step="any" value={itemDraft.quantity} onChange={event => setItemDraft(prev => ({ ...prev, quantity: event.target.value }))} />
-                        </div>
-                        <div>
-                            <Label>Unit price <span className="text-red-600">*</span></Label>
-                            <Input type="number" min="0" step="0.01" value={itemDraft.unit_price} onChange={event => setItemDraft(prev => ({ ...prev, unit_price: event.target.value }))} />
-                        </div>
-                        <div className="sm:col-span-2 flex items-center gap-2">
-                            <Checkbox checked={itemDraft.taxable} onCheckedChange={checked => setItemDraft(prev => ({ ...prev, taxable: !!checked }))} />
-                            <Label>Service is taxable</Label>
-                        </div>
-                    </div>
-                    <DialogFooter>
-                        <Button type="button" variant="outline" onClick={() => setItemDialogOpen(false)}>Cancel</Button>
+                    </DialogBody>
+                    <DialogPanelFooter>
+                        <Button type="button" variant="ghost" onClick={() => setItemDialogOpen(false)}>Cancel</Button>
                         <Button type="button" onClick={saveItem} disabled={!itemDraft.name.trim() || Number(itemDraft.quantity) <= 0 || Number(itemDraft.unit_price) < 0}>
                             Save Item
                         </Button>
-                    </DialogFooter>
+                    </DialogPanelFooter>
                 </DialogContent>
             </Dialog>
 
