@@ -493,7 +493,7 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
             </FloatingDetailPanel>
 
             <Dialog open={summaryDialogOpen} onOpenChange={setSummaryDialogOpen}>
-                <DialogContent size="full">
+                <DialogContent variant="panel">
                     <DialogHeader><DialogTitle>Summary</DialogTitle></DialogHeader>
                     <Textarea value={summaryDraft} onChange={event => setSummaryDraft(event.target.value)} rows={10} placeholder="Make, model, serial, failure issue, findings, needs, cause..." />
                     <DialogFooter>
@@ -504,7 +504,7 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
             </Dialog>
 
             <Dialog open={itemDialogOpen} onOpenChange={setItemDialogOpen}>
-                <DialogContent size="full">
+                <DialogContent variant="panel">
                     <DialogHeader><DialogTitle>{editingItemKey ? 'Edit custom item' : 'Add custom item'}</DialogTitle></DialogHeader>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
                         <div className="sm:col-span-2">

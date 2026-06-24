@@ -108,7 +108,7 @@ export const DispatchSettingsDialog: React.FC<DispatchSettingsDialogProps> = ({
 
     return (
         <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
-            <DialogContent size="wide">
+            <DialogContent variant="panel">
                 <DialogHeader>
                     <DialogTitle>Dispatch Settings</DialogTitle>
                 </DialogHeader>

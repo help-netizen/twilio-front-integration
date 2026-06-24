@@ -166,7 +166,7 @@ export function NewJobDialog({ open, onClose }: NewJobDialogProps) {
     return (
         <>
             <Dialog open={open} onOpenChange={(o) => { if (!o) close(); }}>
-                <DialogContent size="wide">
+                <DialogContent variant="panel">
                     <DialogHeader>
                         <DialogTitle>New Job</DialogTitle>
                         <DialogDescription className="sr-only">Create a job directly</DialogDescription>

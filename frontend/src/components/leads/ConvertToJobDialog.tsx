@@ -12,7 +12,7 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent size="full" className="flex flex-col">
+            <DialogContent variant="panel" className="flex flex-col">
                 <DialogHeader><DialogTitle>Convert to Job — {lead?.FirstName} {lead?.LastName}</DialogTitle></DialogHeader>
                 <div className="flex-1">
                     <StepIndicator step={h.step} />

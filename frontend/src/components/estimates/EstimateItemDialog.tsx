@@ -42,7 +42,7 @@ export function EstimateItemDialog({ open, onOpenChange, isEdit, initial, onSave
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent size="wide" className="z-[70]">
+            <DialogContent variant="panel" className="z-[70]">
                 <DialogHeader>
                     <DialogTitle>{isEdit ? 'Edit item' : 'Add custom item'}</DialogTitle>
                 </DialogHeader>

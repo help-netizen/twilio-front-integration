@@ -69,7 +69,7 @@ export default function ManualCardDialog({ open, onOpenChange, invoiceId, onSucc
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent size="wide">
+            <DialogContent variant="panel">
                 <DialogHeader>
                     <DialogTitle>Enter card manually</DialogTitle>
                     <DialogDescription>

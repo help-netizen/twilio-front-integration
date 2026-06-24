@@ -74,7 +74,7 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent size="wide">
+            <DialogContent variant="panel">
                 <DialogHeader>
                     <DialogTitle>Edit Contact</DialogTitle>
                     <DialogDescription>

@@ -57,7 +57,7 @@ export function BootstrapAdminDialog({ companyId, companyName, open, onOpenChang
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent size="wide">
+            <DialogContent variant="panel">
                 <form onSubmit={handleSubmit}>
                     <DialogHeader>
                         <DialogTitle>Bootstrap First Admin</DialogTitle>

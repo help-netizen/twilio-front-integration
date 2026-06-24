@@ -63,7 +63,7 @@ export function RecordPaymentDialog({ open, onOpenChange, onSave, defaultInvoice
 
     return (
         <Dialog open={open} onOpenChange={v => { onOpenChange(v); if (!v) resetForm(); }}>
-            <DialogContent size="wide">
+            <DialogContent variant="panel">
                 <DialogHeader>
                     <DialogTitle>Record Payment</DialogTitle>
                 </DialogHeader>

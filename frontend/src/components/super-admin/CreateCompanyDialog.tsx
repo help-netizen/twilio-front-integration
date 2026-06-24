@@ -68,7 +68,7 @@ export function CreateCompanyDialog({ open, onOpenChange, onSuccess }: CreateCom
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent size="wide">
+            <DialogContent variant="panel">
                 <form onSubmit={handleSubmit}>
                     <DialogHeader>
                         <DialogTitle>Create Company</DialogTitle>

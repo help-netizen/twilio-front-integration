@@ -47,7 +47,7 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent size="wide">
+            <DialogContent variant="panel">
                 <DialogHeader><DialogTitle>Edit Lead - {lead.SerialId}</DialogTitle><DialogDescription>Make changes to the lead details below.</DialogDescription></DialogHeader>
                 <form onSubmit={handleSubmit} className="space-y-6">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3"><h3 className="sm:col-span-2 font-medium">Contact Information</h3>

@@ -52,7 +52,7 @@ export function RefundDialog({ open, onOpenChange, transaction, onRefund }: Prop
 
     return (
         <Dialog open={open} onOpenChange={v => { onOpenChange(v); if (!v) { setAmount(transaction.amount); setReason(''); } }}>
-            <DialogContent size="wide">
+            <DialogContent variant="panel">
                 <DialogHeader>
                     <DialogTitle>Refund Transaction</DialogTitle>
                 </DialogHeader>

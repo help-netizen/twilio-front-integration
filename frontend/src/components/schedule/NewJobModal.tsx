@@ -68,7 +68,7 @@ export function NewJobModal({ open, startAt, endAt, timezone, providerId, provid
 
     return (
         <Dialog open={open} onOpenChange={(o) => { if (!o) close(); }}>
-            <DialogContent size="wide">
+            <DialogContent variant="panel">
                 <DialogHeader>
                     <DialogTitle>New job</DialogTitle>
                     <DialogDescription>

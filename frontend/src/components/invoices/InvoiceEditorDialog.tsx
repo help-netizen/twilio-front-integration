@@ -442,7 +442,7 @@ export function InvoiceEditorDialog({
 
             {/* Summary edit dialog */}
             <Dialog open={summaryDialogOpen} onOpenChange={setSummaryDialogOpen}>
-                <DialogContent size="full">
+                <DialogContent variant="panel">
                     <DialogHeader><DialogTitle>Summary</DialogTitle></DialogHeader>
                     <Textarea value={summaryDraft} onChange={e => setSummaryDraft(e.target.value)} rows={10} placeholder="Notes for the customer..." />
                     <DialogFooter>
@@ -454,7 +454,7 @@ export function InvoiceEditorDialog({
 
             {/* Item create/edit dialog (used by combobox "Create new" path) */}
             <Dialog open={itemDialogOpen} onOpenChange={setItemDialogOpen}>
-                <DialogContent size="full">
+                <DialogContent variant="panel">
                     <DialogHeader><DialogTitle>{editingItemKey ? 'Edit custom item' : 'Add custom item'}</DialogTitle></DialogHeader>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
                         <div className="sm:col-span-2">

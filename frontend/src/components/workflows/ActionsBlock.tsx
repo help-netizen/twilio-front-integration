@@ -208,7 +208,7 @@ export function ActionsBlock({ machineKey, entityId, currentState, onTransitionC
 
             {/* Override dialog */}
             <Dialog open={overrideOpen} onOpenChange={(open) => { if (!open) { setOverrideOpen(false); setOverrideTarget(''); setOverrideReason(''); } }}>
-                <DialogContent size="wide">
+                <DialogContent variant="panel">
                     <DialogHeader>
                         <DialogTitle>Override Status</DialogTitle>
                         <DialogDescription className="flex items-start gap-2 pt-1">

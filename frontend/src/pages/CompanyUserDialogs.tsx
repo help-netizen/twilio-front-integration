@@ -90,7 +90,7 @@ interface CreateDialogProps { open: boolean; setOpen: (v: boolean) => void; crea
 export function CreateUserDialog({ open, setOpen, createForm, setCreateForm, creating, tempPassword, setTempPassword, handleCreate }: CreateDialogProps) {
     return (
         <Dialog open={open} onOpenChange={o => { if (!o) setTempPassword(null); setOpen(o); }}>
-            <DialogContent size="wide">
+            <DialogContent variant="panel">
                 <DialogHeader><DialogTitle>{tempPassword ? 'User Created' : 'Add New User'}</DialogTitle><DialogDescription>{tempPassword ? 'Share the temporary password with the user. It will only be shown once.' : 'The user will receive a temporary password and must change it on first login.'}</DialogDescription></DialogHeader>
                 {tempPassword ? (
                     <div className="space-y-4 py-2">
@@ -138,7 +138,7 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
 
     return (
         <Dialog open={open} onOpenChange={setOpen}>
-            <DialogContent size="wide">
+            <DialogContent variant="panel">
                 <DialogHeader>
                     <DialogTitle>Edit User Profile</DialogTitle>
                     <DialogDescription>
