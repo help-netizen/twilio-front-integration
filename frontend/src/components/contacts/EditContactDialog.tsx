@@ -74,7 +74,7 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+            <DialogContent size="wide">
                 <DialogHeader>
                     <DialogTitle>Edit Contact</DialogTitle>
                     <DialogDescription>
@@ -84,31 +84,29 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
 
                 <form onSubmit={handleSubmit} className="space-y-5">
                     {/* Client Details */}
-                    <div className="space-y-3">
-                        <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
+                        <h3 className="sm:col-span-2 text-sm font-semibold text-gray-500 uppercase tracking-wider">
                             Client Details
                         </h3>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div>
-                                <Label htmlFor="ec-first-name" className="mb-1.5">First Name</Label>
-                                <Input
-                                    id="ec-first-name"
-                                    value={formData.first_name}
-                                    onChange={(e) => setFormData({ ...formData, first_name: e.target.value })}
-                                    placeholder="First Name"
-                                />
-                            </div>
-                            <div>
-                                <Label htmlFor="ec-last-name" className="mb-1.5">Last Name</Label>
-                                <Input
-                                    id="ec-last-name"
-                                    value={formData.last_name}
-                                    onChange={(e) => setFormData({ ...formData, last_name: e.target.value })}
-                                    placeholder="Last Name"
-                                />
-                            </div>
+                        <div>
+                            <Label htmlFor="ec-first-name" className="mb-1.5">First Name</Label>
+                            <Input
+                                id="ec-first-name"
+                                value={formData.first_name}
+                                onChange={(e) => setFormData({ ...formData, first_name: e.target.value })}
+                                placeholder="First Name"
+                            />
                         </div>
                         <div>
+                            <Label htmlFor="ec-last-name" className="mb-1.5">Last Name</Label>
+                            <Input
+                                id="ec-last-name"
+                                value={formData.last_name}
+                                onChange={(e) => setFormData({ ...formData, last_name: e.target.value })}
+                                placeholder="Last Name"
+                            />
+                        </div>
+                        <div className="sm:col-span-2">
                             <Label htmlFor="ec-company" className="mb-1.5">Company Name</Label>
                             <Input
                                 id="ec-company"
@@ -120,8 +118,8 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
                     </div>
 
                     {/* Contact Information */}
-                    <div className="space-y-3">
-                        <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
+                        <h3 className="sm:col-span-2 text-sm font-semibold text-gray-500 uppercase tracking-wider">
                             Contact Information
                         </h3>
                         <div>
@@ -143,8 +141,18 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
                                 onChange={(formatted) => setFormData({ ...formData, phone_e164: formatted })}
                             />
                         </div>
+                        <div>
+                            <Label htmlFor="ec-email" className="mb-1.5">Email</Label>
+                            <Input
+                                id="ec-email"
+                                type="email"
+                                value={formData.email}
+                                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                                placeholder="email@example.com"
+                            />
+                        </div>
                         {showSecondary && (
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <>
                                 <div>
                                     <Label htmlFor="ec-secondary-phone" className="mb-1.5">Secondary Phone</Label>
                                     <PhoneInput
@@ -162,18 +170,8 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
                                         placeholder="e.g. Tenant, Wife"
                                     />
                                 </div>
-                            </div>
+                            </>
                         )}
-                        <div>
-                            <Label htmlFor="ec-email" className="mb-1.5">Email</Label>
-                            <Input
-                                id="ec-email"
-                                type="email"
-                                value={formData.email}
-                                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                                placeholder="email@example.com"
-                            />
-                        </div>
                     </div>
 
                     {/* Notes */}

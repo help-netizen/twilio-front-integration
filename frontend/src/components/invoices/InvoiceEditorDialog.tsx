@@ -442,7 +442,7 @@ export function InvoiceEditorDialog({
 
             {/* Summary edit dialog */}
             <Dialog open={summaryDialogOpen} onOpenChange={setSummaryDialogOpen}>
-                <DialogContent className="max-w-xl">
+                <DialogContent size="full">
                     <DialogHeader><DialogTitle>Summary</DialogTitle></DialogHeader>
                     <Textarea value={summaryDraft} onChange={e => setSummaryDraft(e.target.value)} rows={10} placeholder="Notes for the customer..." />
                     <DialogFooter>
@@ -454,28 +454,26 @@ export function InvoiceEditorDialog({
 
             {/* Item create/edit dialog (used by combobox "Create new" path) */}
             <Dialog open={itemDialogOpen} onOpenChange={setItemDialogOpen}>
-                <DialogContent className="max-w-lg">
+                <DialogContent size="full">
                     <DialogHeader><DialogTitle>{editingItemKey ? 'Edit custom item' : 'Add custom item'}</DialogTitle></DialogHeader>
-                    <div className="space-y-4">
-                        <div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
+                        <div className="sm:col-span-2">
                             <Label>Title <span className="text-red-600">*</span></Label>
                             <Input value={itemDraft.name} onChange={e => setItemDraft(prev => ({ ...prev, name: e.target.value }))} autoFocus />
                         </div>
-                        <div>
+                        <div className="sm:col-span-2">
                             <Label>Description</Label>
                             <Textarea value={itemDraft.description} onChange={e => setItemDraft(prev => ({ ...prev, description: e.target.value }))} rows={4} />
                         </div>
-                        <div className="grid grid-cols-2 gap-3">
-                            <div>
-                                <Label>Qty</Label>
-                                <Input type="number" min="0.01" step="any" value={itemDraft.quantity} onChange={e => setItemDraft(prev => ({ ...prev, quantity: e.target.value }))} />
-                            </div>
-                            <div>
-                                <Label>Unit price <span className="text-red-600">*</span></Label>
-                                <Input type="number" min="0" step="0.01" value={itemDraft.unit_price} onChange={e => setItemDraft(prev => ({ ...prev, unit_price: e.target.value }))} />
-                            </div>
+                        <div>
+                            <Label>Qty</Label>
+                            <Input type="number" min="0.01" step="any" value={itemDraft.quantity} onChange={e => setItemDraft(prev => ({ ...prev, quantity: e.target.value }))} />
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div>
+                            <Label>Unit price <span className="text-red-600">*</span></Label>
+                            <Input type="number" min="0" step="0.01" value={itemDraft.unit_price} onChange={e => setItemDraft(prev => ({ ...prev, unit_price: e.target.value }))} />
+                        </div>
+                        <div className="sm:col-span-2 flex items-center gap-2">
                             <Checkbox checked={itemDraft.taxable} onCheckedChange={checked => setItemDraft(prev => ({ ...prev, taxable: !!checked }))} />
                             <Label>Service is taxable</Label>
                         </div>

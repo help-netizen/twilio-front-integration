@@ -52,14 +52,14 @@ export function RefundDialog({ open, onOpenChange, transaction, onRefund }: Prop
 
     return (
         <Dialog open={open} onOpenChange={v => { onOpenChange(v); if (!v) { setAmount(transaction.amount); setReason(''); } }}>
-            <DialogContent className="max-w-md">
+            <DialogContent size="wide">
                 <DialogHeader>
                     <DialogTitle>Refund Transaction</DialogTitle>
                 </DialogHeader>
 
-                <div className="space-y-4 py-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 py-2">
                     {/* Original info */}
-                    <div className="bg-muted/50 rounded p-3 space-y-1">
+                    <div className="sm:col-span-2 bg-muted/50 rounded p-3 space-y-1">
                         <div className="flex justify-between text-sm">
                             <span className="text-muted-foreground">Transaction</span>
                             <span className="font-mono">#{transaction.id}</span>
@@ -91,7 +91,7 @@ export function RefundDialog({ open, onOpenChange, transaction, onRefund }: Prop
                     </div>
 
                     {/* Reason */}
-                    <div>
+                    <div className="sm:col-span-2">
                         <Label className="text-xs">Reason (optional)</Label>
                         <Textarea
                             placeholder="Reason for refund..."

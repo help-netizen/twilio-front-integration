@@ -68,7 +68,7 @@ export function CreateCompanyDialog({ open, onOpenChange, onSuccess }: CreateCom
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[425px]">
+            <DialogContent size="wide">
                 <form onSubmit={handleSubmit}>
                     <DialogHeader>
                         <DialogTitle>Create Company</DialogTitle>
@@ -76,7 +76,7 @@ export function CreateCompanyDialog({ open, onOpenChange, onSuccess }: CreateCom
                             Create a new tenant company and bootstrap its first administrator.
                         </DialogDescription>
                     </DialogHeader>
-                    <div className="grid gap-4 py-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 py-4">
                         <div className="grid gap-2">
                             <Label htmlFor="name">Company Name</Label>
                             <Input id="name" name="name" value={formData.name} onChange={handleChange} required placeholder="e.g. Acme Corp" />
@@ -85,17 +85,15 @@ export function CreateCompanyDialog({ open, onOpenChange, onSuccess }: CreateCom
                             <Label htmlFor="slug">URL Slug</Label>
                             <Input id="slug" name="slug" value={formData.slug} onChange={handleChange} required placeholder="acme-corp" />
                         </div>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="grid gap-2">
-                                <Label htmlFor="timezone">Timezone</Label>
-                                <Input id="timezone" name="timezone" value={formData.timezone} onChange={handleChange} required />
-                            </div>
-                            <div className="grid gap-2">
-                                <Label htmlFor="locale">Locale</Label>
-                                <Input id="locale" name="locale" value={formData.locale} onChange={handleChange} required />
-                            </div>
+                        <div className="grid gap-2">
+                            <Label htmlFor="timezone">Timezone</Label>
+                            <Input id="timezone" name="timezone" value={formData.timezone} onChange={handleChange} required />
                         </div>
                         <div className="grid gap-2">
+                            <Label htmlFor="locale">Locale</Label>
+                            <Input id="locale" name="locale" value={formData.locale} onChange={handleChange} required />
+                        </div>
+                        <div className="grid gap-2 sm:col-span-2">
                             <Label htmlFor="admin_email">Admin Email</Label>
                             <Input id="admin_email" name="admin_email" type="email" value={formData.admin_email} onChange={handleChange} required placeholder="admin@company.com" />
                             <p className="text-xs text-muted-foreground">First admin user will be created with this email.</p>

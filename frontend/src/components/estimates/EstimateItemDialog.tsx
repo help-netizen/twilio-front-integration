@@ -42,12 +42,12 @@ export function EstimateItemDialog({ open, onOpenChange, isEdit, initial, onSave
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-lg z-[70]">
+            <DialogContent size="wide" className="z-[70]">
                 <DialogHeader>
                     <DialogTitle>{isEdit ? 'Edit item' : 'Add custom item'}</DialogTitle>
                 </DialogHeader>
-                <div className="space-y-4">
-                    <div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
+                    <div className="sm:col-span-2">
                         <Label>Title <span className="text-red-600">*</span></Label>
                         <Input
                             value={draft.name}
@@ -55,7 +55,7 @@ export function EstimateItemDialog({ open, onOpenChange, isEdit, initial, onSave
                             autoFocus
                         />
                     </div>
-                    <div>
+                    <div className="sm:col-span-2">
                         <Label>Description</Label>
                         <Textarea
                             value={draft.description}
@@ -64,29 +64,27 @@ export function EstimateItemDialog({ open, onOpenChange, isEdit, initial, onSave
                             className="font-normal"
                         />
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
-                        <div>
-                            <Label>Qty</Label>
-                            <Input
-                                type="number"
-                                min="0.01"
-                                step="any"
-                                value={draft.quantity}
-                                onChange={e => setDraft(prev => ({ ...prev, quantity: e.target.value }))}
-                            />
-                        </div>
-                        <div>
-                            <Label>Unit price <span className="text-red-600">*</span></Label>
-                            <Input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                value={draft.unit_price}
-                                onChange={e => setDraft(prev => ({ ...prev, unit_price: e.target.value }))}
-                            />
-                        </div>
+                    <div>
+                        <Label>Qty</Label>
+                        <Input
+                            type="number"
+                            min="0.01"
+                            step="any"
+                            value={draft.quantity}
+                            onChange={e => setDraft(prev => ({ ...prev, quantity: e.target.value }))}
+                        />
                     </div>
-                    <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <div>
+                        <Label>Unit price <span className="text-red-600">*</span></Label>
+                        <Input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={draft.unit_price}
+                            onChange={e => setDraft(prev => ({ ...prev, unit_price: e.target.value }))}
+                        />
+                    </div>
+                    <label className="sm:col-span-2 flex items-center gap-2 text-sm cursor-pointer">
                         <Checkbox
                             checked={draft.taxable}
                             onCheckedChange={checked => setDraft(prev => ({ ...prev, taxable: !!checked }))}

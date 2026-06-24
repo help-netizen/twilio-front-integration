@@ -63,12 +63,12 @@ export function RecordPaymentDialog({ open, onOpenChange, onSave, defaultInvoice
 
     return (
         <Dialog open={open} onOpenChange={v => { onOpenChange(v); if (!v) resetForm(); }}>
-            <DialogContent className="max-w-md">
+            <DialogContent size="wide">
                 <DialogHeader>
                     <DialogTitle>Record Payment</DialogTitle>
                 </DialogHeader>
 
-                <div className="space-y-4 py-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 py-2">
                     {/* Amount */}
                     <div>
                         <Label className="text-xs">Amount *</Label>
@@ -122,7 +122,7 @@ export function RecordPaymentDialog({ open, onOpenChange, onSave, defaultInvoice
                     </div>
 
                     {/* Reference Number */}
-                    <div>
+                    <div className="sm:col-span-2">
                         <Label className="text-xs">Reference Number (optional)</Label>
                         <Input
                             placeholder="Check #, confirmation code, etc."
@@ -132,7 +132,7 @@ export function RecordPaymentDialog({ open, onOpenChange, onSave, defaultInvoice
                     </div>
 
                     {/* Memo */}
-                    <div>
+                    <div className="sm:col-span-2">
                         <Label className="text-xs">Memo / Notes (optional)</Label>
                         <Textarea
                             placeholder="Add notes about this payment..."

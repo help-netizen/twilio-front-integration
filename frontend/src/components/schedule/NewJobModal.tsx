@@ -68,7 +68,7 @@ export function NewJobModal({ open, startAt, endAt, timezone, providerId, provid
 
     return (
         <Dialog open={open} onOpenChange={(o) => { if (!o) close(); }}>
-            <DialogContent className="max-w-md">
+            <DialogContent size="wide">
                 <DialogHeader>
                     <DialogTitle>New job</DialogTitle>
                     <DialogDescription>
@@ -76,8 +76,8 @@ export function NewJobModal({ open, startAt, endAt, timezone, providerId, provid
                     </DialogDescription>
                 </DialogHeader>
 
-                <div className="space-y-3 py-1">
-                    <div className="space-y-1.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 py-1">
+                    <div className="space-y-1.5 sm:col-span-2">
                         <Label htmlFor="njm-title" className="text-sm font-medium">Title</Label>
                         <Input
                             id="njm-title"
@@ -88,13 +88,15 @@ export function NewJobModal({ open, startAt, endAt, timezone, providerId, provid
                             onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
                         />
                     </div>
-                    <AddressAutocomplete
-                        header={<Label className="text-sm font-medium">Address</Label>}
-                        idPrefix="njm"
-                        defaultUseDetails
-                        value={addr}
-                        onChange={setAddr}
-                    />
+                    <div className="sm:col-span-2">
+                        <AddressAutocomplete
+                            header={<Label className="text-sm font-medium">Address</Label>}
+                            idPrefix="njm"
+                            defaultUseDetails
+                            value={addr}
+                            onChange={setAddr}
+                        />
+                    </div>
                 </div>
 
                 <DialogFooter>

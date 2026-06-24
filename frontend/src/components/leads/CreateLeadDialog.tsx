@@ -91,7 +91,7 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
     return (
         <>
             <Dialog open={open} onOpenChange={onOpenChange}>
-                <DialogContent className="cld-dialog max-w-[560px] max-h-[88vh] p-0 overflow-hidden flex flex-col">
+                <DialogContent size="wide" className="cld-dialog max-h-[88vh] p-0 overflow-hidden flex flex-col">
                     {/* ── Header ── */}
                     <DialogHeader className="cld-header">
                         <DialogTitle className="cld-header__title">New Lead</DialogTitle>

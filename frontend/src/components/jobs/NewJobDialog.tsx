@@ -166,13 +166,13 @@ export function NewJobDialog({ open, onClose }: NewJobDialogProps) {
     return (
         <>
             <Dialog open={open} onOpenChange={(o) => { if (!o) close(); }}>
-                <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+                <DialogContent size="wide">
                     <DialogHeader>
                         <DialogTitle>New Job</DialogTitle>
                         <DialogDescription className="sr-only">Create a job directly</DialogDescription>
                     </DialogHeader>
 
-                    <div className="space-y-5 py-1">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 py-1">
                         {/* ── Contact ── */}
                         <section className="space-y-2">
                             <div className="blanc-eyebrow">Contact</div>
@@ -244,7 +244,7 @@ export function NewJobDialog({ open, onClose }: NewJobDialogProps) {
                         </section>
 
                         {/* ── Time & technician ── */}
-                        <section className="space-y-2">
+                        <section className="space-y-2 sm:col-span-2">
                             <div className="blanc-eyebrow">Time & technician</div>
                             {slot ? (
                                 <button
@@ -264,7 +264,7 @@ export function NewJobDialog({ open, onClose }: NewJobDialogProps) {
                         </section>
 
                         {/* ── Work ── */}
-                        <section className="space-y-2">
+                        <section className="space-y-2 sm:col-span-2">
                             <div className="blanc-eyebrow">Work</div>
                             <div className="space-y-1.5">
                                 <Label htmlFor="njd-type" className="text-sm font-medium">Job type</Label>

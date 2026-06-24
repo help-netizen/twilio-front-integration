@@ -208,7 +208,7 @@ export function ActionsBlock({ machineKey, entityId, currentState, onTransitionC
 
             {/* Override dialog */}
             <Dialog open={overrideOpen} onOpenChange={(open) => { if (!open) { setOverrideOpen(false); setOverrideTarget(''); setOverrideReason(''); } }}>
-                <DialogContent className="sm:max-w-md">
+                <DialogContent size="wide">
                     <DialogHeader>
                         <DialogTitle>Override Status</DialogTitle>
                         <DialogDescription className="flex items-start gap-2 pt-1">
@@ -217,7 +217,7 @@ export function ActionsBlock({ machineKey, entityId, currentState, onTransitionC
                         </DialogDescription>
                     </DialogHeader>
 
-                    <div className="space-y-3 py-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 py-2">
                         <div className="space-y-1.5">
                             <label className="blanc-eyebrow">Target status</label>
                             <Select value={overrideTarget} onValueChange={setOverrideTarget}>
@@ -234,7 +234,7 @@ export function ActionsBlock({ machineKey, entityId, currentState, onTransitionC
                             </Select>
                         </div>
 
-                        <div className="space-y-1.5">
+                        <div className="space-y-1.5 sm:col-span-2">
                             <label className="blanc-eyebrow">Reason for override</label>
                             <textarea
                                 value={overrideReason}

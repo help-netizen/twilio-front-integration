@@ -57,7 +57,7 @@ export function BootstrapAdminDialog({ companyId, companyName, open, onOpenChang
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="sm:max-w-[425px]">
+            <DialogContent size="wide">
                 <form onSubmit={handleSubmit}>
                     <DialogHeader>
                         <DialogTitle>Bootstrap First Admin</DialogTitle>
@@ -65,20 +65,18 @@ export function BootstrapAdminDialog({ companyId, companyName, open, onOpenChang
                             Invite the first user for <strong>{companyName}</strong>. They will receive an email to set their password and will be assigned the <code>tenant_admin</code> role.
                         </DialogDescription>
                     </DialogHeader>
-                    <div className="grid gap-4 py-4">
-                        <div className="grid gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 py-4">
+                        <div className="grid gap-2 sm:col-span-2">
                             <Label htmlFor="email">Email Address</Label>
                             <Input id="email" name="email" type="email" value={formData.email} onChange={handleChange} required placeholder="admin@acme.com" />
                         </div>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="grid gap-2">
-                                <Label htmlFor="first_name">First Name</Label>
-                                <Input id="first_name" name="first_name" value={formData.first_name} onChange={handleChange} required />
-                            </div>
-                            <div className="grid gap-2">
-                                <Label htmlFor="last_name">Last Name</Label>
-                                <Input id="last_name" name="last_name" value={formData.last_name} onChange={handleChange} required />
-                            </div>
+                        <div className="grid gap-2">
+                            <Label htmlFor="first_name">First Name</Label>
+                            <Input id="first_name" name="first_name" value={formData.first_name} onChange={handleChange} required />
+                        </div>
+                        <div className="grid gap-2">
+                            <Label htmlFor="last_name">Last Name</Label>
+                            <Input id="last_name" name="last_name" value={formData.last_name} onChange={handleChange} required />
                         </div>
                     </div>
                     <DialogFooter>

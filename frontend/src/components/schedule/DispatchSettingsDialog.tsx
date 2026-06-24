@@ -108,12 +108,12 @@ export const DispatchSettingsDialog: React.FC<DispatchSettingsDialogProps> = ({
 
     return (
         <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
-            <DialogContent className="sm:max-w-md">
+            <DialogContent size="wide">
                 <DialogHeader>
                     <DialogTitle>Dispatch Settings</DialogTitle>
                 </DialogHeader>
 
-                <div className="space-y-4 py-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 py-2">
                     {/* Timezone */}
                     <div className="space-y-1.5">
                         <Label className="text-sm font-medium">Timezone</Label>
@@ -144,7 +144,7 @@ export const DispatchSettingsDialog: React.FC<DispatchSettingsDialogProps> = ({
                     </div>
 
                     {/* Work Hours */}
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-2 gap-3 sm:col-span-2">
                         <div className="space-y-1.5">
                             <Label className="text-sm font-medium">Work Start</Label>
                             <Input
@@ -166,7 +166,7 @@ export const DispatchSettingsDialog: React.FC<DispatchSettingsDialogProps> = ({
                     </div>
 
                     {/* Work Days */}
-                    <div className="space-y-1.5">
+                    <div className="space-y-1.5 sm:col-span-2">
                         <Label className="text-sm font-medium">Work Days</Label>
                         <div className="flex gap-1">
                             {DAY_LABELS.map(day => (
@@ -205,7 +205,7 @@ export const DispatchSettingsDialog: React.FC<DispatchSettingsDialogProps> = ({
 
                     {/* Validation error */}
                     {validationError && (
-                        <p className="text-sm text-red-600">{validationError}</p>
+                        <p className="text-sm text-red-600 sm:col-span-2">{validationError}</p>
                     )}
                 </div>
 

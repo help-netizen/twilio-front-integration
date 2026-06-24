@@ -24,10 +24,23 @@ const DialogOverlay = React.forwardRef<
 ))
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 
+// MODAL-REDESIGN-001 — desktop width by content type. Pick `size` instead of
+// hand-tuning `max-w-*` per dialog: `sm` for confirmations, `wide` for forms
+// (≥2 fields — lay the body out in 2 columns), `full` for document/scenario
+// editors. `default` preserves the legacy 512px. A `max-w-*` in `className`
+// still wins (twMerge), so existing dialogs are unchanged until migrated.
+type DialogSize = "sm" | "default" | "wide" | "full"
+const DIALOG_SIZE: Record<DialogSize, string> = {
+    sm: "md:max-w-md",
+    default: "md:max-w-lg",
+    wide: "md:max-w-3xl",
+    full: "md:max-w-5xl md:max-h-[92vh] md:overflow-y-auto",
+}
+
 const DialogContent = React.forwardRef<
     React.ElementRef<typeof DialogPrimitive.Content>,
-    React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
+    React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { size?: DialogSize }
+>(({ className, children, size = "default", ...props }, ref) => (
     <DialogPortal>
         <DialogOverlay />
         <DialogPrimitive.Content
@@ -36,8 +49,9 @@ const DialogContent = React.forwardRef<
                 // Mobile: bottom-sheet — full-width, pinned to bottom, slides up
                 "fixed z-[140] grid w-full gap-4 border bg-background p-6 shadow-lg duration-200",
                 "max-md:bottom-0 max-md:left-0 max-md:right-0 max-md:top-auto max-md:translate-x-0 max-md:translate-y-0 max-md:max-w-full max-md:max-h-[calc(100dvh-16px)] max-md:overflow-y-auto max-md:rounded-t-[22px] max-md:rounded-b-none max-md:animate-[blancSlideUp_0.25s_ease-out]",
-                // Desktop: centered modal (original behavior)
-                "md:left-[50%] md:top-[50%] md:translate-x-[-50%] md:translate-y-[-50%] md:max-w-lg md:rounded-lg",
+                // Desktop: centered modal; width by `size` (MODAL-REDESIGN-001)
+                "md:left-[50%] md:top-[50%] md:translate-x-[-50%] md:translate-y-[-50%] md:rounded-lg",
+                DIALOG_SIZE[size],
                 "md:data-[state=open]:animate-in md:data-[state=closed]:animate-out md:data-[state=closed]:fade-out-0 md:data-[state=open]:fade-in-0 md:data-[state=closed]:zoom-out-95 md:data-[state=open]:zoom-in-95 md:data-[state=closed]:slide-out-to-left-1/2 md:data-[state=closed]:slide-out-to-top-[48%] md:data-[state=open]:slide-in-from-left-1/2 md:data-[state=open]:slide-in-from-top-[48%]",
                 className
             )}
