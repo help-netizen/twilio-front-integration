@@ -13,6 +13,7 @@ interface JobDetailHeaderProps {
     contactInfo: { id: number; name: string; phone?: string; email?: string } | null;
     navigate: (path: string) => void;
     onBlancStatusChange: (id: number, s: string) => void;
+    onCancel: (id: number) => void;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -26,7 +27,7 @@ function hexToRgba(hex: string, alpha: number) {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChange }: JobDetailHeaderProps) {
+export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChange, onCancel }: JobDetailHeaderProps) {
     const { data: fsmData } = useFsmStates('job', true);
     const allStatuses = fsmData?.states && fsmData.states.length > 0 ? fsmData.states : BLANC_STATUSES;
     const initialState = fsmData?.initialState || null;
@@ -129,7 +130,16 @@ export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChang
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start">
                         {reachable.map(s => (
-                            <DropdownMenuItem key={s} onClick={() => onBlancStatusChange(job.id, s)}>
+                            <DropdownMenuItem
+                                key={s}
+                                onClick={() => {
+                                    if (s === 'Canceled') {
+                                        onCancel(job.id);
+                                        return;
+                                    }
+                                    onBlancStatusChange(job.id, s);
+                                }}
+                            >
                                 {s}
                             </DropdownMenuItem>
                         ))}

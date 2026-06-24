@@ -594,7 +594,11 @@ async function updateBlancStatus(jobId, newStatus, companyId) {
     }
 
     await db.query(
-        'UPDATE jobs SET blanc_status = $1, updated_at = NOW() WHERE id = $2',
+        `UPDATE jobs
+         SET blanc_status = $1,
+             zb_canceled = CASE WHEN $1 = 'Canceled' THEN true ELSE zb_canceled END,
+             updated_at = NOW()
+         WHERE id = $2`,
         [newStatus, jobId]
     );
 

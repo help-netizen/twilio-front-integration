@@ -19,6 +19,7 @@ export interface FsmAction {
 export interface TransitionResult {
     previousState: string;
     newState: string;
+    targetState?: string;
     entityId: number;
 }
 
@@ -56,12 +57,12 @@ export function useFsmActions(machineKey: string, currentState: string | null) {
 export function useApplyTransition(machineKey: string) {
     const queryClient = useQueryClient();
 
-    return useMutation<TransitionResult, Error, { entityId: number; event: string }>({
-        mutationFn: async ({ entityId, event }) => {
+    return useMutation<TransitionResult, Error, { entityId: number; event: string; reason?: string }>({
+        mutationFn: async ({ entityId, event, reason }) => {
             const res = await authedFetch(`${API_BASE}/api/fsm/${machineKey}/apply`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ entityId, event }),
+                body: JSON.stringify({ entityId, event, reason }),
             });
             const json = await res.json();
             if (!res.ok || !json.ok) throw new Error(json.error || 'Transition failed');

@@ -40,9 +40,12 @@ function actorName(req) {
 
 function describeEvent(eventType, data) {
     switch (eventType) {
-        case 'status_changed': return `Status: ${data.from || '?'} → ${data.to || '?'}`;
+        case 'status_changed': {
+            const description = `Status: ${data.from || '?'} → ${data.to || '?'}`;
+            return data.reason ? `${description}. Reason: ${data.reason}` : description;
+        }
         case 'created': return data.description || 'Created';
-        case 'canceled': return 'Canceled';
+        case 'canceled': return data.reason ? `Canceled: ${data.reason}` : 'Canceled';
         case 'rescheduled': return 'Rescheduled';
         case 'marked_lost': return 'Marked as Lost';
         case 'reactivated': return 'Reactivated';

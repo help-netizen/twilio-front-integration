@@ -18,11 +18,15 @@ const http = require('http');
 const express = require('express');
 const db = require('../backend/src/db/connection');
 const jobsService = require('../backend/src/services/jobsService');
+const eventServiceMock = require('../backend/src/services/eventService');
 
 const COMPANY_A = '00000000-0000-0000-0000-00000000000a';
 const PROVIDER_USER = '11111111-1111-1111-1111-111111111111';
 
-beforeEach(() => db.query.mockReset());
+beforeEach(() => {
+    db.query.mockReset();
+    eventServiceMock.logEvent.mockReset();
+});
 
 // ─── Service-level scope semantics ───────────────────────────────────────────
 
@@ -140,5 +144,57 @@ describe('GET /api/jobs/:id route contract', () => {
             'PATCH', '/123/status', { blanc_status: 'Job is Done' }
         );
         expect(res.status).toBe(403);
+    });
+
+    it('POST /:id/cancel rejects missing cancel reason', async () => {
+        db.query.mockResolvedValue({
+            rows: [{ id: 123, blanc_status: 'Submitted', assigned_techs: [], notes: [], company_id: COMPANY_A }],
+        });
+
+        const res = await request(
+            appWithAuthz({ permissions: ['jobs.view', 'jobs.close'] }),
+            'POST', '/123/cancel'
+        );
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatch(/cancel reason is required/i);
+        expect(eventServiceMock.logEvent).not.toHaveBeenCalled();
+    });
+
+    it('POST /:id/cancel accepts a reason and logs it', async () => {
+        const jobRow = {
+            id: 123,
+            blanc_status: 'Submitted',
+            zb_status: 'scheduled',
+            zb_canceled: false,
+            zenbooker_job_id: null,
+            assigned_techs: [],
+            notes: [],
+            company_id: COMPANY_A,
+        };
+        db.query
+            .mockResolvedValueOnce({ rows: [jobRow] })
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: [jobRow] })
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: [] });
+
+        const res = await request(
+            appWithAuthz({ permissions: ['jobs.view', 'jobs.close'] }),
+            'POST', '/123/cancel',
+            { reason: 'Customer found another provider' }
+        );
+
+        expect(res.status).toBe(200);
+        expect(res.body.data.blanc_status).toBe('Canceled');
+        expect(eventServiceMock.logEvent).toHaveBeenCalledWith(
+            COMPANY_A,
+            'job',
+            '123',
+            'canceled',
+            expect.objectContaining({ reason: 'Customer found another provider' }),
+            'user',
+            'kc-sub'
+        );
     });
 });

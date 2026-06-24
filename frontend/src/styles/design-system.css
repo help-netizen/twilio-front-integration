@@ -776,9 +776,9 @@ table tbody tr:hover {
 .blanc-floating-close-zone {
     position: fixed;
     top: 80px;
-    right: 30px;
+    right: clamp(16px, 3vw, 30px);
     bottom: 30px;
-    z-index: 40;
+    z-index: 80;
     pointer-events: none;
     /* extra width for close button hover area */
     padding-left: 44px;
@@ -803,7 +803,7 @@ table tbody tr:hover {
 }
 
 .blanc-floating-panel--wide {
-    width: min(760px, calc(100vw - 60px));
+    width: min(760px, calc(100vw - 100px));
 }
 
 /* Invisible bridge that keeps pointer-events alive between panel and close button */
@@ -844,14 +844,17 @@ table tbody tr:hover {
         bottom: 0;
         left: 0;
         padding-left: 0;
-        z-index: 50;
+        z-index: 120;
+        justify-content: flex-start;
     }
     .blanc-floating-panel,
     .blanc-floating-panel--wide {
         width: 100vw;
-        max-height: 100vh;
+        height: 100dvh;
+        max-height: 100dvh;
         border-radius: 0;
-        animation: blancSlideInRight 0.25s ease-out;
+        transform: none;
+        animation: blancFadeIn 0.15s ease-out;
         box-shadow: none;
     }
     .blanc-floating-close-btn,

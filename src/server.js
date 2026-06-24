@@ -38,10 +38,21 @@ const db = require('../backend/src/db/connection');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const allowedOrigins = (process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(Boolean);
+const allowLocalhostCors = process.env.NODE_ENV !== 'production' || process.env.ALLOW_LOCALHOST_CORS === 'true';
 
 // CORS middleware - allow frontend origin
 app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', 'http://localhost:3001');
+    const origin = req.headers.origin;
+    const isLocalhostOrigin = typeof origin === 'string' &&
+        /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin);
+
+    if (!origin || allowedOrigins.includes(origin) || (allowLocalhostCors && isLocalhostOrigin)) {
+        res.header('Access-Control-Allow-Origin', origin || allowedOrigins[0] || 'http://localhost:3001');
+    }
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-BLANC-API-KEY, X-BLANC-API-SECRET');
     res.header('Access-Control-Allow-Credentials', 'true');
