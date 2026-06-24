@@ -149,7 +149,7 @@ describe('Twilio webhook handlers', () => {
             await handleVoiceInbound(req, res);
 
             expect(mockResolveGroupForNumber).toHaveBeenCalledWith('+15553334444');
-            expect(mockBuildVoicemailTwiml).toHaveBeenCalledWith({ baseUrl: 'https://abc-metrics.fly.dev' });
+            expect(mockBuildVoicemailTwiml).toHaveBeenCalledWith({ baseUrl: 'https://api.albusto.com' });
             expect(res.type).toHaveBeenCalledWith('text/xml');
             expect(res.send.mock.calls[0][0]).toContain('<Record');
             expect(res.send.mock.calls[0][0]).not.toContain('<Client');

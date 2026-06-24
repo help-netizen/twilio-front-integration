@@ -214,7 +214,7 @@ function ResourceSection({
                         type="text"
                         value={serverUrl}
                         onChange={e => setServerUrl(e.target.value)}
-                        placeholder="https://your-domain.fly.dev/api/vapi/runtime"
+                        placeholder="https://your-domain.com/api/vapi/runtime"
                         style={fieldStyle}
                     />
                 </div>

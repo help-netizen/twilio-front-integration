@@ -8,7 +8,7 @@
  *
  * Usage:
  *   node backend/src/cli/backfill_stuck_transcripts.js
- *   fly ssh console -a abc-metrics -C "node src/cli/backfill_stuck_transcripts.js"
+ *   docker compose exec -T app node backend/src/cli/backfill_stuck_transcripts.js  (on the prod host)
  */
 
 require('dotenv').config();

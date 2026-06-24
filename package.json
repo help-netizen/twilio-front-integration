@@ -17,13 +17,9 @@
     "dev": "nodemon src/server.js",
     "dev:local": "./scripts/dev-start.sh",
     "dev:backend": "./scripts/dev-start.sh --backend-only",
-    "deploy:prod": "./scripts/prod-deploy.sh",
-    "webhooks:prod": "./scripts/prod-deploy.sh --webhooks-only",
     "test": "node --experimental-vm-modules node_modules/.bin/jest",
     "test:watch": "node --experimental-vm-modules node_modules/.bin/jest --watch",
-    "test:coverage": "node --experimental-vm-modules node_modules/.bin/jest --coverage",
-    "monitor:errors": "node scripts/fly-error-monitor.js",
-    "monitor:replay": "node scripts/fly-error-monitor.js --replay"
+    "test:coverage": "node --experimental-vm-modules node_modules/.bin/jest --coverage"
   },
   "keywords": [],
   "author": "",

@@ -8,7 +8,7 @@
  * on every row. With it, PostgreSQL can do an index lookup.
  * 
  * Run: node scripts/add-phone-index.js
- * Or via SSH: fly ssh console -a abc-metrics -C "node scripts/add-phone-index.js"
+ * Or on prod: docker compose exec -T app node scripts/add-phone-index.js
  */
 const { Pool } = require('pg');
 

@@ -279,7 +279,7 @@ async function handleVoiceInbound(req, res) {
         });
 
         // Determine direction and return TwiML
-        const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
+        const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://api.albusto.com';
         const statusCallbackUrl = `${baseUrl}/webhooks/twilio/voice-status`;
         const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;
         const voicemailCompleteUrl = `${baseUrl}/webhooks/twilio/voicemail-complete`;
@@ -442,7 +442,7 @@ async function handleDialAction(req, res) {
 
         let twiml;
         if (toVoicemail) {
-            const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://abc-metrics.fly.dev';
+            const baseUrl = process.env.WEBHOOK_BASE_URL || process.env.CALLBACK_HOSTNAME || 'https://api.albusto.com';
             const recordingStatusUrl = `${baseUrl}/webhooks/twilio/recording-status`;
             const voicemailCompleteUrl = `${baseUrl}/webhooks/twilio/voicemail-complete`;
             const vmLanguage = process.env.VM_LANGUAGE || 'en-US';
