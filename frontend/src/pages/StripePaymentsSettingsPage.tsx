@@ -18,14 +18,18 @@ const eyebrow = (text: string) => (
     </div>
 );
 
+const STATUS_NEUTRAL = 'bg-[rgba(117,106,89,0.06)] text-[var(--blanc-ink-3)]';
+const STATUS_WARNING = 'bg-[rgba(178,106,29,0.12)] text-[var(--blanc-warning)]';
+const STATUS_SUCCESS = 'bg-[rgba(27,139,99,0.12)] text-[var(--blanc-success)]';
+
 const READINESS_LABEL: Record<StripeReadiness, { text: string; cls: string }> = {
-    not_connected: { text: 'Available', cls: 'bg-stone-100 text-stone-600' },
-    onboarding_incomplete: { text: 'Setup incomplete', cls: 'bg-amber-100 text-amber-700' },
-    action_required: { text: 'Action required', cls: 'bg-amber-100 text-amber-700' },
-    payments_disabled: { text: 'Setup incomplete', cls: 'bg-amber-100 text-amber-700' },
-    payouts_disabled: { text: 'Payouts disabled', cls: 'bg-amber-100 text-amber-700' },
-    connected_ready: { text: 'Connected', cls: 'bg-emerald-100 text-emerald-700' },
-    disconnected: { text: 'Disconnected', cls: 'bg-stone-100 text-stone-500' },
+    not_connected: { text: 'Available', cls: STATUS_NEUTRAL },
+    onboarding_incomplete: { text: 'Setup incomplete', cls: STATUS_WARNING },
+    action_required: { text: 'Action required', cls: STATUS_WARNING },
+    payments_disabled: { text: 'Setup incomplete', cls: STATUS_WARNING },
+    payouts_disabled: { text: 'Payouts disabled', cls: STATUS_WARNING },
+    connected_ready: { text: 'Connected', cls: STATUS_SUCCESS },
+    disconnected: { text: 'Disconnected', cls: STATUS_NEUTRAL },
 };
 
 function StatusBadge({ readiness }: { readiness: StripeReadiness }) {
@@ -36,8 +40,8 @@ function StatusBadge({ readiness }: { readiness: StripeReadiness }) {
 function ReadinessRow({ ok, label, warn }: { ok: boolean; label: string; warn?: boolean }) {
     return (
         <div className="flex items-center gap-2 py-1.5" style={{ color: 'var(--blanc-ink-2)' }}>
-            {ok ? <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                : <AlertCircle className={`h-4 w-4 ${warn ? 'text-amber-500' : 'text-stone-400'}`} />}
+            {ok ? <CheckCircle2 className="h-4 w-4 text-[var(--blanc-success)]" />
+                : <AlertCircle className={`h-4 w-4 ${warn ? 'text-[var(--blanc-warning)]' : 'text-[var(--blanc-ink-3)]'}`} />}
             <span className="text-sm">{label}</span>
         </div>
     );
@@ -81,9 +85,9 @@ export default function StripePaymentsSettingsPage() {
 
     return (
         <div className="max-w-3xl mx-auto px-6 py-8" style={{ color: 'var(--blanc-ink-1)' }}>
-            <button onClick={() => navigate('/settings/integrations')} className="flex items-center gap-1.5 text-sm mb-6" style={{ color: 'var(--blanc-ink-3)' }}>
+            <Button variant="ghost" onClick={() => navigate('/settings/integrations')} className="mb-6 h-auto px-0 hover:bg-transparent">
                 <ArrowLeft className="h-4 w-4" /> Integrations
-            </button>
+            </Button>
 
             <div className="flex items-start justify-between mb-8">
                 <div className="flex items-center gap-3">
@@ -132,7 +136,7 @@ export default function StripePaymentsSettingsPage() {
                             <ReadinessRow ok={acct.charges_enabled} label="Card payments enabled" warn={!acct.charges_enabled} />
                             <ReadinessRow ok={acct.payouts_enabled} label="Payouts enabled" warn={!acct.payouts_enabled} />
                             {acct.requirements_past_due.length > 0 && (
-                                <p className="mt-2 text-sm text-amber-700 flex items-start gap-2">
+                                <p className="mt-2 text-sm text-[var(--blanc-warning)] flex items-start gap-2">
                                     <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
                                     Stripe needs more information to keep payments active.
                                 </p>
@@ -163,7 +167,7 @@ export default function StripePaymentsSettingsPage() {
                             </Button>
                         )}
                         {connected && (
-                            <Button variant="ghost" className="text-stone-500" onClick={() => setDisconnectOpen(true)}>
+                            <Button variant="ghost" onClick={() => setDisconnectOpen(true)}>
                                 <Unplug className="h-4 w-4 mr-2" /> Disconnect
                             </Button>
                         )}

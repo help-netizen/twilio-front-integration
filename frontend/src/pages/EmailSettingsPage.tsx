@@ -1,15 +1,17 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Mail, RefreshCw, Unplug, ExternalLink, CheckCircle2, AlertTriangle, XCircle } from 'lucide-react';
+import { Button } from '../components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
 import { getMailboxSettings, startGoogleConnect, disconnectMailbox, triggerManualSync, type EmailMailbox } from '../services/emailApi';
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
-    connected: { label: 'Connected', color: 'text-green-600', icon: <CheckCircle2 className="size-4 text-green-600" /> },
-    reconnect_required: { label: 'Reconnect required', color: 'text-amber-600', icon: <AlertTriangle className="size-4 text-amber-600" /> },
-    sync_error: { label: 'Sync error', color: 'text-amber-600', icon: <AlertTriangle className="size-4 text-amber-600" /> },
-    disconnected: { label: 'Disconnected', color: 'text-gray-400', icon: <XCircle className="size-4 text-gray-400" /> },
+    connected: { label: 'Connected', color: 'var(--blanc-success)', icon: <CheckCircle2 className="size-4" style={{ color: 'var(--blanc-success)' }} /> },
+    reconnect_required: { label: 'Reconnect required', color: 'var(--blanc-warning)', icon: <AlertTriangle className="size-4" style={{ color: 'var(--blanc-warning)' }} /> },
+    sync_error: { label: 'Sync error', color: 'var(--blanc-warning)', icon: <AlertTriangle className="size-4" style={{ color: 'var(--blanc-warning)' }} /> },
+    disconnected: { label: 'Disconnected', color: 'var(--blanc-ink-3)', icon: <XCircle className="size-4" style={{ color: 'var(--blanc-ink-3)' }} /> },
 };
 
 function formatSyncTime(iso: string | null): string {
@@ -21,6 +23,7 @@ function formatSyncTime(iso: string | null): string {
 export default function EmailSettingsPage() {
     const queryClient = useQueryClient();
     const [searchParams, setSearchParams] = useSearchParams();
+    const [confirmDisconnect, setConfirmDisconnect] = useState(false);
 
     const { data: mailbox, isLoading } = useQuery<EmailMailbox | null>({
         queryKey: ['email-settings'],
@@ -68,7 +71,8 @@ export default function EmailSettingsPage() {
     if (isLoading) {
         return (
             <div className="p-6 max-w-2xl mx-auto">
-                <h2 className="text-2xl font-semibold" style={{ fontFamily: 'var(--blanc-font-heading)' }}>Email</h2>
+                <div className="blanc-eyebrow">Settings</div>
+                <h1 className="text-2xl font-semibold mt-1" style={{ fontFamily: 'var(--blanc-font-heading)' }}>Email</h1>
                 <div className="mt-6 text-sm" style={{ color: 'var(--blanc-ink-2)' }}>Loading...</div>
             </div>
         );
@@ -78,7 +82,8 @@ export default function EmailSettingsPage() {
 
     return (
         <div className="p-6 max-w-2xl mx-auto">
-            <h2 className="text-2xl font-semibold" style={{ fontFamily: 'var(--blanc-font-heading)' }}>Email</h2>
+            <div className="blanc-eyebrow">Settings</div>
+            <h1 className="text-2xl font-semibold mt-1" style={{ fontFamily: 'var(--blanc-font-heading)' }}>Email</h1>
             <p className="mt-1 text-sm" style={{ color: 'var(--blanc-ink-2)' }}>
                 Connect one shared Gmail mailbox per company for the email workspace.
             </p>
@@ -94,19 +99,13 @@ export default function EmailSettingsPage() {
                                 Albusto supports one shared Gmail / Google Workspace mailbox per company.
                             </p>
                         </div>
-                        <button
-                            className="blanc-btn-primary flex items-center gap-2"
+                        <Button
                             onClick={() => connectMutation.mutate()}
                             disabled={connectMutation.isPending}
-                            style={{
-                                background: 'var(--blanc-ink-1)', color: '#fff',
-                                padding: '8px 20px', borderRadius: '10px', fontWeight: 500, fontSize: '14px',
-                                border: 'none', cursor: 'pointer',
-                            }}
                         >
                             <ExternalLink className="size-4" />
                             {connectMutation.isPending ? 'Redirecting...' : 'Connect Gmail'}
-                        </button>
+                        </Button>
                     </div>
                 ) : (
                     /* ─── Connected mailbox ─── */
@@ -118,7 +117,7 @@ export default function EmailSettingsPage() {
                                     <p className="font-medium" style={{ color: 'var(--blanc-ink-1)' }}>{mailbox.email_address}</p>
                                     <div className="flex items-center gap-1.5 mt-0.5">
                                         {status?.icon}
-                                        <span className={`text-xs font-medium ${status?.color}`}>{status?.label}</span>
+                                        <span className="text-xs font-medium" style={{ color: status?.color }}>{status?.label}</span>
                                         <span className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}> Gmail</span>
                                     </div>
                                 </div>
@@ -128,62 +127,67 @@ export default function EmailSettingsPage() {
                         <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--blanc-ink-3)' }}>
                             <span>Last sync: {formatSyncTime(mailbox.last_synced_at)}</span>
                             {mailbox.last_sync_error && (
-                                <span className="text-amber-600"> {mailbox.last_sync_error}</span>
+                                <span style={{ color: 'var(--blanc-warning)' }}> {mailbox.last_sync_error}</span>
                             )}
                         </div>
 
                         <div className="flex items-center gap-2 pt-2">
                             {mailbox.status === 'reconnect_required' || mailbox.status === 'disconnected' ? (
-                                <button
-                                    className="flex items-center gap-1.5 text-sm font-medium"
+                                <Button
+                                    size="sm"
                                     onClick={() => connectMutation.mutate()}
                                     disabled={connectMutation.isPending}
-                                    style={{
-                                        background: 'var(--blanc-ink-1)', color: '#fff',
-                                        padding: '6px 14px', borderRadius: '8px', border: 'none', cursor: 'pointer',
-                                    }}
                                 >
                                     <ExternalLink className="size-3.5" />
                                     {connectMutation.isPending ? 'Redirecting...' : 'Reconnect Gmail'}
-                                </button>
+                                </Button>
                             ) : (
-                                <button
-                                    className="flex items-center gap-1.5 text-sm"
+                                <Button
+                                    variant="outline"
+                                    size="sm"
                                     onClick={() => syncMutation.mutate()}
                                     disabled={syncMutation.isPending}
-                                    style={{
-                                        background: 'transparent', color: 'var(--blanc-ink-2)',
-                                        padding: '6px 14px', borderRadius: '8px',
-                                        border: '1px solid var(--blanc-line)', cursor: 'pointer',
-                                    }}
                                 >
                                     <RefreshCw className={`size-3.5 ${syncMutation.isPending ? 'animate-spin' : ''}`} />
                                     {syncMutation.isPending ? 'Syncing...' : 'Sync now'}
-                                </button>
+                                </Button>
                             )}
 
                             {mailbox.status !== 'disconnected' && (
-                                <button
-                                    className="flex items-center gap-1.5 text-sm text-red-500"
-                                    onClick={() => {
-                                        if (confirm('Disconnect this mailbox? Synced email history will be preserved.')) {
-                                            disconnectMutation.mutate();
-                                        }
-                                    }}
+                                <Button
+                                    variant="destructive"
+                                    size="sm"
+                                    onClick={() => setConfirmDisconnect(true)}
                                     disabled={disconnectMutation.isPending}
-                                    style={{
-                                        background: 'transparent', padding: '6px 14px',
-                                        borderRadius: '8px', border: '1px solid var(--blanc-line)', cursor: 'pointer',
-                                    }}
                                 >
                                     <Unplug className="size-3.5" />
                                     Disconnect
-                                </button>
+                                </Button>
                             )}
                         </div>
                     </div>
                 )}
             </div>
+
+            <Dialog open={confirmDisconnect} onOpenChange={setConfirmDisconnect}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Disconnect mailbox?</DialogTitle>
+                        <DialogDescription>
+                            Synced email history will be preserved. You can reconnect later.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button variant="ghost" onClick={() => setConfirmDisconnect(false)}>Cancel</Button>
+                        <Button
+                            variant="destructive"
+                            onClick={() => { setConfirmDisconnect(false); disconnectMutation.mutate(); }}
+                        >
+                            Disconnect
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

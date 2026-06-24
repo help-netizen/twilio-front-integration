@@ -78,7 +78,7 @@ export function ActionsBlock({ machineKey, entityId, currentState, onTransitionC
                     onTransitionComplete?.();
                 },
                 onError: (err) => {
-                    toast.error(err.message || 'Transition failed');
+                    toast.error(err.message || 'Couldn\'t change status');
                 },
             },
         );
@@ -165,7 +165,7 @@ export function ActionsBlock({ machineKey, entityId, currentState, onTransitionC
                             className="text-[22px] font-semibold leading-tight"
                             style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
                         >
-                            {confirmAction?.target === 'Canceled' ? 'Cancel Job' : 'Confirm Action'}
+                            {confirmAction?.target === 'Canceled' ? 'Cancel Job' : 'Confirm action'}
                         </DialogTitle>
                         <DialogDescription>
                             {confirmAction?.confirmText || 'Are you sure you want to perform this action?'}
@@ -218,11 +218,11 @@ export function ActionsBlock({ machineKey, entityId, currentState, onTransitionC
                             className="text-[22px] font-semibold leading-tight"
                             style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
                         >
-                            Override Status
+                            Change status manually
                         </DialogTitle>
                         <DialogDescription className="flex items-start gap-2 pt-1">
                             <AlertTriangle className="size-4 shrink-0 text-amber-500 mt-0.5" />
-                            <span>This is an override. It bypasses allowed transitions.</span>
+                            <span>This skips the normal status flow — use with care.</span>
                         </DialogDescription>
                     </DialogPanelHeader>
 
@@ -259,7 +259,7 @@ export function ActionsBlock({ machineKey, entityId, currentState, onTransitionC
                             disabled={!overrideTarget || !overrideReason.trim() || overrideMutation.isPending}
                             onClick={handleOverrideSubmit}
                         >
-                            {overrideMutation.isPending ? 'Applying...' : 'Override'}
+                            {overrideMutation.isPending ? 'Applying...' : 'Change status'}
                         </Button>
                     </DialogPanelFooter>
                 </DialogContent>

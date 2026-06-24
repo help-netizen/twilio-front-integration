@@ -39,7 +39,7 @@ export function BootstrapAdminDialog({ companyId, companyName, open, onOpenChang
             });
 
             if (res.ok) {
-                toast.success('Admin bootstrapped successfully');
+                toast.success('Admin added');
                 setFormData({ email: '', first_name: '', last_name: '' });
                 onSuccess();
                 onOpenChange(false);
@@ -63,17 +63,17 @@ export function BootstrapAdminDialog({ companyId, companyName, open, onOpenChang
                             className="text-[22px] font-semibold leading-tight"
                             style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
                         >
-                            Bootstrap First Admin
+                            Add first admin
                         </DialogTitle>
                         <DialogDescription className="sr-only">
-                            Invite the first user for {companyName}. They will receive an email to set their password and will be assigned the tenant_admin role.
+                            Invite the first user for {companyName}. They will receive an email to set their password and will be made an administrator.
                         </DialogDescription>
                     </DialogPanelHeader>
 
                     <DialogBody className="md:px-8 md:py-7">
                       <div className="mx-auto w-full max-w-[740px] space-y-6">
                         <p className="text-[15px]" style={{ color: 'var(--blanc-ink-2)' }}>
-                            Invite the first user for <strong>{companyName}</strong>. They will receive an email to set their password and will be assigned the <code>tenant_admin</code> role.
+                            Invite the first user for <strong>{companyName}</strong>. They will receive an email to set their password and will be made an administrator.
                         </p>
                         <div className="space-y-3.5">
                             <FloatingField id="email" name="email" label="Email Address" type="email" value={formData.email} onChange={(e) => handleChange(e as React.ChangeEvent<HTMLInputElement>)} />
@@ -90,7 +90,7 @@ export function BootstrapAdminDialog({ companyId, companyName, open, onOpenChang
                             Cancel
                         </Button>
                         <Button type="submit" disabled={loading}>
-                            {loading ? 'Bootstrapping...' : 'Send Invite'}
+                            {loading ? 'Adding…' : 'Add admin'}
                         </Button>
                     </DialogPanelFooter>
                 </form>

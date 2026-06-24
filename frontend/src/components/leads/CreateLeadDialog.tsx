@@ -98,7 +98,7 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                             className="text-[22px] font-semibold leading-tight"
                             style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
                         >
-                            New Lead
+                            New lead
                         </DialogTitle>
                         <DialogDescription className="sr-only">Create a new lead</DialogDescription>
                     </DialogPanelHeader>
@@ -165,10 +165,10 @@ export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDi
                             {/* ── Job ── */}
                             <div className="space-y-3.5">
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                                    <FloatingSelect id="cld-job-type" label="Type" value={formData.JobType} onValueChange={(v) => setFormData({ ...formData, JobType: v })}>
+                                    <FloatingSelect id="cld-job-type" label="Job type" value={formData.JobType} onValueChange={(v) => setFormData({ ...formData, JobType: v })}>
                                         {jobTypes.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
                                     </FloatingSelect>
-                                    <FloatingSelect id="cld-job-source" label="Source" value={formData.JobSource} onValueChange={(v) => setFormData({ ...formData, JobSource: v })}>
+                                    <FloatingSelect id="cld-job-source" label="Lead source" value={formData.JobSource} onValueChange={(v) => setFormData({ ...formData, JobSource: v })}>
                                         {JOB_SOURCES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
                                     </FloatingSelect>
                                 </div>

@@ -52,7 +52,7 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
                         className="text-[22px] font-semibold leading-tight"
                         style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
                     >
-                        Edit lead — {lead.SerialId}
+                        {`Edit lead${[formData.FirstName, formData.LastName].filter(Boolean).join(' ').trim() ? ` — ${[formData.FirstName, formData.LastName].filter(Boolean).join(' ').trim()}` : ''}`}
                     </DialogTitle>
                     <DialogDescription className="sr-only">Make changes to the lead details below.</DialogDescription>
                 </DialogPanelHeader>
@@ -63,11 +63,11 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
                         {/* Contact */}
                         <div className="space-y-3.5">
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                                <FloatingField id="firstName" label="First name *" value={formData.FirstName} onChange={e => update({ FirstName: e.target.value })} />
-                                <FloatingField id="lastName" label="Last name *" value={formData.LastName} onChange={e => update({ LastName: e.target.value })} />
+                                <FloatingField id="firstName" label="First name" value={formData.FirstName} onChange={e => update({ FirstName: e.target.value })} />
+                                <FloatingField id="lastName" label="Last name" value={formData.LastName} onChange={e => update({ LastName: e.target.value })} />
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                                <PhoneInput id="phone" label="Phone *" value={formData.Phone || ''} onChange={formatted => update({ Phone: formatted })} required />
+                                <PhoneInput id="phone" label="Phone" value={formData.Phone || ''} onChange={formatted => update({ Phone: formatted })} required />
                                 <FloatingField id="email" label="Email" type="email" value={formData.Email} onChange={e => update({ Email: e.target.value })} />
                             </div>
                             {!showSecondary ? (
@@ -120,7 +120,7 @@ export function EditLeadDialog({ lead, open, onOpenChange, onSuccess }: EditLead
 
                     <DialogPanelFooter>
                         <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={loading}>Cancel</Button>
-                        <Button type="submit" disabled={loading}>{loading ? 'Saving...' : 'Save Changes'}</Button>
+                        <Button type="submit" disabled={loading}>{loading ? 'Saving...' : 'Save changes'}</Button>
                     </DialogPanelFooter>
                 </form>
             </DialogContent>

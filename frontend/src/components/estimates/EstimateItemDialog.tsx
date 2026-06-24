@@ -46,7 +46,7 @@ export function EstimateItemDialog({ open, onOpenChange, isEdit, initial, onSave
                         className="text-[22px] font-semibold leading-tight"
                         style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
                     >
-                        {isEdit ? 'Edit item' : 'Add custom item'}
+                        {isEdit ? 'Edit item' : 'Add item'}
                     </DialogTitle>
                     <DialogDescription className="sr-only">Add or edit an estimate line item</DialogDescription>
                 </DialogPanelHeader>

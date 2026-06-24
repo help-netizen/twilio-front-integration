@@ -49,9 +49,9 @@ export function UsersTable({ users, loading, filtered, fmtDate, actionLoading, o
         return (
             <div className="flex items-center justify-center py-16">
                 <div className="text-center">
-                    <Users className="size-12 mx-auto mb-3 opacity-20" />
-                    <p className="text-lg mb-1">No users found</p>
-                    <p className="text-sm text-muted-foreground">
+                    <Users className="size-12 mx-auto mb-3 opacity-20 text-[var(--blanc-ink-3)]" />
+                    <p className="text-lg mb-1 text-[var(--blanc-ink-1)]">No users found</p>
+                    <p className="text-sm text-[var(--blanc-ink-3)]">
                         {filtered ? 'Try adjusting your filters.' : (emptyHint || 'Add your first user to get started.')}
                     </p>
                 </div>
@@ -60,16 +60,16 @@ export function UsersTable({ users, loading, filtered, fmtDate, actionLoading, o
     }
 
     return (
-        <Card className="overflow-x-auto">
+        <Card className="overflow-x-auto border-[var(--blanc-line)] shadow-none bg-[var(--blanc-surface-strong)]">
             <Table>
                 <TableHeader>
-                    <TableRow>
-                        <TableHead>User</TableHead>
-                        <TableHead>Role</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Access</TableHead>
-                        <TableHead>Last login</TableHead>
-                        <TableHead className="text-right">Actions</TableHead>
+                    <TableRow className="border-[var(--blanc-line)] hover:bg-transparent bg-[rgba(117,106,89,0.04)]">
+                        <TableHead className="text-[var(--blanc-ink-3)]">User</TableHead>
+                        <TableHead className="text-[var(--blanc-ink-3)]">Role</TableHead>
+                        <TableHead className="text-[var(--blanc-ink-3)]">Status</TableHead>
+                        <TableHead className="text-[var(--blanc-ink-3)]">Access</TableHead>
+                        <TableHead className="text-[var(--blanc-ink-3)]">Last login</TableHead>
+                        <TableHead className="text-right text-[var(--blanc-ink-3)]">Actions</TableHead>
                     </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -79,28 +79,35 @@ export function UsersTable({ users, loading, filtered, fmtDate, actionLoading, o
                         const active = u.membership_status === 'active';
                         const busy = actionLoading === u.id;
                         return (
-                            <TableRow key={u.id}>
+                            <TableRow key={u.id} className="border-[var(--blanc-line)] hover:bg-[rgba(117,106,89,0.04)]">
                                 <TableCell>
-                                    <div className="font-medium text-sm flex items-center gap-2">
+                                    <div className="font-medium text-sm flex items-center gap-2 text-[var(--blanc-ink-1)]">
                                         <span style={{ backgroundColor: u.schedule_color || 'var(--blanc-ink-3, #7d8796)' }} className="size-2.5 rounded-full flex-shrink-0" />
                                         {u.full_name}
                                     </div>
-                                    <div className="text-xs text-muted-foreground pl-[18px]">{u.email}</div>
+                                    <div className="text-xs text-[var(--blanc-ink-3)] pl-[18px]">{u.email}</div>
                                 </TableCell>
                                 <TableCell>
-                                    <Badge variant={r.color} className="font-medium"><Icon className="size-3 mr-1.5" />{r.label}</Badge>
+                                    <Badge variant="outline" className="font-medium border-[var(--blanc-line)] text-[var(--blanc-ink-2)] bg-[rgba(117,106,89,0.04)]"><Icon className="size-3 mr-1.5 text-[var(--blanc-ink-3)]" />{r.label}</Badge>
                                 </TableCell>
                                 <TableCell>
-                                    <Badge variant={active ? 'outline' : 'destructive'}>{active ? 'Active' : 'Disabled'}</Badge>
+                                    <Badge
+                                        variant="outline"
+                                        className={active
+                                            ? 'border-[var(--blanc-line)] text-[var(--blanc-success)] bg-[rgba(27,139,99,0.1)]'
+                                            : 'border-[var(--blanc-line)] text-[var(--blanc-ink-3)] bg-[rgba(117,106,89,0.04)]'}
+                                    >
+                                        {active ? 'Active' : 'Disabled'}
+                                    </Badge>
                                 </TableCell>
                                 <TableCell>
                                     <div className="flex gap-1.5 flex-wrap">
-                                        {u.phone_calls_allowed && <Badge variant="secondary" className="text-[10px] px-1.5"><Phone className="size-2.5 mr-1" />Softphone</Badge>}
-                                        {u.is_provider && <Badge variant="secondary" className="text-[10px] px-1.5"><Truck className="size-2.5 mr-1" />Provider</Badge>}
-                                        {u.location_tracking_enabled && <Badge variant="secondary" className="text-[10px] px-1.5"><MapPin className="size-2.5 mr-1" />Tracking</Badge>}
+                                        {u.phone_calls_allowed && <Badge variant="outline" className="text-[10px] px-1.5 border-[var(--blanc-line)] text-[var(--blanc-ink-2)] bg-[rgba(117,106,89,0.04)]"><Phone className="size-2.5 mr-1 text-[var(--blanc-ink-3)]" />Softphone</Badge>}
+                                        {u.is_provider && <Badge variant="outline" className="text-[10px] px-1.5 border-[var(--blanc-line)] text-[var(--blanc-ink-2)] bg-[rgba(117,106,89,0.04)]"><Truck className="size-2.5 mr-1 text-[var(--blanc-ink-3)]" />Provider</Badge>}
+                                        {u.location_tracking_enabled && <Badge variant="outline" className="text-[10px] px-1.5 border-[var(--blanc-line)] text-[var(--blanc-ink-2)] bg-[rgba(117,106,89,0.04)]"><MapPin className="size-2.5 mr-1 text-[var(--blanc-ink-3)]" />Tracking</Badge>}
                                     </div>
                                 </TableCell>
-                                <TableCell className="text-sm">{fmtDate(u.last_login_at)}</TableCell>
+                                <TableCell className="text-sm text-[var(--blanc-ink-2)]">{fmtDate(u.last_login_at)}</TableCell>
                                 <TableCell className="text-right">
                                     <DropdownMenu>
                                         <DropdownMenuTrigger asChild>
@@ -119,7 +126,7 @@ export function UsersTable({ users, loading, filtered, fmtDate, actionLoading, o
                                             )}
                                             <DropdownMenuItem
                                                 onClick={() => onToggleStatus(u)}
-                                                className={active ? 'text-destructive' : 'text-green-600'}
+                                                className={active ? 'text-[var(--blanc-danger)]' : 'text-[var(--blanc-success)]'}
                                             >
                                                 {active ? <><Ban className="size-4 mr-2" /> Disable</> : <><CheckCircle2 className="size-4 mr-2" /> Enable</>}
                                             </DropdownMenuItem>

@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { authedFetch } from '../services/apiClient';
 import { MessageSquare, PhoneOff, Voicemail } from 'lucide-react';
+import { Switch } from '../components/ui/switch';
 import NotificationsSection from './NotificationsSection';
 
 // Types
@@ -54,40 +55,37 @@ function TriggerRow({
 }) {
     return (
         <div className="flex items-start gap-4 py-4">
-            <div className="shrink-0 mt-0.5 text-gray-500">{icon}</div>
+            <div className="shrink-0 mt-0.5" style={{ color: 'var(--blanc-ink-3)' }}>{icon}</div>
             <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between">
                     <div>
-                        <div className="font-medium text-sm">{label}</div>
-                        <div className="text-xs text-gray-500 mt-0.5">{description}</div>
+                        <div className="font-medium text-sm" style={{ color: 'var(--blanc-ink-1)' }}>{label}</div>
+                        <div className="text-xs mt-0.5" style={{ color: 'var(--blanc-ink-3)' }}>{description}</div>
                     </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                            type="checkbox"
-                            className="sr-only peer"
-                            checked={trigger.enabled}
-                            onChange={(e) => onChange({ ...trigger, enabled: e.target.checked })}
-                        />
-                        <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#2f63d8]" />
-                    </label>
+                    <Switch
+                        checked={trigger.enabled}
+                        onCheckedChange={(checked) => onChange({ ...trigger, enabled: checked })}
+                    />
                 </div>
                 {trigger.enabled && (
                     <div className="mt-3 flex items-center gap-4 text-xs">
                         <label className="flex items-center gap-1.5">
                             <input
                                 type="checkbox"
-                                className="rounded border-gray-300 text-[#2f63d8] focus:ring-[#2f63d8]"
+                                className="rounded"
+                                style={{ accentColor: 'var(--blanc-job)' }}
                                 checked={trigger.create_task}
                                 onChange={(e) => onChange({ ...trigger, create_task: e.target.checked })}
                             />
-                            <span className="text-gray-700">Create Task</span>
+                            <span style={{ color: 'var(--blanc-ink-2)' }}>Create Task</span>
                         </label>
                         {trigger.create_task && (
                             <>
                                 <label className="flex items-center gap-1.5">
-                                    <span className="text-gray-500">Priority</span>
+                                    <span style={{ color: 'var(--blanc-ink-3)' }}>Priority</span>
                                     <select
-                                        className="text-xs border rounded px-1.5 py-0.5 bg-white"
+                                        className="text-xs rounded px-1.5 py-0.5"
+                                        style={{ border: '1px solid var(--blanc-line)', background: 'rgba(117,106,89,0.04)', color: 'var(--blanc-ink-1)' }}
                                         value={trigger.task_priority}
                                         onChange={(e) => onChange({ ...trigger, task_priority: e.target.value })}
                                     >
@@ -97,9 +95,10 @@ function TriggerRow({
                                     </select>
                                 </label>
                                 <label className="flex items-center gap-1.5">
-                                    <span className="text-gray-500">SLA</span>
+                                    <span style={{ color: 'var(--blanc-ink-3)' }}>SLA</span>
                                     <select
-                                        className="text-xs border rounded px-1.5 py-0.5 bg-white"
+                                        className="text-xs rounded px-1.5 py-0.5"
+                                        style={{ border: '1px solid var(--blanc-line)', background: 'rgba(117,106,89,0.04)', color: 'var(--blanc-ink-1)' }}
                                         value={String(trigger.task_sla_minutes)}
                                         onChange={(e) => onChange({ ...trigger, task_sla_minutes: parseInt(e.target.value) })}
                                     >
@@ -142,10 +141,10 @@ export default function ActionRequiredSettingsPage() {
 
     if (isLoading) {
         return (
-            <div className="max-w-2xl mx-auto p-6">
+            <div className="max-w-3xl mx-auto p-6">
                 <div className="animate-pulse space-y-4">
-                    <div className="h-8 bg-gray-200 rounded w-64" />
-                    <div className="h-40 bg-gray-100 rounded" />
+                    <div className="h-8 rounded w-64" style={{ background: 'rgba(117,106,89,0.08)' }} />
+                    <div className="h-40 rounded" style={{ background: 'rgba(117,106,89,0.04)' }} />
                 </div>
             </div>
         );
@@ -153,8 +152,8 @@ export default function ActionRequiredSettingsPage() {
 
     if (error || !config) {
         return (
-            <div className="max-w-2xl mx-auto p-6">
-                <p className="text-red-500">Failed to load settings</p>
+            <div className="max-w-3xl mx-auto p-6">
+                <p style={{ color: 'var(--blanc-danger)' }}>Failed to load settings</p>
             </div>
         );
     }
@@ -170,7 +169,7 @@ export default function ActionRequiredSettingsPage() {
     };
 
     return (
-        <div className="max-w-2xl mx-auto p-6">
+        <div className="max-w-3xl mx-auto p-6">
             <div className="blanc-eyebrow">Settings</div>
             <h1 className="text-2xl font-semibold mt-1 mb-1" style={{ fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1, #202734)' }}>Actions &amp; notifications</h1>
             <p className="text-sm mb-7" style={{ color: 'var(--blanc-ink-3, #7d8796)' }}>

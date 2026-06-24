@@ -26,11 +26,11 @@ export function UserFilters({ searchInput, setSearchInput, roleFilter, setRoleFi
     return (
         <div className="flex flex-wrap items-end gap-3">
             <div className="flex-1 min-w-[200px]">
-                <Label className="text-xs text-muted-foreground mb-1">Search</Label>
+                <Label className="blanc-eyebrow mb-1 block">Search</Label>
                 <Input placeholder="Name or email…" value={searchInput} onChange={e => setSearchInput(e.target.value)} />
             </div>
             <div className="min-w-[160px]">
-                <Label className="text-xs text-muted-foreground mb-1">Role</Label>
+                <Label className="blanc-eyebrow mb-1 block">Role</Label>
                 <Select value={roleFilter} onValueChange={v => { setRoleFilter(v); onResetPage(); }}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -42,7 +42,7 @@ export function UserFilters({ searchInput, setSearchInput, roleFilter, setRoleFi
                 </Select>
             </div>
             <div className="min-w-[160px]">
-                <Label className="text-xs text-muted-foreground mb-1">Status</Label>
+                <Label className="blanc-eyebrow mb-1 block">Status</Label>
                 <Select value={statusFilter} onValueChange={v => { setStatusFilter(v); onResetPage(); }}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>

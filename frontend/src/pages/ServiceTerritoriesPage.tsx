@@ -2,10 +2,12 @@ import React, { useState, useMemo, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../services/apiClient';
 import { Plus, Upload, Download, Trash2, Loader2, Search, ChevronUp, ChevronDown, MapPin, ArrowLeft, LayoutGrid, List } from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '../components/ui/dialog';
+import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle, DialogDescription } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
-import { Label } from '../components/ui/label';
+import { FloatingField } from '../components/ui/floating-field';
+import { FloatingSelect } from '../components/ui/floating-select';
+import { SelectItem } from '../components/ui/select';
 import { toast } from 'sonner';
 
 // ---------------------------------------------------------------------------
@@ -273,7 +275,7 @@ function ZipTable({ rows, onRemove, removing }: {
                         ) : sorted.map(row => (
                             <tr key={row.zip} style={{ borderTop: '1px solid var(--blanc-line)' }} className="hover:bg-[rgba(117,106,89,0.02)]">
                                 <td style={{ padding: '8px 14px', fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>{row.zip}</td>
-                                <td style={{ padding: '8px 14px' }}>{row.area || <span style={{ color: 'var(--blanc-ink-3)' }}>—</span>}</td>
+                                <td style={{ padding: '8px 14px' }}>{row.area || ''}</td>
                                 <td style={{ padding: '8px 14px', color: 'var(--blanc-ink-2)' }}>{row.city || ''}</td>
                                 <td style={{ padding: '8px 14px', color: 'var(--blanc-ink-2)' }}>{row.state || ''}</td>
                                 <td style={{ padding: '8px 14px', color: 'var(--blanc-ink-2)' }}>{row.county || ''}</td>
@@ -454,64 +456,54 @@ function AddZipDialog({ open, onOpenChange, areas, onAdd, isPending, defaultArea
 
     return (
         <Dialog open={open} onOpenChange={v => { if (!v) reset(); onOpenChange(v); }}>
-            <DialogContent className="sm:max-w-md">
-                <DialogHeader>
-                    <DialogTitle>Add Zip Code</DialogTitle>
-                    <DialogDescription>Add a new zip code to your service territory.</DialogDescription>
-                </DialogHeader>
-                <form onSubmit={handleSubmit} className="flex flex-col gap-4 mt-2">
-                    <div className="grid grid-cols-2 gap-3">
-                        <div>
-                            <Label className="text-xs mb-1.5 block" style={{ color: 'var(--blanc-ink-2)' }}>ZIP Code *</Label>
-                            <Input value={zip} onChange={e => setZip(e.target.value.replace(/\D/g, '').slice(0, 5))} placeholder="10001" maxLength={5} required autoFocus />
+            <DialogContent variant="panel">
+                <DialogPanelHeader>
+                    <DialogTitle
+                        className="text-[22px] font-semibold leading-tight"
+                        style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
+                    >
+                        Add zip code
+                    </DialogTitle>
+                    <DialogDescription className="sr-only">Add a new zip code to your service territory.</DialogDescription>
+                </DialogPanelHeader>
+
+                <form onSubmit={handleSubmit} className="contents">
+                    <DialogBody className="md:px-8 md:py-7">
+                        <div className="mx-auto w-full max-w-[740px] space-y-6">
+                            <div className="space-y-3.5">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                                    <FloatingField
+                                        id="azd-zip"
+                                        label="ZIP code"
+                                        inputMode="numeric"
+                                        value={zip}
+                                        onChange={e => setZip(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                                    />
+                                    <FloatingSelect id="azd-area" label="Area" value={area} onValueChange={setArea}>
+                                        {areas.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}
+                                        <SelectItem value="__new__">+ Create new area</SelectItem>
+                                    </FloatingSelect>
+                                </div>
+                                {area === '__new__' && (
+                                    <FloatingField id="azd-new-area" label="New area name" value={newArea} onChange={e => setNewArea(e.target.value)} />
+                                )}
+                                <div className="grid grid-cols-[2fr_104px_1fr] gap-3.5">
+                                    <FloatingField id="azd-city" label="City" value={city} onChange={e => setCity(e.target.value)} />
+                                    <FloatingSelect id="azd-state" label="State" value={state} onValueChange={setState}>
+                                        {US_STATES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                                    </FloatingSelect>
+                                    <FloatingField id="azd-county" label="County" value={county} onChange={e => setCounty(e.target.value)} />
+                                </div>
+                            </div>
                         </div>
-                        <div>
-                            <Label className="text-xs mb-1.5 block" style={{ color: 'var(--blanc-ink-2)' }}>Area *</Label>
-                            <select
-                                value={area}
-                                onChange={e => setArea(e.target.value)}
-                                required
-                                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
-                            >
-                                <option value="">Select area...</option>
-                                {areas.map(a => <option key={a} value={a}>{a}</option>)}
-                                <option value="__new__">+ Create new area</option>
-                            </select>
-                        </div>
-                    </div>
-                    {area === '__new__' && (
-                        <div>
-                            <Label className="text-xs mb-1.5 block" style={{ color: 'var(--blanc-ink-2)' }}>New Area Name *</Label>
-                            <Input value={newArea} onChange={e => setNewArea(e.target.value)} placeholder="e.g. Manhattan" required autoFocus />
-                        </div>
-                    )}
-                    <div className="grid grid-cols-3 gap-3">
-                        <div>
-                            <Label className="text-xs mb-1.5 block" style={{ color: 'var(--blanc-ink-2)' }}>City</Label>
-                            <Input value={city} onChange={e => setCity(e.target.value)} placeholder="New York" />
-                        </div>
-                        <div>
-                            <Label className="text-xs mb-1.5 block" style={{ color: 'var(--blanc-ink-2)' }}>State</Label>
-                            <select
-                                value={state}
-                                onChange={e => setState(e.target.value)}
-                                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
-                            >
-                                <option value="">—</option>
-                                {US_STATES.map(s => <option key={s} value={s}>{s}</option>)}
-                            </select>
-                        </div>
-                        <div>
-                            <Label className="text-xs mb-1.5 block" style={{ color: 'var(--blanc-ink-2)' }}>County</Label>
-                            <Input value={county} onChange={e => setCounty(e.target.value)} placeholder="New York" />
-                        </div>
-                    </div>
-                    <DialogFooter>
-                        <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+                    </DialogBody>
+
+                    <DialogPanelFooter>
+                        <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
                         <Button type="submit" disabled={isPending || zip.length !== 5 || (!area || (area === '__new__' && !newArea.trim()))}>
                             {isPending ? <><Loader2 className="size-3.5 mr-1.5 animate-spin" />Adding...</> : 'Add'}
                         </Button>
-                    </DialogFooter>
+                    </DialogPanelFooter>
                 </form>
             </DialogContent>
         </Dialog>
@@ -568,36 +560,48 @@ function ImportDialog({ open, onOpenChange, onImport, isPending }: {
 
     return (
         <Dialog open={open} onOpenChange={v => { if (!v) reset(); onOpenChange(v); }}>
-            <DialogContent className="sm:max-w-md">
-                <DialogHeader>
-                    <DialogTitle>Import from CSV</DialogTitle>
-                    <DialogDescription>
+            <DialogContent variant="panel">
+                <DialogPanelHeader>
+                    <DialogTitle
+                        className="text-[22px] font-semibold leading-tight"
+                        style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
+                    >
+                        Import from CSV
+                    </DialogTitle>
+                    <DialogDescription className="sr-only">
                         Upload a CSV file with columns: ZIP, Area, City, State, County. This will replace all existing zip codes.
                     </DialogDescription>
-                </DialogHeader>
-                <div className="flex flex-col gap-4 mt-2">
-                    <input
-                        ref={fileRef}
-                        type="file"
-                        accept=".csv,.txt"
-                        onChange={handleFile}
-                        className="text-sm"
-                    />
-                    {error && <div className="text-sm" style={{ color: '#dc2626' }}>{error}</div>}
-                    {parsed && (
-                        <div className="text-sm" style={{ color: 'var(--blanc-ink-2)', padding: '10px 14px', borderRadius: 10, background: 'rgba(117,106,89,0.04)' }}>
-                            Found <strong>{parsed.length}</strong> zip codes.
-                            {parsed.filter(r => r.area).length > 0 && <> In <strong>{new Set(parsed.filter(r => r.area).map(r => r.area)).size}</strong> areas.</>}
-                            <div className="mt-1" style={{ color: '#b45309', fontSize: 12 }}>This will replace all existing zip codes for your company.</div>
-                        </div>
-                    )}
-                    <DialogFooter>
-                        <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-                        <Button onClick={handleImport} disabled={!parsed || isPending}>
-                            {isPending ? <><Loader2 className="size-3.5 mr-1.5 animate-spin" />Importing...</> : `Import ${parsed?.length || 0} zip codes`}
-                        </Button>
-                    </DialogFooter>
-                </div>
+                </DialogPanelHeader>
+
+                <DialogBody className="md:px-8 md:py-7">
+                    <div className="mx-auto w-full max-w-[740px] space-y-6">
+                        <p className="text-sm" style={{ color: 'var(--blanc-ink-2)' }}>
+                            Upload a CSV file with columns: ZIP, Area, City, State, County. This will replace all existing zip codes.
+                        </p>
+                        <input
+                            ref={fileRef}
+                            type="file"
+                            accept=".csv,.txt"
+                            onChange={handleFile}
+                            className="text-sm"
+                        />
+                        {error && <div className="text-sm" style={{ color: 'var(--blanc-danger)' }}>{error}</div>}
+                        {parsed && (
+                            <div className="text-sm" style={{ color: 'var(--blanc-ink-2)', padding: '10px 14px', borderRadius: 10, background: 'rgba(117,106,89,0.04)' }}>
+                                Found <strong>{parsed.length}</strong> zip codes.
+                                {parsed.filter(r => r.area).length > 0 && <> In <strong>{new Set(parsed.filter(r => r.area).map(r => r.area)).size}</strong> areas.</>}
+                                <div className="mt-1" style={{ color: 'var(--blanc-warning)', fontSize: 12 }}>This will replace all existing zip codes for your company.</div>
+                            </div>
+                        )}
+                    </div>
+                </DialogBody>
+
+                <DialogPanelFooter>
+                    <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
+                    <Button onClick={handleImport} disabled={!parsed || isPending}>
+                        {isPending ? <><Loader2 className="size-3.5 mr-1.5 animate-spin" />Importing...</> : `Import ${parsed?.length || 0} zip codes`}
+                    </Button>
+                </DialogPanelFooter>
             </DialogContent>
         </Dialog>
     );

@@ -140,8 +140,17 @@ export default function BillingPage() {
     const periodResets = new Date(now.getFullYear(), now.getMonth() + 1, 1);
     const tone = STATUS_TONE[status] || 'muted';
 
+    // Selectable plans (trial is not a real plan) and the natural upgrade target:
+    // the cheapest plan that costs more than the current monthly base.
+    const visiblePlans = plans.filter(p => p.id !== 'trial');
+    const recommendedPlanId = visiblePlans
+        .filter(p => p.id !== currentPlanId && Number(p.monthly_base_usd) > monthlyBase)
+        .sort((a, b) => Number(a.monthly_base_usd) - Number(b.monthly_base_usd))[0]?.id ?? null;
+
     return (
         <div style={{ padding: '28px 24px', maxWidth: 1120, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 26 }}>
+            {/* Collapse the 3-up KPI row to a single column on narrow viewports */}
+            <style>{`@media (max-width: 560px) { .billing-kpis { grid-template-columns: 1fr !important; } }`}</style>
             {/* Header */}
             <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
                 <div>
@@ -196,7 +205,7 @@ export default function BillingPage() {
             )}
 
             {/* Money-first KPIs */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }} className="billing-kpis">
                 <div style={KPI}>
                     <div style={{ fontSize: 12, color: 'var(--blanc-ink-2)' }}>Monthly cost</div>
                     <div style={{ fontSize: 23, fontWeight: 600, fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1)' }}>
@@ -209,10 +218,12 @@ export default function BillingPage() {
                     <div style={{ fontSize: 12, color: 'var(--blanc-ink-2)' }}>{isTrial ? 'Trial' : 'Next bill'}</div>
                     {isTrial ? (
                         <>
-                            <div style={{ fontSize: 23, fontWeight: 600, fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1)' }}>
-                                {trialDays != null ? `${trialDays} day${trialDays === 1 ? '' : 's'}` : '—'}
-                            </div>
-                            <div style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>{renews ? `free until ${fmtDate(renews)}` : 'left'}</div>
+                            {trialDays != null && (
+                                <div style={{ fontSize: 23, fontWeight: 600, fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1)' }}>
+                                    {`${trialDays} day${trialDays === 1 ? '' : 's'}`}
+                                </div>
+                            )}
+                            {renews && <div style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>free until {fmtDate(renews)}</div>}
                         </>
                     ) : (
                         <>
@@ -242,8 +253,8 @@ export default function BillingPage() {
                 </div>
             </div>
 
-            {/* Usage */}
-            <section>
+            {/* Usage — during an active trial, Plans take priority so this drops below them */}
+            <section style={isTrial ? { order: 2 } : undefined}>
                 <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10, gap: 12, flexWrap: 'wrap' }}>
                     <div className="blanc-eyebrow">This month's usage</div>
                     <div style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>resets {fmtDate(periodResets.toISOString())}</div>
@@ -281,30 +292,34 @@ export default function BillingPage() {
                 </div>
             </section>
 
-            {/* Plans */}
-            <section>
+            {/* Plans — primary job during a trial, so it rises directly under the KPIs */}
+            <section style={isTrial ? { order: 1 } : undefined}>
                 <div className="blanc-eyebrow" style={{ marginBottom: 10 }}>{isTrial ? 'Choose a plan' : 'Change plan'}</div>
                 {!billing_enabled && (
                     <p style={{ fontSize: 13, color: 'var(--blanc-ink-3)', margin: '0 0 12px' }}>
                         Online payments aren't enabled yet — <a href="mailto:support@albusto.com" style={{ color: 'var(--blanc-ink-2)' }}>contact us</a> to change plans.
                     </p>
                 )}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 }}>
-                    {plans.filter(p => p.id !== 'trial').map(plan => {
+                <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 14 }}>
+                    {visiblePlans.map(plan => {
                         const isCurrent = plan.id === currentPlanId;
                         const base = Number(plan.monthly_base_usd);
                         const isUpgrade = base > monthlyBase;
+                        const isRecommended = plan.id === recommendedPlanId;
                         const cta = isCurrent ? 'Current plan' : isUpgrade ? 'Upgrade' : `Switch to ${plan.name}`;
+                        const borderColor = isCurrent || isRecommended ? 'var(--blanc-info)' : 'var(--blanc-line)';
                         return (
                             <div key={plan.id} style={{
-                                border: `${isCurrent ? 2 : 1}px solid ${isCurrent ? 'var(--blanc-info)' : 'var(--blanc-line)'}`,
+                                border: `${isCurrent || isRecommended ? 2 : 1}px solid ${borderColor}`,
                                 borderRadius: 16, padding: 18, background: 'var(--blanc-surface-strong, #fffdf9)',
                                 display: 'flex', flexDirection: 'column', gap: 12,
+                                flex: '1 1 260px', minWidth: 260, maxWidth: 320,
                             }}>
                                 <div>
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                                         <span style={{ fontSize: 17, fontWeight: 600, color: 'var(--blanc-ink-1)', fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif' }}>{plan.name}</span>
                                         {isCurrent && <span style={{ fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 999, ...toneStyle('info') }}>Current</span>}
+                                        {!isCurrent && isRecommended && <span style={{ fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 999, ...toneStyle('info') }}>Recommended</span>}
                                     </div>
                                     <div style={{ fontSize: 22, fontWeight: 600, marginTop: 2, fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1)' }}>
                                         {usd(base)}<span style={{ fontSize: 13, fontWeight: 500, color: 'var(--blanc-ink-3)' }}>/mo</span>
@@ -342,7 +357,7 @@ export default function BillingPage() {
             </section>
 
             {/* Billing history */}
-            <section>
+            <section style={isTrial ? { order: 3 } : undefined}>
                 <div className="blanc-eyebrow" style={{ marginBottom: 10 }}>Billing history</div>
                 {invoices.length === 0 ? (
                     <p style={{ fontSize: 13.5, color: 'var(--blanc-ink-3)', margin: 0 }}>No charges yet.</p>
@@ -369,7 +384,7 @@ export default function BillingPage() {
 
             {/* Wallet activity */}
             {wallet && wallet.ledger.length > 0 && (
-                <section>
+                <section style={isTrial ? { order: 4 } : undefined}>
                     <div className="blanc-eyebrow" style={{ marginBottom: 10 }}>Wallet activity</div>
                     <div style={{ display: 'flex', flexDirection: 'column' }}>
                         {wallet.ledger.slice(0, 12).map((e, i) => (

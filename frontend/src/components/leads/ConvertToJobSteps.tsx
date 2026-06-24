@@ -73,12 +73,12 @@ export function ConvertStep2({ serviceName, setServiceName, serviceDescription, 
     return (
         <div className="space-y-3.5">
             {jobTypes.length > 0 ? (
-                <FloatingSelect id="cj-svc-name" label="Service Name" value={serviceName} onValueChange={setServiceName}>
+                <FloatingSelect id="cj-svc-name" label="Service" value={serviceName} onValueChange={setServiceName}>
                     {jobTypes.map(jt => <SelectItem key={jt} value={jt}>{jt}</SelectItem>)}
                     {serviceName && !jobTypes.includes(serviceName) && <SelectItem key={serviceName} value={serviceName}>{serviceName}</SelectItem>}
                 </FloatingSelect>
             ) : (
-                <FloatingField id="cj-svc-name" label="Service Name" value={serviceName} onChange={e => setServiceName(e.target.value)} />
+                <FloatingField id="cj-svc-name" label="Service" value={serviceName} onChange={e => setServiceName(e.target.value)} />
             )}
             <FloatingField id="cj-svc-desc" label="Description" textarea rows={4} value={serviceDescription} onChange={e => setServiceDescription(e.target.value)} />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
@@ -100,10 +100,10 @@ export function ConvertStep3({ selectedDate, setSelectedDate, timeslotsLoading, 
             {/* Header row */}
             <div className="flex items-center justify-between">
                 <span className="flex items-center gap-1.5 text-sm font-semibold">
-                    <Calendar className="w-4" /> Available Timeslots
+                    <Calendar className="w-4" /> Available times
                 </span>
                 <Button size="sm" variant="secondary" onClick={() => setShowCustomTime(true)} className="flex items-center gap-1">
-                    <Clock className="w-3.5" /> Custom Time
+                    <Clock className="w-3.5" /> Custom time
                 </Button>
             </div>
 
@@ -120,7 +120,7 @@ export function ConvertStep3({ selectedDate, setSelectedDate, timeslotsLoading, 
             {/* Date row with icon refresh */}
             <div className="flex items-end gap-2">
                 <div className="flex-1 space-y-1.5">
-                    <Label htmlFor="cj-date" className="blanc-eyebrow">Starting Date</Label>
+                    <Label htmlFor="cj-date" className="blanc-eyebrow">Starting date</Label>
                     <Input id="cj-date" type="date" value={selectedDate} onChange={e => { setSelectedDate(e.target.value); setSelectedTimeslot(null); }} min={todayInTZ(companyTz)} className="h-[50px] rounded-xl bg-transparent text-[15px]" />
                 </div>
                 <Button size="icon" variant="ghost" onClick={fetchTimeslots} disabled={timeslotsLoading} title="Refresh timeslots" className="shrink-0 mb-0.5">
@@ -157,9 +157,9 @@ export function ConvertStep4({ name, phone, email, addressFields, serviceName, s
     return (
         <div className="space-y-3 text-sm">
             <h4 className="font-semibold">Customer</h4>
-            <div className="rounded-2xl p-3.5 space-y-1" style={cardStyle}><p><span className="text-muted-foreground">Name:</span> {name || '—'}</p><p><span className="text-muted-foreground">Phone:</span> {phone || '—'}</p><p><span className="text-muted-foreground">Email:</span> {email || '—'}</p></div>
+            <div className="rounded-2xl p-3.5 space-y-1" style={cardStyle}>{name && <p><span className="text-muted-foreground">Name:</span> {name}</p>}{phone && <p><span className="text-muted-foreground">Phone:</span> {phone}</p>}{email && <p><span className="text-muted-foreground">Email:</span> {email}</p>}</div>
             <h4 className="font-semibold">Address</h4>
-            <div className="rounded-2xl p-3.5" style={cardStyle}><p>{[addressFields.street, addressFields.apt].filter(Boolean).join(', ') || '—'}</p><p>{[addressFields.city, addressFields.state, addressFields.zip].filter(Boolean).join(', ')}</p></div>
+            <div className="rounded-2xl p-3.5" style={cardStyle}>{[addressFields.street, addressFields.apt].filter(Boolean).join(', ') && <p>{[addressFields.street, addressFields.apt].filter(Boolean).join(', ')}</p>}{[addressFields.city, addressFields.state, addressFields.zip].filter(Boolean).join(', ') && <p>{[addressFields.city, addressFields.state, addressFields.zip].filter(Boolean).join(', ')}</p>}</div>
             <h4 className="font-semibold">Service</h4>
             <div className="rounded-2xl p-3.5 space-y-1" style={cardStyle}><p><span className="text-muted-foreground">Name:</span> {serviceName}</p>{serviceDescription && <p className="text-xs text-muted-foreground line-clamp-2">{serviceDescription}</p>}<p><span className="text-muted-foreground">Duration:</span> {serviceDuration} min • <span className="text-muted-foreground">Price:</span> ${servicePrice}</p></div>
             <h4 className="font-semibold">Timeslot</h4>

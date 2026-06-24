@@ -11,6 +11,7 @@ import { FIELD_TYPES, toApiName, TAG_PALETTE } from './leadFormTypes';
 import { SortableJobType, SortableField } from './SortableSettingsItems';
 import { SortableTag } from './SortableTag';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
+import { Button } from '../components/ui/button';
 import MachineList from '../components/workflows/MachineList';
 
 const FSM_EDITOR_ENABLED = import.meta.env.VITE_FSM_EDITOR_ENABLED !== 'false'; // default true
@@ -54,13 +55,13 @@ export default function LeadFormSettingsPage() {
     const handleTagRename = async (tagId: number, name: string) => { try { await jobsApi.updateJobTag(tagId, { name }); loadTags(); toast.success('Tag renamed'); } catch (err: any) { toast.error(err.message || 'Failed'); } };
     const handleTagDragEnd = async (event: DragEndEvent) => { const { active, over } = event; if (!over || active.id === over.id) return; const oi = tags.findIndex(t => `tag-${t.id}` === active.id); const ni = tags.findIndex(t => `tag-${t.id}` === over.id); const reordered = arrayMove(tags, oi, ni); setTags(reordered); try { await jobsApi.reorderJobTags(reordered.map(t => t.id)); } catch { loadTags(); } };
 
-    if (loading) return <div style={{ padding: '48px', textAlign: 'center', color: '#888' }}>Loading settings...</div>;
+    if (loading) return <div style={{ padding: '48px', textAlign: 'center', color: 'var(--blanc-ink-3)' }}>Loading settings...</div>;
 
     return (
         <div className="lfsp-page">
             <div className="lfsp-header">
                 <div><h1 className="lfsp-title">Lead & Job Settings</h1><p className="lfsp-subtitle">Configure job types, form fields, and workflows</p></div>
-                {activeTab === 'settings' && <button className={`lfsp-save-btn ${dirty ? 'lfsp-save-dirty' : ''}`} onClick={handleSave} disabled={saving || !dirty}>{saving ? 'Saving...' : 'Save'}</button>}
+                {activeTab === 'settings' && <Button variant="default" onClick={handleSave} disabled={saving || !dirty}>{saving ? 'Saving...' : 'Save'}</Button>}
             </div>
 
             <Tabs defaultValue="settings" value={activeTab} onValueChange={setActiveTab} className="w-full">
@@ -71,7 +72,7 @@ export default function LeadFormSettingsPage() {
 
                 <TabsContent value="settings">
                     <section className="lfsp-section">
-                        <h2 className="lfsp-section-title">Job Types</h2>
+                        <h2 className="blanc-eyebrow">Job Types</h2>
                         <p className="lfsp-section-desc">Manage the list of available job types. Drag to reorder.</p>
                         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleJobTypeDragEnd}>
                             <SortableContext items={jobTypes.map(jt => `jt-${jt.id ?? jt.name}`)} strategy={verticalListSortingStrategy}>
@@ -80,13 +81,13 @@ export default function LeadFormSettingsPage() {
                         </DndContext>
                         <div className="lfsp-add-row">
                             <input className="lfsp-input" value={newJobType} onChange={e => setNewJobType(e.target.value)} onKeyDown={e => e.key === 'Enter' && addJobType()} placeholder="New job type name" />
-                            <button className="lfsp-add-btn" onClick={addJobType}>+ Add Job Type</button>
+                            <Button variant="secondary" onClick={addJobType}>Add Job Type</Button>
                         </div>
                     </section>
 
                     <section className="lfsp-section">
-                        <h2 className="lfsp-section-title">Metadata Fields</h2>
-                        <p className="lfsp-section-desc">System fields (🔒) cannot be deleted or renamed. Drag to reorder.</p>
+                        <h2 className="blanc-eyebrow">Metadata Fields</h2>
+                        <p className="lfsp-section-desc">System fields cannot be deleted or renamed. Drag to reorder.</p>
                         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleFieldDragEnd}>
                             <SortableContext items={fields.map(f => `cf-${f.id ?? f.api_name}`)} strategy={verticalListSortingStrategy}>
                                 <div className="lfsp-list">{fields.map((f, i) => <SortableField key={`cf-${f.id ?? f.api_name}`} item={f} onRemove={() => removeField(i)} onToggleSearchable={() => { if (f.is_system) return; const u = [...fields]; u[i] = { ...u[i], is_searchable: !u[i].is_searchable }; setFields(u); setDirty(true); }} />)}</div>
@@ -96,19 +97,18 @@ export default function LeadFormSettingsPage() {
                             <div className="lfsp-new-field-form">
                                 <div className="lfsp-new-field-row">
                                     <input className="lfsp-input" value={newFieldName} onChange={e => { const v = e.target.value.replace(/[^A-Za-z ]/g, ''); setNewFieldName(v); }} placeholder="Display Name" autoFocus />
-                                    <div className="lfsp-api-preview">{toApiName(newFieldName) || 'api_name'}</div>
                                     <select className="lfsp-select" value={newFieldType} onChange={e => setNewFieldType(e.target.value)}>{FIELD_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}</select>
                                 </div>
                                 <div className="lfsp-new-field-actions">
                                     <label className="lfsp-searchable-checkbox"><input type="checkbox" checked={newFieldSearchable} onChange={e => setNewFieldSearchable(e.target.checked)} />Include in search</label>
-                                    <div className="lfsp-new-field-buttons"><button className="lfsp-add-btn" onClick={addField}>Add</button><button className="lfsp-cancel-btn" onClick={() => { setShowNewField(false); setNewFieldName(''); }}>Cancel</button></div>
+                                    <div className="lfsp-new-field-buttons"><Button variant="secondary" onClick={addField}>Add</Button><Button variant="ghost" onClick={() => { setShowNewField(false); setNewFieldName(''); }}>Cancel</Button></div>
                                 </div>
                             </div>
-                        ) : <button className="lfsp-add-btn" style={{ marginTop: 8 }} onClick={() => setShowNewField(true)}>+ Add Field</button>}
+                        ) : <Button variant="secondary" style={{ marginTop: 8 }} onClick={() => setShowNewField(true)}>Add Field</Button>}
                     </section>
 
                     <section className="lfsp-section">
-                        <h2 className="lfsp-section-title">Job Tags</h2>
+                        <h2 className="blanc-eyebrow">Job Tags</h2>
                         <p className="lfsp-section-desc">Manage tags that can be assigned to jobs. Drag to reorder, click color dot to change, click name to rename.</p>
                         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleTagDragEnd}>
                             <SortableContext items={tags.map(t => `tag-${t.id}`)} strategy={verticalListSortingStrategy}>
@@ -117,8 +117,8 @@ export default function LeadFormSettingsPage() {
                         </DndContext>
                         <div className="lfsp-add-row lfsp-tag-add-row">
                             <input className="lfsp-input" value={newTagName} onChange={e => setNewTagName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addTag()} placeholder="New tag name" />
-                            <div className="lfsp-tag-new-palette">{TAG_PALETTE.slice(0, 8).map(c => <button key={c} className={`lfsp-tag-palette-swatch lfsp-swatch-small ${c === newTagColor ? 'lfsp-swatch-active' : ''}`} style={{ backgroundColor: c, border: c === '#FFFFFF' ? '1px solid #d1d5db' : 'none' }} onClick={() => setNewTagColor(c)} />)}</div>
-                            <button className="lfsp-add-btn" onClick={addTag}>+ Add Tag</button>
+                            <div className="lfsp-tag-new-palette">{TAG_PALETTE.slice(0, 8).map(c => <button key={c} className={`lfsp-tag-palette-swatch lfsp-swatch-small ${c === newTagColor ? 'lfsp-swatch-active' : ''}`} style={{ backgroundColor: c, border: c === '#FFFFFF' ? '1px solid var(--blanc-line)' : 'none' }} onClick={() => setNewTagColor(c)} />)}</div>
+                            <Button variant="secondary" onClick={addTag}>Add Tag</Button>
                         </div>
                     </section>
                 </TabsContent>

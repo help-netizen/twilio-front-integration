@@ -3,8 +3,6 @@ import { ChevronDown, Pencil, Plus, Trash2 } from 'lucide-react';
 import {
     Dialog,
     DialogContent,
-    DialogFooter,
-    DialogHeader,
     DialogTitle,
     DialogDescription,
     DialogPanelHeader,
@@ -15,6 +13,7 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Textarea } from '../ui/textarea';
+import { FloatingField } from '../ui/floating-field';
 import { Checkbox } from '../ui/checkbox';
 import { FloatingSelect } from '../ui/floating-select';
 import { SelectItem } from '../ui/select';
@@ -460,48 +459,95 @@ export function InvoiceEditorDialog({
 
             {/* Summary edit dialog */}
             <Dialog open={summaryDialogOpen} onOpenChange={setSummaryDialogOpen}>
-                <DialogContent>
-                    <DialogHeader><DialogTitle>Summary</DialogTitle></DialogHeader>
-                    <Textarea value={summaryDraft} onChange={e => setSummaryDraft(e.target.value)} rows={10} placeholder="Notes for the customer..." />
-                    <DialogFooter>
+                <DialogContent variant="panel">
+                    <DialogPanelHeader>
+                        <DialogTitle
+                            className="text-[22px] font-semibold leading-tight"
+                            style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
+                        >
+                            Summary
+                        </DialogTitle>
+                        <DialogDescription className="sr-only">Edit the invoice summary</DialogDescription>
+                    </DialogPanelHeader>
+                    <DialogBody className="md:px-8 md:py-7">
+                        <div className="mx-auto w-full max-w-[740px] space-y-6">
+                            <FloatingField
+                                textarea
+                                rows={10}
+                                id="invoice-summary"
+                                label="Notes for the customer…"
+                                value={summaryDraft}
+                                onChange={event => setSummaryDraft(event.target.value)}
+                            />
+                        </div>
+                    </DialogBody>
+                    <DialogPanelFooter>
                         <Button type="button" variant="ghost" onClick={() => setSummaryDialogOpen(false)}>Cancel</Button>
                         <Button type="button" onClick={saveSummary}>Save summary</Button>
-                    </DialogFooter>
+                    </DialogPanelFooter>
                 </DialogContent>
             </Dialog>
 
             {/* Item create/edit dialog (used by combobox "Create new" path) */}
             <Dialog open={itemDialogOpen} onOpenChange={setItemDialogOpen}>
-                <DialogContent>
-                    <DialogHeader><DialogTitle>{editingItemKey ? 'Edit custom item' : 'Add custom item'}</DialogTitle></DialogHeader>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
-                        <div className="sm:col-span-2">
-                            <Label>Title <span className="text-red-600">*</span></Label>
-                            <Input value={itemDraft.name} onChange={e => setItemDraft(prev => ({ ...prev, name: e.target.value }))} autoFocus />
+                <DialogContent variant="panel">
+                    <DialogPanelHeader>
+                        <DialogTitle
+                            className="text-[22px] font-semibold leading-tight"
+                            style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
+                        >
+                            {editingItemKey ? 'Edit custom item' : 'Add custom item'}
+                        </DialogTitle>
+                        <DialogDescription className="sr-only">Define a custom line item</DialogDescription>
+                    </DialogPanelHeader>
+                    <DialogBody className="md:px-8 md:py-7">
+                        <div className="mx-auto w-full max-w-[740px] space-y-6">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                                <FloatingField
+                                    containerClassName="sm:col-span-2"
+                                    id="item-title"
+                                    label="Title"
+                                    value={itemDraft.name}
+                                    onChange={event => setItemDraft(prev => ({ ...prev, name: event.target.value }))}
+                                />
+                                <FloatingField
+                                    containerClassName="sm:col-span-2"
+                                    textarea
+                                    rows={4}
+                                    id="item-description"
+                                    label="Description"
+                                    value={itemDraft.description}
+                                    onChange={event => setItemDraft(prev => ({ ...prev, description: event.target.value }))}
+                                />
+                                <FloatingField
+                                    id="item-qty"
+                                    label="Qty"
+                                    type="number"
+                                    inputMode="decimal"
+                                    value={itemDraft.quantity}
+                                    onChange={event => setItemDraft(prev => ({ ...prev, quantity: event.target.value }))}
+                                />
+                                <FloatingField
+                                    id="item-unit-price"
+                                    label="Unit price"
+                                    type="number"
+                                    inputMode="decimal"
+                                    value={itemDraft.unit_price}
+                                    onChange={event => setItemDraft(prev => ({ ...prev, unit_price: event.target.value }))}
+                                />
+                                <label className="sm:col-span-2 flex items-center gap-2 text-sm cursor-pointer" style={{ color: 'var(--blanc-ink-2)' }}>
+                                    <Checkbox checked={itemDraft.taxable} onCheckedChange={checked => setItemDraft(prev => ({ ...prev, taxable: !!checked }))} />
+                                    Service is taxable
+                                </label>
+                            </div>
                         </div>
-                        <div className="sm:col-span-2">
-                            <Label>Description</Label>
-                            <Textarea value={itemDraft.description} onChange={e => setItemDraft(prev => ({ ...prev, description: e.target.value }))} rows={4} />
-                        </div>
-                        <div>
-                            <Label>Qty</Label>
-                            <Input type="number" min="0.01" step="any" value={itemDraft.quantity} onChange={e => setItemDraft(prev => ({ ...prev, quantity: e.target.value }))} />
-                        </div>
-                        <div>
-                            <Label>Unit price <span className="text-red-600">*</span></Label>
-                            <Input type="number" min="0" step="0.01" value={itemDraft.unit_price} onChange={e => setItemDraft(prev => ({ ...prev, unit_price: e.target.value }))} />
-                        </div>
-                        <div className="sm:col-span-2 flex items-center gap-2">
-                            <Checkbox checked={itemDraft.taxable} onCheckedChange={checked => setItemDraft(prev => ({ ...prev, taxable: !!checked }))} />
-                            <Label>Service is taxable</Label>
-                        </div>
-                    </div>
-                    <DialogFooter>
+                    </DialogBody>
+                    <DialogPanelFooter>
                         <Button type="button" variant="ghost" onClick={() => setItemDialogOpen(false)}>Cancel</Button>
                         <Button type="button" onClick={saveItem} disabled={!itemDraft.name.trim() || Number(itemDraft.quantity) <= 0 || Number(itemDraft.unit_price) < 0}>
-                            Save Item
+                            Save item
                         </Button>
-                    </DialogFooter>
+                    </DialogPanelFooter>
                 </DialogContent>
             </Dialog>
         </>

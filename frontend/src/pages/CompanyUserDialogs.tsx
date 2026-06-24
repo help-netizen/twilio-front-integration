@@ -138,7 +138,7 @@ export function CreateUserDialog({ open, setOpen, createForm, setCreateForm, cre
                         </DialogBody>
                         <DialogPanelFooter>
                             <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-                            <Button onClick={handleCreate} disabled={creating}>{creating ? 'Creating…' : 'Create User'}</Button>
+                            <Button onClick={handleCreate} disabled={creating}>{creating ? 'Creating…' : 'Create user'}</Button>
                         </DialogPanelFooter>
                     </>
                 )}
@@ -244,7 +244,7 @@ export function EditUserDialog({ open, setOpen, user, form, setForm, handleUpdat
                 <DialogPanelFooter>
                     <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
                     <Button onClick={handleUpdate} disabled={loading === user.id}>
-                        {loading === user.id ? 'Saving…' : 'Save Changes'}
+                        {loading === user.id ? 'Saving…' : 'Save changes'}
                     </Button>
                 </DialogPanelFooter>
             </DialogContent>

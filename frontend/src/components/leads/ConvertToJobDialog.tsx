@@ -18,7 +18,7 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
                         className="text-[22px] font-semibold leading-tight"
                         style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
                     >
-                        Convert to Job — {lead?.FirstName} {lead?.LastName}
+                        Convert to job — {lead?.FirstName} {lead?.LastName}
                     </DialogTitle>
                     <DialogDescription className="sr-only">Convert a lead into a scheduled job</DialogDescription>
                 </DialogPanelHeader>
@@ -40,7 +40,7 @@ export function ConvertToJobDialog({ lead, open, onOpenChange, onSuccess }: Conv
                         {h.step < 4 ? (
                             <Button onClick={() => h.setStep((h.step + 1) as Step)} disabled={(h.step === 1 && !h.canProceedStep1) || (h.step === 2 && !h.canProceedStep2) || (h.step === 3 && !h.canProceedStep3)}>Next</Button>
                         ) : (
-                            <Button onClick={h.handleSubmit} disabled={h.submitting || !h.selectedTimeslot}>{h.submitting ? 'Creating…' : 'Create Job'}</Button>
+                            <Button onClick={h.handleSubmit} disabled={h.submitting || !h.selectedTimeslot}>{h.submitting ? 'Creating…' : 'Create job'}</Button>
                         )}
                     </div>
                 </DialogPanelFooter>

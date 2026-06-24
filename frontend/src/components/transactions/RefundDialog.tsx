@@ -56,7 +56,7 @@ export function RefundDialog({ open, onOpenChange, transaction, onRefund }: Prop
                         className="text-[22px] font-semibold leading-tight"
                         style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
                     >
-                        Refund Transaction
+                        Refund payment
                     </DialogTitle>
                     <DialogDescription className="sr-only">Refund part or all of a payment transaction</DialogDescription>
                 </DialogPanelHeader>
@@ -69,11 +69,11 @@ export function RefundDialog({ open, onOpenChange, transaction, onRefund }: Prop
                         style={{ background: 'rgba(117, 106, 89, 0.04)' }}
                     >
                         <div className="flex justify-between text-sm">
-                            <span style={{ color: 'var(--blanc-ink-3)' }}>Transaction</span>
+                            <span style={{ color: 'var(--blanc-ink-3)' }}>Payment</span>
                             <span className="font-mono">#{transaction.id}</span>
                         </div>
                         <div className="flex justify-between text-sm">
-                            <span style={{ color: 'var(--blanc-ink-3)' }}>Original Amount</span>
+                            <span style={{ color: 'var(--blanc-ink-3)' }}>Original amount</span>
                             <span className="font-semibold">{money(transaction.amount)}</span>
                         </div>
                         <div className="flex justify-between text-sm">

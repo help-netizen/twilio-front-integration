@@ -74,7 +74,7 @@ export function CreateCompanyDialog({ open, onOpenChange, onSuccess }: CreateCom
                             className="text-[22px] font-semibold leading-tight"
                             style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
                         >
-                            Create Company
+                            Create company
                         </DialogTitle>
                         <DialogDescription className="sr-only">
                             Create a new tenant company and bootstrap its first administrator.
@@ -86,11 +86,11 @@ export function CreateCompanyDialog({ open, onOpenChange, onSuccess }: CreateCom
                         <div className="space-y-3.5">
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                                 <FloatingField id="name" name="name" label="Company Name" value={formData.name} onChange={(e) => handleChange(e as React.ChangeEvent<HTMLInputElement>)} />
-                                <FloatingField id="slug" name="slug" label="URL Slug" value={formData.slug} onChange={(e) => handleChange(e as React.ChangeEvent<HTMLInputElement>)} />
+                                <FloatingField id="slug" name="slug" label="URL handle"value={formData.slug} onChange={(e) => handleChange(e as React.ChangeEvent<HTMLInputElement>)} />
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                                 <FloatingField id="timezone" name="timezone" label="Timezone" value={formData.timezone} onChange={(e) => handleChange(e as React.ChangeEvent<HTMLInputElement>)} />
-                                <FloatingField id="locale" name="locale" label="Locale" value={formData.locale} onChange={(e) => handleChange(e as React.ChangeEvent<HTMLInputElement>)} />
+                                <FloatingField id="locale" name="locale" label="Language"value={formData.locale} onChange={(e) => handleChange(e as React.ChangeEvent<HTMLInputElement>)} />
                             </div>
                             <FloatingField id="admin_email" name="admin_email" label="Admin Email" type="email" value={formData.admin_email} onChange={(e) => handleChange(e as React.ChangeEvent<HTMLInputElement>)} />
                             <p className="text-xs text-muted-foreground">First admin user will be created with this email.</p>
@@ -103,7 +103,7 @@ export function CreateCompanyDialog({ open, onOpenChange, onSuccess }: CreateCom
                             Cancel
                         </Button>
                         <Button type="submit" disabled={loading}>
-                            {loading ? 'Creating...' : 'Create Company'}
+                            {loading ? 'Creating...' : 'Create company'}
                         </Button>
                     </DialogPanelFooter>
                 </form>

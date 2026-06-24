@@ -313,7 +313,7 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                         <p className="text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>Summary</p>
                                         <p className="mt-1 text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Add make, model, issue, findings, needs, and cause when the estimate needs client context.</p>
                                         <Button type="button" variant="outline" size="sm" className="mt-3" onClick={openSummaryDialog}>
-                                            <Plus className="mr-1 size-4" /> Add Summary
+                                            <Plus className="mr-1 size-4" /> Add summary
                                         </Button>
                                     </div>
                                 )}
@@ -500,7 +500,7 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                             Preview
                         </Button>
                         <Button type="button" onClick={handleSave} disabled={saving || !canSave || !!estimate?.archived_at}>
-                            {saving ? 'Saving...' : 'Save Estimate'}
+                            {saving ? 'Saving...' : 'Save estimate'}
                         </Button>
                     </DialogPanelFooter>
                 </DialogContent>
@@ -531,7 +531,7 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                     </DialogBody>
                     <DialogPanelFooter>
                         <Button type="button" variant="ghost" onClick={() => setSummaryDialogOpen(false)}>Cancel</Button>
-                        <Button type="button" onClick={saveSummary}>Save Summary</Button>
+                        <Button type="button" onClick={saveSummary}>Save summary</Button>
                     </DialogPanelFooter>
                 </DialogContent>
             </Dialog>
@@ -590,7 +590,7 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                     <DialogPanelFooter>
                         <Button type="button" variant="ghost" onClick={() => setItemDialogOpen(false)}>Cancel</Button>
                         <Button type="button" onClick={saveItem} disabled={!itemDraft.name.trim() || Number(itemDraft.quantity) <= 0 || Number(itemDraft.unit_price) < 0}>
-                            Save Item
+                            Save item
                         </Button>
                     </DialogPanelFooter>
                 </DialogContent>

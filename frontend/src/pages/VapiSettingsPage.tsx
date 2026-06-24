@@ -13,6 +13,9 @@ import {
     DialogHeader,
     DialogTitle,
 } from '../components/ui/dialog';
+import { FloatingField } from '../components/ui/floating-field';
+import { FloatingSelect } from '../components/ui/floating-select';
+import { SelectItem } from '../components/ui/select';
 import { vapiApi, type VapiConnection, type VapiResource } from '../services/vapiApi';
 import { fetchMarketplaceApps, installMarketplaceApp, disconnectMarketplaceInstallation } from '../services/marketplaceApi';
 
@@ -26,18 +29,6 @@ const label = (text: string) => (
 
 const sectionCard = { background: 'rgba(117,106,89,0.04)', borderRadius: 16, padding: '20px 22px', marginBottom: 16 } as const;
 const VAPI_DISPLAY_NAME = 'VAPI AI';
-
-const fieldStyle = {
-    width: '100%',
-    padding: '8px 12px',
-    border: '1px solid var(--blanc-line, rgba(117,106,89,0.18))',
-    borderRadius: 10,
-    fontSize: 13,
-    background: 'var(--blanc-bg, #fffdf9)',
-    color: 'var(--blanc-ink-1, #2c2620)',
-    outline: 'none',
-    fontFamily: 'IBM Plex Sans, sans-serif',
-} as const;
 
 // ─── Section: API Connection ──────────────────────────────────────────────────
 
@@ -70,7 +61,7 @@ function ConnectionSection({
             <div style={sectionCard}>
                 {label('API Connection')}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <CheckCircle2 size={16} style={{ color: '#22c55e', flexShrink: 0 }} />
+                    <CheckCircle2 size={16} style={{ color: 'var(--blanc-success)', flexShrink: 0 }} />
                     <div>
                         <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--blanc-ink-1)' }}>
                             {VAPI_DISPLAY_NAME}
@@ -90,43 +81,42 @@ function ConnectionSection({
             {label('API Connection')}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <div>
-                    <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--blanc-ink-2)', marginBottom: 6 }}>VAPI API Key</div>
                     <div style={{ position: 'relative' }}>
-                        <input
+                        <FloatingField
+                            label="VAPI API Key"
+                            id="vapi-api-key"
                             type={showKey ? 'text' : 'password'}
                             value={apiKey}
                             onChange={e => { setApiKey(e.target.value); setError(''); }}
-                            placeholder="vapi-key-…"
-                            style={{ ...fieldStyle, paddingRight: 40 }}
-                            autoComplete="off"
+                            className="pr-10"
                         />
                         <button
                             type="button"
                             onClick={() => setShowKey(v => !v)}
-                            style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--blanc-ink-3)', padding: 0 }}
+                            style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--blanc-ink-3)', padding: 0 }}
                             tabIndex={-1}
                         >
                             {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
                         </button>
                     </div>
                     {error && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: 12, color: '#ef4444' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: 12, color: 'var(--blanc-danger)' }}>
                             <AlertCircle size={12} />
                             {error}
                         </div>
                     )}
                 </div>
 
-                <div style={{ width: 160 }}>
-                    <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--blanc-ink-2)', marginBottom: 6 }}>Environment</div>
-                    <select
+                <div style={{ width: 200 }}>
+                    <FloatingSelect
+                        label="Environment"
+                        id="vapi-environment"
                         value={environment}
-                        onChange={e => setEnvironment(e.target.value as 'prod' | 'dev')}
-                        style={fieldStyle}
+                        onValueChange={v => setEnvironment(v as 'prod' | 'dev')}
                     >
-                        <option value="prod">Production</option>
-                        <option value="dev">Development</option>
-                    </select>
+                        <SelectItem value="prod">Production</SelectItem>
+                        <SelectItem value="dev">Development</SelectItem>
+                    </FloatingSelect>
                 </div>
 
                 <Button
@@ -198,28 +188,20 @@ function ResourceSection({
         <div style={sectionCard}>
             {label('SIP Resource')}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <div>
-                    <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--blanc-ink-2)', marginBottom: 6 }}>SIP URI</div>
-                    <input
-                        type="text"
-                        value={sipUri}
-                        onChange={e => { setSipUri(e.target.value); setError(''); }}
-                        placeholder="sip:tenant-abc@sip.vapi.ai"
-                        style={fieldStyle}
-                    />
-                </div>
-                <div>
-                    <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--blanc-ink-2)', marginBottom: 6 }}>Server URL</div>
-                    <input
-                        type="text"
-                        value={serverUrl}
-                        onChange={e => setServerUrl(e.target.value)}
-                        placeholder="https://your-domain.com/api/vapi/runtime"
-                        style={fieldStyle}
-                    />
-                </div>
+                <FloatingField
+                    label="SIP URI"
+                    id="vapi-sip-uri"
+                    value={sipUri}
+                    onChange={e => { setSipUri(e.target.value); setError(''); }}
+                />
+                <FloatingField
+                    label="Server URL"
+                    id="vapi-server-url"
+                    value={serverUrl}
+                    onChange={e => setServerUrl(e.target.value)}
+                />
                 {error && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#ef4444' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--blanc-danger)' }}>
                         <AlertCircle size={12} />
                         {error}
                     </div>
@@ -330,7 +312,7 @@ export default function VapiSettingsPage() {
                     </div>
                 </div>
                 {isFullyConnected && (
-                    <Badge className="ml-auto" style={{ background: 'rgba(34,197,94,0.1)', color: '#16a34a', border: 'none', fontSize: 12 }}>
+                    <Badge className="ml-auto bg-[rgba(27,139,99,0.12)] text-[var(--blanc-success)]" style={{ border: 'none', fontSize: 12 }}>
                         Connected
                     </Badge>
                 )}
@@ -371,10 +353,9 @@ export default function VapiSettingsPage() {
             {isFullyConnected && (
                 <div style={{ marginTop: 24 }}>
                     <Button
-                        variant="outline"
+                        variant="destructive"
                         size="sm"
                         onClick={() => setDisconnectOpen(true)}
-                        style={{ color: '#ef4444', borderColor: 'rgba(239,68,68,0.3)' }}
                     >
                         <Unplug size={13} className="mr-1.5" />
                         Disconnect VAPI AI
@@ -392,7 +373,7 @@ export default function VapiSettingsPage() {
                         </DialogDescription>
                     </DialogHeader>
                     <DialogFooter>
-                        <Button variant="outline" onClick={() => setDisconnectOpen(false)}>Cancel</Button>
+                        <Button variant="ghost" onClick={() => setDisconnectOpen(false)}>Cancel</Button>
                         <Button
                             variant="destructive"
                             onClick={() => disconnectMutation.mutate()}

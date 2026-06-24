@@ -68,7 +68,7 @@ export function RecordPaymentDialog({ open, onOpenChange, onSave, defaultInvoice
                         className="text-[22px] font-semibold leading-tight"
                         style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
                     >
-                        Record Payment
+                        Record payment
                     </DialogTitle>
                     <DialogDescription className="sr-only">Record a manual payment transaction</DialogDescription>
                 </DialogPanelHeader>
@@ -79,7 +79,7 @@ export function RecordPaymentDialog({ open, onOpenChange, onSave, defaultInvoice
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                             <FloatingField
                                 id="rpd-amount"
-                                label="Amount *"
+                                label="Amount"
                                 inputMode="decimal"
                                 value={amount}
                                 onChange={e => setAmount(e.target.value)}
@@ -101,14 +101,14 @@ export function RecordPaymentDialog({ open, onOpenChange, onSave, defaultInvoice
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                             <FloatingField
                                 id="rpd-invoice"
-                                label="Invoice ID (optional)"
+                                label="Invoice number (optional)"
                                 inputMode="numeric"
                                 value={invoiceId}
                                 onChange={e => setInvoiceId(e.target.value)}
                             />
                             <FloatingField
                                 id="rpd-contact"
-                                label="Contact ID (optional)"
+                                label="Customer (optional)"
                                 inputMode="numeric"
                                 value={contactId}
                                 onChange={e => setContactId(e.target.value)}
@@ -139,7 +139,7 @@ export function RecordPaymentDialog({ open, onOpenChange, onSave, defaultInvoice
                         Cancel
                     </Button>
                     <Button onClick={handleSave} disabled={saving || !amount.trim() || Number(amount) <= 0}>
-                        {saving ? 'Saving...' : 'Record Payment'}
+                        {saving ? 'Saving...' : 'Record payment'}
                     </Button>
                 </DialogPanelFooter>
             </DialogContent>
