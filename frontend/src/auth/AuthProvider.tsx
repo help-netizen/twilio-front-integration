@@ -241,6 +241,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             });
     }, []);
 
+    // Security fallback: kc.init('login-required') normally redirects an
+    // unauthenticated visitor to Keycloak before this provider renders the app.
+    // But if init instead RESOLVED without a session, or THREW (caught above and
+    // set loading=false), we must not fall through to rendering {children} — the
+    // AppLayout chrome would leak to a logged-out user. Force the login redirect.
+    useEffect(() => {
+        if (FEATURE_AUTH && !publicPage && !loading && !authenticated) {
+            getKeycloak().login();
+        }
+    }, [loading, authenticated, publicPage]);
+
     const hasRole = useCallback((...roles: string[]) => {
         if (!user) return false;
         return roles.some(r => user.roles.includes(r));
@@ -269,8 +280,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         );
     }
 
+    // Hard auth gate: with auth enabled, an unauthenticated visitor on a
+    // protected page never renders the app shell. The effect above is redirecting
+    // to Keycloak; show a blocker until the browser navigates away.
+    if (FEATURE_AUTH && !publicPage && !authenticated) {
+        return (
+            <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                height: '100vh', background: 'var(--blanc-bg, #efe9df)', color: 'var(--blanc-ink-2, #536070)',
+                fontFamily: '"IBM Plex Sans", system-ui, sans-serif',
+            }}>
+                <div style={{ textAlign: 'center' }}>
+                    <div className="animate-spin" style={{ width: 22, height: 22, border: '2px solid var(--blanc-line, rgba(117,106,89,0.25))', borderTopColor: 'var(--blanc-ink-2, #536070)', borderRadius: '50%', margin: '0 auto 12px' }} />
+                    <div style={{ fontSize: 14 }}>Redirecting to sign in…</div>
+                </div>
+            </div>
+        );
+    }
+
     return (
-        <AuthContext.Provider value={{ 
+        <AuthContext.Provider value={{
             authenticated, user, token, loading, 
             platformRole, company, membership, permissions, scopes,
             hasRole, logout, accessDeniedMessage, clearAccessDenied 

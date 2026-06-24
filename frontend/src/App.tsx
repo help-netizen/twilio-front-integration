@@ -101,7 +101,7 @@ function App() {
               <Route path="/pulse" element={<ProtectedRoute permissions={['pulse.view']}><PulsePage /></ProtectedRoute>} />
               <Route path="/pulse/contact/:id" element={<ProtectedRoute permissions={['pulse.view']}><PulsePage /></ProtectedRoute>} />
               <Route path="/pulse/timeline/:id" element={<ProtectedRoute permissions={['pulse.view']}><PulsePage /></ProtectedRoute>} />
-              <Route path="/calls" element={<HomePage />} />
+              <Route path="/calls" element={<ProtectedRoute permissions={['messages.view_internal']}><HomePage /></ProtectedRoute>} />
               <Route path="/contact/:id" element={<ProtectedRoute permissions={['messages.view_internal']}><ConversationPage /></ProtectedRoute>} />
               <Route path="/calls/:callSid" element={<ProtectedRoute permissions={['messages.view_internal']}><ConversationPage /></ProtectedRoute>} />
               <Route path="/messages" element={<ProtectedRoute permissions={['messages.view_internal']}><MessagesPage /></ProtectedRoute>} />
