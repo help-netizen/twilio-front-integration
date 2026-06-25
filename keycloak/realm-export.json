@@ -1,6 +1,7 @@
 {
   "realm": "crm-prod",
   "enabled": true,
+  "loginTheme": "albusto",
   "registrationAllowed": false,
   "resetPasswordAllowed": true,
   "verifyEmail": true,
