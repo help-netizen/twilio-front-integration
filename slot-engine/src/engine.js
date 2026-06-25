@@ -53,15 +53,30 @@ function recommendSlots(request) {
   const newGeoConf = nr.geo_confidence == null ? 1 : nr.geo_confidence;
   const newDuration = resolveDuration(nr.job_type, nr.duration_minutes, true, config);
 
+  // MVP is single-technician (vendor-spec Phase 1). A new request needing a team
+  // is out of scope here (Phase 2 = team feasible-interval intersection).
+  if ((nr.required_technician_count || 1) > 1) {
+    return {
+      request_id: request.request_id, config_version: config.config_version,
+      generated_at: new Date().toISOString(), recommendations: [],
+      summary: { generated_candidates_count: 0, feasible_candidates_count: 0, returned_recommendations_count: 0,
+        note: 'multi_technician_requests_not_supported_in_mvp' },
+    };
+  }
+
   const techs = (request.technicians || []).filter((t) => t.active !== false);
   const snapshot = buildSnapshot(request.scheduled_jobs, config);
+  const lowGeo = newGeoConf < config.geography.min_geo_confidence_for_auto_recommendation;
 
   const shiftStart = hmToMin(config.workday.shift_start);
   const shiftEnd = hmToMin(config.workday.shift_end) + (config.workday.allowed_overtime_minutes || 0);
   const shiftCapacity = shiftEnd - shiftStart;
 
   const dates = horizonDates(nr.earliest_allowed_date || nowStamp.date, config.planning.horizon_days, config.planning.include_today)
-    .filter((d) => (!nr.earliest_allowed_date || d >= nr.earliest_allowed_date) && (!nr.latest_allowed_date || d <= nr.latest_allowed_date));
+    .filter((d) => (!nr.earliest_allowed_date || d >= nr.earliest_allowed_date)
+      && (!nr.latest_allowed_date || d <= nr.latest_allowed_date)
+      // never propose a date earlier than today
+      && (!nowStamp.date || !config.planning.exclude_past_timeframes || d >= nowStamp.date));
 
   const evaluated = [];
   let generated = 0;
@@ -95,9 +110,9 @@ function recommendSlots(request) {
           // route = existing with new spliced at idx
           const route = existing.slice(0, idx).concat([newNode], existing.slice(idx));
 
-          // ── overlap (max over existing) ───────────────────────────────────
-          let maxOverlap = 0;
-          for (const j of existing) maxOverlap = Math.max(maxOverlap, overlapMinutes(a, b, j.a, j.b));
+          // ── overlap (max + sum over existing) ─────────────────────────────
+          let maxOverlap = 0, sumOverlap = 0;
+          for (const j of existing) { const ov = overlapMinutes(a, b, j.a, j.b); maxOverlap = Math.max(maxOverlap, ov); sumOverlap += ov; }
           if (maxOverlap > config.overlap.max_timeframe_overlap_minutes) { reject(candId, 'timeframe_overlap_exceeded', { max_overlap_minutes: maxOverlap }); continue; }
 
           // ── nearest distance to existing ─────────────────────────────────
@@ -153,25 +168,35 @@ function recommendSlots(request) {
             route_slack_minutes: round1(feas.routeSlack),
             slot_fit_ratio: round2(slotFit),
             max_overlap_minutes: maxOverlap,
+            sum_overlap_minutes: sumOverlap,
             day_utilization_after_insert: round2(util),
             geo_confidence: newGeoConf,
             hours_until_slot_start: round2(hoursUntil),
           };
           const score = scoreCandidate(metrics, config);
-          const confidence = confidenceClass(score, metrics, newGeoConf, config);
+          // Low location confidence (e.g. ZIP centroid below the floor): never an
+          // "auto" recommendation — force low + flag for dispatcher confirmation.
+          const confidence = lowGeo ? 'low' : confidenceClass(score, metrics, newGeoConf, config);
+          const codes = reasonCodes(metrics);
+          if (lowGeo && !codes.includes('low_location_confidence')) codes.push('low_location_confidence');
           evaluated.push({
             candidate_id: candId, date, techId: tech.id, techName: tech.name,
             time_frame: { start: win.start, end: win.end },
             feasible_arrival_interval: { start: minToHm(Fstart), end: minToHm(Fend) },
             metrics, score: round1(score), confidence,
-            reason_codes: reasonCodes(metrics), explanation: explain(win, date, tech, metrics),
+            requires_dispatch_confirmation: lowGeo || undefined,
+            reason_codes: codes, explanation: explain(win, date, tech, metrics),
           });
         }
       }
     }
   }
 
-  const ranked = rankAndDiversify(evaluated, config);
+  // One slot per (technician, date, window): multiple insertion positions can be
+  // feasible for the same window — keep the best-scoring one so the UI never shows
+  // two near-identical cards for the same tech+window.
+  const deduped = dedupeBestPerSlot(evaluated);
+  const ranked = rankAndDiversify(deduped, config);
   return {
     request_id: request.request_id,
     config_version: config.config_version,
@@ -179,7 +204,7 @@ function recommendSlots(request) {
     recommendations: ranked.map((r, i) => ({ rank: i + 1, ...r })),
     summary: {
       generated_candidates_count: generated,
-      feasible_candidates_count: evaluated.length,
+      feasible_candidates_count: deduped.length,
       returned_recommendations_count: ranked.length,
     },
     ...(config.debug.include_rejected_candidates ? { debug: { rejected_candidates_sample: rejected.slice(0, 25) } } : {}),
@@ -238,14 +263,29 @@ function confidenceClass(score, m, geoConf, config) {
 
 function reasonCodes(m) {
   const codes = [];
+  // positive
   if (m.nearest_existing_job_distance_miles != null && m.nearest_existing_job_distance_miles <= 5) codes.push('near_existing_jobs');
   if (m.extra_travel_minutes <= 15) codes.push('low_extra_travel');
   if (m.route_slack_minutes >= 30) codes.push('good_schedule_slack');
   if (m.slot_fit_ratio >= 0.6) codes.push('high_slot_fit');
   if (m.max_overlap_minutes === 0) codes.push('no_overlap');
+  // negative / risk
   if (m.extra_travel_minutes > 15 && m.extra_travel_minutes <= 35) codes.push('medium_extra_travel');
+  if (m.route_slack_minutes < 30) codes.push('tight_schedule');
+  if (m.max_overlap_minutes > 0) codes.push('overlap_allowed');
   if (m.geo_confidence < 0.7) codes.push('low_geo_confidence');
   return codes;
+}
+
+/** Keep the highest-scoring candidate per (techId, date, window start). */
+function dedupeBestPerSlot(cands) {
+  const best = new Map();
+  for (const c of cands) {
+    const key = `${c.techId}|${c.date}|${c.time_frame.start}`;
+    const prev = best.get(key);
+    if (!prev || c.score > prev.score) best.set(key, c);
+  }
+  return [...best.values()];
 }
 
 function explain(win, date, tech, m) {
@@ -272,6 +312,7 @@ function rankAndDiversify(cands, config) {
       candidate_id: c.candidate_id, date: c.date, time_frame: c.time_frame,
       technicians: [{ id: c.techId, name: c.techName }],
       score: c.score, confidence: c.confidence,
+      ...(c.requires_dispatch_confirmation ? { requires_dispatch_confirmation: true } : {}),
       feasible_arrival_interval: c.feasible_arrival_interval,
       metrics: c.metrics, reason_codes: c.reason_codes, explanation: c.explanation,
     });
