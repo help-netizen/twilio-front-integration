@@ -50,12 +50,25 @@ const PANEL_WIDTH: Record<DialogSize, string> = {
 const DialogContent = React.forwardRef<
     React.ElementRef<typeof DialogPrimitive.Content>,
     React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { size?: DialogSize; variant?: "dialog" | "panel" }
->(({ className, children, size = "default", variant = "dialog", ...props }, ref) => (
+>(({ className, children, size = "default", variant = "dialog", onInteractOutside, ...props }, ref) => (
     <DialogPortal>
         {/* Panel: no dimming scrim — the page stays visible behind it (job-card mechanic) */}
         <DialogOverlay className={variant === "panel" ? "bg-transparent" : undefined} />
         <DialogPrimitive.Content
             ref={ref}
+            onInteractOutside={(event) => {
+                // Keep this dialog open when the interaction comes from a STACKED
+                // dialog or a popover/select/dropdown layer rendered above it.
+                // Without this, closing a nested dialog (e.g. the estimate/invoice
+                // "Summary" editor) dismisses its parent too — Radix treats the
+                // click in the upper layer as "outside" the lower one.
+                const target = (event.detail as { originalEvent?: Event })?.originalEvent?.target as HTMLElement | null
+                if (target?.closest?.('[role="dialog"], [role="alertdialog"], [data-radix-popper-content-wrapper]')) {
+                    event.preventDefault()
+                    return
+                }
+                onInteractOutside?.(event)
+            }}
             className={cn(
                 "fixed z-[140] w-full border bg-[var(--blanc-panel-surface,#fffdf9)] shadow-lg duration-200",
                 // Mobile: bottom-sheet — pinned to bottom, slides up (both variants)
