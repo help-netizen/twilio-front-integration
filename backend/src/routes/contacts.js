@@ -1,10 +1,12 @@
 const express = require('express');
 const multer = require('multer');
+const { randomUUID } = require('node:crypto');
 const router = express.Router();
 const contactsService = require('../services/contactsService');
 const contactDedupeService = require('../services/contactDedupeService');
 const zenbookerSyncService = require('../services/zenbookerSyncService');
 const noteAttachmentsService = require('../services/noteAttachmentsService');
+const notesMutationService = require('../services/notesMutationService');
 const { toE164 } = require('../utils/phoneUtils');
 const eventService = require('../services/eventService');
 const { requirePermission } = require('../middleware/authorization');
@@ -385,6 +387,61 @@ router.get('/:id/history', requirePermission('contacts.view'), async (req, res) 
     }
 });
 
+// ─── Note-mutation helpers (shared by PATCH/DELETE note routes, NOTES-001) ────
+
+function isAdminActor(req) {
+    return req.user?._devMode
+        || req.authz?.membership?.role_key === 'tenant_admin'
+        || (req.user?.roles || []).includes('company_admin');
+}
+
+function buildNoteActor(req) {
+    return {
+        sub: req.user?.sub || null,
+        crmUserId: req.user?.sub || null,
+        name: req.user?.name || null,
+        isAdmin: isAdminActor(req),
+    };
+}
+
+function parseRemoveAttachmentIds(raw) {
+    if (raw == null || raw === '') return [];
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === 'string') {
+        try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) return parsed;
+            if (parsed == null) return [];
+            return [parsed];
+        } catch {
+            return [raw];
+        }
+    }
+    return [raw];
+}
+
+// Build the GET-shaped, soft-delete-excluded notes list for a contact.
+async function enrichContactNotes(companyId, contactId, notes) {
+    const attachments = await noteAttachmentsService.getAttachmentsForEntity(companyId, 'contact', contactId);
+    const byNoteId = {};
+    const byNoteIndex = {};
+    for (const a of attachments) {
+        if (a.noteId) (byNoteId[a.noteId] ||= []).push(a);
+        else (byNoteIndex[a.noteIndex] ||= []).push(a);
+    }
+    return (notes || [])
+        .map((n, i) => ({ n, i }))
+        .filter(({ n }) => !n.deleted_at)
+        .map(({ n, i }) => ({
+            ...n,
+            id: n.id || null,
+            created_by: n.created_by || null,
+            source: n.source || null,
+            zb_note_id: n.zb_note_id || null,
+            attachments: (n.id && byNoteId[n.id]) || byNoteIndex[i] || [],
+        }));
+}
+
 router.get('/:id/notes', requirePermission('contacts.view'), async (req, res) => {
     const reqId = requestId();
     try {
@@ -393,15 +450,7 @@ router.get('/:id/notes', requirePermission('contacts.view'), async (req, res) =>
         const contact = await contactsService.getById(contactId, companyId, getProviderScope(req));
         if (!contact) return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));
 
-        const notes = contact.structured_notes || [];
-        const attachments = await noteAttachmentsService.getAttachmentsForEntity(companyId, 'contact', contactId);
-        const byNote = {};
-        for (const a of attachments) {
-            if (!byNote[a.noteIndex]) byNote[a.noteIndex] = [];
-            byNote[a.noteIndex].push(a);
-        }
-
-        const enriched = notes.map((n, i) => ({ ...n, attachments: byNote[i] || [] }));
+        const enriched = await enrichContactNotes(companyId, contactId, contact.structured_notes || []);
         res.json(successResponse(enriched, reqId));
     } catch (err) {
         console.error(`[ContactsAPI][${reqId}] Get notes error:`, err.message);
@@ -430,15 +479,16 @@ router.post('/:id/notes', requirePermission('contacts.edit'), upload.array('atta
         }
 
         const noteIndex = existingNotes.length;
+        const noteId = randomUUID();
         let attachmentsMeta = [];
         if (files.length > 0) {
             attachmentsMeta = await noteAttachmentsService.createAttachments(
-                companyId, 'contact', contactId, noteIndex, files, userId
+                companyId, 'contact', contactId, noteIndex, files, userId, { noteId }
             );
         }
 
         const author = req.user?.name?.split(' ')[0] || req.user?.email || null;
-        const note = { text, created: new Date().toISOString(), ...(author && { author }) };
+        const note = { id: noteId, text, created: new Date().toISOString(), created_by: userId, ...(author && { author }) };
         if (attachmentsMeta.length > 0) {
             note.attachments = attachmentsMeta.map(a => ({
                 id: a.id, fileName: a.file_name, contentType: a.content_type, fileSize: a.file_size,
@@ -457,6 +507,90 @@ router.post('/:id/notes', requirePermission('contacts.edit'), upload.array('atta
         console.error(`[ContactsAPI][${reqId}] Add note error:`, err.message);
         const status = err.status || 500;
         res.status(status).json(errorResponse('INTERNAL_ERROR', err.message, reqId));
+    }
+});
+
+// ─── Edit / Delete Note (NOTES-001) ──────────────────────────────────────────
+
+function buildContactNoteAdapter(companyId, contactId, scope) {
+    const db = require('../db/connection');
+    return {
+        entityType: 'contact',
+        attachmentEntityId: contactId,
+        async loadNotes() {
+            const contact = await contactsService.getById(contactId, companyId, scope);
+            return contact ? (contact.structured_notes || []) : null;
+        },
+        async saveNotes(notes) {
+            await db.query(
+                'UPDATE contacts SET structured_notes = $1::jsonb, updated_at = NOW() WHERE id = $2 AND company_id = $3',
+                [JSON.stringify(notes), contactId, companyId]
+            );
+        },
+    };
+}
+
+router.patch('/:id/notes/:noteId', requirePermission('contacts.edit'), upload.array('attachments', noteAttachmentsService.MAX_FILES_PER_NOTE), async (req, res) => {
+    const reqId = requestId();
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const contactId = parseInt(req.params.id, 10);
+        const scope = getProviderScope(req);
+        const contact = await contactsService.getById(contactId, companyId, scope);
+        if (!contact) return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));
+
+        const adapter = buildContactNoteAdapter(companyId, contactId, scope);
+        const { note, oldText, addedNames, removedNames } = await notesMutationService.editNote(
+            adapter,
+            req.params.noteId,
+            {
+                text: req.body.text,
+                removeAttachmentIds: parseRemoveAttachmentIds(req.body.remove_attachment_ids),
+                files: req.files || [],
+                actor: buildNoteActor(req),
+                companyId,
+            }
+        );
+
+        eventService.logEvent(companyId, 'contact', contactId, 'note_edited', {
+            note_id: note.id, old_text: oldText, new_text: note.text,
+            added: addedNames, removed: removedNames, actor_name: eventService.actorName(req),
+        }, 'user', req.user?.sub);
+
+        const enriched = await enrichContactNotes(companyId, contactId, await adapter.loadNotes());
+        res.json(successResponse({ notes: enriched }, reqId));
+    } catch (err) {
+        const status = err.status || 500;
+        if (status >= 500) console.error(`[ContactsAPI][${reqId}] Edit note error:`, err.message);
+        res.status(status).json(errorResponse(status === 403 ? 'FORBIDDEN' : status === 404 ? 'NOT_FOUND' : 'INTERNAL_ERROR', err.message, reqId));
+    }
+});
+
+router.delete('/:id/notes/:noteId', requirePermission('contacts.edit'), async (req, res) => {
+    const reqId = requestId();
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const contactId = parseInt(req.params.id, 10);
+        const scope = getProviderScope(req);
+        const contact = await contactsService.getById(contactId, companyId, scope);
+        if (!contact) return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));
+
+        const adapter = buildContactNoteAdapter(companyId, contactId, scope);
+        const { note } = await notesMutationService.softDeleteNote(adapter, req.params.noteId, {
+            actor: buildNoteActor(req),
+            companyId,
+        });
+
+        eventService.logEvent(companyId, 'contact', contactId, 'note_deleted', {
+            note_id: note.id, deleted_text: note.text || '', actor_name: eventService.actorName(req),
+        }, 'user', req.user?.sub);
+
+        const enriched = await enrichContactNotes(companyId, contactId, await adapter.loadNotes());
+        res.json(successResponse({ notes: enriched }, reqId));
+    } catch (err) {
+        const status = err.status || 500;
+        if (status >= 500) console.error(`[ContactsAPI][${reqId}] Delete note error:`, err.message);
+        res.status(status).json(errorResponse(status === 403 ? 'FORBIDDEN' : status === 404 ? 'NOT_FOUND' : 'INTERNAL_ERROR', err.message, reqId));
     }
 });
 

@@ -9,10 +9,12 @@
 
 const express = require('express');
 const multer = require('multer');
+const { randomUUID } = require('node:crypto');
 const router = express.Router();
 const { requirePermission } = require('../middleware/authorization');
 const leadsService = require('../services/leadsService');
 const noteAttachmentsService = require('../services/noteAttachmentsService');
+const notesMutationService = require('../services/notesMutationService');
 const db = require('../db/connection');
 
 const upload = multer({
@@ -725,26 +727,69 @@ router.get('/:uuid/history', requirePermission('leads.view'), async (req, res) =
     }
 });
 
+// ─── Note-mutation helpers (shared by PATCH/DELETE note routes, NOTES-001) ────
+
+function isAdminActor(req) {
+    return req.user?._devMode
+        || req.authz?.membership?.role_key === 'tenant_admin'
+        || (req.user?.roles || []).includes('company_admin');
+}
+
+function buildNoteActor(req) {
+    return {
+        sub: req.user?.sub || null,
+        crmUserId: req.user?.sub || null,
+        name: req.user?.name || null,
+        isAdmin: isAdminActor(req),
+    };
+}
+
+function parseRemoveAttachmentIds(raw) {
+    if (raw == null || raw === '') return [];
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === 'string') {
+        try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) return parsed;
+            if (parsed == null) return [];
+            return [parsed];
+        } catch {
+            return [raw];
+        }
+    }
+    return [raw];
+}
+
+// Build the GET-shaped, soft-delete-excluded notes list for a lead.
+async function enrichLeadNotes(companyId, leadId, notes) {
+    const attachments = await noteAttachmentsService.getAttachmentsForEntity(companyId, 'lead', leadId);
+    const byNoteId = {};
+    const byNoteIndex = {};
+    for (const a of attachments) {
+        if (a.noteId) (byNoteId[a.noteId] ||= []).push(a);
+        else (byNoteIndex[a.noteIndex] ||= []).push(a);
+    }
+    return (notes || [])
+        .map((n, i) => ({ n, i }))
+        .filter(({ n }) => !n.deleted_at)
+        .map(({ n, i }) => ({
+            ...n,
+            id: n.id || null,
+            created_by: n.created_by || null,
+            source: n.source || null,
+            zb_note_id: n.zb_note_id || null,
+            attachments: (n.id && byNoteId[n.id]) || byNoteIndex[i] || [],
+        }));
+}
+
 router.get('/:uuid/notes', requirePermission('leads.view'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
         const lead = await leadsService.getLeadByUUID(req.params.uuid, companyId);
         if (!lead) return res.status(404).json({ ok: false, error: 'Lead not found' });
 
-        const notes = lead.structured_notes || [];
-        // Enrich with presigned URLs for attachments
         const leadId = lead.SerialId || lead.ClientId;
-        const attachments = await noteAttachmentsService.getAttachmentsForEntity(companyId, 'lead', leadId);
-        const attachmentsByNote = {};
-        for (const a of attachments) {
-            if (!attachmentsByNote[a.noteIndex]) attachmentsByNote[a.noteIndex] = [];
-            attachmentsByNote[a.noteIndex].push(a);
-        }
-
-        const enriched = notes.map((n, i) => ({
-            ...n,
-            attachments: attachmentsByNote[i] || [],
-        }));
+        const enriched = await enrichLeadNotes(companyId, leadId, lead.structured_notes || []);
 
         res.json({ ok: true, data: enriched });
     } catch (err) {
@@ -773,15 +818,16 @@ router.post('/:uuid/notes', requirePermission('leads.edit'), upload.array('attac
         }
 
         const noteIndex = existingNotes.length;
+        const noteId = randomUUID();
         let attachmentsMeta = [];
         if (files.length > 0) {
             attachmentsMeta = await noteAttachmentsService.createAttachments(
-                companyId, 'lead', leadId, noteIndex, files, userId
+                companyId, 'lead', leadId, noteIndex, files, userId, { noteId }
             );
         }
 
         const author = req.user?.name?.split(' ')[0] || req.user?.email || null;
-        const note = { text, created: new Date().toISOString(), ...(author && { author }) };
+        const note = { id: noteId, text, created: new Date().toISOString(), created_by: userId, ...(author && { author }) };
         if (attachmentsMeta.length > 0) {
             note.attachments = attachmentsMeta.map(a => ({
                 id: a.id, fileName: a.file_name, contentType: a.content_type, fileSize: a.file_size,
@@ -799,6 +845,90 @@ router.post('/:uuid/notes', requirePermission('leads.edit'), upload.array('attac
         console.error('[Leads] Add note error:', err.message);
         const status = err.status || 500;
         res.status(status).json({ ok: false, error: err.message });
+    }
+});
+
+// ─── Edit / Delete Note (NOTES-001) ──────────────────────────────────────────
+
+function buildLeadNoteAdapter(companyId, uuid, lead) {
+    const leadId = lead.SerialId || lead.ClientId; // attachment entity_id = serial_id, NOT uuid
+    return {
+        entityType: 'lead',
+        attachmentEntityId: leadId,
+        async loadNotes() {
+            const fresh = await leadsService.getLeadByUUID(uuid, companyId);
+            return fresh.structured_notes || [];
+        },
+        async saveNotes(notes) {
+            await db.query(
+                'UPDATE leads SET structured_notes = $1::jsonb, updated_at = NOW() WHERE uuid = $2 AND company_id = $3',
+                [JSON.stringify(notes), uuid, companyId]
+            );
+        },
+    };
+}
+
+router.patch('/:uuid/notes/:noteId', requirePermission('leads.edit'), upload.array('attachments', noteAttachmentsService.MAX_FILES_PER_NOTE), async (req, res) => {
+    const reqId = requestId();
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const lead = await leadsService.getLeadByUUID(req.params.uuid, companyId);
+        const aggregateId = lead.SerialId || lead.ClientId;
+        const leadId = lead.SerialId || lead.ClientId;
+
+        const adapter = buildLeadNoteAdapter(companyId, req.params.uuid, lead);
+        const { note, oldText, addedNames, removedNames } = await notesMutationService.editNote(
+            adapter,
+            req.params.noteId,
+            {
+                text: req.body.text,
+                removeAttachmentIds: parseRemoveAttachmentIds(req.body.remove_attachment_ids),
+                files: req.files || [],
+                actor: buildNoteActor(req),
+                companyId,
+            }
+        );
+
+        eventService.logEvent(companyId, 'lead', aggregateId, 'note_edited', {
+            note_id: note.id, old_text: oldText, new_text: note.text,
+            added: addedNames, removed: removedNames, actor_name: eventService.actorName(req),
+        }, 'user', req.user?.sub);
+
+        const enriched = await enrichLeadNotes(companyId, leadId, await adapter.loadNotes());
+        res.json({ ok: true, data: { notes: enriched } });
+    } catch (err) {
+        if (err.status === 403 || err.status === 404) {
+            return res.status(err.status).json({ ok: false, error: err.message });
+        }
+        handleError(err, reqId, res);
+    }
+});
+
+router.delete('/:uuid/notes/:noteId', requirePermission('leads.edit'), async (req, res) => {
+    const reqId = requestId();
+    try {
+        const companyId = req.companyFilter?.company_id;
+        const lead = await leadsService.getLeadByUUID(req.params.uuid, companyId);
+        const aggregateId = lead.SerialId || lead.ClientId;
+        const leadId = lead.SerialId || lead.ClientId;
+
+        const adapter = buildLeadNoteAdapter(companyId, req.params.uuid, lead);
+        const { note } = await notesMutationService.softDeleteNote(adapter, req.params.noteId, {
+            actor: buildNoteActor(req),
+            companyId,
+        });
+
+        eventService.logEvent(companyId, 'lead', aggregateId, 'note_deleted', {
+            note_id: note.id, deleted_text: note.text || '', actor_name: eventService.actorName(req),
+        }, 'user', req.user?.sub);
+
+        const enriched = await enrichLeadNotes(companyId, leadId, await adapter.loadNotes());
+        res.json({ ok: true, data: { notes: enriched } });
+    } catch (err) {
+        if (err.status === 403 || err.status === 404) {
+            return res.status(err.status).json({ ok: false, error: err.message });
+        }
+        handleError(err, reqId, res);
     }
 });
 

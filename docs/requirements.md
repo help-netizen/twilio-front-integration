@@ -1601,3 +1601,49 @@ Front/Zenbooker (SMS-отправка payment link использует суще
 ### Out of scope (этот прогон)
 - Manual card / Payment Element (Phase 3); Tap to Pay / Terminal (Phase 4); refunds +
   dispute visibility + расширенные reporting-фильтры (Phase 5); application-fee funds flow.
+
+---
+
+## NOTES-001: Unified Notes — Edit, Soft-Delete & Audit History
+
+**Status:** Requirements · **Priority:** High · **Type:** Feature + Refactor
+**Scope:** Job / Lead / Contact notes threads only (estimate "Summary" & invoice "Notes" are separate document fields — OUT of scope).
+
+### Description
+Consolidate all notes UIs onto the single shared `NotesSection` (used via `NotesHistoryTabs` in the job/lead/contact cards) and add lifecycle management: edit text, add/remove attachments on existing notes, soft-delete — every edit/delete recorded as an audit event in the History tab. Today notes are append-only JSONB arrays (`jobs.notes`, `leads.structured_notes`, `contacts.structured_notes`) with `text`, `created`, author **name**, optional `attachments` — **no stable id, no `created_by` user-id, no `deleted_at`**. Attachments link positionally (`note_attachments.note_index`) and `getEntityHistory` reads notes by array index — both break under edit/delete, so a **stable note id is mandatory**.
+
+### Functional Requirements
+- **FR-1..3 Unify:** Jobs/Leads/Contacts notes render through one `NotesSection`; delete dead `StructuredNotesSection.tsx` + `JobNotesSection.tsx`; do not touch estimate/invoice fields.
+- **FR-4..6 Identity:** every note gets a stable id (unique within the array, stable across edits/reorders/ZB sync); new notes record `created_by` (req.user.sub); attachments + history key off the id, not array index.
+- **FR-7..11 Edit:** per-entity edit endpoint by note id; one save can change text + remove attachments + add attachments; preserves id/created/created_by/position; emits `note_edited` (old→new text, added/removed attachment names, actor).
+- **FR-12..15 Soft-delete:** per-entity delete endpoint by note id; sets `deleted_at` + actor without removing from JSONB; **every** notes/history-notes read path excludes soft-deleted notes; emits `note_deleted` that stays in History.
+- **FR-16..17 Audit:** reuse `eventService.logEvent`/`domain_events` + `getEntityHistory`; render `note_edited`/`note_deleted` events; keep live (non-deleted) notes rendered from JSONB.
+- **FR-18..19 UI:** edit/delete only via a per-note kebab (⋮); show only the actions the current user may perform (else no kebab).
+
+### Permission matrix
+| Note class | Tenant admin | Author (own) | Other non-admin |
+|---|---|---|---|
+| `created_by` = current user | Edit+Delete | Edit+Delete | none |
+| `created_by` = another user | Edit+Delete | n/a | none |
+| Legacy (name only, no `created_by`) | Edit+Delete | none | none |
+| No author | Edit+Delete | none | none |
+| Zenbooker-synced | Edit+Delete | none | none |
+
+Admin = tenant_admin role / `membership.role_key`. Non-admin may edit/delete **only** notes whose `created_by` = their user-id. Ownership unverifiable (legacy/no-author/ZB) → **admin only**. **All checks enforced server-side** (direct API call by a non-admin on another's note → 403); kebab visibility is convenience only.
+
+### Data & lifecycle
+- **DR-1** Backfill a stable id onto every existing note (idempotent migration) so legacy notes are admin-editable.
+- **DR-2** Add `created_by` to note objects; new notes set it; absent → unverifiable ownership (admin-only).
+- **DR-3** Add `deleted_at` (+ deleting actor); soft-deleted notes retained in JSONB but filtered from all reads.
+- **DR-4** Move attachment linkage from positional `note_index` to the stable note id (or a compat mapping).
+- **DR-5** Edit/delete audit via `domain_events` (`logEvent(companyId,'job|lead|contact',entityId,'note_edited|note_deleted',{...},'user',req.user.sub)`); no new audit table.
+- **DR-6** Note id stable across Zenbooker re-sync (no duplicate/resurrect/re-index).
+
+### Constraints
+Multi-tenant: company_id ONLY from `req.companyFilter`. Backwards-compatible with pre-migration notes (tolerate missing fields; no data loss). Zenbooker sync must preserve new fields + stable ids; ZB notes admin-only. New endpoints sit alongside existing `requirePermission('*.edit')` + add ownership/admin check. Reuse `eventService`. Respect `noteAttachmentsService` max-files cap (surviving + added).
+
+### Out of scope
+Estimate "Summary", invoice "Notes", hard delete, un-delete UI, rich-text/@mentions/threading, per-note privacy/pinning.
+
+### Acceptance criteria
+AC-1 one `NotesSection` for jobs/leads/contacts; legacy components deleted. AC-2 new note persists id + created_by. AC-3 non-admin edits/deletes only own; no actions on others'/legacy/ZB. AC-4 admin edits/deletes any (incl. legacy/ZB). AC-5 server rejects non-admin editing another's note (403) even bypassing the kebab. AC-6 one edit can change text + remove + add attachment, keeping id/position/created/created_by. AC-7 edit emits `note_edited` (old→new + attachment deltas) in History. AC-8 deleted note gone from thread AND every notes/history-notes response. AC-9 `note_deleted` stays in History. AC-10 editing/deleting one note doesn't corrupt another's attachments. AC-11 cross-company isolation on all ops. AC-12 pre-migration notes still render and are admin-addressable after backfill; none lost. AC-13 ZB re-sync after edit/delete doesn't duplicate/resurrect/re-index.

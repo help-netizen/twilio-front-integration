@@ -2793,3 +2793,17 @@ Spec: docs/specs/SCHED-ROUTE-001-route-scheduling.md (+ Binding Corrections C-1.
 - [x] SR-14 (gap, FR-001.4/C-2): assign technician on create-from-lane — NewJobModal passes the lane provider (ZB shape); `createManualJob` resolves the internal crm_users.id mirror so routing + grouping align.
 - [x] SR-15 (gap, C-12/FR-001.4): ZenBooker best-effort sync — flag `FEATURE_ZENBOOKER_SYNC` (default ON), async `zb_job_sync` agent (dedupe-guarded, one-shot, saves zenbooker_job_id, never rolls back local job), migration 109 `jobs.zb_sync_status`.
 - [x] SR-16 (gap, C-13): route data retention — `purgeStaleSegments(>30d)` + `pruneRouteCache(>180d)` + `scripts/purge-route-data.js` (--dry-run). Units still mi-only (no company unit field yet) — documented follow-up.
+
+## NOTES-001 — Unified Notes (edit / soft-delete / attachment edit / audit) — DONE (2026-06-25)
+- [x] T1 Migration 124 — stable note ids + `note_attachments.note_id` (idempotent backfill)
+- [x] T2 `notesMutationService` (canMutateNote / editNote / softDeleteNote)
+- [x] T3 Stamp `id` + `created_by` on note creation (jobs/leads/contacts)
+- [x] T4–T6 PATCH + DELETE note endpoints for jobs/leads/contacts (perm + ownership/admin gate)
+- [x] T7 eventService `note_edited`/`note_deleted` + history filters deleted notes
+- [x] T8 GET notes exclude soft-deleted; attachments grouped by `note_id`
+- [x] T9 `noteAttachmentsService` note_id on create + targeted delete + cap
+- [x] ZB merge preserves local edits/deletes/ids
+- [x] T10 `NotesSection` kebab + edit mode (text + attachment ✕/add) + delete
+- [x] T11 `HistorySection` icons for edited/deleted
+- [x] T12 Delete dead `StructuredNotesSection` + `JobNotesSection`; extract `JobDescription`
+- [x] T13 Jest suites `notesAuthz` + `notesEditDelete` (13 cases, green)

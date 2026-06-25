@@ -7,7 +7,7 @@ import { JobOpsSection } from './JobStatusTags';
 import { JobInfoSections } from './JobInfoSections';
 import { JobMetadataSection } from './JobMetadataSection';
 import { JobFinancialsTab } from './JobFinancialsTab';
-import { JobDescription } from './JobNotesSection';
+import { JobDescription } from './JobDescription';
 import { NotesHistoryTabs } from '../shared/NotesHistoryTabs';
 import { useAuthz } from '../../hooks/useAuthz';
 import {

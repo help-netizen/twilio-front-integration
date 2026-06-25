@@ -826,3 +826,23 @@ Allow users to create invoices from approved estimates with full UX parity to th
 - Frontend: AutomationPage + RuleEditor (trigger→conditions→actions, превью шаблонов) + run history + nav `/settings/automation` (tenant.company.manage).
 - API: agent-tasks list + retry (409 на running, 404 на чужой).
 - Миграция 102 (is_system marker). Тесты: 13 новых (worker claim, handlers, route guards 422/404/409, seed идемпотентность). Полный сьют 687 pass.
+
+## NOTES-001 — Unified Notes: edit, soft-delete, attachment edit & audit (2026-06-25)
+
+Unified the notes thread across Jobs/Leads/Contacts onto the single `NotesSection` component and added full lifecycle management.
+
+**Backend**
+- Migration `124_notes_edit_delete_audit.sql`: stable `id` backfilled onto every note in `jobs.notes` / `leads.structured_notes` / `contacts.structured_notes`; `note_attachments.note_id` added + backfilled from the positional `note_index` (idempotent).
+- New `services/notesMutationService.js`: `canMutateNote` (admin → any; owner → own; legacy/no-author/Zenbooker → admin-only), `editNote` (text + add/remove attachments), `softDeleteNote` (`deleted_at` tombstone, element retained).
+- New endpoints (PATCH + DELETE `…/notes/:noteId`) on jobs/leads/contacts, `requirePermission('*.edit')` + server-side ownership/admin gate (non-admin editing another's note → 403; cross-company → 404). New notes now stamp `id` + `created_by` (Keycloak sub).
+- Soft-deleted notes excluded from every GET /notes and from `getEntityHistory`. `eventService` logs `note_edited` (old→new + attachment deltas) and `note_deleted`, rendered in History.
+- Zenbooker merge preserves locally-edited text (`edited_at`) + `created_by`/`deleted_at`/`id` across re-sync.
+
+**Frontend**
+- `NotesSection`: per-note kebab (⋮, shown only when permitted) → Edit / Delete; edit mode (textarea + ✕ to remove each attachment + add new files), `window.confirm` delete; refetch after.
+- `HistorySection`: icons for `note_edited` (Pencil) / `note_deleted` (Trash2).
+- Removed dead `StructuredNotesSection.tsx` + `JobNotesSection.tsx`; extracted `JobDescription.tsx`.
+
+**Out of scope:** Estimate "Summary" and Invoice "Notes" (separate single document fields).
+
+**Verification:** backend Jest `tests/notesAuthz.test.js` + `tests/notesEditDelete.test.js` (13 cases) green; frontend `npm run build` green. Migration reviewed (idempotent) but not yet run against a live DB; full end-to-end click-through pending a deploy.

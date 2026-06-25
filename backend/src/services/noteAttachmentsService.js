@@ -28,11 +28,17 @@ const ALLOWED_TYPES = new Set([
  * @param {number|null} noteIndex
  * @param {Array<{buffer: Buffer, mimetype: string, originalname: string, size: number}>} files
  * @param {string|null} userId
+ * @param {{noteId?: string|null, existingCount?: number}} [opts]
+ *   noteId — stable note id stamped onto note_attachments.note_id (NOTES-001).
+ *   existingCount — attachments already on the note; counted toward MAX so the
+ *   per-note cap covers surviving + newly added files (used by edit).
  * @returns {Promise<Array<{id: number, fileName: string, contentType: string, fileSize: number}>>}
  */
-async function createAttachments(companyId, entityType, entityId, noteIndex, files, userId) {
+async function createAttachments(companyId, entityType, entityId, noteIndex, files, userId, opts = {}) {
     if (!files || files.length === 0) return [];
-    if (files.length > MAX_FILES_PER_NOTE) {
+    const noteId = opts.noteId || null;
+    const existingCount = opts.existingCount || 0;
+    if (existingCount + files.length > MAX_FILES_PER_NOTE) {
         throw Object.assign(new Error(`Maximum ${MAX_FILES_PER_NOTE} files per note`), { status: 400 });
     }
 
@@ -56,10 +62,10 @@ async function createAttachments(companyId, entityType, entityId, noteIndex, fil
         await storageService.uploadFile(file.buffer, file.mimetype, storageKey);
 
         const row = await db.query(
-            `INSERT INTO note_attachments (company_id, entity_type, entity_id, note_index, file_name, content_type, file_size, storage_key, uploaded_by)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            `INSERT INTO note_attachments (company_id, entity_type, entity_id, note_index, note_id, file_name, content_type, file_size, storage_key, uploaded_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              RETURNING id, file_name, content_type, file_size`,
-            [companyId, entityType, entityId, noteIndex, file.originalname, file.mimetype, file.size, storageKey, userId]
+            [companyId, entityType, entityId, noteIndex, noteId, file.originalname, file.mimetype, file.size, storageKey, userId]
         );
 
         results.push(row.rows[0]);
@@ -73,7 +79,7 @@ async function createAttachments(companyId, entityType, entityId, noteIndex, fil
  */
 async function getAttachmentsForEntity(companyId, entityType, entityId) {
     const result = await db.query(
-        `SELECT id, note_index, file_name, content_type, file_size, storage_key, created_at
+        `SELECT id, note_index, note_id, file_name, content_type, file_size, storage_key, created_at
          FROM note_attachments
          WHERE company_id = $1 AND entity_type = $2 AND entity_id = $3
          ORDER BY created_at`,
@@ -91,6 +97,7 @@ async function getAttachmentsForEntity(companyId, entityType, entityId) {
         attachments.push({
             id: row.id,
             noteIndex: row.note_index,
+            noteId: row.note_id,
             fileName: row.file_name,
             contentType: row.content_type,
             fileSize: row.file_size,

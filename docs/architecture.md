@@ -2169,3 +2169,7 @@ required/Payouts disabled/Disconnected).
 
 **Защищённые:** src/server.js (mount-only), authedFetch.ts, useRealtimeEvents.ts,
 backend/db schema (только новые миграции), платформенный billing — не трогать.
+
+## NOTES-001 — Unified notes lifecycle (2026-06-25)
+
+Notes remain JSONB arrays on `jobs.notes` / `leads.structured_notes` / `contacts.structured_notes` (chosen over a normalized table to stay backwards-compatible with existing data + Zenbooker sync). Each note now carries a stable `id`, `created_by` (Keycloak sub), and a `deleted_at` tombstone. A shared `notesMutationService` (adapter-per-entity: `{entityType, attachmentEntityId, loadNotes, saveNotes}`) holds the permission gate (`canMutateNote`: admin→any, owner→own, legacy/no-author/Zenbooker→admin-only), edit (text + attachment add/remove) and soft-delete. Attachments link by `note_attachments.note_id` (was positional `note_index`). Edit/delete emit `note_edited`/`note_deleted` `domain_events` surfaced in the History tab; soft-deleted notes are filtered from all read paths. Frontend `NotesSection` is the single component (kebab ⋮ + edit/delete); `StructuredNotesSection` and `JobNotesSection` were removed.

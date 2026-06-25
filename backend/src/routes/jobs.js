@@ -6,10 +6,12 @@
 
 const express = require('express');
 const multer = require('multer');
+const { randomUUID } = require('node:crypto');
 const router = express.Router();
 const jobsService = require('../services/jobsService');
 const zenbookerClient = require('../services/zenbookerClient');
 const noteAttachmentsService = require('../services/noteAttachmentsService');
+const notesMutationService = require('../services/notesMutationService');
 const eventService = require('../services/eventService');
 const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope } = require('../middleware/providerScope');
@@ -20,6 +22,41 @@ const upload = multer({
 });
 
 const CANCEL_REASON_MAX_LENGTH = 1000;
+
+// ─── Note-mutation helpers (shared by PATCH/DELETE note routes) ───────────────
+
+// Server-side admin check (NOTES-001). Never trust client input.
+function isAdminActor(req) {
+    return req.user?._devMode
+        || req.authz?.membership?.role_key === 'tenant_admin'
+        || (req.user?.roles || []).includes('company_admin');
+}
+
+function buildNoteActor(req) {
+    return {
+        sub: req.user?.sub || null,
+        crmUserId: req.user?.sub || null, // note_attachments.uploaded_by (matches POST-note path)
+        name: req.user?.name || null,
+        isAdmin: isAdminActor(req),
+    };
+}
+
+// Tolerant parse of remove_attachment_ids: JSON array, scalar, or missing.
+function parseRemoveAttachmentIds(raw) {
+    if (raw == null || raw === '') return [];
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === 'string') {
+        try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) return parsed;
+            if (parsed == null) return [];
+            return [parsed];
+        } catch {
+            return [raw];
+        }
+    }
+    return [raw];
+}
 
 function normalizeCancelReason(input) {
     const reason = typeof input === 'string' ? input.trim() : '';
@@ -313,9 +350,32 @@ function normalizeJobNote(n, index, localAttachments = []) {
         text: n.text || null,
         attachments,
         created,
+        created_by: n.created_by || null,
         author,
         source: zbMatch ? 'zenbooker' : (n.source || null),
+        zb_note_id: n.zb_note_id || null,
     };
+}
+
+// Build the GET-shaped, soft-delete-excluded notes list for a job.
+async function enrichJobNotes(companyId, jobId, notes, fallbackCreated) {
+    // Join by note_id; fall back to note_index for legacy rows whose note_id is null.
+    const attachments = await noteAttachmentsService.getAttachmentsForEntity(companyId, 'job', jobId);
+    const byNoteId = {};
+    const byNoteIndex = {};
+    for (const a of attachments) {
+        if (a.noteId) (byNoteId[a.noteId] ||= []).push(a);
+        else (byNoteIndex[a.noteIndex] ||= []).push(a);
+    }
+    return (notes || [])
+        .map((n, i) => ({ n, i }))
+        .filter(({ n }) => !n.deleted_at)
+        .map(({ n, i }) => {
+            const local = (n.id && byNoteId[n.id]) || byNoteIndex[i] || [];
+            const normalized = normalizeJobNote(n, i, local);
+            if (!normalized.created) normalized.created = fallbackCreated;
+            return normalized;
+        });
 }
 
 router.get('/:id/notes', requirePermission('jobs.view'), async (req, res) => {
@@ -325,23 +385,10 @@ router.get('/:id/notes', requirePermission('jobs.view'), async (req, res) => {
         const job = await jobsService.getJobById(jobId, companyId, getProviderScope(req));
         if (!job) return res.status(404).json({ ok: false, error: 'Job not found' });
 
-        const notes = job.notes || [];
-        // Enrich with attachment presigned URLs (for locally-uploaded files)
-        const attachments = await noteAttachmentsService.getAttachmentsForEntity(companyId, 'job', jobId);
-        const attachmentsByNote = {};
-        for (const a of attachments) {
-            if (!attachmentsByNote[a.noteIndex]) attachmentsByNote[a.noteIndex] = [];
-            attachmentsByNote[a.noteIndex].push(a);
-        }
-
         // Fallback date for notes with no id-derived timestamp: use job.updated_at
         // (closest signal we have to when Zenbooker delivered the note).
         const fallbackCreated = job.updated_at || new Date().toISOString();
-        const enriched = notes.map((n, i) => {
-            const normalized = normalizeJobNote(n, i, attachmentsByNote[i] || []);
-            if (!normalized.created) normalized.created = fallbackCreated;
-            return normalized;
-        });
+        const enriched = await enrichJobNotes(companyId, jobId, job.notes || [], fallbackCreated);
 
         res.json({ ok: true, data: enriched });
     } catch (err) {
@@ -365,20 +412,105 @@ router.post('/:id/notes', requirePermission('jobs.edit'), upload.array('attachme
         if (!text && files.length === 0) return res.status(400).json({ ok: false, error: 'text or attachments required' });
 
         // Save note with attachment metadata
+        const noteId = randomUUID();
         const noteIndex = (existing.notes || []).length;
         let attachments = [];
         if (files.length > 0) {
             attachments = await noteAttachmentsService.createAttachments(
-                companyId, 'job', jobId, noteIndex, files, userId
+                companyId, 'job', jobId, noteIndex, files, userId, { noteId }
             );
         }
 
         const author = req.user?.name?.split(' ')[0] || req.user?.email || null;
-        const result = await jobsService.addNote(jobId, text, attachments, author);
+        const result = await jobsService.addNote(jobId, text, attachments, author, userId, noteId);
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Jobs API] Add note error:', err.message);
         const status = err.status || 500;
+        res.status(status).json({ ok: false, error: err.message });
+    }
+});
+
+// ─── Edit / Delete Note (NOTES-001) ──────────────────────────────────────────
+
+function buildJobNoteAdapter(companyId, jobId, scope) {
+    const db = require('../db/connection');
+    return {
+        entityType: 'job',
+        attachmentEntityId: jobId,
+        async loadNotes() {
+            const job = await jobsService.getJobById(jobId, companyId, scope);
+            return job ? (job.notes || []) : null;
+        },
+        async saveNotes(notes) {
+            await db.query(
+                'UPDATE jobs SET notes = $1::jsonb, updated_at = NOW() WHERE id = $2 AND company_id = $3',
+                [JSON.stringify(notes), jobId, companyId]
+            );
+        },
+    };
+}
+
+router.patch('/:id/notes/:noteId', requirePermission('jobs.edit'), upload.array('attachments', noteAttachmentsService.MAX_FILES_PER_NOTE), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id || null;
+        const jobId = parseInt(req.params.id, 10);
+        const scope = getProviderScope(req);
+        const existing = await jobsService.getJobById(jobId, companyId, scope);
+        if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
+
+        const adapter = buildJobNoteAdapter(companyId, jobId, scope);
+        const { note, oldText, addedNames, removedNames } = await notesMutationService.editNote(
+            adapter,
+            req.params.noteId,
+            {
+                text: req.body.text,
+                removeAttachmentIds: parseRemoveAttachmentIds(req.body.remove_attachment_ids),
+                files: req.files || [],
+                actor: buildNoteActor(req),
+                companyId,
+            }
+        );
+
+        eventService.logEvent(companyId, 'job', jobId, 'note_edited', {
+            note_id: note.id, old_text: oldText, new_text: note.text,
+            added: addedNames, removed: removedNames, actor_name: eventService.actorName(req),
+        }, 'user', req.user?.sub);
+
+        const fallbackCreated = existing.updated_at || new Date().toISOString();
+        const enriched = await enrichJobNotes(companyId, jobId, await adapter.loadNotes(), fallbackCreated);
+        res.json({ ok: true, data: { notes: enriched } });
+    } catch (err) {
+        const status = err.status || 500;
+        if (status >= 500) console.error('[Jobs API] Edit note error:', err.message);
+        res.status(status).json({ ok: false, error: err.message });
+    }
+});
+
+router.delete('/:id/notes/:noteId', requirePermission('jobs.edit'), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id || null;
+        const jobId = parseInt(req.params.id, 10);
+        const scope = getProviderScope(req);
+        const existing = await jobsService.getJobById(jobId, companyId, scope);
+        if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });
+
+        const adapter = buildJobNoteAdapter(companyId, jobId, scope);
+        const { note } = await notesMutationService.softDeleteNote(adapter, req.params.noteId, {
+            actor: buildNoteActor(req),
+            companyId,
+        });
+
+        eventService.logEvent(companyId, 'job', jobId, 'note_deleted', {
+            note_id: note.id, deleted_text: note.text || '', actor_name: eventService.actorName(req),
+        }, 'user', req.user?.sub);
+
+        const fallbackCreated = existing.updated_at || new Date().toISOString();
+        const enriched = await enrichJobNotes(companyId, jobId, await adapter.loadNotes(), fallbackCreated);
+        res.json({ ok: true, data: { notes: enriched } });
+    } catch (err) {
+        const status = err.status || 500;
+        if (status >= 500) console.error('[Jobs API] Delete note error:', err.message);
         res.status(status).json({ ok: false, error: err.message });
     }
 });

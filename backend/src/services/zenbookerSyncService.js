@@ -86,6 +86,10 @@ function normalizeZbCustomerNotes(notes) {
 }
 
 function mergeStructuredNotes(existingNotes, incomingNotes) {
+    // Local notes are kept verbatim and incoming ZB notes are only appended when
+    // genuinely new. This preserves all Blanc-side fields on matched notes —
+    // edited text (edited_at), created_by, deleted_at, id — so an edit or
+    // soft-delete never reverts on re-sync (NOTES-001).
     const merged = Array.isArray(existingNotes) ? [...existingNotes] : [];
     const seenIds = new Set();
     const seenText = new Set();

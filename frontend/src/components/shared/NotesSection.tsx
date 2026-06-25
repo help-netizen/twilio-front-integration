@@ -1,38 +1,44 @@
 /**
  * NotesSection — unified notes component for any entity (job, lead, contact).
  *
- * Self-contained: fetches and posts notes via API.
+ * Self-contained: fetches, posts, edits and soft-deletes notes via API.
  * Usage: <NotesSection entityType="job" entityId={123} />
  */
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus, MoreVertical, Pencil, Trash2, X } from 'lucide-react';
 import { Button } from '../ui/button';
 import { NoteAttachmentInput } from './NoteAttachmentInput';
 import { NoteAttachmentDisplay } from './NoteAttachmentDisplay';
 import { authedFetch } from '../../services/apiClient';
+import { useAuthz } from '../../hooks/useAuthz';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+interface NoteAttachment {
+    id: number | string;
+    fileName: string;
+    contentType: string;
+    fileSize: number;
+    url?: string;
+    source?: string;
+}
+
 interface Note {
+    id?: string;
     text: string | null;
     created: string;
     author?: string;
     migrated?: boolean;
-    source?: string;
-    attachments?: Array<{
-        id: number | string;
-        fileName: string;
-        contentType: string;
-        fileSize: number;
-        url?: string;
-        source?: string;
-    }>;
+    source?: string | null;
+    created_by?: string | null;
+    zb_note_id?: string | null;
+    attachments?: NoteAttachment[];
 }
 
 interface NotesSectionProps {
     entityType: 'job' | 'lead' | 'contact';
     entityId: string | number;
-    /** Optional callback after note is added (e.g. to refresh parent) */
+    /** Optional callback after note is added/edited/deleted (e.g. to refresh parent) */
     onNoteAdded?: () => void;
 }
 
@@ -66,6 +72,10 @@ function apiPath(entityType: string, entityId: string | number): string {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSectionProps) {
+    const { user, isTenantAdmin } = useAuthz();
+    const myId = user?.sub;
+    const isAdmin = isTenantAdmin();
+
     const [notes, setNotes] = useState<Note[]>([]);
     const [text, setText] = useState('');
     const [files, setFiles] = useState<File[]>([]);
@@ -74,7 +84,24 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
+    // Edit state
+    const [editingId, setEditingId] = useState<string | null>(null);
+    const [editText, setEditText] = useState('');
+    const [editFiles, setEditFiles] = useState<File[]>([]);
+    const [removeIds, setRemoveIds] = useState<Set<string>>(new Set());
+    const [editSubmitting, setEditSubmitting] = useState(false);
+    const [editError, setEditError] = useState<string | null>(null);
+    const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+
     const basePath = apiPath(entityType, entityId);
+
+    // Permission predicate — UI convenience; server is the real gate.
+    const canEdit = (n: Note) =>
+        isAdmin ? true
+        : (n.source === 'zenbooker' || n.zb_note_id) ? false
+        : n.created_by ? n.created_by === myId
+        : false;
+    const canDelete = canEdit;
 
     const fetchNotes = useCallback(async () => {
         try {
@@ -126,7 +153,87 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
         }
     }, [expanded, handleClickOutside]);
 
+    // ─── Edit / Delete ───────────────────────────────────────────────────────
+
+    const startEdit = (note: Note) => {
+        setMenuOpenId(null);
+        setEditingId(note.id ?? null);
+        setEditText(note.text ?? '');
+        setEditFiles([]);
+        setRemoveIds(new Set());
+        setEditError(null);
+    };
+
+    const cancelEdit = () => {
+        setEditingId(null);
+        setEditText('');
+        setEditFiles([]);
+        setRemoveIds(new Set());
+        setEditError(null);
+    };
+
+    const toggleRemoveAttachment = (id: number | string) => {
+        const key = String(id);
+        setRemoveIds(prev => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key); else next.add(key);
+            return next;
+        });
+    };
+
+    const saveEdit = useCallback(async (note: Note) => {
+        if (!note.id) return;
+        setEditSubmitting(true);
+        setEditError(null);
+        try {
+            const formData = new FormData();
+            formData.append('text', editText.trim());
+            formData.append('remove_attachment_ids', JSON.stringify([...removeIds]));
+            editFiles.forEach(f => formData.append('attachments', f));
+
+            const res = await authedFetch(`${basePath}/${note.id}`, { method: 'PATCH', body: formData });
+            if (!res.ok) {
+                setEditError(res.status === 403 ? 'You can’t edit this note.' : 'Failed to save note.');
+                return;
+            }
+            cancelEdit();
+            fetchNotes();
+            onNoteAdded?.();
+        } catch (err) {
+            console.error('[NotesSection] Failed to edit note:', err);
+            setEditError('Failed to save note.');
+        } finally {
+            setEditSubmitting(false);
+        }
+    }, [editText, removeIds, editFiles, basePath, fetchNotes, onNoteAdded]);
+
+    const deleteNote = useCallback(async (note: Note) => {
+        if (!note.id) return;
+        setMenuOpenId(null);
+        if (!window.confirm('Delete this note? This cannot be undone.')) return;
+        try {
+            const res = await authedFetch(`${basePath}/${note.id}`, { method: 'DELETE' });
+            if (!res.ok) {
+                console.error('[NotesSection] Failed to delete note:', res.status);
+                return;
+            }
+            fetchNotes();
+            onNoteAdded?.();
+        } catch (err) {
+            console.error('[NotesSection] Failed to delete note:', err);
+        }
+    }, [basePath, fetchNotes, onNoteAdded]);
+
+    // Close kebab menu on outside click
+    useEffect(() => {
+        if (!menuOpenId) return;
+        const close = () => setMenuOpenId(null);
+        document.addEventListener('mousedown', close);
+        return () => document.removeEventListener('mousedown', close);
+    }, [menuOpenId]);
+
     const canSubmit = (text.trim() || files.length > 0) && !submitting;
+    const canSaveEdit = (editText.trim() || editFiles.length > 0) && !editSubmitting;
 
     // Newest first
     const sortedNotes = [...notes].reverse();
@@ -193,19 +300,161 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
             )}
 
             {/* Notes list — newest first */}
-            {sortedNotes.map((note, i) => (
-                <div key={i} className="p-3 rounded-xl space-y-2" style={{ background: NOTE_BG }}>
-                    {note.text && <p className="text-sm whitespace-pre-wrap" style={{ color: 'var(--blanc-ink-1)' }}>{note.text}</p>}
-                    {note.attachments && note.attachments.length > 0 && (
-                        <NoteAttachmentDisplay attachments={note.attachments} />
-                    )}
-                    <p className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>
-                        {note.author && <span className="font-medium">{note.author} · </span>}
-                        {formatDate(note.created)}
-                        {note.migrated && ' (migrated)'}
-                    </p>
-                </div>
-            ))}
+            {sortedNotes.map((note, i) => {
+                const editing = editingId != null && note.id === editingId;
+                const showKebab = !editing && !!note.id && canEdit(note);
+                return (
+                    <div key={note.id || i} className="relative p-3 rounded-xl space-y-2" style={{ background: NOTE_BG }}>
+                        {editing ? (
+                            <div className="space-y-2">
+                                <textarea
+                                    className="w-full text-sm resize-none outline-none bg-transparent leading-5"
+                                    style={{
+                                        border: '1px solid var(--blanc-line)',
+                                        borderRadius: 10,
+                                        padding: '8px 12px',
+                                        minHeight: 72,
+                                        color: 'var(--blanc-ink-1)',
+                                    }}
+                                    placeholder="Write a note..."
+                                    value={editText}
+                                    onChange={e => setEditText(e.target.value)}
+                                    onInput={e => {
+                                        const t = e.target as HTMLTextAreaElement;
+                                        t.style.height = 'auto';
+                                        t.style.height = `${t.scrollHeight}px`;
+                                    }}
+                                    autoFocus
+                                />
+
+                                {/* Existing attachments — mark for removal */}
+                                {note.attachments && note.attachments.length > 0 && (
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {note.attachments.map(att => {
+                                            const marked = removeIds.has(String(att.id));
+                                            return (
+                                                <div
+                                                    key={att.id}
+                                                    className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs"
+                                                    style={{
+                                                        background: 'rgba(117,106,89,0.06)',
+                                                        border: '1px solid var(--blanc-line)',
+                                                        color: 'var(--blanc-ink-2)',
+                                                        opacity: marked ? 0.4 : 1,
+                                                        textDecoration: marked ? 'line-through' : 'none',
+                                                    }}
+                                                >
+                                                    <span className="max-w-[120px] truncate">{att.fileName}</span>
+                                                    <button
+                                                        type="button"
+                                                        onMouseDown={e => e.preventDefault()}
+                                                        onClick={() => toggleRemoveAttachment(att.id)}
+                                                        className="hover:opacity-70"
+                                                        style={{ color: 'var(--blanc-ink-3)' }}
+                                                        title={marked ? 'Keep attachment' : 'Remove attachment'}
+                                                    >
+                                                        <X className="size-3" />
+                                                    </button>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+
+                                {/* New attachments */}
+                                <NoteAttachmentInput files={editFiles} onChange={setEditFiles} compact />
+
+                                {editError && (
+                                    <p className="text-xs" style={{ color: '#b42318' }}>{editError}</p>
+                                )}
+
+                                <div className="flex items-center justify-end gap-2">
+                                    <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        onMouseDown={e => e.preventDefault()}
+                                        onClick={cancelEdit}
+                                        disabled={editSubmitting}
+                                    >
+                                        Cancel
+                                    </Button>
+                                    <Button
+                                        size="sm"
+                                        onMouseDown={e => e.preventDefault()}
+                                        onClick={() => saveEdit(note)}
+                                        disabled={!canSaveEdit}
+                                    >
+                                        Save
+                                    </Button>
+                                </div>
+                            </div>
+                        ) : (
+                            <>
+                                {showKebab && (
+                                    <div className="absolute top-2 right-2">
+                                        <button
+                                            type="button"
+                                            onMouseDown={e => { e.preventDefault(); e.stopPropagation(); }}
+                                            onClick={e => {
+                                                e.stopPropagation();
+                                                setMenuOpenId(menuOpenId === note.id ? null : note.id!);
+                                            }}
+                                            className="p-1 rounded-md transition-opacity hover:opacity-70"
+                                            style={{ color: 'var(--blanc-ink-3)' }}
+                                            title="Note actions"
+                                        >
+                                            <MoreVertical className="size-4" />
+                                        </button>
+                                        {menuOpenId === note.id && (
+                                            <div
+                                                className="absolute right-0 mt-1 z-50 min-w-[120px] rounded-xl overflow-hidden"
+                                                style={{
+                                                    background: 'var(--blanc-surface-strong, #fffdf9)',
+                                                    border: '1px solid var(--blanc-line)',
+                                                }}
+                                                onMouseDown={e => e.stopPropagation()}
+                                            >
+                                                <button
+                                                    type="button"
+                                                    onClick={() => startEdit(note)}
+                                                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors hover:bg-[rgba(117,106,89,0.06)]"
+                                                    style={{ color: 'var(--blanc-ink-1)' }}
+                                                >
+                                                    <Pencil className="size-3.5" /> Edit
+                                                </button>
+                                                {canDelete(note) && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => deleteNote(note)}
+                                                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors hover:bg-[rgba(117,106,89,0.06)]"
+                                                        style={{ color: '#b42318' }}
+                                                    >
+                                                        <Trash2 className="size-3.5" /> Delete
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {note.text && (
+                                    <p className="text-sm whitespace-pre-wrap" style={{ color: 'var(--blanc-ink-1)', paddingRight: showKebab ? 24 : 0 }}>
+                                        {note.text}
+                                    </p>
+                                )}
+                                {note.attachments && note.attachments.length > 0 && (
+                                    <NoteAttachmentDisplay attachments={note.attachments} />
+                                )}
+                                <p className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>
+                                    {note.author && <span className="font-medium">{note.author} · </span>}
+                                    {formatDate(note.created)}
+                                    {note.migrated && ' (migrated)'}
+                                </p>
+                            </>
+                        )}
+                    </div>
+                );
+            })}
         </div>
     );
 }

@@ -10,6 +10,7 @@
  *   zb_rescheduled, zb_canceled — Zenbooker boolean flags
  */
 
+const { randomUUID } = require('node:crypto');
 const db = require('../db/connection');
 const zenbookerClient = require('./zenbookerClient');
 const fsmService = require('./fsmService');
@@ -914,16 +915,26 @@ function mergeNotes(localNotes, zbNotes) {
         }
     }
 
+    // Always carry these Blanc-side fields forward when a ZB note matches a local
+    // one. When the local note was edited (edited_at set) we keep the local text —
+    // otherwise an edit would silently revert on the next re-sync (NOTES-001).
+    const preserveLocal = (ln) => ({
+        ...(ln.author ? { author: ln.author } : {}),
+        ...(ln.created ? { created: ln.created } : {}),
+        ...(ln.attachments && ln.attachments.length ? { attachments: ln.attachments } : {}),
+        ...(ln.id ? { id: ln.id } : {}),
+        ...(ln.created_by ? { created_by: ln.created_by } : {}),
+        ...(ln.deleted_at ? { deleted_at: ln.deleted_at, deleted_by: ln.deleted_by || null } : {}),
+        ...(ln.edited_at ? { edited_at: ln.edited_at, edited_by: ln.edited_by || null, text: ln.text } : {}),
+    });
+
     return (zbNotes || []).map(zn => {
         const znId = zn.id ? String(zn.id) : null;
         if (znId && byZbId.has(znId)) {
             const ln = byZbId.get(znId);
             return {
                 ...zn,
-                // Preserve Blanc metadata
-                ...(ln.author ? { author: ln.author } : {}),
-                ...(ln.created ? { created: ln.created } : {}),
-                ...(ln.attachments && ln.attachments.length ? { attachments: ln.attachments } : {}),
+                ...preserveLocal(ln),
                 zb_note_id: znId,
             };
         }
@@ -934,9 +945,8 @@ function mergeNotes(localNotes, zbNotes) {
                     entry.used = true;
                     return {
                         ...zn,
+                        ...preserveLocal(entry.note),
                         author: entry.note.author,
-                        ...(entry.note.created ? { created: entry.note.created } : {}),
-                        ...(entry.note.attachments && entry.note.attachments.length ? { attachments: entry.note.attachments } : {}),
                         ...(znId ? { zb_note_id: znId } : {}),
                     };
                 }
@@ -1081,11 +1091,11 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
 // Notes
 // =============================================================================
 
-async function addNote(jobId, text, attachments = [], author = null) {
+async function addNote(jobId, text, attachments = [], author = null, createdBy = null, noteId = null) {
     const job = await getJobById(jobId);
     if (!job) throw new Error(`Job #${jobId} not found`);
 
-    const note = { text, created: new Date().toISOString() };
+    const note = { id: noteId || randomUUID(), text, created: new Date().toISOString(), created_by: createdBy || null };
     if (author) note.author = author;
     if (attachments.length > 0) {
         note.attachments = attachments.map(a => ({
