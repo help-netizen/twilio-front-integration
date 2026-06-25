@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: "Full pipeline orchestrator for Blanc Contact Center development. Runs 9-agent chain: Product → Architect → SpecWriter → TestCases → Planner → Implementer → Tester → Reviewer → ProjectSpec. Accepts a feature request and drives it through the complete development lifecycle. Use when the user wants to implement a feature end-to-end, run the full agent pipeline, or orchestrate development workflow."
+description: "Full pipeline orchestrator for Blanc Contact Center development. First interviews the customer to clarify scope and edge cases (Step 0.5), then runs the 9-agent chain: Product → Architect → SpecWriter → TestCases → Planner → Implementer → Tester → Reviewer → ProjectSpec. Accepts a feature request and drives it through the complete development lifecycle. Use when the user wants to implement a feature end-to-end, run the full agent pipeline, or orchestrate development workflow."
 user-invocable: true
 argument-hint: "<feature request or bug description>"
 ---
@@ -51,6 +51,42 @@ Print the summary and mode to the user before proceeding.
 
 ---
 
+## Step 0.5: Requirements Interview (clarify with the customer)
+
+**Before any agent formalizes requirements, interview the customer (the user) to close ambiguities and decide boundary/edge cases.** The sub-agents cannot talk to the user — YOU, the orchestrator, own this conversation. This is the cheapest place to get the task right: a wrong assumption fixed here costs one question; fixed after the Planner it costs a re-run of the whole chain.
+
+### 0.5.1 Investigate first, then find the "white spots"
+
+Read the relevant code and `Docs/*` first. Then list everything that is still **ambiguous or undecided AND would change the design** depending on the answer:
+
+- **Scope boundaries** — what is explicitly in vs out of this change.
+- **Edge cases** — empty / zero / first-run / maximum states, duplicates, concurrency, partial failure, what happens to existing data.
+- **Error & validation rules** — what is rejected, what the user sees, what is retried vs surfaced.
+- **Permissions & multi-tenant** — who is allowed; `company_id` scoping (see project-context.md).
+- **Data & lifecycle** — required vs optional fields, defaults, migrations, deletion/soft-delete.
+- **UX decisions** — entry points, copy/wording, mobile behavior, confirm-vs-silent, where it lives in the UI.
+- **Integrations** — expected Twilio / Front / Zenbooker behavior and how failures are handled.
+- **Non-functional** — limits, performance, idempotency, backwards compatibility.
+
+Do **NOT** ask about anything you can answer yourself from the code, docs, or established project conventions. Investigate first; ask only what is genuinely the customer's call. A request like "do it like X" authorizes the obvious reading — surface only the real forks.
+
+### 0.5.2 Ask
+
+Put the open questions to the user with the **AskUserQuestion** tool:
+- Multiple-choice when there's a sensible default — make it the first option and mark it **"(Recommended)"**; use free-form for genuinely open questions.
+- Keep it tight: at most ~4 questions per round, one or two rounds total. Lead with the decisions that most change the design.
+- If the user defers ("use your judgment" / "на твоё усмотрение"), record the recommended default as the decision and move on. Don't re-ask what's already answered.
+
+### 0.5.3 Record the decisions
+
+Collect the answers into a short **"Clarified requirements & decisions"** list (question → decision, one line each). This list is **input to the Product Agent (Step 1)** and travels with the request through the entire pipeline. Print it back to the user as confirmation before continuing.
+
+Re-open the interview later **only** if a downstream agent (Architect, Spec Writer, Planner) surfaces a genuinely new boundary question that wasn't visible here — ask it the same way, then continue.
+
+**Auto-run mode:** still interview, but ask **only the blocking** questions in a single consolidated round. If there are none, note "no open questions" and proceed without pausing.
+
+---
+
 ## Step 1: Product Agent (01)
 
 Read and follow instructions in: `docs/agents/agent-01-product-requirements.md`
@@ -58,6 +94,7 @@ Read and follow instructions in: `docs/agents/agent-01-product-requirements.md`
 **Pass to agent:**
 - User request text: `$ARGUMENTS`
 - Summary from Step 0.4
+- **Clarified requirements & decisions from Step 0.5** (treat these as binding — they override any conflicting assumption)
 - Current contents of `Docs/requirements.md`
 
 **Expected output:**
@@ -277,6 +314,7 @@ If tests fail during implementation:
 ## Checklist
 
 - [ ] Step 0: Summary created, mode determined
+- [ ] Step 0.5: Customer interview done, decisions recorded and confirmed
 - [ ] Step 1: Product agent done, requirements.md updated
 - [ ] Step 2: Architect agent done, architecture.md updated
 - [ ] Step 3: Spec Writer done, specs saved to Docs/specs/
