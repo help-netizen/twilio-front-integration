@@ -4,13 +4,15 @@
  */
 
 import React from 'react';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, Plus } from 'lucide-react';
+import { Button } from '../ui/button';
 
 interface ScheduleToolbarProps {
     onToggleAIAssistant?: () => void;
+    onNewJob?: () => void;
 }
 
-export const ScheduleToolbar: React.FC<ScheduleToolbarProps> = ({ onToggleAIAssistant }) => {
+export const ScheduleToolbar: React.FC<ScheduleToolbarProps> = ({ onToggleAIAssistant, onNewJob }) => {
     return (
         <div className="flex items-center justify-between gap-4 px-1">
             <h1
@@ -26,6 +28,12 @@ export const ScheduleToolbar: React.FC<ScheduleToolbarProps> = ({ onToggleAIAssi
                 Schedule
             </h1>
 
+            <div className="flex items-center gap-3">
+            {onNewJob && (
+                <Button type="button" onClick={onNewJob} className="h-[48px] gap-2 px-5 text-[15px] rounded-[var(--sched-radius-md)]">
+                    <Plus className="size-5" /> New job
+                </Button>
+            )}
             {onToggleAIAssistant && (
                 <button
                     type="button"
@@ -43,6 +51,7 @@ export const ScheduleToolbar: React.FC<ScheduleToolbarProps> = ({ onToggleAIAssi
                     <span>AI Assistant</span>
                 </button>
             )}
+            </div>
         </div>
     );
 };

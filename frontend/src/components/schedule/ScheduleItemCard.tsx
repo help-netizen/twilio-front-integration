@@ -4,10 +4,12 @@
  */
 
 import React from 'react';
+import { MoreVertical, Copy } from 'lucide-react';
 import type { ScheduleItem } from '../../services/scheduleApi';
 import { formatTimeInTZ } from '../../utils/companyTime';
 import { getProviderColor } from '../../utils/providerColors';
 import { geocodingLabel } from '../../utils/routeFormat';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../ui/dropdown-menu';
 
 // Neutral style for unassigned items
 const UNASSIGNED_STYLE = {
@@ -36,10 +38,12 @@ interface ScheduleItemCardProps {
     item: ScheduleItem;
     compact?: boolean;
     onClick?: (item: ScheduleItem) => void;
+    /** When provided (and the item is a job), shows a kebab menu with "Copy job". */
+    onCopy?: (jobId: number) => void;
     timezone?: string;
 }
 
-export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({ item, compact = false, onClick, timezone }) => {
+export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({ item, compact = false, onClick, onCopy, timezone }) => {
     const primaryTech = item.assigned_techs?.[0];
     const provColor = primaryTech ? getProviderColor(primaryTech.id || primaryTech.name) : null;
     const style = provColor ? {
@@ -64,6 +68,7 @@ export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({ item, compac
     // lat/lng/address — no Google call on render). FR-002: subtle geocoding hint.
     const geoLabel = item.entity_type === 'job' ? geocodingLabel(item.geocoding_status) : null;
     const stop = (e: React.MouseEvent) => e.stopPropagation();
+    const canCopy = !!onCopy && item.entity_type === 'job';
 
     return (
         <div
@@ -72,7 +77,7 @@ export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({ item, compac
             onClick={() => onClick?.(item)}
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.(item); } }}
             className={`
-                w-full h-full text-left overflow-hidden transition-shadow cursor-pointer
+                relative w-full h-full text-left overflow-hidden transition-shadow cursor-pointer
                 hover:shadow-xl
                 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 outline-none
                 ${isCanceled ? 'opacity-60' : ''}
@@ -85,6 +90,31 @@ export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({ item, compac
                 boxShadow: 'var(--sched-shadow-card)',
             }}
         >
+            {/* Kebab menu (top-right) — Copy job. Only for jobs, when wired. */}
+            {canCopy && (
+                <div className="absolute top-1.5 right-1.5 z-[1]">
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <button
+                                type="button"
+                                aria-label="Job actions"
+                                onClick={stop}
+                                onKeyDown={stop as unknown as React.KeyboardEventHandler}
+                                className="inline-flex items-center justify-center rounded-md transition-opacity opacity-70 hover:opacity-100"
+                                style={{ width: 26, height: 26, color: 'var(--sched-ink-3)' }}
+                            >
+                                <MoreVertical className="size-4" />
+                            </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" onClick={stop}>
+                            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onCopy?.(item.entity_id); }}>
+                                <Copy className="size-4 mr-2" />Copy job
+                            </DropdownMenuItem>
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+                </div>
+            )}
+
             <div className="p-3.5 pb-3 h-full flex flex-col" style={{ paddingLeft: '14px' }}>
                 {/* Header: entity number on top, status on its own line below */}
                 <span

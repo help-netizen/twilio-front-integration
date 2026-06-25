@@ -27,6 +27,7 @@ interface TimelineWeekViewProps {
     settings: DispatchSettings;
     allProviders?: ProviderInfo[];
     onSelectItem: (item: ScheduleItem) => void;
+    onCopy?: (jobId: number) => void;
     onReassign?: (entityType: string, entityId: number, assigneeId: string | null, assigneeName?: string, title?: string) => void;
     onCreateFromSlot?: (title: string, startAt: string, endAt: string, providerId?: string, providerName?: string) => void;
     routeByPair?: Map<string, RouteSegment>;
@@ -39,7 +40,7 @@ interface ProviderGroup {
 }
 
 export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
-    currentDate, items, settings, allProviders = [], onSelectItem, onReassign, onCreateFromSlot, routeByPair,
+    currentDate, items, settings, allProviders = [], onSelectItem, onCopy, onReassign, onCreateFromSlot, routeByPair,
 }) => {
     const tz = settings.timezone || 'America/New_York';
     const unit = settings.distance_unit === 'km' ? 'km' : 'mi';
@@ -299,6 +300,7 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
                                                         item={item}
                                                         compact
                                                         onClick={onSelectItem}
+                                                        onCopy={onCopy}
                                                         timezone={tz}
                                                     />
                                                 </div>

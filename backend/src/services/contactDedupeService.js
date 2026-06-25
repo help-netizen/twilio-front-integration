@@ -139,7 +139,14 @@ async function resolveContact({ first_name, last_name, phone, email }, companyId
 // searchCandidates — for UI auto-search (no side effects)
 // =============================================================================
 
-async function searchCandidates({ first_name, last_name, phone, email }, companyId = null) {
+async function searchCandidates({ first_name, last_name, phone, email, q }, companyId = null) {
+    const qNorm = typeof q === 'string' ? q.trim() : '';
+
+    // Broad search mode: a single free-text `q` matches across name / email / phone.
+    if (qNorm.length >= 2) {
+        return broadSearchCandidates(qNorm, companyId);
+    }
+
     const fnNorm = normalizeName(first_name);
     const lnNorm = normalizeName(last_name);
     const phoneNorm = normalizePhone(phone);
@@ -242,43 +249,177 @@ async function searchCandidates({ first_name, last_name, phone, email }, company
 
     const { rows: candidates } = await db.query(unionSql, allParams);
 
-    // Enrich with default address city/state
-    if (candidates.length > 0) {
-        const contactIds = candidates.map(c => c.id);
-        const { rows: addresses } = await db.query(`
-            SELECT DISTINCT ON (contact_id) contact_id, city, state
-            FROM contact_addresses
-            WHERE contact_id = ANY($1)
-            ORDER BY contact_id, is_primary DESC, created_at ASC
-        `, [contactIds]);
-        const addrMap = {};
-        for (const a of addresses) {
-            addrMap[a.contact_id] = { city: a.city, state: a.state };
-        }
-        for (const c of candidates) {
-            const addr = addrMap[c.id];
-            c.city = addr?.city || null;
-            c.state = addr?.state || null;
-        }
+    return { candidates: await mapCandidatesWithAddresses(candidates) };
+}
+
+// =============================================================================
+// broadSearchCandidates — free-text `q` lookup across name / email / phone
+// =============================================================================
+
+/**
+ * Broad case-insensitive search driven by a single free-text query.
+ * Matches any of: name (first/last/full/company), email, phone.
+ * Always parameterized; company filter applied when companyId is provided.
+ *
+ * @param {string} q - trimmed query (length >= 2 guaranteed by caller)
+ * @param {string|null} companyId
+ * @returns {{ candidates: Array }}
+ */
+async function broadSearchCandidates(q, companyId = null) {
+    const params = [];
+    const orConditions = [];
+
+    // Helper to register a param and return its $N placeholder.
+    const addParam = (value) => {
+        params.push(value);
+        return `$${params.length}`;
+    };
+
+    // --- Name matching ---
+    const tokens = q.split(/\s+/).filter(Boolean);
+    if (tokens.length >= 2) {
+        const firstToken = tokens[0];
+        const lastToken = tokens[tokens.length - 1];
+        const fnP = addParam(`${firstToken}%`);
+        const lnP = addParam(`${lastToken}%`);
+        const fullP = addParam(`%${q}%`);
+        orConditions.push(`(c.first_name ILIKE ${fnP} AND c.last_name ILIKE ${lnP})`);
+        orConditions.push(`c.full_name ILIKE ${fullP}`);
+    } else {
+        const prefixP = addParam(`${q}%`);
+        const containsP = addParam(`%${q}%`);
+        orConditions.push(`c.first_name ILIKE ${prefixP}`);
+        orConditions.push(`c.last_name ILIKE ${prefixP}`);
+        orConditions.push(`c.full_name ILIKE ${containsP}`);
+        orConditions.push(`COALESCE(c.company_name, '') ILIKE ${containsP}`);
     }
 
-    return {
-        candidates: candidates.map(c => ({
+    // --- Email matching (only if q looks like / contains an email fragment) ---
+    const hasEmailMatch = q.includes('@');
+    if (hasEmailMatch) {
+        const emailP = addParam(`%${q.toLowerCase()}%`);
+        orConditions.push(`LOWER(COALESCE(c.email, '')) ILIKE ${emailP}`);
+    }
+
+    // --- Phone matching (only if q has >= 4 digits) ---
+    const digits = q.replace(/\D/g, '');
+    const hasPhoneMatch = digits.length >= 4;
+    if (hasPhoneMatch) {
+        const phoneP = addParam(`%${digits}%`);
+        orConditions.push(`REGEXP_REPLACE(COALESCE(c.phone_e164, ''), '[^0-9]', '', 'g') LIKE ${phoneP}`);
+        orConditions.push(`REGEXP_REPLACE(COALESCE(c.secondary_phone, ''), '[^0-9]', '', 'g') LIKE ${phoneP}`);
+    }
+
+    if (orConditions.length === 0) {
+        return { candidates: [] };
+    }
+
+    // Company filter — parameterized, never string-interpolated (PF007)
+    let companyCondition = '';
+    if (companyId) {
+        companyCondition = `AND c.company_id = ${addParam(companyId)}`;
+    }
+
+    const sql = `
+        SELECT c.id, c.full_name, c.first_name, c.last_name,
+               c.phone_e164, c.secondary_phone, c.secondary_phone_name, c.email, c.company_name
+        FROM contacts c
+        WHERE (${orConditions.join(' OR ')})
+        ${companyCondition}
+        LIMIT 10
+    `;
+
+    const { rows } = await db.query(sql, params);
+
+    // Best-effort match flags (re-derived per row for the returned payload).
+    const qLower = q.toLowerCase();
+    const candidates = rows.map((c) => {
+        const fullLower = (c.full_name || '').toLowerCase();
+        const fnLower = (c.first_name || '').toLowerCase();
+        const lnLower = (c.last_name || '').toLowerCase();
+        const companyLower = (c.company_name || '').toLowerCase();
+        const nameMatch =
+            fullLower.includes(qLower) ||
+            fnLower.startsWith(tokens[0]?.toLowerCase() || qLower) ||
+            lnLower.startsWith((tokens[tokens.length - 1] || q).toLowerCase()) ||
+            companyLower.includes(qLower);
+
+        const emailMatch = hasEmailMatch && (c.email || '').toLowerCase().includes(qLower);
+
+        let phoneMatch = false;
+        if (hasPhoneMatch) {
+            const primaryDigits = (c.phone_e164 || '').replace(/\D/g, '');
+            const secondaryDigits = (c.secondary_phone || '').replace(/\D/g, '');
+            phoneMatch = primaryDigits.includes(digits) || secondaryDigits.includes(digits);
+        }
+
+        return {
+            ...c,
+            name_match: Boolean(nameMatch),
+            phone_match: Boolean(phoneMatch),
+            email_match: Boolean(emailMatch),
+        };
+    });
+
+    return { candidates: await mapCandidatesWithAddresses(candidates) };
+}
+
+// =============================================================================
+// mapCandidatesWithAddresses — attach full addresses to candidate rows
+// =============================================================================
+
+/**
+ * Attach an `addresses` array (full address objects) to each candidate and
+ * keep top-level city/state (from primary address) for backward compatibility.
+ */
+async function mapCandidatesWithAddresses(candidateRows) {
+    if (candidateRows.length === 0) return [];
+
+    const contactIds = candidateRows.map(c => c.id);
+    const { rows: addresses } = await db.query(`
+        SELECT contact_id,
+               street_line1 AS line1, street_line2 AS line2,
+               city, state, postal_code, lat, lng
+        FROM contact_addresses
+        WHERE contact_id = ANY($1)
+        ORDER BY contact_id, is_primary DESC, created_at ASC
+    `, [contactIds]);
+
+    const addrMap = {};
+    for (const a of addresses) {
+        if (!addrMap[a.contact_id]) addrMap[a.contact_id] = [];
+        addrMap[a.contact_id].push({
+            line1: a.line1 || '',
+            line2: a.line2 || '',
+            city: a.city || '',
+            state: a.state || '',
+            postal_code: a.postal_code || '',
+            lat: a.lat ?? null,
+            lng: a.lng ?? null,
+        });
+    }
+
+    return candidateRows.map((c) => {
+        const addrs = addrMap[c.id] || [];
+        const primary = addrs[0] || null;
+        return {
             id: c.id,
             full_name: c.full_name,
             first_name: c.first_name,
             last_name: c.last_name,
             phone_e164: c.phone_e164,
             secondary_phone: c.secondary_phone || null,
+            secondary_phone_name: c.secondary_phone_name || null,
             email: c.email,
             company_name: c.company_name || null,
-            city: c.city || null,
-            state: c.state || null,
+            city: primary?.city || null,
+            state: primary?.state || null,
+            addresses: addrs,
             name_match: c.name_match,
             phone_match: c.phone_match,
             email_match: c.email_match,
-        })),
-    };
+        };
+    });
 }
 
 // =============================================================================

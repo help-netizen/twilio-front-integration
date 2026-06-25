@@ -23,6 +23,7 @@ interface WeekViewProps {
     items: ScheduleItem[];
     settings: DispatchSettings;
     onSelectItem: (item: ScheduleItem) => void;
+    onCopy?: (jobId: number) => void;
     onReschedule?: (entityType: string, entityId: number, startAt: string, endAt: string, title?: string) => void;
     onCreateFromSlot?: (title: string, startAt: string, endAt: string) => void;
 }
@@ -42,7 +43,7 @@ function buildHourSlots(startTime: string, endTime: string): number[] {
 
 const HOUR_HEIGHT = 86; // Sprint 7 design refresh
 
-export const WeekView: React.FC<WeekViewProps> = ({ currentDate, items, settings, onSelectItem, onReschedule, onCreateFromSlot }) => {
+export const WeekView: React.FC<WeekViewProps> = ({ currentDate, items, settings, onSelectItem, onCopy, onReschedule, onCreateFromSlot }) => {
     const tz = settings.timezone || 'America/New_York';
     const slotDuration = settings.slot_duration || 60;
     const [dropHighlight, setDropHighlight] = useState<{ dayIdx: number; min: number } | null>(null);
@@ -329,7 +330,7 @@ export const WeekView: React.FC<WeekViewProps> = ({ currentDate, items, settings
                                                 width: `calc(${widthPct}% - 4px)`,
                                             }}
                                         >
-                                            <ScheduleItemCard item={item} compact onClick={onSelectItem} timezone={tz} />
+                                            <ScheduleItemCard item={item} compact onClick={onSelectItem} onCopy={onCopy} timezone={tz} />
                                         </div>
                                     );
                                 });

@@ -74,11 +74,11 @@ router.get('/', requirePermission('contacts.view'), async (req, res) => {
 router.get('/search-candidates', requirePermission('contacts.view'), async (req, res) => {
     const reqId = requestId();
     try {
-        const { first_name, last_name, phone, email } = req.query;
+        const { first_name, last_name, phone, email, q } = req.query;
 
         const companyId = req.companyFilter?.company_id || null;
         const result = await contactDedupeService.searchCandidates(
-            { first_name: first_name || '', last_name: last_name || '', phone: phone || null, email: email || null },
+            { first_name: first_name || '', last_name: last_name || '', phone: phone || null, email: email || null, q: q || null },
             companyId
         );
 

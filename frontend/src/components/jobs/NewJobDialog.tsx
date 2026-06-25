@@ -6,7 +6,7 @@
  * AND the technician (techId) in a single pick. Minimal fields only — no price,
  * duration, territory, or other internal fields.
  */
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Check, X, Clock, Loader2 } from 'lucide-react';
@@ -21,12 +21,20 @@ import { CustomTimeModal } from '../conversations/CustomTimeModal';
 import { useZipCheck } from '../../hooks/useZipCheck';
 import * as contactsApi from '../../services/contactsApi';
 import { createJob, type CreateJobBody } from '../../services/jobsApi';
+import type { CopyJobData } from './copyJobData';
 import type { DedupeCandidate } from '../../types/contact';
 import '../leads/CreateLeadDialog.css';
 
 interface NewJobDialogProps {
     open: boolean;
     onClose: () => void;
+    /**
+     * When set, the dialog opens pre-filled from an existing job ("Copy job"):
+     * contact (linked), address, job type and description are copied; the
+     * technician is pre-selected (preferred) but the timeslot stays empty so the
+     * user re-picks the time. Null/undefined = a normal blank "New job".
+     */
+    copyFrom?: CopyJobData | null;
 }
 
 interface ChosenSlot {
@@ -42,7 +50,7 @@ function composeAddress(a: AddressFields): string {
 }
 
 
-export function NewJobDialog({ open, onClose }: NewJobDialogProps) {
+export function NewJobDialog({ open, onClose, copyFrom }: NewJobDialogProps) {
     const navigate = useNavigate();
 
     // ── Contact ──
@@ -62,6 +70,9 @@ export function NewJobDialog({ open, onClose }: NewJobDialogProps) {
     // ── Time & technician ──
     const [timeOpen, setTimeOpen] = useState(false);
     const [slot, setSlot] = useState<ChosenSlot | null>(null);
+    // Preferred technician carried over from a copied job — used to highlight the
+    // suggested lane in the time picker. The SLOT itself stays empty (re-pick time).
+    const [preferredTechId, setPreferredTechId] = useState<string | undefined>(undefined);
 
     // ── Work ──
     const [jobType, setJobType] = useState('');
@@ -74,20 +85,31 @@ export function NewJobDialog({ open, onClose }: NewJobDialogProps) {
         setNewName(''); setNewPhone(''); setNewEmail('');
         setAddress(EMPTY_ADDRESS);
         setSlot(null);
+        setPreferredTechId(undefined);
         setJobType(''); setDescription('');
     };
     const close = () => { reset(); onClose(); };
 
-    // Debounced contact search by phone/name
+    // Pre-fill from a copied job on open. The blank "New job" path (copyFrom
+    // null/undefined) is left untouched so it stays empty. Keyed on [open, copyFrom]
+    // so re-opening repopulates. The timeslot is intentionally NOT copied.
+    useEffect(() => {
+        if (!open || !copyFrom) return;
+        setSelectedContact(copyFrom.contact ?? null);
+        setAddress(copyFrom.address);
+        setJobType(copyFrom.jobType);
+        setDescription(copyFrom.description);
+        setPreferredTechId(copyFrom.techId);
+        setSlot(null);
+    }, [open, copyFrom]);
+
+    // Debounced broad contact search (name, phone, email, address — backend `q`)
     const runSearch = useCallback(async (q: string) => {
         const trimmed = q.trim();
         if (trimmed.length < 2) { setCandidates([]); return; }
-        const byPhone = /\d/.test(trimmed);
         setSearching(true);
         try {
-            const res = await contactsApi.searchCandidates(
-                byPhone ? { phone: trimmed } : { first_name: trimmed }
-            );
+            const res = await contactsApi.searchCandidates({ q: trimmed });
             setCandidates(res.data.candidates);
         } catch { setCandidates([]); }
         finally { setSearching(false); }
@@ -100,9 +122,23 @@ export function NewJobDialog({ open, onClose }: NewJobDialogProps) {
         (handleQueryChange as any)._t = window.setTimeout(() => runSearch(v), 350);
     };
 
-    const pickContact = (c: DedupeCandidate) => {
+    const pickContact = (
+        c: DedupeCandidate,
+        addr?: { line1: string | null; line2: string | null; city: string | null; state: string | null; postal_code: string | null; lat?: number | null; lng?: number | null }
+    ) => {
         const name = c.full_name || `${c.first_name || ''} ${c.last_name || ''}`.trim() || c.phone_e164 || `Contact #${c.id}`;
         setSelectedContact({ id: c.id, name });
+        if (addr) {
+            setAddress({
+                street: addr.line1 ?? '',
+                apt: addr.line2 ?? '',
+                city: addr.city ?? '',
+                state: addr.state ?? '',
+                zip: addr.postal_code ?? '',
+                lat: addr.lat ?? null,
+                lng: addr.lng ?? null,
+            });
+        }
         setCandidates([]);
         setContactQuery('');
     };
@@ -172,7 +208,7 @@ export function NewJobDialog({ open, onClose }: NewJobDialogProps) {
                             className="text-[22px] font-semibold leading-tight"
                             style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}
                         >
-                            New job
+                            {copyFrom ? 'New job (copy)' : 'New job'}
                         </DialogTitle>
                         <DialogDescription className="sr-only">Create a job directly</DialogDescription>
                     </DialogPanelHeader>
@@ -203,19 +239,39 @@ export function NewJobDialog({ open, onClose }: NewJobDialogProps) {
                                             {!searching && candidates.length === 0 && (
                                                 <div className="cld-candidates__header">No matches — fill the fields below to create a new contact</div>
                                             )}
-                                            {candidates.map((c) => (
-                                                <div key={c.id} onClick={() => pickContact(c)} className="cld-candidates__item">
-                                                    <div className="cld-candidates__info">
-                                                        <div className="cld-candidates__name">
-                                                            <span>{c.full_name || `${c.first_name || ''} ${c.last_name || ''}`.trim() || 'Unnamed'}</span>
+                                            {candidates.flatMap((c) => {
+                                                const name = c.full_name || `${c.first_name || ''} ${c.last_name || ''}`.trim() || 'Unnamed';
+                                                const rows = c.addresses?.length
+                                                    ? c.addresses.map((addr, addrIndex) => {
+                                                        const addrText = [addr.line1, [addr.city, addr.state].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
+                                                        return (
+                                                            <div key={`${c.id}-${addrIndex}`} onClick={() => pickContact(c, addr)} className="cld-candidates__item">
+                                                                <div className="cld-candidates__info">
+                                                                    <div className="cld-candidates__name">
+                                                                        <span>{name}</span>
+                                                                    </div>
+                                                                    <div className="cld-candidates__meta">
+                                                                        {addrText && <span className="cld-candidates__meta-item">{addrText}</span>}
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })
+                                                    : [(
+                                                        <div key={`${c.id}-0`} onClick={() => pickContact(c)} className="cld-candidates__item">
+                                                            <div className="cld-candidates__info">
+                                                                <div className="cld-candidates__name">
+                                                                    <span>{name}</span>
+                                                                </div>
+                                                                <div className="cld-candidates__meta">
+                                                                    {c.phone_e164 && <span className="cld-candidates__meta-item">{c.phone_e164}</span>}
+                                                                    {c.email && <span className="cld-candidates__meta-item">{c.email}</span>}
+                                                                </div>
+                                                            </div>
                                                         </div>
-                                                        <div className="cld-candidates__meta">
-                                                            {c.phone_e164 && <span className="cld-candidates__meta-item">{c.phone_e164}</span>}
-                                                            {c.email && <span className="cld-candidates__meta-item">{c.email}</span>}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            ))}
+                                                    )];
+                                                return rows;
+                                            })}
                                         </div>
                                     )}
                                 </div>
@@ -281,6 +337,7 @@ export function NewJobDialog({ open, onClose }: NewJobDialogProps) {
                 newJobAddress={composeAddress(address) || undefined}
                 newJobDuration={120}
                 initialSlot={slot ? { techId: slot.techId || '', start: slot.start, end: slot.end } : undefined}
+                preselectTechId={slot?.techId ?? preferredTechId}
             />
         </>
     );

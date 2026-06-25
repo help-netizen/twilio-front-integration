@@ -18,6 +18,9 @@ import { TimelineView } from '../components/schedule/TimelineView';
 import { TimelineWeekView } from '../components/schedule/TimelineWeekView';
 import { ListView } from '../components/schedule/ListView';
 import { NewJobModal } from '../components/schedule/NewJobModal';
+import { NewJobDialog } from '../components/jobs/NewJobDialog';
+import { buildCopyJobData, type CopyJobData } from '../components/jobs/copyJobData';
+import { getJob } from '../services/jobsApi';
 import { SidebarStack } from '../components/schedule/SidebarStack';
 import { UnscheduledPanel } from '../components/schedule/UnscheduledPanel';
 import { DispatchSettingsDialog } from '../components/schedule/DispatchSettingsDialog';
@@ -63,6 +66,16 @@ export function SchedulePage() {
     // address) rather than creating a bare job immediately, so the address can
     // feed geocoding/routing.
     const [newJobSlot, setNewJobSlot] = useState<{ startAt: string; endAt: string; providerId?: string; providerName?: string } | null>(null);
+    // Full New Job form opened from the Schedule header button (create from scratch).
+    const [newJobOpen, setNewJobOpen] = useState(false);
+
+    // "Copy job" — pre-fill the New Job form from an existing job's data.
+    const [copyFrom, setCopyFrom] = useState<CopyJobData | null>(null);
+    const handleCopyJob = useCallback((jobId: number) => {
+        getJob(jobId)
+            .then(j => setCopyFrom(buildCopyJobData(j)))
+            .catch(err => console.error('[Copy job] failed to load job', jobId, err));
+    }, []);
 
     const handleCreateFromSlot = useCallback((_title: string, startAt: string, endAt: string, providerId?: string, providerName?: string) => {
         setNewJobSlot({ startAt, endAt, providerId, providerName });
@@ -105,17 +118,17 @@ export function SchedulePage() {
 
         switch (schedule.viewMode) {
             case 'week':
-                return <WeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
+                return <WeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
             case 'day':
-                return <DayView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
+                return <DayView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
             case 'month':
                 return <MonthView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectDay={handleMonthDaySelect} onSelectItem={handleSelectItem} />;
             case 'timeline':
-                return <TimelineView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} routeByPair={schedule.routeByPair} onSelectItem={handleSelectItem} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
+                return <TimelineView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} routeByPair={schedule.routeByPair} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
             case 'timeline-week':
-                return <TimelineWeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} routeByPair={schedule.routeByPair} onSelectItem={handleSelectItem} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
+                return <TimelineWeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} routeByPair={schedule.routeByPair} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
             case 'list':
-                return <ListView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} routeByPair={schedule.routeByPair} onSelectItem={handleSelectItem} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
+                return <ListView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} allProviders={schedule.providers} routeByPair={schedule.routeByPair} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReassign={canDispatch ? schedule.handleReassign : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
             default:
                 return null;
         }
@@ -155,6 +168,7 @@ export function SchedulePage() {
                 {/* Toolbar: title + AI Assistant button */}
                 <ScheduleToolbar
                     onToggleAIAssistant={() => setShowAIAssistant(true)}
+                    onNewJob={canDispatch ? () => setNewJobOpen(true) : undefined}
                 />
 
                 {/* Main content */}
@@ -164,6 +178,7 @@ export function SchedulePage() {
                         <UnscheduledPanel
                             items={schedule.unscheduledItems}
                             onSelectItem={handleSelectItem}
+                            onCopy={handleCopyJob}
                         />
                     )}
 
@@ -251,6 +266,12 @@ export function SchedulePage() {
                     onSubmit={(payload) => { schedule.handleCreateFromSlot(payload); setNewJobSlot(null); }}
                 />
             )}
+
+            {/* Full New Job form (header button) — create a job from scratch */}
+            <NewJobDialog open={newJobOpen} onClose={() => setNewJobOpen(false)} />
+
+            {/* Copy job — New Job form pre-filled from an existing job */}
+            <NewJobDialog open={!!copyFrom} copyFrom={copyFrom} onClose={() => setCopyFrom(null)} />
         </div>
     );
 }

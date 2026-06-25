@@ -10,9 +10,10 @@ import type { ScheduleItem } from '../../services/scheduleApi';
 interface UnscheduledPanelProps {
     items: ScheduleItem[];
     onSelectItem: (item: ScheduleItem) => void;
+    onCopy?: (jobId: number) => void;
 }
 
-export const UnscheduledPanel: React.FC<UnscheduledPanelProps> = ({ items, onSelectItem }) => {
+export const UnscheduledPanel: React.FC<UnscheduledPanelProps> = ({ items, onSelectItem, onCopy }) => {
     if (items.length === 0) return null;
 
     return (
@@ -51,7 +52,7 @@ export const UnscheduledPanel: React.FC<UnscheduledPanelProps> = ({ items, onSel
                             className="flex-none"
                             style={{ width: '280px', minHeight: '148px' }}
                         >
-                            <ScheduleItemCard item={item} onClick={onSelectItem} />
+                            <ScheduleItemCard item={item} onClick={onSelectItem} onCopy={onCopy} />
                         </div>
                     ))}
                 </div>

@@ -29,6 +29,7 @@ interface TimelineViewProps {
     settings: DispatchSettings;
     allProviders?: ProviderInfo[];
     onSelectItem: (item: ScheduleItem) => void;
+    onCopy?: (jobId: number) => void;
     onReschedule?: (entityType: string, entityId: number, startAt: string, endAt: string, title?: string) => void;
     onReassign?: (entityType: string, entityId: number, assigneeId: string | null, assigneeName?: string, title?: string) => void;
     onCreateFromSlot?: (title: string, startAt: string, endAt: string, providerId?: string, providerName?: string) => void;
@@ -113,7 +114,7 @@ function layoutItems(items: ScheduleItem[], tz: string, startHour: number): Posi
 }
 
 export const TimelineView: React.FC<TimelineViewProps> = ({
-    currentDate, items, settings, allProviders = [], onSelectItem, onReschedule, onReassign, onCreateFromSlot, routeByPair,
+    currentDate, items, settings, allProviders = [], onSelectItem, onCopy, onReschedule, onReassign, onCreateFromSlot, routeByPair,
 }) => {
     const tz = settings.timezone || 'America/New_York';
     const unit = settings.distance_unit === 'km' ? 'km' : 'mi';
@@ -452,7 +453,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                             width: `calc(${widthPct}% - 4px)`,
                                         }}
                                     >
-                                        <ScheduleItemCard item={item} compact onClick={onSelectItem} timezone={tz} />
+                                        <ScheduleItemCard item={item} compact onClick={onSelectItem} onCopy={onCopy} timezone={tz} />
                                     </div>
                                     {/* Route leg to the next job — anchored to this card's bottom edge.
                                         pointer-events-none so it never blocks drag/click on the grid. */}

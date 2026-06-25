@@ -20,6 +20,7 @@ interface ListViewProps {
     settings: DispatchSettings;
     allProviders?: ProviderInfo[];
     onSelectItem: (item: ScheduleItem) => void;
+    onCopy?: (jobId: number) => void;
     onReassign?: (entityType: string, entityId: number, assigneeId: string | null, assigneeName?: string, title?: string) => void;
     onCreateFromSlot?: (title: string, startAt: string, endAt: string) => void;
     routeByPair?: Map<string, RouteSegment>;
@@ -46,7 +47,7 @@ function formatDayHeading(day: Date, todayStr: string, _tz: string): string {
 }
 
 export const ListView: React.FC<ListViewProps> = ({
-    currentDate, items, settings, allProviders = [], onSelectItem, onReassign, routeByPair,
+    currentDate, items, settings, allProviders = [], onSelectItem, onCopy, onReassign, routeByPair,
 }) => {
     const tz = settings.timezone || 'America/New_York';
     const unit = settings.distance_unit === 'km' ? 'km' : 'mi';
@@ -233,6 +234,7 @@ export const ListView: React.FC<ListViewProps> = ({
                                                         <ScheduleItemCard
                                                             item={item}
                                                             onClick={onSelectItem}
+                                                            onCopy={onCopy}
                                                             timezone={tz}
                                                         />
                                                     </div>

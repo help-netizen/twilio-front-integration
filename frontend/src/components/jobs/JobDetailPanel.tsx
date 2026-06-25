@@ -35,6 +35,7 @@ export interface JobDetailPanelProps {
     allTags: JobTag[];
     onTagsChange: (jobId: number, tagIds: number[]) => void;
     onJobUpdated?: (updatedJob: LocalJob) => void;
+    onCopy?: () => void;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -43,7 +44,7 @@ export function JobDetailPanel({
     job, contactInfo, detailLoading,
     onClose: _onClose, onBlancStatusChange,
     onMarkEnroute, onMarkInProgress, onMarkComplete, onCancel,
-    navigate, allTags, onTagsChange, onJobUpdated,
+    navigate, allTags, onTagsChange, onJobUpdated, onCopy,
 }: JobDetailPanelProps) {
     const [rightTab, setRightTab] = useState<'notes' | 'financials'>('notes');
     const [cancelOpen, setCancelOpen] = useState(false);
@@ -93,6 +94,7 @@ export function JobDetailPanel({
                     navigate={navigate}
                     onBlancStatusChange={onBlancStatusChange}
                     onCancel={requestCancel}
+                    onCopy={onCopy}
                 />
 
                 {/* Ops: status + tags + action chips — all in one compact band */}

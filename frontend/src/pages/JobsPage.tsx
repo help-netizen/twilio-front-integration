@@ -5,6 +5,8 @@ import { JobsFilters } from '../components/jobs/JobsFilters';
 import { JobsTable } from '../components/jobs/JobsTable';
 import { JobDetailPanel } from '../components/jobs/JobDetailPanel';
 import { NewJobDialog } from '../components/jobs/NewJobDialog';
+import { buildCopyJobData, type CopyJobData } from '../components/jobs/copyJobData';
+import { getJob, type LocalJob } from '../services/jobsApi';
 import { Download, Loader2, Plus } from 'lucide-react';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 
@@ -13,6 +15,14 @@ import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 export function JobsPage() {
     const page = useJobsPage();
     const [newJobOpen, setNewJobOpen] = useState(false);
+    const [copyFrom, setCopyFrom] = useState<CopyJobData | null>(null);
+
+    // List rows may be summary-only, so fetch the full job before copying.
+    const handleCopyJob = (job: LocalJob) => {
+        getJob(job.id)
+            .then(full => setCopyFrom(buildCopyJobData(full)))
+            .catch(() => setCopyFrom(buildCopyJobData(job)));
+    };
 
     return (
         <div className="blanc-page-wrapper">
@@ -90,6 +100,7 @@ export function JobsPage() {
                         hasMore={page.hasMore}
                         limit={page.limit}
                         onLoadJobs={page.loadJobs}
+                        onCopyJob={handleCopyJob}
                     />
                 </div>
             </div>
@@ -114,10 +125,12 @@ export function JobsPage() {
                         allTags={page.allTags}
                         onTagsChange={page.handleTagsChange}
                         onJobUpdated={page.handleJobUpdated}
+                        onCopy={() => page.selectedJob && setCopyFrom(buildCopyJobData(page.selectedJob))}
                     />
                 )}
             </FloatingDetailPanel>
             <NewJobDialog open={newJobOpen} onClose={() => setNewJobOpen(false)} />
+            <NewJobDialog open={!!copyFrom} copyFrom={copyFrom} onClose={() => setCopyFrom(null)} />
         </div>
     );
 }

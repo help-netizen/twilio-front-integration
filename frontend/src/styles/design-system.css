@@ -41,6 +41,11 @@
        surface-strong (which reads creamy) but softer than pure #fff. Fields share it
        and are drawn by border only, so floating labels notch the outline seamlessly. */
     --blanc-panel-surface: #fffdf9;
+    /* Right-side "layer" geometry — shared by create-form drawers (DialogContent
+       variant="panel") AND view cards (FloatingDetailPanel) so they are ONE system:
+       same width, both glued to the right edge below the app header. */
+    --blanc-layer-width: min(760px, calc(100vw - 100px));
+    --blanc-layer-top: 64px;
 
     /* ── Borders ── */
     --blanc-line: rgba(117, 106, 89, 0.18);
@@ -779,9 +784,9 @@ table tbody tr:hover {
 /* Close zone wraps panel + hover close button */
 .blanc-floating-close-zone {
     position: fixed;
-    top: 80px;
-    right: clamp(16px, 3vw, 30px);
-    bottom: 30px;
+    top: var(--blanc-layer-top);
+    right: 0;
+    bottom: 0;
     z-index: 80;
     pointer-events: none;
     /* extra width for close button hover area */
@@ -798,8 +803,10 @@ table tbody tr:hover {
     /* Solid near-white — same surface as form drawers (no frosted glass), so all
        "layers" (forms + view panels) read as one consistent surface. */
     background: var(--blanc-panel-surface, #fffdf9);
+    /* Glued to the right edge → border + rounding only on the LEFT side (like the form drawer). */
     border: 1px solid var(--blanc-line);
-    border-radius: var(--blanc-radius-xl);
+    border-right: 0;
+    border-radius: 24px 0 0 0;
     box-shadow: var(--blanc-shadow-main);
     display: flex;
     flex-direction: column;
@@ -808,7 +815,7 @@ table tbody tr:hover {
 }
 
 .blanc-floating-panel--wide {
-    width: min(760px, calc(100vw - 100px));
+    width: var(--blanc-layer-width);
 }
 
 /* Invisible bridge that keeps pointer-events alive between panel and close button */

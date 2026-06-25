@@ -1,4 +1,4 @@
-import { ExternalLink, ChevronDown, RotateCcw } from 'lucide-react';
+import { ExternalLink, ChevronDown, RotateCcw, MoreVertical, Copy } from 'lucide-react';
 import type { LocalJob } from '../../services/jobsApi';
 import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -14,6 +14,7 @@ interface JobDetailHeaderProps {
     navigate: (path: string) => void;
     onBlancStatusChange: (id: number, s: string) => void;
     onCancel: (id: number) => void;
+    onCopy?: () => void;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -27,7 +28,7 @@ function hexToRgba(hex: string, alpha: number) {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChange, onCancel }: JobDetailHeaderProps) {
+export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChange, onCancel, onCopy }: JobDetailHeaderProps) {
     const { data: fsmData } = useFsmStates('job', true);
     const allStatuses = fsmData?.states && fsmData.states.length > 0 ? fsmData.states : BLANC_STATUSES;
     const initialState = fsmData?.initialState || null;
@@ -47,7 +48,7 @@ export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChang
     return (
         <div className="px-5 pt-5 pb-3">
             {/* Eyebrow: JOB · #629656 · Dryer */}
-            <div className="mb-2">
+            <div className="mb-2 flex items-start justify-between gap-2">
                 <span
                     className="text-[10px] font-semibold uppercase tracking-widest inline-flex items-center gap-1.5 select-text"
                     style={{ color: 'var(--blanc-ink-3)', letterSpacing: '0.12em' }}
@@ -85,6 +86,26 @@ export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChang
                         </span>
                     )}
                 </span>
+
+                {onCopy && (
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <button
+                                type="button"
+                                aria-label="Job actions"
+                                className="inline-flex items-center justify-center transition-opacity hover:opacity-70 -mr-1 -mt-1 shrink-0"
+                                style={{ width: 28, height: 28, borderRadius: 8, color: 'var(--blanc-ink-3)' }}
+                            >
+                                <MoreVertical className="size-4" />
+                            </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={onCopy}>
+                                <Copy className="size-4 mr-2" />Copy job
+                            </DropdownMenuItem>
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+                )}
             </div>
 
             {/* Customer name — large heading */}

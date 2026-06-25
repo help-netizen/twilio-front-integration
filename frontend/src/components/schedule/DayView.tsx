@@ -24,6 +24,7 @@ interface DayViewProps {
     items: ScheduleItem[];
     settings: DispatchSettings;
     onSelectItem: (item: ScheduleItem) => void;
+    onCopy?: (jobId: number) => void;
     onReschedule?: (entityType: string, entityId: number, startAt: string, endAt: string, title?: string) => void;
     onCreateFromSlot?: (title: string, startAt: string, endAt: string) => void;
 }
@@ -43,7 +44,7 @@ function buildHourSlots(startTime: string, endTime: string): number[] {
 
 const HOUR_HEIGHT = 86; // px per hour — Sprint 7 design refresh
 
-export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, onSelectItem, onReschedule, onCreateFromSlot }) => {
+export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, onSelectItem, onCopy, onReschedule, onCreateFromSlot }) => {
     const tz = settings.timezone || 'America/New_York';
     const slotDuration = settings.slot_duration || 60;
     const isMobile = useIsMobile();
@@ -175,7 +176,7 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                 ) : (
                     sorted.map(item => (
                         <div key={`${item.entity_type}-${item.entity_id}`} data-schedule-item>
-                            <ScheduleItemCard item={item} onClick={onSelectItem} timezone={tz} />
+                            <ScheduleItemCard item={item} onClick={onSelectItem} onCopy={onCopy} timezone={tz} />
                         </div>
                     ))
                 )}
@@ -358,7 +359,7 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                                         width: `calc(${widthPct}% - 8px)`,
                                     }}
                                 >
-                                    <ScheduleItemCard item={item} onClick={onSelectItem} timezone={tz} />
+                                    <ScheduleItemCard item={item} onClick={onSelectItem} onCopy={onCopy} timezone={tz} />
                                 </div>
                             );
                         });

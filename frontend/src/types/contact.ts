@@ -57,6 +57,15 @@ export type DedupeCandidate = {
     name_match: boolean;
     phone_match: boolean;
     email_match: boolean;
+    addresses?: Array<{
+        line1: string | null;
+        line2: string | null;
+        city: string | null;
+        state: string | null;
+        postal_code: string | null;
+        lat?: number | null;
+        lng?: number | null;
+    }>;
 };
 
 export type SearchCandidatesResponse = {

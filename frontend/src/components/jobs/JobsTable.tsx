@@ -2,9 +2,13 @@ import { Button } from '../ui/button';
 import {
     ChevronLeft, ChevronRight, Loader2,
     ArrowUpDown, ArrowUp, ArrowDown,
+    MoreVertical, Copy,
 } from 'lucide-react';
 import type { LocalJob } from '../../services/jobsApi';
 import type { ColumnDef } from './jobHelpers';
+import {
+    DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '../ui/dropdown-menu';
 
 // ─── Props ───────────────────────────────────────────────────────────────────
 
@@ -23,6 +27,7 @@ interface JobsTableProps {
     hasMore: boolean;
     limit: number;
     onLoadJobs: (offset: number) => void;
+    onCopyJob?: (job: LocalJob) => void;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -42,6 +47,7 @@ export function JobsTable({
     hasMore,
     limit,
     onLoadJobs,
+    onCopyJob,
 }: JobsTableProps) {
     const handleHeaderClick = (col: ColumnDef) => {
         if (!col.sortKey) return;
@@ -99,6 +105,7 @@ export function JobsTable({
                                     </th>
                                 );
                             })}
+                            {onCopyJob && <th className="px-2 py-2.5 w-10" aria-label="Actions" />}
                         </tr>
                     </thead>
                     <tbody>
@@ -113,6 +120,28 @@ export function JobsTable({
                                     if (!col) return null;
                                     return <td key={fk} className="px-4 py-2.5">{col.render(job)}</td>;
                                 })}
+                                {onCopyJob && (
+                                    <td className="px-2 py-2.5 w-10" onClick={e => e.stopPropagation()}>
+                                        <DropdownMenu>
+                                            <DropdownMenuTrigger asChild>
+                                                <button
+                                                    type="button"
+                                                    aria-label="Job actions"
+                                                    className="inline-flex items-center justify-center transition-opacity hover:opacity-70"
+                                                    style={{ width: 28, height: 28, borderRadius: 8, color: 'var(--blanc-ink-3)' }}
+                                                    onClick={e => e.stopPropagation()}
+                                                >
+                                                    <MoreVertical className="size-4" />
+                                                </button>
+                                            </DropdownMenuTrigger>
+                                            <DropdownMenuContent align="end">
+                                                <DropdownMenuItem onClick={() => onCopyJob(job)}>
+                                                    <Copy className="size-4 mr-2" />Copy job
+                                                </DropdownMenuItem>
+                                            </DropdownMenuContent>
+                                        </DropdownMenu>
+                                    </td>
+                                )}
                             </tr>
                         ))}
                     </tbody>

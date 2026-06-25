@@ -37,14 +37,14 @@ const DIALOG_SIZE: Record<DialogSize, string> = {
     wide: "md:max-w-3xl",
     full: "md:max-w-5xl md:max-h-[92vh] md:overflow-y-auto",
 }
-// Right-side panel widths (MODAL-REDESIGN-001 canon). Forms are single-column,
-// Docked to the right edge, so width is generous (~2/3 of the screen for a normal
-// form) — that room is what lets labels sit beside fields and controls breathe.
+// Right-side panel widths. Standard forms use --blanc-layer-width — the SAME width as
+// the job/lead/estimate VIEW card (FloatingDetailPanel `wide`), so create- and view-
+// layers are identical. Only heavy document editors (wide/full) get extra width.
 const PANEL_WIDTH: Record<DialogSize, string> = {
-    sm: "md:w-[min(680px,94vw)]",
-    default: "md:w-[clamp(760px,74vw,1280px)]",
-    wide: "md:w-[clamp(900px,82vw,1400px)]",
-    full: "md:w-[min(1500px,92vw)]",
+    sm: "md:w-[var(--blanc-layer-width)]",
+    default: "md:w-[var(--blanc-layer-width)]",
+    wide: "md:w-[min(1020px,calc(100vw-100px))]",
+    full: "md:w-[min(1320px,calc(100vw-72px))]",
 }
 
 const DialogContent = React.forwardRef<
@@ -66,10 +66,10 @@ const DialogContent = React.forwardRef<
                         // Surface is warm white so it (a) stands out from the beige page and
                         // (b) matches the fields — fields are delineated by border only, which
                         // lets the floating label notch the border with no colour seam.
-                        "flex flex-col overflow-hidden bg-[var(--blanc-panel-surface,#fffdf9)]",
+                        "peer flex flex-col overflow-hidden bg-[var(--blanc-panel-surface,#fffdf9)]",
                         // Desktop: docked flush to the right edge, below the app header, full height —
-                        // "glued to the edge, slid out from there" (like the job-detail card), no scrim.
-                        "md:left-auto md:top-[60px] md:bottom-0 md:right-0 md:h-auto md:translate-x-0 md:translate-y-0 md:rounded-none md:rounded-tl-[24px] md:border-y-0 md:border-r-0 md:border-l md:border-[var(--blanc-line)] md:shadow-[-26px_0_70px_-28px_rgba(63,55,42,0.32)]",
+                        // "glued to the edge, slid out from there" (same layer as the job-detail card).
+                        "md:left-auto md:top-[var(--blanc-layer-top)] md:bottom-0 md:right-0 md:h-auto md:translate-x-0 md:translate-y-0 md:rounded-none md:rounded-tl-[24px] md:border-y-0 md:border-r-0 md:border-l md:border-[var(--blanc-line)] md:shadow-[-26px_0_70px_-28px_rgba(63,55,42,0.32)]",
                         PANEL_WIDTH[size],
                         "md:data-[state=open]:animate-[blancSlideInRight_0.24s_ease-out] md:data-[state=closed]:animate-out md:data-[state=closed]:fade-out-0 md:data-[state=closed]:slide-out-to-right-8",
                     )
@@ -85,11 +85,31 @@ const DialogContent = React.forwardRef<
             {...props}
         >
             {children}
-            <DialogPrimitive.Close className="absolute right-4 top-[18px] rounded-md p-1 opacity-60 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none">
+            {/* Top-right X — centered dialogs, wide/full document panels, and the MOBILE sheet of standard panels */}
+            <DialogPrimitive.Close
+                className={cn(
+                    "absolute right-4 top-[18px] rounded-md p-1 opacity-60 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none",
+                    variant === "panel" && (size === "default" || size === "sm") && "right-3 top-3 md:hidden",
+                )}
+            >
                 <X className="h-4 w-4" />
                 <span className="sr-only">Close</span>
             </DialogPrimitive.Close>
         </DialogPrimitive.Content>
+        {/* Standard panel, desktop: hover-reveal close to the LEFT of the layer — identical to the view card */}
+        {variant === "panel" && (size === "default" || size === "sm") && (
+            <DialogPrimitive.Close asChild>
+                <button
+                    type="button"
+                    title="Close"
+                    style={{ top: "calc(var(--blanc-layer-top) + 12px)", right: "calc(var(--blanc-layer-width) + 8px)" }}
+                    className="fixed z-[141] hidden h-7 w-7 items-center justify-center rounded-full bg-transparent text-transparent opacity-0 transition-all duration-150 focus:outline-none md:flex peer-hover:bg-[var(--blanc-ink-1)] peer-hover:text-white peer-hover:opacity-100 peer-hover:shadow-[0_4px_12px_rgba(0,0,0,0.15)] hover:bg-[var(--blanc-ink-1)] hover:text-white hover:opacity-100 hover:shadow-[0_4px_12px_rgba(0,0,0,0.15)]"
+                >
+                    <X className="h-3.5 w-3.5" />
+                    <span className="sr-only">Close</span>
+                </button>
+            </DialogPrimitive.Close>
+        )}
     </DialogPortal>
 ))
 DialogContent.displayName = DialogPrimitive.Content.displayName

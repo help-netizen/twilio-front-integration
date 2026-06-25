@@ -46,6 +46,12 @@ interface CustomTimeModalProps {
     excludeJobId?: number;
     /** Pre-populate the green badge with an existing timeslot (for reschedule) */
     initialSlot?: { techId: string; start: string; end: string };
+    /**
+     * Preferred technician (e.g. copied from a duplicated job). When set AND no
+     * slot is chosen yet, this tech's lane is visually emphasized ("Suggested")
+     * so the user knows where to pick a time. Does NOT auto-create a slot.
+     */
+    preselectTechId?: string;
 }
 
 interface TechGroup {
@@ -146,9 +152,11 @@ interface TechTimelineProps {
     onSelectSlot: (slot: SelectedSlot) => void;
     matchesTerritory: boolean;
     companyTz: string;
+    /** Emphasize this lane as the suggested technician (no slot picked yet) */
+    isSuggested?: boolean;
 }
 
-function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectSlot, matchesTerritory, companyTz }: TechTimelineProps) {
+function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectSlot, matchesTerritory, companyTz, isSuggested }: TechTimelineProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const [hoverMinutes, setHoverMinutes] = useState<number | null>(null);
 
@@ -183,11 +191,14 @@ function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectS
     const selectedHeight = isSelected ? ((minutesSinceMidnight(selectedSlot!.end, companyTz) - minutesSinceMidnight(selectedSlot!.start, companyTz)) / 60) * HOUR_HEIGHT : 0;
 
     return (
-        <div className="tech-timeline__col">
+        <div className={`tech-timeline__col${isSuggested ? ' tech-timeline__col--suggested' : ''}`}>
             <div
                 ref={containerRef}
                 className="tech-timeline__grid"
-                style={{ height: TOTAL_HOURS * HOUR_HEIGHT }}
+                style={{
+                    height: TOTAL_HOURS * HOUR_HEIGHT,
+                    ...(isSuggested && { border: '2px solid var(--blanc-job)', borderRadius: 8 }),
+                }}
                 onMouseMove={handleMouseMove}
                 onMouseLeave={handleMouseLeave}
                 onClick={handleClick}
@@ -458,7 +469,7 @@ function JobMap({ jobs, techGroups, newJobCoords, newJobAddress, loading, compan
 
 // ─── Main Modal ───────────────────────────────────────────────────────────────
 
-export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJobAddress, newJobDuration, territoryId, excludeJobId, initialSlot }: CustomTimeModalProps) {
+export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJobAddress, newJobDuration, territoryId, excludeJobId, initialSlot, preselectTechId }: CustomTimeModalProps) {
     const { company } = useAuth();
     const companyTz = company?.timezone || 'America/New_York';
 
@@ -531,6 +542,13 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
     const techGroups = useMemo(() => buildTechGroups(providers, jobs, territoryId), [providers, jobs, territoryId]);
     const totalPages = Math.max(1, Math.ceil(techGroups.length / 2));
     const visibleTechs = techGroups.slice(techPage * 2, techPage * 2 + 2);
+
+    // Suggested tech (e.g. copied from a duplicated job): only highlight while no
+    // slot has been picked yet, and only if that tech actually exists in the list.
+    const suggestedTechId =
+        !selectedSlot && preselectTechId && techGroups.some(g => g.id === preselectTechId)
+            ? preselectTechId
+            : undefined;
 
     // Reset page when date changes; only clear slot if it doesn't match the new date
     useEffect(() => {
@@ -633,6 +651,9 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                                         <div key={tech.id} className="ctm-tech-bar__item">
                                             <span className="ctm-tech-bar__dot" style={{ background: TECH_COLORS[tech.colorIndex].bg }} />
                                             <span className="ctm-tech-bar__name">{tech.name}</span>
+                                            {tech.id === suggestedTechId && (
+                                                <span className="ctm-tech-bar__suggested">Suggested</span>
+                                            )}
                                         </div>
                                     ))}
                                 </div>
@@ -684,6 +705,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                                                     onSelectSlot={setSelectedSlot}
                                                     matchesTerritory={tech.matchesTerritory}
                                                     companyTz={companyTz}
+                                                    isSuggested={tech.id === suggestedTechId}
                                                 />
                                             ))}
                                         </div>

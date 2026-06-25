@@ -127,6 +127,22 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+.ctm-tech-bar__suggested {
+    flex-shrink: 0;
+    margin-left: 4px;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #fff;
+    background: var(--blanc-job, #2f63d8);
+}
+/* Suggested technician lane (Copy job) — subtle tint behind the accent border */
+.tech-timeline__col--suggested .tech-timeline__grid {
+    background: color-mix(in srgb, var(--blanc-job, #2f63d8) 6%, transparent);
+}
 .ctm-tech-bar__arrow {
     display: flex;
     align-items: center;
