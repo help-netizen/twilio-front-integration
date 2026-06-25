@@ -179,8 +179,6 @@ export function SignupPage() {
                             </div>
                         </div>
                     )}
-
-                    <div className="form-foot"><span className="dot" /> Secure sign-up · Albusto CRM</div>
                 </div>
             </div>
 

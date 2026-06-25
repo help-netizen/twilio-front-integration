@@ -110,8 +110,6 @@ body{
 .btn:active{transform:translateY(1px)}
 .btn[disabled]{opacity:.7; cursor:default}
 
-.form-foot{margin-top:26px; color:var(--blanc-ink-3); font-size:12.5px; display:flex; align-items:center; gap:7px}
-.form-foot .dot{width:5px;height:5px;border-radius:50%;background:var(--blanc-task);box-shadow:0 0 0 3px rgba(27,139,99,.16)}
 
 /* generic info/links area (registration, try-another-way) */
 .aux{margin-top:20px; text-align:center; color:var(--blanc-ink-2); font-size:13.5px}

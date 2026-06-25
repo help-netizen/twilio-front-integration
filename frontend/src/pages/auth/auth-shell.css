@@ -85,8 +85,6 @@
 .albusto-auth-shell .aux{margin-top:18px; text-align:center; color:var(--blanc-ink-3,#7d8796); font-size:13.5px}
 .albusto-auth-shell .link{color:var(--blanc-job,#2f63d8); text-decoration:none; font-weight:600}
 .albusto-auth-shell .link:hover{text-decoration:underline}
-.albusto-auth-shell .form-foot{margin-top:24px; color:var(--blanc-ink-3,#7d8796); font-size:12.5px; display:flex; align-items:center; gap:7px}
-.albusto-auth-shell .form-foot .dot{width:5px;height:5px;border-radius:50%;background:var(--blanc-task,#1b8b63);box-shadow:0 0 0 3px rgba(27,139,99,.16)}
 
 /* email-sent state */
 .albusto-auth-shell .sent{text-align:center}

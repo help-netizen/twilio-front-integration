@@ -59,8 +59,6 @@
         <#if displayInfo>
           <div class="aux"><#nested "info"></div>
         </#if>
-
-        <div class="form-foot"><span class="dot"></span> Secure sign-in &middot; Albusto CRM</div>
       </div>
     </div>
 
