@@ -19,8 +19,7 @@
     "dev:backend": "./scripts/dev-start.sh --backend-only",
     "test": "node --experimental-vm-modules node_modules/.bin/jest",
     "test:watch": "node --experimental-vm-modules node_modules/.bin/jest --watch",
-    "test:coverage": "node --experimental-vm-modules node_modules/.bin/jest --coverage",
-    "gen:login-history": "node scripts/gen-login-history.mjs"
+    "test:coverage": "node --experimental-vm-modules node_modules/.bin/jest --coverage"
   },
   "keywords": [],
   "author": "",

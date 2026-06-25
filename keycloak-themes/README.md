@@ -8,28 +8,22 @@ Keycloak still performs the credential check and session handling underneath.
 Two-column shell (`login/template.ftl` → `registrationLayout`):
 
 - **Left** — the real Keycloak form (`login/login.ftl`): username/password,
-  field errors, Remember me, Forgot password, password-visibility toggle.
-  Every other login-theme page (reset password, OTP, update password) inherits
-  the same shell automatically.
-- **Right** — "Shipped recently": a scrollable deploy history, **auto-generated
-  from git** into `login/history.ftl`.
+  field errors, Remember me, Forgot password, password-visibility toggle, and a
+  "Create an account" link to the SPA self-registration page (`signupUrl` in
+  `theme.properties`). Every other login-theme page (reset password, OTP, update
+  password) inherits the same shell automatically.
+- **Right** — a static "Why Albusto" benefits block (hidden on mobile).
 
 Styling is the Blanc design system (`login/resources/css/albusto-login.css`):
 near-white surface, floating labels, `--blanc-job` primary blue.
 
-### Refresh the deploy history
+### Keep it consistent with the SPA signup page
 
-`login/history.ftl` is generated — never edit it by hand. Regenerate from the
-current git log before each deploy:
-
-```bash
-npm run gen:login-history     # → keycloak-themes/albusto/login/history.ftl
-```
-
-Only user-facing commits are kept (feat / fix / perf / redesign / polish …);
-chore/docs/test/ci/build/merge are dropped, conventional-commit prefixes and
-internal ticket codes are stripped, and the file is wrapped in `<#noparse>` so a
-stray `${` in a commit message can never break rendering.
+The React self-registration page (`frontend/src/pages/auth/SignupPage.tsx` +
+`auth-shell.css`) intentionally mirrors this theme — same two-column shell, same
+"Why Albusto" benefits. If you change the benefits copy or the shell here,
+update the SPA file too (and vice-versa); the two run in different runtimes
+(Keycloak FreeMarker vs Vite/React) and can't share a stylesheet.
 
 ### Wiring
 

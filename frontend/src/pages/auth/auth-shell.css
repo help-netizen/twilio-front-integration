@@ -1,0 +1,137 @@
+/* ============================================================
+   Albusto auth shell (SPA) — mirrors the Keycloak login theme
+   (keycloak-themes/albusto/login/resources/css/albusto-login.css)
+   so /signup matches the sign-in page. Scoped under .albusto-auth-shell.
+   ============================================================ */
+.albusto-auth-shell{
+  height:100vh; min-height:100vh; width:100%; overflow:hidden;
+  display:grid; grid-template-columns:minmax(380px,1fr) 1.15fr;
+  font-family:var(--blanc-font-body,"IBM Plex Sans",system-ui,sans-serif);
+  color:var(--blanc-ink-1,#202734);
+}
+
+/* ---- left: form ---- */
+.albusto-auth-shell .auth__form-col{
+  position:relative; z-index:2; min-height:0; overflow-y:auto;
+  background:var(--blanc-panel-surface,#fffdf9);
+  box-shadow:18px 0 50px rgba(47,39,28,.07);
+  display:flex; flex-direction:column;
+  padding:clamp(28px,4vw,56px) clamp(28px,4.5vw,72px);
+}
+.albusto-auth-shell .brand{display:flex; align-items:center; gap:11px; text-decoration:none; color:inherit}
+.albusto-auth-shell .brand__mark{
+  width:34px; height:34px; border-radius:10px;
+  background:linear-gradient(150deg,var(--blanc-job,#2f63d8),#264fb0);
+  display:grid; place-items:center; color:#fff; font-family:var(--blanc-font-heading,Manrope,sans-serif);
+  font-weight:800; font-size:18px; box-shadow:0 6px 16px rgba(47,99,216,.32);
+}
+.albusto-auth-shell .brand__name{font-family:var(--blanc-font-heading,Manrope,sans-serif); font-weight:800; font-size:21px; letter-spacing:-.02em}
+.albusto-auth-shell .brand__sub{color:var(--blanc-ink-3,#7d8796); font-size:12.5px; margin-top:1px}
+
+.albusto-auth-shell .form-wrap{margin:auto 0; width:100%; max-width:404px; padding:34px 0}
+.albusto-auth-shell .form-wrap h1{
+  font-family:var(--blanc-font-heading,Manrope,sans-serif); font-weight:800;
+  font-size:clamp(27px,3.2vw,33px); letter-spacing:-.03em; margin:0 0 8px;
+}
+.albusto-auth-shell .lede{color:var(--blanc-ink-2,#536070); font-size:15px; margin:0 0 24px}
+
+/* floating-label field */
+.albusto-auth-shell .field{position:relative; margin-bottom:14px}
+.albusto-auth-shell .field input{
+  width:100%; height:54px; padding:20px 14px 6px; border:1.5px solid var(--blanc-line,rgba(117,106,89,.18));
+  border-radius:12px; background:var(--blanc-panel-surface,#fffdf9); color:var(--blanc-ink-1,#202734);
+  font-family:inherit; font-size:15px; outline:none; transition:border-color .15s, box-shadow .15s;
+}
+.albusto-auth-shell .field input::placeholder{color:transparent}
+.albusto-auth-shell .field label{
+  position:absolute; left:13px; top:50%; transform:translateY(-50%);
+  color:var(--blanc-ink-3,#7d8796); font-size:15px; pointer-events:none;
+  padding:0 5px; background:transparent; transition:all .15s ease;
+}
+.albusto-auth-shell .field input:focus{border-color:var(--blanc-job,#2f63d8); box-shadow:0 0 0 4px rgba(47,99,216,.10)}
+.albusto-auth-shell .field input:focus+label,
+.albusto-auth-shell .field input:not(:placeholder-shown)+label{
+  top:0; transform:translateY(-50%) scale(.84); color:var(--blanc-ink-2,#536070);
+  background:var(--blanc-panel-surface,#fffdf9); font-weight:500;
+}
+.albusto-auth-shell .field__toggle{
+  position:absolute; right:8px; top:27px; transform:translateY(-50%);
+  background:none; border:0; cursor:pointer; color:var(--blanc-ink-3,#7d8796);
+  padding:8px; border-radius:8px; line-height:0; display:flex;
+}
+.albusto-auth-shell .field__toggle:hover{color:var(--blanc-ink-2,#536070); background:rgba(117,106,89,.07)}
+
+.albusto-auth-shell .btn{
+  width:100%; height:52px; border:0; border-radius:13px; cursor:pointer;
+  font-family:var(--blanc-font-heading,Manrope,sans-serif); font-weight:700; font-size:15.5px;
+  background:var(--blanc-job,#2f63d8); color:#fff; box-shadow:0 10px 24px rgba(47,99,216,.26);
+  display:flex; align-items:center; justify-content:center; gap:8px; text-decoration:none;
+  transition:transform .12s, box-shadow .12s, background .12s;
+}
+.albusto-auth-shell .btn:hover{background:#2a59c4; box-shadow:0 12px 28px rgba(47,99,216,.32)}
+.albusto-auth-shell .btn:active{transform:translateY(1px)}
+.albusto-auth-shell .btn[disabled]{opacity:.7; cursor:default}
+.albusto-auth-shell .btn--ghost{
+  background:var(--blanc-panel-surface,#fffdf9); color:var(--blanc-ink-1,#202734);
+  border:1.5px solid var(--blanc-line-strong,rgba(97,86,71,.28)); box-shadow:none; font-weight:600;
+}
+.albusto-auth-shell .btn--ghost:hover{background:#fff; box-shadow:0 4px 14px rgba(47,39,28,.06)}
+
+.albusto-auth-shell .divider{display:flex; align-items:center; gap:12px; margin:16px 0; color:var(--blanc-ink-3,#7d8796); font-size:12.5px}
+.albusto-auth-shell .divider::before,
+.albusto-auth-shell .divider::after{content:""; flex:1; height:1px; background:var(--blanc-line,rgba(117,106,89,.18))}
+
+.albusto-auth-shell .field-error{color:var(--blanc-danger,#d44d3c); font-size:13px}
+.albusto-auth-shell .aux{margin-top:18px; text-align:center; color:var(--blanc-ink-3,#7d8796); font-size:13.5px}
+.albusto-auth-shell .link{color:var(--blanc-job,#2f63d8); text-decoration:none; font-weight:600}
+.albusto-auth-shell .link:hover{text-decoration:underline}
+.albusto-auth-shell .form-foot{margin-top:24px; color:var(--blanc-ink-3,#7d8796); font-size:12.5px; display:flex; align-items:center; gap:7px}
+.albusto-auth-shell .form-foot .dot{width:5px;height:5px;border-radius:50%;background:var(--blanc-task,#1b8b63);box-shadow:0 0 0 3px rgba(27,139,99,.16)}
+
+/* email-sent state */
+.albusto-auth-shell .sent{text-align:center}
+.albusto-auth-shell .sent__icon{width:54px;height:54px;border-radius:16px;display:grid;place-items:center;margin:0 auto 16px;background:var(--blanc-job-soft,rgba(228,238,255,.92));color:var(--blanc-job,#2f63d8)}
+.albusto-auth-shell .sent .muted{color:var(--blanc-ink-3,#7d8796); font-size:13.5px}
+.albusto-auth-shell .sent__row{display:flex; justify-content:center; gap:18px; font-size:13.5px; margin-top:14px}
+.albusto-auth-shell .textbtn{background:none; border:0; cursor:pointer; font-weight:600; color:var(--blanc-job,#2f63d8); font-family:inherit}
+.albusto-auth-shell .textbtn[disabled]{color:var(--blanc-ink-3,#7d8796); cursor:default; font-weight:500}
+.albusto-auth-shell .textbtn--muted{color:var(--blanc-ink-2,#536070); font-weight:500}
+
+/* ---- right: why Albusto ---- */
+.albusto-auth-shell .auth__news-col{
+  position:relative; z-index:1; overflow:hidden; min-height:0;
+  background:
+    radial-gradient(120% 90% at 100% 0%, rgba(255,247,231,.9), transparent 60%),
+    radial-gradient(120% 100% at 0% 100%, rgba(228,238,255,.7), transparent 55%),
+    linear-gradient(180deg,#fdfaf4,#f4ede2);
+  display:flex; flex-direction:column; justify-content:center;
+  padding:clamp(32px,3.8vw,56px) clamp(30px,3.6vw,60px);
+}
+.albusto-auth-shell .eyebrow{font-size:11px; font-weight:600; letter-spacing:.16em; text-transform:uppercase; color:var(--blanc-ink-3,#7d8796)}
+.albusto-auth-shell .promo{max-width:460px; width:100%; margin:0 auto}
+.albusto-auth-shell .promo__title{
+  font-family:var(--blanc-font-heading,Manrope,sans-serif); font-weight:800; letter-spacing:-.03em;
+  font-size:clamp(26px,2.7vw,34px); line-height:1.12; margin:10px 0 0; color:var(--blanc-ink-1,#202734);
+}
+.albusto-auth-shell .benefits{list-style:none; margin:30px 0 0; padding:0; display:flex; flex-direction:column; gap:22px}
+.albusto-auth-shell .benefit{display:flex; gap:15px; align-items:flex-start}
+.albusto-auth-shell .benefit__icon{
+  flex:0 0 auto; width:42px; height:42px; border-radius:12px;
+  background:var(--blanc-panel-surface,#fffdf9); color:var(--blanc-job,#2f63d8);
+  display:grid; place-items:center; box-shadow:0 4px 14px rgba(47,39,28,.07);
+}
+.albusto-auth-shell .benefit__title{font-family:var(--blanc-font-heading,Manrope,sans-serif); font-weight:700; font-size:15.5px; color:var(--blanc-ink-1,#202734)}
+.albusto-auth-shell .benefit__text{font-size:14px; line-height:1.5; color:var(--blanc-ink-2,#536070); margin-top:3px}
+
+/* ---- responsive: phone — form only, centered ---- */
+@media (max-width:900px){
+  .albusto-auth-shell{grid-template-columns:1fr; height:auto; min-height:100vh; overflow:visible}
+  .albusto-auth-shell .auth__news-col{display:none}
+  .albusto-auth-shell .auth__form-col{
+    box-shadow:none; align-items:center; justify-content:center;
+    min-height:100vh; min-height:100dvh; padding:clamp(24px,7vw,40px);
+  }
+  .albusto-auth-shell .brand{justify-content:center; margin-bottom:26px}
+  .albusto-auth-shell .form-wrap{max-width:420px; margin:0; padding:0}
+  .albusto-auth-shell .form-wrap h1{font-size:29px}
+}

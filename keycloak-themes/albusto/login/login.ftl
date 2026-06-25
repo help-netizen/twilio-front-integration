@@ -71,6 +71,8 @@
           });
         })();
       </script>
+
+      <p class="aux">New to Albusto? <a href="${properties.signupUrl!'https://app.albusto.com/signup'}">Create an account</a></p>
     </#if>
 
   <#elseif section = "info">
