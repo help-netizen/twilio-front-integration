@@ -52,6 +52,9 @@ function FloatingField({
                 <textarea
                     id={fieldId}
                     placeholder=" "
+                    autoComplete="off"
+                    data-lpignore="true"
+                    data-1p-ignore="true"
                     rows={rows}
                     className={cn(fieldBase, "block resize-none px-3.5 pb-2.5 pt-3.5 leading-relaxed", className)}
                     onBlur={onBlur}
@@ -80,6 +83,8 @@ function FloatingField({
                 id={fieldId}
                 placeholder=" "
                 autoComplete="off"
+                data-lpignore="true"
+                data-1p-ignore="true"
                 className={cn(fieldBase, "h-[50px] px-3.5", className)}
                 onBlur={onBlur}
                 onFocus={onFocus}

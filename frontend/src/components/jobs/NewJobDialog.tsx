@@ -15,6 +15,10 @@ import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { FloatingField } from '../ui/floating-field';
+import { FloatingSelect } from '../ui/floating-select';
+import { SelectItem } from '../ui/select';
+import { useLeadFormSettings } from '../../hooks/useLeadFormSettings';
+import { JOB_SOURCES } from '../leads/CreateLeadDialog';
 import { AddressAutocomplete } from '../AddressAutocomplete';
 import { EMPTY_ADDRESS, type AddressFields } from '../addressAutoHelpers';
 import { CustomTimeModal } from '../conversations/CustomTimeModal';
@@ -35,6 +39,12 @@ interface NewJobDialogProps {
      * user re-picks the time. Null/undefined = a normal blank "New job".
      */
     copyFrom?: CopyJobData | null;
+    /**
+     * Pre-set timeslot + technician when opened from a calendar slot ("create from
+     * slot"). It's the SAME full New Job form — the slot/tech is just pre-filled and
+     * stays editable via the time picker.
+     */
+    presetSlot?: { start: string; end: string; techId?: string; formatted?: string } | null;
 }
 
 interface ChosenSlot {
@@ -50,8 +60,12 @@ function composeAddress(a: AddressFields): string {
 }
 
 
-export function NewJobDialog({ open, onClose, copyFrom }: NewJobDialogProps) {
+export function NewJobDialog({ open, onClose, copyFrom, presetSlot }: NewJobDialogProps) {
     const navigate = useNavigate();
+
+    // Shared lead/job form config: job types (dynamic) + Additional-info custom fields.
+    const { jobTypes: dynamicJobTypes, customFields } = useLeadFormSettings(open);
+    const jobTypes = dynamicJobTypes.length > 0 ? dynamicJobTypes : ['COD Service', 'COD Repair', 'Warranty', 'INS Service', 'INS Repair'];
 
     // ── Contact ──
     const [contactQuery, setContactQuery] = useState('');
@@ -76,7 +90,10 @@ export function NewJobDialog({ open, onClose, copyFrom }: NewJobDialogProps) {
 
     // ── Work ──
     const [jobType, setJobType] = useState('');
+    const [jobSource, setJobSource] = useState('');
+    const [metadata, setMetadata] = useState<Record<string, string>>({});
     const [description, setDescription] = useState('');
+    const updateMetadata = (apiName: string, value: string) => setMetadata(prev => ({ ...prev, [apiName]: value }));
 
     const [submitting, setSubmitting] = useState(false);
 
@@ -86,7 +103,7 @@ export function NewJobDialog({ open, onClose, copyFrom }: NewJobDialogProps) {
         setAddress(EMPTY_ADDRESS);
         setSlot(null);
         setPreferredTechId(undefined);
-        setJobType(''); setDescription('');
+        setJobType(''); setJobSource(''); setMetadata({}); setDescription('');
     };
     const close = () => { reset(); onClose(); };
 
@@ -102,6 +119,13 @@ export function NewJobDialog({ open, onClose, copyFrom }: NewJobDialogProps) {
         setPreferredTechId(copyFrom.techId);
         setSlot(null);
     }, [open, copyFrom]);
+
+    // Pre-set the timeslot when opened from a calendar slot. Stays editable.
+    useEffect(() => {
+        if (open && presetSlot) {
+            setSlot({ start: presetSlot.start, end: presetSlot.end, techId: presetSlot.techId, formatted: presetSlot.formatted || '' });
+        }
+    }, [open, presetSlot]);
 
     // Debounced broad contact search (name, phone, email, address — backend `q`)
     const runSearch = useCallback(async (q: string) => {
@@ -173,6 +197,8 @@ export function NewJobDialog({ open, onClose, copyFrom }: NewJobDialogProps) {
             slot: { start: slot.start, end: slot.end, tech_id: slot.techId ?? null },
             job_type: jobType.trim(),
             ...(description.trim() && { description: description.trim() }),
+            ...(jobSource && { lead_source: jobSource }),
+            ...(Object.keys(metadata).length > 0 && { metadata }),
         };
 
         setSubmitting(true);
@@ -310,11 +336,33 @@ export function NewJobDialog({ open, onClose, copyFrom }: NewJobDialogProps) {
                             </Button>
                         )}
 
-                        {/* Work */}
+                        {/* Work — Job type + Lead source are the same shared data as New Lead */}
                         <div className="space-y-3.5">
-                            <FloatingField id="njd-type" label="Job type" value={jobType} onChange={(e) => setJobType(e.target.value)} />
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                                <FloatingSelect id="njd-type" label="Job type" value={jobType} onValueChange={setJobType}>
+                                    {jobTypes.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                                </FloatingSelect>
+                                <FloatingSelect id="njd-source" label="Lead source" value={jobSource} onValueChange={setJobSource}>
+                                    {JOB_SOURCES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                                </FloatingSelect>
+                            </div>
                             <FloatingField id="njd-desc" label="Details (the problem)" textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} />
                         </div>
+
+                        {/* Additional info — same custom fields as New Lead (only if configured) */}
+                        {customFields.length > 0 && (
+                            <div className="space-y-3.5">
+                                <div className="cld-eyebrow">Additional info</div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                                    {customFields.map(field => {
+                                        const isLong = field.field_type === 'textarea' || field.field_type === 'richtext';
+                                        return isLong
+                                            ? <FloatingField key={field.id} id={`njd-meta-${field.api_name}`} label={field.display_name} textarea rows={3} className="sm:col-span-2" value={metadata[field.api_name] || ''} onChange={(e) => updateMetadata(field.api_name, e.target.value)} />
+                                            : <FloatingField key={field.id} id={`njd-meta-${field.api_name}`} label={field.display_name} type={field.field_type === 'number' ? 'number' : 'text'} inputMode={field.field_type === 'number' ? 'decimal' : undefined} value={metadata[field.api_name] || ''} onChange={(e) => updateMetadata(field.api_name, e.target.value)} />;
+                                    })}
+                                </div>
+                            </div>
+                        )}
                       </div>
                     </DialogBody>
 

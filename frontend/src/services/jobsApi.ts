@@ -138,6 +138,10 @@ export interface CreateJobBody {
     slot: { start: string; end: string; tech_id?: string | null };
     job_type: string;
     description?: string;
+    /** Lead source — shared with the New Lead form; stored in job.metadata.lead_source. */
+    lead_source?: string;
+    /** Additional-info custom fields — shared with New Lead; merged into job.metadata. */
+    metadata?: Record<string, string>;
 }
 
 export interface CreateJobResult {

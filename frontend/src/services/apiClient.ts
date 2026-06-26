@@ -3,8 +3,10 @@
  * Injects Keycloak Bearer token into all requests when VITE_FEATURE_AUTH is enabled.
  */
 
-import { getAuthHeaders } from '../auth/AuthProvider';
+import { getAuthHeaders, getKeycloak } from '../auth/AuthProvider';
 import { requireTwoFactor } from './twoFactorGate';
+
+const FEATURE_AUTH = import.meta.env.VITE_FEATURE_AUTH_ENABLED === 'true';
 
 function rawFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     const authHeaders = getAuthHeaders();
@@ -31,13 +33,22 @@ export async function authedFetch(
     input: RequestInfo | URL,
     init?: RequestInit
 ): Promise<Response> {
-    const res = await rawFetch(input, init);
+    let res = await rawFetch(input, init);
     if (res.status === 401) {
         let code: string | undefined;
         try { code = (await res.clone().json())?.code; } catch { /* non-JSON 401 */ }
         if (code === 'PHONE_VERIFICATION_REQUIRED') {
             await requireTwoFactor();        // resolves once the device is trusted
             return rawFetch(input, init);    // retry once with the new cookie
+        }
+        // A generic 401 on a cold page load is usually a token race / near-expiry,
+        // not a dead session. Force-refresh the token and retry once before
+        // surfacing the failure to the caller.
+        if (FEATURE_AUTH) {
+            try {
+                await getKeycloak().updateToken(-1); // force refresh
+                res = await rawFetch(input, init);   // retry once with the fresh token
+            } catch { /* refresh failed → genuine session end, return the 401 */ }
         }
     }
     return res;

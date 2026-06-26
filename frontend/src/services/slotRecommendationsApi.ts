@@ -35,6 +35,8 @@ export interface SlotRecommendationsInput {
     territory_id?: string;
     earliest_allowed_date?: string;
     latest_allowed_date?: string;
+    /** When rescheduling, the job being moved — excluded from the engine snapshot. */
+    exclude_job_id?: number;
 }
 
 const DISABLED: SlotRecommendationsResult = { enabled: false, recommendations: [] };

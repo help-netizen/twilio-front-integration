@@ -5,6 +5,13 @@ import { authedFetch } from './apiClient';
 // engine uses these to estimate drive time. Permission is enforced server-side
 // (tenant.company.manage). Mirrors techniciansApi.ts style.
 
+/**
+ * Sentinel tech_id that stores the single company-level base address (no migration —
+ * a reserved row in technician_base_locations). Set in Settings → Company; technicians
+ * can point their base at it via "Matches company address".
+ */
+export const COMPANY_BASE_TECH_ID = '__company__';
+
 export interface TechnicianBaseLocation {
     tech_id: string;
     name: string | null;

@@ -101,7 +101,9 @@ export function PhoneInput({
                 id={id}
                 name={name}
                 type="tel"
-                autoComplete={autoComplete}
+                autoComplete={autoComplete ?? 'off'}
+                data-lpignore="true"
+                data-1p-ignore="true"
                 value={displayValue}
                 onChange={handleChange}
                 onFocus={() => setFocused(true)}

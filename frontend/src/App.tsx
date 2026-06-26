@@ -33,6 +33,7 @@ import { ContactsPage } from './pages/ContactsPage';
 import { PulsePage } from './pages/PulsePage';
 import { MessagesPage } from './pages/MessagesPage';
 import { IntegrationsPage } from './pages/IntegrationsPage';
+import CompanySettingsPage from './pages/CompanySettingsPage';
 import VapiSettingsPage from './pages/VapiSettingsPage';
 import StripePaymentsSettingsPage from './pages/StripePaymentsSettingsPage';
 import PublicInvoicePayPage from './pages/PublicInvoicePayPage';
@@ -120,6 +121,7 @@ function App() {
               <Route path="/settings/integrations/vapi-ai" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><VapiSettingsPage /></ProtectedRoute>} />
               <Route path="/settings/integrations/stripe-payments" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><StripePaymentsSettingsPage /></ProtectedRoute>} />
               <Route path="/settings/technicians" element={<ProtectedRoute permissions={['tenant.company.manage']}><TechnicianPhotosPage /></ProtectedRoute>} />
+              <Route path="/settings/company" element={<ProtectedRoute permissions={['tenant.company.manage']}><CompanySettingsPage /></ProtectedRoute>} />
               <Route path="/settings/api-docs" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><ApiDocsPage /></ProtectedRoute>} />
               
               <Route path="/settings/lead-form" element={<ProtectedRoute permissions={['tenant.company.manage']}><LeadFormSettingsPage /></ProtectedRoute>} />

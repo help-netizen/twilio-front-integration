@@ -19,7 +19,7 @@ interface CreateLeadDialogProps {
     onSuccess: (lead: Lead) => void;
 }
 
-const JOB_SOURCES = ['eLocals', 'ServiceDirect', 'Inquirly', 'Rely', 'LHG', 'NSA', 'Other'];
+export const JOB_SOURCES = ['eLocals', 'ServiceDirect', 'Inquirly', 'Rely', 'LHG', 'NSA', 'Other'];
 
 export function CreateLeadDialog({ open, onOpenChange, onSuccess }: CreateLeadDialogProps) {
     const [loading, setLoading] = useState(false);

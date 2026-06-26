@@ -4,7 +4,7 @@
  * toolbar split (ScheduleToolbar + CalendarControls), AI Assistant modal.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useScheduleData } from '../hooks/useScheduleData';
 import { useJobDetail } from '../hooks/useJobDetail';
@@ -17,7 +17,7 @@ import { MonthView } from '../components/schedule/MonthView';
 import { TimelineView } from '../components/schedule/TimelineView';
 import { TimelineWeekView } from '../components/schedule/TimelineWeekView';
 import { ListView } from '../components/schedule/ListView';
-import { NewJobModal } from '../components/schedule/NewJobModal';
+import { formatTimeInTZ } from '../utils/companyTime';
 import { NewJobDialog } from '../components/jobs/NewJobDialog';
 import { buildCopyJobData, type CopyJobData } from '../components/jobs/copyJobData';
 import { getJob } from '../services/jobsApi';
@@ -80,6 +80,14 @@ export function SchedulePage() {
     const handleCreateFromSlot = useCallback((_title: string, startAt: string, endAt: string, providerId?: string, providerName?: string) => {
         setNewJobSlot({ startAt, endAt, providerId, providerName });
     }, []);
+
+    // Calendar slot → the SAME full New Job form, with the slot + technician pre-set.
+    const presetSlot = useMemo(() => newJobSlot ? {
+        start: newJobSlot.startAt,
+        end: newJobSlot.endAt,
+        techId: newJobSlot.providerId,
+        formatted: `${formatTimeInTZ(new Date(newJobSlot.startAt), schedule.settings.timezone)} – ${formatTimeInTZ(new Date(newJobSlot.endAt), schedule.settings.timezone)}${newJobSlot.providerName ? ` · ${newJobSlot.providerName}` : ''}`,
+    } : null, [newJobSlot, schedule.settings.timezone]);
 
     const renderCalendarView = () => {
         if (schedule.loading) {
@@ -254,18 +262,8 @@ export function SchedulePage() {
                 onSave={schedule.handleUpdateSettings}
             />
 
-            {newJobSlot && (
-                <NewJobModal
-                    open
-                    startAt={newJobSlot.startAt}
-                    endAt={newJobSlot.endAt}
-                    timezone={schedule.settings.timezone}
-                    providerId={newJobSlot.providerId}
-                    providerName={newJobSlot.providerName}
-                    onClose={() => setNewJobSlot(null)}
-                    onSubmit={(payload) => { schedule.handleCreateFromSlot(payload); setNewJobSlot(null); }}
-                />
-            )}
+            {/* Calendar slot → the full New Job form with the slot + technician pre-set */}
+            <NewJobDialog open={!!newJobSlot} presetSlot={presetSlot} onClose={() => setNewJobSlot(null)} />
 
             {/* Full New Job form (header button) — create a job from scratch */}
             <NewJobDialog open={newJobOpen} onClose={() => setNewJobOpen(false)} />

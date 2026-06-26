@@ -109,11 +109,13 @@ async function buildTechnicians(companyId) {
     });
 }
 
-async function buildScheduledJobs(companyId, startDate, endDate, tz) {
+async function buildScheduledJobs(companyId, startDate, endDate, tz, excludeJobId) {
     const jobs = await jobsService.listJobs({ companyId, startDate, endDate, limit: 500 });
     const list = Array.isArray(jobs) ? jobs : (jobs?.jobs || jobs?.data || []);
     const out = [];
     for (const j of list) {
+        // Reschedule: drop the job being moved so its current slot isn't treated as occupied.
+        if (excludeJobId != null && String(j.id) === String(excludeJobId)) continue;
         const lat = j.lat;
         const lng = j.lng;
         if (!isFiniteNum(lat) || !isFiniteNum(lng)) continue;
@@ -162,7 +164,7 @@ async function getRecommendations(companyId, input = {}) {
     // 2 + 3. Technicians and scheduled jobs.
     const [technicians, scheduledJobs] = await Promise.all([
         buildTechnicians(companyId),
-        buildScheduledJobs(companyId, earliest, latest, tz),
+        buildScheduledJobs(companyId, earliest, latest, tz, newJob.exclude_job_id),
     ]);
 
     // 4. Engine request body (per slot-engine/README.md contract).

@@ -576,17 +576,17 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
     const [loading, setLoading] = useState(false);
     const durationMin = newJobDuration || DEFAULT_DURATION_MIN;
 
-    // ── SLOT-ENGINE-001 Phase 3 — recommendations (NEW jobs only) ──
-    // Reschedule/edit (initialSlot / excludeJobId) must behave exactly as before:
-    // no fetch, no panel, no overlays.
-    const isNewJob = !initialSlot && !excludeJobId;
+    // ── SLOT-ENGINE-001 — recommendations whenever we have a location ──
+    // Works for a new job AND for reschedule/edit (which carry the job's coords).
+    // excludeJobId keeps the job being moved out of the engine's snapshot below.
+    const canRecommend = !!(newJobCoords || newJobAddress);
     const [recsEnabled, setRecsEnabled] = useState(false);
     const [recs, setRecs] = useState<SlotRecommendation[]>([]);
     const [recsLoading, setRecsLoading] = useState(false);
     const [recsUnavailable, setRecsUnavailable] = useState(false);
 
     useEffect(() => {
-        if (!open || !isNewJob) return;
+        if (!open || !canRecommend) return;
         let cancelled = false;
         setRecsLoading(true);
         fetchSlotRecommendations({
@@ -595,6 +595,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
             address: newJobAddress,
             duration_minutes: durationMin,
             territory_id: territoryId,
+            exclude_job_id: excludeJobId,
         })
             .then(r => {
                 if (!cancelled) {
@@ -606,7 +607,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
             .finally(() => { if (!cancelled) setRecsLoading(false); });
         return () => { cancelled = true; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [open, isNewJob, newJobCoords?.lat, newJobCoords?.lng, newJobAddress]);
+    }, [open, canRecommend, newJobCoords?.lat, newJobCoords?.lng, newJobAddress, excludeJobId]);
 
     // Apply a recommendation via the EXISTING pick mechanism (setSelectedDate + setSelectedSlot).
     const applyRecommendation = useCallback((rec: SlotRecommendation) => {
@@ -666,8 +667,8 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
 
     // Recommendations scoped to the currently selected date (T13).
     const recsForSelectedDate = useMemo(
-        () => (isNewJob && recsEnabled ? recs.filter(r => r.date === selectedDate) : []),
-        [isNewJob, recsEnabled, recs, selectedDate],
+        () => (canRecommend && recsEnabled ? recs.filter(r => r.date === selectedDate) : []),
+        [canRecommend, recsEnabled, recs, selectedDate],
     );
     // Set of tech ids that appear in a recommendation for the selected date → "Recommended" pill.
     const recommendedTechIds = useMemo(() => {
@@ -690,7 +691,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
     // Panel renders for a new job while loading, or once the engine is enabled
     // (covering loading / unavailable / empty / list). When the engine is disabled
     // and not loading, the panel stays absent and the modal behaves as today.
-    const showRecPanel = isNewJob && (recsLoading || recsEnabled);
+    const showRecPanel = canRecommend && (recsLoading || recsEnabled);
 
     // Reset page when date changes; only clear slot if it doesn't match the new date
     useEffect(() => {

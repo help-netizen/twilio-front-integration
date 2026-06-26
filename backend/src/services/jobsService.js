@@ -402,6 +402,11 @@ async function createDirectJob(companyId, input = {}) {
     const slot = input.slot || {};
     const jobType = input.job_type || 'General Service';
     const description = input.description || '';
+    // Shared lead/job fields (same data model as the New Lead form): lead source
+    // + Additional-info custom fields, persisted onto the local job's metadata jsonb.
+    const leadSource = (input.lead_source || '').trim();
+    const customMeta = (input.metadata && typeof input.metadata === 'object' && !Array.isArray(input.metadata))
+        ? input.metadata : {};
 
     // ── a. Resolve contact ────────────────────────────────────────────────────
     let contactId = null;
@@ -531,6 +536,23 @@ async function createDirectJob(companyId, input = {}) {
         ]);
         localJob = rowToJob(rows[0]);
         console.log(`[CreateDirectJob] Local job ${localJob.id} created without ZB link: ${zbWarning}`);
+    }
+
+    // Merge shared fields into the local job's metadata (best-effort; never blocks
+    // the create). lead_source lives under metadata.lead_source alongside the
+    // Additional-info custom fields, mirroring the New Lead form's data shape.
+    const jobMetadata = { ...customMeta };
+    if (leadSource) jobMetadata.lead_source = leadSource;
+    if (localJob && Object.keys(jobMetadata).length > 0) {
+        try {
+            await db.query(
+                `UPDATE jobs SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb, updated_at = now()
+                 WHERE id = $2 AND company_id = $3`,
+                [JSON.stringify(jobMetadata), localJob.id, companyId]
+            );
+        } catch (e) {
+            console.error('[CreateDirectJob] metadata merge failed (non-fatal):', e.message);
+        }
     }
 
     return { job_id: localJob.id, zenbooker_job_id: zenbookerJobId, zb_warning: zbWarning };

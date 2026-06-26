@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '../ui/dropdown-menu';
-import { PhoneIncoming, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase, Bell, CalendarDays, MapPin, Mail, FileCog, Zap, CreditCard } from 'lucide-react';
+import { PhoneIncoming, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase, Bell, CalendarDays, MapPin, Mail, FileCog, Zap, CreditCard, Building2 } from 'lucide-react';
 import { useAuthz } from '../../hooks/useAuthz';
 
 interface AppNavProps { activeTab: string; pulseUnreadCount: number; hasRole: (r: string) => boolean; logout: () => void; }
@@ -82,6 +82,7 @@ export const BottomNavBar: React.FC<{ activeTab: string; pulseUnreadCount: numbe
 // Settings menu entries with their backing permissions (PF007)
 const SETTINGS_ITEMS = [
     { label: 'Integrations', icon: Key, path: '/settings/integrations', permission: 'tenant.integrations.manage' },
+    { label: 'Company', icon: Building2, path: '/settings/company', permission: 'tenant.company.manage' },
     { label: 'Lead & Job', icon: FileText, path: '/settings/lead-form', permission: 'tenant.company.manage' },
     { label: 'Quick Messages', icon: MessageSquareText, path: '/settings/quick-messages', permission: 'tenant.company.manage' },
     { label: 'API Docs', icon: BookOpen, path: '/settings/api-docs', permission: 'tenant.integrations.manage' },
