@@ -564,6 +564,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
     const [recsEnabled, setRecsEnabled] = useState(false);
     const [recs, setRecs] = useState<SlotRecommendation[]>([]);
     const [recsLoading, setRecsLoading] = useState(false);
+    const [recsUnavailable, setRecsUnavailable] = useState(false);
 
     useEffect(() => {
         if (!open || !isNewJob) return;
@@ -577,7 +578,11 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
             territory_id: territoryId,
         })
             .then(r => {
-                if (!cancelled) { setRecsEnabled(r.enabled); setRecs(r.recommendations || []); }
+                if (!cancelled) {
+                    setRecsEnabled(r.enabled);
+                    setRecs(r.recommendations || []);
+                    setRecsUnavailable(!!r.enabled && r.engine_status === 'unavailable');
+                }
             })
             .finally(() => { if (!cancelled) setRecsLoading(false); });
         return () => { cancelled = true; };
@@ -666,7 +671,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
     // Panel renders when the engine returned usable recs, OR while still loading
     // for a new job (so the spinner row shows). After load with no/disabled recs
     // it collapses to nothing and the modal behaves exactly as today.
-    const showRecPanel = isNewJob && ((recsEnabled && recs.length > 0) || recsLoading);
+    const showRecPanel = isNewJob && ((recsEnabled && (recs.length > 0 || recsUnavailable)) || recsLoading);
 
     // Reset page when date changes; only clear slot if it doesn't match the new date
     useEffect(() => {
@@ -756,6 +761,8 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                                 <div className="ctm-recs__loading">
                                     <Loader2 className="h-3.5 w-3.5 animate-spin" /> Finding best times…
                                 </div>
+                            ) : recs.length === 0 && recsUnavailable ? (
+                                <div className="ctm-recs__loading">Suggestions unavailable right now.</div>
                             ) : (
                                 <div className="ctm-recs__list">
                                     {recs.map((rec, i) => {

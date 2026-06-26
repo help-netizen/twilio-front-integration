@@ -277,6 +277,11 @@ export function IntegrationsPage() {
                                                             Retry
                                                         </Button>
                                                     )}
+                                                    {app.installation?.status === 'connected' && app.metadata?.setup_path && (
+                                                        <Button size="sm" onClick={() => navigate(String(app.metadata!.setup_path))}>
+                                                            Setup
+                                                        </Button>
+                                                    )}
                                                     {app.installation?.status === 'connected' || app.installation?.status === 'provisioning_failed' ? (
                                                         <Button variant="outline" size="sm" onClick={() => setDisconnectTarget(app)}>
                                                             Disconnect

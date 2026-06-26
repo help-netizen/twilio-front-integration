@@ -48,6 +48,36 @@ feasible_arrival_interval, metrics, reason_codes, explanation }], summary }`.
 
 `GET /health` → liveness.
 
+## Deploy (separate service)
+
+This runs **independently** of the Albusto app. Albusto reaches it via the
+`SLOT_ENGINE_URL` env var (e.g. `http://slot-engine:4500`). If `SLOT_ENGINE_URL`
+is unset or the service is unreachable, Albusto safe-fails — the picker simply
+shows no suggestions (never fabricated slots), so deploying this is optional and
+non-breaking.
+
+Build/run the container:
+
+```bash
+docker build -t albusto-slot-engine ./slot-engine
+docker run -d --name slot-engine -p 4500:4500 albusto-slot-engine
+```
+
+As a compose service alongside Albusto, add to `docker-compose.yml`:
+
+```yaml
+  slot-engine:
+    build: ./app/slot-engine        # path relative to the compose file (prod tree = /opt/albusto/app)
+    restart: unless-stopped
+    environment:
+      PORT: "4500"
+    # no ports needed if only the app talks to it on the compose network
+```
+
+Then set `SLOT_ENGINE_URL=http://slot-engine:4500` in the app's environment, and
+restart the app. Stateless + no DB, so it scales horizontally and needs no
+migrations. See `docs/specs/SLOT-ENGINE-001.md` for the full rollout.
+
 ## Pipeline (`src/engine.js`)
 
 candidate generation (date × fixed window × technician × insertion position) → hard filters
