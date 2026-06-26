@@ -3104,3 +3104,150 @@ PT-1/PT-2 (engine) and PT-3/PT-4 (frontend) are independent tracks and may proce
 
 **Order:** TASK-ONWAY-1 → TASK-ONWAY-2 → TASK-ONWAY-3 (after 1+2) → TASK-ONWAY-4 (after 2) → TASK-ONWAY-5 (gates last).
 TASK-ONWAY-3 and TASK-ONWAY-4 are independent and may proceed in parallel once their deps land. PT-1 (status) MUST precede PT-2/PT-3 (status must exist); PT-2 MUST precede PT-3 (routes to mock); PT-4 after PT-2.
+
+---
+
+## REC-SETTINGS-001 — tasks (2026-06-26)
+
+> **STATUS: ✅ DONE (2026-06-26)** — all of TASK-RS-1..6 implemented, tested, and reviewer-**APPROVED**. Backend `tests/slotEngineSettings.test.js` (44) + extended `tests/slotEngineProxy.test.js` (→23) = **67 passing**; frontend `npm run build` green. One implementation refinement vs the first pass: the GET route uses `svc.get` (not `resolve`), so a hard DB error surfaces as **500** (honest "couldn't load" toast + the UI's local DEFAULTS mirror) instead of silently returning defaults — matches the spec's get/resolve split (TC-RS-050). Pending: run migration 128 on prod + deploy.
+
+> Per-company recommendation settings replacing the **hardcoded** `config_override` in `backend/src/services/slotEngineService.js`. Sibling of SLOT-ENGINE-001's `technician_base_locations` — mirror its migration/queries/service/route/api-client patterns exactly. **No engine change, no engine redeploy** (`slot-engine/` `DEFAULT_CONFIG` + `mergeConfig` deep-merge is reused as-is).
+> Spec `docs/specs/REC-SETTINGS-001.md` · Requirements `docs/requirements.md` → REC-SETTINGS-001 (RS-R1..R6, AC-1..AC-12) · Architecture `docs/architecture.md` → "REC-SETTINGS-001 — design (2026-06-26)" · Test cases `docs/test-cases/REC-SETTINGS-001.md` (TC-RS-001..081).
+>
+> **Cross-cutting constraints (every backend task):**
+> - `company_id` comes **ONLY** from `req.companyFilter?.company_id` (NOT `req.companyId`, NOT the request body). Routes mount under `authenticate, requireCompanyAccess`; each route additionally enforces `requirePermission('tenant.company.manage')`.
+> - All SQL filters/scopes by `company_id` → settings are isolated between companies; no `:id` path exists, so no cross-tenant direct-ID surface.
+> - `DEFAULTS = { max_distance_miles:10, overlap_minutes:0, min_buffer_minutes:15, horizon_days:3, recommendations_shown:3 }` is the single source of truth (lives in `slotEngineSettingsService.js`). Backwards-compatible: **no row → DEFAULTS** everywhere.
+> - The **2 fixed values** (`geography.allow_empty_day_candidates=true`, `workload.max_day_utilization=0.95`) are ALWAYS injected by `buildConfigOverride` regardless of stored content — never stored, never shown in the UI.
+> - Highest existing migration = 127, so 128 is the correct next number. The shared trigger fn `update_updated_at_column()` pre-exists (010/125) — reuse, do not redefine.
+
+### TASK-RS-1: Storage + settings queries + settings service (P0)
+
+**Цель:** Create the table, the company-scoped query layer, and the settings service that owns `DEFAULTS`, `resolve`/`get`, `validate`, `save`, and `buildConfigOverride`.
+
+**Файлы, которые можно менять:**
+- `backend/db/migrations/128_create_slot_engine_settings.sql` (NEW) — exact table from architecture/spec: `slot_engine_settings(company_id UUID PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE, config JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`. **Idempotent** (`CREATE TABLE IF NOT EXISTS`) and **re-runnable trigger** (e.g. `DROP TRIGGER IF EXISTS trg_slot_engine_settings_updated_at … ` then `CREATE TRIGGER … BEFORE UPDATE … EXECUTE FUNCTION update_updated_at_column()`) so `ensureSchema()` can replay on every query without error (mirror 125). The 2 fixed values are NOT columns.
+- `backend/src/db/slotEngineSettingsQueries.js` (NEW) — mirror `technicianBaseLocationQueries.js`: `ensureSchema()` reads + replays `128_*.sql`; `getByCompany(companyId)` (SELECT `config`/`updated_at` `WHERE company_id = $1`); `upsert(companyId, config)` (`INSERT INTO slot_engine_settings (company_id, config) VALUES ($1,$2) ON CONFLICT (company_id) DO UPDATE SET config = EXCLUDED.config, updated_at = NOW()` RETURNING config). `company_id` is the first bound param in both; every query calls `ensureSchema()` first.
+- `backend/src/services/slotEngineSettingsService.js` (NEW) — owns `DEFAULTS` (the const above) + `VALIDATION` ranges (distance 1–100, overlap 0–240, buffer 0–240, horizon 1–14, shown 1–10). Functions:
+  - `get(companyId)` → `getByCompany`; no row → `DEFAULTS`; row present → `{ ...DEFAULTS, ...row.config }` then **re-coerce each key** (missing/malformed individual key falls back to that key's default; result always complete + integer-typed; never partial). A hard DB error here **propagates** (so the GET route can map it to 500).
+  - `resolve(companyId)` → same as `get` **but degrades to `DEFAULTS` on any DB error and NEVER throws** (safe-failure parity with `slotEngineService`).
+  - `validate(payload)` → reads only the 5 known keys (unknown keys stripped/ignored), coerces (`"15"`→15), each must be an **integer within range**; non-integer / out-of-range / missing → throw `{ httpStatus:422, code:'INVALID_SETTINGS', field, message }`. **All-or-nothing**: validate fully before any return/side-effect; returns the 5 coerced integers on success.
+  - `save(companyId, payload)` → `validate(payload)` then `queries.upsert(companyId, validated)`; returns saved 5 values.
+  - `buildConfigOverride(settings)` → the EXACT shape from spec §buildConfigOverride: `geography.max_distance_from_existing_job_miles` AND `geography.max_distance_from_base_if_empty_day_miles` both = `settings.max_distance_miles` (one radius → both keys); `geography.allow_empty_day_candidates=true` (fixed); `overlap.max_timeframe_overlap_minutes`, `feasibility.min_required_slack_minutes`, `planning.horizon_days`, `ranking.top_n`; `workload.max_day_utilization=0.95` (fixed). The 2 fixed values emitted unconditionally; top-level keys exactly `{geography,overlap,feasibility,planning,ranking,workload}` (no extra/exposed engine keys).
+
+**Файлы, которые трогать нельзя:**
+- `slot-engine/` — `DEFAULT_CONFIG` + `mergeConfig` contract (no engine change/redeploy).
+- `technician_base_locations` table/queries — REC-SETTINGS is a sibling; don't alter base-location behavior.
+- Other migrations (no renumber/edit of 001..127).
+
+**Покрывает AC:** AC-1, AC-2 (table/PK/FK + fixed-values-always), AC-3 (no-row→DEFAULTS), AC-4 (engine-key mapping in `buildConfigOverride`), AC-5 (`planning.horizon_days` produced), AC-10 (validation ranges/integer/missing), AC-11 (custom picker value still obeys 0–240 in `validate`). Test cases TC-RS-001..006, 010..015, 020..033, 040..041, 060..064.
+
+**Ожидаемый результат:** A company with no row resolves to `{10,0,15,3,3}`; a stored/partial/corrupt row resolves to a complete integer-typed object; `resolve` returns `DEFAULTS` on a DB fault without throwing; `validate` rejects bad input with `422 INVALID_SETTINGS` (no partial save) and coerces good input; `buildConfigOverride(DEFAULTS)` produces the exact 8-path override incl. both radii + the 2 fixed values; SQL is company-scoped (`WHERE company_id = $1`, `ON CONFLICT (company_id)`), settings isolated between companies; `ensureSchema()` replays 128 idempotently.
+
+**Зависимости:** none (first task).
+
+**Статус:** pending
+
+### TASK-RS-2: Wire slotEngineService to resolved settings (P0)
+
+**Цель:** Replace the hardcoded `config_override` and the `HORIZON_DAYS=2` constant in `getRecommendations` with values derived from the resolved per-company settings.
+
+**Файлы, которые можно менять:**
+- `backend/src/services/slotEngineService.js` (EDIT) — add `const settingsService = require('./slotEngineSettingsService');`; resolve **once** at the top of `getRecommendations`: `const settings = await settingsService.resolve(companyId);`. **Drop** the module constant `HORIZON_DAYS = 2` (line ~20). Date window now uses `const latest = newJob.latest_allowed_date || addDaysLocal(today, settings.horizon_days);` (line ~162) — so the snapshot window and `planning.horizon_days` agree. **Replace** the hardcoded literal at line ~199 (`config_override: { geography: { allow_empty_day_candidates: true, max_distance_from_base_if_empty_day_miles: 40 } }`) with `config_override: settingsService.buildConfigOverride(settings)`.
+
+**Файлы, которые трогать нельзя:**
+- `slot-engine/` (no engine change/redeploy).
+- `slotEngineService` safe-failure path (empty/flagged result on engine fault / missing `SLOT_ENGINE_URL`) and snapshot-building logic (techs/base/scheduled jobs/coverage/tz) — preserve unchanged. `resolve` never throwing keeps these intact.
+
+**Покрывает AC:** AC-4 (hardcoded `config_override` removed → built from settings), AC-5 (`HORIZON_DAYS` replaced by `settings.horizon_days` for `latest_allowed_date`), AC-6 (no engine change), AC-3 (DB-fault `resolve`→DEFAULTS keeps recommendations well-defined). Test cases TC-RS-051..054 (asserted in TASK-RS-4).
+
+**Ожидаемый результат:** A new-job recommendation posts `config_override === buildConfigOverride(resolve(companyId))` and `new_request.latest_allowed_date === today + settings.horizon_days` (caller-supplied `latest_allowed_date` still wins). Settings load failure degrades to DEFAULTS — the recommendation still runs; existing engine-fault safe-failure unchanged. No `HORIZON_DAYS` constant remains.
+
+**Зависимости:** after TASK-RS-1 (consumes `resolve` + `buildConfigOverride`).
+
+**Статус:** pending
+
+### TASK-RS-3: GET/PUT routes + server mount (P0)
+
+**Цель:** Expose `GET`/`PUT /api/settings/slot-engine-settings` (permission-gated, company-scoped) and mount the router beside technician-base-locations.
+
+**Файлы, которые можно менять:**
+- `backend/src/routes/slotEngineSettings.js` (NEW) — mirror `routes/technicianBaseLocations.js`: `const { requirePermission } = require('../middleware/authorization');`, `const svc = require('../services/slotEngineSettingsService');`, `function companyId(req) { return req.companyFilter?.company_id; }`. `GET '/'`, `requirePermission('tenant.company.manage')` → `{ ok:true, data: await svc.get(companyId(req)) }` (defaults on no-row; a hard DB error surfaces 500). `PUT '/'`, same permission → `const data = await svc.save(companyId(req), req.body)` → `{ ok:true, data }`; on `err.httpStatus` (422) respond `res.status(422).json({ ok:false, error:{ code:'INVALID_SETTINGS', field, message } })`, else 500. **`company_id` is never read from `req.body`.** No `:id` path. `module.exports = router`.
+- `src/server.js` (EDIT, PROTECTED — **+1 mount line only**) — beside the base-locations line (~246): `app.use('/api/settings/slot-engine-settings', authenticate, requireCompanyAccess, require('../backend/src/routes/slotEngineSettings'));`. No other change to server core.
+
+**Файлы, которые трогать нельзя:**
+- `src/server.js` core middleware (only the one mount line added).
+- `technician-base-locations` routes (sibling — don't alter).
+
+**Покрывает AC:** AC-7 (GET returns settings-or-defaults; PUT upserts validated 5), AC-8 (both under `requirePermission('tenant.company.manage')`), AC-9 (`company_id` only from `req.companyFilter`; cross-tenant read/write impossible), AC-10 (PUT 422 on invalid, no save). Test cases TC-RS-042..050. Route mounts with `authenticate, requireCompanyAccess`; SQL filters by `company_id` → data isolated between companies; no `:id` path → no cross-tenant direct-ID access.
+
+**Ожидаемый результат:** `GET` → 200 `{ok:true,data:<5 values>}` (defaults when no row, no row created); `PUT` valid → 200 `{ok:true,data:<saved 5>}` + upsert scoped to `req.companyFilter.company_id` (poisoned `req.companyId`/body `company_id` ignored); `PUT` invalid → 422 `{ok:false,error:{code:'INVALID_SETTINGS',field,message}}` with nothing saved; missing permission → 403; no auth → 401; tenant B's GET is scoped to B (never returns A's row).
+
+**Зависимости:** after TASK-RS-1 (uses `svc.get`/`svc.save`). May proceed in parallel with TASK-RS-2.
+
+**Статус:** pending
+
+### TASK-RS-4: Backend tests — units + slotEngineService integration (P0)
+
+**Цель:** Cover the service / validate / queries / routes / migration units in a new file, AND the `slotEngineService` consumption cases by extending the existing proxy test.
+
+**Файлы, которые можно менять:**
+- `tests/slotEngineSettings.test.js` (NEW) — follow `tests/technicianBaseLocations.test.js` harness:
+  - **service `buildConfigOverride`** (TC-RS-001..006): DEFAULTS→exact override; custom set→exact; one radius→both geography keys; 2 fixed values always (incl. minimal-input guard); no extra/exposed top-level keys.
+  - **service `resolve`/`get`** (TC-RS-010..015): `jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }))`; no-row→DEFAULTS; full row→its 5; missing key→that key defaulted; corrupt/non-numeric key→defaulted + re-coerced; DB error in `resolve`→`.resolves.toEqual(DEFAULTS)` (never throws); DB error in `get`→**rejects** (get-vs-resolve split).
+  - **service `validate`** (TC-RS-020..033): all-valid baseline→coerced ints; `"15"`→15; per-field boundary matrix (distance 1/100 ok, 0/101 reject; overlap & buffer 0/240 ok, −1/241 reject; horizon 1/14 ok, 0/15 reject; shown 1/10 ok, 0/11 reject) each `{422,INVALID_SETTINGS,field:'<key>'}`; float (30.5) reject; `"abc"`/`NaN` reject; missing field reject; all-or-nothing (one bad field → throws, `queries.upsert` NOT reached via `save`); unknown keys stripped; custom value 300 rejected.
+  - **queries** (TC-RS-040..041): `getByCompany` SQL `WHERE company_id = $1`, bound `[0]===COMPANY`, reads `config`; `upsert` first bound param===COMPANY, SQL `ON CONFLICT (company_id) DO UPDATE`, writes `config` jsonb, bumps `updated_at`.
+  - **routes** (TC-RS-042..050): reuse the `appWith({ permissions, companyId })` factory injecting `req.user`, `req.authz.permissions`, `req.companyFilter={company_id}`; mount `require('../backend/src/routes/slotEngineSettings')` at `/`; supertest. 401 (no user); 403 (`permissions:[]`); GET no-row→defaults; GET row→saved; PUT valid→upsert+returns saved; PUT invalid (`max_distance_miles:250`)→422, no INSERT recorded; `company_id` ONLY from `companyFilter` (poison `req.companyId=COMPANY_B` + body `company_id:COMPANY_B` → upsert param===COMPANY_A); cross-tenant GET scoped to caller; GET hard DB error→500.
+  - **migration 128** (TC-RS-060..064): structural assertions by reading `128_*.sql` (+ an `ensureSchema()` replay smoke against mocked `db.query`): `company_id UUID PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE`; `config JSONB NOT NULL` + both timestamps; `update_updated_at_column()` trigger wired; idempotent (`IF NOT EXISTS` + guarded trigger, double-replay no-throw); cascade clause present; 128 is the next free number.
+- `tests/slotEngineProxy.test.js` (EDIT) — add the integration cases (TC-RS-051..054) per the test-cases infra note: `jest.mock('../backend/src/services/slotEngineSettingsService', () => ({ resolve: jest.fn(), buildConfigOverride: jest.requireActual('../backend/src/services/slotEngineSettingsService').buildConfigOverride }))` — **mock `resolve`, keep the REAL `buildConfigOverride`**. Per test: `settingsSvc.resolve.mockResolvedValue({…})`, `global.fetch.mockResolvedValue({ ok:true, json: async () => ({ recommendations: [] }) })`, call `getRecommendations(COMPANY, { new_job: { lat, lng } })`, read `JSON.parse(global.fetch.mock.calls[0][1].body)`, assert `body.config_override` deep-equals `buildConfigOverride(resolved)` AND `body.new_request.latest_allowed_date === addDaysLocal(today, settings.horizon_days)` (freeze "today" as the service derives it; pass a `new_job` WITHOUT `latest_allowed_date` to exercise the horizon branch). Cases: config_override == built (guards removal of the `{allow_empty_day_candidates:true, max_distance_from_base_if_empty_day_miles:40}` literal); date window uses `horizon_days` (guards removal of `HORIZON_DAYS=2`); explicit `latest_allowed_date` wins; resolve-degrades-to-DEFAULTS path still recommends. Existing engine-fault safe-failure cases must not regress.
+
+**Файлы, которые трогать нельзя:** production source (tests mock at module boundaries only); `slot-engine/`.
+
+**Покрывает AC:** AC-1..AC-11 (automated slice — every backend AC). Test cases TC-RS-001..064.
+
+**Ожидаемый результат:** Both files green via `npx jest --runTestsByPath tests/slotEngineSettings.test.js --testPathIgnorePatterns "/node_modules/"` and `npx jest --runTestsByPath tests/slotEngineProxy.test.js --testPathIgnorePatterns "/node_modules/"` (the override flag is REQUIRED — repo `testPathIgnorePatterns` ignores `/.claude/worktrees/`). The integration asserts equality against the **real** `buildConfigOverride` (not a copy), proving the hardcode + `HORIZON_DAYS` removal.
+
+**Зависимости:** after TASK-RS-1, TASK-RS-2, TASK-RS-3 (exercises service, the wired `slotEngineService`, and the routes).
+
+**Статус:** pending
+
+### TASK-RS-5: Frontend — API client + RecommendationSettings block + page mount (P1)
+
+**Цель:** Ship the typed API client, the "Recommendation settings" block (5 controls, dirty-gated Save, validation hints, 422 toast), and mount it under `<CompanyBaseAddress>` on the Technicians settings page.
+
+**Файлы, которые можно менять:**
+- `frontend/src/services/slotEngineSettingsApi.ts` (NEW) — mirror `technicianBaseLocationsApi.ts`: `import { authedFetch } from './apiClient';`. `interface SlotEngineSettings { max_distance_miles; overlap_minutes; min_buffer_minutes; horizon_days; recommendations_shown }`; `get(): Promise<SlotEngineSettings>` (`GET /api/settings/slot-engine-settings`, unwrap `json.data`); `save(body): Promise<SlotEngineSettings>` (`PUT`, unwrap `json.data`). Export a `DEFAULTS` mirror + the `VALIDATION` ranges for client-side echo.
+- `frontend/src/components/settings/RecommendationSettings.tsx` (NEW) — loads on mount via `get()` (falling back to the local `DEFAULTS` mirror if the load fails so the form stays usable; controls disabled/skeleton while pending). 5 controls: **3 number inputs** (Max distance (mi), Planning horizon (days), Recommendations shown) + **2 minute-pickers** (Allow overlapping arrival windows, Min buffer between jobs) as segmented presets `0 / 30 / 60 / Custom` — Custom reveals a number input; a server value not in {0,30,60} pre-selects Custom with that value. **Save** is primary + **disabled until dirty**; in-flight label "Saving…" + disabled; re-enables per dirty on completion. Client validation mirrors server ranges (inline per-field range hints gating Save); on server 422 surface `field`+`message` via `toast` (sonner) e.g. "Max distance must be between 1 and 100"; success toast "Recommendation settings saved". Helper text on Max distance noting it bounds **both** base + nearest-job radii; helpers per spec for the others. Section header `.blanc-eyebrow` ("Recommendation settings"), optional one-line sublabel; **no `<hr>`/separators**; Albusto `--blanc-*` tokens; **English** copy; the 2 fixed values are NOT shown.
+- `frontend/src/pages/TechnicianPhotosPage.tsx` (EDIT) — import `RecommendationSettings`; mount `<RecommendationSettings />` in its own `mb-6` wrapper directly under the existing `<CompanyBaseAddress …>` block (immediately after the `</div>` closing line ~145). No other page logic changes.
+
+**Файлы, которые трогать нельзя:**
+- `frontend/src/lib/authedFetch.ts` / `frontend/src/services/apiClient.ts` — reused, not rewritten.
+- `CompanyBaseAddress` and the technician-photos logic — only add the block beneath it.
+
+**Покрывает AC:** AC-12 (block on Technicians page, exactly 5 controls, 2 fixed hidden, English, Albusto tokens, `.blanc-eyebrow`, no separators), AC-3 (first-run shows 10/0/15/3/3), AC-7 (Save PUTs all 5, reload reflects), AC-10/AC-11 (client range hints + custom obeys 0–240, server authoritative via 422). Manual TC-RS-070..080.
+
+**Ожидаемый результат:** Settings → Technicians shows the "Recommendation settings" block under the base address; first run shows defaults 10/0/15/3/3 (no row created by GET); editing enables Save → "Saving…" → success toast + reload reflects; out-of-range shows the inline hint and (if forced) a 422 toast with nothing saved; Custom picker values obey 0–240; next recommendation fetch reflects saved values (no redeploy).
+
+**Зависимости:** after TASK-RS-3 (endpoints must exist to call).
+
+**Статус:** pending
+
+### TASK-RS-6: Verification gate (P0)
+
+**Цель:** Prove the frontend build and both backend jest files are green, and note the manual FE checklist.
+
+**Файлы, которые можно менять:** none (verification only; minor type/lint fixes in the RS files above if the build surfaces them).
+
+**Ожидаемый результат:**
+- From `frontend/`: `npm run build` (`tsc -b` + Vite) **green** — no type/lint errors (prod Docker is stricter, `noUnusedLocals`); covers `RecommendationSettings.tsx` + `slotEngineSettingsApi.ts` (`SlotEngineSettings` interface + `DEFAULTS`/ranges exports resolve) — TC-RS-081.
+- Backend: `npx jest --runTestsByPath tests/slotEngineSettings.test.js --testPathIgnorePatterns "/node_modules/"` **green** AND `npx jest --runTestsByPath tests/slotEngineProxy.test.js --testPathIgnorePatterns "/node_modules/"` **green** (no proxy regressions).
+- Manual FE checklist **TC-RS-070..081** noted (5 controls only / 2 fixed hidden; first-run 10/0/15/3/3; pickers 0/30/60/Custom + Custom-reveal & pre-select; Save dirty-gated + "Saving…"; save persists + success toast + reload; out-of-range inline hint + 422 toast, nothing saved; custom out-of-range rejected; loading usable / load-failure → DEFAULTS mirror; saved change reflected in next recommendation fetch; reset = saving defaults; English + Albusto tokens + canon).
+
+**Зависимости:** after TASK-RS-1..TASK-RS-5 (gates last).
+
+**Статус:** pending
+
+---
+
+**Order:** TASK-RS-1 → { TASK-RS-2, TASK-RS-3 } (both after RS-1; independent of each other) → TASK-RS-4 (after RS-1+RS-2+RS-3) → TASK-RS-5 (after RS-3) → TASK-RS-6 (gates last).
+RS-2 (slotEngineService wiring) and RS-3 (routes) both depend only on RS-1 and may proceed in parallel. RS-5 (frontend) needs RS-3's endpoints. RS-4 (backend tests) needs the wired service + routes; RS-6 gates the whole feature (build + both jest files + manual checklist).

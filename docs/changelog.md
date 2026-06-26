@@ -4,6 +4,26 @@
 
 ---
 
+## 2026-06-26 — REC-SETTINGS-001: per-company configurable recommendation settings
+
+Replaces the **hardcoded** engine `config_override` in `slotEngineService` (previously `{ geography: { allow_empty_day_candidates: true, max_distance_from_base_if_empty_day_miles: 40 } }`) with **5 per-company parameters** a dispatcher edits in the UI. Defaults tightened: the empty-day base radius drops 40 → **10 mi** (one shared radius now governs both the base-distance and the nearest-existing-job checks). No engine change / redeploy — the deployed engine already honors `config_override` (deep-merge).
+
+**The 5 editable parameters** (defaults): `max_distance_miles` (10) → mapped to BOTH `geography.max_distance_from_existing_job_miles` and `geography.max_distance_from_base_if_empty_day_miles`; `overlap_minutes` (0 = no overlap) → `overlap.max_timeframe_overlap_minutes`; `min_buffer_minutes` (15) → `feasibility.min_required_slack_minutes`; `horizon_days` (3) → `planning.horizon_days` (also widens the snapshot date window); `recommendations_shown` (3) → `ranking.top_n`. Two values stay fixed/hidden and are always injected: `geography.allow_empty_day_candidates=true`, `workload.max_day_utilization=0.95`.
+
+**Backend**
+- Migration **128** `slot_engine_settings(company_id PK→companies ON DELETE CASCADE, config jsonb, timestamps)` — idempotent, `updated_at` trigger (mirrors 125).
+- `slotEngineSettingsQueries.js` (getByCompany / upsert ON CONFLICT / ensureSchema) + `slotEngineSettingsService.js` — `DEFAULTS`, `get` (row-or-defaults, per-key fallback, propagates DB error), `resolve` (safe-fail → DEFAULTS, never throws — engine path), `validate` (server-authoritative ranges: distance 1–100, overlap/buffer 0–240, horizon 1–14, shown 1–10 → 422 `INVALID_SETTINGS` + offending `field`), `save`, `buildConfigOverride`.
+- `slotEngineService` now resolves per-company settings and builds the override from them (hardcode + `HORIZON_DAYS` removed; horizon comes from settings); existing safe-failure + base-coverage reporting preserved.
+- Routes `GET`/`PUT /api/settings/slot-engine-settings` (`requirePermission('tenant.company.manage')`; `company_id` ONLY from `req.companyFilter`). GET uses `get` → a hard DB error surfaces **500** (UI shows defaults + "couldn't load" toast) rather than masking it.
+
+**Frontend**
+- `slotEngineSettingsApi.ts` (get/save + typed `SlotEngineSettingsError` carrying the server's 422 message/field; DEFAULTS + range mirrors for first-paint/load-failure).
+- `RecommendationSettings.tsx` — Albusto card on **Settings → Technicians**, under the company base-address block: 3 number inputs (max distance / horizon / shown) + 2 minute-pickers (overlap, buffer) with `0/30/60/Custom` presets; Save dirty-gated, inline range hints, 422 → server message. The 2 fixed values are not shown.
+
+**Tests:** `tests/slotEngineSettings.test.js` (44 — service / validate / queries / routes / migration) + `tests/slotEngineProxy.test.js` extended to 23 (config_override now built from resolved settings) = **67 passing**; frontend `npm run build` green. Reviewer **APPROVED** (multi-tenant scoping, safe-failure, override mapping, idempotent migration confirmed).
+
+**Pending:** run migration 128 against prod + deploy.
+
 ## 2026-06-26 — ONWAY-001: «On the way» / ETA-уведомление клиента
 
 Техник, выезжая на работу, жмёт главную CTA-кнопку **«On the way»** в карточке

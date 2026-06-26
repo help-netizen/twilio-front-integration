@@ -245,6 +245,9 @@ app.use('/api/settings/technicians', authenticate, requireCompanyAccess,
 // Technician base (home) locations for the slot engine (SLOT-ENGINE-001 Phase 2).
 app.use('/api/settings/technician-base-locations', authenticate, requireCompanyAccess,
     require('../backend/src/routes/technicianBaseLocations'));
+// Per-company recommendation settings for the slot engine (REC-SETTINGS-001).
+app.use('/api/settings/slot-engine-settings', authenticate, requireCompanyAccess,
+    require('../backend/src/routes/slotEngineSettings'));
 // F015: Document templates customization (estimates first; designed to extend to invoice/work_order)
 require('../backend/src/services/documentTemplates'); // bootstrap renderer registry
 const documentTemplatesRouter = require('../backend/src/routes/document-templates');

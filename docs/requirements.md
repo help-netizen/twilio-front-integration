@@ -1815,3 +1815,89 @@ Technicians need a one-tap way to tell a customer they are en route, with a real
 - ETA accuracy beyond Google's single estimate (no traffic/`departure_time`, no multi-leg routing).
 - Customer-facing live ETA page / link; inbound reply handling beyond the normal conversation flow.
 - Localization/i18n of the SMS or modal (English only this pass).
+
+---
+
+## REC-SETTINGS-001 — configurable recommendation settings (2026-06-26)
+
+**Status:** Requirements · **Priority:** P1 · **Type:** New feature (per-company configuration over the merged SLOT-ENGINE-001).
+
+**Краткое описание:** Replace the hardcoded `config_override` in `backend/src/services/slotEngineService.js` with **per-company settings** a dispatcher edits in the UI. The slot engine already accepts a `config_override` (deep-merged over `slot-engine/src/config.js` `DEFAULT_CONFIG`), so the only change is *where the override comes from* — there is **NO engine redeploy**. Exactly **5** parameters are exposed in a "Recommendation settings" block on the Settings → Technicians page (`frontend/src/pages/TechnicianPhotosPage.tsx`); two further values are always applied but never shown.
+
+### Пользовательские сценарии
+
+1. **View settings (first run / no row).** A dispatcher with `tenant.company.manage` opens Settings → Technicians. The "Recommendation settings" block shows the 5 fields populated with the **documented defaults** (Max distance 10 mi, Allow overlap 0 min, Min buffer 15 min, Planning horizon 3 days, Recommendations shown 3) even though no DB row exists yet. Behavior is well-defined for every company before anyone saves.
+2. **Edit + save.** The dispatcher changes one or more fields (e.g. Max distance 10 → 15, Recommendations shown 3 → 5) and saves. The values are validated, persisted to the company's row, and the block reflects the saved values on reload.
+3. **Recommendations use the saved values.** On the next slot-recommendation request for that company, `slotEngineService` reads the company's saved settings, builds the engine `config_override` from them (plus the two fixed values), and the returned recommendations reflect the new settings (e.g. a wider radius surfaces farther technicians; `top_n` controls how many cards return).
+4. **Reset to defaults.** Clearing the form / restoring defaults and saving writes a config equal to the documented defaults; recommendations behave exactly as the untouched first-run case.
+
+### Пользовательские параметры (exactly these 5)
+
+Each maps to one or more engine `config_override` keys (deep-merged over `DEFAULT_CONFIG`).
+
+| # | UI label | Control | Default | Validation | Engine config key(s) |
+|---|----------|---------|---------|-----------|----------------------|
+| 1 | **Max distance (mi)** | number input | **10** | integer **1–100** | `geography.max_distance_from_existing_job_miles` **AND** `geography.max_distance_from_base_if_empty_day_miles` (ONE radius → BOTH keys) |
+| 2 | **Allow overlap (min)** | picker {0, 30, 60, custom} | **0** (no overlap) | integer **0–240** | `overlap.max_timeframe_overlap_minutes` |
+| 3 | **Min buffer between jobs (min)** | picker {0, 30, 60, custom} | **15** | integer **0–240** | `feasibility.min_required_slack_minutes` |
+| 4 | **Planning horizon (days)** | number input | **3** | integer **1–14** | `planning.horizon_days` |
+| 5 | **Recommendations shown** | number input | **3** | integer **1–10** | `ranking.top_n` |
+
+### Fixed values (ALWAYS applied in the built config_override, NOT in the UI)
+
+- `geography.allow_empty_day_candidates = true`
+- `workload.max_day_utilization = 0.95`
+
+### Acceptance criteria
+
+**RS-R1 — Storage / schema.**
+- AC-1: A new table `slot_engine_settings(company_id uuid PRIMARY KEY REFERENCES company, config jsonb NOT NULL, created_at timestamptz, updated_at timestamptz)` is created via a migration. `company_id` is both PK and FK (one row per company).
+- AC-2: `config` (jsonb) stores the 5 user-set parameter values. The two fixed values may be persisted or injected at build time, but they are ALWAYS present in the `config_override` the service sends to the engine regardless of stored content.
+
+**RS-R2 — Defaults when no row (well-defined for every company).**
+- AC-3: When a company has no `slot_engine_settings` row, GET returns the documented defaults (10 / 0 / 15 / 3 / 3) and `slotEngineService` builds the `config_override` from those same defaults plus the two fixed values. No request is ever sent with an undefined/partial parameter.
+
+**RS-R3 — slotEngineService consumes saved settings (replaces hardcode).**
+- AC-4: The hardcoded `config_override: { geography: { allow_empty_day_candidates: true, max_distance_from_base_if_empty_day_miles: 40 } }` in `getRecommendations` is REMOVED. The service instead reads the company's row (or defaults) and assembles `config_override` mapping each of the 5 parameters to the engine key(s) in the table above, plus the two fixed values.
+- AC-5: `HORIZON_DAYS` (currently the local constant `2` used for `latest_allowed_date`) is driven by the **Planning horizon (days)** setting (i.e. `planning.horizon_days`), so the snapshot window and the engine config agree.
+- AC-6: No change to `slot-engine/` is required; the engine receives the override and deep-merges it as today (no redeploy).
+
+**RS-R4 — CRUD endpoints (GET + PUT only).**
+- AC-7: `GET` returns the company's settings (or documented defaults when no row). `PUT` upserts the company's row with the validated 5 parameters.
+- AC-8: Both endpoints enforce `requirePermission('tenant.company.manage')`.
+- AC-9: `company_id` is taken **ONLY** from `req.companyFilter` — never from the client payload. A request without a resolvable company scope is rejected; a caller can never read or write another tenant's settings.
+
+**RS-R5 — Validation (per parameter, server-enforced; the UI mirrors the same ranges).**
+- AC-10: **Max distance** integer 1–100 mi; **Allow overlap** integer 0–240 min; **Min buffer** integer 0–240 min; **Planning horizon** integer 1–14 days; **Recommendations shown** integer 1–10. Out-of-range, non-integer, or missing values are rejected (422) on PUT — no partial save.
+- AC-11: For pickers (2, 3) the {0,30,60} options and the **custom** path both resolve to an integer that must satisfy the 0–240 range; "custom" cannot bypass validation.
+
+**RS-R6 — UI (English, Albusto tokens, follows design canon).**
+- AC-12: The "Recommendation settings" block lives on the Settings → Technicians page (`frontend/src/pages/TechnicianPhotosPage.tsx`), English copy, Albusto design tokens (`--blanc-*`, no user-facing "Blanc"). It shows exactly the 5 controls — the two fixed values are not surfaced. Section header uses the `.blanc-eyebrow` style; no horizontal separators.
+
+### Ограничения и нефункциональные требования
+- **No engine redeploy / no engine code change.** The engine `config_override` contract (`slot-engine/src/config.js` deep-merge) is reused unchanged.
+- **Multi-tenant isolation:** `company_id` only from `req.companyFilter`; one row per company; cross-tenant read/write impossible.
+- **RBAC:** all access under `requirePermission('tenant.company.manage')`.
+- **English-only** copy, **Albusto** design system; CommonJS backend (consistent with `slotEngineService.js`).
+- **Safe-failure preserved:** existing slot-engine safe-failure behavior in `slotEngineService` (empty, flagged result on any engine fault / missing `SLOT_ENGINE_URL`) must not regress; settings load failure must degrade to documented defaults rather than throw.
+
+### Потенциально вовлечённые модули/части системы
+- **Backend:** `backend/src/services/slotEngineService.js` (build `config_override` from settings; drop hardcode; drive horizon); a new settings service/queries for `slot_engine_settings`; a route exposing `GET`/`PUT` (alongside the existing `/api/settings/technician-base-locations` routes); a migration for the new table.
+- **Frontend:** `frontend/src/pages/TechnicianPhotosPage.tsx` (the "Recommendation settings" block); a small settings API client (alongside the technician-base-locations client).
+
+### Затронутые интеграции
+- **Slot engine** (`slot-engine/`) — consumes the built `config_override`; **no redeploy**.
+- Twilio / Front / Zenbooker / Google: **none** (Zenbooker still supplies the technician roster for recommendations, but is unaffected by this feature).
+
+### Защищённые части кода (НЕЛЬЗЯ ломать)
+- The slot-engine `config_override` deep-merge contract and `DEFAULT_CONFIG` (`slot-engine/src/config.js`) — do not change engine defaults or merge semantics.
+- `slotEngineService` safe-failure path (empty/flagged result on engine fault) and the snapshot-building logic (technicians, scheduled jobs, coverage).
+- The existing `technician_base_locations` table, its settings screen, and its `GET/PUT/DELETE` routes — REC-SETTINGS adds a sibling, it must not alter base-location behavior.
+- Multi-tenant `company_id` resolution via `req.companyFilter` and the `tenant.company.manage` permission convention.
+
+### Out of scope
+- **Any of the engine's internal parameters not in the 5 exposed** — explicitly: the travel model (`travel.*` — `model`, `average_city_speed_mph`, multipliers, edge limits, `geo_uncertainty_beta`), scoring weights and thetas (`scoring.*`), geo-confidence threshold (`geography.min_geo_confidence_for_auto_recommendation`), candidate time-frames / workday windows (`candidate_timeframes`, `workday.*`), durations (`durations.*`), and the other ranking/diversity caps (`ranking.max_recommendations_per_technician`, `ranking.max_recommendations_per_same_timeframe`). None are exposed or editable.
+- Per-technician or per-territory overrides (settings are per-company only).
+- Engine redeploy, engine algorithm/weights/feasibility changes, or any change to the engine API contract.
+- Localization/i18n of the settings UI (English only this pass).
+- Versioning/audit history of settings changes, and import/export of configs.

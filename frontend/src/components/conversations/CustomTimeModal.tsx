@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Dialog, DialogContent, DialogFooter, DialogTitle } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { ChevronLeft, ChevronRight, CalendarIcon, Loader2 } from 'lucide-react';
@@ -544,6 +545,7 @@ function JobMap({ jobs, techGroups, newJobCoords, newJobAddress, loading, compan
 export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJobAddress, newJobDuration, territoryId, excludeJobId, initialSlot, preselectTechId }: CustomTimeModalProps) {
     const { company } = useAuth();
     const companyTz = company?.timezone || 'America/New_York';
+    const navigate = useNavigate();
 
     const getInitialDate = () => {
         if (initialSlot?.start) return new Intl.DateTimeFormat('en-CA', { timeZone: companyTz }).format(new Date(initialSlot.start));
@@ -584,6 +586,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
     const [recs, setRecs] = useState<SlotRecommendation[]>([]);
     const [recsLoading, setRecsLoading] = useState(false);
     const [recsUnavailable, setRecsUnavailable] = useState(false);
+    const [recsCoverage, setRecsCoverage] = useState<{ technicians_total: number; technicians_with_base: number } | null>(null);
 
     useEffect(() => {
         if (!open || !canRecommend) return;
@@ -602,6 +605,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                     setRecsEnabled(r.enabled);
                     setRecs(r.recommendations || []);
                     setRecsUnavailable(!!r.enabled && r.engine_status === 'unavailable');
+                    setRecsCoverage(r.coverage ?? null);
                 }
             })
             .finally(() => { if (!cancelled) setRecsLoading(false); });
@@ -827,6 +831,16 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                                         );
                                     })}
                                 </div>
+                            )}
+                            {recsCoverage && recsCoverage.technicians_with_base < recsCoverage.technicians_total && (
+                                <button
+                                    type="button"
+                                    className="ctm-recs__coverage"
+                                    onClick={() => { onClose(); navigate('/settings/technicians'); }}
+                                    style={{ marginTop: 8, padding: '8px 4px 2px', textAlign: 'left', fontSize: 11, lineHeight: 1.4, color: 'var(--blanc-ink-3)', borderTop: '1px solid var(--blanc-line)', background: 'transparent', cursor: 'pointer', width: '100%' }}
+                                >
+                                    {recsCoverage.technicians_total - recsCoverage.technicians_with_base} of {recsCoverage.technicians_total} technicians have no base address — suggestions may be incomplete. <span style={{ color: 'var(--blanc-job)', fontWeight: 600 }}>Set bases →</span>
+                                </button>
                             )}
                         </div>
                     )}

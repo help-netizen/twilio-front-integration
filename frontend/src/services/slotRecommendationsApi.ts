@@ -24,6 +24,8 @@ export interface SlotRecommendationsResult {
     engine_status?: 'ok' | 'unavailable';
     recommendations: SlotRecommendation[];
     summary?: unknown;
+    /** Base coverage — how many active technicians have a base set (for the UI warning). */
+    coverage?: { technicians_total: number; technicians_with_base: number };
 }
 
 export interface SlotRecommendationsInput {
@@ -68,6 +70,7 @@ export async function fetchSlotRecommendations(
             engine_status: data.engine_status,
             recommendations: Array.isArray(data.recommendations) ? data.recommendations : [],
             summary: data.summary,
+            coverage: data.coverage,
         };
     } catch {
         return DISABLED;

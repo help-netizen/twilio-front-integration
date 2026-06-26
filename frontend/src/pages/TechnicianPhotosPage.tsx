@@ -10,6 +10,7 @@ import {
 } from '../services/technicianBaseLocationsApi';
 import { AddressAutocomplete, EMPTY_ADDRESS, type AddressFields } from '../components/AddressAutocomplete';
 import { CompanyBaseAddress, type CompanyBase } from '../components/settings/CompanyBaseAddress';
+import { RecommendationSettings } from '../components/settings/RecommendationSettings';
 
 function initials(name?: string | null) {
     if (!name) return '—';
@@ -142,6 +143,10 @@ export default function TechnicianPhotosPage() {
                     hint="The default base for technicians who match it. Also editable in Settings → Company."
                     onChange={setCompanyBase}
                 />
+            </div>
+
+            <div className="mb-6">
+                <RecommendationSettings />
             </div>
 
             {loading ? (

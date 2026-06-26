@@ -23,6 +23,17 @@ jest.mock('../backend/src/services/jobsService', () => ({ listJobs: jest.fn() })
 jest.mock('../backend/src/services/scheduleService', () => ({
     getDispatchSettings: jest.fn(async () => ({ timezone: 'America/New_York' })),
 }));
+// RS-2: getRecommendations now builds config_override from resolve(companyId). Mock
+// resolve for determinism (no DB dependence) but keep the REAL buildConfigOverride so
+// the integration assertions equal production logic, not a copy (test-cases note §6).
+jest.mock('../backend/src/services/slotEngineSettingsService', () => {
+    const actual = jest.requireActual('../backend/src/services/slotEngineSettingsService');
+    return {
+        DEFAULTS: actual.DEFAULTS,
+        buildConfigOverride: actual.buildConfigOverride,
+        resolve: jest.fn(),
+    };
+});
 
 const express = require('express');
 const request = require('supertest');
@@ -32,9 +43,19 @@ const zenbookerClient = require('../backend/src/services/zenbookerClient');
 const jobsService = require('../backend/src/services/jobsService');
 const marketplaceService = require('../backend/src/services/marketplaceService');
 const slotEngineService = require('../backend/src/services/slotEngineService');
+const settingsService = require('../backend/src/services/slotEngineSettingsService');
 const scheduleRouter = require('../backend/src/routes/schedule');
 
 const COMPANY = '00000000-0000-0000-0000-00000000000a';
+const { DEFAULTS } = jest.requireActual('../backend/src/services/slotEngineSettingsService');
+
+// Mirror of slotEngineService.addDaysLocal (pure UTC date-string add) so the horizon
+// date assertion derives the expectation exactly as the service does.
+function addDaysLocal(baseDateStr, n) {
+    const base = new Date(`${baseDateStr}T00:00:00Z`);
+    base.setUTCDate(base.getUTCDate() + n);
+    return base.toISOString().slice(0, 10);
+}
 
 beforeEach(() => {
     jest.clearAllMocks();
@@ -42,6 +63,9 @@ beforeEach(() => {
     marketplaceQueries.findActiveInstallation.mockReset();
     zenbookerClient.getTeamMembers.mockReset().mockResolvedValue([]);
     jobsService.listJobs.mockReset().mockResolvedValue([]);
+    // RS-2: settings resolve defaults to DEFAULTS so the existing snapshot/proxy tests
+    // stay deterministic; integration cases below override per-test.
+    settingsService.resolve.mockReset().mockResolvedValue({ ...DEFAULTS });
     process.env.SLOT_ENGINE_URL = 'http://engine.test';
     global.fetch = jest.fn();
 });
@@ -188,7 +212,8 @@ describe('slotEngineService.getRecommendations', () => {
     it('safe-failure when fetch rejects (network/timeout)', async () => {
         global.fetch.mockRejectedValue(new Error('aborted'));
         const out = await slotEngineService.getRecommendations(COMPANY, { new_job: { lat: 1, lng: 2 } });
-        expect(out).toEqual({ recommendations: [], summary: null, engine_status: 'unavailable' });
+        expect(out).toMatchObject({ recommendations: [], summary: null, engine_status: 'unavailable' });
+        expect(out.coverage).toMatchObject({ technicians_total: expect.any(Number), technicians_with_base: expect.any(Number) });
     });
 
     it('safe-failure on non-2xx', async () => {
@@ -256,7 +281,7 @@ describe('POST /api/schedule/slot-recommendations', () => {
         const res = await request(appWith({ permissions: ['schedule.dispatch'] }))
             .post('/api/schedule/slot-recommendations').send({ new_job: { lat: 42.35, lng: -71.09 } });
         expect(res.status).toBe(200);
-        expect(res.body.data).toEqual({ enabled: true, recommendations: [], summary: null, engine_status: 'unavailable' });
+        expect(res.body.data).toMatchObject({ enabled: true, recommendations: [], summary: null, engine_status: 'unavailable' });
     });
 
     it('connected + bad input → surfaces 422 NEW_JOB_LOCATION_REQUIRED', async () => {
@@ -267,5 +292,61 @@ describe('POST /api/schedule/slot-recommendations', () => {
             .post('/api/schedule/slot-recommendations').send({ new_job: {} });
         expect(res.status).toBe(422);
         expect(res.body.error.code).toBe('NEW_JOB_LOCATION_REQUIRED');
+    });
+});
+
+// ─── Integration: getRecommendations consumes resolved settings (REC-SETTINGS-001) ──
+
+describe('getRecommendations consumes resolved settings (config_override + horizon)', () => {
+    const dbConn = require('../backend/src/db/connection');
+    const TZ = 'America/New_York';
+
+    beforeEach(() => {
+        dbConn.query.mockReset().mockResolvedValue({ rows: [] });
+        global.fetch.mockResolvedValue({ ok: true, json: async () => ({ recommendations: [] }) });
+    });
+
+    const bodyFromFetch = () => JSON.parse(global.fetch.mock.calls[0][1].body);
+
+    it('TC-RS-051: config_override deep-equals buildConfigOverride(resolved)', async () => {
+        const resolved = { max_distance_miles: 20, overlap_minutes: 30, min_buffer_minutes: 45, horizon_days: 7, recommendations_shown: 5 };
+        settingsService.resolve.mockResolvedValue(resolved);
+        await slotEngineService.getRecommendations(COMPANY, { new_job: { lat: 42.35, lng: -71.09 } });
+        const body = bodyFromFetch();
+        expect(body.config_override).toEqual(settingsService.buildConfigOverride(resolved));
+        // Spot-check the load-bearing mapping (guards removal of the old hardcoded literal).
+        expect(body.config_override.geography.max_distance_from_existing_job_miles).toBe(20);
+        expect(body.config_override.geography.max_distance_from_base_if_empty_day_miles).toBe(20);
+        expect(body.config_override.geography.allow_empty_day_candidates).toBe(true);
+        expect(body.config_override.ranking.top_n).toBe(5);
+        expect(body.config_override.workload.max_day_utilization).toBe(0.95);
+    });
+
+    it('TC-RS-052: date window uses settings.horizon_days (replaces HORIZON_DAYS=2)', async () => {
+        settingsService.resolve.mockResolvedValue({ ...DEFAULTS, horizon_days: 7 });
+        await slotEngineService.getRecommendations(COMPANY, { new_job: { lat: 42.35, lng: -71.09 } });
+        const body = bodyFromFetch();
+        const today = slotEngineService._localDate(new Date(), TZ);
+        expect(body.new_request.latest_allowed_date).toBe(addDaysLocal(today, 7));
+        expect(body.new_request.earliest_allowed_date).toBe(today);
+    });
+
+    it('TC-RS-053: explicit latest_allowed_date wins over horizon', async () => {
+        settingsService.resolve.mockResolvedValue({ ...DEFAULTS, horizon_days: 7 });
+        await slotEngineService.getRecommendations(COMPANY, {
+            new_job: { lat: 42.35, lng: -71.09, latest_allowed_date: '2026-07-01' },
+        });
+        expect(bodyFromFetch().new_request.latest_allowed_date).toBe('2026-07-01');
+    });
+
+    it('TC-RS-054: resolve DB-fault path (degraded to DEFAULTS) still recommends', async () => {
+        // resolve never throws — it degrades to DEFAULTS internally; the call proceeds normally.
+        settingsService.resolve.mockResolvedValue({ ...DEFAULTS });
+        const out = await slotEngineService.getRecommendations(COMPANY, { new_job: { lat: 42.35, lng: -71.09 } });
+        const body = bodyFromFetch();
+        expect(body.config_override).toEqual(settingsService.buildConfigOverride(DEFAULTS));
+        const today = slotEngineService._localDate(new Date(), TZ);
+        expect(body.new_request.latest_allowed_date).toBe(addDaysLocal(today, 3));
+        expect(out.engine_status).toBe('ok');
     });
 });

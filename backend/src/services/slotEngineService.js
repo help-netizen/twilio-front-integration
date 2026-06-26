@@ -13,11 +13,11 @@ const zenbookerClient = require('./zenbookerClient');
 const googlePlacesService = require('./googlePlacesService');
 const jobsService = require('./jobsService');
 const scheduleService = require('./scheduleService');
+const slotEngineSettingsService = require('./slotEngineSettingsService');
 
 const DEFAULT_TZ = 'America/New_York';
 const DEFAULT_DURATION_MINUTES = 75;
 const ENGINE_TIMEOUT_MS = 4000;
-const HORIZON_DAYS = 2; // today + 2 when no explicit window is given
 
 function isFiniteNum(n) {
     return typeof n === 'number' && Number.isFinite(n);
@@ -156,16 +156,28 @@ async function getRecommendations(companyId, input = {}) {
     // 1. New-job point (may throw NEW_JOB_LOCATION_REQUIRED — a real client error).
     const point = await resolveNewJobPoint(newJob);
 
-    // Horizon: explicit window, else today..today+2 (company-local).
+    // Per-company recommendation settings (never throws; safe-fails to DEFAULTS).
+    const settings = await slotEngineSettingsService.resolve(companyId);
+
+    // Horizon: explicit window, else today..today + settings.horizon_days (company-local).
     const today = localDate(new Date(), tz);
     const earliest = newJob.earliest_allowed_date || today;
-    const latest = newJob.latest_allowed_date || addDaysLocal(today, HORIZON_DAYS);
+    const latest = newJob.latest_allowed_date || addDaysLocal(today, settings.horizon_days);
 
     // 2 + 3. Technicians and scheduled jobs.
     const [technicians, scheduledJobs] = await Promise.all([
         buildTechnicians(companyId),
         buildScheduledJobs(companyId, earliest, latest, tz, newJob.exclude_job_id),
     ]);
+
+    // Base coverage — surfaced to the UI so the dispatcher knows recommendations may
+    // be incomplete when some technicians have no base set (the engine can't place a
+    // based-less technician on a day they have no other jobs).
+    const activeTechs = technicians.filter(t => t.active);
+    const coverage = {
+        technicians_total: activeTechs.length,
+        technicians_with_base: activeTechs.filter(t => t.base).length,
+    };
 
     // 4. Engine request body (per slot-engine/README.md contract).
     const requestId = `alb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -184,12 +196,15 @@ async function getRecommendations(companyId, input = {}) {
         },
         technicians,
         scheduled_jobs: scheduledJobs,
+        // Per-company tuning (distance/overlap/buffer/horizon/top_n) + the fixed
+        // empty-day + utilization values, mapped to the engine's config shape.
+        config_override: slotEngineSettingsService.buildConfigOverride(settings),
     };
 
     // 5. Proxy with a short timeout. Any engine fault → safe-failure.
     const baseUrl = process.env.SLOT_ENGINE_URL;
     if (!baseUrl) {
-        return { recommendations: [], summary: null, engine_status: 'unavailable' };
+        return { recommendations: [], summary: null, engine_status: 'unavailable', coverage };
     }
 
     const controller = new AbortController();
@@ -203,7 +218,7 @@ async function getRecommendations(companyId, input = {}) {
         });
         if (!res.ok) {
             console.warn('[SlotEngine] non-2xx response:', res.status);
-            return { recommendations: [], summary: null, engine_status: 'unavailable' };
+            return { recommendations: [], summary: null, engine_status: 'unavailable', coverage };
         }
         const json = await res.json();
         // 6. Success.
@@ -211,10 +226,11 @@ async function getRecommendations(companyId, input = {}) {
             recommendations: Array.isArray(json?.recommendations) ? json.recommendations : [],
             summary: json?.summary ?? null,
             engine_status: 'ok',
+            coverage,
         };
     } catch (err) {
         console.warn('[SlotEngine] engine unavailable:', err.message);
-        return { recommendations: [], summary: null, engine_status: 'unavailable' };
+        return { recommendations: [], summary: null, engine_status: 'unavailable', coverage };
     } finally {
         clearTimeout(timer);
     }

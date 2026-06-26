@@ -2236,3 +2236,91 @@ Reuse **`routeDistanceService.computePair(origin, dest, travelMode='driving')`**
 ### Open boundary question (customer)
 
 **Which Twilio number should the "on the way" SMS be sent FROM for a company that owns several SMS-capable DIDs?** There is no configured "default sending number" in the schema. The plan uses MRU-of-recent-conversations → `SOFTPHONE_CALLER_ID` fallback, which is correct for the current single-prod-number setup but is ambiguous for a multi-number tenant. Confirm: (a) MRU-then-env fallback is acceptable for v1, or (b) a specific company setting / first-SMS-capable-number rule is required.
+
+---
+
+## REC-SETTINGS-001 — design (2026-06-26)
+
+Per-company configuration that replaces the **hardcoded** `config_override` in `backend/src/services/slotEngineService.js` with values a dispatcher edits in Settings → Technicians. **No engine change / no redeploy** — the engine already deep-merges any `config_override` over `slot-engine/src/config.js DEFAULT_CONFIG` (`mergeConfig`). The only change is *where the override comes from*. Sibling of SLOT-ENGINE-001's `technician_base_locations`; mirrors that feature's route/service/queries/API-client patterns exactly.
+
+### Storage + migration
+
+- **NEW** `backend/db/migrations/128_create_slot_engine_settings.sql` (highest existing = 127 / ONWAY). One row per company; the 5 editable params stored as **discrete jsonb keys** (NOT a full engine-config blob — keeps UI/validation trivial; the service maps them to engine keys):
+
+```sql
+CREATE TABLE IF NOT EXISTS slot_engine_settings (
+    company_id  UUID PRIMARY KEY REFERENCES companies(id) ON DELETE CASCADE,
+    config      JSONB NOT NULL,   -- { max_distance_miles, overlap_minutes, min_buffer_minutes, horizon_days, recommendations_shown }
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- update_updated_at_column() is the shared trigger fn (used by 010/125/etc.)
+CREATE TRIGGER trg_slot_engine_settings_updated_at
+    BEFORE UPDATE ON slot_engine_settings
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+```
+
+The two **fixed** values (`geography.allow_empty_day_candidates=true`, `workload.max_day_utilization=0.95`) are **NOT stored** — they're injected at build time, so they're always present regardless of row contents.
+
+### Queries + service + resolver (single source of truth)
+
+- **NEW** `backend/src/db/slotEngineSettingsQueries.js` — `getByCompany(companyId)` (SELECT, WHERE company_id) + `upsert(companyId, config)` (INSERT … ON CONFLICT (company_id) DO UPDATE SET config=EXCLUDED.config, updated_at=NOW()). `ensureSchema()` reads `128_*.sql` (mirrors `technicianBaseLocationQueries.js`). Every query filters by `company_id`.
+- **NEW** `backend/src/services/slotEngineSettingsService.js` — owns the **`DEFAULTS` constant** (the single source of truth) and the **`buildConfigOverride(settings)`** function (single place the engine-key mapping lives):
+  - `DEFAULTS = { max_distance_miles: 10, overlap_minutes: 0, min_buffer_minutes: 15, horizon_days: 3, recommendations_shown: 3 }`
+  - `VALIDATION` = integer ranges: distance 1–100, overlap 0–240, buffer 0–240, horizon 1–14, shown 1–10.
+  - `get(companyId)` → row.config OR `DEFAULTS` (never partial; missing keys filled from `DEFAULTS`).
+  - `resolve(companyId)` → same as `get` but degrades to `DEFAULTS` on any DB error (safe-failure parity).
+  - `validate(payload)` → returns the 5 coerced integers or throws `{ httpStatus: 422, code: 'INVALID_SETTINGS' }`; all-or-nothing (no partial save).
+  - `save(companyId, payload)` → `validate` then `queries.upsert`.
+  - `buildConfigOverride(s)` maps the 5 values → engine keys, **plus the two fixed values, always**:
+    ```js
+    {
+      geography: {
+        max_distance_from_existing_job_miles: s.max_distance_miles,
+        max_distance_from_base_if_empty_day_miles: s.max_distance_miles, // ONE radius → BOTH keys
+        allow_empty_day_candidates: true,                                // fixed
+      },
+      overlap:     { max_timeframe_overlap_minutes: s.overlap_minutes },
+      feasibility: { min_required_slack_minutes: s.min_buffer_minutes },
+      planning:    { horizon_days: s.horizon_days },
+      ranking:     { top_n: s.recommendations_shown },
+      workload:    { max_day_utilization: 0.95 },                        // fixed
+    }
+    ```
+
+### slotEngineService edits (the only consumer change)
+
+- Add `const settingsService = require('./slotEngineSettingsService');` near the top of `getRecommendations` resolve the row once: `const settings = await settingsService.resolve(companyId);`.
+- **Drop** the local module constant `HORIZON_DAYS = 2` (line ~20). The date window now uses the resolved value: `const latest = newJob.latest_allowed_date || addDaysLocal(today, settings.horizon_days);` (line ~162) — so the snapshot window (`buildScheduledJobs` range) and `planning.horizon_days` agree (AC-5).
+- **Replace** the hardcoded literal at line ~199 — `config_override: { geography: { allow_empty_day_candidates: true, max_distance_from_base_if_empty_day_miles: 40 } }` — with `config_override: settingsService.buildConfigOverride(settings)`.
+- Safe-failure preserved: `resolve` never throws (DB error → `DEFAULTS`); the existing empty/flagged-result paths on engine fault / missing `SLOT_ENGINE_URL` are untouched.
+
+### Routes (GET + PUT)
+
+- **NEW** `backend/src/routes/slotEngineSettings.js` — `companyId(req)=req.companyFilter?.company_id`:
+  - `GET /` → `requirePermission('tenant.company.manage')` → `{ ok:true, data: await svc.get(companyId(req)) }` (defaults when no row).
+  - `PUT /` → `requirePermission('tenant.company.manage')` → `svc.save(companyId(req), req.body)` → `{ ok:true, data }`; on `err.httpStatus` (422 INVALID_SETTINGS) return that status; else 500. **PUT body carries only the 5 params — company_id is never read from the payload.**
+- **Mount** in `src/server.js` next to the base-locations line (~246), same chain (permission enforced per-route, like its sibling):
+  `app.use('/api/settings/slot-engine-settings', authenticate, requireCompanyAccess, require('../backend/src/routes/slotEngineSettings'));`
+
+### Frontend
+
+- **NEW** `frontend/src/services/slotEngineSettingsApi.ts` — `authedFetch` from `./apiClient`, unwraps `json.data`, mirrors `technicianBaseLocationsApi.ts`. `interface SlotEngineSettings { max_distance_miles; overlap_minutes; min_buffer_minutes; horizon_days; recommendations_shown }`; methods `get(): Promise<SlotEngineSettings>` (GET) and `save(body): Promise<SlotEngineSettings>` (PUT). Export a `DEFAULTS` mirror + the validation ranges for client-side echo.
+- **NEW** `frontend/src/components/settings/RecommendationSettings.tsx` — the "Recommendation settings" block. Loads on mount (`get`, falling back to defaults), holds the 5 fields in local state, **saves on an explicit Save button** (the page is not a live-blur form). 3 number inputs (Max distance, Planning horizon, Recommendations shown) + 2 minute-pickers (Allow overlap, Min buffer) with presets {0, 30, 60, custom} → custom resolves to an integer that still satisfies 0–240. Albusto tokens (`--blanc-*`), section header `.blanc-eyebrow`, no `<hr>`/separators; English copy. Client validation mirrors server ranges; on 422 surface the field error via `toast`.
+- **EDIT** `frontend/src/pages/TechnicianPhotosPage.tsx` — mount `<RecommendationSettings />` directly under the existing `<CompanyBaseAddress …>` block (~line 145), inside its own `mb-6` wrapper. No other page logic changes.
+
+### Backwards-compat / protected
+
+- Companies with **no row → `DEFAULTS`** everywhere (GET, `resolve`, `buildConfigOverride`); behavior is well-defined before anyone saves. The previous hardcoded empty-day radius (40 mi) is intentionally superseded by the configurable `max_distance_miles` (default 10).
+- **Untouched:** `slot-engine/` (`DEFAULT_CONFIG` + `mergeConfig` contract), the `technician_base_locations` table/routes/screen, `authedFetch.ts`/`apiClient.ts`, `src/server.js` core (only one new mount line). Multi-tenant isolation via `req.companyFilter` + `tenant.company.manage`.
+
+### File-touch summary
+
+- **NEW backend:** `db/migrations/128_create_slot_engine_settings.sql`; `db/slotEngineSettingsQueries.js`; `services/slotEngineSettingsService.js` (DEFAULTS + buildConfigOverride live here); `routes/slotEngineSettings.js`. (Optional `db/migrations/rollback_128_*.sql`.)
+- **EDIT backend:** `services/slotEngineService.js` (drop `HORIZON_DAYS`; resolve settings; horizon from `settings.horizon_days`; `config_override = buildConfigOverride`); `src/server.js` (+1 mount line).
+- **NEW frontend:** `services/slotEngineSettingsApi.ts`; `components/settings/RecommendationSettings.tsx`.
+- **EDIT frontend:** `pages/TechnicianPhotosPage.tsx` (mount the block under `CompanyBaseAddress`).
+
+### Open boundary question (customer)
+
+The hardcoded empty-day base radius was **40 mi**; the new configurable **Max distance** maps to *both* `max_distance_from_existing_job_miles` and `max_distance_from_base_if_empty_day_miles` with a **default of 10 mi**. So on first run (no row) the effective empty-day radius **drops 40 → 10**, which can shrink first-run recommendations versus today. Confirm: (a) one shared 10-mi default for both radii is intended, or (b) the empty-day radius should default wider (e.g. keep 40, or a separate 6th param) to preserve current first-run breadth.
