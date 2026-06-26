@@ -113,3 +113,17 @@ Sales CRM MCP adds a backend CRM core plus MCP-compatible tool access for seller
 **Sales Workflows:** `crm.list_sales_workflows` discovers ready-made workflow selections. `crm.get_sales_list` and explicit alias tools cover my open deals, closing this month/quarter, deals without activity, deals without next step, risky deals, top accounts by pipeline, accounts needing follow-up, contacts missing role/title/email, and tasks due this week.
 
 **Rollout:** CRM REST and authenticated MCP are mounted behind `authenticate, requireCompanyAccess`; public MCP is token-gated and fail-closed by env config. Regression tests cover auth/tenant gates, tenant isolation, write allowlist/audit, no delete tools, secret redaction, slippage/history, stale activity, and workflow lists.
+
+---
+
+## Slot Recommendation Picker (SLOT-ENGINE-001)
+
+When the slot-engine marketplace app is installed, the new-job slot picker (`CustomTimeModal`) surfaces engine recommendations as a side panel of cards. The standalone `slot-engine` service ranks candidate technician/time windows; each recommendation carries a `score`, a `confidence` tier (`high`/`medium`/`low`), an `explanation` string, and a `requires_dispatch_confirmation` flag. The engine I/O contract and ranking are unchanged by the UX polish — only how these signals are presented.
+
+**Trust signal — temperature mini-bar.** A recommendation's quality is shown as a single thin vertical "temperature" mini-bar on the card edge: fill height scales with `score`, color maps to confidence tier (`high` → green / "Best match", `medium` → blue / "Good fit", `low` → amber-muted / "Worth a look"). The raw numeric score is off the card face, available only via the card `title`/`aria-label` for dispatchers. The earlier separate raw-score and confidence chips are gone.
+
+**Vocabulary.** Engine recommendations use "Recommended" consistently — the panel header reads "Recommended times" and the engine tech-bar pill reads "Recommended". The pill for a technician preselected from a duplicate-job copy reads "Preselected" (distinct from engine recommendations).
+
+**Explanation copy.** The card sub-text is a terse English reason composed by the engine's `explain(m)` from candidate metrics (e.g. "Tech already working nearby · little extra driving · comfortable schedule gap"), with the fallback "Good fit for this route". It contains no date/time/technician (the card already renders those) and no machine tokens — `snake_case` reason codes never leak to the UI. An "Approx. address — confirm" amber flag appears only when `requires_dispatch_confirmation` is set.
+
+**Empty state.** When the app is enabled and the engine is reachable but returns zero recommendations, the panel shows "No nearby openings — try another day" rather than vanishing. The existing graceful degradation is preserved: when the app is disabled or the engine is unreachable, the panel stays absent and the modal is unchanged. The picker is new-job only; reschedule/edit mode does not render the panel or temperature bar.

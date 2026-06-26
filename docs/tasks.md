@@ -2821,3 +2821,168 @@ Spec: docs/specs/SCHED-ROUTE-001-route-scheduling.md (+ Binding Corrections C-1.
 - [x] T10 base-location editor on /settings/technicians
 - [x] T12/T13 CustomTimeModal cards + apply + timeline highlights
 - [x] T14 Jest (34) + schedule regression (48) + FE build
+
+## SLOT-ENGINE-001 — UX polish tasks (2026-06-25)
+
+UX/copy/a11y polish over merged SLOT-ENGINE-001. **HARD scope — exactly three files:**
+`slot-engine/src/engine.js`, `frontend/src/components/conversations/CustomTimeModal.tsx`,
+`frontend/src/components/conversations/CustomTimeModal.css`.
+Spec: `docs/specs/SLOT-ENGINE-001-UX-POLISH.md` · Requirements: SE-UX-1..7 / AC-1..16 ·
+Architecture: `docs/architecture.md` → "SLOT-ENGINE-001 UX polish — design notes (2026-06-25)" ·
+Test cases: `docs/test-cases/SLOT-ENGINE-001-UX-POLISH.md` (EXP-01..12 automated; MAN-01..16 manual).
+
+**Global constraints (apply to every task below):**
+- **No engine/API/DB/route/tenant change.** No new files/components/deps (sole exception: PT-2's new test file). No scoring/ranking/feasibility/config/output-contract change — `explanation` stays a `string`; `score`/`confidence` are read, never written.
+- **No protected-file edits:** `src/server.js`, `frontend/src/lib/authedFetch.ts`, `frontend/src/hooks/useRealtimeEvents.ts`, `backend/db/` are untouched (none are in scope anyway).
+- **Albusto naming:** no user-facing "Blanc"; do **not** rename `--blanc-*` tokens or `Blanc*`/internal identifiers (`__suggested`, `--suggested`, `isSuggested` stay).
+- **Protected invariant — reschedule/edit path byte-for-byte unaffected.** `isNewJob = !initialSlot && !excludeJobId`; when false the recs effect early-returns, `recsEnabled`/`showRecPanel` stay false, no temp-bar/panel/empty-state/overlay render, no fetch fires. Every visible change is reachable only on the new-job path. The single shared change is the preselected-tech pill label "Suggested"→"Preselected" (label-only, no behavioral diff). Verify via MAN-15.
+
+---
+
+### PT-1: Engine `explain(m)` clean English builder (P0)
+
+**Files:** `slot-engine/src/engine.js` (explain only).
+**ACs:** AC-1, AC-2 (+ enables AC-3, AC-7).
+
+**Goal:** Rewrite `explain` (engine.js:293) to a terse positives-only English phrase-bank;
+simplify the signature `explain(win, date, tech, m)` → `explain(m)` and update the **single** call site
+in `recommendSlots` (engine.js:190) to pass only `metrics`. **Add `explain` to `module.exports`**
+(engine.js:336) so it is unit-testable.
+
+**Behavior (per spec §1):** build `bits: string[]` in this exact order, mirroring `reasonCodes` thresholds (inclusive):
+- `nearest_existing_job_distance_miles != null && <= 5` → `tech already working nearby`
+- `extra_travel_minutes <= 15` → `little extra driving`
+- `route_slack_minutes >= 30` → `comfortable schedule gap`
+
+Join non-empty bits with `" · "` (space · middot U+00B7 · space). If `bits.length === 0`, return the
+constant `Good fit for this route`. Positives only — **no** date/time/window/tech-name prefix, **no**
+Russian, **no** snake_case, **no** risk/approx-address text (`geo_confidence` has zero effect on output —
+the approx-address signal lives exclusively on the card dispatch flag in PT-3). Never return `''`/null/undefined.
+
+**Constraints:** no other engine function touched; thresholds/boundary directions unchanged; the only
+non-explain edit is the `module.exports` line + the one call-site arg change.
+
+**Acceptance check:** call site at :190 passes only `metrics`; `explain` exported; manual phrase-bank
+examples match spec §1 ("all three" / "only slack" / "none → fallback"). Green confirmed by PT-2.
+
+**Status:** pending
+
+---
+
+### PT-2: Engine `explain` unit tests (P0)
+
+**Files:** `slot-engine/test/explain.test.js` (NEW — the one allowed new file; `node --test` style, matching `engine.test.js`/`scenarios.test.js`).
+**ACs:** AC-3 (shape-only) + verifies AC-1, AC-2.
+
+**Goal:** Implement EXP-01..12 from the test-cases doc as plain `node --test` cases importing `explain`
+directly from `engine.js` (relies on PT-1's export). Include the reusable forbidden-content guard
+(no Cyrillic `/[Ѐ-ӿ]/`, no snake_case `/[a-z]+_[a-z]/`, no `YYYY-MM-DD`, no `HH:MM`, none of
+`технік`/`Риск`/`Плюсы`; ASCII-only except the `·` separator). Cover: all-three join + order (EXP-01),
+fallback constant (EXP-02, EXP-08), single-phrase paths (EXP-03/04/05), low-geo positives-only (EXP-07),
+inclusive thresholds `=5`/`5.1`, `=15`/`15.1`, `=30`/`29.9` (EXP-09/10), `null` distance (EXP-11), and the
+suite-level regression guard EXP-12 (full `node --test` green ≥26 prior cases; every `recommendations[*].explanation`
+is a non-empty string; no literal/Russian explanation assertion anywhere).
+
+**Constraints:** do **not** assert literal explanation copy in legacy suites (AC-3 keeps engine assertions
+shape-only); do not modify `engine.test.js`/`scenarios.test.js` except as EXP-12 confirms they already pass.
+
+**Acceptance check:** `node --test` in `slot-engine/` green; new file holds EXP-01..12.
+
+**Dependencies:** after PT-1.
+
+**Status:** pending
+
+---
+
+### PT-3: CustomTimeModal.tsx — temp-bar, removals, vocabulary, empty-ladder, arrows, a11y, no-emoji (P1/P2/P3)
+
+**Files:** `frontend/src/components/conversations/CustomTimeModal.tsx`.
+**ACs:** AC-4, AC-5, AC-6, AC-7, AC-8, AC-9, AC-10, AC-11, AC-13, AC-15, AC-16.
+
+**Goal (per spec §2–§8):**
+- **Temp-bar + helper (SE-UX-2/AC-4,5):** add module-local pure `tempFromRec({ score, confidence })` beside
+  `parseHHMM`/`recToSlotDates` → `{ fillPct, colorVar, label }`; `fillPct = clamp(round(score),0,100)`;
+  color/label by tier: high→`var(--blanc-success, #1b8b63)`/`Best match`, medium→`var(--blanc-job, #2f63d8)`/`Good fit`,
+  low(+unknown)→`var(--blanc-warning, #b26a1d)`/`Worth a look`. Render `<span className="ctm-rec-card__temp" aria-hidden>`
+  with inner `__temp-fill` (inline `height`/`background`) as the **first** child of the rec card, before `__top`.
+  Card `<button>` gets `title` + `aria-label` = `` `${label} · score ${Math.round(rec.score)}` `` (only place the raw score lives).
+- **Remove from face (AC-5,6):** delete `<span className="ctm-rec-card__score">` (:787) and
+  `<span className="ctm-rec-card__confidence">` (:794). Replace `Dispatch confirm` (:796) with `Approx. address — confirm`
+  (en-dash, lowercase "confirm"), kept on `.ctm-rec-card__flag`, rendered **only** when `rec.requires_dispatch_confirmation`
+  truthy; render flag conditionally so no empty `__meta` row shows.
+- **Sub-text fallback (AC-7):** add module-top `const REC_FALLBACK_REASON = 'Good fit for this route';`; replace
+  `rec.explanation || rec.reason_codes?.[0]` (:773) with `rec.explanation || REC_FALLBACK_REASON` (snake_case fallback removed).
+- **Vocabulary (AC-8,9):** header "Suggested times" (:759) → "Recommended times"; copied-tech pill "Suggested" (:830) →
+  "Preselected"; engine pill "Recommended" (:833) unchanged. Update lane comments to "Preselected"; **do not** rename classes/props.
+- **Empty ladder (AC-10,11):** `showRecPanel` (:674) → `isNewJob && (recsLoading || recsEnabled)`. Render an if/else chain in
+  order: Loading → Unavailable → **Empty** (`No nearby openings — try another day`, en-dash, when
+  `recsEnabled && !recsLoading && !recsUnavailable && recs.length === 0`) → List. Header always on top.
+- **Pagination arrows (AC-13):** replace both raw `<button className="ctm-tech-bar__arrow">` (:815, :841) with
+  `<Button variant="ghost" size="icon" className="ctm-tech-bar__arrow">` (already imported); keep the class (24px), keep
+  ChevronLeft/Right and exact disabled logic (`techPage===0` / `techPage >= totalPages-1`).
+- **Overlay band a11y (AC-15):** on `tech-timeline__rec-band` (:289) add `role="button"`, `tabIndex={0}`,
+  `onKeyDown` (Enter/Space → preventDefault + stopPropagation + `onApplyRec?.(rec)`), and
+  `aria-label={`Recommended ${start}–${end}`}` (en-dash); keep existing onClick + title.
+- **No emoji (AC-16):** strip `🕓 ` (:473) and `🔧 ` (:474) prefixes from the map info-window HTML; keep time/service text and the inline `#6b7280` colors (Google InfoWindow scope, not Albusto CSS).
+
+**Constraints:** keep the protected invariant (all visible changes new-job-only; preselected pill is the lone shared
+label change). No unused vars after removing score/confidence spans (prod build is strict — `tempFromRec`/`REC_FALLBACK_REASON`
+must be referenced). No token renames; CSS class names unchanged.
+
+**Acceptance check:** MAN-01..09, MAN-11, MAN-12, MAN-13 pass; `tsc -b` clean (see PT-5).
+
+**Dependencies:** independent of PT-1/PT-2; pairs with PT-4 (same component). Do PT-3 **then** PT-4 (or one implementer does both — recommended, since they share the `.tsx`/`.css` pair and CSS classes added in PT-4 back the JSX in PT-3).
+
+**Status:** pending
+
+---
+
+### PT-4: CustomTimeModal.css — temp-bar styles, warm tokens, dead-rule deletion (P2/P3)
+
+**Files:** `frontend/src/components/conversations/CustomTimeModal.css`.
+**ACs:** AC-12, AC-14 (+ backs AC-4 styling).
+
+**Goal (per spec §2, §6, §8):**
+- **Temp-bar styles (backs AC-4):** add `.ctm-rec-card__temp` (track: `position:absolute; left:6px; top:9px; bottom:9px;
+  width:5px; border-radius:999px; background:var(--blanc-line, rgba(117,106,89,0.18)); overflow:hidden;`) and
+  `.ctm-rec-card__temp-fill` (`position:absolute; left:0; right:0; bottom:0; border-radius:999px;` — height/background inline).
+  Give `.ctm-rec-card` `position:relative` (if absent) and left padding for the bar: `padding: 9px 11px 9px 18px;`.
+- **Warm-token swaps (AC-12):** apply the spec §6 table — `--muted-foreground`→`--blanc-ink-3`, `--border`→`--blanc-line`,
+  overlay/legend backgrounds → `var(--blanc-surface-strong, #fffdf9)`, tech-bar arrow color → `--blanc-ink-2` — across the
+  touched rules (date-nav trigger/hint, timelines empty/label, tech-timeline grid/hour-line, map border/overlay/legend, tech-bar arrow).
+  **Drop the dead cold-slate hex fallbacks** in those rules: `#27303f`, `#0f172a`, `#1e293b`, `#334155`, `#64748b`, `#94a3b8`, `#e2e8f0`.
+  **Keep** functional colors `#16a34a` (hover), `#ef4444` (now-line), `#d97706`/`#b45309` (amber); leave warm literal fallbacks already in place.
+- **Delete dead CSS (AC-14):** remove `.ctm-timelines__footer`, `.ctm-timelines__dots`, `.ctm-timelines__dot`,
+  `.ctm-timelines__dot--active`, `.ctm-timelines__legend`, `.ctm-timelines__legend-item`, `.ctm-timelines__legend-dot`
+  (grep-confirm no JSX reference first). The `.ctm-rec-card__score`/`.ctm-rec-card__confidence` rules may also be deleted (now unreferenced after PT-3).
+
+**Constraints:** no `--blanc-*` renames; only the listed cold-neutral fallbacks dropped; no change to functional colors or warm fallbacks.
+
+**Acceptance check:** MAN-10, MAN-14 pass; temp-bar renders correctly with PT-3; `tsc -b`/build clean.
+
+**Dependencies:** after PT-3 (coupled — same component pair). Recommend a single implementer for PT-3+PT-4.
+
+**Status:** pending
+
+---
+
+### PT-5: Verification gate (P0)
+
+**Files:** none (verification only).
+**ACs:** build/regression gate for all of the above (MAN-16, EXP-12).
+
+**Goal:** Confirm `npm run build` (`tsc -b`) is **green** from `frontend/` (prod-strict, noUnusedLocals — removed
+score/confidence spans leave no unused vars; `tempFromRec`/`REC_FALLBACK_REASON` referenced) and `node --test` in
+`slot-engine/` is **green** (≥26 prior + EXP-01..12). Record the manual checklist MAN-01..16 (incl. MAN-15 reschedule/edit
+regression guard) for the orchestrator's live verification on the new-job path with the marketplace slot-engine app enabled.
+
+**Acceptance check:** both build + engine suites green; MAN list handed to orchestrator.
+
+**Dependencies:** after PT-1, PT-2, PT-3, PT-4.
+
+**Status:** pending
+
+---
+
+**Order:** PT-1 → PT-2 → (PT-3 → PT-4, coupled — one implementer recommended) → PT-5.
+PT-1/PT-2 (engine) and PT-3/PT-4 (frontend) are independent tracks and may proceed in parallel; PT-5 gates last.

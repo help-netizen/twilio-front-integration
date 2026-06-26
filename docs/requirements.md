@@ -1647,3 +1647,67 @@ Estimate "Summary", invoice "Notes", hard delete, un-delete UI, rich-text/@menti
 
 ### Acceptance criteria
 AC-1 one `NotesSection` for jobs/leads/contacts; legacy components deleted. AC-2 new note persists id + created_by. AC-3 non-admin edits/deletes only own; no actions on others'/legacy/ZB. AC-4 admin edits/deletes any (incl. legacy/ZB). AC-5 server rejects non-admin editing another's note (403) even bypassing the kebab. AC-6 one edit can change text + remove + add attachment, keeping id/position/created/created_by. AC-7 edit emits `note_edited` (old→new + attachment deltas) in History. AC-8 deleted note gone from thread AND every notes/history-notes response. AC-9 `note_deleted` stays in History. AC-10 editing/deleting one note doesn't corrupt another's attachments. AC-11 cross-company isolation on all ops. AC-12 pre-migration notes still render and are admin-addressable after backfill; none lost. AC-13 ZB re-sync after edit/delete doesn't duplicate/resurrect/re-index.
+
+## SLOT-ENGINE-001 — UX polish (2026-06-25)
+
+**Status:** Requirements · **Priority:** P0–P3 polish · **Type:** UX / consistency / copy bugfix pack over the merged SLOT-ENGINE-001.
+**Scope (HARD):** frontend `frontend/src/components/conversations/CustomTimeModal.{tsx,css}` and `slot-engine/src/engine.js` (`explain()`) ONLY. No engine architecture, API contract, DB, scoring, or multi-tenant changes.
+**Naming:** product is **Albusto**. New user-facing copy must contain no "Blanc". Do NOT rename `--blanc-*` CSS tokens or code identifiers (BlancBadge, etc.) — "Blanc" is internal-only.
+
+### Description
+The slot-picker side panel (`CustomTimeModal`) and the engine's `explain()` ship machine-y, partly-Russian, jargon-heavy output in an all-English UI. This pack closes the design-critique findings: clean English explanations, a single visual quality signal, consistent "Recommended/Preselected" vocabulary, a human empty state, warm Albusto tokens, reused components, and accessibility/dead-code cleanup. No behavior of the recommendation algorithm changes.
+
+### Requirements (per finding)
+
+**SE-UX-1 (P0) — `explain()` returns a clean English reason only.**
+`engine.js` `explain()` currently returns Russian text with the typo "технік", a "Риск: …" line, and a redundant `${date}, ${win.start}-${win.end}, ${tech.name}` prefix the card already renders.
+- AC-1: `explanation` is English, with no Russian characters and no "технік"/"Риск" strings anywhere in engine output.
+- AC-2: `explanation` contains NO date, time/window, or technician name — only the reason (e.g. "Tech already working nearby · low added travel · comfortable schedule buffer"). Empty/short candidates yield a sensible terse English reason, never an empty string that breaks the card.
+- AC-3: No engine test asserts on the literal explanation text (assert on type/shape only), so copy can evolve freely.
+
+**SE-UX-2 (P1) — One visual quality signal (temperature mini-bar); humanized dispatch flag; no snake_case leak.**
+The rec card today renders three raw machine signals: integer `score`, raw `confidence` enum, and the jargon flag "Dispatch confirm".
+- AC-4: The score+confidence quality signal is shown as ONE thin vertical "temperature" mini-bar on the card edge; fill height and color map to tier (high → green, medium → blue, low → amber/muted). Minimal footprint.
+- AC-5: The raw numeric score is OFF the card face — present only in a hover `title`/tooltip and/or `aria-label` for accessibility. The standalone `confidence` text chip and the raw `<span class="ctm-rec-card__score">` number are removed from the visible card.
+- AC-6: "Dispatch confirm" is replaced by a separate humanized actionable flag "Approx. address — confirm" (amber), rendered ONLY when `requires_dispatch_confirmation` is true.
+- AC-7: The `reason_codes?.[0]` fallback never leaks snake_case to the UI; with `explain()` fixed, the visible sub-text is always human English (humanized fallback if `explanation` is ever missing).
+
+**SE-UX-3 (P1) — Vocabulary: engine = "Recommended", copied-tech = "Preselected".**
+- AC-8: Panel header reads "Recommended times" (was "Suggested times"); the engine tech-bar pill reads "Recommended".
+- AC-9: The copied-from-duplicate tech pill reads "Preselected" (was "Suggested"); related comments/labels for that lane use "Preselected", not "Suggested".
+
+**SE-UX-4 (P2) — Human empty state when engine is enabled but returns zero recs.**
+Today the panel vanishes silently when the engine is on but returns no recommendations.
+- AC-10: When the marketplace app is installed/enabled and the engine returns zero recs (engine reachable, empty result — distinct from disabled/unreachable), the panel shows "No nearby openings — try another day" instead of disappearing.
+- AC-11: When the app is disabled or the engine is unavailable, the panel remains absent and the modal is unchanged (no regression to current graceful behavior).
+
+**SE-UX-5 (P2) — Warm Albusto tokens; remove dead dark fallbacks.**
+Timeline/date-nav/hour-labels use cold neutral tokens.
+- AC-12: `--muted-foreground` → `--blanc-ink-3` and `--border` → `--blanc-line` across the touched CSS; dead dark fallbacks (`#27303f`, `#0f172a`, and the other `#1e293b/#334155/#64748b/#94a3b8`-style cold fallbacks in the same rules) are removed.
+
+**SE-UX-6 (P2) — Technician pagination arrows use the Button component.**
+- AC-13: The technician prev/next pagination arrows use the shared `Button` component (`variant="ghost"`, `size="icon"`), matching the date-nav arrows; raw `<button>` markup for them is removed.
+
+**SE-UX-7 (P3) — Dead CSS, keyboard accessibility, no emoji.**
+- AC-14: Dead CSS rules `.ctm-timelines__dots`, `.ctm-timelines__footer`, `.ctm-timelines__legend*` (and their orphaned children) are deleted.
+- AC-15: The recommendation overlay bands (currently `<div onClick>`) are keyboard-accessible (focusable, Enter/Space activate, appropriate role/aria-label).
+- AC-16: The 🕓 and 🔧 emoji in the map info-window markup are removed (Albusto rule: no emoji); the underlying time/service text remains.
+
+### Constraints
+- Touch only the three named files. No changes to engine scoring, ranking, config, output contract fields, the proxy/service, DB, or any tenant-isolation logic.
+- Preserve existing graceful-degradation behavior (panel absent when disabled/unreachable).
+- Frontend must build green (`npm run build` / tsc -b; prod Docker build is stricter — no unused locals).
+- Do not introduce any user-facing "Blanc"; do not rename `--blanc-*` tokens or code identifiers.
+
+### Out of scope
+Engine algorithm/weights/feasibility, Google Routes upgrade, multi-tech, new fields/contracts, settings/base-location UI, the proxy and `slotEngineService`, any backend/DB work, and i18n/localization of the panel.
+
+### Affected modules
+- `frontend/src/components/conversations/CustomTimeModal.tsx` + `.css` (rec cards, tech pills, panel header, empty state, tokens, pagination arrows, overlay bands, map info window).
+- `slot-engine/src/engine.js` — `explain()` only.
+
+### Affected integrations
+None (no Twilio/Front/Zenbooker/Google contract changes; engine I/O contract unchanged).
+
+### Protected (do NOT break)
+Engine scoring/ranking/feasibility pipeline and output contract; `slotEngineService`/proxy gating + safe-failure; marketplace install gating; multi-tenant isolation; `--blanc-*` token names and `Blanc*` identifiers; existing pick mechanism (click rec → applies slot+tech).

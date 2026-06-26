@@ -187,7 +187,7 @@ function recommendSlots(request) {
             feasible_arrival_interval: { start: minToHm(Fstart), end: minToHm(Fend) },
             metrics, score: round1(score), confidence,
             requires_dispatch_confirmation: lowGeo || undefined,
-            reason_codes: codes, explanation: explain(win, date, tech, metrics),
+            reason_codes: codes, explanation: explain(metrics),
           });
         }
       }
@@ -290,13 +290,12 @@ function dedupeBestPerSlot(cands) {
   return [...best.values()];
 }
 
-function explain(win, date, tech, m) {
+function explain(m) {
   const bits = [];
-  if (m.nearest_existing_job_distance_miles != null && m.nearest_existing_job_distance_miles <= 5) bits.push('технік уже работает рядом');
-  if (m.extra_travel_minutes <= 15) bits.push('мало добавочной езды');
-  if (m.route_slack_minutes >= 30) bits.push('хороший запас по расписанию');
-  const risk = m.geo_confidence < 0.7 ? ' Риск: локация приблизительная (ZIP).' : '';
-  return `${date}, ${win.start}-${win.end}, ${tech.name || tech.id}. ${bits.length ? 'Плюсы: ' + bits.join(', ') + '.' : ''}${risk}`.trim();
+  if (m.nearest_existing_job_distance_miles != null && m.nearest_existing_job_distance_miles <= 5) bits.push('tech already working nearby');
+  if (m.extra_travel_minutes <= 15) bits.push('little extra driving');
+  if (m.route_slack_minutes >= 30) bits.push('comfortable schedule gap');
+  return bits.length ? bits.join(' · ') : 'Good fit for this route';
 }
 
 function rankAndDiversify(cands, config) {
@@ -333,4 +332,4 @@ function hoursBetween(nowStamp, date, winStartMin) {
 const round1 = (x) => (x == null ? null : Math.round(x * 10) / 10);
 const round2 = (x) => (x == null ? null : Math.round(x * 100) / 100);
 
-module.exports = { recommendSlots, buildSnapshot, checkFeasibility };
+module.exports = { recommendSlots, buildSnapshot, checkFeasibility, explain };

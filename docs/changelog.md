@@ -4,6 +4,52 @@
 
 ---
 
+## 2026-06-26 — SLOT-ENGINE-001: UX-полировка пикера рекомендаций (Albusto)
+
+Закрыт набор дефектов дизайн-критики поверх уже слитой фичи рекомендаций слотов
+(движок не переделывался, архитектура/контракты/БД/мультитенант не менялись —
+только UX/консистентность/копирайт). Прогон через оркестрацию (Product → Architect
+→ Spec → Test-cases → Planner → Implement → Test → Review).
+
+### Движок (slot-engine)
+- **P0:** `explain(m)` теперь возвращает чистую английскую причину (раньше — русский
+  текст с опечаткой «технік» в полностью английском UI, плюс дублировал
+  дату/время/имя техника). Только плюсы: `tech already working nearby · little extra
+  driving · comfortable schedule gap`; фолбэк `Good fit for this route`. Сигнатура
+  упрощена до `explain(m)`, функция экспортируется для юнит-тестов.
+- Тесты: новый `slot-engine/test/explain.test.js` (EXP-01..12) — английский-only,
+  отсутствие кириллицы/snake_case/префикса, граничные пороги. `node --test` → 39/39.
+
+### Фронтенд (CustomTimeModal — пикер слота)
+- **Сигнал качества:** вместо сырых `score`+`confidence`+жаргона — тонкий
+  вертикальный «температурный» мини-бар на кромке карточки (заполнение ∝ score,
+  цвет по confidence: high→`--blanc-success`/Best match, medium→`--blanc-job`/Good
+  fit, low→`--blanc-warning`/Worth a look). Голое число ушло с лица карточки в
+  `title`/`aria-label` (для диспетчера).
+- **Точность адреса:** `Dispatch confirm` → человеческое `Approx. address — confirm`
+  (янтарная пилюля, только при `requires_dispatch_confirmation`).
+- **Словарь:** панель `Suggested times` → `Recommended times`; пилюля
+  скопированного техника `Suggested` → `Preselected`; рекомендации движка — везде
+  `Recommended`. Убрана утечка snake_case `reason_codes` в фолбэке.
+- **Пустой результат:** при включённом движке и нуле рекомендаций панель больше не
+  исчезает молча — показывает `No nearby openings — try another day` (лесенка
+  состояний: loading → unavailable → empty → list).
+- **Тёплые токены Albusto** в таймлайне/date-nav/часовых метках/карте
+  (`--muted-foreground`/`--border` → `--blanc-ink-3`/`--blanc-line`); удалены
+  мёртвые dark-фолбэки.
+- **Кнопки/доступность:** стрелки пагинации техников → `Button variant="ghost"
+  size="icon"` (как стрелки даты); бэнды-рекомендации на таймлайне получили
+  клавиатурную доступность (`role/tabIndex/onKeyDown`/`aria-label`); убраны эмодзи
+  🕓🔧 из инфо-окна карты. Удалён мёртвый CSS `.ctm-timelines__dots/__footer/__legend*`.
+- Инвариант: режим reschedule/edit не затронут (бар/панель/бэнды не рендерятся при
+  `isNewJob===false`). `tsc -b` → green.
+
+Docs: `requirements.md` (SE-UX-1..7 / AC-1..16), `architecture.md`, спека
+`specs/SLOT-ENGINE-001-UX-POLISH.md`, тест-кейсы `test-cases/SLOT-ENGINE-001-UX-POLISH.md`,
+`tasks.md` (PT-1..PT-5).
+
+---
+
 ## 2026-06-24 — JOB-CREATE-001: Direct Job creation (one-form, Zenbooker-linked)
 
 Jobs can now be created directly (previously only via lead→job conversion), from

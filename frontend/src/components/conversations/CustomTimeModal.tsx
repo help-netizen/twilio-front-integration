@@ -49,7 +49,7 @@ interface CustomTimeModalProps {
     initialSlot?: { techId: string; start: string; end: string };
     /**
      * Preferred technician (e.g. copied from a duplicated job). When set AND no
-     * slot is chosen yet, this tech's lane is visually emphasized ("Suggested")
+     * slot is chosen yet, this tech's lane is visually emphasized ("Preselected")
      * so the user knows where to pick a time. Does NOT auto-create a slot.
      */
     preselectTechId?: string;
@@ -112,6 +112,21 @@ function recToSlotDates(rec: SlotRecommendation, tz: string): { start: Date; end
         start: dateInTZ(y, mo, d, startHM[0], startHM[1], tz),
         end: dateInTZ(y, mo, d, endHM[0], endHM[1], tz),
     };
+}
+
+/** Fallback reason shown on a rec card when the engine returns no explanation. */
+const REC_FALLBACK_REASON = 'Good fit for this route';
+
+/**
+ * Map a recommendation's raw score/confidence to a temperature mini-bar.
+ * Pure: reads only `score` (magnitude → fill height) and `confidence` (→ color + label).
+ * The tier is the engine's confidence enum — never re-derived from score here.
+ */
+function tempFromRec({ score, confidence }: { score: number; confidence: string }): { fillPct: number; colorVar: string; label: string } {
+    const fillPct = Math.max(0, Math.min(Math.round(score), 100));
+    if (confidence === 'high') return { fillPct, colorVar: 'var(--blanc-success, #1b8b63)', label: 'Best match' };
+    if (confidence === 'medium') return { fillPct, colorVar: 'var(--blanc-job, #2f63d8)', label: 'Good fit' };
+    return { fillPct, colorVar: 'var(--blanc-warning, #b26a1d)', label: 'Worth a look' };
 }
 
 function snapToGrid(y: number, containerTop: number): number {
@@ -178,7 +193,7 @@ interface TechTimelineProps {
     onSelectSlot: (slot: SelectedSlot) => void;
     matchesTerritory: boolean;
     companyTz: string;
-    /** Emphasize this lane as the suggested technician (no slot picked yet) */
+    /** Emphasize this lane as the preselected technician (no slot picked yet) */
     isSuggested?: boolean;
     /** Engine recommendations for THIS tech on the selected date (T13 overlay bands) */
     recsForTech?: SlotRecommendation[];
@@ -287,9 +302,13 @@ function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectS
                         <div
                             key={`rec-${rec.rank}-${i}`}
                             className="tech-timeline__rec-band"
+                            role="button"
+                            tabIndex={0}
                             style={{ top, height }}
                             title={`Recommended ${fmtTime(dates.start, companyTz)}–${fmtTime(dates.end, companyTz)}${rec.explanation ? ` · ${rec.explanation}` : ''}`}
+                            aria-label={`Recommended ${fmtTime(dates.start, companyTz)}–${fmtTime(dates.end, companyTz)}`}
                             onClick={(e) => { e.stopPropagation(); onApplyRec?.(rec); }}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onApplyRec?.(rec); } }}
                         >
                             <span className="tech-timeline__rec-band-label">#{rec.rank}</span>
                         </div>
@@ -470,8 +489,8 @@ function JobMap({ jobs, techGroups, newJobCoords, newJobAddress, loading, compan
                     });
                     const infoContent = `<div style="font-size:13px;max-width:220px">
                         <div style="font-weight:700;margin-bottom:3px;color:${color}">${group.name} #${num} — ${job.customer_name || `Job #${job.id}`}</div>
-                        ${timeStr ? `<div style="color:#6b7280">🕓 ${timeStr}</div>` : ''}
-                        ${job.service_name ? `<div style="color:#6b7280">🔧 ${job.service_name}</div>` : ''}
+                        ${timeStr ? `<div style="color:#6b7280">${timeStr}</div>` : ''}
+                        ${job.service_name ? `<div style="color:#6b7280">${job.service_name}</div>` : ''}
                         ${job.address ? `<div style="color:#9ca3af;font-size:11px;margin-top:2px">${job.address}</div>` : ''}
                     </div>`;
                     const infoWindow = new google.maps.InfoWindow({ content: infoContent });
@@ -638,7 +657,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
     const totalPages = Math.max(1, Math.ceil(techGroups.length / 2));
     const visibleTechs = techGroups.slice(techPage * 2, techPage * 2 + 2);
 
-    // Suggested tech (e.g. copied from a duplicated job): only highlight while no
+    // Preselected tech (e.g. copied from a duplicated job): only highlight while no
     // slot has been picked yet, and only if that tech actually exists in the list.
     const suggestedTechId =
         !selectedSlot && preselectTechId && techGroups.some(g => g.id === preselectTechId)
@@ -668,10 +687,10 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
         return m;
     }, [recsForSelectedDate]);
 
-    // Panel renders when the engine returned usable recs, OR while still loading
-    // for a new job (so the spinner row shows). After load with no/disabled recs
-    // it collapses to nothing and the modal behaves exactly as today.
-    const showRecPanel = isNewJob && ((recsEnabled && (recs.length > 0 || recsUnavailable)) || recsLoading);
+    // Panel renders for a new job while loading, or once the engine is enabled
+    // (covering loading / unavailable / empty / list). When the engine is disabled
+    // and not loading, the panel stays absent and the modal behaves as today.
+    const showRecPanel = isNewJob && (recsLoading || recsEnabled);
 
     // Reset page when date changes; only clear slot if it doesn't match the new date
     useEffect(() => {
@@ -756,13 +775,15 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                     {/* ── Recommendations side panel (NEW jobs, engine enabled) ── */}
                     {showRecPanel && (
                         <div className="ctm-recs">
-                            <div className="ctm-recs__header">Suggested times</div>
+                            <div className="ctm-recs__header">Recommended times</div>
                             {recsLoading ? (
                                 <div className="ctm-recs__loading">
                                     <Loader2 className="h-3.5 w-3.5 animate-spin" /> Finding best times…
                                 </div>
-                            ) : recs.length === 0 && recsUnavailable ? (
+                            ) : recsUnavailable ? (
                                 <div className="ctm-recs__loading">Suggestions unavailable right now.</div>
+                            ) : recs.length === 0 ? (
+                                <div className="ctm-recs__loading">No nearby openings — try another day</div>
                             ) : (
                                 <div className="ctm-recs__list">
                                     {recs.map((rec, i) => {
@@ -770,7 +791,8 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                                         const tech = rec.technicians?.[0];
                                         const isActive = !!selectedSlot && !!tech && selectedSlot.techId === tech.id
                                             && !!dates && selectedSlot.start.getTime() === dates.start.getTime();
-                                        const sub = rec.explanation || rec.reason_codes?.[0];
+                                        const sub = rec.explanation || REC_FALLBACK_REASON;
+                                        const { fillPct, colorVar, label } = tempFromRec(rec);
                                         const dayLabel = (() => {
                                             const [yy, mm, dd] = rec.date.split('-').map(Number);
                                             return new Date(yy, mm - 1, dd).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
@@ -780,22 +802,25 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                                                 type="button"
                                                 key={`rec-card-${rec.rank}-${i}`}
                                                 className={`ctm-rec-card${isActive ? ' ctm-rec-card--active' : ''}`}
+                                                title={`${label} · score ${Math.round(rec.score)}`}
+                                                aria-label={`${label} · score ${Math.round(rec.score)}`}
                                                 onClick={() => applyRecommendation(rec)}
                                             >
+                                                <span className="ctm-rec-card__temp" aria-hidden="true">
+                                                    <span className="ctm-rec-card__temp-fill" style={{ height: `${fillPct}%`, background: colorVar }} />
+                                                </span>
                                                 <div className="ctm-rec-card__top">
                                                     <span className="ctm-rec-card__date">{dayLabel}</span>
-                                                    <span className="ctm-rec-card__score">{Math.round(rec.score)}</span>
                                                 </div>
                                                 <div className="ctm-rec-card__time">
                                                     {rec.time_frame.start}–{rec.time_frame.end}
                                                 </div>
                                                 {tech?.name && <div className="ctm-rec-card__tech">{tech.name}</div>}
-                                                <div className="ctm-rec-card__meta">
-                                                    <span className="ctm-rec-card__confidence">{rec.confidence}</span>
-                                                    {rec.requires_dispatch_confirmation && (
-                                                        <span className="ctm-rec-card__flag">Dispatch confirm</span>
-                                                    )}
-                                                </div>
+                                                {rec.requires_dispatch_confirmation && (
+                                                    <div className="ctm-rec-card__meta">
+                                                        <span className="ctm-rec-card__flag">Approx. address — confirm</span>
+                                                    </div>
+                                                )}
                                                 {sub && <div className="ctm-rec-card__sub">{sub}</div>}
                                             </button>
                                         );
@@ -812,13 +837,15 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                             <div className="ctm-tech-bar-container">
                                 <div className="ctm-tech-bar-spacer">
                                     {totalPages > 1 && (
-                                        <button
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
                                             className="ctm-tech-bar__arrow"
                                             onClick={() => setTechPage(p => Math.max(0, p - 1))}
                                             disabled={techPage === 0}
                                         >
                                             <ChevronLeft className="w-4" />
-                                        </button>
+                                        </Button>
                                     )}
                                 </div>
                                 <div className="ctm-tech-bar">
@@ -827,7 +854,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                                             <span className="ctm-tech-bar__dot" style={{ background: TECH_COLORS[tech.colorIndex].bg }} />
                                             <span className="ctm-tech-bar__name">{tech.name}</span>
                                             {tech.id === suggestedTechId && (
-                                                <span className="ctm-tech-bar__suggested">Suggested</span>
+                                                <span className="ctm-tech-bar__suggested">Preselected</span>
                                             )}
                                             {tech.id !== suggestedTechId && recommendedTechIds.has(tech.id) && (
                                                 <span className="ctm-tech-bar__recommended">Recommended</span>
@@ -837,13 +864,15 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                                 </div>
                                 {totalPages > 1 && (
                                     <div className="ctm-tech-bar-spacer ctm-tech-bar-spacer--right">
-                                        <button
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
                                             className="ctm-tech-bar__arrow"
                                             onClick={() => setTechPage(p => Math.min(totalPages - 1, p + 1))}
                                             disabled={techPage >= totalPages - 1}
                                         >
                                             <ChevronRight className="w-4" />
-                                        </button>
+                                        </Button>
                                     </div>
                                 )}
                             </div>
