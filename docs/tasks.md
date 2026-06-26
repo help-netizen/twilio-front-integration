@@ -2807,3 +2807,17 @@ Spec: docs/specs/SCHED-ROUTE-001-route-scheduling.md (+ Binding Corrections C-1.
 - [x] T11 `HistorySection` icons for edited/deleted
 - [x] T12 Delete dead `StructuredNotesSection` + `JobNotesSection`; extract `JobDescription`
 - [x] T13 Jest suites `notesAuthz` + `notesEditDelete` (13 cases, green)
+
+## SLOT-ENGINE-001 Phase 2+3 — Albusto integration — DONE (2026-06-25)
+- [x] T1 Migration 125 technician_base_locations
+- [x] T2 Migration 126 seed smart-slot-engine app (+ marketplaceQueries replay list)
+- [x] T3 technicianBaseLocationQueries
+- [x] T4 technicianBaseLocationsService (roster merge + geocode-on-save)
+- [x] T5 base-location routes (GET/PUT/DELETE) + server.js registration
+- [x] T6 marketplaceService.isAppConnected gating helper
+- [x] T7 slotEngineService (snapshot assembly + engine call + safe-failure)
+- [x] T8 proxy POST /api/schedule/slot-recommendations (gated, schedule.dispatch)
+- [x] T9-T11 FE slotRecommendationsApi + technicianBaseLocationsApi
+- [x] T10 base-location editor on /settings/technicians
+- [x] T12/T13 CustomTimeModal cards + apply + timeline highlights
+- [x] T14 Jest (34) + schedule regression (48) + FE build

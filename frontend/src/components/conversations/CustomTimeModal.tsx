@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { Dialog, DialogContent, DialogFooter, DialogTitle } from '../ui/dialog';
 import { Button } from '../ui/button';
-import { ChevronLeft, ChevronRight, CalendarIcon } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CalendarIcon, Loader2 } from 'lucide-react';
 import { Calendar } from '../ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { listJobs, updateJobCoords } from '../../services/jobsApi';
@@ -11,6 +11,7 @@ import type { TeamMember } from '../../services/zenbookerApi';
 import { useAuth } from '../../auth/AuthProvider';
 import { dateInTZ, todayInTZ, minutesSinceMidnight, formatTimeInTZ } from '../../utils/companyTime';
 import { serverDate, serverNow } from '../../utils/serverClock';
+import { fetchSlotRecommendations, type SlotRecommendation } from '../../services/slotRecommendationsApi';
 import './CustomTimeModal.css';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -88,6 +89,31 @@ function getRelativeDayHint(dateStr: string, tz: string): string | null {
 // fmtTime and minutesSinceMidnight are now imported from companyTime.ts
 const fmtTime = formatTimeInTZ;
 
+/** Parse 'HH:MM' → [hour, minute]. Returns null on malformed input. */
+function parseHHMM(s?: string): [number, number] | null {
+    if (!s) return null;
+    const m = s.match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return null;
+    return [Number(m[1]), Number(m[2])];
+}
+
+/**
+ * Build company-tz start/end Date objects from a recommendation's date
+ * ('YYYY-MM-DD') + time_frame ('HH:MM'). Returns null if either is malformed.
+ */
+function recToSlotDates(rec: SlotRecommendation, tz: string): { start: Date; end: Date } | null {
+    const dm = rec.date?.split('-').map(Number);
+    if (!dm || dm.length !== 3 || dm.some(isNaN)) return null;
+    const [y, mo, d] = dm;
+    const startHM = parseHHMM(rec.time_frame?.start);
+    const endHM = parseHHMM(rec.time_frame?.end);
+    if (!startHM || !endHM) return null;
+    return {
+        start: dateInTZ(y, mo, d, startHM[0], startHM[1], tz),
+        end: dateInTZ(y, mo, d, endHM[0], endHM[1], tz),
+    };
+}
+
 function snapToGrid(y: number, containerTop: number): number {
     const offsetY = Math.max(0, y - containerTop);
     const totalMinutes = (offsetY / HOUR_HEIGHT) * 60;
@@ -154,9 +180,13 @@ interface TechTimelineProps {
     companyTz: string;
     /** Emphasize this lane as the suggested technician (no slot picked yet) */
     isSuggested?: boolean;
+    /** Engine recommendations for THIS tech on the selected date (T13 overlay bands) */
+    recsForTech?: SlotRecommendation[];
+    /** Apply a recommendation via the existing pick mechanism */
+    onApplyRec?: (rec: SlotRecommendation) => void;
 }
 
-function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectSlot, matchesTerritory, companyTz, isSuggested }: TechTimelineProps) {
+function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectSlot, matchesTerritory, companyTz, isSuggested, recsForTech, onApplyRec }: TechTimelineProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const [hoverMinutes, setHoverMinutes] = useState<number | null>(null);
 
@@ -239,6 +269,29 @@ function TechTimeline({ tech, selectedDate, durationMin, selectedSlot, onSelectS
                         >
                             <span className="tech-timeline__job-time">{sTime}–{eTime}</span>
                             <span className="tech-timeline__job-name">{job.customer_name}</span>
+                        </div>
+                    );
+                })}
+
+                {/* Recommendation overlay bands (T13) — translucent, clickable */}
+                {recsForTech?.map((rec, i) => {
+                    const dates = recToSlotDates(rec, companyTz);
+                    if (!dates) return null;
+                    const startMin = minutesSinceMidnight(dates.start, companyTz) - HOUR_START * 60;
+                    const endMin = minutesSinceMidnight(dates.end, companyTz) - HOUR_START * 60;
+                    if (endMin <= 0 || startMin >= TOTAL_HOURS * 60) return null; // out of visible range
+                    const top = Math.max(0, (startMin / 60) * HOUR_HEIGHT);
+                    const bottom = Math.min(TOTAL_HOURS * HOUR_HEIGHT, (endMin / 60) * HOUR_HEIGHT);
+                    const height = Math.max(bottom - top, 18);
+                    return (
+                        <div
+                            key={`rec-${rec.rank}-${i}`}
+                            className="tech-timeline__rec-band"
+                            style={{ top, height }}
+                            title={`Recommended ${fmtTime(dates.start, companyTz)}–${fmtTime(dates.end, companyTz)}${rec.explanation ? ` · ${rec.explanation}` : ''}`}
+                            onClick={(e) => { e.stopPropagation(); onApplyRec?.(rec); }}
+                        >
+                            <span className="tech-timeline__rec-band-label">#{rec.rank}</span>
                         </div>
                     );
                 })}
@@ -504,6 +557,43 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
     const [loading, setLoading] = useState(false);
     const durationMin = newJobDuration || DEFAULT_DURATION_MIN;
 
+    // ── SLOT-ENGINE-001 Phase 3 — recommendations (NEW jobs only) ──
+    // Reschedule/edit (initialSlot / excludeJobId) must behave exactly as before:
+    // no fetch, no panel, no overlays.
+    const isNewJob = !initialSlot && !excludeJobId;
+    const [recsEnabled, setRecsEnabled] = useState(false);
+    const [recs, setRecs] = useState<SlotRecommendation[]>([]);
+    const [recsLoading, setRecsLoading] = useState(false);
+
+    useEffect(() => {
+        if (!open || !isNewJob) return;
+        let cancelled = false;
+        setRecsLoading(true);
+        fetchSlotRecommendations({
+            lat: newJobCoords?.lat,
+            lng: newJobCoords?.lng,
+            address: newJobAddress,
+            duration_minutes: durationMin,
+            territory_id: territoryId,
+        })
+            .then(r => {
+                if (!cancelled) { setRecsEnabled(r.enabled); setRecs(r.recommendations || []); }
+            })
+            .finally(() => { if (!cancelled) setRecsLoading(false); });
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open, isNewJob, newJobCoords?.lat, newJobCoords?.lng, newJobAddress]);
+
+    // Apply a recommendation via the EXISTING pick mechanism (setSelectedDate + setSelectedSlot).
+    const applyRecommendation = useCallback((rec: SlotRecommendation) => {
+        const dates = recToSlotDates(rec, companyTz);
+        if (!dates) return;
+        const techId = rec.technicians?.[0]?.id;
+        if (!techId) return;
+        if (rec.date && rec.date !== selectedDate) setSelectedDate(rec.date);
+        setSelectedSlot({ techId, start: dates.start, end: dates.end });
+    }, [companyTz, selectedDate]);
+
     // Fetch providers once
     useEffect(() => {
         let cancelled = false;
@@ -549,6 +639,34 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
         !selectedSlot && preselectTechId && techGroups.some(g => g.id === preselectTechId)
             ? preselectTechId
             : undefined;
+
+    // Recommendations scoped to the currently selected date (T13).
+    const recsForSelectedDate = useMemo(
+        () => (isNewJob && recsEnabled ? recs.filter(r => r.date === selectedDate) : []),
+        [isNewJob, recsEnabled, recs, selectedDate],
+    );
+    // Set of tech ids that appear in a recommendation for the selected date → "Recommended" pill.
+    const recommendedTechIds = useMemo(() => {
+        const s = new Set<string>();
+        for (const r of recsForSelectedDate) for (const t of r.technicians || []) if (t.id) s.add(t.id);
+        return s;
+    }, [recsForSelectedDate]);
+    // Recommendations grouped by tech id (for that tech's overlay bands on this date).
+    const recsByTech = useMemo(() => {
+        const m = new Map<string, SlotRecommendation[]>();
+        for (const r of recsForSelectedDate) {
+            const techId = r.technicians?.[0]?.id;
+            if (!techId) continue;
+            if (!m.has(techId)) m.set(techId, []);
+            m.get(techId)!.push(r);
+        }
+        return m;
+    }, [recsForSelectedDate]);
+
+    // Panel renders when the engine returned usable recs, OR while still loading
+    // for a new job (so the spinner row shows). After load with no/disabled recs
+    // it collapses to nothing and the modal behaves exactly as today.
+    const showRecPanel = isNewJob && ((recsEnabled && recs.length > 0) || recsLoading);
 
     // Reset page when date changes; only clear slot if it doesn't match the new date
     useEffect(() => {
@@ -629,7 +747,57 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                     )}
                 </div>
 
-                <div className="ctm-body">
+                <div className={`ctm-body${showRecPanel ? ' ctm-body--with-recs' : ''}`}>
+                    {/* ── Recommendations side panel (NEW jobs, engine enabled) ── */}
+                    {showRecPanel && (
+                        <div className="ctm-recs">
+                            <div className="ctm-recs__header">Suggested times</div>
+                            {recsLoading ? (
+                                <div className="ctm-recs__loading">
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Finding best times…
+                                </div>
+                            ) : (
+                                <div className="ctm-recs__list">
+                                    {recs.map((rec, i) => {
+                                        const dates = recToSlotDates(rec, companyTz);
+                                        const tech = rec.technicians?.[0];
+                                        const isActive = !!selectedSlot && !!tech && selectedSlot.techId === tech.id
+                                            && !!dates && selectedSlot.start.getTime() === dates.start.getTime();
+                                        const sub = rec.explanation || rec.reason_codes?.[0];
+                                        const dayLabel = (() => {
+                                            const [yy, mm, dd] = rec.date.split('-').map(Number);
+                                            return new Date(yy, mm - 1, dd).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+                                        })();
+                                        return (
+                                            <button
+                                                type="button"
+                                                key={`rec-card-${rec.rank}-${i}`}
+                                                className={`ctm-rec-card${isActive ? ' ctm-rec-card--active' : ''}`}
+                                                onClick={() => applyRecommendation(rec)}
+                                            >
+                                                <div className="ctm-rec-card__top">
+                                                    <span className="ctm-rec-card__date">{dayLabel}</span>
+                                                    <span className="ctm-rec-card__score">{Math.round(rec.score)}</span>
+                                                </div>
+                                                <div className="ctm-rec-card__time">
+                                                    {rec.time_frame.start}–{rec.time_frame.end}
+                                                </div>
+                                                {tech?.name && <div className="ctm-rec-card__tech">{tech.name}</div>}
+                                                <div className="ctm-rec-card__meta">
+                                                    <span className="ctm-rec-card__confidence">{rec.confidence}</span>
+                                                    {rec.requires_dispatch_confirmation && (
+                                                        <span className="ctm-rec-card__flag">Dispatch confirm</span>
+                                                    )}
+                                                </div>
+                                                {sub && <div className="ctm-rec-card__sub">{sub}</div>}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     {/* ── Left: Technician Timelines ── */}
                     <div className="ctm-timelines">
                         {/* Tech name bar */}
@@ -653,6 +821,9 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                                             <span className="ctm-tech-bar__name">{tech.name}</span>
                                             {tech.id === suggestedTechId && (
                                                 <span className="ctm-tech-bar__suggested">Suggested</span>
+                                            )}
+                                            {tech.id !== suggestedTechId && recommendedTechIds.has(tech.id) && (
+                                                <span className="ctm-tech-bar__recommended">Recommended</span>
                                             )}
                                         </div>
                                     ))}
@@ -706,6 +877,8 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                                                     matchesTerritory={tech.matchesTerritory}
                                                     companyTz={companyTz}
                                                     isSuggested={tech.id === suggestedTechId}
+                                                    recsForTech={recsByTech.get(tech.id)}
+                                                    onApplyRec={applyRecommendation}
                                                 />
                                             ))}
                                         </div>

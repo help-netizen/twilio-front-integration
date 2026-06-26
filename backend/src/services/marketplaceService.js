@@ -13,6 +13,20 @@ class MarketplaceServiceError extends Error {
     }
 }
 
+// SLOT-ENGINE-001 Phase 2: app_key gate for the Smart Slot Engine integration.
+const SMART_SLOT_ENGINE_APP_KEY = 'smart-slot-engine';
+
+/**
+ * Whether the given marketplace app is connected (gate-only check) for a company.
+ * True iff the app is published AND an active installation exists with status 'connected'.
+ */
+async function isAppConnected(companyId, appKey) {
+    const app = await marketplaceQueries.getPublishedAppByKey(appKey);
+    if (!app) return false;
+    const installation = await marketplaceQueries.findActiveInstallation(companyId, app.id);
+    return Boolean(installation) && installation.status === 'connected';
+}
+
 function toScopeArray(scopes) {
     if (Array.isArray(scopes)) return scopes.map(String);
     if (typeof scopes === 'string') {
@@ -564,6 +578,8 @@ async function retryProvisioning(companyId, actorId, installationId, { requestId
 
 module.exports = {
     MarketplaceServiceError,
+    SMART_SLOT_ENGINE_APP_KEY,
+    isAppConnected,
     listApps,
     listInstallations,
     installApp,

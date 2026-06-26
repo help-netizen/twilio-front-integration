@@ -5,6 +5,8 @@
 const express = require('express');
 const router = express.Router();
 const scheduleService = require('../services/scheduleService');
+const slotEngineService = require('../services/slotEngineService');
+const marketplaceService = require('../services/marketplaceService');
 const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope } = require('../middleware/providerScope');
 
@@ -179,6 +181,33 @@ router.patch('/settings', requirePermission('schedule.dispatch'), async (req, re
 
 router.get('/availability', (req, res) => {
     res.status(501).json({ ok: false, error: { code: 'NOT_IMPLEMENTED', message: 'Provider availability is planned for Sprint 3' } });
+});
+
+// =============================================================================
+// Slot recommendations — proxy to the standalone slot engine (SLOT-ENGINE-001 P2)
+// =============================================================================
+
+// POST /api/schedule/slot-recommendations — recommend arrival time-frame + technician.
+// Gated on the Smart Slot Engine marketplace app being connected. When not connected,
+// returns { enabled:false } without calling the engine. Engine faults degrade safely.
+router.post('/slot-recommendations', requirePermission('schedule.dispatch'), async (req, res) => {
+    const companyId = req.companyFilter?.company_id;
+    try {
+        const enabled = await marketplaceService.isAppConnected(
+            companyId,
+            marketplaceService.SMART_SLOT_ENGINE_APP_KEY
+        );
+        if (!enabled) {
+            return res.json({ ok: true, data: { enabled: false, recommendations: [] } });
+        }
+        const result = await slotEngineService.getRecommendations(companyId, req.body || {});
+        return res.json({ ok: true, data: { enabled: true, ...result } });
+    } catch (err) {
+        return res.status(err.httpStatus || 500).json({
+            ok: false,
+            error: { code: err.code || 'INTERNAL', message: err.message },
+        });
+    }
 });
 
 module.exports = router;

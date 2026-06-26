@@ -846,3 +846,26 @@ Unified the notes thread across Jobs/Leads/Contacts onto the single `NotesSectio
 **Out of scope:** Estimate "Summary" and Invoice "Notes" (separate single document fields).
 
 **Verification:** backend Jest `tests/notesAuthz.test.js` + `tests/notesEditDelete.test.js` (13 cases) green; frontend `npm run build` green. Migration reviewed (idempotent) but not yet run against a live DB; full end-to-end click-through pending a deploy.
+
+## SLOT-ENGINE-001 Phase 2+3 — Albusto integration of the slot recommendation engine (2026-06-25)
+
+Marketplace-gated integration of the standalone `slot-engine` (Phase 1) into the schedule slot-picker.
+
+**Backend**
+- Migration 125 `technician_base_locations` (per-tenant tech base coords); migration 126 seeds the
+  `smart-slot-engine` marketplace app (+ added to the `ensureMarketplaceSchema` replay list).
+- Base-location CRUD: `GET/PUT/DELETE /api/settings/technician-base-locations` (`tenant.company.manage`),
+  Zenbooker roster merge, geocode-on-save fallback (`googlePlacesService`).
+- `marketplaceService.isAppConnected` gating helper.
+- `slotEngineService` assembles the engine snapshot (techs + bases + local jobs → window/duration/status,
+  company-tz) and calls `SLOT_ENGINE_URL` with a 4s timeout + safe-failure.
+- Proxy `POST /api/schedule/slot-recommendations` (`schedule.dispatch`), gated on install.
+- Jest: technicianBaseLocations + slotEngineProxy (34 cases); no schedule regressions (48/48).
+
+**Frontend**
+- `slotRecommendationsApi` + `technicianBaseLocationsApi`.
+- Base-location editor on `/settings/technicians` (address autocomplete → geocode).
+- `CustomTimeModal` (new jobs only): recommendation cards side panel (click applies slot+tech) +
+  `Recommended` tech-bar pill + clickable timeline overlay bands; graceful when disabled/engine-down.
+
+`SLOT_ENGINE_URL` added to `.env.example`. Verified: 34 + 48 backend tests, frontend build green, engine 18/18.

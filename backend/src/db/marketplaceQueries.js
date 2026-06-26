@@ -32,6 +32,8 @@ async function ensureMarketplaceSchema(client = null) {
         await query(readMigration('114_create_stripe_payment_sessions.sql'));
         await query(readMigration('115_create_stripe_webhook_events.sql'));
         await query(readMigration('116_seed_stripe_payments_marketplace_app.sql'));
+        // SLOT-ENGINE-001 Phase 2: Smart Slot Engine app (gate-only, no credential).
+        await query(readMigration('126_seed_smart_slot_engine_marketplace_app.sql'));
         await query(readMigration('117_create_stripe_terminal_locations.sql'));
         return;
     }

@@ -40,20 +40,32 @@ feasibility (earliest/latest propagation with shift + base) → metrics → weig
 diversity → explanations. Config-driven (`src/config.js`), deterministic. 7 scenario tests
 (`node --test`) + live HTTP smoke test passing.
 
-## Phase 2 — Albusto integration (pending)
-- Migration: `technician_base_locations(company_id, tech_id, lat, lng, label, ...)`.
-- Backend CRUD + a Settings screen ("Technician base locations") to set each tech's coords.
-- A proxy endpoint (e.g. `POST /api/v1/slot-recommendations`) that: checks the marketplace install
-  is connected → gathers technicians (+ base) + the relevant scheduled jobs window + the new job's
-  geocoded point → calls the engine (`SLOT_ENGINE_URL`) → returns recommendations. `company_id` only
-  from `req.companyFilter`; `requirePermission('schedule.dispatch')`.
-- Register the `smart-slot-engine` marketplace app.
+## Phase 2 — Albusto integration ✅ (done)
+- Migration **125** `technician_base_locations(company_id, tech_id, lat, lng, label, address, …)`,
+  PK `(company_id, tech_id)`. Migration **126** seeds the `smart-slot-engine` marketplace app
+  (also appended to `marketplaceQueries.ensureMarketplaceSchema` replay list).
+- `technicianBaseLocationQueries` + `technicianBaseLocationsService` (Zenbooker roster merge +
+  geocode-on-save fallback) + routes `GET/PUT/DELETE /api/settings/technician-base-locations`
+  (`tenant.company.manage`).
+- `marketplaceService.isAppConnected(companyId, appKey)` gating helper.
+- `slotEngineService.getRecommendations` assembles the snapshot (Zenbooker techs + bases + local
+  scheduled jobs mapped to the engine's window/duration/status shape, company-tz) and calls
+  `SLOT_ENGINE_URL` with a 4s timeout + safe-failure (engine down → empty, never fabricated).
+- Proxy `POST /api/schedule/slot-recommendations` (`schedule.dispatch`): gates on install
+  (`{enabled:false}` when not connected, engine not called), else returns engine cards.
+- Tests: `tests/technicianBaseLocations.test.js` + `tests/slotEngineProxy.test.js` (34 cases:
+  auth/isolation, geocode-on-upsert, gating matrix, snapshot mapping, proxy success + engine-down
+  safe-failure). No schedule regressions (48/48).
 
-## Phase 3 — Slot-picker UI (pending)
-- `CustomTimeModal`: fetch recommendations when opened for a new job (only if app installed); render
-  a side panel of cards (date · window · technician · score · reason → click applies slot+tech) and
-  highlight the recommended windows/lanes on the tech timelines (extends the existing
-  `preselectTechId` "Suggested" mechanism).
+## Phase 3 — Slot-picker UI ✅ (done)
+- `slotRecommendationsApi` + `technicianBaseLocationsApi`.
+- Base-location editor added to the existing `/settings/technicians` page (address autocomplete →
+  geocode; "Base set ✓" pill; clear).
+- `CustomTimeModal`: for NEW jobs only (skips reschedule/edit), fetches recommendations on open
+  when the address is geocoded; renders a Blanc side panel of cards (date · window · tech · score ·
+  confidence · reason → click applies slot+tech via the existing pick mechanism) + a `Recommended`
+  tech-bar pill + clickable translucent overlay bands on the tech timelines. Graceful when the app
+  is disabled or the engine is unavailable (panel absent; modal unchanged). Frontend build green.
 
 ## Future (vendor spec phases 2–3)
 Google Routes Compute Route Matrix (real traffic-aware travel time + cache), multi-technician new

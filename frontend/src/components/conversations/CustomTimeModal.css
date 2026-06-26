@@ -75,6 +75,10 @@
     min-height: 0;
     overflow: hidden;
 }
+/* With the recommendations panel: [recs | timelines | map] */
+.ctm-body--with-recs {
+    grid-template-columns: 216px 1fr 1fr;
+}
 
 /* ── Timelines panel (left) ── */
 .ctm-timelines {
@@ -142,6 +146,20 @@
 /* Suggested technician lane (Copy job) — subtle tint behind the accent border */
 .tech-timeline__col--suggested .tech-timeline__grid {
     background: color-mix(in srgb, var(--blanc-job, #2f63d8) 6%, transparent);
+}
+/* Recommended pill (slot engine) — subtler than Suggested: outlined, not filled */
+.ctm-tech-bar__recommended {
+    flex-shrink: 0;
+    margin-left: 4px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--blanc-job, #2f63d8);
+    background: color-mix(in srgb, var(--blanc-job, #2f63d8) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--blanc-job, #2f63d8) 35%, transparent);
 }
 .ctm-tech-bar__arrow {
     display: flex;
@@ -367,6 +385,32 @@
     color: #16a34a;
 }
 
+/* Recommendation overlay band (slot engine) — translucent, clickable */
+.tech-timeline__rec-band {
+    position: absolute;
+    left: 4px;
+    right: 4px;
+    border: 1.5px dashed color-mix(in srgb, var(--blanc-job, #2f63d8) 60%, transparent);
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--blanc-job, #2f63d8) 12%, transparent);
+    z-index: 2;
+    cursor: pointer;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-end;
+    padding: 2px 4px;
+    transition: background 0.12s;
+}
+.tech-timeline__rec-band:hover {
+    background: color-mix(in srgb, var(--blanc-job, #2f63d8) 22%, transparent);
+}
+.tech-timeline__rec-band-label {
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--blanc-job, #2f63d8);
+    line-height: 1;
+}
+
 /* ── Map (right panel) ── */
 .ctm-map {
     position: relative;
@@ -472,6 +516,118 @@
     font-weight: 500;
 }
 
+/* ── Recommendations side panel (slot engine) ── */
+.ctm-recs {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+    border-radius: 16px;
+    background: rgba(117, 106, 89, 0.04);
+    padding: 12px 10px 10px;
+}
+.ctm-recs__header {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--blanc-ink-3, #94a3b8);
+    padding: 0 4px 8px;
+    flex-shrink: 0;
+}
+.ctm-recs__loading {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--blanc-ink-3, #94a3b8);
+    padding: 4px;
+}
+.ctm-recs__list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow-y: auto;
+    min-height: 0;
+    padding: 2px;
+}
+.ctm-rec-card {
+    text-align: left;
+    border: 1px solid var(--blanc-line, rgba(117, 106, 89, 0.18));
+    border-radius: 12px;
+    background: var(--blanc-panel-surface, #fffdf9);
+    padding: 9px 11px;
+    cursor: pointer;
+    transition: border-color 0.12s, background 0.12s;
+}
+.ctm-rec-card:hover {
+    border-color: color-mix(in srgb, var(--blanc-job, #2f63d8) 40%, var(--blanc-line, rgba(117, 106, 89, 0.3)));
+}
+.ctm-rec-card--active {
+    border-color: var(--blanc-job, #2f63d8);
+    background: color-mix(in srgb, var(--blanc-job, #2f63d8) 6%, var(--blanc-panel-surface, #fffdf9));
+}
+.ctm-rec-card__top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+.ctm-rec-card__date {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--blanc-ink-3, #94a3b8);
+}
+.ctm-rec-card__score {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--blanc-job, #2f63d8);
+    background: color-mix(in srgb, var(--blanc-job, #2f63d8) 10%, transparent);
+    border-radius: 999px;
+    padding: 0 7px;
+    line-height: 16px;
+}
+.ctm-rec-card__time {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--blanc-ink-1, #1e293b);
+    margin-top: 2px;
+}
+.ctm-rec-card__tech {
+    font-size: 12px;
+    color: var(--blanc-ink-2, #475569);
+    margin-top: 1px;
+}
+.ctm-rec-card__meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 5px;
+}
+.ctm-rec-card__confidence {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: capitalize;
+    color: var(--blanc-ink-3, #94a3b8);
+}
+.ctm-rec-card__flag {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #b45309;
+    background: rgba(245, 158, 11, 0.14);
+    border-radius: 999px;
+    padding: 1px 6px;
+}
+.ctm-rec-card__sub {
+    font-size: 11px;
+    color: var(--blanc-ink-3, #94a3b8);
+    margin-top: 5px;
+    line-height: 1.35;
+}
+
 /* ── Responsive ── */
 @media (max-width: 767px) {
     .ctm-dialog {
@@ -481,6 +637,21 @@
         grid-template-columns: 1fr;
         grid-template-rows: 1fr 320px;
         gap: 8px;
+    }
+    .ctm-body--with-recs {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr 320px;
+    }
+    .ctm-recs {
+        max-height: 180px;
+    }
+    .ctm-recs__list {
+        flex-direction: row;
+        overflow-x: auto;
+    }
+    .ctm-rec-card {
+        min-width: 160px;
+        flex-shrink: 0;
     }
     .ctm-footer {
         padding-top: 8px;
