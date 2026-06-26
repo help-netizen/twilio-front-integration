@@ -25,14 +25,21 @@ function haversineMiles(a, b) {
 function adjustedTravelMinutes(a, b, config) {
   const t = config.travel;
   const distance = haversineMiles(a, b);
-  if (!isFinite(distance)) return { distance_miles: Infinity, minutes: Infinity };
+  if (!isFinite(distance)) return { distance_miles: Infinity, minutes: Infinity, driveMinutes: Infinity };
   const speed = t.average_city_speed_mph || 25;
   const rawMinutes = (distance / speed) * 60;
   const uncA = metersToMiles(a && a.uncertainty_radius_meters) || 0;
   const uncB = metersToMiles(b && b.uncertainty_radius_meters) || 0;
   const geoBufferMinutes = ((t.geo_uncertainty_beta ?? 0.5) * (uncA + uncB) / speed) * 60;
-  const minutes = rawMinutes * (t.travel_time_multiplier ?? 1) + (t.operational_buffer_minutes ?? 0) + geoBufferMinutes;
-  return { distance_miles: distance, minutes };
+  // driveMinutes = actual drive estimate (raw * multiplier + per-stop operational buffer).
+  // Use this for edge / extra-travel LIMITS — a detour is a detour regardless of how precisely
+  // the address was geocoded.
+  const driveMinutes = rawMinutes * (t.travel_time_multiplier ?? 1) + (t.operational_buffer_minutes ?? 0);
+  // minutes = driveMinutes + geo-uncertainty risk margin. Use this for FEASIBILITY (conservative
+  // arrival time) only — never for the detour limits (the margin is added asymmetrically to the
+  // edges touching the uncertain point and would otherwise reject ZIP-level locations entirely).
+  const minutes = driveMinutes + geoBufferMinutes;
+  return { distance_miles: distance, minutes, driveMinutes };
 }
 
 function metersToMiles(m) { return m == null ? 0 : m / 1609.344; }

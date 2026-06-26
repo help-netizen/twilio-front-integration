@@ -129,18 +129,20 @@ function recommendSlots(request) {
           const eNewNext = next ? T(newNode, next) : null;
           const ePrevNext = prev && next ? T(prev, next) : null;
 
+          // Edge / extra-travel limits use driveMinutes (raw drive) — NOT the geo-uncertainty
+          // margin, which would otherwise reject ZIP-level locations entirely.
           for (const e of [ePrevNew, eNewNext]) {
             if (!e) continue;
             if (e.distance_miles > config.travel.max_edge_distance_miles) { reject(candId, 'edge_distance_exceeded', { edge_distance_miles: e.distance_miles }); e.bad = 'd'; }
-            if (e.minutes > config.travel.max_edge_travel_minutes) { reject(candId, 'edge_travel_time_exceeded', { edge_travel_minutes: e.minutes }); e.bad = e.bad || 't'; }
+            if (e.driveMinutes > config.travel.max_edge_travel_minutes) { reject(candId, 'edge_travel_time_exceeded', { edge_travel_minutes: e.driveMinutes }); e.bad = e.bad || 't'; }
           }
           if ((ePrevNew && ePrevNew.bad) || (eNewNext && eNewNext.bad)) continue;
 
-          // ── extra travel ─────────────────────────────────────────────────
+          // ── extra travel (marginal detour; raw drive, no uncertainty margin) ─
           let extraTravel;
-          if (ePrevNew && eNewNext && ePrevNext) extraTravel = ePrevNew.minutes + eNewNext.minutes - ePrevNext.minutes;
-          else if (ePrevNew && !eNewNext) extraTravel = ePrevNew.minutes;       // after last, no base
-          else if (!ePrevNew && eNewNext) extraTravel = eNewNext.minutes;       // before first, no base
+          if (ePrevNew && eNewNext && ePrevNext) extraTravel = ePrevNew.driveMinutes + eNewNext.driveMinutes - ePrevNext.driveMinutes;
+          else if (ePrevNew && !eNewNext) extraTravel = ePrevNew.driveMinutes;   // after last, no base
+          else if (!ePrevNew && eNewNext) extraTravel = eNewNext.driveMinutes;   // before first, no base
           else extraTravel = 0;
           if (extraTravel > config.travel.max_extra_travel_minutes) { reject(candId, 'extra_travel_exceeded', { extra_travel_minutes: extraTravel }); continue; }
 
