@@ -172,6 +172,64 @@ export async function cancelJob(id: number, reason: string): Promise<void> {
     });
 }
 
+// ─── ONWAY-001: "On the way" ETA estimate + notify ─────────────────────────────
+
+/** Error carrying the backend `code` so the modal can map it to a friendly toast. */
+export class EtaNotifyError extends Error {
+    code: string | null;
+    constructor(message: string, code: string | null) {
+        super(message);
+        this.name = 'EtaNotifyError';
+        this.code = code;
+    }
+}
+
+export interface EtaEstimateResult {
+    eta_minutes: number | null;
+}
+
+export interface EtaNotifyResult {
+    sent?: boolean;
+    status?: string;
+    /** Present (= 'status_not_advanced') when the SMS sent but the status didn't update. */
+    warning?: string;
+}
+
+/**
+ * Estimate the technician's travel-time ETA to the job address.
+ * Posts device coords when available; with no fix the server still returns
+ * `eta_minutes: null` (we send `{}`), so the modal can stay in state (c).
+ */
+export async function estimateEta(id: number, origin: { lat: number; lng: number } | null): Promise<EtaEstimateResult> {
+    const data = await jobsRequest<{ eta_minutes: number | null }>(`${JOBS_BASE}/${id}/eta/estimate`, {
+        method: 'POST',
+        body: JSON.stringify(origin ? { origin } : {}),
+    });
+    return { eta_minutes: data?.eta_minutes ?? null };
+}
+
+/**
+ * Notify the customer (outbound SMS) that the technician is on the way and
+ * advance the job to "On the way". Returns `data` plus any non-blocking
+ * `warning`. On failure throws an {@link EtaNotifyError} carrying the backend
+ * `code` (NO_PHONE / NO_PROXY / WALLET_BLOCKED / SMS_FAILED / invalid_eta).
+ */
+export async function notifyEta(id: number, etaMinutes: number): Promise<EtaNotifyResult> {
+    const res = await authedFetch(`${JOBS_BASE}/${id}/eta/notify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ eta_minutes: etaMinutes }),
+    });
+    let json: any = {};
+    try { json = await res.json(); } catch { /* non-JSON body */ }
+    if (!res.ok || !json.ok) {
+        const code = (json.code as string) || (json.error as string) || null;
+        const message = (json.message as string) || (json.error as string) || `Request failed (${res.status})`;
+        throw new EtaNotifyError(message, code);
+    }
+    return { ...(json.data || {}), warning: json.warning };
+}
+
 export async function rescheduleJob(id: number, data: { start_date: string; arrival_window_minutes?: number; tech_id?: string }): Promise<LocalJob> {
     return jobsRequest<LocalJob>(`${JOBS_BASE}/${id}/reschedule`, {
         method: 'POST',

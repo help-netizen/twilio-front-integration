@@ -8,11 +8,12 @@ import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react'
 import { format } from 'date-fns';
 import { ScheduleItemCard } from './ScheduleItemCard';
 import { NewJobPlaceholder, NEW_JOB_DEFAULT_DURATION_MIN } from './NewJobPlaceholder';
-import type { ScheduleItem, DispatchSettings } from '../../services/scheduleApi';
+import type { ScheduleItem, DispatchSettings, RouteSegment } from '../../services/scheduleApi';
 import {
     todayInTZ, dateInTZ, minutesSinceMidnight,
     formatTimeInTZ, dateKeyInTZ,
 } from '../../utils/companyTime';
+import { formatDuration, routeSegmentTone } from '../../utils/routeFormat';
 import { serverDate } from '../../utils/serverClock';
 import { assignLanes } from '../../utils/scheduleLayout';
 import type { LayoutItem } from '../../utils/scheduleLayout';
@@ -27,6 +28,8 @@ interface DayViewProps {
     onCopy?: (jobId: number) => void;
     onReschedule?: (entityType: string, entityId: number, startAt: string, endAt: string, title?: string) => void;
     onCreateFromSlot?: (title: string, startAt: string, endAt: string) => void;
+    /** SCHED-ROUTE-001: drive-time between consecutive jobs (by `${fromId}->${toId}`). */
+    routeByPair?: Map<string, RouteSegment>;
 }
 
 function parseTime(t: string): number {
@@ -44,7 +47,7 @@ function buildHourSlots(startTime: string, endTime: string): number[] {
 
 const HOUR_HEIGHT = 86; // px per hour — Sprint 7 design refresh
 
-export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, onSelectItem, onCopy, onReschedule, onCreateFromSlot }) => {
+export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, onSelectItem, onCopy, onReschedule, onCreateFromSlot, routeByPair }) => {
     const tz = settings.timezone || 'America/New_York';
     const slotDuration = settings.slot_duration || 60;
     const isMobile = useIsMobile();
@@ -174,11 +177,31 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                         No jobs scheduled for {format(currentDate, 'EEEE, MMM d')}
                     </div>
                 ) : (
-                    sorted.map(item => (
-                        <div key={`${item.entity_type}-${item.entity_id}`} data-schedule-item>
-                            <ScheduleItemCard item={item} onClick={onSelectItem} onCopy={onCopy} timezone={tz} />
-                        </div>
-                    ))
+                    sorted.map((item, idx) => {
+                        // Drive time to the next consecutive job (mobile is a single
+                        // provider's day, so consecutive cards are one tech's route).
+                        const next = sorted[idx + 1];
+                        const leg = next ? routeByPair?.get(`${item.entity_id}->${next.entity_id}`) : undefined;
+                        const legText = leg
+                            ? (leg.status === 'success' && leg.duration_minutes != null
+                                ? `${formatDuration(leg.duration_minutes)} drive time`
+                                : leg.status === 'pending' ? 'Calculating drive time…' : '')
+                            : '';
+                        const legWarn = routeSegmentTone(leg) === 'warn';
+                        return (
+                            <React.Fragment key={`${item.entity_type}-${item.entity_id}`}>
+                                <div data-schedule-item>
+                                    <ScheduleItemCard item={item} onClick={onSelectItem} onCopy={onCopy} timezone={tz} />
+                                </div>
+                                {legText && (
+                                    <div className="schedule-mobile-leg" style={{ display: 'flex', alignItems: 'center', gap: 10, paddingLeft: 20, marginTop: -2, marginBottom: -2 }}>
+                                        <span style={{ alignSelf: 'stretch', minHeight: 16, borderLeft: '2px dotted var(--sched-line, rgba(117,106,89,0.30))', marginLeft: 4 }} />
+                                        <span style={{ fontSize: 12, fontWeight: 500, color: legWarn ? '#b26a1d' : 'var(--sched-ink-3)' }}>{legText}</span>
+                                    </div>
+                                )}
+                            </React.Fragment>
+                        );
+                    })
                 )}
             </div>
         );

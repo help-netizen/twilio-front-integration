@@ -13,6 +13,11 @@ const zenbookerClient = require('../services/zenbookerClient');
 const noteAttachmentsService = require('../services/noteAttachmentsService');
 const notesMutationService = require('../services/notesMutationService');
 const eventService = require('../services/eventService');
+const conversationsService = require('../services/conversationsService');
+const routeDistanceService = require('../services/routeDistanceService');
+const googlePlacesService = require('../services/googlePlacesService');
+const companyQueries = require('../db/companyQueries');
+const { toE164 } = require('../utils/phoneUtils');
 const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope } = require('../middleware/providerScope');
 
@@ -691,6 +696,163 @@ router.post('/:id/reschedule', requirePermission('jobs.edit'), async (req, res) 
     } catch (err) {
         console.error('[Jobs API] Reschedule error:', err.message);
         res.status(err.statusCode || 500).json({ ok: false, error: err.message });
+    }
+});
+
+// =============================================================================
+// ONWAY-001 — "On the way" ETA estimate + notify (technician dispatch SMS)
+// =============================================================================
+
+/**
+ * Resolve the company's outbound sending DID (E.164).
+ *  1. MRU of recent SMS conversations for this company (proven pulse query).
+ *  2. Fallback to process.env.SOFTPHONE_CALLER_ID.
+ *  3. Neither → null (caller returns 422 NO_PROXY).
+ *
+ * Local to this route: it's a single company-scoped MRU lookup + env fallback,
+ * used only by the notify handler, so it stays here rather than widening the
+ * conversationsService surface.
+ */
+async function resolveCompanyProxyE164(companyId) {
+    if (companyId) {
+        const db = require('../db/connection');
+        const { rows } = await db.query(
+            `SELECT proxy_e164 FROM sms_conversations
+             WHERE company_id = $1 AND proxy_e164 IS NOT NULL
+             ORDER BY last_message_at DESC NULLS LAST
+             LIMIT 1`,
+            [companyId]
+        );
+        if (rows[0]?.proxy_e164) return toE164(rows[0].proxy_e164) || rows[0].proxy_e164;
+    }
+    const envDid = process.env.SOFTPHONE_CALLER_ID;
+    return envDid ? (toE164(envDid) || envDid) : null;
+}
+
+// POST /:id/eta/estimate — pure read: device coords → job address travel time.
+// Never sends anything, never changes status.
+router.post('/:id/eta/estimate', requirePermission('messages.send'), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id || null;
+        const body = req.body;
+        if (!body || typeof body !== 'object' || Array.isArray(body)) {
+            return res.status(400).json({ ok: false, error: 'invalid body' });
+        }
+        const job = await jobsService.getJobById(req.params.id, companyId, getProviderScope(req));
+        if (!job) return res.status(404).json({ ok: false, error: 'Job not found' });
+
+        const origin = body.origin || {};
+        const oLat = Number(origin.lat);
+        const oLng = Number(origin.lng);
+        // No usable origin → don't call Google (geolocation-not-sent path).
+        if (!Number.isFinite(oLat) || !Number.isFinite(oLng)) {
+            return res.json({ ok: true, data: { eta_minutes: null } });
+        }
+
+        // Destination: prefer stored coords; else geocode the service address.
+        let destLat = job.lat != null ? Number(job.lat) : null;
+        let destLng = job.lng != null ? Number(job.lng) : null;
+        if ((destLat == null || destLng == null || !Number.isFinite(destLat) || !Number.isFinite(destLng))
+            && job.address && String(job.address).trim()) {
+            const geo = await googlePlacesService.geocodeAddress(job.address);
+            if (geo.status !== 'failed' && geo.lat != null && geo.lng != null) {
+                destLat = Number(geo.lat);
+                destLng = Number(geo.lng);
+            }
+        }
+        // No usable destination → unavailable (not an error).
+        if (!Number.isFinite(destLat) || !Number.isFinite(destLng)) {
+            return res.json({ ok: true, data: { eta_minutes: null } });
+        }
+
+        const pair = await routeDistanceService.computePair(
+            { lat: oLat, lng: oLng }, { lat: destLat, lng: destLng }, 'driving'
+        );
+        const etaMinutes = (pair.status === 'success' && pair.durationMinutes != null)
+            ? Math.round(pair.durationMinutes)
+            : null;
+        return res.json({ ok: true, data: { eta_minutes: etaMinutes } });
+    } catch (err) {
+        console.error('[Jobs API] ETA estimate error:', err.message);
+        res.status(500).json({ ok: false, error: err.message });
+    }
+});
+
+// POST /:id/eta/notify — SMS first (primary), then status (best-effort).
+router.post('/:id/eta/notify', requirePermission('messages.send'), async (req, res) => {
+    try {
+        const companyId = req.companyFilter?.company_id || null;
+        const jobId = parseInt(req.params.id, 10);
+
+        // Validate eta_minutes: integer 1–600 (defense-in-depth; UI validates too).
+        const eta = req.body?.eta_minutes;
+        if (typeof eta !== 'number' || !Number.isInteger(eta) || eta < 1 || eta > 600) {
+            return res.status(400).json({ ok: false, error: 'invalid_eta' });
+        }
+
+        const job = await jobsService.getJobById(jobId, companyId, getProviderScope(req));
+        if (!job) return res.status(404).json({ ok: false, error: 'Job not found' });
+
+        // Customer phone (denormalized on the job row). Absent → 422, no side effects.
+        const rawPhone = (job.customer_phone || '').trim();
+        if (!rawPhone) {
+            return res.status(422).json({ ok: false, code: 'NO_PHONE', message: 'No phone number on file for this customer.' });
+        }
+        const customerE164 = toE164(rawPhone);
+        if (!customerE164) {
+            return res.status(422).json({ ok: false, code: 'NO_PHONE', message: 'No phone number on file for this customer.' });
+        }
+
+        // Sending proxy DID. None → 422, no side effects.
+        const proxyE164 = await resolveCompanyProxyE164(companyId);
+        if (!proxyE164) {
+            return res.status(422).json({ ok: false, code: 'NO_PROXY', message: 'No sending number configured for your company.' });
+        }
+
+        // Resolve tech + company name for the SMS template.
+        const techName = (job.assigned_techs?.[0]?.name || '').trim();
+        let companyName = null;
+        try {
+            const company = companyId ? await companyQueries.getCompanyById(companyId) : null;
+            companyName = (company?.name || '').trim() || null;
+        } catch (e) {
+            console.warn('[Jobs API] ETA notify: company name lookup failed:', e.message);
+        }
+        const companyLabel = companyName || 'your service team';
+
+        // OW-R5 template. When the tech name is missing, the word "technician"
+        // stays and the name is simply omitted (grammatical single template).
+        const leadIn = techName ? `Your technician ${techName} ` : 'Your technician ';
+        const body = `Hi! ${leadIn}from ${companyLabel} is on the way and should arrive in about ${eta} minutes.`;
+
+        // Send: wallet gate is INSIDE sendMessage. Any throw → status NOT changed.
+        let conversationId;
+        try {
+            const conv = await conversationsService.getOrCreateConversation(customerE164, proxyE164, companyId);
+            conversationId = conv.id;
+            await conversationsService.sendMessage(conv.id, { body, author: 'agent' });
+        } catch (sendErr) {
+            if (sendErr.code === 'WALLET_BLOCKED') {
+                return res.status(sendErr.httpStatus || 402).json({
+                    ok: false, code: 'WALLET_BLOCKED', message: 'Messaging is paused — top up your balance.',
+                });
+            }
+            console.error('[Jobs API] ETA notify send error:', sendErr.message);
+            return res.status(502).json({ ok: false, code: 'SMS_FAILED', message: "Couldn't send the message. Please try again." });
+        }
+
+        // SMS sent (primary success). Advance status best-effort — no SMS rollback.
+        try {
+            await jobsService.updateBlancStatus(jobId, 'On the way', companyId);
+        } catch (statusErr) {
+            console.warn('[Jobs API] ETA notify: status not advanced:', statusErr.message);
+            return res.json({ ok: true, data: { sent: true }, warning: 'status_not_advanced' });
+        }
+
+        return res.json({ ok: true, data: { sent: true, status: 'On the way' } });
+    } catch (err) {
+        console.error('[Jobs API] ETA notify error:', err.message);
+        res.status(500).json({ ok: false, error: err.message });
     }
 });
 

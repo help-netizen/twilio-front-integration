@@ -1711,3 +1711,107 @@ None (no Twilio/Front/Zenbooker/Google contract changes; engine I/O contract unc
 
 ### Protected (do NOT break)
 Engine scoring/ranking/feasibility pipeline and output contract; `slotEngineService`/proxy gating + safe-failure; marketplace install gating; multi-tenant isolation; `--blanc-*` token names and `Blanc*` identifiers; existing pick mechanism (click rec → applies slot+tech).
+
+---
+
+## ONWAY-001 — On-the-way ETA notification (2026-06-26)
+
+**Status:** Requirements · **Priority:** P1 · **Type:** Feature (technician dispatch UX + outbound SMS + new job status).
+**One-liner:** From a job card in a pre-visit status, a technician taps a primary CTA, sees a device-geolocated Google travel-time ETA plus preset tiles, picks one, and taps "Notify client" → an outbound SMS (tech name + ETA) is sent to the customer, the message lands in the customer's conversation timeline, and the job flips to a new **On the way** status.
+
+### Description
+Technicians need a one-tap way to tell a customer they are en route, with a realistic arrival estimate, without leaving the job card or composing a message by hand. ETA is computed from the technician device's live geolocation (PWA) to the job's service address via Google travel-time (reusing `routeDistanceService`). The same action both notifies the customer (SMS recorded to the conversation) and advances the job into a new pre-visit-reachable status, **On the way**.
+
+### Actors & entry point
+- **Actor:** assigned technician (or dispatcher) holding the `messages.send` permission, viewing a Job card.
+- **Entry:** the **"On the way"** button is the **primary CTA** on the Job card when the job is in a pre-visit status. Per the current Job FSM/`ALLOWED_TRANSITIONS`, the pre-visit set is **Submitted**, **Rescheduled** (and, where applicable, a future **Scheduled** status if introduced by the FSM seed). "Waiting for parts" / "Follow Up with Client" / terminal states do not show it as primary. The exact reachable-from set is whatever the published Job FSM defines as transitions into **On the way**; the hardcoded fallback map must mirror it.
+
+### User scenarios
+
+#### SC-01 — Happy path with geolocation (mobile PWA)
+1. Technician opens a job in **Submitted**/**Rescheduled** and taps the primary **"On the way"** CTA.
+2. Modal opens and immediately requests `navigator.geolocation.getCurrentPosition`.
+3. Permission is granted and a fix is returned → frontend asks the backend to compute travel time from `{lat,lng}` (device) → job service address, reusing `routeDistanceService.computePair` (driving, no live traffic).
+4. The computed Google ETA (rounded minutes) is shown pre-selected at the top; preset tiles **10 / 15 / 20 / 30 / 45 / 60** and a **"Set custom time"** row are also offered.
+5. Technician keeps the Google value (or picks a tile / custom) and taps **"Notify client"**.
+6. Backend sends the SMS via `conversationsService` (getOrCreateConversation + sendMessage) to the customer phone; the outbound message appears in the customer's conversation timeline; the job status is set to **On the way**.
+7. Modal shows success and closes; the job card now reflects **On the way** and the CTA is no longer primary.
+
+#### SC-02 — No geolocation / denied / desktop (fallback)
+1. Technician (or desktop dispatcher) opens the modal; geolocation is unavailable, denied, or times out.
+2. **No Google call is made.** The modal shows a placeholder such as **"ETA unavailable — location is off"** and offers only the preset tiles + **"Set custom time"**.
+3. Technician picks a tile or custom value and taps **"Notify client"** → SMS sent with the chosen minutes; status set to **On the way** (same as SC-01 steps 6–7).
+
+#### SC-03 — No customer phone
+1. Technician taps the CTA / "Notify client" but the job's contact has no phone.
+2. SMS cannot be sent; the action is blocked with a clear message ("No phone number on file for this customer"). **Status is NOT changed** (no silent "On the way" without a notification). No partial side effects.
+
+#### SC-04 — No service address (ETA only)
+1. Job has no usable service address / no `lat,lng` and cannot be geocoded.
+2. Google ETA is not computed (placeholder shown, same as SC-02), but the flow still works via preset/custom tiles. Address absence blocks only the Google ETA, not the notification or the status change.
+
+#### SC-05 — Wallet-blocked (insufficient balance)
+1. Technician taps **"Notify client"**; the company wallet is at/below the grace floor (`walletService.assertServiceActive` throws inside `sendMessage`).
+2. The SMS is rejected; the modal surfaces a wallet/billing message ("Messaging is paused — top up your balance"). **Status is NOT changed** (SMS is the primary success; status follows it).
+
+#### SC-06 — SMS send failure (Twilio/transient)
+1. Technician taps **"Notify client"**; `sendMessage` fails for a non-wallet reason (Twilio error, network).
+2. The action reports failure and **does not** change the job status. Technician may retry. No duplicate status flip, no orphaned "On the way".
+
+### Requirements & acceptance criteria
+
+**OW-R1 — Primary CTA placement & gating.**
+- AC-1: The **"On the way"** button renders as the **primary CTA** on the Job card only for jobs whose current status has a defined transition into **On the way** in the active Job workflow (pre-visit: **Submitted**, **Rescheduled**, future **Scheduled**). It is hidden (or non-primary) otherwise and never shown for terminal states.
+- AC-2: The button/modal is available only to users with the required dispatch/messaging permission (`messages.send`); a user lacking it neither sees the action nor can call the endpoint (403).
+
+**OW-R2 — Device-geolocation ETA.**
+- AC-3: On modal open the client calls `navigator.geolocation.getCurrentPosition`. If a fix is obtained AND the job has a usable address, the backend computes travel-time from device coords → job address by reusing `routeDistanceService` (driving, no `departure_time`/traffic); the rounded-minute result is shown pre-selected.
+- AC-4: If geolocation is unavailable, denied, errors, or no address exists, **no Google request is made** and the modal shows the **"ETA unavailable — location is off"** placeholder with preset tiles + custom only. (No live/continuous tracking — a single `getCurrentPosition` per open.)
+
+**OW-R3 — ETA selection model.**
+- AC-5: The technician can choose exactly one ETA value from: the Google ETA (when present), a preset tile (**10/15/20/30/45/60**), or a **"Set custom time"** manual minute entry. Custom accepts a positive integer minute value; the chosen value is what is sent in the SMS.
+
+**OW-R4 — Notify = SMS + status, in that priority order.**
+- AC-6: "Notify client" sends the SMS via `conversationsService` (`getOrCreateConversation` with the customer phone + company proxy/DID resolved server-side, then `sendMessage`), recording it as an **outbound** message in the customer's conversation/timeline.
+- AC-7: After a successful SMS, the job status is set to **On the way**. **Ordering:** SMS first; the SMS is the primary success signal. If the status set fails after a successful send, the API still returns success for the notification and surfaces a non-blocking warning that the status did not advance (no rollback of the sent SMS). If the SMS fails (incl. wallet block, SC-05/SC-06), the status is **not** changed.
+- AC-8: No phone (SC-03) → blocked before send, status unchanged, clear error. No double-send and no double status-flip on retry/double-click (idempotent on the success path).
+
+**OW-R5 — SMS template (English, exact).**
+- AC-9: The message body is exactly:
+  `Hi! Your technician {tech} from {company} is on the way and should arrive in about {eta} minutes.`
+  where `{tech}` = assigned technician display name (from the job's assignment), `{company}` = company name, `{eta}` = chosen minutes (integer). All copy/UI is English.
+
+**OW-R6 — New "On the way" job status.**
+- AC-10: **On the way** is added as a NEW status to the Job workflow — to the hardcoded `BLANC_STATUSES`/`ALLOWED_TRANSITIONS` fallback in `jobsService.js` **and** to the Job FSM SCXML seed (FSM-001), as a non-terminal state reachable from the pre-visit statuses, with sensible onward transitions (e.g. → Visit completed / Canceled). The fallback map and the seed must stay consistent.
+- AC-11: The status is rendered in the standard Job status UI (status tags / list) like any other status; the standard transition/audit path records the change.
+
+**OW-R7 — Multi-tenant & security.**
+- AC-12: `company_id` is taken ONLY from `req.companyFilter` (never from client payload). The customer phone is derived from job → contact server-side. The proxy/company DID is resolved server-side. The endpoint enforces `requirePermission` (dispatch/messaging) + company scoping; a job from another tenant returns 404/403.
+
+### Constraints / NFRs
+- **Reuse, don't reinvent:** ETA via `backend/src/services/routeDistanceService.js` (`computePair`); SMS via existing `conversationsService.getOrCreateConversation` + `sendMessage` (wallet gate already enforced inside `sendMessage`). No new Twilio send path.
+- **CommonJS backend**, English-only copy, Albusto design system (no user-facing "Blanc").
+- **PWA geolocation only** for origin; desktop/no-permission degrades gracefully to tiles.
+- Google travel-time call is **driving, no traffic** (consistent with SCHED-ROUTE-001) and only fired on cache-miss with a valid key; a missing key behaves like SC-02 (no ETA, tiles only).
+
+### Affected modules
+- **Backend:** `services/jobsService.js` (new status in `BLANC_STATUSES` + `ALLOWED_TRANSITIONS`; status-set on notify); `services/routeDistanceService.js` (reused for device→job ETA); `services/conversationsService.js` (reused send path); a route (e.g. under `routes/jobs.js` or `routes/messaging.js`) for "notify on the way" (compute ETA + send + set status); Job FSM SCXML seed (FSM-001) — add **On the way** state + transitions.
+- **Frontend:** Job-card CTA in `components/jobs/JobStatusTags.tsx` (JobOpsSection, where the action bar now lives) + a new "On the way" modal component (geolocation request, ETA display, preset tiles, custom time, Notify button); `services/jobsApi.ts` for the new endpoint.
+
+### Affected integrations
+- **Twilio** (outbound SMS via Conversations — already wired through `conversationsService`).
+- **Google Distance Matrix** (travel-time via `routeDistanceService`; key from env, never to browser).
+- **Zenbooker:** the new **On the way** status is Blanc-internal; it must NOT regress the existing outbound ZB status sync (only sync if/when an explicit ZB mapping is defined — otherwise no outbound ZB call for this status).
+
+### Protected (do NOT break)
+- The existing `sendMessage` wallet gate (`walletService.assertServiceActive`) — it must remain the single enforcement point for outbound SMS cost.
+- Existing Job FSM transitions/seed completeness (FSM-001 §8) and the hardcoded fallback — adding **On the way** must not drop or alter existing statuses/transitions.
+- Existing outbound Zenbooker sync behavior on the current statuses.
+- `frontend/src/lib/authedFetch.ts`, `useRealtimeEvents.ts`, `server.js` (shared infra, per FSM-001 protected list).
+
+### Out of scope
+- Live / continuous technician tracking (only a single `getCurrentPosition` per modal open — no streaming location, no map breadcrumb).
+- Recurring or automatic ETA recomputation / auto-resend; no scheduled "running late" follow-ups.
+- ETA accuracy beyond Google's single estimate (no traffic/`departure_time`, no multi-leg routing).
+- Customer-facing live ETA page / link; inbound reply handling beyond the normal conversation flow.
+- Localization/i18n of the SMS or modal (English only this pass).

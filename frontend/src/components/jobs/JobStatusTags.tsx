@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Plus, Navigation, Play, CheckCircle2 } from 'lucide-react';
 import type { LocalJob, JobTag } from '../../services/jobsApi';
 import {
@@ -5,6 +6,8 @@ import {
 } from '../ui/dropdown-menu';
 import { TagBadge } from './jobHelpers';
 import { ActionsBlock } from '../workflows/ActionsBlock';
+import { OnTheWayModal } from './OnTheWayModal';
+import { useAuthz } from '../../hooks/useAuthz';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -16,7 +19,12 @@ interface JobOpsSectionProps {
     onMarkInProgress: (id: number) => void;
     onMarkComplete: (id: number) => void;
     onCancel: (id: number) => void;
+    /** Refresh the job after the "On the way" notification (afterMutation). */
+    onNotified?: (id: number) => void;
 }
+
+// ONWAY-001 — pre-visit statuses where the "On the way" CTA is offered.
+const ONWAY_SOURCE_STATUSES = ['Submitted', 'Rescheduled'];
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
@@ -37,9 +45,15 @@ const SECONDARY_BTN: React.CSSProperties = {
 
 export function JobOpsSection({
     job, allTags, onTagsChange,
-    onMarkEnroute, onMarkInProgress, onMarkComplete, onCancel,
+    onMarkEnroute, onMarkInProgress, onMarkComplete, onCancel, onNotified,
 }: JobOpsSectionProps) {
     const isActionable = !job.zb_canceled && job.zb_status !== 'complete';
+    const { hasPermission } = useAuthz();
+    const [onWayOpen, setOnWayOpen] = useState(false);
+
+    // ONWAY-001: primary CTA only from a pre-visit status, and only with messages.send.
+    const showOnWayCta =
+        ONWAY_SOURCE_STATUSES.includes(job.blanc_status) && hasPermission('messages.send');
 
     return (
         <div className="px-5 pb-4 space-y-3">
@@ -106,6 +120,21 @@ export function JobOpsSection({
                     </DropdownMenuContent>
                 </DropdownMenu>
             </div>
+
+            {/* ── ONWAY-001: primary "On the way" CTA (pre-visit statuses) ── */}
+            {showOnWayCta && (
+                <button onClick={() => setOnWayOpen(true)}
+                    className="w-full inline-flex items-center justify-center gap-1.5 text-sm font-semibold"
+                    style={{
+                        minHeight: 40, borderRadius: 12,
+                        background: 'linear-gradient(180deg, #f5874a 0%, #e06020 100%)',
+                        color: '#fff', border: 'none',
+                        boxShadow: '0 4px 12px rgba(224,96,32,0.25)',
+                        cursor: 'pointer',
+                    }}>
+                    <Navigation className="size-4" /> On the way
+                </button>
+            )}
 
             {/* ── Zenbooker Actions ── */}
             {isActionable && (
@@ -182,6 +211,16 @@ export function JobOpsSection({
 
             {/* ── FSM Status Transitions ── */}
             <ActionsBlock machineKey="job" entityId={job.id} currentState={job.blanc_status} />
+
+            {/* ── ONWAY-001: "On the way" modal ── */}
+            {showOnWayCta && (
+                <OnTheWayModal
+                    open={onWayOpen}
+                    onClose={() => setOnWayOpen(false)}
+                    job={job}
+                    onDone={() => onNotified?.(job.id)}
+                />
+            )}
         </div>
     );
 }

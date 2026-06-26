@@ -2986,3 +2986,121 @@ regression guard) for the orchestrator's live verification on the new-job path w
 
 **Order:** PT-1 → PT-2 → (PT-3 → PT-4, coupled — one implementer recommended) → PT-5.
 PT-1/PT-2 (engine) and PT-3/PT-4 (frontend) are independent tracks and may proceed in parallel; PT-5 gates last.
+
+---
+
+## ONWAY-001 — tasks (2026-06-26)
+
+> **Inputs:** `docs/specs/ONWAY-001.md` (authoritative) · `docs/requirements.md` → ONWAY-001 (OW-R1..R7 / AC-1..AC-12 / SC-01..06) · `docs/architecture.md` → "ONWAY-001 — design" · `docs/test-cases/ONWAY-001.md` (38 cases).
+> **Feature:** From a Job card in a pre-visit status (`Submitted`/`Rescheduled`), a tech with `messages.send` taps a primary **"On the way"** CTA → modal does one `getCurrentPosition`, optionally computes a Google ETA → **"Notify client"** sends an outbound SMS (tech + company + ETA) into the customer conversation, **then** advances the job to a new **On the way** status. **Hard rule (AC-7): SMS first (primary success), status second (best-effort).**
+> **Global constraints (every backend task):** new routes ride the EXISTING jobs router (already mounted in `src/server.js` behind `authenticate` + `requireCompanyAccess` — NO new mount); `requirePermission('messages.send')` on both endpoints; `company_id` ONLY from `req.companyFilter?.company_id` (NEVER `req.companyId`, never the body); job loaded company-scoped via `getJobById(id, companyId)` → cross-tenant/missing → **404**; SQL/data isolated per company. **Additive only** — no existing FSM state/transition removed or altered (protect FSM-001 §8); **no Zenbooker mapping** for the new status (`OUTBOUND_MAP`/ZB block untouched); wallet gate inside `sendMessage` stays the single SMS cost-enforcement point (no second check); English-only copy; do NOT conflate `On the way` (`blanc_status`) with ZB `en-route` (`zb_status`)/`markEnroute`/`/enroute`.
+
+### TASK-ONWAY-1: Add "On the way" job status (FSM — migration + mirrors + color) (P0)
+
+**Цель:** Introduce the new non-terminal `On the way` job status across all four FSM sources + the frontend color, kept convergent. Transitions: `Submitted→On the way`, `Rescheduled→On the way`, `On the way→Visit completed`, `On the way→Canceled`. State id `On_the_way` (SCXML), status name/label `On the way`, color `#0EA5E9`.
+
+**Файлы, которые можно менять:**
+- `backend/db/migrations/127_job_fsm_on_the_way.sql` (NEW) — idempotent SCXML injection into each company's active published `machine_key='job'` version, modeled EXACTLY on `095_add_review_lead_status.sql`. Guard `WHERE v.scxml_source NOT LIKE '%id="On_the_way"%'`. Two `replace()` passes: (A) insert the `<state id="On_the_way" blanc:label="On the way" blanc:statusName="On the way">` block (children `TO_VISIT_COMPLETED→Visit_completed`, `TO_CANCELED→Canceled`) immediately BEFORE the `<final id="Canceled" …/>` marker; (B) inject `<transition event="TO_ON_THE_WAY" target="On_the_way" blanc:action="true" blanc:label="On the way" blanc:order="0" />` as first child of BOTH `<state id="Submitted" blanc:label="Submitted">` and `<state id="Rescheduled" blanc:label="Rescheduled">`. `IF new_scxml = scxml_source → RAISE NOTICE; CONTINUE`. Archive prior published row, INSERT `version_number+1` as `published` (`change_note='Add On the way status (ONWAY-001)'`, created_by/published_by `'system'`), repoint `fsm_machines.active_version_id`. (Optional `rollback_127_*.sql`.)
+- `fsm/job.scxml` (EDIT) — add the same `On_the_way` state block + the two inbound `TO_ON_THE_WAY` transitions into `Submitted`/`Rescheduled`.
+- `backend/db/migrations/073_seed_fsm_machines.sql` (EDIT) — same state + two inbound transitions inside the `$scxml_job$` heredoc, so a from-scratch DB already includes it (073 ⇄ 127 convergent; both running is safe via the `NOT LIKE` guard).
+- `backend/src/services/jobsService.js` (EDIT, fallback map only) — append `'On the way'` to `BLANC_STATUSES`; in `ALLOWED_TRANSITIONS` add key `'On the way': ['Visit completed','Canceled']` and add `'On the way'` to the `'Submitted'` and `'Rescheduled'` arrays.
+- `frontend/src/components/jobs/jobHelpers.tsx` (EDIT) — add `'On the way'` to the `BLANC_STATUSES` array (~lines 6–12) and `'On the way': '#0EA5E9'` to `BLANC_STATUS_COLORS` (~lines 16–22).
+- A small **pure JS SCXML-transform helper** (per test-cases agent) — EXTRACT the two `replace()` passes into a unit-testable pure function (place beside the migration or a tiny module the migration/test can require, e.g. `backend/db/migrations/lib/injectOnTheWay.js`) so the transform is testable without a DB (consumed by TASK-ONWAY-3). The migration body calls it.
+
+**Файлы, которые трогать нельзя:**
+- `OUTBOUND_MAP` / the Zenbooker block in `jobsService.js` — On the way has no ZB mapping (Protected).
+- Any existing `BLANC_STATUSES` entry, `ALLOWED_TRANSITIONS` key/target, or existing SCXML state/transition — additive only (FSM-001 §8 completeness).
+
+**Покрывает AC:** AC-10 (new status in fallback map AND FSM seed/migration, non-terminal, sensible onward), AC-11 (rendered like any status; standard transition/audit path). Covers TC-FSM-001..005, the extracted-transform unit, and feeds TC-FE-010 (badge color).
+
+**Ожидаемый результат:** Existing seeded tenants reach `On the way` via the DB graph after `127` runs; unseeded/fallback tenants reach it via the mirrored `ALLOWED_TRANSITIONS`; a from-scratch DB (073) already has it; `127` is idempotent and convergent with 073/`fsm/job.scxml`; the badge renders sky/cyan. No existing status/transition dropped; no ZB call added.
+
+**Зависимости:** none (first).
+
+**Статус:** pending
+
+### TASK-ONWAY-2: Backend endpoints — `/eta/estimate` + `/eta/notify` (+ proxy resolver) (P0)
+
+**Цель:** Add the two POST endpoints on the jobs router plus the server-side proxy-DID resolver. estimate = pure read (no SMS/status); notify = SMS-first then best-effort status.
+
+**Файлы, которые можно менять:**
+- `backend/src/routes/jobs.js` (EDIT) — add both routes + the `resolveCompanyProxyE164(companyId)` helper (decide home: route-local vs export from `conversationsService`; whichever ships, TASK-ONWAY-3 mocks that surface).
+  - **`POST /api/jobs/:id/eta/estimate`** `requirePermission('messages.send')`: load job company-scoped (null→404); resolve dest = `job.lat`/`job.lng` (optionally geocode `job.address`); if no dest OR origin missing/invalid in body → `200 { eta_minutes:null, status:'unavailable' }`; else `routeDistanceService.computePair(origin, dest, 'driving')` → success→`{ eta_minutes: durationMinutes, status:'success' }` (also null durationMinutes → unavailable), `{status:'failed', errorCode:'NO_KEY'|<google>}`→`{ eta_minutes:null, status:'unavailable' }` (NON-error). `400` ONLY for a body that isn't an object. No SMS, no status change.
+  - **`POST /api/jobs/:id/eta/notify`** `requirePermission('messages.send')`: validate `eta_minutes` integer 1–600 else `400 { ok:false, error:'invalid_eta' }`. Step order (§4.3): (1) load job company-scoped → null→404; (2) `customerE164 = job.customer_phone`; absent/blank → **422 NO_PHONE** (no side effects); (3) `techName = job.assigned_techs?.[0]?.name || null`, `companyName = (await companyQueries.getById(companyId))?.name || null`; (4) `proxyE164 = await resolveCompanyProxyE164(companyId)`; null → **422 NO_PROXY** (no side effects); (5) build `body` from the EXACT OW-R5 template (§3.1) — lead-in `` `Your technician ${techName} ` `` when a name exists else `` `Your technician ` `` (word "technician" stays, name omitted → no "your technician your technician"); `{company}` = companyName or literal `your service team`; `{eta}` = chosen integer; first tech only; (6) `conv = await conversationsService.getOrCreateConversation(customerE164, proxyE164, companyId)` + `await conversationsService.sendMessage(conv.id, { body, author:'agent' })` — throw → classify wallet (`code/httpStatus`→`WALLET_BLOCKED`, passthrough 402/403) vs generic (`SMS_FAILED`, 502/500); **status NOT changed**; (7) on send success → `await jobsService.updateBlancStatus(id, 'On the way', companyId)`; throws → catch → `200 { ok:true, warning:'status_not_advanced', conversation_id, eta_minutes }` (NO SMS rollback); succeeds → `200 { ok:true, status:'On the way', conversation_id, eta_minutes }`.
+  - **`resolveCompanyProxyE164`** order (§4.5): (1) MRU `SELECT proxy_e164 FROM sms_conversations WHERE proxy_e164 IS NOT NULL AND company_id=$1 ORDER BY last_message_at DESC LIMIT 1`; (2) fallback `process.env.SOFTPHONE_CALLER_ID`; both null → null (route → 422 NO_PROXY). No live Twilio `incomingPhoneNumbers.list` on the hot path.
+
+**Файлы, которые трогать нельзя:**
+- `services/conversationsService.js`, `services/routeDistanceService.js`, `db/companyQueries.js` — reused UNCHANGED (except the optional `resolveCompanyProxyE164` export if that home is chosen).
+- `walletService` / the wallet gate inside `sendMessage` — single enforcement point; do NOT add a second wallet check (Protected).
+- `src/server.js` — jobs router already mounted; NO new mount. Do not touch `OUTBOUND_MAP`/ZB.
+
+**Покрывает AC:** AC-2 (`messages.send` 403), AC-3/AC-4 (estimate ETA / graceful unavailable), AC-6 (SMS via `conversationsService`, outbound to timeline), AC-7 (SMS-first ordering; best-effort status; `status_not_advanced` warning; no rollback; SMS-fail → status unchanged), AC-8 (NO_PHONE before send; `__NOOP__`-safe idempotency server-side), AC-9 (exact SMS template incl. tech/company fallbacks), AC-12 (company_id from `req.companyFilter`; server-derived phone/proxy; cross-tenant→404). Scenarios SC-01..06; edges E1–E16.
+
+**Ожидаемый результат:** Both endpoints respond per §4 contracts; SQL filters by company_id and is isolated between companies; cross-tenant/unknown id → 404; missing `messages.send` → 403; estimate never 5xx on NO_KEY/no-address (returns null/unavailable); notify enforces SMS-before-status with the exact best-effort/warning semantics; proxy resolved server-side (MRU→env→422).
+
+**Зависимости:** after TASK-ONWAY-1 (the `On the way` status/transition must exist before `updateBlancStatus(id,'On the way')` is valid).
+
+**Статус:** pending
+
+### TASK-ONWAY-3: Backend tests — `tests/jobsEta.test.js` (P0)
+
+**Цель:** Cover both endpoints + the fallback-map FSM units + the extracted SCXML-transform idempotency unit, all with mocked services (no live DB/Twilio/Google).
+
+**Файлы, которые можно менять:**
+- `tests/jobsEta.test.js` (NEW). Build a bare `express()` app (`express.json()` + a middleware setting `req.user`, `req.authz.permissions`, `req.companyFilter.company_id = COMPANY`, and **poisoning** `req.companyId = 'LEGACY-DO-NOT-USE'`), `app.use('/', jobsRouter)`, drive with `supertest`. Mock `jobsService` (`getJobById`, `updateBlancStatus`), `conversationsService` (`getOrCreateConversation`, `sendMessage`), `companyQueries` (`getById`), `routeDistanceService` (`computePair` — note: returns `{status:'failed',errorCode}`, does NOT throw), and the proxy surface (`db/connection` `query` MRU vs `conversationsService` export — whichever TASK-ONWAY-2 shipped). Stub unrelated jobs-router imports (`zenbookerClient`, `noteAttachmentsService`, `eventService`, `stripePaymentsService`) per `jobsCreate.test.js`.
+  - **Estimate:** TC-EST-001..010 (403 gate; 404 cross-tenant w/ COMPANY assertion; happy `eta_minutes:23` + `computePair(origin,dest,'driving')`; no-origin→null + `computePair` not called; no-dest→null; failed/NO_KEY→null non-error incl. OVER_QUERY_LIMIT; null durationMinutes→null; malformed-body→400; `company_id` only from `req.companyFilter`).
+  - **Notify:** TC-NOT-001..015 (403; 404; happy EXACT body `"Hi! Your technician Mike from ABC Homes is on the way and should arrive in about 25 minutes."` + `author:'agent'` + `updateBlancStatus(5,'On the way',COMPANY)` + **order assertion sendMessage before updateBlancStatus** via `mock.invocationCallOrder`; NO_PHONE 422 no side effects; NO_PROXY 422; env-fallback proceeds; WALLET_BLOCKED passthrough, status unchanged, no 2nd wallet check; SMS_FAILED, status unchanged; status-throws-after-send → `{ok:true,warning:'status_not_advanced'}` no rollback; multi-tech uses first; no-tech lead-in; company-null→`your service team`; invalid eta parametric→400 `invalid_eta` + boundary 1/600 pass; tenant isolation on all calls; already-On-the-way `__NOOP__`-safe).
+  - **FSM fallback units (no DB):** TC-FSM-001 (`BLANC_STATUSES` includes `'On the way'`; `ALLOWED_TRANSITIONS['Submitted']` and `['Rescheduled']` include `'On the way'`), TC-FSM-002 (`ALLOWED_TRANSITIONS['On the way'] === ['Visit completed','Canceled']`; deep-compare the prior map minus additions — nothing dropped; `OUTBOUND_MAP` untouched).
+  - **Extracted-transform unit:** feed sample job SCXML through the pure helper from TASK-ONWAY-1 → asserts the `On_the_way` state + both inbound `TO_ON_THE_WAY` transitions are injected, and **idempotency** (re-running / already-present input is a no-op via the `NOT LIKE`/equality guard).
+
+**Файлы, которые трогать нельзя:** production source (tests mock at module boundaries only).
+
+**Покрывает AC:** AC-2, AC-3, AC-4, AC-6, AC-7, AC-8, AC-9, AC-10, AC-12 (automated slice); SC-01..06.
+
+**Ожидаемый результат:** Run via `npx jest --runTestsByPath tests/jobsEta.test.js --testPathIgnorePatterns "/node_modules/"` — **green**. (The repo's `package.json` `testPathIgnorePatterns` includes `/\.claude/worktrees/`, so the worktree path is otherwise ignored — the override flag is REQUIRED.) Asserts company_id always sourced from `req.companyFilter` (never `'OTHER'`/`'LEGACY-DO-NOT-USE'`), SMS-before-status order, and the exact rendered body.
+
+**Зависимости:** after TASK-ONWAY-1 (FSM mirror + transform helper) and TASK-ONWAY-2 (routes + proxy resolver to mock against).
+
+**Статус:** pending
+
+### TASK-ONWAY-4: Frontend — OnTheWayModal + primary CTA + jobsApi (P1)
+
+**Цель:** Ship the modal, the gated primary CTA, and the two API methods.
+
+**Файлы, которые можно менять:**
+- `frontend/src/components/jobs/OnTheWayModal.tsx` (NEW) — Shadcn `Dialog` mirroring `components/transactions/RecordPaymentDialog.tsx` (`Dialog open onOpenChange` + `DialogContent variant="panel"` + `DialogPanelHeader/DialogBody/DialogPanelFooter/DialogTitle/DialogDescription`). Props `{ open, onOpenChange, job: LocalJob, onNotified:(id:number)=>void }`. On open: ONE `navigator.geolocation.getCurrentPosition(success, error, { timeout:8000, enableHighAccuracy:false, maximumAge:60000 })` (no `watchPosition`/map). State ladder: (a) "Finding your location…" spinner w/ tiles visible underneath; (b) fix + job has origin/dest + `estimateEta` returns `eta_minutes!=null` → highlighted pre-selected **"Google ETA · ~{N} min"** row; (c) denied/unavailable/timeout/no-`getCurrentPosition`/`estimateEta`→null → muted **"ETA unavailable — location is off."** + hint **"Allow location access to get a live travel-time estimate, or pick a time below."**, NO Google row, nothing pre-selected. Tiles **10/15/20/30/45/60** + **"Set custom time"** in all states; custom = integer **1–600** (hint **"Enter 1–600 minutes."** out of range; cannot be active selection when invalid). Exactly one active selection across {Google | tile | custom}. **"Notify client"** disabled until a value chosen AND while in-flight (label **"Sending…"**, single submission, no auto-retry on timeout) → `jobsApi.notifyOnTheWay(job.id,{eta_minutes})`. Success `{ok:true}` → success toast **"Customer notified — you're marked On the way."** → close → `onNotified(job.id)`; `{ok:true,warning:'status_not_advanced'}` → toast **"SMS sent, but the job status didn't update. You can change it manually."** → still close+refresh; errors keep modal open + re-enable button with the §3/§5.4 toast copy (NO_PHONE/NO_PROXY/WALLET_BLOCKED/SMS_FAILED). All copy EXACT per spec §3, English-only.
+- `frontend/src/components/jobs/JobStatusTags.tsx` (EDIT, JobOpsSection — NOT the dead `JobActionBar.tsx` stub) — add the **"On the way"** primary CTA using the SAME full-width orange-gradient slot as "Start Job"/"Complete Job" (`minHeight:40, borderRadius:12, linear-gradient(180deg,#f5874a,#e06020)`, white text, box-shadow). Render ONLY when `job.blanc_status ∈ {Submitted, Rescheduled}` AND user has `messages.send` (hide otherwise). Clicking opens `OnTheWayModal` (not the bare `ActionsBlock` transition). Thread `job` + `onNotified`/`afterMutation` (from `JobDetailPanel`/`useJobDetail`).
+- `frontend/src/services/jobsApi.ts` (EDIT) — two methods on the existing client via `jobsRequest<T>()` + `JOBS_BASE`: `estimateEta(id, { origin }): Promise<{ eta_minutes:number|null; status:string }>` → `POST ${JOBS_BASE}/${id}/eta/estimate`; `notifyOnTheWay(id, { eta_minutes }): Promise<{ ok:boolean; status?:string; warning?:string; conversation_id?:string; eta_minutes?:number }>` → `POST ${JOBS_BASE}/${id}/eta/notify`. No `LocalJob` type changes beyond these signatures.
+
+**Файлы, которые трогать нельзя:**
+- `frontend/src/lib/authedFetch.ts`, `frontend/src/hooks/useRealtimeEvents.ts` (Protected shared infra).
+- `JobActionBar.tsx` (dead `export {}` stub — do not use).
+- No new SSE event — reuse the existing `job.status_changed` + conversation/timeline write; refresh via existing `useJobDetail.afterMutation`.
+
+**Покрывает AC:** AC-1 (CTA gated on `{Submitted,Rescheduled}`, hidden for terminal/others), AC-2 (CTA hidden without `messages.send`), AC-3/AC-4 (single geolocation; ETA pre-select vs graceful unavailable), AC-5 (one-of {Google|tile|custom}, custom 1–600), AC-6/AC-7 (Notify→SMS, status flips, warning surfaced), AC-8 (disabled until chosen + in-flight, no double-send), AC-11 (badge renders). Manual TC-FE-001..011.
+
+**Ожидаемый результат:** On a Submitted/Rescheduled job with `messages.send`, the orange CTA opens the modal; geolocation→ETA or graceful fallback; choosing a value + Notify sends the SMS (visible in the customer timeline) and flips the card to **On the way** (sky/cyan badge), CTA no longer primary; error/warning toasts map to the exact copy.
+
+**Зависимости:** after TASK-ONWAY-2 (endpoints must exist to call). May proceed in parallel with TASK-ONWAY-3.
+
+**Статус:** pending
+
+### TASK-ONWAY-5: Verification gate (P0)
+
+**Цель:** Prove the build and backend tests are green and the manual FE checklist passes.
+
+**Файлы, которые можно менять:** none (verification only; minor type/lint fixes in the ONWAY files above if the build surfaces them).
+
+**Ожидаемый результат:**
+- From `frontend/`: `npm run build` (`tsc -b` + Vite) **green** — no type/lint errors (prod Docker is stricter, `noUnusedLocals`); covers `OnTheWayModal.tsx`, the two `jobsApi.ts` methods, and the `jobHelpers.tsx` status+color additions (TC-FE-012).
+- Backend: `npx jest --runTestsByPath tests/jobsEta.test.js --testPathIgnorePatterns "/node_modules/"` **green** (TASK-ONWAY-3); broader jest suite unbroken.
+- Manual FE checklist **TC-FE-001..012** noted (CTA gating/permission, single geolocation, ETA-computed vs unavailable states, tiles 10/15/20/30/45/60, custom 1–600, single-select, Notify disabled-until-chosen + in-flight, success/warning/error toasts, badge color) — verify on a mobile PWA viewport for geolocation items.
+
+**Зависимости:** after TASK-ONWAY-1, TASK-ONWAY-2, TASK-ONWAY-3, TASK-ONWAY-4.
+
+**Статус:** pending
+
+---
+
+**Order:** TASK-ONWAY-1 → TASK-ONWAY-2 → TASK-ONWAY-3 (after 1+2) → TASK-ONWAY-4 (after 2) → TASK-ONWAY-5 (gates last).
+TASK-ONWAY-3 and TASK-ONWAY-4 are independent and may proceed in parallel once their deps land. PT-1 (status) MUST precede PT-2/PT-3 (status must exist); PT-2 MUST precede PT-3 (routes to mock); PT-4 after PT-2.

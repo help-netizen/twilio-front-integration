@@ -30,17 +30,19 @@ const BLANC_STATUSES = [
     'Job is Done',
     'Rescheduled',
     'Canceled',
+    'On the way',
 ];
 
 /** Manual transitions allowed in Blanc UI (§7) */
 const ALLOWED_TRANSITIONS = {
-    'Submitted': ['Follow Up with Client', 'Waiting for parts', 'Canceled'],
+    'Submitted': ['Follow Up with Client', 'Waiting for parts', 'Canceled', 'On the way'],
     'Waiting for parts': ['Submitted', 'Follow Up with Client', 'Canceled'],
     'Follow Up with Client': ['Waiting for parts', 'Submitted', 'Canceled'],
     'Visit completed': ['Follow Up with Client', 'Job is Done', 'Canceled'],
     'Job is Done': ['Canceled'],
-    'Rescheduled': ['Submitted', 'Canceled'],
+    'Rescheduled': ['Submitted', 'Canceled', 'On the way'],
     'Canceled': [],  // terminal
+    'On the way': ['Visit completed', 'Canceled'],
 };
 
 /**

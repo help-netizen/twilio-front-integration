@@ -10,6 +10,7 @@ export const BLANC_STATUSES = [
     'Job is Done',
     'Rescheduled',
     'Canceled',
+    'On the way',
 ];
 
 export const BLANC_STATUS_COLORS: Record<string, string> = {
@@ -20,6 +21,7 @@ export const BLANC_STATUS_COLORS: Record<string, string> = {
     'Job is Done': '#6B7280',
     'Rescheduled': '#F97316',
     'Canceled': '#EF4444',
+    'On the way': '#0EA5E9',
 };
 
 export const ZB_STATUS_COLORS: Record<string, string> = {

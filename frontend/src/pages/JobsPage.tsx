@@ -125,6 +125,7 @@ export function JobsPage() {
                         allTags={page.allTags}
                         onTagsChange={page.handleTagsChange}
                         onJobUpdated={page.handleJobUpdated}
+                        onNotified={page.afterMutation}
                         onCopy={() => page.selectedJob && setCopyFrom(buildCopyJobData(page.selectedJob))}
                     />
                 )}

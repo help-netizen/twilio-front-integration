@@ -4,6 +4,54 @@
 
 ---
 
+## 2026-06-26 — ONWAY-001: «On the way» / ETA-уведомление клиента
+
+Техник, выезжая на работу, жмёт главную CTA-кнопку **«On the way»** в карточке
+работы → открывается окно с расчётным ETA и пресетами → по «Notify client»
+клиенту уходит SMS, работа переходит в статус **«On the way»**, а сообщение
+появляется в таймлайне переписки с клиентом. Прогон через оркестрацию
+(Product → Architect → Spec → Test-cases → Planner → Implement → Test → Review).
+
+### Новый статус работы «On the way» (FSM)
+- Миграция `127_job_fsm_on_the_way.sql` — идемпотентно (по образцу `095`) внедряет
+  состояние `On_the_way` в активную published SCXML-машину каждой компании:
+  переходы **в** статус из Submitted/Rescheduled, **из** статуса → Visit completed/
+  Canceled. Зеркала: `fsm/job.scxml`, seed `073`, hardcoded fallback
+  `BLANC_STATUSES`/`ALLOWED_TRANSITIONS` в `jobsService.js`, цвет `#0EA5E9`.
+- Чистый хелпер `fsm/onTheWayTransform.js` (`injectOnTheWay`) — DB-free путь для
+  тестов; inline-SQL миграции byte-identical его выводу. Только additive (FSM-001
+  не ломается). Без ZB-маппинга для нового статуса.
+
+### Бэкенд (jobs router, requirePermission('messages.send'), company_id из req.companyFilter)
+- `POST /api/jobs/:id/eta/estimate { origin:{lat,lng} }` → `{ eta_minutes|null }`
+  (pure-read; `routeDistanceService.computePair`; null если нет origin/адреса/ключа).
+- `POST /api/jobs/:id/eta/notify { eta_minutes }` → резолв телефона клиента
+  (422 NO_PHONE) + sending-DID (MRU `sms_conversations` → `SOFTPHONE_CALLER_ID`,
+  422 NO_PROXY) → `conversationsService.sendMessage` (wallet-gate внутри, пишется в
+  таймлайн как outbound) → затем `updateBlancStatus('On the way')`; если статус не
+  обновился после отправки → `{ ok:true, warning:'status_not_advanced' }` (SMS не
+  откатываем). SMS: `Hi! Your technician {tech} from {company} is on the way and
+  should arrive in about {eta} minutes.`
+
+### Фронтенд
+- `OnTheWayModal.tsx` — одна геолокация (`getCurrentPosition`, таймаут 8с); если
+  координаты есть → показывает «Google ETA · ~N min», иначе «ETA unavailable —
+  location is off». Плитки **10/15/20/30/45/60** + «Set custom time» (1–600);
+  ровно один выбор; «Notify client» заблокирован до выбора и во время отправки
+  (без дабл-сенда); коды ошибок → дружелюбные тосты.
+- Главная CTA **«On the way»** в `JobStatusTags.tsx` показывается только для
+  статусов Submitted/Rescheduled и при праве `messages.send`; после успеха —
+  авто-рефреш карточки (`onNotified`→`afterMutation`).
+
+Тесты: `tests/jobsEta.test.js` — **45/45** (estimate/notify контракты, NO_PHONE/
+NO_PROXY/wallet/SMS-fail/status-after-send, мультитех, изоляция company_id, FSM
+additive + идемпотентность transform). `tsc -b` green. Docs: requirements
+(OW-R1..R7), architecture, спека `specs/ONWAY-001.md`, тест-кейсы, tasks.
+
+⚠️ Деплой этой фичи требует применить миграцию **127** на проде (FSM-машины).
+
+---
+
 ## 2026-06-26 — SLOT-ENGINE-001: UX-полировка пикера рекомендаций (Albusto)
 
 Закрыт набор дефектов дизайн-критики поверх уже слитой фичи рекомендаций слотов

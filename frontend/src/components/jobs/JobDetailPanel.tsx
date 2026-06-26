@@ -35,6 +35,8 @@ export interface JobDetailPanelProps {
     allTags: JobTag[];
     onTagsChange: (jobId: number, tagIds: number[]) => void;
     onJobUpdated?: (updatedJob: LocalJob) => void;
+    /** Refresh the job after the "On the way" notification (ONWAY-001). */
+    onNotified?: (id: number) => void;
     onCopy?: () => void;
 }
 
@@ -44,7 +46,7 @@ export function JobDetailPanel({
     job, contactInfo, detailLoading,
     onClose: _onClose, onBlancStatusChange,
     onMarkEnroute, onMarkInProgress, onMarkComplete, onCancel,
-    navigate, allTags, onTagsChange, onJobUpdated, onCopy,
+    navigate, allTags, onTagsChange, onJobUpdated, onNotified, onCopy,
 }: JobDetailPanelProps) {
     const [rightTab, setRightTab] = useState<'notes' | 'financials'>('notes');
     const [cancelOpen, setCancelOpen] = useState(false);
@@ -81,7 +83,7 @@ export function JobDetailPanel({
         if (!open) setCancelReason('');
     };
 
-    const opsProps = { job, allTags, onTagsChange, onMarkEnroute, onMarkInProgress, onMarkComplete, onCancel: requestCancel };
+    const opsProps = { job, allTags, onTagsChange, onMarkEnroute, onMarkInProgress, onMarkComplete, onCancel: requestCancel, onNotified };
 
     return (
         <div className="flex flex-col md:flex-row h-full overflow-hidden">

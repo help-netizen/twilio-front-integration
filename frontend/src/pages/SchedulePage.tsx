@@ -128,7 +128,7 @@ export function SchedulePage() {
             case 'week':
                 return <WeekView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
             case 'day':
-                return <DayView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} />;
+                return <DayView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectItem={handleSelectItem} onCopy={handleCopyJob} onReschedule={canDispatch ? schedule.handleReschedule : undefined} onCreateFromSlot={canDispatch ? handleCreateFromSlot : undefined} routeByPair={schedule.routeByPair} />;
             case 'month':
                 return <MonthView currentDate={schedule.currentDate} items={schedule.scheduledItems} settings={schedule.settings} onSelectDay={handleMonthDaySelect} onSelectItem={handleSelectItem} />;
             case 'timeline':
@@ -241,6 +241,7 @@ export function SchedulePage() {
                         allTags={jobDetail.allTags}
                         onTagsChange={jobDetail.handleTagsChange}
                         onJobUpdated={jobDetail.handleJobUpdated}
+                        onNotified={jobDetail.afterMutation}
                     />
                 )}
             </FloatingDetailPanel>

@@ -127,3 +127,17 @@ When the slot-engine marketplace app is installed, the new-job slot picker (`Cus
 **Explanation copy.** The card sub-text is a terse English reason composed by the engine's `explain(m)` from candidate metrics (e.g. "Tech already working nearby · little extra driving · comfortable schedule gap"), with the fallback "Good fit for this route". It contains no date/time/technician (the card already renders those) and no machine tokens — `snake_case` reason codes never leak to the UI. An "Approx. address — confirm" amber flag appears only when `requires_dispatch_confirmation` is set.
 
 **Empty state.** When the app is enabled and the engine is reachable but returns zero recommendations, the panel shows "No nearby openings — try another day" rather than vanishing. The existing graceful degradation is preserved: when the app is disabled or the engine is unreachable, the panel stays absent and the modal is unchanged. The picker is new-job only; reschedule/edit mode does not render the panel or temperature bar.
+
+---
+
+## On-the-way ETA notification (ONWAY-001)
+
+From a Job card in a pre-visit status (`Submitted` or `Rescheduled`), a technician or dispatcher with `messages.send` taps a primary **"On the way"** CTA. A modal does one device geolocation, optionally computes a Google travel-time ETA (device coords → job service address, via `routeDistanceService`), and offers preset minute tiles (10/15/20/30/45/60) plus a custom 1–600 entry. On **"Notify client"** Albusto sends an outbound SMS to the customer ("Hi! Your technician {tech} from {company} is on the way and should arrive in about {eta} minutes.") and **then** advances the job.
+
+**New Job status — `On the way`.** A new non-terminal Job status (color `#0EA5E9`) joins the existing set (`Submitted`, `Waiting for parts`, `Follow Up with Client`, `Visit completed`, `Job is Done`, `Rescheduled`, `Canceled`). It is reachable **into** from `Submitted`/`Rescheduled` and **out** to `Visit completed`/`Canceled`. It has **no Zenbooker outbound mapping** and is orthogonal to the Zenbooker `en-route` substatus (`markEnroute`). The Job FSM is dual-sourced (hardcoded fallback in `jobsService.js` + per-company published SCXML); the status is injected idempotently into every company's active machine by migration `127_job_fsm_on_the_way.sql`, with mirrors in `fsm/job.scxml`, the `073` seed, and the fallback maps. Applying migration 127 on prod is a deploy prerequisite.
+
+**Endpoints** (on the existing jobs router, both `requirePermission('messages.send')`, `company_id` from `req.companyFilter` only):
+- `POST /api/jobs/:id/eta/estimate { origin:{lat,lng} }` → `{ eta_minutes|null }` — pure read; `null` when origin/address/Google key is missing.
+- `POST /api/jobs/:id/eta/notify { eta_minutes }` → resolves customer phone (422 `NO_PHONE`) and a sending DID (MRU `sms_conversations` → `SOFTPHONE_CALLER_ID`, 422 `NO_PROXY`), then sends via `conversationsService.sendMessage` (wallet-gated; recorded to the customer timeline as outbound), then sets status. Ordering is **SMS first, status best-effort**: a failed/wallet-blocked SMS leaves status unchanged; a status failure after a sent SMS returns `{ ok:true, warning:'status_not_advanced' }` without rolling back the SMS.
+
+The outbound ETA SMS reuses the canonical Conversations send path (the single wallet cost-enforcement point) and the timeline write; no new SSE event is added (the standard `job.status_changed` and conversation write drive existing real-time refresh).
