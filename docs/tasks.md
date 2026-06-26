@@ -3251,3 +3251,46 @@ TASK-ONWAY-3 and TASK-ONWAY-4 are independent and may proceed in parallel once t
 
 **Order:** TASK-RS-1 → { TASK-RS-2, TASK-RS-3 } (both after RS-1; independent of each other) → TASK-RS-4 (after RS-1+RS-2+RS-3) → TASK-RS-5 (after RS-3) → TASK-RS-6 (gates last).
 RS-2 (slotEngineService wiring) and RS-3 (routes) both depend only on RS-1 and may proceed in parallel. RS-5 (frontend) needs RS-3's endpoints. RS-4 (backend tests) needs the wired service + routes; RS-6 gates the whole feature (build + both jest files + manual checklist).
+
+---
+
+## REC-SETTINGS-002 — tasks (2026-06-26)
+
+> **STATUS: ✅ DONE (2026-06-26)** — TASK-RS2-1 implemented, tested (81 passing), reviewer-**APPROVED** (formula cross-checked against engine source), and **empirically verified on the live prod engine** (D=10 coverage extends to ~10mi; Newton centroid 0→24 feasible). Not yet committed/deployed.
+
+> Follow-up to REC-SETTINGS-001. Make `max_distance_miles` the effective empty-day coverage radius by also deriving the engine travel caps from it inside `buildConfigOverride`. **No engine change/redeploy, no UI change, no DB/migration.**
+> Spec `docs/specs/REC-SETTINGS-002.md` · Requirements `docs/requirements.md` → REC-SETTINGS-002 (AC-1..AC-6) · Architecture `docs/architecture.md` → "REC-SETTINGS-002 — design (2026-06-26)" · Test cases `docs/test-cases/REC-SETTINGS-002.md` (TC-RS2-001..014).
+
+### TASK-RS2-1: Extend `buildConfigOverride` with derived empty-day travel caps + unit tests (P0)
+
+**Что сделать:**
+- In `backend/src/services/slotEngineSettingsService.js`, add module constants mirroring `slot-engine/src/config.js` `DEFAULT_CONFIG.travel` (documented literals — do NOT import `slot-engine/`):
+  `ENGINE_SPEED_MPH=25`, `ENGINE_TRAVEL_MULT=1.10`, `ENGINE_OP_BUFFER_MIN=10`, `ENGINE_EDGE_DEFAULT=45`, `ENGINE_EXTRA_DEFAULT=35`, `TRAVEL_HEADROOM=1.10`, `K=(60/ENGINE_SPEED_MPH)*ENGINE_TRAVEL_MULT` (=2.64).
+- Extend `buildConfigOverride(settings)` to also return a `travel` block keyed off `D = settings.max_distance_miles`:
+  - `edge  = K*D + ENGINE_OP_BUFFER_MIN` ; `extra = 2*K*D + ENGINE_OP_BUFFER_MIN`
+  - `max_edge_travel_minutes  = Math.max(ENGINE_EDGE_DEFAULT,  Math.ceil(edge  * TRAVEL_HEADROOM))`
+  - `max_extra_travel_minutes = Math.max(ENGINE_EXTRA_DEFAULT, Math.ceil(extra * TRAVEL_HEADROOM))`
+  - Emit ONLY those two `travel.*` keys (no `model`/speed/multiplier/buffer/`max_edge_distance_miles` — they stay at engine defaults via deep-merge).
+- Leave the `geography`/`overlap`/`feasibility`/`planning`/`ranking`/`workload` blocks byte-for-byte unchanged from REC-SETTINGS-001.
+- In `tests/slotEngineSettings.test.js`: add TC-RS2-001..014 (travel block present; exact caps for D=1/5/10/25/100 = 45/35, 45/41, 45/70, 84/157, 302/592; edge cap ≥45 and extra cap ≥35 across the range; monotonic non-decreasing; assert-against-literals formula fidelity; `extra(5)≈35` sanity; the 2 fixed values + all RS-001 mappings still correct; `travel.max_edge_distance_miles`/`model` NOT emitted). **Supersede** the two RS-001 assertions that expected 6 top-level keys / `o.travel === undefined` (update to 7 keys incl. `travel`).
+
+**Покрывает AC:** AC-1 (travel caps emitted from radius), AC-2 (job at radius feasible / geo binds — via the formula + headroom), AC-3 (never more restrictive: floors 45/35, monotonic), AC-4 (geography + other mappings + fixed values unchanged), AC-5 (defaults still safe — 10 mi → ~10 mi), AC-6 (no engine/UI change). Test cases TC-RS2-001..014.
+
+**files-allowed:**
+- `backend/src/services/slotEngineSettingsService.js` (extend `buildConfigOverride` + add `ENGINE_*` constants)
+- `tests/slotEngineSettings.test.js` (add TC-RS2-001..014; update the 2 superseded RS-001 assertions)
+
+**files-forbidden:**
+- `slot-engine/**` (no engine change, no redeploy — constants are mirrored, not imported)
+- `backend/src/routes/**`, `src/server.js` (no route/mount change)
+- `frontend/**` (no UI change)
+- `backend/db/**`, `backend/src/db/slotEngineSettingsQueries.js`, any migration (no schema change)
+- `backend/src/services/slotEngineService.js` (the consumer is unchanged — it already forwards `buildConfigOverride`'s output verbatim)
+
+**Acceptance / verify:** `npx jest tests/slotEngineSettings.test.js` green (RS-001 + RS-002 cases all pass). No other file changed.
+
+**Статус:** pending
+
+---
+
+**Order:** TASK-RS2-1 is the single self-contained task (one function + its unit tests). It depends on REC-SETTINGS-001 being merged (it extends the already-shipped `buildConfigOverride`). No engine, route, frontend, or DB work — so no downstream tasks.

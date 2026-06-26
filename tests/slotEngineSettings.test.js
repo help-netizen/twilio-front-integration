@@ -70,7 +70,7 @@ function configRow(config) {
 // ─── 1. buildConfigOverride — engine key mapping ─────────────────────────────────
 
 describe('buildConfigOverride', () => {
-    it('TC-RS-001: DEFAULTS → exact override', () => {
+    it('TC-RS-001: DEFAULTS → exact override (RS-002: now incl. travel block)', () => {
         expect(svc.buildConfigOverride(DEFAULTS)).toEqual({
             geography: {
                 max_distance_from_existing_job_miles: 10,
@@ -82,6 +82,7 @@ describe('buildConfigOverride', () => {
             planning: { horizon_days: 3 },
             ranking: { top_n: 3 },
             workload: { max_day_utilization: 0.95 },
+            travel: { max_edge_travel_minutes: 45, max_extra_travel_minutes: 70 }, // RS-002: D=10 → 45/70
         });
     });
 
@@ -121,19 +122,160 @@ describe('buildConfigOverride', () => {
         expect(o.workload.max_day_utilization).toBe(0.95);
     });
 
-    it('TC-RS-006: output carries no extra/exposed keys', () => {
+    it('TC-RS-006: output carries no extra/exposed keys (superseded by RS-002: 7 keys incl. travel)', () => {
         const o = svc.buildConfigOverride(DEFAULTS);
+        // RS-002: top-level set is now 7 keys (travel added). Superseding the old RS-001
+        // 6-key list and the `expect(o.travel).toBeUndefined()` assertion.
         expect(Object.keys(o).sort()).toEqual(
-            ['feasibility', 'geography', 'overlap', 'planning', 'ranking', 'workload']
+            ['feasibility', 'geography', 'overlap', 'planning', 'ranking', 'travel', 'workload']
         );
         expect(Object.keys(o.geography).sort()).toEqual([
             'allow_empty_day_candidates',
             'max_distance_from_base_if_empty_day_miles',
             'max_distance_from_existing_job_miles',
         ]);
-        expect(o.travel).toBeUndefined();
+        expect(o.travel).toBeDefined();
         expect(o.scoring).toBeUndefined();
         expect(o.candidate_timeframes).toBeUndefined();
+    });
+});
+
+// ─── 1b. buildConfigOverride — REC-SETTINGS-002 derived empty-day travel caps ─────
+// Reference: K=(60/25)*1.10=2.64; edge(D)=2.64·D+10; extra(D)=5.28·D+10;
+//   max_edge=max(45, ceil(edge(D)*1.10));  max_extra=max(35, ceil(extra(D)*1.10)).
+// Expected (hand-computed literals, NOT a re-implementation of the formula):
+//   D=1 →45/35 · D=5 →45/41 · D=10 →45/70 · D=25 →84/157 · D=100 →302/592.
+
+describe('buildConfigOverride — REC-SETTINGS-002 travel caps', () => {
+    const withD = (D) => svc.buildConfigOverride({ ...DEFAULTS, max_distance_miles: D });
+
+    it('TC-RS2-001: travel block present and well-formed (exactly 2 integer keys)', () => {
+        const o = svc.buildConfigOverride(DEFAULTS);
+        expect(typeof o.travel).toBe('object');
+        expect(Object.keys(o.travel).sort()).toEqual(
+            ['max_edge_travel_minutes', 'max_extra_travel_minutes']
+        );
+        expect(Number.isInteger(o.travel.max_edge_travel_minutes)).toBe(true);
+        expect(Number.isInteger(o.travel.max_extra_travel_minutes)).toBe(true);
+    });
+
+    it('TC-RS2-002: 7 top-level keys including travel (supersedes RS-001 TC-RS-006)', () => {
+        const o = svc.buildConfigOverride(DEFAULTS);
+        expect(Object.keys(o).sort()).toEqual(
+            ['feasibility', 'geography', 'overlap', 'planning', 'ranking', 'travel', 'workload']
+        );
+    });
+
+    it('TC-RS2-003: DEFAULTS (D=10) → exact caps 45 / 70', () => {
+        const o = svc.buildConfigOverride(DEFAULTS);
+        expect(o.travel.max_edge_travel_minutes).toBe(45);
+        expect(o.travel.max_extra_travel_minutes).toBe(70);
+    });
+
+    it('TC-RS2-004: D=1 → caps floor to engine defaults 45 / 35', () => {
+        const o = withD(1);
+        expect(o.travel.max_edge_travel_minutes).toBe(45);
+        expect(o.travel.max_extra_travel_minutes).toBe(35);
+    });
+
+    it('TC-RS2-005: D=25 → exact caps 84 / 157', () => {
+        const o = withD(25);
+        expect(o.travel.max_edge_travel_minutes).toBe(84);
+        expect(o.travel.max_extra_travel_minutes).toBe(157);
+    });
+
+    it('TC-RS2-006: D=100 → exact caps 302 / 592', () => {
+        const o = withD(100);
+        expect(o.travel.max_edge_travel_minutes).toBe(302);
+        expect(o.travel.max_extra_travel_minutes).toBe(592);
+    });
+
+    it('TC-RS2-007: edge cap never < 45 across the full range', () => {
+        for (const D of [1, 2, 5, 10, 13, 14, 25, 50, 100]) {
+            expect(withD(D).travel.max_edge_travel_minutes).toBeGreaterThanOrEqual(45);
+        }
+    });
+
+    it('TC-RS2-008: extra cap never < 35 across the full range', () => {
+        for (const D of [1, 2, 3, 4, 5, 10, 25, 100]) {
+            expect(withD(D).travel.max_extra_travel_minutes).toBeGreaterThanOrEqual(35);
+        }
+    });
+
+    it('TC-RS2-009: caps are monotonic non-decreasing in D', () => {
+        const Ds = [1, 5, 10, 25, 50, 100];
+        const edges = Ds.map((D) => withD(D).travel.max_edge_travel_minutes);
+        const extras = Ds.map((D) => withD(D).travel.max_extra_travel_minutes);
+        for (let i = 0; i + 1 < Ds.length; i++) {
+            expect(edges[i]).toBeLessThanOrEqual(edges[i + 1]);
+            expect(extras[i]).toBeLessThanOrEqual(extras[i + 1]);
+        }
+        // extra strictly increasing; edge non-decreasing (floored at 45 for small D).
+        expect(extras).toEqual([35, 41, 70, 157, 302, 592]);
+        expect(edges).toEqual([45, 45, 45, 84, 157, 302]);
+    });
+
+    it('TC-RS2-010: caps equal the closed-form formula for representative radii', () => {
+        const table = [
+            [1, 45, 35],
+            [5, 45, 41],
+            [10, 45, 70],
+            [25, 84, 157],
+            [100, 302, 592],
+        ];
+        for (const [D, expEdge, expExtra] of table) {
+            const o = withD(D);
+            expect(o.travel.max_edge_travel_minutes).toBe(expEdge);
+            expect(o.travel.max_extra_travel_minutes).toBe(expExtra);
+        }
+    });
+
+    it('TC-RS2-011: extraTravelMinutes(5) ≈ 35 — prod-data-point sanity', () => {
+        // Raw (pre-headroom, pre-floor) extra-travel at D=5 from the engine constants.
+        const extra5 = 5.28 * 5 + 10; // = 36.4
+        expect(Math.round(extra5)).toBe(36); // rounds to ~35 (the observed default cap)
+        // The load-bearing pin: solving extra(D)=35 ⇒ D=(35-10)/5.28 ≈ 4.73 mi — matches the
+        // observed empty-day cutoff of ~4.5–5 mi straight-line (catches future constant drift).
+        const solveD = (35 - 10) / 5.28;
+        expect(solveD).toBeGreaterThanOrEqual(4.5);
+        expect(solveD).toBeLessThanOrEqual(5.0);
+    });
+
+    it('TC-RS2-012: the 2 fixed values still correct and unchanged', () => {
+        for (const o of [
+            svc.buildConfigOverride(DEFAULTS),
+            svc.buildConfigOverride({
+                max_distance_miles: 1, overlap_minutes: 0, min_buffer_minutes: 0,
+                horizon_days: 1, recommendations_shown: 1,
+            }),
+        ]) {
+            expect(o.geography.allow_empty_day_candidates).toBe(true);
+            expect(o.workload.max_day_utilization).toBe(0.95);
+        }
+    });
+
+    it('TC-RS2-013: geography / overlap / feasibility / planning / ranking mappings unchanged', () => {
+        const o = svc.buildConfigOverride({
+            max_distance_miles: 25, overlap_minutes: 30, min_buffer_minutes: 45,
+            horizon_days: 7, recommendations_shown: 5,
+        });
+        expect(o.geography.max_distance_from_existing_job_miles).toBe(25);
+        expect(o.geography.max_distance_from_base_if_empty_day_miles).toBe(25);
+        expect(o.overlap.max_timeframe_overlap_minutes).toBe(30);
+        expect(o.feasibility.min_required_slack_minutes).toBe(45);
+        expect(o.planning.horizon_days).toBe(7);
+        expect(o.ranking.top_n).toBe(5);
+    });
+
+    it('TC-RS2-014: travel.max_edge_distance_miles (and other travel.* keys) NOT emitted', () => {
+        const o = withD(25);
+        expect(o.travel.max_edge_distance_miles).toBeUndefined();
+        expect(o.travel.model).toBeUndefined();
+        expect(o.travel.average_city_speed_mph).toBeUndefined();
+        expect(o.travel.operational_buffer_minutes).toBeUndefined();
+        expect(Object.keys(o.travel).sort()).toEqual(
+            ['max_edge_travel_minutes', 'max_extra_travel_minutes']
+        );
     });
 });
 

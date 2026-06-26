@@ -2324,3 +2324,79 @@ The two **fixed** values (`geography.allow_empty_day_candidates=true`, `workload
 ### Open boundary question (customer)
 
 The hardcoded empty-day base radius was **40 mi**; the new configurable **Max distance** maps to *both* `max_distance_from_existing_job_miles` and `max_distance_from_base_if_empty_day_miles` with a **default of 10 mi**. So on first run (no row) the effective empty-day radius **drops 40 → 10**, which can shrink first-run recommendations versus today. Confirm: (a) one shared 10-mi default for both radii is intended, or (b) the empty-day radius should default wider (e.g. keep 40, or a separate 6th param) to preserve current first-run breadth.
+
+---
+
+## REC-SETTINGS-002 — design (2026-06-26)
+
+Follow-up to REC-SETTINGS-001. The Max-distance setting currently maps to the engine's GEO pre-filter only; empty-day candidates that pass the geo gate are then independently rejected by the engine's **TRAVEL-FEASIBILITY** gates (left at their `DEFAULT_CONFIG` values), so effective empty-day coverage is ~5 mi regardless of the setting. Fix: also derive the travel caps from `max_distance_miles` so the geo radius binds. **The only code that changes is `buildConfigOverride` (+ its unit tests).** No engine change, no UI change, no DB/migration change.
+
+### Why travel binds today (engine trace — `slot-engine/src/engine.js`)
+
+For an **empty day** the new job is spliced into an empty route at `idx = 0`, so `prev === base` and `next === base` (engine.js ~L125–126). The relevant gates (~L132–147), all using `driveMinutes` (raw drive, **no** geo-uncertainty margin):
+- per-edge: `ePrevNew.driveMinutes` and `eNewNext.driveMinutes` vs `travel.max_edge_travel_minutes` (default **45**);
+- detour: `extraTravel = ePrevNew.driveMinutes + eNewNext.driveMinutes − ePrevNext.driveMinutes` vs `travel.max_extra_travel_minutes` (default **35**), where `ePrevNext = T(base, base)` (distance 0).
+
+The GEO empty-day gate (~L107) compares the **haversine miles** `dBase` to `max_distance_from_base_if_empty_day_miles` with **no** speed/multiplier/buffer applied — so once we lift the travel caps above what a job at the radius needs, the geo gate is the binding constraint.
+
+### Derived travel-time model (constants cited)
+
+`adjustedTravelMinutes` (`slot-engine/src/geo.js` L25–43):
+```
+driveMinutes(D) = (D / average_city_speed_mph) * 60 * travel_time_multiplier + operational_buffer_minutes
+```
+Constants from `slot-engine/src/config.js` `DEFAULT_CONFIG.travel`:
+`average_city_speed_mph = 25`, `travel_time_multiplier = 1.10`, `operational_buffer_minutes = 10`.
+
+Let `K = (60 / 25) * 1.10 = 2.64` min/mi and `BUF = 10` min. Then:
+- **edge** (base→job): `edgeDriveMinutes(D) = K·D + BUF = 2.64·D + 10`
+- **extra** (empty day, base→job→base): `ePrevNext = T(base,base)` has distance 0 ⇒ `driveMinutes = BUF`. So
+  `extraTravelMinutes(D) = 2·edgeDriveMinutes(D) − BUF = 2·K·D + BUF = 5.28·D + 10`.
+
+Sanity vs prod: `extraTravelMinutes(5) = 5.28·5 + 10 = 36.4` min ≈ the default cap **35**, and solving `5.28·D + 10 = 35` gives **D ≈ 4.74 mi** — matching the observed ~4.5–5 mi cutoff (job at base → recs; 5.4 mi → 0 feasible).
+
+### What changes in `buildConfigOverride` (single function, `slotEngineSettingsService.js`)
+
+Add module constants mirroring the engine (documented literals — backend does **not** import `slot-engine/`):
+```
+ENGINE_SPEED_MPH = 25; ENGINE_TRAVEL_MULT = 1.10; ENGINE_OP_BUFFER_MIN = 10;
+ENGINE_EDGE_DEFAULT = 45; ENGINE_EXTRA_DEFAULT = 35; TRAVEL_HEADROOM = 1.10;
+K = (60 / ENGINE_SPEED_MPH) * ENGINE_TRAVEL_MULT;   // 2.64 min/mi
+```
+Emit one **new** `travel` block keyed off `D = settings.max_distance_miles`:
+```
+edge  = K * D + ENGINE_OP_BUFFER_MIN;          // edgeDriveMinutes(D)
+extra = 2 * K * D + ENGINE_OP_BUFFER_MIN;      // extraTravelMinutes(D)
+travel: {
+  max_edge_travel_minutes:  Math.max(ENGINE_EDGE_DEFAULT,  Math.ceil(edge  * TRAVEL_HEADROOM)),
+  max_extra_travel_minutes: Math.max(ENGINE_EXTRA_DEFAULT, Math.ceil(extra * TRAVEL_HEADROOM)),
+}
+```
+The `geography` / `overlap` / `feasibility` / `planning` / `ranking` / `workload` blocks are **unchanged** from REC-SETTINGS-001. Output now has **7** top-level keys (adds `travel`).
+
+**Headroom = ×1.10 (then `Math.ceil`), with each cap floored at the engine default (edge ≥ 45, extra ≥ 35).** Rationale:
+- A *multiplicative* margin scales with the cap (a flat +N would be negligible at radius 100 and oversized at radius 1). 10% comfortably absorbs the difference between the closed-form straight-line distance and the engine's actual per-pair haversine recomputation, guaranteeing a job at exactly the radius passes both travel gates so the **geo gate binds** (AC-2).
+- Flooring at the engine defaults guarantees the override is **never more restrictive than today** (AC-3): at small radii where the formula would yield <45/<35, we keep 45/35.
+- Because `geography.max_distance_from_base_if_empty_day_miles = D` uses raw haversine (no multiplier/buffer) and the travel caps now exceed `extraTravelMinutes(D)` and `edgeDriveMinutes(D)`, the GEO gate trips first → coverage is bounded by the radius, with the engine's existing **workday / route-fit** checks (`checkFeasibility`, `workday.shift_*`, `max_day_utilization`) as the natural upper bound (binding decision #1).
+
+### Resulting caps (representative radii)
+
+| `max_distance_miles` | edge(D) | extra(D) | `max_edge_travel_minutes` | `max_extra_travel_minutes` |
+|---|---|---|---|---|
+| 1   | 12.64 | 15.28 | **45** (floored) | **35** (floored) |
+| 10  | 36.40 | 62.80 | **45** (floored) | **70** |
+| 25  | 76.00 | 142.00 | **84** | **157** |
+| 100 | 274.00 | 538.00 | **302** | **592** |
+
+(`extra` caps are strictly increasing in D: 35 < 70 < 157 < 592; edge caps non-decreasing: 45 = 45 < 84 < 302.)
+
+### Backwards-compat / protected
+
+- Saved `slot_engine_settings` rows are unaffected (no schema/migration change). No-row companies still resolve to DEFAULTS (10 mi) and now reach ~10 mi empty-day coverage instead of ~5.
+- **Untouched:** `slot-engine/` (`DEFAULT_CONFIG`, `mergeConfig`, `geo.js`, `engine.js`), all routes, `slotEngineService` consumption path (it still calls `buildConfigOverride` and forwards the result verbatim), and the entire frontend.
+
+### File-touch summary
+
+- **EDIT backend:** `backend/src/services/slotEngineSettingsService.js` — extend `buildConfigOverride` with the derived `travel` block + the mirrored engine constants.
+- **EDIT tests:** `tests/slotEngineSettings.test.js` — new `buildConfigOverride` travel-block assertions; supersede the two REC-SETTINGS-001 assertions that hard-coded "6 top-level keys / `o.travel` undefined".
+- **No** new files; **no** engine/route/frontend/migration changes.

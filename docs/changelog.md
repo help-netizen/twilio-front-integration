@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-06-26 — REC-SETTINGS-002: `max_distance_miles` now drives empty-day coverage
+
+Follow-up to REC-SETTINGS-001. **Problem (verified on prod):** `max_distance_miles` only drove the engine's GEO pre-filter, but empty-day candidates were then rejected by the engine's internal travel-feasibility caps (`travel.max_extra_travel_minutes:35` / `max_edge_travel_minutes:45`, haversine MVP @ 25 mph) — so effective coverage was only ~5 mi regardless of the setting.
+
+**Fix:** `slotEngineSettingsService.buildConfigOverride` now also emits a `travel` block scaled from `max_distance_miles` (D), so the GEO radius is the binding constraint and the technician workday is the natural ceiling (customer decision: radius = limit, no extra hard drive-time cap). Formula derived from the engine source (`slot-engine/src/geo.js` `driveMinutes=(D/25·60)·1.10+10`, `engine.js` empty-day `extra=2(K·D+10)−10`):
+- `K=2.64`, `BUF=10`; `max_edge_travel_minutes = max(45, ceil((2.64·D+10)×1.10))`; `max_extra_travel_minutes = max(35, ceil((5.28·D+10)×1.10))`.
+- Floored at the engine defaults (45/35) → never more restrictive than before. D=10 → 45/70, D=25 → 84/157, D=1 → 45/35, D=100 → 302/592.
+
+**Verified on the live prod engine:** at D=10, empty-day coverage now extends to the full ~10 mi radius (then the geo gate cuts at 11 mi) vs ~5 mi before; the Newton centroid (7 mi from nearest base) went 0 → 24 feasible candidates. D=25 → ~25 mi.
+
+**Scope:** one function (`buildConfigOverride`) + tests only. No engine change/redeploy (config_override already deep-merges `travel.*`), no UI change, no migration. Tests: `tests/slotEngineSettings.test.js` extended (TC-RS2-001..014) — 81 passing across it + `slotEngineProxy.test.js`. Reviewer APPROVED (formula cross-checked against engine source). Specs: `docs/specs/REC-SETTINGS-002.md`.
+
+**Pending:** deploy (rsync `slotEngineSettingsService.js` + rebuild app; no migration, no engine rebuild).
+
 ## 2026-06-26 — REC-SETTINGS-001: per-company configurable recommendation settings
 
 Replaces the **hardcoded** engine `config_override` in `slotEngineService` (previously `{ geography: { allow_empty_day_candidates: true, max_distance_from_base_if_empty_day_miles: 40 } }`) with **5 per-company parameters** a dispatcher edits in the UI. Defaults tightened: the empty-day base radius drops 40 → **10 mi** (one shared radius now governs both the base-distance and the nearest-existing-job checks). No engine change / redeploy — the deployed engine already honors `config_override` (deep-merge).

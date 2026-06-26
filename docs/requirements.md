@@ -1901,3 +1901,51 @@ Each maps to one or more engine `config_override` keys (deep-merged over `DEFAUL
 - Engine redeploy, engine algorithm/weights/feasibility changes, or any change to the engine API contract.
 - Localization/i18n of the settings UI (English only this pass).
 - Versioning/audit history of settings changes, and import/export of configs.
+
+---
+
+## REC-SETTINGS-002 — make `max_distance_miles` the effective empty-day coverage radius (2026-06-26)
+
+**Status:** Requirements · **Priority:** P1 · **Type:** Follow-up to REC-SETTINGS-001 (no new UI, no engine change).
+**Predecessor:** REC-SETTINGS-001 (`docs/specs/REC-SETTINGS-001.md`).
+
+### Problem (verified on prod)
+
+In REC-SETTINGS-001 the **Max distance (mi)** setting (`max_distance_miles`) is mapped to the engine's GEO pre-filter only — both `geography.max_distance_from_existing_job_miles` and `geography.max_distance_from_base_if_empty_day_miles`. Those gates decide *which* candidates are **generated**. But an empty-day candidate (base → new job → base) is then independently re-checked by the engine's **TRAVEL-FEASIBILITY** gates (`travel.max_edge_travel_minutes`, `travel.max_extra_travel_minutes`), which are left at their `DEFAULT_CONFIG` values. With those defaults the empty-day extra-travel gate cuts off at **~4.5–5 mi straight-line from base** (empirically: a job at a tech base → recommendations; a job 5.4 mi away → 0 feasible) **regardless of how large `max_distance_miles` is set**. So a dispatcher who sets Max distance to 25 mi still effectively gets ~5 mi of empty-day coverage.
+
+### Binding decisions (from the customer — fixed, not re-litigated here)
+
+1. The radius (`max_distance_miles`) is the **effective coverage limit**. The natural upper bound is the technician workday (the engine's existing route / workday-fit checks). **No** additional hard drive-time ceiling.
+2. The travel caps must **scale from `max_distance_miles`** with enough headroom that the **GEO gate (not travel) binds** for a job at exactly the radius on an empty day.
+3. **No engine change / redeploy** — `config_override` already deep-merges `travel.*`. **No UI change.** The existing `geography.*` mapping (both keys = `max_distance_miles`) stays exactly as-is.
+
+### Solution summary
+
+`buildConfigOverride(settings)` (in `backend/src/services/slotEngineSettingsService.js`) additionally emits a `travel` block whose two empty-day-relevant caps are **derived from `max_distance_miles`** using the engine's own travel-time constants, plus a small headroom, so the geo radius becomes the binding constraint. Everything else (the 5 mapped params, the 2 fixed values, the geography mapping) is unchanged.
+
+### Acceptance criteria
+
+- **AC-1 (travel caps emitted from radius).** `buildConfigOverride` returns a `travel` object containing `max_edge_travel_minutes` and `max_extra_travel_minutes`, both computed from `max_distance_miles` via the documented formula (see `docs/specs/REC-SETTINGS-002.md`). No other `travel.*` key is emitted (the rest stay at engine defaults via deep-merge).
+- **AC-2 (radius binds on an empty day).** For a job at exactly `max_distance_miles` straight-line from a tech base on an otherwise empty day, both travel gates pass with margin, so the candidate is rejected (if at all) only by the GEO gate / workday-fit — i.e. the geo radius is what bounds coverage, not travel. At the default 10 mi, empty-day coverage reaches ~10 mi (not ~5 mi).
+- **AC-3 (never more restrictive than today).** The emitted `max_edge_travel_minutes` is always **≥ the engine default of 45**; the emitted `max_extra_travel_minutes` is always **≥ the engine default of 35** (both monotonically non-decreasing in `max_distance_miles`). The change can only ever *widen* feasibility versus the previous REC-SETTINGS-001 output, never narrow it.
+- **AC-4 (existing-job + geography mapping unchanged).** The geography mapping (one radius → both geography keys + `allow_empty_day_candidates=true`), the `overlap`/`feasibility`/`planning`/`ranking` mappings, and `workload.max_day_utilization=0.95` are byte-for-byte unchanged from REC-SETTINGS-001. The travel caps also govern existing-job edges (the engine applies the same `travel.*` gates to non-empty routes); scaling them up cannot reject any edge the old defaults accepted (caps only grow).
+- **AC-5 (defaults still safe).** With the documented defaults (`max_distance_miles=10`) the emitted caps make ~10 mi of empty-day coverage reachable rather than ~5 mi, while the workday/route-fit checks still bound long routes (a 10-mi empty-day round trip is well within the workday).
+- **AC-6 (no engine / UI change).** No file under `slot-engine/` changes; no redeploy. No frontend file changes. Only `buildConfigOverride` (and its unit tests) change. Saved settings rows are untouched; a company with no row still resolves to DEFAULTS (10 mi) and now reaches ~10 mi empty-day coverage.
+
+### Constraints / non-functional
+
+- The formula's constants (`average_city_speed_mph`, `travel_time_multiplier`, `operational_buffer_minutes`, the engine edge/extra defaults 45/35) are **read from `slot-engine/src/config.js` DEFAULT_CONFIG and the `slot-engine/src/geo.js` travel model** — they are mirrored as documented literals in `slotEngineSettingsService.js`, NOT imported from the engine package (backend does not depend on `slot-engine/`).
+- Safe-failure parity preserved: `resolve`→DEFAULTS on DB error still yields a complete, well-defined override (now including the travel block).
+
+### Out of scope
+
+- Any UI surface for the travel caps (they remain derived, never user-edited).
+- A separate hard drive-time ceiling, per-technician travel tuning, or exposing `average_city_speed_mph` / multipliers.
+- Changing `slot-engine/` defaults or merge semantics; any engine redeploy.
+- Re-mapping the geography keys or adding a 6th user parameter.
+
+### Protected (must not break)
+
+- The REC-SETTINGS-001 `buildConfigOverride` mapping for the 5 params + 2 fixed values (extended, not altered).
+- `slot-engine/` `DEFAULT_CONFIG` + `mergeConfig` deep-merge contract.
+- `slotEngineService` consumption path and its safe-failure behavior.

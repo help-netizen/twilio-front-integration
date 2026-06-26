@@ -134,6 +134,18 @@ async function save(companyId, input) {
  * path is verified present in slot-engine/src/config.js DEFAULT_CONFIG.
  */
 function buildConfigOverride(settings) {
+    const D = settings.max_distance_miles;
+    // Engine travel model (slot-engine/src/config.js): average_city_speed_mph=25,
+    // travel_time_multiplier=1.10, per-stop buffer=10min. Empty-day route = base→job→base.
+    //   edge(D)  = 2.64*D + 10     (K = 60/25 * 1.10 = 2.64 min/mi)
+    //   extra(D) = 5.28*D + 10
+    // We size the caps to edge/extra at the radius + 10% headroom, floored at the engine
+    // defaults (45 / 35) so this is never MORE restrictive than today. This makes the GEO
+    // gate (max_distance_miles) the binding limit; the workday/route-fit checks remain the
+    // natural ceiling.
+    const K = 2.64, BUF = 10;
+    const edge = Math.max(45, Math.ceil((K * D + BUF) * 1.10));
+    const extra = Math.max(35, Math.ceil((2 * K * D + BUF) * 1.10));
     return {
         geography: {
             max_distance_from_existing_job_miles: settings.max_distance_miles,
@@ -145,6 +157,7 @@ function buildConfigOverride(settings) {
         planning: { horizon_days: settings.horizon_days },
         ranking: { top_n: settings.recommendations_shown },
         workload: { max_day_utilization: 0.95 }, // fixed, always
+        travel: { max_edge_travel_minutes: edge, max_extra_travel_minutes: extra },
     };
 }
 
