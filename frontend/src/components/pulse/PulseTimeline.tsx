@@ -2,9 +2,10 @@ import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import { ChevronDown } from 'lucide-react';
 import type { CallData } from '../call-list-item';
 import { PulseCallListItem } from './PulseCallListItem';
-import type { SmsMessage, TimelineItem, FinancialEvent } from '../../types/pulse';
+import type { SmsMessage, TimelineItem, FinancialEvent, EmailTimelineItem } from '../../types/pulse';
 import { DateSeparator } from './DateSeparator';
 import { SmsListItem } from './SmsListItem';
+import { EmailListItem } from './EmailListItem';
 import { FinancialEventListItem } from './FinancialEventListItem';
 import { useAuth } from '../../auth/AuthProvider';
 
@@ -14,6 +15,7 @@ interface PulseTimelineProps {
     loading: boolean;
     timelineKey?: string | number;
     financialEvents?: FinancialEvent[];
+    emailMessages?: EmailTimelineItem[];
 }
 
 function toTZDateKey(date: Date, tz: string): string {
@@ -30,7 +32,7 @@ function formatDateSep(date: Date, tz: string): string {
     return date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: tz });
 }
 
-export function PulseTimeline({ calls, messages, loading, timelineKey, financialEvents = [] }: PulseTimelineProps) {
+export function PulseTimeline({ calls, messages, loading, timelineKey, financialEvents = [], emailMessages = [] }: PulseTimelineProps) {
     const { company } = useAuth();
     const companyTz = company?.timezone || 'America/New_York';
     const endRef = useRef<HTMLDivElement>(null);
@@ -67,11 +69,20 @@ export function PulseTimeline({ calls, messages, loading, timelineKey, financial
             });
         }
 
+        // Add email messages (EMAIL-TIMELINE-001) — sorted alongside SMS/calls by sent_at
+        for (const email of emailMessages) {
+            items.push({
+                type: 'email',
+                timestamp: new Date(email.sent_at),
+                data: email,
+            });
+        }
+
         // Sort chronologically (oldest first)
         items.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 
         return items;
-    }, [calls, messages, financialEvents]);
+    }, [calls, messages, financialEvents, emailMessages]);
 
     // Show "jump to latest" button when timeline has items
     useEffect(() => {
@@ -134,6 +145,12 @@ export function PulseTimeline({ calls, messages, loading, timelineKey, financial
             rendered.push(
                 <div key={`fin-${(item.data as FinancialEvent).id}`} style={{ padding: '5px 20px' }}>
                     <FinancialEventListItem event={item.data as FinancialEvent} />
+                </div>
+            );
+        } else if (item.type === 'email') {
+            rendered.push(
+                <div key={`email-${(item.data as EmailTimelineItem).id}`} style={{ padding: '5px 20px' }}>
+                    <EmailListItem email={item.data as EmailTimelineItem} />
                 </div>
             );
         } else {

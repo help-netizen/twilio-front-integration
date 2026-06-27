@@ -4,6 +4,43 @@
 
 ---
 
+## 2026-06-26 — EMAIL-TIMELINE-001: email in the contact timeline
+
+Email now lives in the same contact conversation as SMS and calls — inbound Gmail
+lands on the timeline and replies go back out as email, with the composer routing
+by channel. Run through the full orchestration (Product → Architect → Spec →
+Test-cases → Planner → Implement → Test → Review).
+
+### Receive
+- **Real-time push:** Gmail `users.watch` (INBOX) → Google Pub/Sub → `POST /api/email/push/google`.
+  The endpoint mounts BEFORE `express.json` with a raw body parser (like the Stripe
+  webhook), verifies first (shared `?token=` primary / OIDC `aud` secondary), then
+  **fast-acks 200** and ingests detached so Pub/Sub never retry-storms.
+- **Fallback:** the existing 5-min poll (`EMAIL_SYNC_INTERVAL_MS`) reconciles inbound,
+  so email keeps landing on the timeline even before Pub/Sub is provisioned.
+- Inbound filtering: **draft/sent excluded**, `from_email` matched to a contact,
+  body **quote-stripped** (latest reply only), persisted **unread**.
+
+### Send
+- Reply-to-thread (keeps the Gmail thread) or initiate a fresh email.
+- Composer is **channel-routed**: phone selected → SMS, email selected → email; a
+  **connect CTA** is shown instead when the company's Gmail isn't connected yet.
+
+### Plumbing
+- **MailProvider abstraction** — `GmailProvider` today, IMAP-ready seam
+  (`startWatch`/`renewWatch`/normalized pull) behind a provider registry.
+- **Migration 129** (`129_email_timeline_link.sql`) — email↔timeline link.
+- New env (see `.env.example`): `GMAIL_PUBSUB_TOPIC`, `GMAIL_PUSH_VERIFICATION_TOKEN`,
+  `GMAIL_PUSH_OIDC_AUDIENCE`, `GMAIL_PUBSUB_SA_EMAIL`, `GMAIL_WATCH_RENEW_INTERVAL_MS`.
+
+**OPS prerequisite for LIVE push:** a GCP Pub/Sub **topic** + a **push subscription**
+targeting `https://<host>/api/email/push/google?token=<GMAIL_PUSH_VERIFICATION_TOKEN>`,
+and **Pub/Sub Publisher** on the topic for `gmail-api-push@system.gserviceaccount.com`.
+Until that's provisioned, inbound runs on the 5-min poll.
+
+**Pending:** **NOT yet deployed** — run migration 129 against prod + deploy + provision
+GCP Pub/Sub (topic/subscription/IAM) for real-time push.
+
 ## 2026-06-26 — REC-SETTINGS-002: `max_distance_miles` now drives empty-day coverage
 
 Follow-up to REC-SETTINGS-001. **Problem (verified on prod):** `max_distance_miles` only drove the engine's GEO pre-filter, but empty-day candidates were then rejected by the engine's internal travel-feasibility caps (`travel.max_extra_travel_minutes:35` / `max_edge_travel_minutes:45`, haversine MVP @ 25 mph) — so effective coverage was only ~5 mi regardless of the setting.

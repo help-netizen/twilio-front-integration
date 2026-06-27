@@ -3,17 +3,18 @@
  * AI formatting button (Wand2), character counter, ⌘+Enter to send.
  * Supports {Field Name} variable placeholders in quick messages.
  */
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Wand2, ChevronDown, Paperclip, X, ChevronUp } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { Send, Wand2, ChevronDown, Paperclip, X, ChevronUp, Mail, MessageSquare } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useAuthz } from '../../hooks/useAuthz';
 import { authedFetch } from '../../services/apiClient';
-import { formatFileSize, formatDisplayPhone, resolveVariables } from './smsFormHelpers';
-import type { SmsFormProps, QuickMessage } from './smsFormHelpers';
+import { formatFileSize, resolveVariables, buildMessageTargets } from './smsFormHelpers';
+import type { SmsFormProps, QuickMessage, MessageTarget } from './smsFormHelpers';
 import { isMobileViewport, clampToViewport } from '../../hooks/useViewportSafePosition';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
-export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, secondaryPhone, secondaryPhoneName, selectedPhone, onPhoneChange }: SmsFormProps) {
+export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, secondaryPhone, secondaryPhoneName, emails, emailConnected, selectedTarget, onTargetChange }: SmsFormProps) {
     const [message, setMessage] = useState('');
     const [isPresetsOpen, setIsPresetsOpen] = useState(false);
     const [isAiFormatting, setIsAiFormatting] = useState(false);
@@ -25,6 +26,10 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
     const quickDropdownRef = useRef<HTMLDivElement>(null);
     const [quickMessages, setQuickMessages] = useState<QuickMessage[]>([]);
     const navigate = useNavigate();
+    const { hasPermission } = useAuthz();
+    // Only admins can reach /settings/email (gated by tenant.integrations.manage);
+    // non-admins get a non-clickable hint instead of a dead-end CTA.
+    const canManageIntegrations = hasPermission('tenant.integrations.manage');
 
     useEffect(() => { const ta = textareaRef.current; if (!ta) return; ta.style.height = 'auto'; const lh = parseInt(getComputedStyle(ta).lineHeight) || 20; ta.style.height = `${Math.min(Math.max(ta.scrollHeight, lh * 3 + 16), lh * 10 + 16)}px`; }, [message]);
 
@@ -43,27 +48,85 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
         return () => document.removeEventListener('mousedown', handler);
     }, [isPresetsOpen]);
 
-    const handleSend = () => { if (message.trim() || attachedFiles.length > 0) { onSend(message, attachedFiles, selectedPhone); setMessage(''); setAttachedFiles([]); } };
+    const targets = useMemo(
+        () => buildMessageTargets(mainPhone, secondaryPhone, secondaryPhoneName, emails),
+        [mainPhone, secondaryPhone, secondaryPhoneName, emails],
+    );
+    const activeTarget: MessageTarget | undefined = selectedTarget
+        ?? targets.find(t => t.channel === 'sms')
+        ?? targets[0];
+    const isEmail = activeTarget?.channel === 'email';
+    const emailTargets = targets.filter(t => t.channel === 'email');
+    // Show the To-selector when there's more than one phone OR any email option exists.
+    const phoneCount = targets.filter(t => t.channel === 'sms').length;
+    const showToSelector = phoneCount > 1 || emailTargets.length > 0;
+
+    const handleSend = () => {
+        if (!activeTarget) return;
+        if (message.trim() || (!isEmail && attachedFiles.length > 0)) {
+            onSend(message, isEmail ? undefined : attachedFiles, { channel: activeTarget.channel, value: activeTarget.value });
+            setMessage('');
+            setAttachedFiles([]);
+        }
+    };
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => { const files = Array.from(e.target.files || []); setAttachedFiles(prev => [...prev, ...files]); if (fileInputRef.current) fileInputRef.current.value = ''; };
     const handleRemoveFile = (index: number) => { setAttachedFiles(prev => prev.filter((_, i) => i !== index)); };
     const handlePresetSelect = (presetText: string) => { setMessage(resolveVariables(presetText, lead)); setIsPresetsOpen(false); };
     const handleAiFormat = async () => { if (message.trim() && onAiFormat) { setIsAiFormatting(true); try { setMessage(await onAiFormat(message)); } catch (error) { console.error('AI formatting failed:', error); } finally { setIsAiFormatting(false); } } };
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSend(); } };
 
-    const hasSecondary = !!(secondaryPhone && mainPhone && secondaryPhone !== mainPhone);
-
     return (
         <div className="border-t p-4" style={{ borderTopColor: 'var(--blanc-line)', background: 'var(--blanc-surface-strong)' }}>
-            {hasSecondary && (
+            {showToSelector && activeTarget && (
                 <div className="mb-2 relative">
                     <div className="flex items-center gap-2 text-xs">
                         <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--blanc-ink-3)' }}>To</span>
                         <button type="button" onClick={() => setToDropdownOpen(!toDropdownOpen)} className="flex items-center gap-1.5 px-2 py-1 rounded-lg border hover:bg-muted/60 transition-colors" style={{ borderColor: 'var(--blanc-line)', background: 'var(--blanc-surface-muted)', color: 'var(--blanc-ink-1)' }}>
-                            <span>{selectedPhone === secondaryPhone ? `${formatDisplayPhone(secondaryPhone)}${secondaryPhoneName ? ` — ${secondaryPhoneName}` : ''}` : `${formatDisplayPhone(mainPhone)} — Main number`}</span>
+                            {activeTarget.channel === 'email'
+                                ? <Mail className="w-3 h-3" style={{ color: 'var(--blanc-ink-3)' }} />
+                                : <MessageSquare className="w-3 h-3" style={{ color: 'var(--blanc-ink-3)' }} />}
+                            <span>{activeTarget.label}</span>
                             {toDropdownOpen ? <ChevronUp className="w-3 h-3" style={{ color: 'var(--blanc-ink-3)' }} /> : <ChevronDown className="w-3 h-3" style={{ color: 'var(--blanc-ink-3)' }} />}
                         </button>
                     </div>
-                    {toDropdownOpen && (<><div className="fixed inset-0 z-10" onClick={() => setToDropdownOpen(false)} /><div className="absolute left-0 top-full mt-1 rounded-xl shadow-lg z-20 py-1 min-w-[260px] max-w-[calc(100vw-32px)]" style={{ background: 'var(--blanc-surface-strong)', border: '1px solid var(--blanc-line)' }}><button onClick={() => { onPhoneChange?.(mainPhone); setToDropdownOpen(false); }} className={`w-full text-left px-3 py-2 hover:bg-muted/50 text-sm flex items-center justify-between ${selectedPhone !== secondaryPhone ? 'text-primary' : ''}`} style={{ color: selectedPhone !== secondaryPhone ? 'var(--blanc-info)' : 'var(--blanc-ink-1)' }}><span>{formatDisplayPhone(mainPhone)} — Main number</span>{selectedPhone !== secondaryPhone && <span className="text-xs">✓</span>}</button><button onClick={() => { onPhoneChange?.(secondaryPhone); setToDropdownOpen(false); }} className={`w-full text-left px-3 py-2 hover:bg-muted/50 text-sm flex items-center justify-between`} style={{ color: selectedPhone === secondaryPhone ? 'var(--blanc-info)' : 'var(--blanc-ink-1)' }}><span>{formatDisplayPhone(secondaryPhone)}{secondaryPhoneName ? ` — ${secondaryPhoneName}` : ''}</span>{selectedPhone === secondaryPhone && <span className="text-xs">✓</span>}</button></div></>)}
+                    {toDropdownOpen && (
+                        <>
+                            <div className="fixed inset-0 z-10" onClick={() => setToDropdownOpen(false)} />
+                            <div className="absolute left-0 top-full mt-1 rounded-xl shadow-lg z-20 py-1 min-w-[260px] max-w-[calc(100vw-32px)]" style={{ background: 'var(--blanc-surface-strong)', border: '1px solid var(--blanc-line)' }}>
+                                {targets.filter(t => t.channel === 'sms').map(t => {
+                                    const selected = activeTarget.channel === 'sms' && activeTarget.value === t.value;
+                                    return (
+                                        <button key={`sms-${t.value}`} onClick={() => { onTargetChange?.(t); setToDropdownOpen(false); }} className="w-full text-left px-3 py-2 hover:bg-muted/50 text-sm flex items-center justify-between gap-2" style={{ color: selected ? 'var(--blanc-info)' : 'var(--blanc-ink-1)' }}>
+                                            <span className="flex items-center gap-2 min-w-0"><MessageSquare className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} /><span className="truncate">{t.label}</span></span>
+                                            {selected && <span className="text-xs shrink-0">✓</span>}
+                                        </button>
+                                    );
+                                })}
+                                {emailTargets.length > 0 && emailConnected && emailTargets.map(t => {
+                                    const selected = activeTarget.channel === 'email' && activeTarget.value === t.value;
+                                    return (
+                                        <button key={`email-${t.value}`} onClick={() => { onTargetChange?.(t); setToDropdownOpen(false); }} className="w-full text-left px-3 py-2 hover:bg-muted/50 text-sm flex items-center justify-between gap-2" style={{ color: selected ? 'var(--blanc-info)' : 'var(--blanc-ink-1)' }}>
+                                            <span className="flex items-center gap-2 min-w-0"><Mail className="w-3.5 h-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} /><span className="truncate">{t.label}</span></span>
+                                            {selected && <span className="text-xs shrink-0">✓</span>}
+                                        </button>
+                                    );
+                                })}
+                                {emailTargets.length > 0 && !emailConnected && (
+                                    canManageIntegrations ? (
+                                        <button onClick={() => { setToDropdownOpen(false); navigate('/settings/email'); }} className="w-full text-left px-3 py-2 hover:bg-muted/50 text-sm flex items-start gap-2">
+                                            <Mail className="w-3.5 h-3.5 shrink-0 mt-0.5" style={{ color: 'var(--blanc-ink-3)' }} />
+                                            <span style={{ color: 'var(--blanc-info)' }}>Connect Google email to message clients by email →</span>
+                                        </button>
+                                    ) : (
+                                        <div className="w-full text-left px-3 py-2 text-sm flex items-start gap-2">
+                                            <Mail className="w-3.5 h-3.5 shrink-0 mt-0.5" style={{ color: 'var(--blanc-ink-3)' }} />
+                                            <span style={{ color: 'var(--blanc-ink-3)' }}>Email unavailable — ask an admin to connect Google email</span>
+                                        </div>
+                                    )
+                                )}
+                            </div>
+                        </>
+                    )}
                 </div>
             )}
             {attachedFiles.length > 0 && (
@@ -71,9 +134,9 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
             )}
             <div className="relative mb-3">
                 <div aria-hidden className="absolute inset-0 px-3 py-2 pr-20 text-sm pointer-events-none overflow-hidden rounded-lg border border-transparent" style={{ whiteSpace: 'pre-wrap', wordWrap: 'break-word', color: 'transparent', lineHeight: textareaRef.current ? getComputedStyle(textareaRef.current).lineHeight : '1.5', fontFamily: textareaRef.current ? getComputedStyle(textareaRef.current).fontFamily : 'inherit' }} dangerouslySetInnerHTML={{ __html: message.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\{([^}]+)\}/g, '<mark style="background:#fef3c7;color:transparent;border-radius:3px;padding:1px 0">$&</mark>') + '\n' }} />
-                <textarea ref={textareaRef} value={message} onChange={e => setMessage(e.target.value)} onKeyDown={handleKeyDown} placeholder="Type your message... (Cmd/Ctrl + Enter to send)" className="w-full px-3 py-2 pr-20 rounded-lg resize-none focus:outline-none focus:ring-2 focus:border-transparent text-sm" style={{ overflow: 'auto', background: 'transparent', position: 'relative', border: '1px solid var(--blanc-line-strong)', '--tw-ring-color': 'rgba(47,99,216,0.25)' } as React.CSSProperties} rows={3} disabled={disabled} />
-                {/* Show char count only when > 0 */}
-                {message.length > 0 && (
+                <textarea ref={textareaRef} value={message} onChange={e => setMessage(e.target.value)} onKeyDown={handleKeyDown} placeholder={isEmail ? 'Write an email... (Cmd/Ctrl + Enter to send)' : 'Type your message... (Cmd/Ctrl + Enter to send)'} className="w-full px-3 py-2 pr-20 rounded-lg resize-none focus:outline-none focus:ring-2 focus:border-transparent text-sm" style={{ overflow: 'auto', background: 'transparent', position: 'relative', border: '1px solid var(--blanc-line-strong)', '--tw-ring-color': 'rgba(47,99,216,0.25)' } as React.CSSProperties} rows={3} disabled={disabled} />
+                {/* SMS char count only (emails have no segment limit) */}
+                {!isEmail && message.length > 0 && (
                     <div
                         className="absolute top-2 right-3 text-[11px] font-mono"
                         style={{ color: message.length > 300 ? 'var(--blanc-danger)' : 'var(--blanc-ink-3)' }}
@@ -135,19 +198,23 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
                             );
                         })()}
                     </div>
-                    <button onClick={() => fileInputRef.current?.click()} className="flex items-center justify-center transition-opacity hover:opacity-70" style={{ width: 42, height: 42, borderRadius: 14, border: '1px solid rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', color: 'var(--blanc-ink-2)', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }} title="Attach file"><Paperclip className="w-4 h-4" /></button>
-                    <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} className="hidden" />
+                    {!isEmail && (
+                        <>
+                            <button onClick={() => fileInputRef.current?.click()} className="flex items-center justify-center transition-opacity hover:opacity-70" style={{ width: 42, height: 42, borderRadius: 14, border: '1px solid rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', color: 'var(--blanc-ink-2)', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }} title="Attach file"><Paperclip className="w-4 h-4" /></button>
+                            <input ref={fileInputRef} type="file" multiple onChange={handleFileSelect} className="hidden" />
+                        </>
+                    )}
                 </div>
                 <div className="flex items-center gap-2">
                     <button onClick={handleAiFormat} disabled={!message.trim() || isAiFormatting || !onAiFormat} className="flex items-center justify-center transition-opacity hover:opacity-70 disabled:opacity-40 disabled:cursor-not-allowed" style={{ width: 42, height: 42, borderRadius: 14, border: '1px solid rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', color: 'var(--blanc-ink-2)', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }} title="Format with AI"><Wand2 className={`w-4 h-4 ${isAiFormatting ? 'animate-spin' : ''}`} /></button>
                     <button
                         onClick={handleSend}
-                        disabled={(!message.trim() && attachedFiles.length === 0) || disabled}
+                        disabled={(!message.trim() && (isEmail || attachedFiles.length === 0)) || disabled || !activeTarget}
                         className="flex items-center gap-1.5 px-5 text-sm font-semibold transition-opacity hover:opacity-85 disabled:opacity-40 disabled:cursor-not-allowed"
                         style={{ background: 'var(--blanc-info)', color: '#fff', minHeight: 42, borderRadius: 14, border: 'none', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
                     >
                         <Send className="w-3.5 h-3.5" />
-                        Send
+                        {isEmail ? 'Email' : 'Send'}
                     </button>
                 </div>
             </div>

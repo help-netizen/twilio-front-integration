@@ -291,6 +291,7 @@ export const PulsePage: React.FC = () => {
                                     loading={p.timelineLoading}
                                     timelineKey={p.timelineId || p.contactId}
                                     financialEvents={p.financialEvents}
+                                    emailMessages={p.emailMessages}
                                 />
                             </div>
 
@@ -305,8 +306,10 @@ export const PulsePage: React.FC = () => {
                                         mainPhone={p.phone}
                                         secondaryPhone={p.secondaryPhone}
                                         secondaryPhoneName={p.secondaryPhoneName}
-                                        selectedPhone={p.selectedToPhone || p.phone}
-                                        onPhoneChange={p.setSelectedToPhone}
+                                        emails={p.contactEmails}
+                                        emailConnected={p.emailConnected}
+                                        selectedTarget={p.selectedTarget}
+                                        onTargetChange={p.setSelectedTarget}
                                     />
                                 </div>
                             )}

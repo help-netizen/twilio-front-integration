@@ -26,6 +26,8 @@ export type Contact = {
     secondary_phone: string | null;
     secondary_phone_name: string | null;
     email: string | null;
+    /** Additional contact emails (EMAIL-TIMELINE-001). Optional until the backend surfaces it. */
+    contact_emails?: string[];
     notes: string | null;
     zenbooker_customer_id: string | null;
     zenbooker_sync_status: 'not_linked' | 'linked' | 'pending' | 'error' | null;

@@ -1,11 +1,14 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useParams, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
+import { useQuery } from '@tanstack/react-query';
 import { useCallsByContact } from './useConversations';
 import { usePulseTimeline } from './usePulseTimeline';
 import { messagingApi } from '../services/messagingApi';
 import * as contactsApi from '../services/contactsApi';
-import { useRealtimeEvents, type SSECallEvent, type SSETranscriptDeltaEvent, type SSETranscriptFinalizedEvent } from './useRealtimeEvents';
+import * as emailApi from '../services/emailApi';
+import { buildMessageTargets, type MessageTarget } from '../components/pulse/smsFormHelpers';
+import { useRealtimeEvents, type SSECallEvent, type SSEMessageAddedEvent, type SSETranscriptDeltaEvent, type SSETranscriptFinalizedEvent } from './useRealtimeEvents';
 import { appendTranscriptDelta, finalizeTranscript } from './useLiveTranscript';
 import { authedFetch } from '../services/apiClient';
 import { useLeadByPhone } from './useLeadByPhone';
@@ -36,7 +39,17 @@ export function usePulsePage() {
     useRealtimeEvents({
         onCallUpdate: (event: SSECallEvent) => { if (event.parent_call_sid) return; refetchContacts(); if ((contactId && event.contact_id && Number(event.contact_id) === contactId) || (timelineId && event.timeline_id && Number(event.timeline_id) === timelineId)) refetchTimeline(); },
         onCallCreated: () => refetchContacts(),
-        onMessageAdded: () => { refetchContacts(); if (contactId || timelineId) refetchTimeline(); },
+        onMessageAdded: (event: SSEMessageAddedEvent) => {
+            // List badge always updates (any contact, company-wide).
+            refetchContacts();
+            // Only refetch the open timeline when this event belongs to it (mirror onCallUpdate's
+            // timeline_id gate). message.added carries a numeric `timelineId` (SMS + email publishers
+            // both set it). If it's null/absent the event isn't timeline-scoped, so fall back to the
+            // prior behavior and refetch whenever a timeline is open.
+            const evtTimelineId = event?.timelineId;
+            if (evtTimelineId == null) { if (contactId || timelineId) refetchTimeline(); return; }
+            if (timelineId && Number(evtTimelineId) === timelineId) refetchTimeline();
+        },
         onContactRead: () => refetchContacts(),
         onGenericEvent: (et: string) => { if (['thread.action_required', 'thread.handled', 'thread.snoozed', 'thread.unsnoozed', 'thread.assigned', 'timeline.read', 'timeline.unread'].includes(et)) refetchContacts(); },
         onTranscriptDelta: (e: SSETranscriptDeltaEvent) => { appendTranscriptDelta(e.callSid, { text: e.text, speaker: e.speaker, turnOrder: e.turnOrder, isFinal: e.isFinal, receivedAt: e.receivedAt }); },
@@ -49,6 +62,7 @@ export function usePulsePage() {
     const messages = timelineData?.messages || [];
     const conversations = timelineData?.conversations || [];
     const financialEvents = (timelineData as any)?.financial_events || [];
+    const emailMessages = (timelineData as any)?.email_messages || [];
     const contactCalls = timelineData?.calls || [];
     const contact = (timelineData as any)?.contact || contactCalls[0]?.contact;
     const selectedConv = filteredCalls.find((c: Call) => { const tlId = (c as any).timeline_id; return tlId ? Number(tlId) === timelineId : c.contact?.id === contactId; });
@@ -59,9 +73,19 @@ export function usePulsePage() {
     const [leadOverride, setLeadOverride] = useState<Lead | null>(null);
     const [editingLead, setEditingLead] = useState<Lead | null>(null);
     const [convertingLead, setConvertingLead] = useState<Lead | null>(null);
-    const [selectedToPhone, setSelectedToPhone] = useState<string>('');
+    const [selectedTarget, setSelectedTarget] = useState<MessageTarget | undefined>(undefined);
     const lead = leadOverride || fetchedLead;
-    React.useEffect(() => { setLeadOverride(null); setSelectedToPhone(''); }, [phone]);
+    React.useEffect(() => { setLeadOverride(null); setSelectedTarget(undefined); }, [phone]);
+
+    // Company Gmail mailbox status — drives whether email targets are selectable or a connect-CTA.
+    // Read via the lightweight timeline endpoint (needs only `messages.send`) so a send-only
+    // agent sees the real connect state instead of always getting the connect-CTA.
+    const { data: mailboxStatus } = useQuery({
+        queryKey: ['timeline-mailbox-status'],
+        queryFn: () => emailApi.getTimelineMailboxStatus(),
+        staleTime: 60000,
+    });
+    const emailConnected = mailboxStatus?.connected === true;
 
     const [contactDetail, setContactDetail] = useState<{ contact: any; leads: ContactLead[] } | null>(null);
     const [contactDetailLoading, setContactDetailLoading] = useState(false);
@@ -71,6 +95,24 @@ export function usePulsePage() {
     const secondaryPhoneName = lead?.SecondPhoneName || contact?.secondary_phone_name || '';
     const normalizeDigits = (p: string) => (p || '').replace(/\D/g, '');
 
+    // Contact email addresses (channel 'email'): contact.email + contact_emails, deduped, primary first.
+    const contactEmails = useMemo(() => {
+        const out: string[] = [];
+        const seen = new Set<string>();
+        const push = (e?: string | null) => { const v = (e || '').trim(); if (!v) return; const k = v.toLowerCase(); if (seen.has(k)) return; seen.add(k); out.push(v); };
+        const c: any = contact || contactDetail?.contact;
+        push(c?.email);
+        for (const e of (c?.contact_emails as string[] | undefined) || []) push(e);
+        return out;
+    }, [contact, contactDetail]);
+
+    // Composer targets: phones (SMS) + emails. Reused by the form and the default-channel logic.
+    const messageTargets = useMemo(
+        () => buildMessageTargets(phone, secondaryPhone, secondaryPhoneName, contactEmails),
+        [phone, secondaryPhone, secondaryPhoneName, contactEmails],
+    );
+
+    // Last inbound *phone* (existing behavior): newest inbound SMS/call → that phone target value.
     const lastUsedPhone = useMemo(() => {
         if (!phone || !secondaryPhone) return phone;
         const mainD = normalizeDigits(phone), secD = normalizeDigits(secondaryPhone);
@@ -84,7 +126,33 @@ export function usePulsePage() {
         return events[0].phone;
     }, [phone, secondaryPhone, messages, contactCalls]);
 
-    React.useEffect(() => { if (lastUsedPhone && !selectedToPhone) setSelectedToPhone(lastUsedPhone); }, [lastUsedPhone, selectedToPhone]);
+    // Default target = last inbound channel. If the newest inbound timeline item is an email and
+    // its address is a known contact email, preselect that email; otherwise the SMS phone default.
+    const defaultTarget = useMemo<MessageTarget | undefined>(() => {
+        const phoneTarget = messageTargets.find(t => t.channel === 'sms' && normalizeDigits(t.value) === normalizeDigits(lastUsedPhone))
+            || messageTargets.find(t => t.channel === 'sms');
+        // newest inbound email
+        let bestEmail: { value: string; time: number } | null = null;
+        for (const em of emailMessages as any[]) {
+            if (em?.direction !== 'inbound') continue;
+            const addr = (em.from_email || '').trim().toLowerCase();
+            const match = contactEmails.find(e => e.toLowerCase() === addr);
+            if (!match) continue;
+            const t = new Date(em.sent_at || 0).getTime();
+            if (!bestEmail || t > bestEmail.time) bestEmail = { value: match, time: t };
+        }
+        // newest inbound SMS/call time (for comparison with email)
+        let bestPhoneTime = 0;
+        for (const msg of messages) { if (msg.direction === 'inbound') bestPhoneTime = Math.max(bestPhoneTime, new Date(msg.date_created_remote || msg.created_at).getTime()); }
+        for (const call of contactCalls) { if ((call.direction || '').includes('inbound')) bestPhoneTime = Math.max(bestPhoneTime, new Date(call.started_at || call.created_at).getTime()); }
+        // Only default to email when the mailbox is actually connected (else it can't be sent).
+        if (emailConnected && bestEmail && bestEmail.time >= bestPhoneTime) {
+            return messageTargets.find(t => t.channel === 'email' && t.value === bestEmail!.value) || phoneTarget;
+        }
+        return phoneTarget;
+    }, [messageTargets, lastUsedPhone, emailMessages, contactEmails, messages, contactCalls, emailConnected]);
+
+    React.useEffect(() => { if (defaultTarget && !selectedTarget) setSelectedTarget(defaultTarget); }, [defaultTarget, selectedTarget]);
 
     const actions = makePulseLeadActions(setLeadOverride);
     const handleConvert = (_uuid: string) => { if (lead) setConvertingLead(lead); };
@@ -106,8 +174,26 @@ export function usePulsePage() {
     useEffect(() => { if (derivedProxy || !phone) return; const API_BASE = import.meta.env.VITE_API_URL || '/api'; authedFetch(`${API_BASE}/pulse/default-proxy`).then(r => r.json()).then(d => { if (d.proxy_e164) setFallbackProxy(d.proxy_e164); }).catch(() => { }); }, [derivedProxy, phone]);
     const proxyPhone = derivedProxy || fallbackProxy;
 
-    const handleSendMessage = async (message: string, files?: File[], targetPhone?: string) => {
-        const sendTo = targetPhone || phone;
+    const handleSendMessage = async (message: string, files?: File[], target?: { channel: 'sms' | 'email'; value: string }) => {
+        // Email branch (EMAIL-TIMELINE-001 / ET-10): send via the timeline email route.
+        if (target?.channel === 'email') {
+            const cid = contact?.id || contactId;
+            if (!cid) { toast.error('Cannot send email: contact not resolved'); return; }
+            try {
+                await emailApi.sendTimelineEmail(cid, { body: message, toEmail: target.value });
+                refetchTimeline();
+            } catch (err: any) {
+                console.error('[Email] Send failed:', err);
+                if (err instanceof emailApi.TimelineEmailError && err.code === 'MAILBOX_NOT_CONNECTED') {
+                    toast.error('Google email not connected', { description: 'Connect it in Settings → Email to send.' });
+                } else {
+                    toast.error(err?.message || 'Failed to send email');
+                }
+            }
+            return;
+        }
+        // SMS branch (unchanged).
+        const sendTo = target?.value || phone;
         try {
             const targetConv = conversations.find(c => normalizeDigits(c.customer_e164) === normalizeDigits(sendTo));
             if (targetConv) { await messagingApi.sendMessage(targetConv.id, { body: message }, files?.[0]); }
@@ -137,10 +223,10 @@ export function usePulsePage() {
     return {
         location, contactId, timelineId, searchQuery, setSearchQuery,
         contactsLoading, filteredCalls, loadMoreRef, isFetchingNextPage,
-        timelineLoading, callDataItems, messages, financialEvents, phone, hasActiveCall,
+        timelineLoading, callDataItems, messages, financialEvents, emailMessages, phone, hasActiveCall,
         lead, leadLoading, contact, contactDetail, contactDetailLoading, selectedConv,
         editingLead, setEditingLead, convertingLead, setConvertingLead,
-        secondaryPhone, secondaryPhoneName, selectedToPhone, setSelectedToPhone,
+        secondaryPhone, secondaryPhoneName, contactEmails, emailConnected, selectedTarget, setSelectedTarget,
         handleUpdateStatus: actions.handleUpdateStatus, handleUpdateSource: actions.handleUpdateSource,
         handleUpdateComments: actions.handleUpdateComments, handleMarkLost: actions.handleMarkLost,
         handleActivate: actions.handleActivate, handleConvert, handleConvertSuccess, handleDelete, handleUpdateLead,

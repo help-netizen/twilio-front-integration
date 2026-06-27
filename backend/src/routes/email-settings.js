@@ -10,6 +10,7 @@
 const express = require('express');
 const emailMailboxService = require('../services/emailMailboxService');
 const emailSyncService = require('../services/emailSyncService');
+const providerRegistry = require('../services/mail/providerRegistry');
 
 const router = express.Router();
 
@@ -52,6 +53,18 @@ router.post('/disconnect', async (req, res) => {
         if (!companyId) return res.status(400).json({ ok: false, error: 'No company context' });
 
         const userId = req.user?.sub || req.user?.email;
+
+        // EMAIL-TIMELINE-001 (TASK-ET-6) — tear down the Gmail push watch BEFORE disconnecting,
+        // while the mailbox still holds a valid token. disconnectMailbox nulls the tokens, after
+        // which stopWatch's users.stop could not authenticate and the watch would keep pushing
+        // until it self-expires (≤7 days). Best-effort + safe-fail; a teardown failure must not
+        // change the disconnect response.
+        try {
+            await providerRegistry.get(companyId).stopWatch(companyId);
+        } catch (watchErr) {
+            console.warn(`[EmailSettings] stopWatch (non-fatal) for company ${companyId}:`, watchErr.message);
+        }
+
         const mailbox = await emailMailboxService.disconnectMailbox(companyId, userId);
         if (!mailbox) return res.status(404).json({ ok: false, error: 'No mailbox found' });
 

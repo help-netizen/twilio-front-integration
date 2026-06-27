@@ -2400,3 +2400,189 @@ The `geography` / `overlap` / `feasibility` / `planning` / `ranking` / `workload
 - **EDIT backend:** `backend/src/services/slotEngineSettingsService.js` — extend `buildConfigOverride` with the derived `travel` block + the mirrored engine constants.
 - **EDIT tests:** `tests/slotEngineSettings.test.js` — new `buildConfigOverride` travel-block assertions; supersede the two REC-SETTINGS-001 assertions that hard-coded "6 top-level keys / `o.travel` undefined".
 - **No** new files; **no** engine/route/frontend/migration changes.
+
+---
+
+## EMAIL-TIMELINE-001 — design (2026-06-26)
+
+Wire email send/receive into the Pulse contact timeline by **reusing EMAIL-001** and inserting a **mail-provider abstraction** between the timeline/exchange logic and Gmail. Requirements: `docs/requirements.md › EMAIL-TIMELINE-001`. Backend entry is repo-root **`src/server.js`**, which mounts routers/services from `../backend/src/...`; migrations live in **`backend/db/migrations/`** (next number = **129**).
+
+### Layering (the seam)
+
+```
+                Pulse timeline / composer (FE)
+                              │
+        ┌─────────────────────┴───────────────────────┐
+        │  emailTimelineService  (NEW, provider-agnostic) │
+        │   - inbound: filter→match contact→link→unread   │
+        │   - outbound: route reply vs initiate           │
+        │   - projection: quote-strip → timeline rows     │
+        └─────────────────────┬───────────────────────┘
+                              │ depends only on ↓ interface
+                    ┌─────────┴──────────┐
+                    │   MailProvider     │   (NEW interface)
+                    └─────────┬──────────┘
+                              │ implemented by
+                    ┌─────────┴──────────┐
+                    │   GmailProvider    │   (NEW thin adapter)
+                    └─────────┬──────────┘
+                              │ delegates to EXISTING EMAIL-001
+        emailMailboxService · emailSyncService · emailService · emailQueries
+```
+
+**Rule:** `emailTimelineService` and `buildTimeline` import **only** `MailProvider`/the provider registry and `emailQueries` — never `googleapis` or `email{Mailbox,Sync,}Service` directly. All Gmail specifics (history list, watch, MIME, label inspection) stay in `GmailProvider` + EMAIL-001. This is the single seam REC for future IMAP.
+
+### The `MailProvider` interface (`backend/src/services/mail/MailProvider.js`)
+
+A documented base/contract (CommonJS "interface" = a class with throwing stubs + a JSDoc contract; `GmailProvider extends` it). Methods + responsibilities:
+
+| Method | Responsibility |
+|---|---|
+| `getConnectionStatus(companyId)` | `{ connected: boolean, status, email_address|null }` — for the composer CTA + send guards. Gmail: `emailMailboxService.getMailboxStatus`. |
+| `startWatch(companyId)` | Register provider push for INBOX; persist provider cursor + watch expiry. Gmail: `users.watch({ topicName, labelIds:['INBOX'] })` → store `history_id` + `watch_expiration`. |
+| `renewWatch(companyId)` / `stopWatch(companyId)` | Re-arm before expiry / tear down on disconnect. Gmail: `users.watch` again / `users.stop`. |
+| `handlePushNotification(payload)` | Verify + decode a provider push into `{ companyId, cursor }`; the service then calls `pullChanges`. Gmail: base64-decode the Pub/Sub `message.data` → `{ emailAddress, historyId }`, resolve mailbox by address. **Verification (token/OIDC) happens in the route**, payload shape here. |
+| `pullChanges(companyId, sinceCursor)` | Return **normalized inbound messages** since cursor + new cursor. Gmail: `syncIncrementalHistory` semantics, but yields a normalized `NormalizedInboundMessage[]` (see below) with `labelIds` + `isInbound` included. |
+| `sendMessage(companyId, { to, subject, body, inReplyTo, references, providerThreadId })` | Send; reply when `providerThreadId` present, else new thread. Returns `{ provider_message_id, provider_thread_id }`. Gmail: delegates to `emailService.replyToThread` (thread present) or `emailService.sendEmail` (new). |
+
+**`NormalizedInboundMessage`** (provider-neutral): `{ provider_message_id, provider_thread_id, message_id_header, in_reply_to_header, references_header, from_email, from_name, to:[], subject, body_text, snippet, internal_at, labelIds:[], is_outbound:boolean }`. This is the only shape `emailTimelineService` consumes — no Gmail types leak up.
+
+**`GmailProvider`** (`backend/src/services/mail/GmailProvider.js`) is a thin adapter; it does **not** duplicate token/refresh/MIME/history logic — it calls EMAIL-001. A `providerRegistry.get(companyId)` returns the provider for the company's mailbox (`provider` column is already `'gmail'`-checked in `079`); v1 always returns `GmailProvider`.
+
+### Inbound real-time flow
+
+Pub/Sub topic + push subscription point at a new endpoint. Five steps:
+
+1. **Watch.** On mailbox connect (and on a renewal tick), `GmailProvider.startWatch` calls `gmail.users.watch({ userId:'me', requestBody:{ topicName: GMAIL_PUBSUB_TOPIC, labelIds:['INBOX'], labelFilterAction:'include' } })` and persists the returned `historyId` + `expiration` to new `email_mailboxes` columns `watch_history_id` + `watch_expires_at`.
+2. **Push received + verified.** Google Pub/Sub POSTs the notification to **`POST /api/email/push/google`**, mounted in `src/server.js` **before `express.json`** with `express.raw({ type:'*/*' })` — exactly like `stripePaymentsWebhook` at `src/server.js:75`. The route **verifies** the push: either the Pub/Sub **OIDC bearer JWT** (verify signature + `aud` = our endpoint / `email` claim against `GMAIL_PUBSUB_SA_EMAIL`) or, simpler, a pre-shared **`?token=GMAIL_PUSH_VERIFICATION_TOKEN`** configured on the subscription. Invalid/missing → `401/403`, no work. Valid → **ack 200 immediately**, then process async (`setImmediate`/detached) so Pub/Sub never retries on our latency.
+3. **Pull + filter.** `handlePushNotification` decodes `{ emailAddress, historyId }`, resolves the company/mailbox by `emailAddress` (tenant context derives from the **payload**, not a session). `emailTimelineService.ingestForCompany(companyId)` calls `provider.pullChanges` (which runs the existing history walk and `importGmailThread` so the **inbox stays populated**), then for each `NormalizedInboundMessage` **drops** any with `is_outbound` true or `labelIds ∩ {SENT, DRAFT}` ≠ ∅ — only genuine **INBOX external inbound** proceeds. *(Draft-edit storms die here: draft saves/edits carry `DRAFT` and are filtered → no timeline activity, satisfying AC-2.)*
+4. **Contact match → link.** For each surviving message, `findEmailContact(from_email, companyId)` queries `contacts.email` (normalized) **and** `contact_emails.email_normalized` (company-scoped, `idx_contact_emails_normalized` already exists). **No match → skip** (stays inbox-only, AC-3/FR-IN-6). On match, link the `email_messages` row to the contact (data model below) and resolve/create the contact's `timelines` row (`findOrCreateTimeline` is phone-keyed; we add `findOrCreateTimelineByContact(contactId, companyId)` to `timelinesQueries`, reusing the orphan-adopt logic already in `pulse.js POST /ensure-timeline`).
+5. **Unread + live.** Mirror SMS inbound exactly: `markContactUnread(contactId, internal_at)` + `markTimelineUnread(timelineId)`; run the same per-company Action-Required trigger (`arConfigHelper.getTriggerConfig(companyId, 'inbound_email')`); broadcast via `realtimeService` (a `messageAdded`-equivalent including `timelineId`) so an open `usePulsePage` `refetchTimeline()`s. **Idempotency:** linkage keys on the existing unique `(company_id, provider_message_id)`; re-link is a no-op update, so the overlapping **5-minute poll reconciliation** (kept) never double-posts (AC-1/AC-11).
+
+**Watch-renewal scheduler.** A new interval in `emailSyncService` (or a sibling `emailWatchScheduler`) started next to the existing one at `src/server.js:413`: every `GMAIL_WATCH_RENEW_INTERVAL_MS` (default 12h) it renews any mailbox whose `watch_expires_at` is within 48h. The **existing 5-min poll scheduler is unchanged** and serves as the reconciliation fallback.
+
+**Poll path reuse.** The existing `syncIncrementalHistory` is refactored minimally so its per-message handling also calls `emailTimelineService.linkInboundMessage(normalized, companyId)` (the same filter+match+link+unread used by push). One code path, two triggers (push + poll).
+
+### Data model — DECISION
+
+**Chosen: extend `email_messages` with a contact link + a thin read-time projection into `buildTimeline`. Reject a unified `messages` table.**
+
+- **Why not a unified `messages` table:** SMS lives in `sms_messages` (+`sms_conversations`, phone-keyed) with Twilio delivery semantics; email lives in `email_messages` (+`email_threads`, Gmail-keyed) with MIME/threading semantics. Merging them means a risky backfill migration of a live SMS table, a lossy lowest-common-denominator schema, and rewriting the SMS read/write + unread paths — all explicitly out of scope and high-blast-radius. The timeline already **merges heterogeneous sources at read time** (`calls`, `sms`, `financial_events` are different tables fused in `buildTimeline` and sorted on the client in `PulseTimeline.tsx`). Email is one more source.
+- **Chosen approach:** add nullable `contact_id` (+ a derived flag) to `email_messages`; `buildTimeline` runs an additional query for inbound/outbound email rows linked to the contact and emits a normalized `email_messages[]` array (and/or folds them into the existing `messages` array with a `channel:'email'` discriminator). Minimal new surface; **inbox queries are unaffected** because the new column is nullable and never filtered by the inbox.
+
+**Migration `129_email_timeline_link.sql`:**
+
+```sql
+-- email_messages: link a message to the contact whose timeline it belongs to
+ALTER TABLE email_messages
+  ADD COLUMN IF NOT EXISTS contact_id  BIGINT REFERENCES contacts(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS timeline_id BIGINT REFERENCES timelines(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS on_timeline BOOLEAN NOT NULL DEFAULT false;  -- true once projected (inbound matched OR outbound-from-timeline)
+
+-- read path: "give me this contact's timeline email, newest-aware, tenant-scoped"
+CREATE INDEX IF NOT EXISTS idx_email_messages_contact_timeline
+  ON email_messages (company_id, contact_id, gmail_internal_at)
+  WHERE contact_id IS NOT NULL;
+
+-- mailbox: Gmail watch lifecycle for real-time push
+ALTER TABLE email_mailboxes
+  ADD COLUMN IF NOT EXISTS watch_history_id  TEXT,
+  ADD COLUMN IF NOT EXISTS watch_expires_at  TIMESTAMPTZ;
+```
+
+Notes: `contacts.id` and `timelines.id` are **BIGINT** (BIGSERIAL); `email_messages.company_id` stays **UUID** (matches `079`). `on_timeline` lets `buildTimeline`/inbox cheaply distinguish "this email is a timeline item" without re-running the match. No change to the `079` tables' existing columns, constraints, or the inbox's `getThreads`/`getMessagesByThread` queries.
+
+**`buildTimeline` extension** (`backend/src/routes/pulse.js`, inside the shared builder after the SMS block, gated on `contact?.id`):
+
+```sql
+SELECT id, thread_id, provider_thread_id, direction, from_name, from_email,
+       to_recipients_json, subject, body_text, snippet, gmail_internal_at,
+       sent_by_user_email
+FROM email_messages
+WHERE company_id = $1 AND contact_id = $2 AND on_timeline = true
+ORDER BY gmail_internal_at ASC;
+```
+
+Each row is mapped to a timeline email item (quote-stripped `body_text` → display body) and returned in a new `email_messages` array on the JSON (alongside `calls`/`messages`/`conversations`/`financial_events`), keeping the SMS payload untouched. Permission/visibility unchanged (`pulse.view`, provider `assigned_only`). The unread-count endpoint (`GET /api/pulse/unread-count`) continues to read `contacts.has_unread`, which inbound email already sets — so email-unread surfaces in the existing badge with no change there.
+
+### Outbound — routing + reuse
+
+- **Composer signal.** `SmsForm.onSend` is extended from `(message, files, selectedPhone)` to also carry the chosen **channel + target**: `onSend(message, files, { channel:'sms'|'email', value })`. `usePulsePage.handleSendMessage` branches on `channel`.
+- **SMS branch:** unchanged — existing `messagingApi.sendMessage` / `startConversation`.
+- **Email branch:** new `emailApi.sendTimelineEmail(contactId, { body })`. Backend **route** `POST /api/email/timeline/contacts/:contactId/send` (mounted under the existing authed `/api/email`, `requirePermission('messages.send')`, `requireCompanyAccess`) → `emailTimelineService.sendForContact(companyId, contactId, body, user)`:
+  - **Reply vs initiate:** look up the contact's **most recent email thread** (`email_messages.contact_id = $contactId` → newest `thread_id`). Found → `provider.sendMessage({ ..., providerThreadId })` which routes to `emailService.replyToThread` (subject `Re:` + `In-Reply-To`/`References` from the thread's last message — existing behavior). None → `provider.sendMessage` with no thread → `emailService.sendEmail` (new thread) with **auto subject** `Message from <company.name>` (FR-OUT-2).
+  - **To:** the selected contact email (validated against `contacts.email`/`contact_emails` for that contact + company).
+  - **Hydrate + link:** `emailService.{reply,send}` already re-imports the thread via `importGmailThread`; the service then stamps `contact_id`/`timeline_id`/`on_timeline=true` on the just-sent `email_messages` row (matched by returned `provider_message_id`) and broadcasts so the timeline shows the outbound bubble immediately (FR-OUT-4).
+- **Reused as-is:** `emailService.sendEmail`, `emailService.replyToThread`, `buildMimeMessage`, `getValidAccessToken`, `importGmailThread`. **Not duplicated.** v1 sends **no `files`** on the email branch (text only).
+
+### Composer + timeline UI
+
+- **`SmsForm.tsx` "To" selector** (today shows up to 2 phones, lines ~57–67): generalize the dropdown to a **target list** = `[{kind:'sms', value:phone, label}…, {kind:'email', value:email, label}…]`. Email entries come from `contact.email` + `contact_emails`. When `mailbox.status !== 'connected'`, render a **non-selectable CTA row** ("Google email not connected — connect to message clients by email") that `navigate`s to the email settings/connect page (FR-UI-3; pattern mirrors the existing "+ Add New" row that navigates to `/settings/quick-messages`). The selected target drives an `email` vs `sms` send and toggles minor copy (placeholder, char-counter hidden for email). No subject field is ever shown.
+- **`usePulsePage.ts`:** add `mailboxStatus` (from `emailApi.getWorkspaceMailbox`, React-Query-cached), build the email target list from `contact`/`contactDetail`, and compute **default channel = last inbound channel**: extend the existing `lastUsedPhone` logic to also consider the newest inbound `email_messages` timestamp; if email is newest, default the selector to that email; else keep the SMS default. `handleSendMessage` gains the `{channel}` branch.
+- **`messagingApi.ts` / `emailApi.ts`:** add `emailApi.sendTimelineEmail`. (Keep email calls in `emailApi`; SMS in `messagingApi` — no cross-import.)
+- **Timeline render:** add an `email` item type alongside `sms` in `PulseTimeline.tsx`'s `useMemo` fusion (timestamp = `gmail_internal_at`), rendering an **`EmailListItem`** bubble (new, sibling to `SmsListItem.tsx`) — inbound left / outbound right, plain text (quote-stripped body), timestamp, a small mail glyph / "Email" eyebrow to distinguish channel. No HTML, no attachment chips (v1). `types/pulse.ts` gets an `EmailTimelineItem` type; the timeline fetch hook maps the new `email_messages` array.
+
+### Config / env (`.env.example` additions)
+
+```
+# EMAIL-TIMELINE-001 — Gmail real-time push (Google Cloud Pub/Sub)
+GMAIL_PUBSUB_TOPIC=projects/<gcp-project>/topics/gmail-inbound   # topic passed to users.watch
+GMAIL_PUSH_VERIFICATION_TOKEN=                                   # shared secret on the push subscription (?token=)
+GMAIL_PUBSUB_SA_EMAIL=                                           # (if OIDC) service account in the push JWT 'email' claim
+GMAIL_PUSH_ENDPOINT_PATH=/api/email/push/google                 # informational; subscription push URL
+GMAIL_WATCH_RENEW_INTERVAL_MS=43200000                          # 12h watch-renewal tick (watch expires ≤7d)
+# Reused from EMAIL-001 (already present): GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI, EMAIL_TOKEN_ENCRYPTION_KEY,
+# EMAIL_OAUTH_STATE_SECRET, EMAIL_SYNC_INTERVAL_MS (5-min poll kept as reconciliation).
+```
+
+Gmail watch additionally requires the Gmail API service account `gmail-api-push@system.gserviceaccount.com` to have **Pub/Sub Publisher** on the topic (GCP setup, documented in deploy notes — not code).
+
+### Files to change / add
+
+**Backend (add)**
+- `backend/src/services/mail/MailProvider.js` — interface/contract + `NormalizedInboundMessage` JSDoc.
+- `backend/src/services/mail/GmailProvider.js` — adapter delegating to EMAIL-001 services (watch/renew/stop, pullChanges→normalize, sendMessage→send/reply, getConnectionStatus).
+- `backend/src/services/mail/providerRegistry.js` — `get(companyId)` → provider (v1: Gmail).
+- `backend/src/services/emailTimelineService.js` — provider-agnostic: `linkInboundMessage`, `ingestForCompany`, `findEmailContact`, `sendForContact`, quote-stripper `toTimelineBody`.
+- `backend/src/routes/email-push.js` — `POST /api/email/push/google` (raw body, token/OIDC verify, fast-ack, async ingest).
+
+**Backend (edit)**
+- `src/server.js` — mount `email-push` **before `express.json`** (next to `:70–76`); start the **watch-renewal scheduler** next to `:411–413`.
+- `backend/src/routes/pulse.js` — `buildTimeline`: add the contact-linked email query + `email_messages` array in the response.
+- `backend/src/routes/email.js` — add `POST /timeline/contacts/:contactId/send` (`messages.send`).
+- `backend/src/services/emailSyncService.js` — call `emailTimelineService.linkInboundMessage` from the history path (push + poll share it); export a `pullChangesNormalized` helper for the provider.
+- `backend/src/services/emailMailboxService.js` — persist/clear `watch_history_id`/`watch_expires_at` on connect/disconnect; `disconnectMailbox` → `provider.stopWatch`.
+- `backend/src/db/emailQueries.js` — `linkMessageToContact`, `getTimelineEmailByContact`, watch-column updates, `listMailboxesForWatchRenewal`.
+- `backend/src/db/timelinesQueries.js` — `findOrCreateTimelineByContact(contactId, companyId)`.
+- `backend/src/services/arConfigHelper` usage — support an `inbound_email` trigger key (config-only).
+
+**DB (add)**
+- `backend/db/migrations/129_email_timeline_link.sql` (above) + `backend/db/migrations/rollback_129_email_timeline_link.sql`.
+
+**Frontend (edit)**
+- `frontend/src/components/pulse/SmsForm.tsx` — generalized "To" target selector (phones + emails + connect-CTA), channel-aware `onSend`.
+- `frontend/src/hooks/usePulsePage.ts` — mailbox status, email targets, default-channel = last inbound channel, `handleSendMessage` email branch.
+- `frontend/src/services/emailApi.ts` — `sendTimelineEmail`.
+- `frontend/src/components/pulse/PulseTimeline.tsx` — fuse `email` items; `frontend/src/components/pulse/EmailListItem.tsx` (**add**) — email bubble.
+- `frontend/src/types/pulse.ts` / `frontend/src/types/contact.ts` — `EmailTimelineItem`; ensure `contact_emails` surfaced to the composer.
+- `frontend/src/hooks/usePulseTimeline.ts` (or equivalent) — map the new `email_messages` array.
+
+### Protected / forbidden (must not break)
+
+- **EMAIL-001 inbox**: `backend/src/routes/email.js` existing endpoints, `email-oauth.js`, `email-settings.js`, `components/email/*`, `EmailPage`/`EmailSettingsPage`, `getThreads`/`getMessagesByThread`, attachment download, OAuth. The new email-timeline column is **nullable** and never filtered by inbox queries.
+- **EMAIL-001 services**: do not change `getValidAccessToken`/refresh, `importGmailThread` thread-upsert, or `email_sync_state` checkpointing semantics; only **add hooks**/new exports. Keep the 5-minute scheduler (now also reconciliation).
+- **SMS/calls/financial timeline**: `buildTimeline`'s existing arrays + the SMS send path (`conversationsService`, `messagingApi`) stay intact — email is additive (new array + new composer branch).
+- **slot-engine**, `src/server.js` boot order/core, `authedFetch.ts`, `useRealtimeEvents.ts`, the `079` migration, and all prior migrations — unchanged.
+- **Tenancy**: no email query may omit `company_id`; the push route derives tenant from the verified notification payload, never trusts a caller-supplied id.
+
+### Risks / edge cases
+
+- **No contact match** → inbox-only, no timeline/unread/contact (AC-3). Expected, not an error.
+- **Multiple contacts share one email** (`from_email` matches >1 contact in the company) → v1 links to the **most-recently-active** match (deterministic tiebreak: highest `contacts.updated_at`, then lowest id) and logs a warning; never fans out to several timelines. (Documented limitation; contact-merge is out of scope.)
+- **Contact has email but mailbox disconnected** → composer email entries show the **connect CTA**, not a send target (FR-UI-3); inbound simply isn't arriving (no watch). Outbound route returns `409` (mirrors `emailService`'s `reconnect_required`).
+- **Gmail watch expiry (≤7d)** → renewal scheduler re-arms within 48h of expiry; if a watch lapses, the 5-min poll still ingests inbound into the timeline (degraded latency, not loss) (AC-11).
+- **Pub/Sub at-least-once / retries / duplicates / reorders** → idempotent on `(company_id, provider_message_id)`; re-link is a no-op; fast-ack prevents retry storms; poll overlap is safe.
+- **Threading when initiating** → no `providerThreadId` ⇒ `sendEmail` (new thread); a reply path is taken **only** when a prior email thread for the contact exists, preventing accidental cross-thread merges.
+- **Draft-edit push storm** → every draft save/edit emits `labelsAdded`/`messagesAdded` history carrying the `DRAFT` label; the INBOX-external filter in step 3 drops all of them ⇒ zero timeline activity (AC-2). Outbound (`SENT`/own-from) is filtered the same way; the agent's own sent timeline emails are projected by the **send path** (stamping `on_timeline`), not by inbound ingest, so there's no double-count.
+- **History-gap fallback** (`syncIncrementalHistory` 404 → backfill) is preserved; backfilled threads run the same `linkInboundMessage`, so a gap self-heals onto the timeline.
+- **Push endpoint spoofing** → unverified token/OIDC ⇒ rejected before any DB work (AC-10).

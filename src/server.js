@@ -75,6 +75,13 @@ app.use('/api/billing/webhook', express.raw({ type: '*/*', limit: '1mb' }),
 app.use('/api/stripe-payments/webhook', express.raw({ type: '*/*', limit: '1mb' }),
     require('../backend/src/routes/stripePaymentsWebhook'));
 
+// EMAIL-TIMELINE-001 (TASK-ET-5): Gmail Pub/Sub inbound push. UNAUTHENTICATED by
+// user (Pub/Sub can't carry our JWT) — token/OIDC verification happens inside the
+// route. Mounted with the RAW body BEFORE express.json (mirrors the Stripe webhooks
+// above) so verification + JSON parse run on the unmodified payload.
+app.use('/api/email/push', express.raw({ type: '*/*', limit: '1mb' }),
+    require('../backend/src/routes/emailPush'));
+
 // Middleware
 // 2mb limit covers document-template descriptors that may embed a base64 logo
 // (logo_url.maxLength = 500_000 chars ≈ 370KB + descriptor JSON overhead).
@@ -265,6 +272,10 @@ const emailRouter = require('../backend/src/routes/email');
 const emailOAuthRouter = require('../backend/src/routes/email-oauth');
 app.use('/api/email/oauth', emailOAuthRouter); // public — Google redirects here
 app.use('/api/settings/email', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess, emailSettingsRouter);
+// Outbound email from the contact timeline (EMAIL-TIMELINE-001, TASK-ET-8) — mounted
+// before the broader /api/email so the more-specific prefix matches first.
+const emailTimelineRouter = require('../backend/src/routes/emailTimeline');
+app.use('/api/email/timeline', authenticate, requireCompanyAccess, emailTimelineRouter);
 app.use('/api/email', authenticate, requireCompanyAccess, emailRouter);
 const serviceTerritoryRouter = require('../backend/src/routes/service-territories');
 app.use('/api/settings/service-territories', authenticate, requirePermission('tenant.company.manage'), requireCompanyAccess, serviceTerritoryRouter);
@@ -412,7 +423,66 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
     const emailSyncService = require('../backend/src/services/emailSyncService');
     emailSyncService.startScheduler();
 
+    // ── EMAIL-TIMELINE-001 (TASK-ET-6): Gmail watch-renewal scheduler ──────────
+    // Sibling of the EMAIL-001 poll scheduler above. Every ~12h, re-arm Gmail
+    // `users.watch` for connected mailboxes whose watch is null or expiring within
+    // 48h (Gmail watches expire ≤7 days). Entirely guarded: if GMAIL_PUBSUB_TOPIC
+    // is unset (Pub/Sub not provisioned) we skip — the 5-min poll covers inbound.
+    // renewWatch is itself safe-fail; per-mailbox + overall try/catch keep one bad
+    // mailbox (or a missing topic) from ever crashing the tick or boot.
+    if (process.env.GMAIL_PUBSUB_TOPIC) {
+        const emailQueries = require('../backend/src/db/emailQueries');
+        const providerRegistry = require('../backend/src/services/mail/providerRegistry');
+        const WATCH_RENEW_INTERVAL_MS = parseInt(process.env.GMAIL_WATCH_RENEW_INTERVAL_MS, 10) || 43200000; // 12h
+        const renewWatches = async () => {
+            try {
+                const mailboxes = await emailQueries.listMailboxesForWatchRenewal();
+                for (const mb of mailboxes) {
+                    try {
+                        await providerRegistry.get(mb.company_id).renewWatch(mb.company_id);
+                    } catch (mbErr) {
+                        console.error(`[emailWatchScheduler] renewWatch failed for company ${mb.company_id}:`, mbErr.message);
+                    }
+                }
+            } catch (err) {
+                console.error('[emailWatchScheduler] tick error:', err.message);
+            }
+        };
+        setInterval(renewWatches, WATCH_RENEW_INTERVAL_MS);
+        console.log(`📧 Gmail watch-renewal scheduler started (${Math.round(WATCH_RENEW_INTERVAL_MS / 3600000)}h tick)`);
+    } else {
+        console.log('📧 Gmail watch-renewal scheduler skipped (GMAIL_PUBSUB_TOPIC unset)');
+    }
 
+    // ── EMAIL-TIMELINE-001 (TASK-ET-4): inbound-link reconciliation poll ───────
+    // Sibling of the EMAIL-001 sync scheduler above (additive — does NOT touch
+    // emailSyncService). Same cadence (EMAIL_SYNC_INTERVAL_MS, default 5 min): the
+    // EMAIL-001 sync imports INBOX rows; this tick scans each connected company's
+    // recently-imported, not-yet-linked INBOUND rows and links them onto the
+    // contact timeline (recovers any dropped/failed push, idempotently). NOT gated
+    // on Pub/Sub — this is the reconciliation path that works without push.
+    // Wholly guarded so a bad mailbox or DB error never crashes the tick or boot.
+    // Reuse the EMAIL-001 cadence constant (emailSyncService.SYNC_INTERVAL_MS) so the
+    // two schedulers stay in lockstep instead of duplicating the 5-min default here.
+    const EMAIL_TIMELINE_POLL_MS = emailSyncService.SYNC_INTERVAL_MS;
+    const emailTimelineService = require('../backend/src/services/email/emailTimelineService');
+    const emailTimelineQueries = require('../backend/src/db/emailQueries');
+    const runTimelineLinkPoll = async () => {
+        try {
+            const mailboxes = await emailTimelineQueries.listConnectedMailboxes();
+            for (const mb of mailboxes) {
+                try {
+                    await emailTimelineService.ingestPolledForCompany(mb.company_id);
+                } catch (mbErr) {
+                    console.error(`[EmailTimeline] poll failed for company ${mb.company_id}:`, mbErr.message);
+                }
+            }
+        } catch (err) {
+            console.error('[EmailTimeline] poll tick error:', err.message);
+        }
+    };
+    setInterval(runTimelineLinkPoll, EMAIL_TIMELINE_POLL_MS);
+    console.log(`📨 Email-timeline link poll started, interval: ${EMAIL_TIMELINE_POLL_MS}ms`);
 
     // Realtime transcription (Twilio Media Streams → AssemblyAI)
     if (process.env.FEATURE_REALTIME_TRANSCRIPTION === 'true') {

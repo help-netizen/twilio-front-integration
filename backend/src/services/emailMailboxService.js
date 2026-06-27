@@ -12,7 +12,23 @@ const ENCRYPTION_KEY = process.env.EMAIL_TOKEN_ENCRYPTION_KEY; // 32-byte hex
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/api/email/oauth/google/callback';
-const STATE_SECRET = process.env.EMAIL_OAUTH_STATE_SECRET || 'blanc-email-oauth-state-secret';
+// OAuth-state HMAC key. NEVER fall back to a hardcoded literal — a public, shipped
+// secret makes the state forgeable (anyone could mint a valid state for any company).
+// Prefer the env var; if it's unset, mint a per-process random secret ONCE at module
+// load so connect still works in dev/CI without hard-failing. The trade-off (warned
+// loudly): random per-process means in-flight states do NOT survive a restart and
+// won't validate across multiple instances — so EMAIL_OAUTH_STATE_SECRET MUST be set
+// in production.
+const STATE_SECRET = process.env.EMAIL_OAUTH_STATE_SECRET
+    || (() => {
+        const generated = crypto.randomBytes(32).toString('hex');
+        console.warn(
+            '[EmailMailboxService] EMAIL_OAUTH_STATE_SECRET is not set — using a random '
+            + 'per-process secret. OAuth states will not survive a restart or validate '
+            + 'across instances. Set EMAIL_OAUTH_STATE_SECRET in production.'
+        );
+        return generated;
+    })();
 
 const SCOPES = [
     'https://www.googleapis.com/auth/gmail.readonly',

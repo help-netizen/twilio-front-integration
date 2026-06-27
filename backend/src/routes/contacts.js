@@ -106,6 +106,10 @@ router.get('/:id', requirePermission('contacts.view'), async (req, res) => {
         const contact = await contactsService.getContactById(id, companyId, getProviderScope(req));
         const leads = await contactsService.getContactLeads(id, companyId);
 
+        // Surface ALL email addresses (primary + contact_emails) so the Pulse
+        // composer's "To" dropdown can offer each one (EMAIL-TIMELINE-001 / TASK-ET-14).
+        contact.contact_emails = await contactsService.getContactEmails(id, contact.email);
+
         // Merge contact_addresses from our DB into contact.addresses
         const contactAddressService = require('../services/contactAddressService');
         const dbAddresses = await contactAddressService.getAddressesForContact(id);

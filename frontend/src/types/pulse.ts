@@ -32,7 +32,24 @@ export interface SmsConversation {
     state: string;
 }
 
-export type TimelineItemType = 'call' | 'sms' | 'financial';
+export type TimelineItemType = 'call' | 'sms' | 'financial' | 'email';
+
+// EMAIL-TIMELINE-001 §6 — an email projected onto a contact's timeline.
+// Backend (buildTimeline) already quote-strips body_text for display.
+export interface EmailTimelineItem {
+    id: string;
+    type: 'email';
+    direction: 'inbound' | 'outbound';
+    is_outbound: boolean;
+    from_email: string | null;
+    from_name: string | null;
+    to_email: string | string[] | null; // raw to_recipients_json
+    subject: string | null;
+    body_text: string | null; // plain text, already quote-stripped server-side
+    sent_at: string; // gmail_internal_at (ISO8601) — timeline sort timestamp
+    thread_id: string | null;
+    sent_by_user_email: string | null; // outbound attribution (nullable)
+}
 
 export interface FinancialEvent {
     id: string;
@@ -48,7 +65,7 @@ export interface FinancialEvent {
 export interface TimelineItem {
     type: TimelineItemType;
     timestamp: Date;
-    data: CallData | SmsMessage | FinancialEvent;
+    data: CallData | SmsMessage | FinancialEvent | EmailTimelineItem;
 }
 
 export interface PulseTimelineResponse {
@@ -56,6 +73,7 @@ export interface PulseTimelineResponse {
     messages: SmsMessage[];
     conversations: SmsConversation[];
     financial_events?: FinancialEvent[];
+    email_messages?: EmailTimelineItem[];
 }
 
 // Action Required types

@@ -8,6 +8,9 @@ const router = express.Router();
 const db = require('../db/connection');
 const queries = require('../db/queries');
 const convQueries = require('../db/conversationsQueries');
+const contactsService = require('../services/contactsService');
+const emailQueries = require('../db/emailQueries');
+const { toTimelineBody } = require('../services/email/emailTimelineBody');
 const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope } = require('../middleware/providerScope');
 
@@ -288,11 +291,56 @@ async function buildTimeline(req, res, contact, timeline) {
         }
     }
 
+    // Email messages projected onto this contact's timeline (EMAIL-TIMELINE-001 §6).
+    // Only fires when there is a resolved contact (BIGINT id) — orphan/contact-less
+    // timelines have no linked email, so email_messages stays []. The query itself
+    // is company- + contact-scoped and filters on on_timeline = true.
+    let emailMessages = [];
+    if (contact?.id) {
+        const companyId = tenantCompanyId(req);
+        if (companyId) {
+            try {
+                const emailRows = await emailQueries.getTimelineEmailByContact(companyId, contact.id);
+                emailMessages = emailRows.map(row => ({
+                    id: row.id,
+                    type: 'email',
+                    direction: row.direction,
+                    is_outbound: row.is_outbound,
+                    from_email: row.from_email,
+                    from_name: row.from_name,
+                    to_email: row.to_recipients_json,
+                    subject: row.subject,
+                    // Quote-strip the STORED body for display only (storage untouched).
+                    body_text: toTimelineBody(row.body_text, { snippet: row.snippet }),
+                    sent_at: row.gmail_internal_at,
+                    thread_id: row.thread_id,
+                    sent_by_user_email: row.sent_by_user_email,
+                }));
+            } catch (err) {
+                console.error('[Pulse] timeline email query error:', err.message);
+            }
+        }
+    }
+
+    // Surface ALL of the contact's email addresses so the Pulse composer's "To"
+    // dropdown can offer each one (EMAIL-TIMELINE-001 / TASK-ET-14). Union of the
+    // primary contacts.email + contact_emails rows, deduped, primary first.
+    let contactOut = contact || null;
+    if (contact?.id) {
+        try {
+            const contactEmails = await contactsService.getContactEmails(contact.id, contact.email);
+            contactOut = { ...contact, contact_emails: contactEmails };
+        } catch (err) {
+            console.error('[Pulse] contact emails query error:', err.message);
+        }
+    }
+
     res.json({
         calls, messages, conversations,
+        email_messages: emailMessages,
         financial_events: financialEvents,
         timeline_id: timeline?.id || null,
-        contact: contact || null,
+        contact: contactOut,
     });
 }
 

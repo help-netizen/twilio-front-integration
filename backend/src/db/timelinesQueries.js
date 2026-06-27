@@ -144,6 +144,92 @@ async function findOrCreateTimeline(phoneE164, companyId = null) {
     return tl.rows[0];
 }
 
+/**
+ * Phone-less analogue of findOrCreateTimeline: resolve the timeline for an
+ * already-known contact (e.g. inbound/outbound email, where the contact is
+ * matched by email address upstream — EMAIL-TIMELINE-001 §3d step 1).
+ *
+ * Mirrors the contactId branch of `pulse.js POST /ensure-timeline`:
+ *   1. return the contact's existing linked timeline, else
+ *   2. adopt an orphan timeline (contact_id IS NULL) matching the contact's
+ *      phone / secondary_phone, else
+ *   3. INSERT a fresh contact-linked timeline.
+ *
+ * Because timelines carry a partial-unique index on (contact_id) WHERE
+ * contact_id IS NOT NULL, this resolves to the SAME single row that the SMS
+ * path (findOrCreateTimeline → match contact by phone → contact_id) reaches —
+ * so email and SMS for a contact share one timeline. Company-scoped: a contact
+ * from another tenant resolves to nothing (returns null).
+ *
+ * @param {string|number} contactId
+ * @param {string|null} companyId
+ * @returns {Promise<object|null>} the timeline row, or null if the contact does
+ *   not exist within the given company.
+ */
+async function findOrCreateTimelineByContact(contactId, companyId = null) {
+    const cid = companyId || DEFAULT_COMPANY_ID;
+
+    // Contact must live in the current tenant (data isolation). Also pull the
+    // phones up-front so we can hunt for an adoptable orphan below.
+    const contactResult = await db.query(
+        `SELECT id, phone_e164, secondary_phone
+         FROM contacts WHERE id = $1 AND company_id = $2`,
+        [contactId, cid]
+    );
+    const contact = contactResult.rows[0];
+    if (!contact) return null;
+
+    // 1. Existing timeline already linked to this contact.
+    const existing = await db.query(
+        `SELECT * FROM timelines WHERE contact_id = $1 AND company_id = $2 LIMIT 1`,
+        [contactId, cid]
+    );
+    if (existing.rows[0]) return existing.rows[0];
+
+    // 2. No linked timeline yet — adopt an orphan timeline for the contact's
+    //    phone(s), so an email-first contact reuses any call/SMS timeline.
+    const phonesToCheck = [contact.phone_e164, contact.secondary_phone]
+        .filter(Boolean)
+        .map(p => p.replace(/\D/g, ''));
+
+    if (phonesToCheck.length > 0) {
+        const orphan = await db.query(
+            `SELECT id FROM timelines
+             WHERE contact_id IS NULL
+               AND company_id = $2
+               AND regexp_replace(phone_e164, '\\D', '', 'g') = ANY($1)
+             ORDER BY updated_at DESC NULLS LAST
+             LIMIT 1`,
+            [phonesToCheck, cid]
+        );
+        if (orphan.rows[0]) {
+            const adopted = await db.query(
+                `UPDATE timelines SET contact_id = $1, phone_e164 = NULL, updated_at = now()
+                 WHERE id = $2 RETURNING *`,
+                [contactId, orphan.rows[0].id]
+            );
+            await db.query(
+                `UPDATE calls SET contact_id = $1 WHERE timeline_id = $2 AND contact_id IS NULL`,
+                [contactId, orphan.rows[0].id]
+            );
+            console.log(`[Timeline] Adopted orphan timeline ${orphan.rows[0].id} for contact ${contactId}`);
+            return adopted.rows[0];
+        }
+    }
+
+    // 3. No orphan — create a fresh contact-linked timeline. The partial-unique
+    //    index on (contact_id) makes this idempotent under a race.
+    const created = await db.query(
+        `INSERT INTO timelines (contact_id, company_id)
+         VALUES ($1, $2)
+         ON CONFLICT (contact_id) WHERE contact_id IS NOT NULL
+         DO UPDATE SET updated_at = now()
+         RETURNING *`,
+        [contactId, cid]
+    );
+    return created.rows[0];
+}
+
 async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, search = null } = {}) {
     const companyFilter = companyId ? `AND tl.company_id = $3` : '';
     const params = [limit, offset];
@@ -371,6 +457,7 @@ module.exports = {
     markTimelineUnread,
     markTimelineRead,
     findOrCreateTimeline,
+    findOrCreateTimelineByContact,
     findOrCreateAnonymousTimeline,
     ANONYMOUS_PHONE_SENTINEL,
     getCallsByTimeline,

@@ -2,16 +2,58 @@ import type { Lead } from '../../types/lead';
 
 export interface QuickMessage { id: string; title: string; content: string; sort_order: number; }
 
+/** A composer destination: an SMS phone or a contact email. */
+export type MessageChannel = 'sms' | 'email';
+export interface MessageTarget {
+    channel: MessageChannel;
+    value: string; // phone (E.164) or email address
+    label: string; // human label shown in the dropdown
+}
+
 export interface SmsFormProps {
-    onSend: (message: string, files?: File[], targetPhone?: string) => void;
+    onSend: (message: string, files: File[] | undefined, target: { channel: MessageChannel; value: string }) => void;
     onAiFormat?: (message: string) => Promise<string>;
     disabled?: boolean;
     lead?: Lead | null;
     mainPhone?: string;
     secondaryPhone?: string;
     secondaryPhoneName?: string;
-    selectedPhone?: string;
-    onPhoneChange?: (phone: string) => void;
+    /** Contact email addresses (channel = 'email'). First entry is the primary. */
+    emails?: string[];
+    /** True when the company Gmail mailbox is connected; false → email is a connect-CTA only. */
+    emailConnected?: boolean;
+    /** Currently selected target (phone or email). */
+    selectedTarget?: MessageTarget;
+    onTargetChange?: (target: MessageTarget) => void;
+}
+
+/**
+ * Build the ordered target list for the composer: main phone, optional secondary
+ * phone, then each contact email. Phones come first (SMS is the default channel).
+ */
+export function buildMessageTargets(
+    mainPhone: string | undefined,
+    secondaryPhone: string | undefined,
+    secondaryPhoneName: string | undefined,
+    emails: string[] | undefined,
+): MessageTarget[] {
+    const targets: MessageTarget[] = [];
+    if (mainPhone) targets.push({ channel: 'sms', value: mainPhone, label: `${formatDisplayPhone(mainPhone)} — Main number` });
+    const mainD = (mainPhone || '').replace(/\D/g, '');
+    const secD = (secondaryPhone || '').replace(/\D/g, '');
+    if (secondaryPhone && secD && secD !== mainD) {
+        targets.push({ channel: 'sms', value: secondaryPhone, label: `${formatDisplayPhone(secondaryPhone)}${secondaryPhoneName ? ` — ${secondaryPhoneName}` : ''}` });
+    }
+    const seenEmails = new Set<string>();
+    for (const raw of emails || []) {
+        const email = (raw || '').trim();
+        if (!email) continue;
+        const key = email.toLowerCase();
+        if (seenEmails.has(key)) continue;
+        seenEmails.add(key);
+        targets.push({ channel: 'email', value: email, label: email });
+    }
+    return targets;
 }
 
 export function formatFileSize(bytes: number): string {

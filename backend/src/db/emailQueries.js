@@ -41,27 +41,42 @@ async function upsertMailbox(data) {
         created_by, updated_by,
     } = data;
 
-    const result = await db.query(`
-        INSERT INTO email_mailboxes
-            (company_id, provider, email_address, display_name, provider_account_id,
-             status, access_token_encrypted, refresh_token_encrypted, token_expires_at,
-             created_by, updated_by)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-        ON CONFLICT (company_id, provider) DO UPDATE SET
-            email_address = EXCLUDED.email_address,
-            display_name = COALESCE(EXCLUDED.display_name, email_mailboxes.display_name),
-            provider_account_id = COALESCE(EXCLUDED.provider_account_id, email_mailboxes.provider_account_id),
-            status = EXCLUDED.status,
-            access_token_encrypted = EXCLUDED.access_token_encrypted,
-            refresh_token_encrypted = EXCLUDED.refresh_token_encrypted,
-            token_expires_at = EXCLUDED.token_expires_at,
-            updated_by = EXCLUDED.updated_by,
-            updated_at = now()
-        RETURNING *
-    `, [company_id, provider, email_address, display_name, provider_account_id,
-        status, access_token_encrypted, refresh_token_encrypted, token_expires_at,
-        created_by, updated_by]);
-    return result.rows[0];
+    try {
+        const result = await db.query(`
+            INSERT INTO email_mailboxes
+                (company_id, provider, email_address, display_name, provider_account_id,
+                 status, access_token_encrypted, refresh_token_encrypted, token_expires_at,
+                 created_by, updated_by)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+            ON CONFLICT (company_id, provider) DO UPDATE SET
+                email_address = EXCLUDED.email_address,
+                display_name = COALESCE(EXCLUDED.display_name, email_mailboxes.display_name),
+                provider_account_id = COALESCE(EXCLUDED.provider_account_id, email_mailboxes.provider_account_id),
+                status = EXCLUDED.status,
+                access_token_encrypted = EXCLUDED.access_token_encrypted,
+                refresh_token_encrypted = EXCLUDED.refresh_token_encrypted,
+                token_expires_at = EXCLUDED.token_expires_at,
+                updated_by = EXCLUDED.updated_by,
+                updated_at = now()
+            RETURNING *
+        `, [company_id, provider, email_address, display_name, provider_account_id,
+            status, access_token_encrypted, refresh_token_encrypted, token_expires_at,
+            created_by, updated_by]);
+        return result.rows[0];
+    } catch (err) {
+        // Multi-tenant isolation (migration 130): the same email_address is already
+        // connected by a DIFFERENT company. The ON CONFLICT (company_id, provider)
+        // upsert above handles the SAME company reconnecting; only a cross-tenant
+        // collision reaches the uniq_email_mailboxes_address index and raises 23505.
+        // Translate it into a clean 409 the OAuth callback can redirect on (never a 500).
+        if (err && err.code === '23505') {
+            const conflict = new Error('This Google account is already connected to another workspace.');
+            conflict.httpStatus = 409;
+            conflict.code = 'EMAIL_ALREADY_CONNECTED_ELSEWHERE';
+            throw conflict;
+        }
+        throw err;
+    }
 }
 
 async function updateMailboxStatus(mailboxId, { status, last_sync_status, last_sync_error, last_synced_at, history_id, updated_by }) {
@@ -391,6 +406,233 @@ async function listDueMailboxes(intervalMinutes = 5) {
     return result.rows;
 }
 
+// ─── EMAIL-TIMELINE-001: email ↔ contact ↔ timeline link ─────────────────
+// All functions below are additive (EMAIL-001 inbox behavior is unchanged) and
+// company-scoped where the data is tenant-bound. They build against migration 129
+// columns: email_messages.{contact_id,timeline_id,on_timeline},
+// email_mailboxes.{watch_history_id,watch_expires_at}.
+
+/**
+ * Resolve a contact by email for an inbound message (§3b).
+ * Matches `lower(trim(from_email))` against either `lower(contacts.email)` OR
+ * `contact_emails.email_normalized` (already lower(trim)'d at write time),
+ * company-scoped. Multi-match tie-break: most-recently-active contact wins
+ * (`contacts.updated_at DESC NULLS LAST, c.id ASC`) — deterministic single link,
+ * never fans onto several timelines. Returns the contact row (incl. `id` as
+ * contact_id) or null when no contact matches (→ message stays inbox-only).
+ */
+async function findEmailContact(fromEmail, companyId) {
+    const normalized = String(fromEmail || '').trim().toLowerCase();
+    if (!normalized) return null;
+    const result = await db.query(
+        `SELECT c.*, c.id AS contact_id
+         FROM contacts c
+         LEFT JOIN contact_emails ce ON ce.contact_id = c.id
+         WHERE c.company_id = $1
+           AND (lower(c.email) = $2 OR ce.email_normalized = $2)
+         ORDER BY c.updated_at DESC NULLS LAST, c.id ASC
+         LIMIT 1`,
+        [companyId, normalized]
+    );
+    return result.rows[0] || null;
+}
+
+/**
+ * Link an email_messages row to a contact/timeline and flag it for the timeline.
+ * Keyed on the unique `(company_id, provider_message_id)` (079). Re-link is a
+ * no-op UPDATE — idempotent under push redelivery / poll overlap. Used by both
+ * inbound matching (§3d) and the outbound send path (§5, on_timeline stamp).
+ * Returns the updated row or null when no such message exists for the company.
+ */
+async function linkMessageToContact(providerMessageId, companyId, { contact_id, timeline_id, on_timeline = true } = {}) {
+    const result = await db.query(
+        `UPDATE email_messages SET
+            contact_id  = $3,
+            timeline_id = $4,
+            on_timeline = $5,
+            updated_at  = now()
+         WHERE company_id = $1 AND provider_message_id = $2
+         RETURNING *`,
+        [companyId, providerMessageId, contact_id, timeline_id, on_timeline]
+    );
+    return result.rows[0] || null;
+}
+
+/**
+ * Pre-link idempotency probe (TASK-ET-4): the current link state of a message,
+ * keyed on the unique `(company_id, provider_message_id)`. Lets the inbound
+ * pipeline detect an already-projected row BEFORE the (no-op) re-link UPDATE, so
+ * a redelivered push / poll-overlap does not re-flag unread or re-emit SSE.
+ * Returns `{ contact_id, timeline_id, on_timeline }` or null when no such row.
+ */
+async function getMessageLinkState(providerMessageId, companyId) {
+    const result = await db.query(
+        `SELECT contact_id, timeline_id, on_timeline
+         FROM email_messages
+         WHERE company_id = $1 AND provider_message_id = $2
+         LIMIT 1`,
+        [companyId, providerMessageId]
+    );
+    return result.rows[0] || null;
+}
+
+/**
+ * Poll-path scan (TASK-ET-4): a company's recently-imported INBOUND email_messages
+ * rows that are not yet linked onto a timeline. The `direction='inbound'` filter
+ * IS the draft/sent exclusion for the poll path (SENT/DRAFT rows are 'outbound').
+ * Newest-first so a backlog drains most-recent-first. Company-scoped.
+ */
+async function listUnlinkedInboundForTimeline(companyId, { limit = 100 } = {}) {
+    const result = await db.query(
+        `SELECT id, provider_message_id, from_email, from_name, subject,
+                body_text, snippet, gmail_internal_at
+         FROM email_messages
+         WHERE company_id = $1
+           AND direction = 'inbound'
+           AND contact_id IS NULL
+           AND on_timeline = false
+         ORDER BY gmail_internal_at DESC NULLS LAST, id DESC
+         LIMIT $2`,
+        [companyId, limit]
+    );
+    return result.rows;
+}
+
+/**
+ * All currently-connected mailboxes (TASK-ET-4): drives the timeline-link poll
+ * sibling scheduler — one `ingestPolledForCompany` per connected company.
+ */
+async function listConnectedMailboxes() {
+    const result = await db.query(
+        `SELECT id, company_id, provider, email_address, status
+         FROM email_mailboxes
+         WHERE status = 'connected'
+         ORDER BY company_id`
+    );
+    return result.rows;
+}
+
+/**
+ * §6 projection: a contact's timeline email, oldest→newest. Tenant + contact
+ * scoped, only rows already projected (`on_timeline = true`). Shaped for
+ * buildTimeline (the FE fuses + sorts heterogeneous sources client-side).
+ */
+async function getTimelineEmailByContact(companyId, contactId, { limit } = {}) {
+    const params = [companyId, contactId];
+    let limitClause = '';
+    if (limit != null) {
+        params.push(limit);
+        limitClause = ` LIMIT $${params.length}`;
+    }
+    const result = await db.query(
+        `SELECT id, thread_id, provider_thread_id, direction, from_name, from_email,
+                to_recipients_json, subject, body_text, snippet, gmail_internal_at,
+                sent_by_user_email,
+                (direction = 'outbound') AS is_outbound
+         FROM email_messages
+         WHERE company_id = $1 AND contact_id = $2 AND on_timeline = true
+         ORDER BY gmail_internal_at ASC, id ASC${limitClause}`,
+        params
+    );
+    return result.rows;
+}
+
+/**
+ * Newest email thread (local `email_messages.thread_id`) linked to the contact,
+ * any direction, on or off timeline — drives the outbound reply-vs-initiate
+ * decision (§5/TASK-ET-8). Returns the thread_id (BIGINT) or null when the
+ * contact has no prior email thread (→ initiate a new thread).
+ */
+async function getNewestThreadIdForContact(companyId, contactId) {
+    const result = await db.query(
+        `SELECT thread_id
+         FROM email_messages
+         WHERE company_id = $1 AND contact_id = $2
+         ORDER BY gmail_internal_at DESC NULLS LAST, id DESC
+         LIMIT 1`,
+        [companyId, contactId]
+    );
+    return result.rows[0] ? result.rows[0].thread_id : null;
+}
+
+/**
+ * Resolve the mailbox (+ its company_id) by the mailbox's connected address — for
+ * push-payload → company/tenant resolution (the Pub/Sub `emailAddress`). Returns
+ * the mailbox row or null when no mailbox matches that address.
+ */
+async function getMailboxByEmail(emailAddress) {
+    // Defense-in-depth: the uniq_email_mailboxes_address index (migration 130)
+    // guarantees at most one row per lower(email_address), but a tenant-resolution
+    // query must NEVER rely on arbitrary row order — pin it deterministically so a
+    // (theoretical) duplicate resolves to the most-recently-updated mailbox, not a
+    // random tenant.
+    const result = await db.query(
+        `SELECT * FROM email_mailboxes
+         WHERE lower(email_address) = lower($1)
+         ORDER BY updated_at DESC NULLS LAST, id ASC
+         LIMIT 1`,
+        [emailAddress]
+    );
+    return result.rows[0] || null;
+}
+
+/**
+ * Persist the Gmail watch cursor + expiry on connect / renewal (§4). Company-scoped.
+ * Returns the updated mailbox row or null.
+ */
+async function updateWatchState(companyId, { history_id, expires_at } = {}) {
+    const result = await db.query(
+        `UPDATE email_mailboxes SET
+            watch_history_id = $2,
+            watch_expires_at = $3,
+            updated_at = now()
+         WHERE company_id = $1
+         RETURNING *`,
+        [companyId, history_id, expires_at]
+    );
+    return result.rows[0] || null;
+}
+
+/**
+ * Clear the Gmail watch columns on disconnect / stopWatch (§4). Company-scoped.
+ */
+async function clearWatchState(companyId) {
+    const result = await db.query(
+        `UPDATE email_mailboxes SET
+            watch_history_id = NULL,
+            watch_expires_at = NULL,
+            updated_at = now()
+         WHERE company_id = $1
+         RETURNING *`,
+        [companyId]
+    );
+    return result.rows[0] || null;
+}
+
+/**
+ * Connected mailboxes whose Gmail watch needs re-arming: `watch_expires_at` is
+ * NULL or within 48h of `beforeTs` (default: now + 48h). Drives the 12h renewal
+ * scheduler (§4). Soonest-to-expire first.
+ */
+async function listMailboxesForWatchRenewal(beforeTs = null) {
+    const params = [];
+    let threshold = `now() + interval '48 hours'`;
+    if (beforeTs != null) {
+        params.push(beforeTs);
+        threshold = `$1`;
+    }
+    const result = await db.query(
+        `SELECT id, company_id, provider, email_address, status,
+                watch_history_id, watch_expires_at
+         FROM email_mailboxes
+         WHERE status = 'connected'
+           AND (watch_expires_at IS NULL OR watch_expires_at <= ${threshold})
+         ORDER BY watch_expires_at ASC NULLS FIRST`,
+        params
+    );
+    return result.rows;
+}
+
 module.exports = {
     // mailbox
     getMailboxByCompany,
@@ -416,4 +658,16 @@ module.exports = {
     getSyncState,
     upsertSyncState,
     listDueMailboxes,
+    // EMAIL-TIMELINE-001: email ↔ contact ↔ timeline link
+    findEmailContact,
+    linkMessageToContact,
+    getMessageLinkState,
+    listUnlinkedInboundForTimeline,
+    listConnectedMailboxes,
+    getTimelineEmailByContact,
+    getNewestThreadIdForContact,
+    getMailboxByEmail,
+    updateWatchState,
+    clearWatchState,
+    listMailboxesForWatchRenewal,
 };

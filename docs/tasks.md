@@ -3294,3 +3294,474 @@ RS-2 (slotEngineService wiring) and RS-3 (routes) both depend only on RS-1 and m
 ---
 
 **Order:** TASK-RS2-1 is the single self-contained task (one function + its unit tests). It depends on REC-SETTINGS-001 being merged (it extends the already-shipped `buildConfigOverride`). No engine, route, frontend, or DB work — so no downstream tasks.
+
+---
+
+## EMAIL-TIMELINE-001 — tasks (2026-06-26)
+
+> **STATUS: ✅ DONE (2026-06-26)** — ET-1..ET-14 implemented, reviewer-**APPROVED**, 90 backend tests passing + frontend build green. Migration 129 NOT yet run on prod; real-time push needs a GCP Pub/Sub topic+subscription+IAM (the 5-min poll delivers inbound until then). Not yet committed/deployed.
+
+> Wire inbound + outbound email into the Pulse contact timeline behind a **`MailProvider`** seam (Gmail today), reusing EMAIL-001 (OAuth/token/MIME/history). Inbound from a known contact → left bubble + unread (like SMS); reply-in-thread or initiate from the same composer via the "To" selector; near-real-time via Gmail `users.watch` → Pub/Sub push, 5-min poll kept as reconciliation. **Standalone `/email` inbox unchanged.**
+> Spec `docs/specs/EMAIL-TIMELINE-001.md` · Requirements `docs/requirements.md` → EMAIL-TIMELINE-001 (FR-IN/OUT/UI/PROV/SEC, AC-1..AC-13) · Architecture `docs/architecture.md` → "EMAIL-TIMELINE-001 — design (2026-06-26)" · Test cases `docs/test-cases/EMAIL-TIMELINE-001.md` (TC-ET-001..056).
+
+### Cross-cutting constraints (apply to EVERY task below)
+
+- **Server entry** is repo-root `src/server.js`; it `require`s routers/services from `../backend/src/...`.
+- **Migration number** = **129** (next free verified at planning time). **Renumber to the next free integer if 128/129 was taken at commit time** — the working tree is shared across parallel dialogs.
+- **Tenancy:** every email read/write filters by `company_id`, taken **only** from `req.companyFilter?.company_id` (NOT `req.companyId` — it doesn't exist). Foreign `:contactId` → **404** (never 403). The push route derives tenant from the **verified payload** (`emailAddress`), never a caller-supplied id.
+- **Outbound permission:** `requirePermission('messages.send')` (same gate as SMS-send / EMAIL-001 compose).
+- **The seam (AC-12):** `emailTimelineService` and the `buildTimeline` email block import **only** the `MailProvider` interface / `providerRegistry` + `emailQueries`. They MUST NOT import `googleapis`, `emailService`, `emailSyncService`, or `emailMailboxService` directly.
+- **Push endpoint** is mounted on the **raw-body, pre-`express.json`** path (mirror `stripePaymentsWebhook` at `src/server.js:75`); it is the ONLY `/api/email/*` route off the authed JSON router.
+- **Backend tests:** `npx jest --runTestsByPath <file> --testPathIgnorePatterns "/node_modules/"` (tests live in `tests/*.test.js`). External APIs (Gmail `googleapis`, Pub/Sub) are **mocked**; the timeline layer is tested against a fake `MailProvider`. **Frontend:** `cd frontend && npm run build` (tsc -b; prod Docker build is stricter).
+- **Protected / forbidden everywhere (AC-13):** do not break the EMAIL-001 standalone inbox — `backend/src/routes/email.js` *existing* endpoints, `email-oauth.js`, `email-settings.js`, `frontend/src/pages/EmailPage.tsx` + `components/email/*`, and the existing `emailSyncService` checkpoint/`importGmailThread` semantics. Do NOT touch `slot-engine/**`, `authedFetch.ts`, `useRealtimeEvents.ts`, `src/server.js` boot core/order beyond the two named insertions, or any prior migration (079 etc.). New `email_messages`/`email_mailboxes` columns are **nullable/defaulted** and never filtered by inbox queries.
+
+> **⚠️ OPS PREREQUISITE (external, not code) — needed for LIVE real-time push only:** Provision **Google Cloud Pub/Sub** — a topic (`GMAIL_PUBSUB_TOPIC`), a **push subscription** pointing at `https://<host>/api/email/push/google` (with either `?token=GMAIL_PUSH_VERIFICATION_TOKEN` or OIDC service-account auth), and grant **Pub/Sub Publisher** on the topic to `gmail-api-push@system.gserviceaccount.com`. This blocks the *live* push path exercised by **TASK-ET-5** (endpoint) + **TASK-ET-6** (watch lifecycle) end-to-end (manual TC-ET-054/056). **All code is testable without it** (Pub/Sub + Gmail are mocked in Jest); the **5-min poll fallback (TASK-ET-4 wiring) keeps inbound working** on the timeline until Pub/Sub is provisioned. No other task is OPS-gated.
+
+---
+
+### BACKEND
+
+### TASK-ET-1: Migration 129 (email→contact link + watch columns) + rollback + emailQueries additions (P0)
+
+**Goal:** Add the data-model substrate everything else builds on: link columns on `email_messages`, the projection index, watch-lifecycle columns on `email_mailboxes`, and the new query functions. Additive + reversible; inbox queries untouched.
+
+**Что сделать:**
+- Create `backend/db/migrations/129_email_timeline_link.sql` (renumber if taken):
+  - `ALTER TABLE email_messages ADD COLUMN IF NOT EXISTS contact_id BIGINT REFERENCES contacts(id) ON DELETE SET NULL, ADD COLUMN IF NOT EXISTS timeline_id BIGINT REFERENCES timelines(id) ON DELETE SET NULL, ADD COLUMN IF NOT EXISTS on_timeline BOOLEAN NOT NULL DEFAULT false;` (note: `contacts.id`/`timelines.id` are **BIGINT**; `email_messages.company_id` stays **UUID** per 079).
+  - `CREATE INDEX IF NOT EXISTS idx_email_messages_contact_timeline ON email_messages (company_id, contact_id, gmail_internal_at) WHERE contact_id IS NOT NULL;`
+  - `ALTER TABLE email_mailboxes ADD COLUMN IF NOT EXISTS watch_history_id TEXT, ADD COLUMN IF NOT EXISTS watch_expires_at TIMESTAMPTZ;`
+- Create `backend/db/migrations/rollback_129_email_timeline_link.sql` dropping exactly those columns + the index, touching nothing in 079.
+- Add to `backend/src/db/emailQueries.js` (all company-scoped):
+  - `linkMessageToContact(providerMessageId, companyId, { contact_id, timeline_id, on_timeline })` — keyed on the unique `(company_id, provider_message_id)`; **re-link is a no-op `UPDATE`** (idempotent).
+  - `getTimelineEmailByContact(companyId, contactId)` — the §6 projection SELECT (`WHERE company_id=$1 AND contact_id=$2 AND on_timeline=true ORDER BY gmail_internal_at ASC`).
+  - `findEmailContact(fromEmail, companyId)` — the §3b match (`lower(c.email)=$2 OR ce.email_normalized=$2`, `ORDER BY c.updated_at DESC NULLS LAST, c.id ASC`); returns the single most-recently-active contact or null. *(Lives here so the service stays Gmail-free; or place in `contactsQueries.js` if cleaner — keep it query-layer.)*
+  - `getMailboxByEmail(emailAddress)` — resolve mailbox + company by address (for push tenant resolution).
+  - `updateWatchState(companyId, { history_id, expires_at })` and `clearWatchState(companyId)`.
+  - `listMailboxesForWatchRenewal()` — connected mailboxes whose `watch_expires_at` is within 48h or NULL.
+
+**Покрывает:** AC-1/AC-3 (link + no-match substrate), AC-11 (watch columns), AC-13 (additive/nullable, inbox unaffected). TC-ET-053 (migration additive+reversible), TC-ET-006/007/009 (findEmailContact), TC-ET-020 support.
+
+**files-allowed:**
+- `backend/db/migrations/129_email_timeline_link.sql` (new)
+- `backend/db/migrations/rollback_129_email_timeline_link.sql` (new)
+- `backend/src/db/emailQueries.js` (additive functions only)
+
+**files-forbidden:**
+- any other migration (079 etc.) — additive new migration only
+- `backend/src/routes/email.js`, `email-oauth.js`, `email-settings.js` — inbox unchanged
+- `backend/src/services/emailSyncService.js`, `emailService.js`, `emailMailboxService.js` — no service change here
+- `slot-engine/**`
+
+**Acceptance / verify:** migration applies + rolls back cleanly on a scratch DB; new emailQueries functions exported. `npx jest --runTestsByPath tests/migration129.test.js …` (added in TASK-ET-11). No change to existing emailQueries function bodies.
+
+**Зависимости:** none (foundation).
+
+**Статус:** pending
+
+---
+
+### TASK-ET-2: `MailProvider` interface + `GmailProvider` adapter + `providerRegistry` + `pullChangesNormalized` (P0)
+
+**Goal:** Stand up the seam. A documented base interface, a thin Gmail adapter that delegates to EMAIL-001 (no token/MIME/history logic duplicated), a registry, and the additive normalized-pull export on `emailSyncService`.
+
+**Что сделать:**
+- `backend/src/services/mail/MailProvider.js` (new): base class with throwing stubs + JSDoc contract for `getConnectionStatus`, `startWatch`, `renewWatch`, `stopWatch`, `handlePushNotification`, `pullChanges`, `sendMessage`; document the `NormalizedInboundMessage` shape (§1: `provider_message_id, provider_thread_id, message_id_header, in_reply_to_header, references_header, from_email, from_name, to[], subject, body_text, snippet, internal_at, labelIds[], is_outbound`).
+- `backend/src/services/mail/GmailProvider.js` (new) `extends MailProvider`:
+  - `getConnectionStatus` → `emailMailboxService.getMailboxStatus(companyId)`; never throws for "no mailbox" (returns `{connected:false,status:null,email_address:null}`).
+  - `startWatch`/`renewWatch` → `gmail.users.watch({userId:'me', requestBody:{topicName:GMAIL_PUBSUB_TOPIC, labelIds:['INBOX'], labelFilterAction:'include'}})`, then `emailQueries.updateWatchState`; idempotent re-arm. `stopWatch` → `gmail.users.stop` + `emailQueries.clearWatchState`; safe-fail.
+  - `handlePushNotification(payload)` → **decode only**: base64-decode Pub/Sub `message.data` → `{emailAddress, historyId}`, resolve via `emailQueries.getMailboxByEmail` → `{companyId, cursor:historyId}`; unknown address → `null` (no throw).
+  - `pullChanges(companyId, sinceCursor)` → delegate to the new `emailSyncService.pullChangesNormalized`; history-gap (404) self-heals via the existing bounded backfill, returning backfilled messages normalized.
+  - `sendMessage(companyId, {to, subject, body, providerThreadId, userId, userEmail})` → present `providerThreadId` → `emailService.replyToThread`; absent → `emailService.sendEmail`; returns `{provider_message_id, provider_thread_id}`; surfaces EMAIL-001 `reconnect_required` 409 unchanged. v1 sends **no `files`**.
+  - **Safe-fail:** all methods except `sendMessage` catch provider errors, log with `companyId`, return empty/`null`. `sendMessage` is the one method allowed to throw.
+- `backend/src/services/mail/providerRegistry.js` (new): `get(companyId)` → provider for the company's mailbox (`email_mailboxes.provider`; v1 always `GmailProvider`).
+- `backend/src/services/emailSyncService.js` (**edit, additive only**): export `pullChangesNormalized(companyId, sinceCursor)` returning `{ messages: NormalizedInboundMessage[], cursor }` — same history-walk + `importGmailThread` hydration as `syncIncrementalHistory`, but yields per-message normalized array. **Do NOT change** the existing `syncIncrementalHistory` checkpoint/return-count or any other existing export.
+
+**Покрывает:** AC-12 (seam), FR-PROV-1/2. TC-ET-038 (base stubs throw), TC-ET-039 (sendMessage reply-vs-new), TC-ET-040 (handlePushNotification decode/resolve), TC-ET-041 (pullChanges normalizes + labelIds/is_outbound + hydration).
+
+**files-allowed:**
+- `backend/src/services/mail/MailProvider.js` (new)
+- `backend/src/services/mail/GmailProvider.js` (new)
+- `backend/src/services/mail/providerRegistry.js` (new)
+- `backend/src/services/emailSyncService.js` (**additive** `pullChangesNormalized` export only)
+
+**files-forbidden:**
+- existing `syncIncrementalHistory` body/checkpoint, `importGmailThread` upsert semantics, `email_sync_state` handling — additive hooks only
+- `backend/src/routes/**` (no mount/route here)
+- `slot-engine/**`
+
+**Acceptance / verify:** `npx jest --runTestsByPath tests/mailProvider.test.js tests/gmailProvider.test.js …` (TASK-ET-11) with `googleapis` + EMAIL-001 services mocked. The standalone inbox poll behavior is byte-unchanged.
+
+**Зависимости:** after TASK-ET-1 (uses `updateWatchState/clearWatchState/getMailboxByEmail`).
+
+**Статус:** pending
+
+---
+
+### TASK-ET-3: Quote/thread-strip utility `toTimelineBody` (pure, heavily unit-tested) (P0)
+
+**Goal:** A deterministic, plain-text-only projection that strips quoted history while keeping the new body + signature, never mutating the stored row.
+
+**Что сделать:**
+- Add `toTimelineBody(body_text)` (pure function) — placed in `backend/src/services/emailTimelineService.js` (exported) so §3c/§6 both use it; created in this task even though the rest of the service lands in TASK-ET-4 (this task may stub the file with only the exported util + its tests).
+- Algorithm (§3c): operate on `body_text` only; cut at the **earliest** quote-boundary marker and discard it + everything after —
+  - attribution `^\s*On .+ wrote:\s*$` (tolerant of a 2-line line-wrapped attribution: `^\s*On .+$` followed by a line ending `wrote:`);
+  - Outlook `^\s*-{2,}\s*Original Message\s*-{2,}\s*$/i`, OR a `^\s*From:\s.+` line followed within 4 lines by `^\s*(Sent|Date):\s` AND `^\s*To:\s`;
+  - leading-`>` block: first line of the first contiguous `^\s*>` run that continues to end-of-body (a single stray mid-body `>` must NOT cut).
+- Trim trailing blank lines + trailing pure-quote leftovers; collapse 3+ blank lines to 1. **Keep the signature** (`-- ` and lines after are retained — only quoted history is removed). If stripping empties the body, fall back to `snippet`, then truncated original (never blank). HTML-only input (`body_text` empty) → caller passes an HTML→text extraction; document the contract.
+
+**Покрывает:** AC-4, FR-IN-8. TC-ET-011 (no mutation of stored body), TC-ET-012 (On…wrote + signature kept), TC-ET-013 (leading `>` block; stray `>` no-cut), TC-ET-014 (Outlook From/Sent/To block), TC-ET-015 (Original Message), TC-ET-016 (signature-only unchanged), TC-ET-017 (quote-only → snippet fallback), TC-ET-018 (HTML-only text extraction).
+
+**files-allowed:**
+- `backend/src/services/emailTimelineService.js` (create with exported `toTimelineBody` + nothing Gmail-specific; rest filled in TASK-ET-4)
+- `tests/toTimelineBody.test.js` (new — the heavy unit suite)
+- `tests/fixtures/email-timeline/{gmail-on-wrote.txt,caret-quoted.txt,outlook-header-block.txt,original-message.txt,html-only.html}` (new fixtures, per the spec "Fixtures" list)
+
+**files-forbidden:**
+- any route, migration, provider, or EMAIL-001 service file (pure util only)
+- `googleapis` / `email{Sync,Mailbox,}Service` import (the seam — this file must stay Gmail-free)
+- `slot-engine/**`
+
+**Acceptance / verify:** `npx jest --runTestsByPath tests/toTimelineBody.test.js --testPathIgnorePatterns "/node_modules/"` green across all fixtures; asserts the input string is byte-identical after projection.
+
+**Зависимости:** none (pure). Can run in parallel with TASK-ET-1/2. (It creates the `emailTimelineService.js` file that TASK-ET-4 then extends — sequence TASK-ET-3 → TASK-ET-4.)
+
+**Статус:** pending
+
+---
+
+### TASK-ET-4: Inbound `linkInboundMessage` + `ingestForCompany` pipeline; wire into the poll (P0)
+
+**Goal:** The load-bearing inbound behavior, shared by push + poll: exclusion filter → contact match → strip-at-projection → link → unread + Action-Required + SSE, fully idempotent.
+
+**Что сделать:**
+- In `backend/src/services/emailTimelineService.js` add (provider-agnostic — imports `providerRegistry`/`emailQueries` only):
+  - `linkInboundMessage(normalized, companyId)`:
+    - **(a) exclusion (§3a):** return early (no timeline/unread/SSE) if `is_outbound===true` OR `labelIds ∩ {'SENT','DRAFT'} ≠ ∅` — kills the draft-edit storm.
+    - **(b) match (§3b):** `emailQueries.findEmailContact(lower(trim(from_email)), companyId)`; **no match → return** (inbox-only, no contact created, AC-3); multi-match → the single most-recently-active row + **log a warning** (never fan out).
+    - **(c) link (§3d):** `timelinesQueries.findOrCreateTimelineByContact(contactId, companyId)` (TASK-ET-7) → `emailQueries.linkMessageToContact(provider_message_id, companyId, {contact_id, timeline_id, on_timeline:true})` (re-link no-op).
+    - **(d) unread + live:** `contactsQueries.markContactUnread(contactId, internal_at)` + `timelinesQueries.markTimelineUnread(timelineId)`; `arConfigHelper.getTriggerConfig(companyId,'inbound_email')` → broadcast `thread.action_required` when it fires (mirror SMS); `realtimeService.publishMessageAdded(<emailItem>, null, timelineId)`.
+    - **Idempotent** under redelivery/poll-overlap (link no-op, unread already-true, ordering by `internal_at`).
+  - `ingestForCompany(companyId)`: `const provider = providerRegistry.get(companyId)` → read stored cursor → `provider.pullChanges(companyId, cursor)` → for each message `linkInboundMessage(msg, companyId)` → persist returned cursor. Safe-fail (logs, never crashes the caller).
+- **Wire the poll:** in `backend/src/services/emailSyncService.js` (**edit**) make `syncIncrementalHistory`'s per-message handling also call `emailTimelineService.linkInboundMessage(normalized, companyId)` — **one code path, two triggers** (push + poll). Keep the existing inbox import + checkpoint behavior intact; this is an added hook, not a rewrite.
+
+**Покрывает:** AC-1 (link+unread+SSE), AC-2 (draft/sent/own excluded — push-storm), AC-3 (no-match inbox-only), AC-11 (poll reconciliation idempotent), AC-12 (no Gmail imports in this service). TC-ET-001..005 (exclusion), TC-ET-008 (no-match), TC-ET-019 (link+unread+SSE), TC-ET-021 (idempotent re-delivery), TC-ET-022 (inbound_email AR), TC-ET-023 (poll shares linkInboundMessage).
+
+**files-allowed:**
+- `backend/src/services/emailTimelineService.js` (add `linkInboundMessage` + `ingestForCompany`)
+- `backend/src/services/emailSyncService.js` (**add the `linkInboundMessage` call** in the history path only)
+
+**files-forbidden:**
+- `googleapis`, `emailService`, `emailSyncService`-internal token/MIME/history logic, `emailMailboxService` **imports inside `emailTimelineService.js`** (seam, AC-12) — the service talks to `providerRegistry`/`emailQueries`/`contactsQueries`/`timelinesQueries`/`arConfigHelper`/`realtimeService` only
+- existing `syncIncrementalHistory` checkpoint/return value, `importGmailThread` semantics
+- `backend/src/routes/**` (route work is TASK-ET-5/7)
+- `slot-engine/**`
+
+**Acceptance / verify:** `npx jest --runTestsByPath tests/emailTimelineService.test.js tests/emailSyncTimeline.test.js …` (TASK-ET-11) with a fake provider; assert no `linkMessageToContact`/`markContactUnread`/SSE on excluded or no-match inputs.
+
+**Зависимости:** after TASK-ET-1 (queries), TASK-ET-2 (`providerRegistry`/`pullChanges`), TASK-ET-3 (`toTimelineBody` + the file), TASK-ET-7 (`findOrCreateTimelineByContact`). *(TASK-ET-7 is tiny — sequence it before or alongside.)*
+
+**Статус:** pending
+
+---
+
+### TASK-ET-5: Push endpoint `POST /api/email/push/google` (raw body, verify, fast-ack, async ingest) + mount (P0)
+
+**Goal:** The Pub/Sub receiver: raw-body verified, fast-acks 200, ingests async — never blocks Pub/Sub, never trusts a caller id.
+
+**Что сделать:**
+- `backend/src/routes/email-push.js` (new): `POST /api/email/push/google`:
+  - **Verify BEFORE any DB work (§2):** token mode (default) — constant-time compare `?token=` to `GMAIL_PUSH_VERIFICATION_TOKEN`; mismatch/missing → **401**. OIDC mode — verify the bearer JWT against Google's public keys, `aud`=endpoint URL, `email`=`GMAIL_PUBSUB_SA_EMAIL`; invalid → **403**.
+  - **Fast-ack + async:** on valid verify, **return 200 immediately** (empty body), then `setImmediate(() => provider.handlePushNotification(payload) → {companyId,cursor} → emailTimelineService.ingestForCompany(companyId))`. Async throw → logged, **not** surfaced (200 already sent; poll reconciles). Foreign/stale address → `handlePushNotification` returns null → still 200.
+- **Mount (edit `src/server.js`):** add `app.use('/api/email/push/google', express.raw({ type:'*/*', limit:'1mb' }), require('../backend/src/routes/email-push'))` **before** `express.json` (next to the stripe mount at `:75`). It is the ONLY `/api/email/*` route on the raw path; all other `/api/email/*` stay on the authed JSON router.
+
+**Покрывает:** AC-10 (push verification rejects bad token/OIDC; tenant from payload), FR-IN-2/SEC-2. TC-ET-042 (raw body before express.json), TC-ET-043 (invalid/missing token 401, no processing), TC-ET-044 (OIDC bad aud/email 403), TC-ET-045 (valid fast-acks 200; async error still 200).
+
+**files-allowed:**
+- `backend/src/routes/email-push.js` (new)
+- `src/server.js` (**the pre-`express.json` mount line only**, next to `:75`; no other boot change)
+
+**files-forbidden:**
+- `backend/src/routes/email.js` (separate router; do not add this route to the authed inbox router)
+- `src/server.js` boot order/core beyond the single mount; `express.json` placement
+- `googleapis` direct decode inside the route — decoding/resolution goes through `provider.handlePushNotification` (route only does verify + ack + dispatch)
+- `slot-engine/**`
+
+**Acceptance / verify:** `npx jest --runTestsByPath tests/emailPushRoute.test.js tests/emailPushVerify.test.js …` (TASK-ET-11): supertest asserts 401/403 on bad verify with `ingestForCompany` never called, and 200 fast-ack even when ingest throws.
+
+**Зависимости:** after TASK-ET-2 (`providerRegistry`/`handlePushNotification`) + TASK-ET-4 (`ingestForCompany`). **Live push is OPS-gated on Pub/Sub provisioning** (code testable without it).
+
+**Статус:** pending
+
+---
+
+### TASK-ET-6: Watch lifecycle — start on connect, renewal scheduler (~12h), stop on disconnect + env (P1)
+
+**Goal:** Keep Gmail `users.watch` armed: register on connect, re-arm before the ≤7-day expiry, tear down on disconnect. Poll remains the fallback if a watch lapses.
+
+**Что сделать:**
+- **Start on connect (edit `emailMailboxService.js`):** after the mailbox reaches `connected` (OAuth-callback / connect path), call `providerRegistry.get(companyId).startWatch(companyId)`.
+- **Stop on disconnect (edit `emailMailboxService.js`):** `disconnectMailbox` → `provider.stopWatch(companyId)` + clear the watch columns (`emailQueries.clearWatchState`).
+- **Renewal scheduler (new `backend/src/services/emailWatchScheduler.js`):** `start()` runs every `GMAIL_WATCH_RENEW_INTERVAL_MS` (default 12h); each tick `emailQueries.listMailboxesForWatchRenewal()` → for each `provider.renewWatch(companyId)`. Safe-fail per mailbox.
+- **Start the scheduler (edit `src/server.js`):** `require('../backend/src/services/emailWatchScheduler').start()` next to the existing `emailSyncService.startScheduler()` at `:413`. **Do not touch** the existing 5-min poll scheduler.
+- **Env:** ensure `startWatch` reads `GMAIL_PUBSUB_TOPIC`; scheduler reads `GMAIL_WATCH_RENEW_INTERVAL_MS` (`.env.example` entries land in TASK-ET-12).
+
+**Покрывает:** AC-11 (watch renewed before expiry; poll fallback on lapse), FR-IN-1/7. TC-ET-046 (startWatch persists history_id+expires_at; listMailboxesForWatchRenewal 48h window; renewWatch re-arms; stopWatch clears + users.stop). Manual TC-ET-056.
+
+**files-allowed:**
+- `backend/src/services/emailMailboxService.js` (**add** start-on-connect + stop-on-disconnect hooks via `providerRegistry`; do not alter token/refresh logic)
+- `backend/src/services/emailWatchScheduler.js` (new)
+- `src/server.js` (**the one `emailWatchScheduler.start()` line** at `:413`; nothing else)
+
+**files-forbidden:**
+- `getValidAccessToken`/token-refresh internals; the existing `emailSyncService` 5-min scheduler
+- `gmail.users.watch` raw call inside `emailMailboxService` — it goes through `provider.startWatch` (Gmail specifics stay in `GmailProvider`)
+- `slot-engine/**`
+
+**Acceptance / verify:** `npx jest --runTestsByPath tests/emailWatch.test.js …` (TASK-ET-11) with Gmail mocked. **Live re-arm is OPS-gated on Pub/Sub provisioning.**
+
+**Зависимости:** after TASK-ET-1 (watch-column queries) + TASK-ET-2 (`startWatch/renewWatch/stopWatch`).
+
+**Статус:** pending
+
+---
+
+### TASK-ET-7: `timelinesQueries.findOrCreateTimelineByContact(contactId, companyId)` (P0)
+
+**Goal:** A phone-less analogue of `findOrCreateTimeline` so inbound/outbound email can resolve the contact's timeline (reusing the orphan-adopt logic already in `pulse.js POST /ensure-timeline`).
+
+**Что сделать:**
+- Add `findOrCreateTimelineByContact(contactId, companyId)` to `backend/src/db/timelinesQueries.js`: return the contact's existing timeline; else create/adopt-orphan (port the orphan-adopt branch from `pulse.js` `/ensure-timeline`, lines ~428–514), **company-scoped**; never duplicate a timeline.
+
+**Покрывает:** §3d step 1, FR-IN-4. TC-ET-020 (reuse existing / adopt orphan; company-scoped; no duplicate).
+
+**files-allowed:**
+- `backend/src/db/timelinesQueries.js` (additive function)
+
+**files-forbidden:**
+- `backend/src/routes/pulse.js` (do not change the existing `/ensure-timeline` route — only port its logic into the query layer)
+- `slot-engine/**`
+
+**Acceptance / verify:** `npx jest --runTestsByPath tests/timelinesQueries.test.js …` (TASK-ET-11). SQL filters by `company_id`.
+
+**Зависимости:** none (foundation). Sequence before/with TASK-ET-4. *(Tiny — could fold conceptually into TASK-ET-1, kept separate as it's a different query file.)*
+
+**Статус:** pending
+
+---
+
+### TASK-ET-8: Outbound route `POST /api/email/timeline/contacts/:contactId/send` + `sendForContact` (P0)
+
+**Goal:** Send email from the timeline composer — reply-in-thread when a prior contact thread exists, else initiate with an auto subject; stamp `on_timeline` so it renders right-aligned.
+
+**Что сделать:**
+- **Route (edit `backend/src/routes/email.js`):** add `POST /timeline/contacts/:contactId/send` under the existing authed `/api/email` router. Chain: `authenticate` → `requireCompanyAccess` → `requirePermission('messages.send')`. `company_id = req.companyFilter?.company_id`; validate `:contactId` belongs to that company (**404** if not). Body `{ body:string, toEmail:string }` — **no subject**; `toEmail` must equal `contacts.email` or a `contact_emails` row for that contact+company, else **422**. Response **200** = the created outbound timeline email item (same shape `buildTimeline` emits). Map `sendForContact`'s 409 (`reconnect_required`/disconnected) → **409**.
+- **Service (edit `backend/src/services/emailTimelineService.js`):** `sendForContact(companyId, contactId, body, toEmail, user)`:
+  1. **Guard:** `provider.getConnectionStatus(companyId).connected` must be true → else throw 409.
+  2. **Reply vs initiate (§5):** newest `email_messages.thread_id` for `contact_id=:contactId` (any direction). Found → `provider.sendMessage({to:toEmail, body, providerThreadId:<local thread id>, userId, userEmail})` (→ `replyToThread`, `Re:` + In-Reply-To/References). None → `provider.sendMessage({to:toEmail, body, subject:'Message from <company.name>', userId, userEmail})` (→ `sendEmail`, new thread; company name resolved server-side). Reply only when a prior thread exists (no accidental cross-thread merge).
+  3. **Hydrate + link:** the just-sent message is re-imported by `emailService.{reply,send}` via `importGmailThread`; stamp `emailQueries.linkMessageToContact(returned.provider_message_id, companyId, {contact_id, timeline_id, on_timeline:true})`.
+  4. **Broadcast:** `realtimeService.publishMessageAdded(<emailItem>, null, timelineId)`.
+  - v1 sends **no attachments**.
+
+**Покрывает:** AC-5 (reply threads correctly), AC-6 (initiate new thread + auto subject, no subject field), AC-9 (disconnected→409), AC-10 (messages.send 403 / foreign contact 404), FR-OUT-1..6. TC-ET-024 (reply), TC-ET-025 (initiate), TC-ET-026 (stamps on_timeline outbound), TC-ET-027 (409 disconnected), TC-ET-028 (403 no perm / 401 no token), TC-ET-029 (foreign :contactId 404), TC-ET-030 (toEmail not on contact 422), TC-ET-031 (initiate never reuses a thread).
+
+**files-allowed:**
+- `backend/src/routes/email.js` (**add the one new `/timeline/contacts/:contactId/send` route**; do not touch existing inbox endpoints)
+- `backend/src/services/emailTimelineService.js` (add `sendForContact`)
+
+**files-forbidden:**
+- existing `email.js` inbox/compose/reply endpoints (additive route only)
+- `googleapis`/`emailService` **import inside `emailTimelineService.js`** (seam — go through `providerRegistry`); `emailService.replyToThread`/`sendEmail`/`buildMimeMessage` are reused **via `GmailProvider`**, not re-imported here
+- `frontend/**` (FE is TASK-ET-9/10)
+- `slot-engine/**`
+
+**Acceptance / verify:** `npx jest --runTestsByPath tests/emailTimelineSend.test.js tests/emailTimelineSendAuth.test.js …` (TASK-ET-11): supertest asserts 403/401/404/422/409 branches + reply-vs-initiate via a fake provider.
+
+**Зависимости:** after TASK-ET-2 (`sendMessage`/`getConnectionStatus`), TASK-ET-1 (`linkMessageToContact`), TASK-ET-7 (timeline resolve). Independent of TASK-ET-5/6.
+
+**Статус:** pending
+
+---
+
+### TASK-ET-9: `buildTimeline` email projection in `pulse.js` (P0)
+
+**Goal:** Surface contact-linked email on the read path — one extra query, one new `email_messages` array; SMS/calls/financial arrays untouched; inbox unchanged.
+
+**Что сделать:**
+- In `backend/src/routes/pulse.js` `buildTimeline` (after the SMS block, gated on `contact?.id`), run `emailQueries.getTimelineEmailByContact(companyId, contact.id)` and map each row → `{ type:'email', id, thread_id, direction, from:{name,email}, to:to_recipients_json, subject, body_text: toTimelineBody(body_text), sent_at: gmail_internal_at, sent_by_user_email }`. Add as a **new `email_messages` array** alongside `calls`/`messages`/`conversations`/`financial_events`. `company_id` from `req.companyFilter?.company_id`.
+- **Seam:** the email block imports **only** `emailQueries` (for the projection) + `toTimelineBody` from `emailTimelineService` — **no** `googleapis`/`email{Sync,Mailbox,}Service` (AC-12). Use `emailTimelineService.toTimelineBody` (already Gmail-free).
+- **Unread-count unchanged:** do not touch `GET /api/pulse/unread-count` — it already reads `contacts.has_unread`.
+
+**Покрывает:** AC-1 (email present), AC-3 (inbox-only absent), AC-12 (no Gmail imports in buildTimeline), AC-13 (SMS payload unchanged), FR-SEC-1. TC-ET-032 (both items present, ordered, stripped), TC-ET-033 (unmatched absent), TC-ET-034 (company+contact scoped), TC-ET-035 (unread-count surfaces email-unread, endpoint unchanged), TC-ET-036 (SMS payload regression), TC-ET-037 (seam: no Gmail imports).
+
+**files-allowed:**
+- `backend/src/routes/pulse.js` (**add the email query + `email_messages` array inside `buildTimeline` only**)
+
+**files-forbidden:**
+- the existing `calls`/`messages`/`conversations`/`financial_events` blocks + `/ensure-timeline` + `/unread-count` (additive array only — no change to existing outputs)
+- `googleapis`, `emailService`, `emailSyncService`, `emailMailboxService` imports in `pulse.js` (seam, AC-12)
+- `slot-engine/**`
+
+**Acceptance / verify:** `npx jest --runTestsByPath tests/pulseTimelineEmail.test.js …` (TASK-ET-11): asserts the `email_messages` array + that `calls/messages/conversations/financial_events` are byte-identical for an SMS-only contact; static seam check (TC-ET-037).
+
+**Зависимости:** after TASK-ET-1 (`getTimelineEmailByContact`) + TASK-ET-3 (`toTimelineBody`). Independent of the inbound/outbound services — can land in parallel with TASK-ET-8.
+
+**Статус:** pending
+
+---
+
+### FRONTEND
+
+### TASK-ET-10: Composer — `SmsForm` To-dropdown (phones+emails+CTA) + channel-aware `onSend`; `usePulsePage` email branch + default-channel; `emailApi.sendTimelineEmail`; mailbox status (P1)
+
+**Goal:** One composer, explicit target: list phones + emails (+ connect-CTA when not connected); phone→SMS, email→email; default to the last inbound channel.
+
+**Что сделать:**
+- **`frontend/src/services/emailApi.ts` (edit):** add `sendTimelineEmail(contactId, { body, toEmail })` → `POST /api/email/timeline/contacts/:contactId/send`. (`getWorkspaceMailbox` already exists — reuse it for status.)
+- **`frontend/src/components/pulse/SmsForm.tsx` (edit):** generalize the "To" dropdown from phones-only to a **target list** `[{kind:'sms',value,label}…, {kind:'email',value,label}…]` (emails from `contact.email` + `contact_emails`). Render the list whenever there is ≥1 secondary phone **or** ≥1 email. Selecting a phone → SMS path; selecting an email → email path. When `mailboxStatus !== 'connected'`, email entries render a **non-selectable CTA row** "Google email not connected — connect to message clients by email" that `navigate`s to `/settings/email` (mirror the existing "+ Add New" → `/settings/quick-messages` row); phones still send SMS. **No subject field**; for an email target hide the char-counter + adjust placeholder. Extend `onSend(message, files, selectedPhone)` → `onSend(message, files, { channel:'sms'|'email', value })`. *(helpers may live in `smsFormHelpers.ts`.)*
+- **`frontend/src/hooks/usePulsePage.ts` (edit):** add `mailboxStatus` from `emailApi.getWorkspaceMailbox` (React-Query cached); build the email target list from `contact`/`contactDetail`; **default channel = last inbound channel** — extend the existing `lastUsedPhone` logic to also consider the newest inbound `email_messages` timestamp on the timeline (email newest → preselect that email; else SMS default; no inbound email → unchanged). Branch `handleSendMessage` on `channel`: `'sms'` → unchanged (`messagingApi`); `'email'` → `emailApi.sendTimelineEmail(contactId, { body:message, toEmail:value })` then `refetchTimeline`.
+- **`frontend/src/types/contact.ts` (edit):** ensure `contact_emails` is surfaced to the composer (type only, if not already present).
+
+**Покрывает:** AC-7 (channel selection), AC-8 (default = last inbound), AC-9 (not-connected CTA), FR-UI-1/2/3. TC-ET-047 (phones+emails; phone→sms, email→email; no subject), TC-ET-048 (CTA copy/navigate/not-selectable), TC-ET-049 (default channel), TC-ET-050 (handleSendMessage email branch → sendTimelineEmail + refetch).
+
+**files-allowed:**
+- `frontend/src/services/emailApi.ts` (`sendTimelineEmail`)
+- `frontend/src/components/pulse/SmsForm.tsx` (target selector + channel-aware onSend)
+- `frontend/src/components/pulse/smsFormHelpers.ts` (target-list helpers, if used)
+- `frontend/src/hooks/usePulsePage.ts` (mailboxStatus, email targets, default-channel, handleSendMessage branch)
+- `frontend/src/types/contact.ts` (surface `contact_emails`, type-only)
+
+**files-forbidden:**
+- `frontend/src/services/messagingApi.ts` (SMS path unchanged; no cross-import of email into it)
+- `frontend/src/lib/authedFetch.ts`, `frontend/src/hooks/useRealtimeEvents.ts`
+- `frontend/src/components/email/*`, `EmailPage.tsx` (standalone inbox unchanged)
+- backend files (FE only)
+
+**Acceptance / verify:** `cd frontend && npm run build` clean (tsc -b; noUnusedLocals). `SmsForm.test.tsx` / `usePulsePage.test.tsx` (TASK-ET-11) pass. Design per CLAUDE.md (Blanc/Albusto tokens; no decorative noise; action by the data).
+
+**Зависимости:** after TASK-ET-8 (the send route exists) + TASK-ET-9 (timeline returns `email_messages` for the default-channel/last-inbound computation). FE-only otherwise.
+
+**Статус:** pending
+
+---
+
+### TASK-ET-11: Frontend timeline — `EmailTimelineItem` type + `EmailListItem` bubble in `PulseTimeline` (P1/P2)
+
+**Goal:** Render email in the timeline as a chat bubble (inbound left / outbound right), plain text, with a mail affordance — consistent with SMS.
+
+**Что сделать:**
+- **`frontend/src/types/pulse.ts` (edit):** add an `EmailTimelineItem` type (`type:'email'`, `direction`, `from`, `to`, `subject`, `body_text`, `sent_at`, `sent_by_user_email`).
+- **`frontend/src/components/pulse/EmailListItem.tsx` (new):** sibling to `SmsListItem.tsx` — inbound left / outbound right chat bubble, plain text (already quote-stripped server-side), timestamp, a small mail glyph / `Email` eyebrow to distinguish channel. **No HTML, no attachment chips** (v1). Follow CLAUDE.md design (Blanc tokens; no shadows; subtle borders).
+- **`frontend/src/components/pulse/PulseTimeline.tsx` (edit):** add an `email` item type alongside `sms` in the `useMemo` fusion (timestamp = `sent_at`/`gmail_internal_at`); render `EmailListItem`.
+- **`frontend/src/hooks/usePulseTimeline.ts` (edit):** map the new `email_messages` array from the timeline response into the fused item list.
+
+**Покрывает:** AC-1 (email visible in timeline), FR-UI-4. TC-ET-051 (inbound left/outbound right, plain text + mail glyph, no HTML/attachments).
+
+**files-allowed:**
+- `frontend/src/types/pulse.ts` (`EmailTimelineItem`)
+- `frontend/src/components/pulse/EmailListItem.tsx` (new)
+- `frontend/src/components/pulse/PulseTimeline.tsx` (fuse `email` items)
+- `frontend/src/hooks/usePulseTimeline.ts` (map `email_messages`)
+
+**files-forbidden:**
+- `frontend/src/components/pulse/SmsListItem.tsx` (do not alter the SMS bubble — add a sibling)
+- `frontend/src/hooks/useRealtimeEvents.ts`, `authedFetch.ts`
+- `frontend/src/components/email/*`, `EmailPage.tsx`
+- backend files
+
+**Acceptance / verify:** `cd frontend && npm run build` clean. `EmailListItem.test.tsx` (TASK-ET-12) passes.
+
+**Зависимости:** after TASK-ET-9 (response shape). Can run in parallel with TASK-ET-10 (different files, both depend on TASK-ET-9).
+
+**Статус:** pending
+
+---
+
+### TESTS & CONFIG
+
+### TASK-ET-12: Backend Jest suites (TC-ET groups) + frontend test/build (P0/P1)
+
+**Goal:** Implement the test files referenced by every task above (external APIs mocked; timeline tested against a fake provider), plus the FE component/hook tests, and confirm the FE build.
+
+**Что сделать (backend — `tests/*.test.js`, `googleapis`/Pub/Sub mocked):**
+- `tests/toTimelineBody.test.js` — TC-ET-011..018 (created in TASK-ET-3; here ensure full coverage + fixtures).
+- `tests/findEmailContact.test.js` — TC-ET-006/007/009.
+- `tests/emailTimelineService.test.js` — TC-ET-001/003/004/005/022.
+- `tests/emailPushIngest.test.js` — TC-ET-002/008/010/019/021 (integration, fake provider).
+- `tests/timelinesQueries.test.js` — TC-ET-020.
+- `tests/emailSyncTimeline.test.js` — TC-ET-023 (poll shares `linkInboundMessage`).
+- `tests/emailTimelineSend.test.js` — TC-ET-024/025/026/027/030/031.
+- `tests/emailTimelineSendAuth.test.js` — TC-ET-028/029.
+- `tests/pulseTimelineEmail.test.js` — TC-ET-032/033/034/035/036.
+- `tests/mailProviderSeam.test.js` — TC-ET-037 (static: no Gmail imports in `pulse.js` email block + `emailTimelineService.js`).
+- `tests/mailProvider.test.js` — TC-ET-038; `tests/gmailProvider.test.js` — TC-ET-039/040/041.
+- `tests/emailPushRoute.test.js` — TC-ET-042/043/045; `tests/emailPushVerify.test.js` — TC-ET-044.
+- `tests/emailWatch.test.js` — TC-ET-046.
+- `tests/emailInboxRegression.test.js` — TC-ET-052 (EMAIL-001 inbox queries unaffected by 129).
+- `tests/migration129.test.js` — TC-ET-053 (additive + reversible).
+- **Frontend:** `SmsForm.test.tsx` (TC-ET-047/048), `usePulsePage.test.tsx` (TC-ET-049/050), `EmailListItem.test.tsx` (TC-ET-051).
+- **Manual (documented, not automated):** TC-ET-054 (staged Pub/Sub inbound→timeline), TC-ET-055 (reply+initiate from composer), TC-ET-056 (watch renewal over a real expiry) — these exercise the **live Pub/Sub OPS path**.
+
+**Покрывает:** all TC-ET-001..056 (P0:27/P1:20/P2:6/P3:3).
+
+**files-allowed:**
+- `tests/*.test.js` (the files listed above) + `tests/fixtures/email-timeline/*`
+- `frontend/src/components/pulse/{SmsForm,EmailListItem}.test.tsx`, `frontend/src/hooks/usePulsePage.test.tsx`
+
+**files-forbidden:**
+- production source under `backend/src/**`, `src/server.js`, `frontend/src/**` (tests only — if a test reveals a prod bug, fix it under the **owning** task, not here)
+- `slot-engine/**`
+
+**Acceptance / verify:** each backend file green via `npx jest --runTestsByPath <file> --testPathIgnorePatterns "/node_modules/"`; `cd frontend && npm run build` clean.
+
+**Зависимости:** each test file after its production task (TASK-ET-1..11). Best run incrementally **with** each task; this entry is the consolidated coverage ledger.
+
+**Статус:** pending
+
+---
+
+### TASK-ET-13: `.env.example` additions + changelog stub (P2)
+
+**Goal:** Document the new Pub/Sub config + record the feature.
+
+**Что сделать:**
+- **`.env.example` (edit):** add the EMAIL-TIMELINE-001 block — `GMAIL_PUBSUB_TOPIC`, `GMAIL_PUSH_VERIFICATION_TOKEN`, `GMAIL_PUBSUB_SA_EMAIL`, `GMAIL_PUSH_ENDPOINT_PATH=/api/email/push/google` (informational), `GMAIL_WATCH_RENEW_INTERVAL_MS=43200000` — with a comment noting the reused EMAIL-001 vars (`GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI`, `EMAIL_TOKEN_ENCRYPTION_KEY`, `EMAIL_OAUTH_STATE_SECRET`, `EMAIL_SYNC_INTERVAL_MS`) and that Gmail watch needs `gmail-api-push@system.gserviceaccount.com` to have **Pub/Sub Publisher** on the topic (GCP OPS, not code).
+- **`docs/changelog.md` (edit):** add an EMAIL-TIMELINE-001 stub entry.
+
+**Покрывает:** config completeness; the OPS prerequisite is documented for deploy.
+
+**files-allowed:**
+- `.env.example`
+- `docs/changelog.md`
+
+**files-forbidden:**
+- any source/route/migration; `slot-engine/**`
+
+**Acceptance / verify:** vars referenced by the code (TASK-ET-5/6) are present; changelog stub added.
+
+**Зависимости:** after TASK-ET-5/6 (the vars they consume). No code dependency.
+
+**Статус:** pending
+
+---
+
+### Execution order & parallelism (EMAIL-TIMELINE-001)
+
+```
+Foundation (parallel):  TASK-ET-1 (migration+queries) │ TASK-ET-3 (toTimelineBody) │ TASK-ET-7 (findOrCreateTimelineByContact)
+Seam:                   TASK-ET-2 (MailProvider/GmailProvider/registry/pullChangesNormalized)   ← needs ET-1
+Inbound pipeline:       TASK-ET-4 (linkInboundMessage/ingestForCompany + poll wire)             ← needs ET-1,2,3,7
+Push + watch (parallel, both OPS-gated for LIVE):
+                        TASK-ET-5 (push endpoint + mount)   ← needs ET-2,4
+                        TASK-ET-6 (watch lifecycle + scheduler) ← needs ET-1,2
+Outbound:               TASK-ET-8 (send route + sendForContact) ← needs ET-1,2,7
+Read projection:        TASK-ET-9 (buildTimeline email array)   ← needs ET-1,3   (parallel w/ ET-8)
+Frontend (parallel, both need ET-9; ET-10 also needs ET-8):
+                        TASK-ET-10 (composer To-selector/channel/default) ← needs ET-8,9
+                        TASK-ET-11 (EmailListItem + timeline fusion)       ← needs ET-9
+Cross-cutting:          TASK-ET-12 (test suites) — alongside each prod task
+                        TASK-ET-13 (.env.example + changelog) ← after ET-5,6
+```
+
+- **Backend:** ET-1, ET-2, ET-3, ET-4, ET-5, ET-6, ET-7, ET-8, ET-9 (+ backend half of ET-12). **Frontend:** ET-10, ET-11 (+ FE half of ET-12). **Config:** ET-13.
+- **Critical path:** ET-1 → ET-2 → ET-4 → ET-5 (push) and ET-1 → ET-9 → ET-10 (composer). ET-3/ET-7 are short leaf tasks feeding ET-4.
+- **OPS-gated (live Pub/Sub only):** **ET-5** + **ET-6** end-to-end (manual TC-ET-054/056). Everything is unit/integration-testable with Gmail+Pub/Sub mocked; the **5-min poll (ET-4 wiring)** keeps inbound landing on the timeline until Pub/Sub is provisioned.
