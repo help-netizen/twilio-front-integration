@@ -110,7 +110,8 @@ function extractRoles(kc: Keycloak): string[] {
 
 // Paths that must render WITHOUT forcing a Keycloak login (ALB-101)
 // /pay/:token is the customer-facing Stripe Pay-now page (F018) — opaque token is the credential.
-const PUBLIC_AUTH_PATHS = ['/signup', '/pay'];
+// /e/:token is the customer-facing public Estimate view page (SEND-DOC-001) — same model.
+const PUBLIC_AUTH_PATHS = ['/signup', '/pay', '/e'];
 function isPublicAuthPath() {
     return PUBLIC_AUTH_PATHS.some(p => window.location.pathname.startsWith(p));
 }
