@@ -4,6 +4,31 @@
 
 ---
 
+## 2026-06-27 — ZB-ISO-001 (SECURITY): fix Zenbooker cross-tenant data leak
+
+**Owner-reported, P0.** The Schedule technician quick-filter showed technicians from
+*another* company. Root cause: `zenbookerClient.getClientForCompany()` fell back to the
+shared env `ZENBOOKER_API_KEY` (the default/Boston-Masters account) for **any** tenant
+without its own key, so every tenant saw the default account's team — and, via the same
+fallback, its jobs/services/territories/timeslots. `GET /api/zenbooker/team-members` made it
+worse by not passing `companyId` at all.
+
+Fix (`backend/src/services/zenbookerClient.js` + routes):
+- The shared env key now belongs to ONE company — `ZENBOOKER_DEFAULT_COMPANY_ID` (env,
+  default = seed company `…0001`). `getClientForCompany` returns the env client **only** for
+  that company; any other tenant without its own `zenbooker_api_key` gets **null** (no
+  cross-tenant fallback).
+- Callers degrade safely: `getTeamMembers` → `[]`; `/api/zenbooker/team-members` now passes
+  `companyId`; `POST /api/jobs/sync` no-ops with a clear message; `GET /api/integrations/
+  zenbooker/jobs` (customer jobs) uses the company client (was global) → `[]` for non-connected
+  tenants. The default company (Boston Masters) is unaffected.
+
+**Note:** "jobs/leads empty on mobile" was NOT a bug — that session was logged into a different,
+empty tenant; the leaked technician names made it look like the wrong company.
+
+**Tests:** `tests/zenbookerTenantIsolation.test.js` (null for non-default, env only for default,
+`[]` roster for non-connected) + 162 existing Zenbooker-caller tests green. No migration.
+
 ## 2026-06-27 — AUTH-FLOW-FIX-001: post-signup email-verify UX + 2FA SMS loop & throttle
 
 Owner-reported after a real prod signup. Spec: `Docs/specs/AUTH-FLOW-FIX-001.md`.

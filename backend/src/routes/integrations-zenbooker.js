@@ -307,13 +307,21 @@ router.get('/jobs', authenticate, requireCompanyAccess, async (req, res) => {
 
         const zenbookerClient = require('../services/zenbookerClient');
 
+        // Scope to the caller's company — use ITS Zenbooker client, never the
+        // shared/default account. Tenants without their own connection get []
+        // (prevents reading another tenant's Zenbooker jobs/customers).
+        const zbClient = await zenbookerClient.getClientForCompany(req.companyFilter?.company_id);
+        if (!zbClient) {
+            return res.json({ ok: true, data: [] });
+        }
+
         // Fetch jobs for this customer (paginated)
         const allJobs = [];
         let cursor = 0;
         const limit = 100;
 
         while (true) {
-            const jobRes = await zenbookerClient.getClient().get('/jobs', {
+            const jobRes = await zbClient.get('/jobs', {
                 params: { customer: customerId, limit, cursor },
             });
             const data = jobRes.data;

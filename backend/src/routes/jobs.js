@@ -80,6 +80,12 @@ router.post('/sync', requirePermission('jobs.edit'), async (req, res) => {
         const companyId = req.companyFilter?.company_id || null;
         // Use per-tenant Zenbooker API key (falls back to global env var)
         const zbClient = await zenbookerClient.getClientForCompany(companyId);
+        if (!zbClient) {
+            // Company hasn't connected its own Zenbooker (and isn't the default
+            // account owner) — nothing to sync, and we must not read another
+            // tenant's Zenbooker. Return a clean no-op instead of leaking/crashing.
+            return res.json({ ok: true, synced: 0, created: 0, message: 'Zenbooker is not connected for this company' });
+        }
         const makeRequest = (url, params) => zbClient.get(url, { params });
 
         console.log(`[Jobs Sync] Starting full sync from Zenbooker for company ${companyId}...`);
