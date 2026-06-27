@@ -22,7 +22,8 @@ router.get('/', requirePermission('tenant.company.manage'), async (req, res) => 
     }
 });
 
-// PUT /:techId — set a technician's base (body: { lat?, lng?, label?, address? }).
+// PUT /:techId — set a technician's base
+// (body: { lat?, lng?, label?, address?, street?, apt?, city?, state?, zip? }).
 router.put('/:techId', requirePermission('tenant.company.manage'), async (req, res) => {
     try {
         const body = req.body || {};
@@ -31,6 +32,11 @@ router.put('/:techId', requirePermission('tenant.company.manage'), async (req, r
             lng: body.lng,
             label: body.label,
             address: body.address,
+            street: body.street,
+            apt: body.apt,
+            city: body.city,
+            state: body.state,
+            zip: body.zip,
         });
         res.json({ ok: true, data });
     } catch (err) {

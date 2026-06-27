@@ -57,6 +57,41 @@ export function parseAddressComponents(
     return { street: [streetNumber, route].filter(Boolean).join(" "), apt: "", city, state, zip, lat, lng };
 }
 
+/**
+ * Build editable AddressFields from a stored base-location row. Prefers the structured
+ * columns (street/apt/city/state/zip) when present; falls back to parsing the composed
+ * `address` string for pre-migration rows that only kept a string + lat/lng — so the
+ * edit form is pre-filled instead of empty.
+ */
+export function fieldsFromStored(row: {
+    street?: string | null;
+    apt?: string | null;
+    city?: string | null;
+    state?: string | null;
+    zip?: string | null;
+    address?: string | null;
+    label?: string | null;
+    lat?: number | null;
+    lng?: number | null;
+}): AddressFields {
+    const hasStructured = !!(row.street || row.city || row.state || row.zip || row.apt);
+    if (hasStructured) {
+        return {
+            street: row.street || "",
+            apt: row.apt || "",
+            city: row.city || "",
+            state: row.state || "",
+            zip: row.zip || "",
+            lat: row.lat ?? null,
+            lng: row.lng ?? null,
+        };
+    }
+    const composed = row.address || row.label || "";
+    if (!composed) return { ...EMPTY_ADDRESS, lat: row.lat ?? null, lng: row.lng ?? null };
+    const parsed = parseDescription(composed);
+    return { ...parsed, lat: row.lat ?? null, lng: row.lng ?? null };
+}
+
 /** Parse address from Autocomplete description text */
 export function parseDescription(desc: string): AddressFields {
     const cleaned = desc.replace(/,\s*(USA|United States)$/i, "").trim();

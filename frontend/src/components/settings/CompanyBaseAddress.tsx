@@ -3,7 +3,8 @@ import { toast } from 'sonner';
 import { Loader2, MapPin, X } from 'lucide-react';
 import { Button } from '../ui/button';
 import { technicianBaseLocationsApi, COMPANY_BASE_TECH_ID } from '../../services/technicianBaseLocationsApi';
-import { AddressAutocomplete, EMPTY_ADDRESS, type AddressFields } from '../AddressAutocomplete';
+import { EMPTY_ADDRESS, fieldsFromStored, type AddressFields } from '../addressAutoHelpers';
+import { BaseAddressForm } from './BaseAddressForm';
 
 export interface CompanyBase { lat: number; lng: number; address: string | null }
 
@@ -18,6 +19,9 @@ function composeAddress(a: AddressFields): string {
  * sentinel). Self-contained: loads + saves itself and reports the current value to
  * the parent via `onChange`. Used both on Settings → Company and on the Technicians
  * page, so the address can be edited from either place.
+ *
+ * ADDR-UX-001: explicit Save (no auto-save on suggestion select), edit pre-fills the
+ * stored address, manual entry is geocoded on save (422 → stay in edit).
  */
 export function CompanyBaseAddress({
     title = 'Company base address',
@@ -29,6 +33,9 @@ export function CompanyBaseAddress({
     onChange?: (base: CompanyBase | null) => void;
 }) {
     const [base, setBase] = useState<CompanyBase | null>(null);
+    // Editable fields for the stored company base (drives edit pre-fill). EMPTY_ADDRESS
+    // until the row loads or the user starts a fresh entry.
+    const [storedFields, setStoredFields] = useState<AddressFields>(EMPTY_ADDRESS);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [editing, setEditing] = useState(false);
@@ -38,7 +45,9 @@ export function CompanyBaseAddress({
             .then(rows => {
                 const c = rows.find(r => r.tech_id === COMPANY_BASE_TECH_ID);
                 const b = (c && c.lat != null && c.lng != null) ? { lat: c.lat, lng: c.lng, address: c.address || c.label } : null;
-                setBase(b); onChange?.(b);
+                setBase(b);
+                setStoredFields(c ? fieldsFromStored(c) : EMPTY_ADDRESS);
+                onChange?.(b);
             })
             .catch(() => { /* base-locations optional; degrade quietly */ })
             .finally(() => setLoading(false));
@@ -46,26 +55,33 @@ export function CompanyBaseAddress({
     }, []);
 
     const save = async (fields: AddressFields) => {
-        // AddressAutocomplete fires per-keystroke; only commit once we have coords.
-        if (fields.lat == null || fields.lng == null) return;
         const address = composeAddress(fields);
         setSaving(true);
         try {
             const saved = await technicianBaseLocationsApi.upsert(COMPANY_BASE_TECH_ID, {
-                lat: fields.lat, lng: fields.lng, address, label: address,
+                lat: fields.lat ?? null, lng: fields.lng ?? null, address, label: address,
+                street: fields.street, apt: fields.apt, city: fields.city, state: fields.state, zip: fields.zip,
             });
             const b: CompanyBase = { lat: saved.lat as number, lng: saved.lng as number, address: saved.address || address };
-            setBase(b); onChange?.(b); setEditing(false);
+            setBase(b);
+            setStoredFields(fieldsFromStored(saved));
+            onChange?.(b);
+            setEditing(false);
             toast.success('Company address saved');
-        } catch (e: any) { toast.error(e.message || 'Failed to save company address'); }
-        finally { setSaving(false); }
+        } catch (e: any) {
+            // Includes geocode-fail (422): toast the server message and stay in edit.
+            toast.error(e.message || 'Failed to save company address');
+            throw e;
+        } finally {
+            setSaving(false);
+        }
     };
 
     const clear = async () => {
         setSaving(true);
         try {
             await technicianBaseLocationsApi.remove(COMPANY_BASE_TECH_ID);
-            setBase(null); onChange?.(null); setEditing(false);
+            setBase(null); setStoredFields(EMPTY_ADDRESS); onChange?.(null); setEditing(false);
             toast.success('Company address cleared');
         } catch (e: any) { toast.error(e.message || 'Failed to clear company address'); }
         finally { setSaving(false); }
@@ -90,22 +106,28 @@ export function CompanyBaseAddress({
                 </div>
                 {!loading && (
                     <div className="flex items-center gap-2 shrink-0">
-                        {base && editing && (
+                        {base && !editing && (
                             <button type="button" onClick={clear} disabled={saving} className="inline-flex items-center gap-1 text-xs" style={{ color: 'var(--blanc-ink-3)' }}>
                                 <X className="h-3 w-3" /> Clear
                             </button>
                         )}
-                        <Button variant="ghost" size="sm" disabled={saving} onClick={() => setEditing(e => !e)} style={{ color: 'var(--blanc-ink-2)' }}>
-                            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : editing ? 'Close' : base ? 'Edit' : 'Set address'}
-                        </Button>
+                        {!editing && (
+                            <Button variant="ghost" size="sm" disabled={saving} onClick={() => setEditing(true)} style={{ color: 'var(--blanc-ink-2)' }}>
+                                {base ? 'Edit' : 'Set address'}
+                            </Button>
+                        )}
                     </div>
                 )}
             </div>
             {editing && (
-                <div className="mt-3">
-                    <AddressAutocomplete value={EMPTY_ADDRESS} onChange={save} idPrefix="company-base" streetLabel="Company address" defaultUseDetails hideDetailsToggle />
-                    <p className="text-[11px] mt-2" style={{ color: 'var(--blanc-ink-3)' }}>Pick an address from the suggestions to save (coordinates are required).</p>
-                </div>
+                <BaseAddressForm
+                    initial={storedFields}
+                    onSave={save}
+                    onCancel={() => setEditing(false)}
+                    idPrefix="company-base"
+                    streetLabel="Company address"
+                    saving={saving}
+                />
             )}
         </div>
     );

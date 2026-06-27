@@ -19,6 +19,12 @@ export interface TechnicianBaseLocation {
     lng: number | null;
     label: string | null;
     address: string | null;
+    // Structured fields (ADDR-UX-001, mig 135). May be null for pre-migration rows.
+    street: string | null;
+    apt: string | null;
+    city: string | null;
+    state: string | null;
+    zip: string | null;
     has_base: boolean;
 }
 
@@ -27,6 +33,13 @@ export interface TechnicianBaseLocationUpsert {
     lng?: number | null;
     label?: string;
     address?: string;
+    // Structured fields persisted alongside lat/lng. When lat/lng are null the backend
+    // geocodes `address` on save and returns 422 if it can't resolve coordinates.
+    street?: string;
+    apt?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
 }
 
 export const technicianBaseLocationsApi = {
@@ -40,7 +53,10 @@ export const technicianBaseLocationsApi = {
     upsert: async (
         techId: string,
         body: TechnicianBaseLocationUpsert,
-    ): Promise<{ tech_id: string; lat: number | null; lng: number | null; label: string | null; address: string | null }> => {
+    ): Promise<{
+        tech_id: string; lat: number | null; lng: number | null; label: string | null; address: string | null;
+        street: string | null; apt: string | null; city: string | null; state: string | null; zip: string | null;
+    }> => {
         const res = await authedFetch(`/api/settings/technician-base-locations/${encodeURIComponent(techId)}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },

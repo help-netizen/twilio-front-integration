@@ -8,8 +8,9 @@ import {
     technicianBaseLocationsApi,
     type TechnicianBaseLocation,
 } from '../services/technicianBaseLocationsApi';
-import { AddressAutocomplete, EMPTY_ADDRESS, type AddressFields } from '../components/AddressAutocomplete';
+import { EMPTY_ADDRESS, fieldsFromStored, type AddressFields } from '../components/addressAutoHelpers';
 import { CompanyBaseAddress, type CompanyBase } from '../components/settings/CompanyBaseAddress';
+import { BaseAddressForm } from '../components/settings/BaseAddressForm';
 import { RecommendationSettings } from '../components/settings/RecommendationSettings';
 
 function initials(name?: string | null) {
@@ -78,24 +79,35 @@ export default function TechnicianPhotosPage() {
         else setBaseMode(companyBase ? 'company' : 'own');
     };
 
-    const applyBase = (techId: string, saved: { lat: number | null; lng: number | null; label: string | null; address: string | null }) => {
+    const applyBase = (techId: string, saved: {
+        lat: number | null; lng: number | null; label: string | null; address: string | null;
+        street: string | null; apt: string | null; city: string | null; state: string | null; zip: string | null;
+    }) => {
         setTechs(ts => ts.map(t => t.tech_id === techId
-            ? { ...t, base: { tech_id: techId, name: t.name, lat: saved.lat, lng: saved.lng, label: saved.label, address: saved.address, has_base: true } }
+            ? { ...t, base: { tech_id: techId, name: t.name, lat: saved.lat, lng: saved.lng, label: saved.label, address: saved.address, street: saved.street, apt: saved.apt, city: saved.city, state: saved.state, zip: saved.zip, has_base: true } }
             : t));
         setEditingBase(null);
     };
 
-    const onSelectOwnBase = async (techId: string, fields: AddressFields) => {
-        // Only commit once the autocomplete resolves coordinates (real pick).
-        if (fields.lat == null || fields.lng == null) return;
+    const onSaveOwnBase = async (techId: string, fields: AddressFields) => {
+        // Explicit save (ADDR-UX-001): no auto-save on suggestion select. lat/lng may be
+        // null on manual entry — the backend geocodes `address` and returns 422 if unresolved.
         const address = composeAddress(fields);
         setSavingBase(techId);
         try {
-            const saved = await technicianBaseLocationsApi.upsert(techId, { lat: fields.lat, lng: fields.lng, address, label: address });
+            const saved = await technicianBaseLocationsApi.upsert(techId, {
+                lat: fields.lat ?? null, lng: fields.lng ?? null, address, label: address,
+                street: fields.street, apt: fields.apt, city: fields.city, state: fields.state, zip: fields.zip,
+            });
             toast.success('Base location set');
             applyBase(techId, saved);
-        } catch (e: any) { toast.error(e.message || 'Failed to save base location'); }
-        finally { setSavingBase(null); }
+        } catch (e: any) {
+            // Includes geocode-fail (422): toast the server message and stay in edit.
+            toast.error(e.message || 'Failed to save base location');
+            throw e;
+        } finally {
+            setSavingBase(null);
+        }
     };
 
     const onUseCompanyBase = async (techId: string) => {
@@ -244,22 +256,14 @@ export default function TechnicianPhotosPage() {
                                                 <p className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Set the company base address above first.</p>
                                             )
                                         ) : (
-                                            <>
-                                                {hasBase && t.base?.address && (
-                                                    <p className="text-xs mb-2" style={{ color: 'var(--blanc-ink-2)' }}>Current: {t.base.address}</p>
-                                                )}
-                                                <AddressAutocomplete
-                                                    value={EMPTY_ADDRESS}
-                                                    onChange={fields => onSelectOwnBase(t.tech_id, fields)}
-                                                    idPrefix={`base-${t.tech_id}`}
-                                                    streetLabel="Base address"
-                                                    defaultUseDetails
-                                                    hideDetailsToggle
-                                                />
-                                                <p className="text-[11px] mt-2" style={{ color: 'var(--blanc-ink-3)' }}>
-                                                    Pick an address from the suggestions to save (coordinates are required).
-                                                </p>
-                                            </>
+                                            <BaseAddressForm
+                                                initial={t.base ? fieldsFromStored(t.base) : EMPTY_ADDRESS}
+                                                onSave={fields => onSaveOwnBase(t.tech_id, fields)}
+                                                onCancel={() => setEditingBase(null)}
+                                                idPrefix={`base-${t.tech_id}`}
+                                                streetLabel="Base address"
+                                                saving={busy}
+                                            />
                                         )}
                                     </div>
                                 )}

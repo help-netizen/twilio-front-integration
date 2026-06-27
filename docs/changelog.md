@@ -4,6 +4,28 @@
 
 ---
 
+## 2026-06-27 — ADDR-UX-001: base-address entry UX fix (Company + technician base)
+
+Owner-reported: the base-address editors **auto-saved** the instant you picked a Google suggestion (no
+chance to add an apt/unit), and on **Edit** showed the saved address as a string with an empty form below.
+
+Root cause: the base editors MISUSED the (otherwise-correct controlled) `AddressAutocomplete` — passing a
+constant `value={EMPTY_ADDRESS}` + `onChange={save}` (commit-on-coords), and storing only a composed
+string + lat/lng (mig 125, no structured fields). Lead/job/contact forms use it correctly — left alone.
+
+- **Frontend:** new shared `BaseAddressForm` holds a `draft: AddressFields`, renders the controlled
+  autocomplete (no auto-save), with explicit **Save / Cancel**. `CompanyBaseAddress` + the per-tech base
+  editor (`TechnicianPhotosPage`) now pre-fill the form on Edit (structured-first; `parseDescription`
+  fallback for pre-migration string-only rows), keep the Apt field editable until Save, and surface a
+  geocode-fail 422 as a toast while staying in edit. `addressAutoHelpers.fieldsFromStored` does the pre-fill.
+- **Backend:** migration **135** adds `technician_base_locations.{street,apt,city,state,zip}` (additive);
+  the upsert/list persist + return them. Manual entry (no Google pick → lat/lng null) **geocodes on save**
+  (existing fallback); geocode-fail → 422 `GEOCODE_FAILED` (no row written). lat/lng/string/label kept for
+  the slot-engine.
+
+**Tests:** `tests/baseLocationStructured.test.js` (12) + existing tech-base/slot-engine/jobsEta (140) =
+152 green; frontend build green. Reviewer APPROVED. Deploy: migration 135 + app rebuild + logout-all.
+
 ## 2026-06-27 — COMPANY-PROFILE-001: editable Company Profile in Settings
 
 Owner couldn't change the company name that goes out in the "on the way" SMS, and wanted a real

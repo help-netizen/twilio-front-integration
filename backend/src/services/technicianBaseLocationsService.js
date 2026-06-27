@@ -12,6 +12,34 @@ function isFiniteNum(n) {
     return typeof n === 'number' && Number.isFinite(n);
 }
 
+function trimOrNull(v) {
+    if (v === null || v === undefined) return null;
+    const s = String(v).trim();
+    return s === '' ? null : s;
+}
+
+// Project the structured-address columns off a stored row (or all-null when absent),
+// so every list() branch returns the same shape for the editor to pre-fill.
+function structuredOf(row) {
+    return {
+        street: row ? (row.street || null) : null,
+        apt: row ? (row.apt || null) : null,
+        city: row ? (row.city || null) : null,
+        state: row ? (row.state || null) : null,
+        zip: row ? (row.zip || null) : null,
+    };
+}
+
+// Compose a single-line address from structured fields (used to geocode when the
+// caller typed parts but no composed `address` string).
+function composeAddress({ street, apt, city, state, zip }) {
+    const line1 = [trimOrNull(street), trimOrNull(apt)].filter(Boolean).join(' ');
+    const tail = [trimOrNull(city), [trimOrNull(state), trimOrNull(zip)].filter(Boolean).join(' ')]
+        .filter(Boolean)
+        .join(', ');
+    return [line1, tail].filter(Boolean).join(', ').trim() || null;
+}
+
 /**
  * Roster of service-provider technicians (from Zenbooker), LEFT-merged with stored
  * base locations. If Zenbooker is unavailable, degrade to just the stored rows.
@@ -41,6 +69,7 @@ async function list(companyId) {
             lng: r.lng,
             label: r.label || null,
             address: r.address || null,
+            ...structuredOf(r),
             has_base: true,
         }));
     }
@@ -58,6 +87,7 @@ async function list(companyId) {
             lng: base ? base.lng : null,
             label: base ? (base.label || null) : null,
             address: base ? (base.address || null) : null,
+            ...structuredOf(base),
             has_base: Boolean(base),
         };
     });
@@ -72,6 +102,7 @@ async function list(companyId) {
             lng: r.lng,
             label: r.label || null,
             address: r.address || null,
+            ...structuredOf(r),
             has_base: true,
         });
     }
@@ -85,15 +116,27 @@ async function list(companyId) {
  */
 async function upsert(companyId, techId, payload = {}) {
     const { lat, lng, label, address } = payload;
+    // Structured address fields (ADDR-UX-001) — stored as-is so the editor can pre-fill.
+    const structured = {
+        street: trimOrNull(payload.street),
+        apt: trimOrNull(payload.apt),
+        city: trimOrNull(payload.city),
+        state: trimOrNull(payload.state),
+        zip: trimOrNull(payload.zip),
+    };
 
     if (isFiniteNum(lat) && isFiniteNum(lng)) {
-        return queries.upsert(companyId, techId, { lat, lng, label, address: address ?? null });
+        return queries.upsert(companyId, techId, {
+            lat, lng, label, address: address ?? null, ...structured,
+        });
     }
 
-    if (address && String(address).trim()) {
-        const g = await googlePlacesService.geocodeAddress(address);
+    // No explicit coords: geocode the composed string (or build one from the parts).
+    const toGeocode = (address && String(address).trim()) ? String(address) : composeAddress(structured);
+    if (toGeocode) {
+        const g = await googlePlacesService.geocodeAddress(toGeocode);
         if (g.status === 'failed' || !isFiniteNum(g.lat) || !isFiniteNum(g.lng)) {
-            const err = new Error(g.error_message || 'Could not geocode that address.');
+            const err = new Error(g.error_message || 'Could not find coordinates for this address.');
             err.httpStatus = 422;
             err.code = 'GEOCODE_FAILED';
             throw err;
@@ -102,7 +145,8 @@ async function upsert(companyId, techId, payload = {}) {
             lat: g.lat,
             lng: g.lng,
             label,
-            address: g.normalized_address || address,
+            address: g.normalized_address || toGeocode,
+            ...structured,
         });
     }
 
