@@ -4,6 +4,22 @@
 
 ---
 
+## 2026-06-27 — MOBILE-NO-SOFTPHONE-001: hide the browser softphone on mobile
+
+The softphone is a Twilio WebRTC Device — unreliable on mobile browsers (backgrounded/locked tab drops
+registration → no ring; flaky audio). On mobile it only caused confusion (warm-up modal on every
+load/login + a non-working incoming-call screen). Decided to disable it on mobile; desktop unchanged.
+
+- `AppLayout.tsx`: `softPhoneEnabled = !isMobile && …` (reuses `useIsMobile`, bp 768). On mobile this
+  fully disables it — **Twilio Device never registers** (no token/register/getUserMedia), no nav button,
+  no warm-up modal, no incoming auto-open; the `<SoftPhoneWidget>` render is also gated on `!isMobile`.
+  (Verified the Device tears down via `destroy()` if the viewport flips desktop→mobile.)
+- `ClickToCallButton`: on mobile the per-row "Call" button opens the **native dialer** (`tel:`) instead of
+  the dead in-browser softphone (so you can still call from your phone); desktop keeps the in-app dialer.
+
+Frontend-only; no backend/Twilio/Keycloak/DB change. `npm run build` green; reviewer APPROVED (desktop
+byte-for-byte unchanged; no other softphone UI on mobile). Deploy: app rebuild + logout-all.
+
 ## 2026-06-27 — AUTH-SESSION-001: stay logged in on mobile (30-day Remember Me)
 
 Owner: mobile browser logged out after ~5 min of backgrounding. Root cause: `rememberMe=false` →

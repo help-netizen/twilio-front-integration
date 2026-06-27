@@ -8,6 +8,7 @@ import { Button } from '../ui/button';
 import { Phone } from 'lucide-react';
 import { useRealtimeEvents } from '../../hooks/useRealtimeEvents';
 import { useTwilioDevice } from '../../hooks/useTwilioDevice';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import { SoftPhoneWidget } from '../softphone/SoftPhoneWidget';
 import { SoftPhoneProvider } from '../../contexts/SoftPhoneContext';
 import { warmUpAudio } from '../../utils/ringtone';
@@ -28,7 +29,12 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
 
     const [softPhoneGroups, setSoftPhoneGroups] = useState<any[]>([]);
     const [softPhoneGroupsLoaded, setSoftPhoneGroupsLoaded] = useState(false);
-    const softPhoneEnabled = softPhoneGroupsLoaded && softPhoneGroups.length > 0;
+    // MOBILE-NO-SOFTPHONE-001: the browser softphone (Twilio WebRTC Device) is
+    // unreliable on mobile (backgrounded tab drops registration → no ring; flaky
+    // audio), so fully disable it on mobile — no Device registration, no nav button,
+    // no warm-up modal, no widget, no incoming-call screen. Desktop unchanged.
+    const isMobile = useIsMobile();
+    const softPhoneEnabled = !isMobile && softPhoneGroupsLoaded && softPhoneGroups.length > 0;
     const voice = useTwilioDevice({ enabled: softPhoneEnabled });
     const [softPhoneOpen, setSoftPhoneOpen] = useState(false);
     const [softPhoneMinimized, setSoftPhoneMinimized] = useState(false);
@@ -120,7 +126,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                     {children}
                 </main>
                 <Dialog open={showWarmUp && !location.pathname.startsWith('/schedule')} onOpenChange={open => { if (!open) handleWarmUpDismiss(); }}><DialogContent className="sm:max-w-[360px]" onPointerDownOutside={e => e.preventDefault()}><DialogHeader className="text-center sm:text-center"><div className="flex justify-center mb-2"><Phone className="size-8 text-primary" /></div><DialogTitle>SoftPhone Ready</DialogTitle><DialogDescription>Enable incoming call ringtone so you don't miss any calls.</DialogDescription></DialogHeader><DialogFooter className="sm:justify-center"><Button onClick={handleWarmUpDismiss} size="lg" className="w-full"><Phone />Enable Ringtone</Button></DialogFooter></DialogContent></Dialog>
-                <SoftPhoneWidget voice={voice} open={softPhoneOpen} minimized={softPhoneMinimized} disabledReason={!softPhoneEnabled && softPhoneGroupsLoaded ? 'You are not assigned to any group. Ask your administrator.' : undefined} onClose={() => { setSoftPhoneOpen(false); setSoftPhoneMinimized(false); }} onMinimize={() => setSoftPhoneMinimized(true)} />
+                {!isMobile && <SoftPhoneWidget voice={voice} open={softPhoneOpen} minimized={softPhoneMinimized} disabledReason={!softPhoneEnabled && softPhoneGroupsLoaded ? 'You are not assigned to any group. Ask your administrator.' : undefined} onClose={() => { setSoftPhoneOpen(false); setSoftPhoneMinimized(false); }} onMinimize={() => setSoftPhoneMinimized(true)} />}
             </div>
         </SoftPhoneProvider>
     );
