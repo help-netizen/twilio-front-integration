@@ -8,8 +8,10 @@ import { useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useScheduleData } from '../hooks/useScheduleData';
 import { useJobDetail } from '../hooks/useJobDetail';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { ScheduleToolbar } from '../components/schedule/ScheduleToolbar';
 import { CalendarControls } from '../components/schedule/CalendarControls';
+import { MobileScheduleBar } from '../components/schedule/MobileScheduleBar';
 import { AIAssistantModal } from '../components/schedule/AIAssistantModal';
 import { WeekView } from '../components/schedule/WeekView';
 import { DayView } from '../components/schedule/DayView';
@@ -32,6 +34,7 @@ import type { ScheduleItem } from '../services/scheduleApi';
 export function SchedulePage() {
     const schedule = useScheduleData();
     const navigate = useNavigate();
+    const isMobile = useIsMobile();
     const [settingsOpen, setSettingsOpen] = useState(false);
     // Dispatch-only controls hidden for providers without schedule.dispatch (PF007)
     const canDispatch = schedule.canDispatch;
@@ -171,18 +174,34 @@ export function SchedulePage() {
                 }}
             />
 
-            {/* Main workspace */}
-            <div className="schedule-workspace relative z-[1] max-w-[1780px] mx-auto" style={{ padding: '24px' }}>
-                {/* Toolbar: title + AI Assistant button */}
-                <ScheduleToolbar
-                    onToggleAIAssistant={() => setShowAIAssistant(true)}
-                    onNewJob={canDispatch ? () => setNewJobOpen(true) : undefined}
-                />
+            {/* Main workspace — tighter gutter on mobile (the 24px all-widths felt cramped on a phone) */}
+            <div className="schedule-workspace relative z-[1] max-w-[1780px] mx-auto" style={{ padding: isMobile ? '14px' : '24px' }}>
+                {isMobile ? (
+                    /* ── Mobile: date-first bar + a single gear → "View options" sheet ── */
+                    <MobileScheduleBar
+                        currentDate={schedule.currentDate}
+                        filters={schedule.filters}
+                        providers={schedule.providers}
+                        allTags={schedule.allTags}
+                        itemCounts={schedule.itemCounts}
+                        onNavigateDate={schedule.navigateDate}
+                        onFiltersChange={schedule.setFilters}
+                        onNewJob={canDispatch ? () => setNewJobOpen(true) : undefined}
+                        onToggleAIAssistant={() => setShowAIAssistant(true)}
+                        onOpenSettings={canDispatch ? () => setSettingsOpen(true) : undefined}
+                    />
+                ) : (
+                    /* Toolbar: title + AI Assistant button */
+                    <ScheduleToolbar
+                        onToggleAIAssistant={() => setShowAIAssistant(true)}
+                        onNewJob={canDispatch ? () => setNewJobOpen(true) : undefined}
+                    />
+                )}
 
                 {/* Main content */}
                 <div className="schedule-page-grid grid gap-3 mt-3">
-                    {/* Unscheduled panel — above controls for ASAP scheduling priority */}
-                    {!schedule.loading && (
+                    {/* Unscheduled panel — desktop only (off the phone's field-tech view); above controls for ASAP scheduling priority */}
+                    {!isMobile && !schedule.loading && (
                         <UnscheduledPanel
                             items={schedule.unscheduledItems}
                             onSelectItem={handleSelectItem}
@@ -190,20 +209,22 @@ export function SchedulePage() {
                         />
                     )}
 
-                    {/* Calendar Controls — view mode, date nav, filters */}
-                    <CalendarControls
-                        viewMode={schedule.viewMode}
-                        currentDate={schedule.currentDate}
-                        filters={schedule.filters}
-                        itemCounts={schedule.itemCounts}
-                        loading={schedule.loading}
-                        providers={schedule.providers}
-                        allTags={schedule.allTags}
-                        onViewModeChange={schedule.setViewMode}
-                        onNavigateDate={schedule.navigateDate}
-                        onFiltersChange={schedule.setFilters}
-                        onOpenSettings={canDispatch ? () => setSettingsOpen(true) : undefined}
-                    />
+                    {/* Calendar Controls — desktop only; on mobile every control lives in the sheet above */}
+                    {!isMobile && (
+                        <CalendarControls
+                            viewMode={schedule.viewMode}
+                            currentDate={schedule.currentDate}
+                            filters={schedule.filters}
+                            itemCounts={schedule.itemCounts}
+                            loading={schedule.loading}
+                            providers={schedule.providers}
+                            allTags={schedule.allTags}
+                            onViewModeChange={schedule.setViewMode}
+                            onNavigateDate={schedule.navigateDate}
+                            onFiltersChange={schedule.setFilters}
+                            onOpenSettings={canDispatch ? () => setSettingsOpen(true) : undefined}
+                        />
+                    )}
 
                     {/* Calendar view */}
                     {renderCalendarView()}

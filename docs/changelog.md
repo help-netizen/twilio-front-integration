@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-06-27 — SCHED-MOBILE-001: mobile Schedule reworked for the field technician
+
+Mobile-only Schedule rework (desktop unchanged). On a phone the toolbar is now just the
+**date as the hero** (large) + ‹ Today › nav + a single **gear ⚙** button; below it the
+existing clean job-list agenda. Every secondary control — search, filters, technician
+selector, reset, and (dispatch-only) New job / AI Assistant / Settings — moved into a new
+**bottom-sheet** (`ui/BottomSheet.tsx`) that slides up full-width (max 85vh + scroll, safe-
+area), fixing the old filters popover that ran off-screen (fixed 520px, right-anchored).
+The giant page title and the Unscheduled drag-panel are hidden on mobile (dispatch chrome).
+`CalendarControls` was refactored to share `ScheduleFilterBody`/`ScheduleProviderChips`
+between the desktop popover and the mobile sheet (same filter/provider/search state — no
+duplication). New `MobileScheduleBar`. All behind `isMobile`; reviewer APPROVED, build green.
+
 ## 2026-06-27 — MOBILE-NO-SOFTPHONE-001: hide the browser softphone on mobile
 
 The softphone is a Twilio WebRTC Device — unreliable on mobile browsers (backgrounded/locked tab drops
@@ -113,7 +126,6 @@ empty tenant; the leaked technician names made it look like the wrong company.
 
 **Tests:** `tests/zenbookerTenantIsolation.test.js` (null for non-default, env only for default,
 `[]` roster for non-connected) + 162 existing Zenbooker-caller tests green. No migration.
-
 ## 2026-06-27 — AUTH-FLOW-FIX-001: post-signup email-verify UX + 2FA SMS loop & throttle
 
 Owner-reported after a real prod signup. Spec: `Docs/specs/AUTH-FLOW-FIX-001.md`.

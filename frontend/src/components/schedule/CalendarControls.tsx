@@ -48,6 +48,10 @@ const STATUS_OPTIONS: Array<{ value: string; label: string; color: string }> = [
 
 const SOURCE_OPTIONS = ['Zenbooker', 'Manual', 'Lead Form', 'Phone', 'Website', 'Referral'];
 
+// Build status color map (shared by desktop popover + mobile sheet).
+const STATUS_COLOR_MAP: Record<string, string> = {};
+for (const s of STATUS_OPTIONS) STATUS_COLOR_MAP[s.label] = s.color;
+
 function getDateLabel(date: Date, mode: ViewMode): string {
     switch (mode) {
         case 'day':
@@ -136,6 +140,148 @@ function FilterColumn({
     );
 }
 
+/* ── Shared filter mutation handlers (desktop popover + mobile sheet) ── */
+
+export function useScheduleFilterHandlers(
+    filters: Partial<ScheduleFilters>,
+    onFiltersChange: (filters: Partial<ScheduleFilters>) => void,
+) {
+    const handleProviderToggle = (providerId: string) => {
+        const current = filters.providerIds || [];
+        const next = current.includes(providerId)
+            ? current.filter(id => id !== providerId)
+            : [...current, providerId];
+        onFiltersChange({ ...filters, providerIds: next.length ? next : undefined });
+    };
+    const handleStatusToggle = (status: string) => {
+        const current = filters.statuses || [];
+        const next = current.includes(status)
+            ? current.filter(s => s !== status)
+            : [...current, status];
+        onFiltersChange({ ...filters, statuses: next.length ? next : undefined });
+    };
+    const handleSourceToggle = (source: string) => {
+        const normalized = source.toLowerCase().replace(/\s+/g, '_');
+        const current = filters.source;
+        onFiltersChange({ ...filters, source: current === normalized ? undefined : normalized });
+    };
+    const handleTagToggle = (tag: string) => {
+        const current = filters.tags || [];
+        const next = current.includes(tag)
+            ? current.filter(t => t !== tag)
+            : [...current, tag];
+        onFiltersChange({ ...filters, tags: next.length ? next : undefined });
+    };
+    return { handleProviderToggle, handleStatusToggle, handleSourceToggle, handleTagToggle };
+}
+
+export function getActiveFilterCount(filters: Partial<ScheduleFilters>): number {
+    return [
+        filters.statuses?.length ? 1 : 0,
+        filters.source ? 1 : 0,
+        filters.tags?.length ? 1 : 0,
+        filters.search ? 1 : 0,
+        filters.providerIds?.length ? 1 : 0,
+    ].reduce((a, b) => a + b, 0);
+}
+
+/* ── Filter body: STATUS / SOURCE / TAGS columns (reused on mobile as 1-col) ── */
+
+export const ScheduleFilterBody: React.FC<{
+    filters: Partial<ScheduleFilters>;
+    allTags: string[];
+    onFiltersChange: (filters: Partial<ScheduleFilters>) => void;
+    /** 'columns' = desktop grid; 'stack' = single column for the mobile sheet. */
+    layout: 'columns' | 'stack';
+}> = ({ filters, allTags, onFiltersChange, layout }) => {
+    const { handleStatusToggle, handleSourceToggle, handleTagToggle } = useScheduleFilterHandlers(filters, onFiltersChange);
+    return (
+        <div
+            className={layout === 'columns' ? 'grid p-3 gap-0' : 'flex flex-col gap-4'}
+            style={layout === 'columns' ? { gridTemplateColumns: allTags.length > 0 ? '1fr 1fr 1fr' : '1fr 1fr' } : undefined}
+        >
+            <FilterColumn
+                title="STATUS"
+                items={STATUS_OPTIONS.map(o => o.label)}
+                selected={(filters.statuses || []).map(v => STATUS_OPTIONS.find(o => o.value === v)?.label || v)}
+                onToggle={(label) => {
+                    const opt = STATUS_OPTIONS.find(o => o.label === label);
+                    if (opt) handleStatusToggle(opt.value);
+                }}
+                colorMap={STATUS_COLOR_MAP}
+            />
+            <FilterColumn
+                title="SOURCE"
+                items={SOURCE_OPTIONS}
+                selected={filters.source ? [SOURCE_OPTIONS.find(s => s.toLowerCase().replace(/\s+/g, '_') === filters.source) || ''] : []}
+                onToggle={handleSourceToggle}
+            />
+            {allTags.length > 0 && (
+                <FilterColumn
+                    title="TAGS"
+                    items={allTags}
+                    selected={filters.tags || []}
+                    onToggle={handleTagToggle}
+                />
+            )}
+        </div>
+    );
+};
+
+/* ── Provider selector chips (reused: desktop row + mobile sheet) ── */
+
+export const ScheduleProviderChips: React.FC<{
+    providers: ProviderInfo[];
+    filters: Partial<ScheduleFilters>;
+    onFiltersChange: (filters: Partial<ScheduleFilters>) => void;
+}> = ({ providers, filters, onFiltersChange }) => {
+    const { handleProviderToggle } = useScheduleFilterHandlers(filters, onFiltersChange);
+    if (providers.length === 0) return null;
+    return (
+        <>
+            {providers.map(provider => {
+                const c = getProviderColor(provider.id);
+                const isActive = filters.providerIds?.includes(provider.id);
+                return (
+                    <button
+                        key={provider.id}
+                        type="button"
+                        onClick={() => handleProviderToggle(provider.id)}
+                        className="inline-flex items-center min-h-[28px] px-2.5 rounded-full text-[11px] font-semibold transition-all"
+                        style={{
+                            background: isActive ? c.accent : c.bg,
+                            border: `1px solid ${c.border}`,
+                            color: isActive ? '#fff' : c.text,
+                            boxShadow: isActive ? `0 2px 8px ${c.border}` : 'none',
+                        }}
+                    >
+                        {provider.name}
+                    </button>
+                );
+            })}
+            {/* Unassigned chip */}
+            {(() => {
+                const isActive = filters.providerIds?.includes('__unassigned__');
+                return (
+                    <button
+                        type="button"
+                        onClick={() => handleProviderToggle('__unassigned__')}
+                        className="inline-flex items-center min-h-[28px] px-2.5 rounded-full text-[11px] font-semibold transition-all"
+                        style={{
+                            background: isActive ? '#6b7280' : 'rgba(243, 244, 246, 0.7)',
+                            border: '1px solid rgba(107, 114, 128, 0.25)',
+                            color: isActive ? '#fff' : '#6b7280',
+                            boxShadow: isActive ? '0 2px 8px rgba(107, 114, 128, 0.25)' : 'none',
+                        }}
+                    >
+                        Unassigned
+                    </button>
+                );
+            })()}
+        </>
+    );
+};
+
 export const CalendarControls: React.FC<CalendarControlsProps> = ({
     viewMode, currentDate, filters, itemCounts, loading, providers = [], allTags = [],
     onViewModeChange, onNavigateDate, onFiltersChange, onOpenSettings,
@@ -155,52 +301,14 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
         return () => document.removeEventListener('mousedown', handler);
     }, [filterDropdownOpen]);
 
-    const activeFilterCount = [
-        filters.statuses?.length ? 1 : 0,
-        filters.source ? 1 : 0,
-        filters.tags?.length ? 1 : 0,
-        filters.search ? 1 : 0,
-        filters.providerIds?.length ? 1 : 0,
-    ].reduce((a, b) => a + b, 0);
+    const activeFilterCount = getActiveFilterCount(filters);
 
-    const handleProviderToggle = (providerId: string) => {
-        const current = filters.providerIds || [];
-        const next = current.includes(providerId)
-            ? current.filter(id => id !== providerId)
-            : [...current, providerId];
-        onFiltersChange({ ...filters, providerIds: next.length ? next : undefined });
-    };
-
-    const handleStatusToggle = (status: string) => {
-        const current = filters.statuses || [];
-        const next = current.includes(status)
-            ? current.filter(s => s !== status)
-            : [...current, status];
-        onFiltersChange({ ...filters, statuses: next.length ? next : undefined });
-    };
-
-    const handleSourceToggle = (source: string) => {
-        const normalized = source.toLowerCase().replace(/\s+/g, '_');
-        const current = filters.source;
-        onFiltersChange({ ...filters, source: current === normalized ? undefined : normalized });
-    };
-
-    const handleTagToggle = (tag: string) => {
-        const current = filters.tags || [];
-        const next = current.includes(tag)
-            ? current.filter(t => t !== tag)
-            : [...current, tag];
-        onFiltersChange({ ...filters, tags: next.length ? next : undefined });
-    };
+    const { handleStatusToggle, handleTagToggle } = useScheduleFilterHandlers(filters, onFiltersChange);
 
     const handleResetFilters = () => {
         onFiltersChange({});
         setFilterDropdownOpen(false);
     };
-
-    // Build status color map
-    const statusColorMap: Record<string, string> = {};
-    for (const s of STATUS_OPTIONS) statusColorMap[s.label] = s.color;
 
     return (
         // Mobile: flat, full-width — drop the frosted tile + inner gutter so the
@@ -362,37 +470,17 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
 
                                     {/* Columns */}
                                     <div
-                                        className="grid p-3 gap-0"
                                         style={{
-                                            gridTemplateColumns: allTags.length > 0 ? '1fr 1fr 1fr' : '1fr 1fr',
                                             borderTop: activeFilterCount > 0 ? '1px solid var(--blanc-line, rgba(117, 106, 89, 0.18))' : undefined,
                                             marginTop: activeFilterCount > 0 ? 8 : 0,
                                         }}
                                     >
-                                        <FilterColumn
-                                            title="STATUS"
-                                            items={STATUS_OPTIONS.map(o => o.label)}
-                                            selected={(filters.statuses || []).map(v => STATUS_OPTIONS.find(o => o.value === v)?.label || v)}
-                                            onToggle={(label) => {
-                                                const opt = STATUS_OPTIONS.find(o => o.label === label);
-                                                if (opt) handleStatusToggle(opt.value);
-                                            }}
-                                            colorMap={statusColorMap}
+                                        <ScheduleFilterBody
+                                            filters={filters}
+                                            allTags={allTags}
+                                            onFiltersChange={onFiltersChange}
+                                            layout="columns"
                                         />
-                                        <FilterColumn
-                                            title="SOURCE"
-                                            items={SOURCE_OPTIONS}
-                                            selected={filters.source ? [SOURCE_OPTIONS.find(s => s.toLowerCase().replace(/\s+/g, '_') === filters.source) || ''] : []}
-                                            onToggle={handleSourceToggle}
-                                        />
-                                        {allTags.length > 0 && (
-                                            <FilterColumn
-                                                title="TAGS"
-                                                items={allTags}
-                                                selected={filters.tags || []}
-                                                onToggle={handleTagToggle}
-                                            />
-                                        )}
                                     </div>
                                 </div>
                             )}
@@ -429,45 +517,7 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
                 {/* Provider chips — always visible below controls */}
                 {providers.length > 0 && (
                     <div className="flex items-center gap-2 flex-wrap mt-3 pt-3" style={{ borderTop: isMobile ? 'none' : '1px solid rgba(117, 106, 89, 0.08)' }}>
-                        {providers.map(provider => {
-                            const c = getProviderColor(provider.id);
-                            const isActive = filters.providerIds?.includes(provider.id);
-                            return (
-                                <button
-                                    key={provider.id}
-                                    type="button"
-                                    onClick={() => handleProviderToggle(provider.id)}
-                                    className="inline-flex items-center min-h-[28px] px-2.5 rounded-full text-[11px] font-semibold transition-all"
-                                    style={{
-                                        background: isActive ? c.accent : c.bg,
-                                        border: `1px solid ${c.border}`,
-                                        color: isActive ? '#fff' : c.text,
-                                        boxShadow: isActive ? `0 2px 8px ${c.border}` : 'none',
-                                    }}
-                                >
-                                    {provider.name}
-                                </button>
-                            );
-                        })}
-                        {/* Unassigned chip */}
-                        {(() => {
-                            const isActive = filters.providerIds?.includes('__unassigned__');
-                            return (
-                                <button
-                                    type="button"
-                                    onClick={() => handleProviderToggle('__unassigned__')}
-                                    className="inline-flex items-center min-h-[28px] px-2.5 rounded-full text-[11px] font-semibold transition-all"
-                                    style={{
-                                        background: isActive ? '#6b7280' : 'rgba(243, 244, 246, 0.7)',
-                                        border: '1px solid rgba(107, 114, 128, 0.25)',
-                                        color: isActive ? '#fff' : '#6b7280',
-                                        boxShadow: isActive ? '0 2px 8px rgba(107, 114, 128, 0.25)' : 'none',
-                                    }}
-                                >
-                                    Unassigned
-                                </button>
-                            );
-                        })()}
+                        <ScheduleProviderChips providers={providers} filters={filters} onFiltersChange={onFiltersChange} />
                     </div>
                 )}
             </div>
