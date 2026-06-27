@@ -94,7 +94,9 @@ describe('service.resolveTemplate', () => {
     });
 
     test('falls back to factory on unknown document_type', async () => {
-        const out = await service.resolveTemplate(COMPANY, 'invoice');
+        // NOTE: 'invoice' became a registered type via SEND-DOC-001; use a truly
+        // unregistered type so this asserts the real "unknown → null" contract.
+        const out = await service.resolveTemplate(COMPANY, 'not_a_real_document_type');
         expect(out).toBeNull(); // factory.getFactory returns null for unregistered types
     });
 });

@@ -4,6 +4,32 @@
 
 ---
 
+## 2026-06-27 — COMPANY-PROFILE-001: editable Company Profile in Settings
+
+Owner couldn't change the company name that goes out in the "on the way" SMS, and wanted a real
+company profile (name, contacts, address, logo, bank details).
+
+- **Settings → Company** (`/settings/company`) is now a full profile editor (was address-only):
+  company **name** (flows into the ONWAY customer SMS — `jobs.js` already reads `companies.name` —
+  and into email subjects), contact email/phone, billing email, the existing address block, a
+  **logo** upload (S3 via storageService, mirrors technician photos), and **bank/payment details**
+  (bank name, account name, account number, routing, SWIFT, free-text instructions).
+- Backend: tenant-scoped `GET/PATCH /api/settings/company-profile` + `POST .../logo`
+  (`companyProfileService`, permission `tenant.company.manage`, whitelisted fields — never status/
+  company_id/keys). Migration **134** adds `companies.logo_storage_key` + `payment_*` columns.
+- **Documents source-of-truth:** `documentTemplatesService.resolveTemplate` now overlays the company
+  profile brand (name/address/email/phone/logo/ach) onto the **factory** descriptor, so a tenant
+  without a custom template gets its real brand on invoices/estimates instead of the "ABC Homes /
+  Bank of America" placeholder. **A stored template still wins** ("templates can override") — so
+  Boston Masters' invoices keep their "ABC Homes" DBA; only the SMS/display name follows the profile.
+  Overlay only applies non-empty fields and safe-fails (never throws / never mutates the frozen factory).
+- Fixed a stale `documentTemplatesService` test (`invoice` is a registered type since SEND-DOC-001;
+  now asserts a genuinely-unknown type → null).
+
+**Tests:** `tests/companyProfile.test.js` (13) + `documentTemplatesService` (14) green; frontend
+build green. Pre-existing unrelated failures (PDF `@react-pdf/renderer` ESM-in-Jest, etc.) untouched.
+Deploy: migration 134 + app rebuild + logout-all (frontend changed).
+
 ## 2026-06-27 — ZB-ISO-001 (SECURITY): fix Zenbooker cross-tenant data leak
 
 **Owner-reported, P0.** The Schedule technician quick-filter showed technicians from

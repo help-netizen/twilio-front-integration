@@ -253,6 +253,9 @@ app.use('/api/stripe-terminal', authenticate, requireCompanyAccess,
 // Technician display profiles (photo/name) for the public payment page.
 app.use('/api/settings/technicians', authenticate, requireCompanyAccess,
     require('../backend/src/routes/technicians'));
+// COMPANY-PROFILE-001: tenant-facing company identity + branding (brand source for invoice/estimate PDFs).
+app.use('/api/settings/company-profile', authenticate, requirePermission('tenant.company.manage'), requireCompanyAccess,
+    require('../backend/src/routes/companyProfile'));
 // Technician base (home) locations for the slot engine (SLOT-ENGINE-001 Phase 2).
 app.use('/api/settings/technician-base-locations', authenticate, requireCompanyAccess,
     require('../backend/src/routes/technicianBaseLocations'));

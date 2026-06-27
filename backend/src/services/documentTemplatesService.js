@@ -15,6 +15,51 @@ const queries = require('../db/documentTemplatesQueries');
 const factory = require('./documentTemplates/factory');
 const { validateDescriptor } = require('./documentTemplates/validator');
 const rendererRegistry = require('./documentTemplates/rendererRegistry');
+const companyProfileService = require('./companyProfileService');
+
+/**
+ * Merge the company-profile brand overlay onto a template's brand. Profile
+ * NON-EMPTY values win; the nested `ach` object is merged field-by-field so
+ * template values survive where the profile is empty. Returns a NEW object —
+ * never mutates `base` (the factory brand/ach are Object.freeze'd).
+ */
+function deepMergeBrand(base, overlay) {
+    const baseBrand = base && typeof base === 'object' ? base : {};
+    const overlayBrand = overlay && typeof overlay === 'object' ? overlay : {};
+    const merged = { ...baseBrand };
+    for (const [key, value] of Object.entries(overlayBrand)) {
+        if (key === 'ach') continue; // merged separately below
+        if (value !== undefined && value !== null && value !== '') merged[key] = value;
+    }
+    if (overlayBrand.ach && typeof overlayBrand.ach === 'object') {
+        const mergedAch = { ...(baseBrand.ach && typeof baseBrand.ach === 'object' ? baseBrand.ach : {}) };
+        for (const [key, value] of Object.entries(overlayBrand.ach)) {
+            if (value !== undefined && value !== null && value !== '') mergedAch[key] = value;
+        }
+        merged.ach = mergedAch;
+    }
+    return merged;
+}
+
+/**
+ * Overlay the company-profile brand onto a resolved descriptor. Always returns
+ * a usable descriptor; safe-fails to the un-overlaid descriptor on any error so
+ * resolveTemplate never throws.
+ */
+async function overlayCompanyBrand(companyId, descriptor) {
+    try {
+        if (!descriptor || typeof descriptor !== 'object') return descriptor;
+        const profileBrand = await companyProfileService.buildBrand(companyId);
+        if (!profileBrand || Object.keys(profileBrand).length === 0) return descriptor;
+        // Shallow-clone the descriptor and replace `brand` with a merged clone so
+        // the (possibly frozen) source brand/ach objects are never mutated.
+        return { ...descriptor, brand: deepMergeBrand(descriptor.brand, profileBrand) };
+    } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[document-templates] company brand overlay failed; using base descriptor', err);
+        return descriptor;
+    }
+}
 
 class DocumentTemplateServiceError extends Error {
     constructor(code, httpStatus, message, details = null) {
@@ -118,23 +163,39 @@ async function resetTemplate(companyId, id, { updatedBy = null } = {}) {
  * to pass to the renderer adapter. Always returns a valid descriptor; never throws.
  */
 async function resolveTemplate(companyId, documentType) {
+    let descriptor = null;
     try {
         ensureType(documentType);
         const row = await queries.getDefaultByType(companyId, documentType);
         if (row && row.content && row.content.schema_version === 1) {
             const result = validateDescriptor(row.content);
-            if (result.valid) return row.content;
-            // stored row corrupt; fall through to factory
-            // eslint-disable-next-line no-console
-            console.warn('[document-templates] stored descriptor invalid; falling back to factory', {
-                companyId, documentType, errors: result.errors,
-            });
+            if (result.valid) {
+                descriptor = row.content;
+            } else {
+                // stored row corrupt; fall through to factory
+                // eslint-disable-next-line no-console
+                console.warn('[document-templates] stored descriptor invalid; falling back to factory', {
+                    companyId, documentType, errors: result.errors,
+                });
+            }
         }
     } catch (err) {
         // eslint-disable-next-line no-console
         console.warn('[document-templates] resolveTemplate failed; falling back to factory', err);
     }
-    return factory.getFactory(documentType);
+    if (descriptor) {
+        // A tenant-customized template exists → it WINS ("templates can override
+        // the Company Profile"). Return untouched so we never clobber a deliberately
+        // customized invoice/estimate brand (e.g. a DBA on documents that differs
+        // from the company's SMS/display name — Boston Masters docs say "ABC Homes").
+        return descriptor;
+    }
+    // No stored template: start from the factory and overlay the tenant's Company
+    // Profile brand (COMPANY-PROFILE-001) so documents use the tenant's real brand
+    // instead of the factory placeholder. Safe-fails to the factory; never throws.
+    const base = factory.getFactory(documentType);
+    if (!base) return base; // unknown/unregistered document_type → null; nothing to overlay
+    return overlayCompanyBrand(companyId, base);
 }
 
 function getFactoryDescriptor(documentType) {
