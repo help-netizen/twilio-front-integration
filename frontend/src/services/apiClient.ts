@@ -12,6 +12,11 @@ function rawFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respons
     const authHeaders = getAuthHeaders();
     const existingHeaders = init?.headers as Record<string, string> | undefined;
     return fetch(input, {
+        // Send the trusted-device cookie (albusto_td) on every authed request so a
+        // retried call after the 2FA gate actually carries it. Without this the
+        // retry 401s again → gate re-opens → SMS loop. `credentials` is still
+        // overridable per-call via init for the rare caller that needs to opt out.
+        credentials: 'include',
         ...init,
         headers: {
             ...authHeaders,

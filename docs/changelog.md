@@ -4,6 +4,38 @@
 
 ---
 
+## 2026-06-27 — AUTH-FLOW-FIX-001: post-signup email-verify UX + 2FA SMS loop & throttle
+
+Owner-reported after a real prod signup. Spec: `Docs/specs/AUTH-FLOW-FIX-001.md`.
+
+**2FA SMS loop killed (P0).** After onboarding, `phone_verified_at` was set but the device wasn't
+trusted, so landing on `/pulse` returned `401 PHONE_VERIFICATION_REQUIRED` → the "Confirm it's you"
+gate opened and **auto-sent an SMS**; a full-page reload re-mounted the gate → another SMS → loop.
+Fixes: (1) `routes/onboarding.js` now **trusts the device** (sets the `albusto_td` cookie, same attrs
+as trust-device) on signup completion → no immediate gate/2nd SMS; (2) `OnboardingPage` lands via
+client-side navigation instead of a hard `window.location` reload; (3) `apiClient.rawFetch` +
+`TwoFactorGate.authFetch` now send `credentials:'include'` so the trust cookie actually sticks on the
+retry (was the root of the reopen loop on a cross-origin API base); (4) the gate auto-sends **at most
+once per open** and treats `429` as a soft "wait" state.
+
+**Escalating per-phone SMS throttle (R6).** `otpService.sendCode` replaces the flat 5/hr+30s with a
+ladder counted per E.164 across purposes, **since the last successful verify** (1h idle reset): ≤3
+sends keep the 30s base cooldown, then min-gap 1 min → 5 min → 15 min → 1 h before each further send.
+Throttled sends return `429 { code:'OTP_RATE_LIMITED', message, retry_after_sec }`. `verifyCode` stamps
+`verified_at` to reset the ladder. Migration **133** adds `phone_otp.verified_at`. Applies to both
+`/api/public/otp/send` (signup) and `/api/auth/otp/send` (login).
+
+**Email-verification UX (Keycloak `albusto` theme).** New `info.ftl` (calls the layout with
+`displayMessage=false` → **no more duplicated text**; auto-proceeds past KC's "» Click here to proceed"
+via meta-refresh + `location.replace`; terminal state is a branded "You're all set" success page with
+a **"Sign in to Albusto"** button) + `login-verify-email.ftl` + `messages/messages_en.properties` +
+`theme.properties` `appUrl`. "Why Albusto" benefits stay signup-only; product name stays Albusto.
+
+**Tests:** `tests/otpThrottle.test.js` (ladder + reset-on-verify), updated `otpService.test.js` to the
+new semantics; full backend suite + frontend `npm run build` green. Reviewer APPROVED-WITH-NITS (the
+flagged stale test fixed; nits addressed). Deploy: backend rebuild + migration 133 + KC
+`up -d --force-recreate` (theme gzip cache).
+
 ## 2026-06-27 — SEND-DOC-001: send Estimate/Invoice by email or SMS + Gmail→marketplace app
 
 **Send (was a non-functional stub):** the "Send" button on the Estimate/Invoice view now actually delivers. A dialog (email | SMS, editable recipient + message) sends: **email** = the document **PDF attached** + a link to the online doc (`emailService.sendEmail`); **SMS** = text + link (`conversationsService`, wallet-gated). Status flips to `sent`+`sent_at` **only after dispatch succeeds** (fixes the invoice flip-first bug). Error matrix: 400 (recipient/channel), 409 `MAILBOX_NOT_CONNECTED` (→ connect CTA), 402 `WALLET_BLOCKED`, 422 `NO_PROXY`/`NO_PHONE`, 404/403.

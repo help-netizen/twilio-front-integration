@@ -14,9 +14,13 @@ import { subscribeTwoFactor, completeTwoFactor } from '../../services/twoFactorG
 
 // Direct fetch with auth headers — the /api/auth/* endpoints are 2FA-exempt, so
 // they never re-trigger the gate (no recursion through authedFetch).
+// `credentials: 'include'` is REQUIRED: trust-device sets the httpOnly `albusto_td`
+// cookie, and it must be (a) sent on these requests and (b) accepted from the
+// response — otherwise the device never sticks and the 401 gate re-opens in a loop.
 function authFetch(path: string, body?: unknown): Promise<Response> {
     return fetch(path, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: body ? JSON.stringify(body) : undefined,
     });
@@ -46,15 +50,25 @@ export default function TwoFactorGate() {
     const [error, setError] = useState<string | null>(null);
     const [resendIn, setResendIn] = useState(0);
     const codeRef = useRef<HTMLInputElement>(null);
+    // Guards the auto-send so it fires AT MOST ONCE per gate-open (no SMS storm on
+    // re-render / StrictMode double-invoke / repeated requireTwoFactor calls).
+    const autoSentRef = useRef(false);
 
     // Show/hide when the gate is required.
     useEffect(() => subscribeTwoFactor((on) => {
         setActive(on);
         if (on) { setCode(''); setError(null); }
+        else { autoSentRef.current = false; }   // re-arm auto-send for the next open
     }), []);
 
-    // Auto-send a code as soon as the gate opens.
-    useEffect(() => { if (active) void send(); /* eslint-disable-next-line */ }, [active]);
+    // Auto-send a code exactly once when the gate opens.
+    useEffect(() => {
+        if (active && !autoSentRef.current) {
+            autoSentRef.current = true;
+            void send();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [active]);
 
     // Resend countdown.
     useEffect(() => {
@@ -68,6 +82,16 @@ export default function TwoFactorGate() {
         try {
             const r = await authFetch('/api/auth/otp/send');
             const j = await r.json().catch(() => ({}));
+            // Rate limited: not a hard error. Show the wait, start the countdown
+            // from retry_after_sec, and DON'T auto-resend (button stays disabled
+            // while resendIn > 0). Combined with the backend throttle this makes
+            // an SMS storm impossible.
+            if (r.status === 429 || j.code === 'OTP_RATE_LIMITED') {
+                if (j.phone_hint) setPhoneHint(j.phone_hint);
+                setError(j.message || 'Too many attempts — please wait a moment.');
+                setResendIn(Math.max(1, Number(j.retry_after_sec) || 60));
+                return;
+            }
             if (!r.ok) throw new Error(j.message || 'Could not send the code');
             setPhoneHint(j.phone_hint || 'your phone');
             setResendIn(j.resend_after_sec || 30);

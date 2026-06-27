@@ -109,7 +109,14 @@ body{
 .btn:hover{background:#2a59c4; box-shadow:0 12px 28px rgba(47,99,216,.32)}
 .btn:active{transform:translateY(1px)}
 .btn[disabled]{opacity:.7; cursor:default}
+/* same primary button rendered as a link (terminal success CTA) */
+a.btn{display:flex; align-items:center; justify-content:center; text-decoration:none}
+a.btn:hover{text-decoration:none}
 
+
+/* secondary instructional copy (e.g. "check your spam folder") */
+.instruction{color:var(--blanc-ink-2); font-size:14px; line-height:1.55; margin:0 0 18px}
+.form-wrap strong{color:var(--blanc-ink-1); font-weight:600}
 
 /* generic info/links area (registration, try-another-way) */
 .aux{margin-top:20px; text-align:center; color:var(--blanc-ink-2); font-size:13.5px}

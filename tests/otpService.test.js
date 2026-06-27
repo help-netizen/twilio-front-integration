@@ -30,10 +30,12 @@ describe('otpService.sendCode', () => {
         expect(insert[1][2]).toMatch(/^[0-9a-f]{64}$/); // sha256 hash, never the code
     });
 
-    it('rejects the 6th send within an hour', async () => {
-        db.query.mockResolvedValueOnce({ rows: [{ n: '5', last: new Date(Date.now() - 3600e3).toISOString() }] });
+    it('throttles a send that is within the escalation gap (6th send → 15-min tier)', async () => {
+        // AUTH-FLOW-FIX-001: with 5 prior sends in the burst the next send needs a
+        // 900s gap; only 100s have elapsed → rejected with retry_after_sec.
+        db.query.mockResolvedValueOnce({ rows: [{ n: '5', last: new Date(Date.now() - 100e3).toISOString() }] });
         await expect(otpService.sendCode({ phone: '+15085140320', purpose: 'signup' }))
-            .rejects.toMatchObject({ code: 'OTP_RATE_LIMITED', httpStatus: 429 });
+            .rejects.toMatchObject({ code: 'OTP_RATE_LIMITED', httpStatus: 429, extra: { retry_after_sec: expect.any(Number) } });
     });
 
     it('rejects invalid phone numbers', async () => {

@@ -121,6 +121,15 @@ export function OnboardingPage() {
                 body: JSON.stringify({ phone, purpose: 'signup' }),
             });
             const json = await res.json();
+            // Rate limited (AUTH-FLOW-FIX-001 R7): show the wait and start the
+            // countdown from retry_after_sec; the Resend button stays disabled
+            // while resendIn > 0, so the UI can't spam the SMS endpoint.
+            if (res.status === 429 || json.code === 'OTP_RATE_LIMITED') {
+                if (step === 'phone') setStep('code');
+                setError(json.message || 'Too many attempts — please wait a moment.');
+                setResendIn(Math.max(1, Number(json.retry_after_sec) || 60));
+                return;
+            }
             if (!res.ok) { setError(json.message || 'Could not send the code'); return; }
             setStep('code'); setCode('');
             setResendIn(json.resend_after_sec || 30);
@@ -169,7 +178,22 @@ export function OnboardingPage() {
                 if (json.code === 'ALREADY_ONBOARDED') { navigate('/pulse', { replace: true }); return; }
                 setError(json.message || 'Could not create the company'); return;
             }
-            window.location.href = json.redirect || '/pulse';
+            // The device is now trusted server-side (AUTH-FLOW-FIX-001 R4), so the
+            // 2FA gate won't fire on /pulse. Land via client-side navigation when
+            // the target is in-SPA — a full-page reload here would re-boot the app
+            // and could surface a transient 401 → gate → SMS loop. Only fall back
+            // to a hard navigation for an external/absolute redirect URL.
+            const redirect: string = json.redirect || '/pulse';
+            const isExternal = /^https?:\/\//i.test(redirect) &&
+                !redirect.startsWith(window.location.origin);
+            if (isExternal) {
+                window.location.href = redirect;
+            } else {
+                const path = redirect.startsWith(window.location.origin)
+                    ? redirect.slice(window.location.origin.length) || '/pulse'
+                    : redirect;
+                navigate(path, { replace: true });
+            }
         } catch { setError('Connection error'); } finally { setBusy(false); }
     };
 

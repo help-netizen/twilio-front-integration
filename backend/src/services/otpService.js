@@ -14,8 +14,36 @@ const PEPPER = process.env.OTP_PEPPER || process.env.BLANC_SERVER_PEPPER || '';
 const JWT_SECRET = process.env.JWT_SECRET;
 const OTP_TTL_MS = 5 * 60 * 1000;
 const MAX_ATTEMPTS = 3;
-const MAX_SENDS_PER_PHONE_PER_HOUR = 5;
-const RESEND_AFTER_SEC = 30;
+
+// AUTH-FLOW-FIX-001 (R6): escalating per-phone SMS throttle. The ladder counts
+// sends since the last successful verify (within the last hour — older sends are
+// an idle reset). N = number of prior sends in the current burst; the value is
+// the minimum gap (seconds) required before the NEXT send.
+//   N<=2 -> 30s  (sends #1,#2,#3 keep the base 30s cooldown)
+//   N==3 -> 60s   (#4)
+//   N==4 -> 300s  (#5)
+//   N==5 -> 900s  (#6)
+//   N>=6 -> 3600s (#7+)
+const THROTTLE_TIERS = [
+    { maxPriorSends: 2, gapSec: 30 },
+    { maxPriorSends: 3, gapSec: 60 },
+    { maxPriorSends: 4, gapSec: 300 },
+    { maxPriorSends: 5, gapSec: 900 },
+    { maxPriorSends: Infinity, gapSec: 3600 },
+];
+
+/** Minimum gap (seconds) required before a send when `n` sends already exist in the burst. */
+function requiredGapSec(n) {
+    return THROTTLE_TIERS.find((t) => n <= t.maxPriorSends).gapSec;
+}
+
+/** Human-readable duration for a throttle wait message. */
+function humanDuration(sec) {
+    if (sec < 60) return `${sec}s`;
+    const mins = Math.ceil(sec / 60);
+    if (mins < 60) return `${mins} min`;
+    return `${Math.ceil(mins / 60)}h`;
+}
 
 function hashCode(code) {
     return crypto.createHash('sha256').update(PEPPER + code).digest('hex');
@@ -34,19 +62,44 @@ async function sendCode({ phone, purpose, ip }) {
     const e164 = normalizePhone(phone);
     if (!e164) throw new OtpError('VALIDATION_ERROR', 'Invalid US phone number', 422);
 
-    // Per-phone hourly limit
+    // Escalating per-phone throttle (R6) — across ALL purposes, since abuse is
+    // per number. Count sends in the current burst: those since the last
+    // successful verify, bounded to the last hour (older sends = idle reset).
     const { rows: countRows } = await db.query(
-        `SELECT COUNT(*) AS n, MAX(created_at) AS last
+        `WITH last_verify AS (
+             SELECT MAX(verified_at) AS at FROM phone_otp WHERE phone = $1
+         )
+         SELECT
+             COUNT(*) FILTER (
+                 WHERE created_at > GREATEST(
+                     COALESCE((SELECT at FROM last_verify), 'epoch'::timestamptz),
+                     now() - INTERVAL '1 hour'
+                 )
+             ) AS n,
+             MAX(created_at) AS last
          FROM phone_otp
-         WHERE phone = $1 AND purpose = $2 AND created_at > now() - INTERVAL '1 hour'`,
-        [e164, purpose]
+         WHERE phone = $1`,
+        [e164]
     );
-    if (parseInt(countRows[0].n, 10) >= MAX_SENDS_PER_PHONE_PER_HOUR) {
-        throw new OtpError('OTP_RATE_LIMITED', 'Too many codes requested — try again later', 429);
+    const n = parseInt(countRows[0].n, 10) || 0;
+    const last = countRows[0].last ? new Date(countRows[0].last).getTime() : null;
+    const gapSec = requiredGapSec(n);
+
+    if (last !== null) {
+        const elapsedMs = Date.now() - last;
+        if (elapsedMs < gapSec * 1000) {
+            const retryAfterSec = Math.ceil((gapSec * 1000 - elapsedMs) / 1000);
+            throw new OtpError(
+                'OTP_RATE_LIMITED',
+                `Too many codes — try again in ${humanDuration(retryAfterSec)}`,
+                429,
+                { retry_after_sec: retryAfterSec }
+            );
+        }
     }
-    if (countRows[0].last && Date.now() - new Date(countRows[0].last).getTime() < RESEND_AFTER_SEC * 1000) {
-        throw new OtpError('OTP_RATE_LIMITED', `Wait ${RESEND_AFTER_SEC}s before requesting a new code`, 429);
-    }
+
+    // Gap that will apply before the NEXT send (so the UI countdown is correct).
+    const resendAfterSec = requiredGapSec(n + 1);
 
     // Invalidate previous unconsumed codes
     await db.query(
@@ -63,7 +116,7 @@ async function sendCode({ phone, purpose, ip }) {
     );
 
     await deliverSms(e164, `Albusto: your verification code is ${code}. Valid 5 minutes.`);
-    return { ok: true, resend_after_sec: RESEND_AFTER_SEC, phone: e164 };
+    return { ok: true, resend_after_sec: resendAfterSec, phone: e164 };
 }
 
 /**
@@ -104,7 +157,8 @@ async function verifyCode({ phone, purpose, code }) {
         throw new OtpError('OTP_INVALID', 'Incorrect code', 401, { attempts_left: left });
     }
 
-    await db.query(`UPDATE phone_otp SET consumed_at = now() WHERE id = $1`, [row.id]);
+    // SUCCESS: consume + stamp verified_at so the send throttle ladder resets (R6/B3).
+    await db.query(`UPDATE phone_otp SET consumed_at = now(), verified_at = now() WHERE id = $1`, [row.id]);
 
     const otpToken = jwt.sign({ phone: e164, purpose, typ: 'otp' }, JWT_SECRET, { expiresIn: '10m' });
     return { ok: true, otp_token: otpToken, phone: e164 };

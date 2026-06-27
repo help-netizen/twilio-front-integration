@@ -58,6 +58,21 @@ router.post('/', async (req, res) => {
             email: req.user?.email || null,
         });
 
+        // AUTH-FLOW-FIX-001 (R4): trust the just-onboarded device so the 2FA gate
+        // does not fire (and re-send an SMS) immediately after signup. Mirrors the
+        // albusto_td cookie set by routes/authDevice.js trust-device.
+        const { deviceId, maxAgeSec } = await otpService.trustDevice(userId, {
+            ip: req.ip,
+            label: req.headers['user-agent']?.slice(0, 120) || null,
+        });
+        res.cookie('albusto_td', deviceId, {
+            httpOnly: true,
+            secure: true,
+            sameSite: 'lax',
+            maxAge: maxAgeSec * 1000,
+            path: '/',
+        });
+
         res.status(201).json({
             ok: true,
             company: { id: company.id, name: company.name, timezone: company.timezone },
