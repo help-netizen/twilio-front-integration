@@ -10,8 +10,9 @@ import { EstimateEditorDialog } from '../estimates/EstimateEditorDialog';
 import { InvoiceEditorDialog } from '../invoices/InvoiceEditorDialog';
 import { EstimateDetailPanel } from '../estimates/EstimateDetailPanel';
 import { InvoiceDetailPanel } from '../invoices/InvoiceDetailPanel';
+import { InvoiceSendDialog } from '../invoices/InvoiceSendDialog';
 import { archiveEstimate, fetchEstimate, fetchEstimateEvents, approveEstimate, declineEstimate, sendEstimate, restoreEstimate, linkJobToEstimate, updateEstimate } from '../../services/estimatesApi';
-import { fetchInvoiceEvents, recordPayment, voidInvoice, deleteInvoice } from '../../services/invoicesApi';
+import { fetchInvoiceEvents, recordPayment, voidInvoice, deleteInvoice, sendInvoice } from '../../services/invoicesApi';
 import type { EstimateEvent } from '../../services/estimatesApi';
 import type { InvoiceEvent, RecordPaymentData } from '../../services/invoicesApi';
 import { toast } from 'sonner';
@@ -52,6 +53,7 @@ export function LeadFinancialsTab({ leadId }: Props) {
     const [estimateEvents, setEstimateEvents] = useState<EstimateEvent[]>([]);
     const [invoiceEvents, setInvoiceEvents] = useState<InvoiceEvent[]>([]);
     const [detailLoading, setDetailLoading] = useState(false);
+    const [showInvoiceSend, setShowInvoiceSend] = useState(false);
 
     const openEstimate = async (e: (typeof estimates)[0]) => {
         setDetailLoading(true);
@@ -274,14 +276,7 @@ export function LeadFinancialsTab({ leadId }: Props) {
                             loading={detailLoading}
                             onClose={() => setSelectedInvoice(null)}
                             onEdit={() => {}}
-                            onSend={async () => {
-                                try {
-                                    const { sendInvoice } = await import('../../services/invoicesApi');
-                                    await sendInvoice(selectedInvoice.id, { channel: 'email', recipient: '' });
-                                    toast.success('Invoice sent');
-                                    refresh();
-                                } catch (err: any) { toast.error(err.message); }
-                            }}
+                            onSend={() => setShowInvoiceSend(true)}
                             onVoid={async () => {
                                 try {
                                     await voidInvoice(selectedInvoice.id);
@@ -316,6 +311,32 @@ export function LeadFinancialsTab({ leadId }: Props) {
                         />
                     </DialogContent>
                 </Dialog>
+            )}
+
+            {/* Invoice send dialog — operator confirms recipient/message (no empty-recipient sends) */}
+            {selectedInvoice && (
+                <InvoiceSendDialog
+                    open={showInvoiceSend}
+                    onOpenChange={setShowInvoiceSend}
+                    invoiceId={selectedInvoice.id}
+                    contactEmail={selectedInvoice.contact_email || ''}
+                    contactPhone={selectedInvoice.contact_phone || ''}
+                    contactName={selectedInvoice.contact_name || ''}
+                    invoiceNumber={selectedInvoice.invoice_number}
+                    balanceDue={selectedInvoice.balance_due}
+                    total={selectedInvoice.total}
+                    dueDate={selectedInvoice.due_date}
+                    onSend={async (data) => {
+                        try {
+                            await sendInvoice(selectedInvoice.id, data);
+                            toast.success('Invoice sent');
+                            refresh();
+                        } catch (err: any) {
+                            toast.error(err.message);
+                            throw err; // keep the dialog open on failure
+                        }
+                    }}
+                />
             )}
         </div>
     );

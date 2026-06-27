@@ -37,6 +37,7 @@ import CompanySettingsPage from './pages/CompanySettingsPage';
 import VapiSettingsPage from './pages/VapiSettingsPage';
 import StripePaymentsSettingsPage from './pages/StripePaymentsSettingsPage';
 import PublicInvoicePayPage from './pages/PublicInvoicePayPage';
+import PublicEstimateViewPage from './pages/PublicEstimateViewPage';
 import TechnicianPhotosPage from './pages/TechnicianPhotosPage';
 import ApiDocsPage from './pages/ApiDocsPage';
 import LeadFormSettingsPage from './pages/LeadFormSettingsPage';
@@ -49,7 +50,7 @@ import ProvidersPage from './pages/ProvidersPage';
 import ActionRequiredSettingsPage from './pages/ActionRequiredSettingsPage';
 import AutomationPage from './pages/AutomationPage';
 import BillingPage from './pages/BillingPage';
-import EmailSettingsPage from './pages/EmailSettingsPage';
+import GoogleEmailSettingsPage from './pages/GoogleEmailSettingsPage';
 import DocumentTemplatesPage from './pages/DocumentTemplatesPage';
 import DocumentTemplateEditorPage from './pages/DocumentTemplateEditorPage';
 import { EmailPage } from './pages/EmailPage';
@@ -97,6 +98,7 @@ function App() {
             <Routes>
               <Route path="/signup" element={<SignupPage />} />
               <Route path="/pay/:token" element={<PublicInvoicePayPage />} />
+              <Route path="/e/:token" element={<PublicEstimateViewPage />} />
               <Route path="/onboarding" element={<OnboardingPage />} />
               <Route path="/" element={<Navigate to="/pulse" replace />} />
               <Route path="/pulse" element={<ProtectedRoute permissions={['pulse.view']}><PulsePage /></ProtectedRoute>} />
@@ -120,6 +122,7 @@ function App() {
               <Route path="/settings/integrations" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><IntegrationsPage /></ProtectedRoute>} />
               <Route path="/settings/integrations/vapi-ai" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><VapiSettingsPage /></ProtectedRoute>} />
               <Route path="/settings/integrations/stripe-payments" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><StripePaymentsSettingsPage /></ProtectedRoute>} />
+              <Route path="/settings/integrations/google-email" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><GoogleEmailSettingsPage /></ProtectedRoute>} />
               <Route path="/settings/technicians" element={<ProtectedRoute permissions={['tenant.company.manage']}><TechnicianPhotosPage /></ProtectedRoute>} />
               <Route path="/settings/company" element={<ProtectedRoute permissions={['tenant.company.manage']}><CompanySettingsPage /></ProtectedRoute>} />
               <Route path="/settings/api-docs" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><ApiDocsPage /></ProtectedRoute>} />
@@ -139,7 +142,7 @@ function App() {
               <Route path="/settings/actions-notifications" element={<ProtectedRoute permissions={['tenant.company.manage']}><ActionRequiredSettingsPage /></ProtectedRoute>} />
               
               <Route path="/settings/service-territories" element={<ProtectedRoute permissions={['tenant.company.manage']}><ServiceTerritoriesPage /></ProtectedRoute>} />
-              <Route path="/settings/email" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><EmailSettingsPage /></ProtectedRoute>} />
+              <Route path="/settings/email" element={<Navigate to="/settings/integrations/google-email" replace />} />
               <Route path="/settings/document-templates" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><DocumentTemplatesPage /></ProtectedRoute>} />
               <Route path="/settings/document-templates/:id" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><DocumentTemplateEditorPage /></ProtectedRoute>} />
               <Route path="/email" element={<ProtectedRoute permissions={['messages.view_internal']}><EmailPage /></ProtectedRoute>} />

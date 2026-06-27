@@ -55,7 +55,7 @@ function MarketplaceConnectDialog({
 }) {
     const requiresGmail = !!app?.metadata?.requires_connected_gmail;
     const canConnect = !requiresGmail || gmailConnected;
-    const settingsPath = app?.metadata?.dependency_cta?.path || '/settings/email';
+    const settingsPath = app?.metadata?.dependency_cta?.path || '/settings/integrations/google-email';
     const credentialCopy = app?.provisioning_mode === 'none'
         ? 'Albusto will enable this module for your company. No external API credentials will be issued.'
         : 'Albusto will create tenant-scoped credentials for this app. Secrets are handled under the hood.';
@@ -269,6 +269,14 @@ export function IntegrationsPage() {
                                                     onClick={() => navigate('/settings/integrations/stripe-payments')}
                                                 >
                                                     {app.installation?.status === 'connected' || app.installation?.status === 'provisioning_failed' ? 'Manage' : 'Configure'}
+                                                </Button>
+                                            ) : app.app_key === 'google-email' ? (
+                                                <Button
+                                                    size="sm"
+                                                    variant={gmailConnected ? 'outline' : 'default'}
+                                                    onClick={() => navigate(String(app.metadata?.setup_path || '/settings/integrations/google-email'))}
+                                                >
+                                                    {gmailConnected ? 'Manage' : 'Connect'}
                                                 </Button>
                                             ) : (
                                                 <>

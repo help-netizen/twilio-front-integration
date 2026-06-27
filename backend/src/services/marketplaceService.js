@@ -3,6 +3,7 @@ const marketplaceQueries = require('../db/marketplaceQueries');
 const emailQueries = require('../db/emailQueries');
 const integrationsService = require('./integrationsService');
 const provisioningService = require('./marketplaceProvisioningService');
+const emailMailboxService = require('./emailMailboxService');
 
 class MarketplaceServiceError extends Error {
     constructor(message, code, httpStatus = 400) {
@@ -16,11 +17,54 @@ class MarketplaceServiceError extends Error {
 // SLOT-ENGINE-001 Phase 2: app_key gate for the Smart Slot Engine integration.
 const SMART_SLOT_ENGINE_APP_KEY = 'smart-slot-engine';
 
+// SEND-DOC-001 §4.3: the Google Email marketplace app (seeded with
+// provisioning_mode='none' and NO install row) derives its connected state from
+// the REAL Gmail mailbox, not a marketplace_installations row. Special-cased in
+// listApps + isAppConnected; all other apps are untouched.
+const GOOGLE_EMAIL_APP_KEY = 'google-email';
+
+/**
+ * Mailbox-derived connected boolean for the Google Email app.
+ * Connected ⇔ a Gmail mailbox exists AND its status is 'connected'. Any other
+ * status (reconnect_required / sync_error / disconnected) or no mailbox ⇒ false.
+ */
+async function isGoogleEmailMailboxConnected(companyId) {
+    const mailbox = await emailMailboxService.getMailboxStatus(companyId);
+    return Boolean(mailbox) && mailbox.provider === 'gmail' && mailbox.status === 'connected';
+}
+
+/**
+ * Build the SYNTHETIC installation overlay for the Google Email app from the real
+ * mailbox. No marketplace_installations row is created or read. Mirrors the
+ * installation shape the app-list path returns for other apps (mapAppRow) so the
+ * frontend needs no special handling, plus exposes external_installation_id (the
+ * connected email) per SEND-DOC-001. Returns null when no mailbox exists.
+ */
+async function buildGoogleEmailInstallationOverlay(companyId) {
+    const mailbox = await emailMailboxService.getMailboxStatus(companyId);
+    if (!mailbox) return null;
+    const connected = mailbox.provider === 'gmail' && mailbox.status === 'connected';
+    return {
+        id: null,
+        status: connected ? 'connected' : 'disconnected',
+        installed_at: connected ? mailbox.created_at || null : null,
+        disconnected_at: null,
+        provisioning_error: null,
+        last_used_at: connected ? mailbox.last_synced_at || null : null,
+        external_installation_id: connected ? mailbox.email_address || null : null,
+    };
+}
+
 /**
  * Whether the given marketplace app is connected (gate-only check) for a company.
  * True iff the app is published AND an active installation exists with status 'connected'.
  */
 async function isAppConnected(companyId, appKey) {
+    // SEND-DOC-001 §5.10: google-email connected-state comes from the mailbox, not
+    // an install row — the mail-secretary gate resolves from truth.
+    if (appKey === GOOGLE_EMAIL_APP_KEY) {
+        return isGoogleEmailMailboxConnected(companyId);
+    }
     const app = await marketplaceQueries.getPublishedAppByKey(appKey);
     if (!app) return false;
     const installation = await marketplaceQueries.findActiveInstallation(companyId, app.id);
@@ -155,7 +199,18 @@ function sanitizeProvisioningError(err) {
 
 async function listApps(companyId) {
     const rows = await marketplaceQueries.listPublishedAppsWithInstallation(companyId);
-    return rows.map(mapAppRow);
+    const apps = rows.map(mapAppRow);
+
+    // SEND-DOC-001 §4.3: overlay the google-email app's installation with a
+    // synthetic one derived from the real Gmail mailbox. This OVERRIDES any
+    // install-row state mapAppRow produced (a stale row never wins). All other
+    // apps are returned exactly as mapAppRow built them.
+    const googleEmail = apps.find(app => app.app_key === GOOGLE_EMAIL_APP_KEY);
+    if (googleEmail) {
+        googleEmail.installation = await buildGoogleEmailInstallationOverlay(companyId);
+    }
+
+    return apps;
 }
 
 async function listInstallations(companyId, includeInactive = false) {

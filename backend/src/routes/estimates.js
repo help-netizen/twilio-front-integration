@@ -19,6 +19,10 @@ function getUserId(req) {
         : null;
 }
 
+function getUserEmail(req) {
+    return req.user?.email || req.user?.preferred_username || null;
+}
+
 // =============================================================================
 // Estimate CRUD
 // =============================================================================
@@ -166,12 +170,28 @@ router.post('/:id/send', requirePermission('estimates.send'), async (req, res) =
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
         const { id } = req.params;
-        const { channel, recipient, message } = req.body;
+        const { channel, recipient, message } = req.body || {};
+        const userEmail = getUserEmail(req);
 
-        const result = await estimatesService.sendEstimate(companyId, userId, id, { channel, recipient, message });
+        const result = await estimatesService.sendEstimate(companyId, userId, id, { channel, recipient, message, userEmail });
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Estimates] POST /:id/send error:', err.message);
+        const status = err.httpStatus || 500;
+        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+    }
+});
+
+// POST /api/estimates/:id/public-link — mint (or reuse) the customer page link
+router.post('/:id/public-link', requirePermission('estimates.send'), async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        const { id } = req.params;
+
+        const { url } = await estimatesService.ensurePublicLink(companyId, id);
+        res.json({ ok: true, data: { url } });
+    } catch (err) {
+        console.error('[Estimates] POST /:id/public-link error:', err.message);
         const status = err.httpStatus || 500;
         res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
     }

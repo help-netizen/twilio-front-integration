@@ -608,6 +608,9 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                 onOpenChange={setSendOpen}
                 estimateId={estimate.id}
                 contactEmail={estimate.contact_email || ''}
+                contactPhone={estimate.contact_phone || ''}
+                estimateNumber={estimate.estimate_number}
+                contactName={estimate.contact_name || ''}
                 onSend={async data => {
                     await onSend(data);
                 }}

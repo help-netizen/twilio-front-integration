@@ -113,7 +113,7 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
                                 })}
                                 {emailTargets.length > 0 && !emailConnected && (
                                     canManageIntegrations ? (
-                                        <button onClick={() => { setToDropdownOpen(false); navigate('/settings/email'); }} className="w-full text-left px-3 py-2 hover:bg-muted/50 text-sm flex items-start gap-2">
+                                        <button onClick={() => { setToDropdownOpen(false); navigate('/settings/integrations/google-email'); }} className="w-full text-left px-3 py-2 hover:bg-muted/50 text-sm flex items-start gap-2">
                                             <Mail className="w-3.5 h-3.5 shrink-0 mt-0.5" style={{ color: 'var(--blanc-ink-3)' }} />
                                             <span style={{ color: 'var(--blanc-info)' }}>Connect Google email to message clients by email →</span>
                                         </button>

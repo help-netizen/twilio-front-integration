@@ -20,6 +20,11 @@ function getUserId(req) {
         : null;
 }
 
+// Actor email — tags the sender on outbound mail (EMAIL-TIMELINE-001).
+function getUserEmail(req) {
+    return req.user?.email || req.user?.preferred_username || null;
+}
+
 // =============================================================================
 // Invoice CRUD
 // =============================================================================
@@ -135,9 +140,10 @@ router.post('/:id/send', requirePermission('invoices.send'), async (req, res) =>
         const companyId = getCompanyId(req);
         const userId = getUserId(req);
         const { id } = req.params;
-        const { channel, recipient, message } = req.body;
+        const { channel, recipient, message, includePaymentLink } = req.body || {};
+        const userEmail = getUserEmail(req);
 
-        const result = await invoicesService.sendInvoice(companyId, userId, id, { channel, recipient, message });
+        const result = await invoicesService.sendInvoice(companyId, userId, id, { channel, recipient, message, includePaymentLink, userEmail });
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Invoices] POST /:id/send error:', err.message);

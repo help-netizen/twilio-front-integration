@@ -4,6 +4,16 @@
 
 ---
 
+## 2026-06-27 — SEND-DOC-001: send Estimate/Invoice by email or SMS + Gmail→marketplace app
+
+**Send (was a non-functional stub):** the "Send" button on the Estimate/Invoice view now actually delivers. A dialog (email | SMS, editable recipient + message) sends: **email** = the document **PDF attached** + a link to the online doc (`emailService.sendEmail`); **SMS** = text + link (`conversationsService`, wallet-gated). Status flips to `sent`+`sent_at` **only after dispatch succeeds** (fixes the invoice flip-first bug). Error matrix: 400 (recipient/channel), 409 `MAILBOX_NOT_CONNECTED` (→ connect CTA), 402 `WALLET_BLOCKED`, 422 `NO_PROXY`/`NO_PHONE`, 404/403.
+
+**Estimate public page (new):** migration 131 `estimates.public_token`; public routes `GET /api/public/estimates/:token` (PII-safe view JSON) + `/pdf`; branded view-only SPA page `/e/:token` (mirrors the invoice pay page). Invoice link uses the existing `/pay/:token` pay page. `EstimateSendDialog` upgraded to `InvoiceSendDialog` parity; `JobFinancialsTab`/`LeadFinancialsTab` route through the dialog (no more empty-recipient sends).
+
+**Gmail connect → marketplace app (declutter settings):** migration 132 seeds a `google-email` marketplace app; its connected-state is a backend overlay off the REAL mailbox (`marketplaceService`, no install row). Connect reuses the existing Google OAuth (callback now redirects to `/settings/integrations/google-email`). The standalone `/settings/email` route + nav item are removed (route → redirect; refs repointed; `mail-secretary` dependency_cta repointed); `EmailSettingsPage` → `GoogleEmailSettingsPage` under the marketplace.
+
+**Tests:** 45 backend (public routes/tenant-safety, dispatch + status-after-success ordering for both docs, full error matrix, marketplace overlay) + frontend build green. Reviewer APPROVED. Migrations 131/132 run on deploy.
+
 ## 2026-06-26 — EMAIL-TIMELINE-001: email in the contact timeline
 
 Email now lives in the same contact conversation as SMS and calls — inbound Gmail

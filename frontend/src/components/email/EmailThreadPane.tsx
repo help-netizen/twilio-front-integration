@@ -60,7 +60,7 @@ export function EmailThreadPane({ threadId, mailboxStatus, onThreadUpdated }: Em
                     </button>
                 )}
                 {!canSend && mailboxStatus === 'reconnect_required' && (
-                    <ReconnectBanner onNavigate={() => navigate('/settings/email')} />
+                    <ReconnectBanner onNavigate={() => navigate('/settings/integrations/google-email')} />
                 )}
                 {composeMode && (
                     <div className="w-full max-w-xl mt-4">
@@ -101,7 +101,7 @@ export function EmailThreadPane({ threadId, mailboxStatus, onThreadUpdated }: Em
         <div className="flex-1 flex flex-col h-full overflow-hidden">
             {/* Reconnect banner */}
             {mailboxStatus === 'reconnect_required' && (
-                <ReconnectBanner onNavigate={() => navigate('/settings/email')} />
+                <ReconnectBanner onNavigate={() => navigate('/settings/integrations/google-email')} />
             )}
 
             {/* Thread header */}

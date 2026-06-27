@@ -2075,3 +2075,131 @@ This feature wires **email into the same timeline**: inbound email from a known 
 - **SMS/calls/financial timeline** — existing `buildTimeline` outputs (`calls`, `messages`, `conversations`, `financial_events`) and SMS send path stay intact; email is **additive**.
 - **slot-engine**, `src/server.js` core boot, `authedFetch.ts`, `useRealtimeEvents.ts`, and `backend/db/` existing migrations (079 etc.) — unchanged (new migration only).
 - Multi-tenant isolation: no query may drop the `company_id` filter.
+
+---
+
+# SEND-DOC-001 — Send Estimate & Invoice by Email/SMS + Gmail-as-Marketplace-App
+
+> Status: requirements (Product 01). Two coupled parts. **PART A** = actually deliver Estimates & Invoices to the client (today both "send" actions are stubs / record-only — no email or SMS ever leaves the system). **PART B** = move the Gmail connect/disconnect UI out of `/settings/email` and into a first-class **marketplace app** ("Google Email"), and retire the standalone settings page.
+
+## 1. Problem
+
+Operators can build a polished Estimate or Invoice (line items, branded PDF, "Preview PDF") but **cannot get it to the customer from inside Albusto**. Concretely:
+
+- **Estimate "Send"** opens a stub dialog that only picks a channel and calls `estimatesService.sendEstimate`, which logs a `send_stub_requested` event and changes **nothing** — no status change, no email, no SMS, no public link. There is **no public estimate page** at all (estimates have no `public_token`, no public route, no view page).
+- **Invoice "Send"** has a fully-built dialog (channel, editable recipient, message, "include payment link") and flips the invoice to `sent`/`sent_at`, but the service comment says it plainly: *"MVP: record the delivery, no actual sending."* No email or SMS is dispatched. The customer never receives anything.
+- All the **delivery infrastructure already exists but is unwired**: `emailService.sendEmail` (multipart Gmail send with PDF attachments), `conversationsService.getOrCreateConversation` + `sendMessage` (wallet-gated Twilio SMS), `generatePdf` for both docs, and `ensurePublicLink` + the branded pay page (`/pay/:token`) for invoices.
+- Separately, **Gmail connection lives in its own settings page** (`/settings/email` + a nav item) that duplicates what the marketplace is for. Other apps (`mail-secretary`) already depend on a connected Gmail and deep-link to `/settings/email`. The customer wants Gmail managed like every other integration (in the marketplace) and the standalone page removed.
+
+The result: the sales→delivery loop is broken at the last step, and integration settings are inconsistent.
+
+## 2. Goals / Non-goals
+
+**Goals**
+- Send an Estimate or Invoice to the client by **Email** (PDF attached + link to the online doc) or **SMS** (text + link, no attachment), from the existing detail panels.
+- Give estimates the same **public, tokenized, branded online page** invoices have — a **view-only** estimate page at `/e/<token>` plus a public PDF endpoint.
+- **Actually dispatch**: wire `sendEstimate`/`sendInvoice` to `emailService.sendEmail` (email) and `conversationsService` SMS; flip status → `sent` + `sent_at`; record the send event; ensure the activity lands on the **contact timeline**.
+- Enforce correct **gating**: doc authority (`estimates.send`/`invoices.send`), a connected Gmail mailbox for email (else a clear "connect" path), an active wallet + a company Twilio number for SMS, and a present recipient.
+- Move Gmail connect/disconnect/status into a new **"Google Email" marketplace app** that **reuses the existing Google OAuth backend**, and **remove the `/settings/email` route and nav item**; update the OAuth callback redirect and every `/settings/email` reference (incl. `mail-secretary`'s `dependency_cta`) to the new destination.
+
+**Non-goals (v1)**
+- Estimate **Accept/Decline from the public page** (the page is view-only in v1; approve/decline stays operator-side). The public estimate page is structured to add it later.
+- Online payment **on the estimate page** (payment stays an invoice concept via the existing `/pay/:token`).
+- Rewriting the Google OAuth flow, the email inbox (EMAIL-001), or the timeline projection (EMAIL-TIMELINE-001) — those are **reused**, only the entry point and a thin dispatch/stamp call are added.
+- Scheduled/automated sending, delivery-receipt tracking beyond what Twilio/Gmail already record, multi-recipient/CC UI.
+
+## 3. User stories
+
+- **US-1** As an operator, from the Estimate detail panel I click **Send**, pick **Email** or **SMS**, confirm/edit the recipient and a prefilled message, and the customer receives the estimate (email: branded PDF + link; SMS: text + link).
+- **US-2** As an operator, the same works for an Invoice (it already has the richer dialog), and an "include payment link" choice controls whether the pay link is embedded.
+- **US-3** As a customer, I receive a link and open a **branded online estimate page** (or the existing invoice pay page) without logging in.
+- **US-4** As an operator, after I send, the doc shows **Sent** with a timestamp, and the send appears on the **contact's timeline** (the email I sent / the SMS I sent), so the whole team sees it.
+- **US-5** As an operator without a connected mailbox, when I try to send by email I get a clear message and a **one-click path to connect Google Email** (the marketplace app), not a dead end.
+- **US-6** As an operator without wallet balance or without a company sending number, SMS send fails with a clear, specific reason and **no** false "Sent" state.
+- **US-7** As an admin, I connect/disconnect **Google Email from the marketplace** (`/settings/integrations`), like Stripe or VAPI; the standalone `/settings/email` page is gone, and old links/bookmarks redirect to the marketplace.
+- **US-8** As an admin, the "Google Email" app shows **Connected** with the actual mailbox address only when a Gmail mailbox is truly connected (derived from the real mailbox status, not just an install row).
+
+## 4. Functional requirements
+
+### PART A — Send Estimate/Invoice
+
+**FR-A1 Estimate public link + page.**
+- Add `estimates.public_token` (nullable TEXT, unique partial index), minted lazily by `estimatesService.ensurePublicLink(companyId, id)` (mirror invoice: `crypto.randomBytes(8).toString('base64url')`, idempotent).
+- Public, unauthenticated routes (token is the credential): view-data `GET /api/public/estimates/:token`, PDF `GET /api/public/estimates/:token/pdf`, and a short alias `GET /e/:token` (302 → the React page, mirroring how `/i/:token` and `/pay/:token` are served). The link embedded in messages is `(PUBLIC_APP_URL||APP_URL)/e/<token>`.
+- A **branded, view-only** React page at `/e/:token` (`PublicEstimateViewPage`, mirroring `PublicInvoicePayPage`): company name, estimate number, line items/totals, status, a "Download PDF" action. No Accept/Decline, no payment in v1.
+
+**FR-A2 Channel semantics.**
+- **Email** = the document **PDF attached** + a **link to the online doc** in the body (estimate → `/e/<token>`; invoice → `/pay/<token>`).
+- **SMS** = a short text **+ the link** (no attachment); wallet-gated.
+
+**FR-A3 Send dialog (estimate parity).**
+- Upgrade `EstimateSendDialog` to match the built `InvoiceSendDialog`: channel **email | SMS** toggle, editable recipient (email vs phone), required message prefilled from contact + a default per-doc/per-channel template, and the public link minted on open (`ensureEstimatePublicLink`). Invoice keeps its dialog (incl. "include payment link").
+- `EstimateSendData` extends to `{ channel: 'email'|'sms', recipient: string, message: string }` (today it is only `{ channel }`).
+
+**FR-A4 Real dispatch + status + timeline.**
+- `sendEstimate`/`sendInvoice` accept `{ channel, recipient, message }`, then:
+  - **Email**: `generatePdf` → `ensurePublicLink` → `emailService.sendEmail(companyId, { to: recipient, subject, body(html, incl. link), files:[{ originalname, mimetype:'application/pdf', buffer }], userId, userEmail })`. After send, **stamp the contact timeline** by linking the returned `provider_message_id` to the doc's contact (the EMAIL-TIMELINE-001 outbound linking — `emailQueries.linkMessageToContact(provider_message_id, companyId, { contact_id, timeline_id, on_timeline:true })`).
+  - **SMS**: resolve `proxyE164` (company Twilio number) → `getOrCreateConversation(customerE164, proxyE164, companyId)` → `sendMessage(convId, { body: text+link, author:'agent' })` (wallet gate is inside `sendMessage`; `conversationsService` already records the message and projects SMS to the timeline).
+- On success: flip status → `sent` and set `sent_at` (estimate gains this; invoice already does), and record the existing send **event** (`sent`) with channel/recipient. On any dispatch failure: status is **not** changed.
+
+**FR-A5 Gating & errors (exact contracts).**
+- Authority: `estimates.send` / `invoices.send` (unchanged route perms).
+- **Recipient missing** → `400` (block) with a clear message; dialog disables Send when empty (already the invoice behavior).
+- **Email, mailbox not connected** → `409 MAILBOX_NOT_CONNECTED` (derive from mailbox status before sending; `emailService.sendEmail` itself throws `409` on `reconnect_required`). UI surfaces the **connect CTA → the Google Email marketplace app** (FR-A6), not `/settings/email`.
+- **SMS, wallet blocked** → `402` (`WALLET_BLOCKED` from `assertServiceActive`) surfaced as "Messaging is paused — top up your balance."
+- **SMS, no company Twilio number** (`resolveCompanyProxyE164` → null) → `422 NO_PROXY` "No sending number configured for your company." (mirror the ETA-notify contract); no side effects.
+- **SMS, no/invalid customer phone** → `422 NO_PHONE`.
+
+**FR-A6 Connect CTA target.** When email send is blocked for "not connected", the surfaced hint/link points to the **new Google Email marketplace app** (its setup path under `/settings/integrations`), never to the removed `/settings/email`.
+
+**FR-A7 Financials-tab reuse fix.** `JobFinancialsTab` and `LeadFinancialsTab` currently call `sendInvoice(id, { channel:'email', recipient:'' })` directly from `InvoiceDetailPanel.onSend`, **bypassing the dialog** (empty recipient → would now fail FR-A5). Route these through `InvoiceSendDialog` (and `EstimateSendDialog` for estimates) so the operator always confirms recipient/message.
+
+### PART B — Gmail connect → marketplace app
+
+**FR-B1 New marketplace app.** Seed a published `marketplace_apps` row, key **`google-email`**, name **"Google Email"** (category `communication`/`ai`, `app_type` `internal`, `provisioning_mode` `none`), with `metadata.setup_path` pointing at its destination under `/settings/integrations` (mirror the Stripe/VAPI seed pattern). The app represents the company's Gmail connection.
+
+**FR-B2 Connect via existing OAuth.** The app's "Connect" action triggers the **existing** Google OAuth (`POST /api/settings/email/google/start` → Google consent → `GET /api/email/oauth/google/callback`). The OAuth backend (`email-settings.js`, `email-oauth.js`, `emailMailboxService`) is **reused unchanged** — only the frontend entry point and the post-callback redirect move.
+
+**FR-B3 Connected-state derived from the real mailbox.** The "Google Email" app's connected state and the displayed address **derive from the actual Gmail mailbox** (the same source as `GET /api/email/timeline/mailbox-status` → `{ connected, email_address }` / `getMailboxSettings` → `{ provider:'gmail', status:'connected', email_address }`), **not** merely from a `marketplace_installations` row. (The marketplace list query/resolver must overlay mailbox status for this app so "Connected ✓ name@domain" reflects reality.)
+
+**FR-B4 Disconnect.** The app supports disconnect, which calls the existing `POST /api/settings/email/disconnect` (tears down the Gmail watch, nulls tokens, preserves synced history) — reused, not reimplemented.
+
+**FR-B5 Remove the standalone page.** Delete the `/settings/email` **route** (App.tsx:142) and the **nav item** (`appLayoutNavigation.tsx:96`). The connect/disconnect/status UI lives in the marketplace (a dedicated app detail/setup surface under `/settings/integrations`, mirroring Stripe/VAPI setup pages, OR the existing `MarketplaceConnectDialog` "connect Gmail" pattern). Old `/settings/email` URLs (bookmarks, the OAuth callback) must **redirect** to the new destination, not 404.
+
+**FR-B6 Update callback redirect + all references.** Change the OAuth callback redirect (`email-oauth.js`: `/settings/email?...` success/`?error=`/`?email_error=...`) to the new marketplace destination (with equivalent success/error query flags). Update `mail-secretary`'s `metadata.dependency_cta.path` (currently `/settings/email`) and every other `/settings/email` reference in the frontend (`appLayoutNavigation`, `SmsForm`, `EmailThreadPane`, `EmailPage`, `IntegrationsPage`, `emailApi`) to the new app path.
+
+**FR-B7 Status source for the send dialog is unchanged.** The send-dialog connection check still uses `getTimelineMailboxStatus` (`{ connected, email_address }`) — no behavior change there; only the **CTA destination** changes (FR-A6).
+
+## 5. Acceptance criteria
+
+**PART A**
+- **AC-1** From the Estimate detail panel, **Send → Email** with a valid recipient delivers a Gmail email **with the estimate PDF attached** and a body containing the `/e/<token>` link; the estimate flips to **Sent** with `sent_at`; a `sent` event is recorded; the sent email appears on the **contact timeline**.
+- **AC-2** From the Estimate panel, **Send → SMS** with a valid phone sends a Twilio SMS containing the `/e/<token>` link (no attachment); status → **Sent**; the SMS appears on the contact timeline.
+- **AC-3** Opening `/e/<token>` in a fresh browser (no auth) renders the **branded, view-only** estimate (number, items, totals) and a working **Download PDF**; `GET /api/public/estimates/:token/pdf` returns the PDF; `GET /e/:badtoken` (malformed) returns 404.
+- **AC-4** Invoice **Send → Email** delivers the invoice **PDF + `/pay/<token>` link**; **Send → SMS** sends text + link; "include payment link" toggles whether the link is embedded; status → **Sent**; activity lands on the timeline. (`sendInvoice` no longer merely records.)
+- **AC-5** Email send with **no connected mailbox** returns `409 MAILBOX_NOT_CONNECTED`; the UI shows a connect hint linking to the **Google Email marketplace app** (not `/settings/email`); status is unchanged.
+- **AC-6** SMS send with **wallet blocked** → `402`; with **no company Twilio number** → `422 NO_PROXY`; with **no/invalid recipient phone** → `422 NO_PHONE`. In every failure the doc is **not** marked Sent.
+- **AC-7** Sending with an **empty recipient** is blocked (Send disabled; backend `400` if forced) for both docs.
+- **AC-8** `JobFinancialsTab` / `LeadFinancialsTab` open the proper **send dialog** (recipient prefilled from `contact_email`/`contact_phone`) instead of calling `sendInvoice` with an empty recipient; sending from a job/lead works end-to-end.
+
+**PART B**
+- **AC-9** `/settings/integrations` lists a **"Google Email"** app. With no mailbox connected it shows **Not connected** + a Connect action; clicking Connect runs the existing Google OAuth and returns to the marketplace.
+- **AC-10** After OAuth, the "Google Email" app shows **Connected** with the **actual mailbox address**, derived from the real mailbox status (disconnecting the mailbox flips it back to Not connected even though an install row may exist).
+- **AC-11** **Disconnect** from the app calls the existing disconnect endpoint (watch torn down, tokens nulled, history preserved) and the app returns to Not connected.
+- **AC-12** The **`/settings/email` nav item is gone** and the route no longer renders the old page; navigating to `/settings/email` (old bookmark) **redirects** to the new marketplace destination.
+- **AC-13** The OAuth **callback redirect** lands on the new marketplace destination (with success/error flags preserved); `mail-secretary`'s `dependency_cta` and all other `/settings/email` references now point to the new app.
+- **AC-14** `mail-secretary`'s "Connect Gmail before enabling…" gate still works, now resolving connected-state from the same mailbox source and linking to the new app.
+
+**Regression / protected**
+- **AC-15** EMAIL-TIMELINE-001 inbound/outbound email projection and the standalone `/email` inbox are byte-for-behavior unchanged; the Google OAuth backend (`email-settings.js`, `email-oauth.js`, `emailMailboxService`, token refresh, Gmail watch) is unchanged except the callback redirect URL.
+- **AC-16** The existing **invoice pay page** (`/pay/:token`), `ensureInvoicePublicLink`, `/i/:token`, and Stripe public-pay routes are unchanged; the new estimate public routes are **additive** (new `/api/public/estimates/*` + `/e/:token`), not a refactor of the invoice ones.
+- **AC-17** Multi-tenant isolation holds: public token lookups are unscoped-by-design (token is the credential) but resolve a single row; all authenticated paths keep the `company_id` filter.
+
+## 6. Protected / do-not-break
+
+- **EMAIL-TIMELINE-001** send/receive + timeline projection; **EMAIL-001** inbox, search, attachments, the 5-min scheduler.
+- The **Google OAuth backend** (`routes/email-settings.js`, `routes/email-oauth.js`, `services/emailMailboxService.js`) — reuse; only the callback redirect string changes.
+- The **invoice pay page** + invoice public token/route/short-link + Stripe public-pay endpoints.
+- `crypto.randomBytes` token scheme + the unique partial index pattern (mirror, don't alter, the invoice one).
+- Wallet gating (`walletService.assertServiceActive`) and `resolveCompanyProxyE164` contract (422 on missing proxy).
+- `src/server.js` public-router mount order (auth-skipping `/api/public/*` + `/i/:token`); the new estimate public router mounts alongside the same way.

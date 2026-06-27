@@ -216,11 +216,15 @@ app.use('/api/vapi-tools', vapiToolsRouter);
 // middleware doesn't intercept /api/public/* requests.
 const publicInvoicesRouter = require('../backend/src/routes/public-invoices');
 app.use('/api/public', publicInvoicesRouter);
+// Public, un-authenticated estimate routes (tokenized view JSON + PDF for "send" links).
+const publicEstimatesRouter = require('../backend/src/routes/public-estimates');
+app.use('/api/public', publicEstimatesRouter);
 // ALB-101: self-registration surface (rate-limited, no auth, no tenant data)
 const publicAuthRouter = require('../backend/src/routes/publicAuth');
 app.use('/api/public', publicAuthRouter);
 // Top-level short-link redirect (e.g. /i/abc123 → /api/public/invoices/abc123/pdf).
 app.use('/', publicInvoicesRouter.shortRouter);
+app.use('/', publicEstimatesRouter.shortRouter);
 app.use('/api/invoices', authenticate, requireCompanyAccess, invoicesRouter);
 app.use('/api/payments', authenticate, requireCompanyAccess, paymentsCanonicalRouter);
 app.use('/api/portal', portalRouter); // public auth + portal-session auth inside router

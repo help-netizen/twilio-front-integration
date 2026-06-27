@@ -18,6 +18,7 @@ const routeDistanceService = require('../services/routeDistanceService');
 const googlePlacesService = require('../services/googlePlacesService');
 const companyQueries = require('../db/companyQueries');
 const { toE164 } = require('../utils/phoneUtils');
+const { resolveCompanyProxyE164 } = require('../services/messagingHelper');
 const { requirePermission } = require('../middleware/authorization');
 const { getProviderScope } = require('../middleware/providerScope');
 
@@ -703,31 +704,8 @@ router.post('/:id/reschedule', requirePermission('jobs.edit'), async (req, res) 
 // ONWAY-001 — "On the way" ETA estimate + notify (technician dispatch SMS)
 // =============================================================================
 
-/**
- * Resolve the company's outbound sending DID (E.164).
- *  1. MRU of recent SMS conversations for this company (proven pulse query).
- *  2. Fallback to process.env.SOFTPHONE_CALLER_ID.
- *  3. Neither → null (caller returns 422 NO_PROXY).
- *
- * Local to this route: it's a single company-scoped MRU lookup + env fallback,
- * used only by the notify handler, so it stays here rather than widening the
- * conversationsService surface.
- */
-async function resolveCompanyProxyE164(companyId) {
-    if (companyId) {
-        const db = require('../db/connection');
-        const { rows } = await db.query(
-            `SELECT proxy_e164 FROM sms_conversations
-             WHERE company_id = $1 AND proxy_e164 IS NOT NULL
-             ORDER BY last_message_at DESC NULLS LAST
-             LIMIT 1`,
-            [companyId]
-        );
-        if (rows[0]?.proxy_e164) return toE164(rows[0].proxy_e164) || rows[0].proxy_e164;
-    }
-    const envDid = process.env.SOFTPHONE_CALLER_ID;
-    return envDid ? (toE164(envDid) || envDid) : null;
-}
+// resolveCompanyProxyE164 (outbound sending DID resolution) moved to
+// ../services/messagingHelper so SMS dispatch services can reuse it.
 
 // POST /:id/eta/estimate — pure read: device coords → job address travel time.
 // Never sends anything, never changes status.

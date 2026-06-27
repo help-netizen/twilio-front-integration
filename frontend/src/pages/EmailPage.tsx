@@ -97,7 +97,7 @@ export function EmailPage() {
                 {canManage && (
                     <button
                         className="flex items-center gap-2 text-sm font-medium"
-                        onClick={() => navigate('/settings/email')}
+                        onClick={() => navigate('/settings/integrations/google-email')}
                         style={{
                             background: 'var(--blanc-ink-1)', color: '#fff',
                             padding: '8px 20px', borderRadius: '10px', border: 'none', cursor: 'pointer',

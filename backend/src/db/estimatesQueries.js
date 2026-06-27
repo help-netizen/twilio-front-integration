@@ -523,6 +523,44 @@ async function listEvents(estimateId) {
     return rows;
 }
 
+// =============================================================================
+// Public token (SEND-DOC-001) — mirrors invoicesQueries 563–599
+// =============================================================================
+
+/** Look up an estimate strictly by its public_token (no company scoping — the token IS the auth). */
+async function getEstimateByPublicToken(publicToken) {
+    if (!publicToken) return null;
+    const { rows } = await db.query(
+        `SELECT e.*,
+                c.full_name AS contact_name,
+                c.email AS contact_email,
+                c.phone_e164 AS contact_phone,
+                j.job_number AS job_number,
+                l.serial_id AS lead_serial_id,
+                co.name AS company_name
+         FROM estimates e
+         LEFT JOIN contacts c ON c.id = e.contact_id
+         LEFT JOIN jobs j ON j.id = e.job_id AND j.company_id = e.company_id
+         LEFT JOIN leads l ON l.id = e.lead_id AND l.company_id = e.company_id
+         LEFT JOIN companies co ON co.id = e.company_id
+         WHERE e.public_token = $1
+         LIMIT 1`,
+        [publicToken]
+    );
+    return rows[0] || null;
+}
+
+/** Persist a public_token on the estimate (idempotent — caller checks if one already exists first). */
+async function setPublicToken(estimateId, companyId, token) {
+    const { rows } = await db.query(
+        `UPDATE estimates SET public_token = $3, updated_at = NOW()
+         WHERE id = $1 AND company_id = $2
+         RETURNING *`,
+        [estimateId, companyId, token]
+    );
+    return rows[0] || null;
+}
+
 module.exports = {
     listEstimates,
     getEstimateById,
@@ -545,4 +583,6 @@ module.exports = {
     listRevisions,
     createEvent,
     listEvents,
+    getEstimateByPublicToken,
+    setPublicToken,
 };

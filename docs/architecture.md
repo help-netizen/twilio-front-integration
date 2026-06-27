@@ -2586,3 +2586,192 @@ Gmail watch additionally requires the Gmail API service account `gmail-api-push@
 - **Draft-edit push storm** → every draft save/edit emits `labelsAdded`/`messagesAdded` history carrying the `DRAFT` label; the INBOX-external filter in step 3 drops all of them ⇒ zero timeline activity (AC-2). Outbound (`SENT`/own-from) is filtered the same way; the agent's own sent timeline emails are projected by the **send path** (stamping `on_timeline`), not by inbound ingest, so there's no double-count.
 - **History-gap fallback** (`syncIncrementalHistory` 404 → backfill) is preserved; backfilled threads run the same `linkInboundMessage`, so a gap self-heals onto the timeline.
 - **Push endpoint spoofing** → unverified token/OIDC ⇒ rejected before any DB work (AC-10).
+
+---
+
+# SEND-DOC-001 — Architecture (Architect 02)
+
+> Wires the existing-but-unconnected delivery infra (`emailService.sendEmail`, `conversationsService` SMS, `generatePdf`, `ensurePublicLink`) into the two "send" stubs, gives **estimates** the tokenized public page invoices already have, and relocates Gmail connect into a **marketplace app**, retiring `/settings/email`. **Reuse over rebuild** throughout. Migration number: **131** (next free; latest on disk is 130).
+
+## A. Estimate public link + page (mirror the invoice machinery)
+
+### A.1 Migration `131_estimates_public_token.sql` (+ `rollback_131_*.sql`)
+Mirror migration 087 exactly, on `estimates`:
+```sql
+ALTER TABLE estimates ADD COLUMN IF NOT EXISTS public_token TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_estimates_public_token
+  ON estimates (public_token) WHERE public_token IS NOT NULL;
+```
+Rollback drops the index then the column. Additive, idempotent (re-runnable by `apply_migrations.js`).
+
+### A.2 Queries — `backend/src/db/estimatesQueries.js` (mirror invoicesQueries 563-599)
+- `getEstimateByPublicToken(publicToken)` — `SELECT … FROM estimates e … WHERE e.public_token = $1` (no company scope; token is auth). Join the same contact fields the list query exposes (`contact_name/contact_email/contact_phone`) + company name for the page header.
+- `setPublicToken(estimateId, companyId, token)` — `UPDATE estimates SET public_token = $3, updated_at = NOW() WHERE id = $1 AND company_id = $2`.
+
+### A.3 Service — `backend/src/services/estimatesService.js`
+- `ensurePublicLink(companyId, id)` — copy of the invoice impl: load estimate (404 if missing), reuse `public_token` or mint `crypto.randomBytes(8).toString('base64url')` via `setPublicToken`, return `{ token, url }` where `url = (PUBLIC_APP_URL||APP_URL).replace(/\/+$/,'') + '/e/' + token`. Idempotent.
+- `getPublicEstimate(token)` — `getEstimateByPublicToken` + `getEstimateItems`, shaped for the page (number, status, items, totals, company_name, contact display name). 404 if not found.
+- `generatePdfByPublicToken(token)` — mirror invoice: resolve by token, load items, `documentTemplatesService.resolveTemplate(company_id,'estimate')` + `rendererRegistry.get('estimate')`, return `{ estimate, buffer }`. (Note the doc-link in the **email** points to `/e/<token>` page, but the **PDF route** is `/api/public/estimates/:token/pdf`; the page's "Download PDF" hits that.)
+- Export all three.
+
+### A.4 Public routes — new `backend/src/routes/public-estimates.js` (mirror public-invoices.js)
+- `GET /estimates/:token` → `estimatesService.getPublicEstimate(token)` → `{ ok:true, data }` (view JSON for the React page). Validate token with the same `TOKEN_RE = /^[A-Za-z0-9_-]{6,64}$/` → 404 on mismatch.
+- `GET /estimates/:token/pdf` → `generatePdfByPublicToken` → stream `application/pdf` inline (copy headers/Cache-Control from public-invoices).
+- `shortRouter.get('/e/:token')` → in dev/SSR-less Vite this must reach the **React page**, not the PDF. Two valid options (pick one, document): (a) serve the SPA `index.html` for `/e/:token` (client routes via React Router to `PublicEstimateViewPage`), like `/pay/:token` is an App.tsx route reached by the SPA; **or** (b) 302 to `/api/public/estimates/:token` JSON. **Chosen: (a)** — `/e/:token` is a **client route** (App.tsx), NOT a server redirect; the server short-router is only needed if a hard GET must resolve, in which case 302 → the SPA path. Keep it parallel to how `/pay/:token` already works as a pure App.tsx route (no server short-link for the *page*; `/i/:token` short-link is only for the **PDF**). So: add a **PDF** short-link `GET /ep/:token → 302 /api/public/estimates/:token/pdf` for SMS-friendly PDF if needed, but the customer link in messages is the **page** `/e/<token>` (served by the SPA).
+- Mount in `src/server.js` next to public-invoices (auth-skipping), e.g.:
+  ```js
+  const publicEstimatesRouter = require('../backend/src/routes/public-estimates');
+  app.use('/api/public', publicEstimatesRouter);
+  app.use('/', publicEstimatesRouter.shortRouter); // optional PDF short-link
+  ```
+  `/e/:token` itself is handled by the SPA catch-all (same as `/pay/:token`).
+
+### A.5 Page — `frontend/src/pages/PublicEstimateViewPage.tsx` + route App.tsx
+- New default-export component mirroring `PublicInvoicePayPage` structure (token from `useParams`, fetch `GET /api/public/estimates/:token`, loading/error states), **view-only**: company header, estimate number, line-items table, totals, status badge, "Download PDF" → `/api/public/estimates/:token/pdf`. No tip/Stripe/Accept. Albusto tokens (`--blanc-*`), product name "Albusto".
+- `App.tsx`: add `<Route path="/e/:token" element={<PublicEstimateViewPage />} />` adjacent to the `/pay/:token` route (both outside the authed shell).
+
+### A.6 Token security
+- 64-bit opaque token = the only credential; unscoped lookup resolves exactly one row (unique index). `TOKEN_RE` rejects malformed input before any DB hit. PDF route sets `Cache-Control: private, must-revalidate`. No enumeration (random, not sequential). Same posture as invoices (AC-16/17).
+
+## B. Dispatch wiring (the core of PART A)
+
+### B.1 `estimatesService.sendEstimate(companyId, userId, id, { channel, recipient, message })`
+Replace the stub body. Steps:
+1. Load estimate (404), `assertNotArchived`, `assertHasItems`. Normalize channel (`text`→`sms`); must be `email|sms`.
+2. **Validate recipient** present (else `EstimatesServiceError('VALIDATION', …, 400)`).
+3. `link = (await ensurePublicLink(companyId, id)).url` (the `/e/<token>` page).
+4. **Email branch**:
+   - `{ buffer } = await generatePdf(companyId, id)`.
+   - Build `subject` + `body` (HTML) from templates (B.3); body includes the `link`.
+   - `result = await emailService.sendEmail(companyId, { to: recipient, subject, body, files: [{ originalname: \`\${estimate_number||'estimate'}.pdf\`, mimetype: 'application/pdf', buffer }], userId, userEmail })`.
+   - **Timeline stamp**: if the estimate has a `contact_id`, resolve its `timeline_id` and call `emailQueries.linkMessageToContact(result.provider_message_id, companyId, { contact_id, timeline_id, on_timeline:true })` so the sent email projects onto the contact timeline (the EMAIL-TIMELINE-001 outbound mechanism). Best-effort (wrap in try/catch; a stamp failure must not undo a real send).
+5. **SMS branch**:
+   - `customerE164 = toE164(recipient)` → `422 NO_PHONE` if falsy.
+   - `proxyE164 = await resolveCompanyProxyE164(companyId)` (extract the helper from `routes/jobs.js` into a shared module — see B.5) → `422 NO_PROXY` if null.
+   - `conv = await conversationsService.getOrCreateConversation(customerE164, proxyE164, companyId)`; `await conversationsService.sendMessage(conv.id, { body: smsBody(message, link), author:'agent' })`. Wallet gate is **inside** `sendMessage` → maps to `402`. `conversationsService` already records the message + projects SMS to the timeline (no extra stamp needed).
+6. **On success only**: `updateEstimate(id, companyId, { status:'sent', sent_at: now })` (add `sent_at` handling; estimates currently lack a sent flip) and `createEvent(id, 'sent', 'user', userId, { channel, recipient })`. **On any dispatch throw → do NOT change status** (let the error propagate; route maps to the right HTTP code).
+
+### B.2 `invoicesService.sendInvoice(companyId, userId, id, { channel, recipient, message, includePaymentLink })`
+Same shape, but:
+- `link = (await ensurePublicLink(companyId, id)).url` is the **`/i/<token>` short PDF link today**; the **customer page** is `/pay/<token>`. For consistency the message link should be the **pay page** `/pay/<token>` (what `InvoiceSendDialog` already mints via `ensureInvoicePublicLink`). Keep `ensureInvoicePublicLink` returning the page URL the dialog expects; pass the same URL into the body. Honor `includePaymentLink` (omit link when false).
+- Email branch attaches the invoice PDF (`generatePdf`) + body link; SMS branch identical to B.1.5. Timeline stamp identical (invoice carries `contact_id`).
+- **Move the status flip to after a successful dispatch** (today it flips first, then "records"): keep `updateInvoiceStatus(id, companyId, 'sent', 'sent_at')` + the `sent` event, but only once dispatch succeeds.
+
+### B.3 Templates (default subject/body per doc × channel)
+Add a small `documentSendTemplates` helper (or inline). Mirrors the friendly tone already in `InvoiceSendDialog.buildDefaultMessage` (the **dialog** prefills the editable message; the **service** uses `message` as the body and only synthesizes the **subject** + wraps SMS/email link). 
+- **Email subject**: estimate → `Estimate {number} from {company}`; invoice → `Invoice {number} from {company}`.
+- **Email body**: HTML wrap of the operator-edited `message` (newlines→`<br>`), with the `link` rendered as an anchor ("View your estimate/invoice online"). PDF is the attachment.
+- **SMS body**: the operator-edited `message`; if it does not already contain the link, append ` {link}`. (The dialog's default already embeds the link, so usually a no-op.)
+
+### B.4 Routes — pass the new body through
+- `routes/estimates.js` `POST /:id/send` (perm `estimates.send`): read `{ channel, recipient, message }` from `req.body`, pass to `sendEstimate`. Map service errors: `VALIDATION`→400, `MAILBOX_NOT_CONNECTED`/409 (from `emailService`) → 409, `WALLET_BLOCKED`→402, `NO_PROXY`/`NO_PHONE`→422.
+- `routes/invoices.js` `POST /:id/send` (perm `invoices.send`): same body incl. `includePaymentLink`; same error mapping. (Both routes already exist; only the handler payload + error translation expand.)
+
+### B.5 `proxyE164` resolution (shared)
+`resolveCompanyProxyE164(companyId)` lives in `routes/jobs.js:716` (most-recent `sms_conversations.proxy_e164`, else `SOFTPHONE_CALLER_ID`). **Extract to `backend/src/services/messagingHelper.js`** (or reuse if a phone-helper module exists per RF007) and import in both `jobs.js` and the send services — no logic change. Returns null when no number ⇒ `422 NO_PROXY`.
+
+## C. Send dialog (frontend)
+
+### C.1 `EstimateSendDialog` upgrade (to invoice parity)
+Rewrite `frontend/src/components/estimates/EstimateSendDialog.tsx` to mirror `InvoiceSendDialog`: 
+- Props gain `contactPhone`, `estimateNumber`, `contactName`. State: `channel: 'email'|'sms'`, `emailRecipient`/`phoneRecipient` (prefilled), `message`, `publicUrl`.
+- On open, `ensureEstimatePublicLink(estimateId)` (new `estimatesApi` fn calling `POST /api/estimates/:id/public-link` OR a thin `GET` — add a tiny authed route `POST /api/estimates/:id/public-link → ensurePublicLink`, mirroring the invoice one) to mint/fetch the `/e/<token>` URL for the default message.
+- Default message via a `buildDefaultMessage(channel, {...})` (estimate-flavored copy: "Here's your estimate {n}. View it online: {url}"). Channel toggle email|SMS, editable recipient, required message. `onSend({ channel, recipient, message })`.
+- `EstimateSendData` (estimatesApi.ts:140) → `{ channel:'email'|'sms'; recipient:string; message:string }`; `sendEstimate(id, data)` posts the full body.
+
+### C.2 `InvoiceSendDialog` — reused as-is
+Already complete (channel, recipient, message, include-payment-link, mints `ensureInvoicePublicLink`). No change beyond passing `includePaymentLink`/`message`/`recipient` straight to the now-real `sendInvoice` (it already does).
+
+### C.3 Connection-status check + connect CTA
+- Before/within the email branch the dialog (or the panel) checks `emailApi.getTimelineMailboxStatus()` → `{ connected, email_address }`. If not connected and channel=email, show an inline notice + a **"Connect Google Email"** link to the new marketplace app setup path (FR-A6/B1), and disable email Send. Also handle a `409 MAILBOX_NOT_CONNECTED` from the API defensively (same CTA toast).
+- This reuses the **existing** pattern in `IntegrationsPage.tsx` (`requiresGmail`, `dependency_cta.path`, `gmailConnected = mailbox.provider==='gmail' && status==='connected'`).
+
+### C.4 Financials-tab fix (FR-A7)
+In `JobFinancialsTab.tsx` (:337-346) and `LeadFinancialsTab.tsx` (:271-280), stop calling `sendInvoice(id, { channel:'email', recipient:'' })` from `InvoiceDetailPanel.onSend`. Instead let `InvoiceDetailPanel` own the `InvoiceSendDialog` (it already does in its own panel usage) and pass `contactEmail`/`contactPhone`/`invoiceNumber`/`contactName`/`balanceDue`/`total`/`dueDate` so the dialog prefills; the tab's `onSend` becomes the real `sendInvoice(id, data)` with the dialog's `{channel,recipient,message}`. Same for estimates via `EstimateSendDialog`. (Verify whether `InvoiceDetailPanel` already renders the dialog internally; if so, the tabs just stop the bypassing direct call and forward `data`.)
+
+## D. Marketplace app for Google Email (PART B)
+
+### D.1 Seed `131`/`132_seed_google_email_marketplace_app.sql`
+> Use the **next** migration number after the token migration (token = 131, seed = 132) so both land in one feature. Mirror the Stripe seed (116):
+```sql
+INSERT INTO marketplace_apps (app_key, name, provider_name, category, app_type,
+  short_description, long_description, requested_scopes, provisioning_mode, status,
+  support_email, privacy_url, docs_url, metadata)
+VALUES ('google-email', 'Google Email', 'Albusto', 'communication', 'internal',
+  'Send estimates & invoices and sync mail from your Gmail.',
+  'Connects a company Gmail mailbox via Google OAuth. Albusto uses it to email documents to customers and to project email onto the contact timeline.',
+  '["email:send","email:read"]'::jsonb, 'none', 'published',
+  'support@albusto.local', 'https://albusto.local/privacy', '/settings/api-docs',
+  '{"setup_path":"/settings/integrations/google-email","manages_gmail_connection":true}'::jsonb)
+ON CONFLICT (app_key) DO UPDATE SET … updated_at = NOW();
+```
+Also in the same seed: **`UPDATE marketplace_apps SET metadata = jsonb_set(metadata,'{dependency_cta,path}','"/settings/integrations/google-email"') WHERE app_key='mail-secretary';`** (FR-B6).
+
+### D.2 Connect → existing OAuth
+The app's setup surface (new `GoogleEmailSettingsPage` routed at `/settings/integrations/google-email`, mirroring `StripePaymentsSettingsPage`/`VapiSettingsPage`, OR the `IntegrationsPage` "Connect Gmail" inline action) calls the **unchanged** `POST /api/settings/email/google/start` (perm `tenant.integrations.manage`) → returns the Google consent URL → browser navigates → Google → `GET /api/email/oauth/google/callback`. No OAuth rewrite.
+
+### D.3 Connected-state derived from the real mailbox (key design point)
+The "Google Email" app must show **Connected + address** from the **actual mailbox**, not a fabricated install row:
+- **Frontend**: the app's card/detail reads `getMailboxSettings()`/`getTimelineMailboxStatus()` and treats `provider==='gmail' && status==='connected'` as connected (exactly like `IntegrationsPage.gmailConnected`). For the `google-email` app specifically, **override** the generic `installation?.status==='connected'` check with this mailbox-derived boolean and display `email_address`.
+- **Backend (optional, cleaner)**: in `marketplaceService.listApps`/`isAppConnected`, special-case `app_key==='google-email'` to derive `connected` from `emailMailboxService` mailbox status (overlay a synthetic `installation: { status: mailbox.connected ? 'connected':'disconnected', external_installation_id: mailbox.email_address }`) so the marketplace truthfully reflects Gmail without requiring a real `marketplace_installations` insert. Document that `google-email` does **not** go through `installApp` provisioning (provisioning_mode `none`); its lifecycle is the OAuth connect/disconnect.
+
+### D.4 Disconnect
+The app's Disconnect calls the existing `POST /api/settings/email/disconnect` (perm `tenant.integrations.manage`) — tears down the Gmail watch, nulls tokens, preserves history. After it returns, the mailbox-derived state flips to Not connected (D.3), so the app reflects it without a separate install-row mutation.
+
+### D.5 Callback redirect change (FR-B6)
+`routes/email-oauth.js`: replace `const SETTINGS_URL = '/settings/email';` with `'/settings/integrations/google-email'` (success → `?connected=1`, error → `?error=…`, `?email_error=already_connected|connect_failed`). The new setup page reads these flags (toast). The OAuth logic is otherwise untouched.
+
+### D.6 Remove `/settings/email` route + nav (FR-B5)
+- `App.tsx:142`: **delete** the `/settings/email` route; add a **redirect** `<Route path="/settings/email" element={<Navigate to="/settings/integrations/google-email" replace />} />` so old bookmarks/the callback (until cache clears) don't 404.
+- `appLayoutNavigation.tsx:96`: **remove** the `{ label:'Email', path:'/settings/email' }` nav item.
+- Either delete `EmailSettingsPage.tsx` or repurpose its connect/disconnect/status UI into `GoogleEmailSettingsPage` (preferred: reuse its JSX). 
+- Update the other `/settings/email` string references (`SmsForm`, `EmailThreadPane`, `EmailPage`, `IntegrationsPage`, `emailApi`) to the new path.
+
+## E. Files — change / add / protected
+
+**DB (add)**
+- `backend/db/migrations/131_estimates_public_token.sql` + `rollback_131_estimates_public_token.sql`
+- `backend/db/migrations/132_seed_google_email_marketplace_app.sql` (incl. mail-secretary dependency_cta update)
+
+**Backend (change)**
+- `services/estimatesService.js` — `ensurePublicLink`, `getPublicEstimate`, `generatePdfByPublicToken`, rewrite `sendEstimate` (real dispatch + status flip + timeline stamp); add `sent_at` handling.
+- `services/invoicesService.js` — make `sendInvoice` actually dispatch (email/SMS) + move status flip after success; honor `includePaymentLink`.
+- `db/estimatesQueries.js` — `getEstimateByPublicToken`, `setPublicToken`.
+- `routes/estimates.js` — `/:id/send` body + error mapping; add `POST /:id/public-link`.
+- `routes/invoices.js` — `/:id/send` body (`includePaymentLink`) + error mapping.
+- `routes/email-oauth.js` — `SETTINGS_URL` → marketplace path.
+- `src/server.js` — mount `public-estimates` router (+ optional short-link).
+- (extract) `services/messagingHelper.js` — shared `resolveCompanyProxyE164`; update `routes/jobs.js` import.
+
+**Backend (add)**
+- `routes/public-estimates.js`.
+
+**Frontend (change)**
+- `components/estimates/EstimateSendDialog.tsx` — full upgrade to invoice parity.
+- `services/estimatesApi.ts` — `EstimateSendData` shape, `ensureEstimatePublicLink`, `sendEstimate` body.
+- `components/jobs/JobFinancialsTab.tsx`, `components/leads/LeadFinancialsTab.tsx` — route send through the dialog (FR-A7).
+- `App.tsx` — add `/e/:token` route; replace `/settings/email` route with a redirect; (add `/settings/integrations/google-email`).
+- `components/layout/appLayoutNavigation.tsx` — remove Email nav item.
+- `pages/IntegrationsPage.tsx` — Google Email app: mailbox-derived connected-state + CTA path; update `dependency_cta` default fallback.
+- `SmsForm.tsx`, `EmailThreadPane.tsx`, `EmailPage.tsx`, `emailApi.ts` — repoint `/settings/email` strings.
+
+**Frontend (add)**
+- `pages/PublicEstimateViewPage.tsx`.
+- `pages/GoogleEmailSettingsPage.tsx` (or repurpose `EmailSettingsPage.tsx`).
+
+**Protected (do not break)**
+- EMAIL-TIMELINE-001 send/receive + `emailQueries.linkMessageToContact` semantics; EMAIL-001 inbox.
+- Google OAuth backend (`email-settings.js`, `email-oauth.js` except the redirect string, `emailMailboxService` incl. token refresh + watch).
+- Invoice pay page `/pay/:token`, `ensureInvoicePublicLink`, `/i/:token`, Stripe public-pay routes.
+- `src/server.js` public-mount ordering (auth-skipping `/api/public/*`).
+
+## F. Risks / edge cases
+- **Estimate/invoice with no contact email/phone** → recipient empty: dialog disables Send; backend 400. If `contact_id` exists but no email, operator can still type one (dialog recipient is editable); timeline stamp only runs when `contact_id` is present.
+- **SMS with no company Twilio number** → `resolveCompanyProxyE164` null → `422 NO_PROXY`, no side effects, no false Sent (mirror ETA-notify).
+- **Wallet blocked** → `assertServiceActive` throws inside `sendMessage` → `402`; status untouched.
+- **Email not connected mid-send** → `emailService.sendEmail` throws (`Mailbox is not connected` / `409 reconnect_required`); service surfaces `409 MAILBOX_NOT_CONNECTED`; status untouched; UI shows the connect CTA → Google Email app.
+- **Partial success** (email sent but timeline stamp fails) → send is authoritative; stamp is best-effort/try-catch so a stamp error never rolls back a real send or blocks the status flip; a missed stamp self-heals if the inbound/sync path later links the SENT message (EMAIL-TIMELINE-001 already projects own-from sent mail via the send path).
+- **Public token leakage** → opaque 64-bit token, unique index, `TOKEN_RE` guard, `private` cache; view-only page exposes no payment action; same posture as invoices.
+- **Removing `/settings/email`** → keep a `Navigate` redirect for old bookmarks and the in-flight OAuth callback; update the callback `SETTINGS_URL` so new flows never hit the old path.
+- **Marketplace "connected" vs install-row mismatch** → `google-email` connected-state is **derived from the real mailbox** (D.3), not a `marketplace_installations` row; disconnecting the mailbox flips the app to Not connected even with a stale install row; `isAppConnected('google-email')` (if used by gates like mail-secretary) must consult the mailbox, not just an install row.
+- **Idempotent resend** → `ensurePublicLink` reuses the token; re-sending re-flips `sent`/`sent_at` and adds another `sent` event (acceptable: an audit trail of each send).

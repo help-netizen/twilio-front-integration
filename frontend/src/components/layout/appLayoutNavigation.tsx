@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '../ui/dropdown-menu';
-import { PhoneIncoming, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase, Bell, CalendarDays, MapPin, Mail, FileCog, Zap, CreditCard, Building2 } from 'lucide-react';
+import { PhoneIncoming, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase, Bell, CalendarDays, MapPin, FileCog, Zap, CreditCard, Building2 } from 'lucide-react';
 import { useAuthz } from '../../hooks/useAuthz';
 
 interface AppNavProps { activeTab: string; pulseUnreadCount: number; hasRole: (r: string) => boolean; logout: () => void; }
@@ -93,7 +93,6 @@ const SETTINGS_ITEMS = [
     { label: 'Automation', icon: Zap, path: '/settings/automation', permission: 'tenant.company.manage' },
     { label: 'Billing', icon: CreditCard, path: '/settings/billing', permission: 'tenant.company.manage' },
     { label: 'Service Territories', icon: MapPin, path: '/settings/service-territories', permission: 'tenant.company.manage' },
-    { label: 'Email', icon: Mail, path: '/settings/email', permission: 'tenant.integrations.manage' },
     { label: 'Document Templates', icon: FileCog, path: '/settings/document-templates', permission: 'tenant.integrations.manage' },
 ] as const;
 

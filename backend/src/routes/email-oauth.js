@@ -13,7 +13,7 @@ const providerRegistry = require('../services/mail/providerRegistry');
 
 const router = express.Router();
 
-const SETTINGS_URL = '/settings/email';
+const SETTINGS_URL = '/settings/integrations/google-email';
 
 // ─── GET /api/email/oauth/google/callback ────────────────────────────────
 router.get('/google/callback', async (req, res) => {
