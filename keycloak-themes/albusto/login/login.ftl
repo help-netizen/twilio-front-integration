@@ -44,7 +44,9 @@
         <div class="row-between">
           <#if realm.rememberMe && !usernameHidden??>
             <label class="remember">
-              <input id="rememberMe" name="rememberMe" type="checkbox" tabindex="3" <#if login.rememberMe??>checked</#if>>
+              <#-- AUTH-SESSION-001: default-ON so users get a persistent 30-day session
+                   (survives mobile tab-discard) without hunting for the checkbox. -->
+              <input id="rememberMe" name="rememberMe" type="checkbox" tabindex="3" checked>
               ${msg("rememberMe")}
             </label>
           <#else>

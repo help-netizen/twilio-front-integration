@@ -253,6 +253,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
     }, [loading, authenticated, publicPage]);
 
+    // AUTH-SESSION-001: when a backgrounded (mobile) tab becomes visible again, the
+    // 30s refresh interval was suspended and the access token may have expired —
+    // refresh it immediately so the resumed tab never fires an API call with a stale
+    // token. Best-effort: on failure the interval / onTokenExpired / apiClient 401
+    // path still handle a genuinely dead session.
+    useEffect(() => {
+        if (!FEATURE_AUTH) return;
+        const refreshOnResume = () => {
+            if (document.visibilityState !== 'visible') return;
+            const kc = getKeycloak();
+            if (!kc?.authenticated) return;
+            kc.updateToken(60)
+                .then((refreshed) => { if (refreshed) setToken(kc.token || null); })
+                .catch(() => { /* leave recovery to the interval / 401-refresh */ });
+        };
+        document.addEventListener('visibilitychange', refreshOnResume);
+        window.addEventListener('focus', refreshOnResume);
+        return () => {
+            document.removeEventListener('visibilitychange', refreshOnResume);
+            window.removeEventListener('focus', refreshOnResume);
+        };
+    }, []);
+
     const hasRole = useCallback((...roles: string[]) => {
         if (!user) return false;
         return roles.some(r => user.roles.includes(r));

@@ -4,6 +4,27 @@
 
 ---
 
+## 2026-06-27 — AUTH-SESSION-001: stay logged in on mobile (30-day Remember Me)
+
+Owner: mobile browser logged out after ~5 min of backgrounding. Root cause: `rememberMe=false` →
+Keycloak's SSO identity cookie was a non-persistent **session cookie**, which mobile browsers drop when
+they discard a backgrounded tab → cold reload finds no session → login. (The 5-min timing is the
+`accessTokenLifespan`, which is fine and stays at 300s.)
+
+- **Keycloak realm (crm-prod):** `rememberMe=true`, `ssoSessionIdleTimeoutRememberMe` +
+  `ssoSessionMaxLifespanRememberMe` = **2592000 (30 days)**. Applied live via kcadm; mirrored in
+  `keycloak/realm-export.json` for fresh imports. A remembered session now sets a **persistent** cookie
+  that survives mobile background/restart.
+- **Login theme** (`login.ftl`): the "Remember me" checkbox is **default-checked** so users get the
+  persistent 30-day session automatically.
+- **Frontend** (`AuthProvider.tsx`): on tab resume (`visibilitychange`/`focus`) the Keycloak token is
+  refreshed immediately, so a woken mobile tab never calls the API with an expired token (complements the
+  existing 30s interval + onTokenExpired + apiClient 401-refresh).
+
+**Tradeoff:** a 30-day persistent session means a lost/shared device stays logged in for 30 days
+(accepted). Access tokens stay short (5 min). **One more login is needed** to mint the new persistent
+cookie (deploy does a logout-all). Frontend build green; no DB migration.
+
 ## 2026-06-27 — ADDR-UX-001: base-address entry UX fix (Company + technician base)
 
 Owner-reported: the base-address editors **auto-saved** the instant you picked a Google suggestion (no
