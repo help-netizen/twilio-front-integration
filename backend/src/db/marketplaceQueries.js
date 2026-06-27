@@ -35,6 +35,10 @@ async function ensureMarketplaceSchema(client = null) {
         // SLOT-ENGINE-001 Phase 2: Smart Slot Engine app (gate-only, no credential).
         await query(readMigration('126_seed_smart_slot_engine_marketplace_app.sql'));
         await query(readMigration('117_create_stripe_terminal_locations.sql'));
+        // SEND-DOC-001: Google Email app + repoint mail-secretary's dependency_cta.
+        // MUST run AFTER 087 (which re-seeds mail-secretary's old /settings/email path)
+        // so this update wins on every schema-ensure, and so google-email self-heals.
+        await query(readMigration('132_seed_google_email_marketplace_app.sql'));
         return;
     }
 
