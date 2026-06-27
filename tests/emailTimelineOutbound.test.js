@@ -52,6 +52,11 @@ jest.mock('../backend/src/db/emailQueries', () => ({
     getNewestThreadIdForContact: jest.fn(),
     linkMessageToContact: jest.fn(),
     getTimelineEmailByContact: jest.fn(),
+    // EMAIL-TIMELINE-001 follow-up — outbound link-by-recipient.
+    findEmailContact: jest.fn(),
+    getMessageLinkState: jest.fn(),
+    listUnlinkedInboundForTimeline: jest.fn(),
+    listUnlinkedOutboundForTimeline: jest.fn(),
 }));
 jest.mock('../backend/src/db/timelinesQueries', () => ({
     findOrCreateTimelineByContact: jest.fn(),
@@ -423,5 +428,278 @@ describe('GET /mailbox-status — route', () => {
         const res = await request(appWith()).get('/mailbox-status');
         expect(res.status).toBe(200);
         expect(res.body).toEqual({ ok: true, data: { connected: false } });
+    });
+});
+
+// ─── E. linkOutboundMessage — link-by-recipient (EMAIL-TIMELINE-001 follow-up) ────
+//
+// Outbound emails the agent sends (incl. directly from Gmail) must land on the
+// recipient contact's timeline, RIGHT-aligned, WITHOUT raising unread, and live via
+// SSE. Drafts must NEVER project (the customer's hard rule). Matching is by RECIPIENT
+// (msg.to / to_recipients_json), reusing findEmailContact.
+
+// A genuinely-SENT outbound normalized message (push shape: `to` = [{name,email}]).
+function outboundMsg(overrides = {}) {
+    return {
+        provider_message_id: 'out-g1',
+        provider_thread_id: 'gthr-9',
+        from_email: 'mb@co.com',          // the mailbox itself
+        from_name: 'Acme Support',
+        to: [{ name: 'Alice', email: CONTACT_EMAIL }],
+        subject: 'Re: your booking',
+        body_text: 'on our way',
+        internal_at: '2026-06-23T14:00:00.000Z',
+        labelIds: ['SENT'],
+        is_outbound: true,
+        ...overrides,
+    };
+}
+
+// The email_messages row linkMessageToContact RETURNINGs for an outbound link.
+function linkedOutboundRow(overrides = {}) {
+    return {
+        id: 31, thread_id: 88, provider_thread_id: 'gthr-9', direction: 'outbound',
+        from_name: 'Acme Support', from_email: 'mb@co.com',
+        to_recipients_json: [{ name: 'Alice', email: CONTACT_EMAIL }],
+        subject: 'Re: your booking', body_text: 'on our way', snippet: 'on our way',
+        gmail_internal_at: '2026-06-23T14:00:00.000Z', sent_by_user_email: 'agent@co.com',
+        ...overrides,
+    };
+}
+
+function wireOutboundMatchAndLink() {
+    emailQueries.findEmailContact.mockResolvedValue({ contact_id: CONTACT, full_name: 'Alice' });
+    timelinesQueries.findOrCreateTimelineByContact.mockResolvedValue({ id: TIMELINE });
+    emailQueries.getMessageLinkState.mockResolvedValue(null);
+    emailQueries.linkMessageToContact.mockResolvedValue(linkedOutboundRow());
+}
+
+describe('linkOutboundMessage — link-by-recipient (P0)', () => {
+    it('matches by recipient → links contact/timeline/on_timeline, NO unread, publishes SSE (right-aligned)', async () => {
+        wireOutboundMatchAndLink();
+
+        const res = await svc.linkOutboundMessage(COMPANY_A, outboundMsg());
+
+        expect(res).toEqual({ linked: true, contactId: CONTACT, timelineId: TIMELINE });
+        // Matched by RECIPIENT (the To address), not the From (which is the mailbox).
+        expect(emailQueries.findEmailContact).toHaveBeenCalledWith(CONTACT_EMAIL, COMPANY_A);
+        // Link UPDATE carries the projection flags.
+        expect(emailQueries.linkMessageToContact).toHaveBeenCalledWith(
+            'out-g1', COMPANY_A,
+            { contact_id: CONTACT, timeline_id: TIMELINE, on_timeline: true }
+        );
+        // SSE fired with a FLAT outbound item + the timeline id (3rd arg).
+        expect(realtimeService.publishMessageAdded).toHaveBeenCalledTimes(1);
+        const [emitted, conv, tl] = realtimeService.publishMessageAdded.mock.calls[0];
+        expect(emitted).toMatchObject({
+            id: 31, type: 'email', direction: 'outbound', is_outbound: true,
+            from_email: 'mb@co.com', body_text: 'on our way', thread_id: 88,
+            sent_at: '2026-06-23T14:00:00.000Z', sent_by_user_email: 'agent@co.com',
+        });
+        expect(conv).toEqual({ id: null });
+        expect(tl).toBe(TIMELINE);
+    });
+
+    it('does NOT mark unread / set action-required (the agent sent it)', async () => {
+        wireOutboundMatchAndLink();
+        await svc.linkOutboundMessage(COMPANY_A, outboundMsg());
+        // No unread side-effects are even importable here, so assert via what IS mocked:
+        // findOrCreateTimelineByContact ran (timeline resolved) but the service must not
+        // have called any unread/AR query — none of those are on the mocked surface, and
+        // the result has no `unread`. The behavioral guarantee is the SSE-only path above;
+        // here we additionally pin that markContactUnread is NOT reachable by checking the
+        // emailQueries surface stayed link-only.
+        expect(emailQueries.linkMessageToContact).toHaveBeenCalledTimes(1);
+        expect(realtimeService.broadcast).not.toHaveBeenCalled(); // no thread.action_required
+    });
+
+    it('reads the stored-row shape too (to_recipients_json, no labelIds)', async () => {
+        wireOutboundMatchAndLink();
+        // Poll-path synthesized msg: to_recipients_json present, no `to`, no labelIds.
+        const pollMsg = {
+            provider_message_id: 'out-poll-1',
+            to_recipients_json: [{ name: 'Alice', email: CONTACT_EMAIL }],
+            subject: 'Re: booking', body_text: 'b', internal_at: '2026-06-23T14:00:00.000Z',
+        };
+        const res = await svc.linkOutboundMessage(COMPANY_A, pollMsg);
+        expect(res).toMatchObject({ linked: true, contactId: CONTACT, timelineId: TIMELINE });
+        expect(emailQueries.findEmailContact).toHaveBeenCalledWith(CONTACT_EMAIL, COMPANY_A);
+    });
+
+    it('to_recipients_json as a JSON STRING is parsed (defensive)', async () => {
+        wireOutboundMatchAndLink();
+        const res = await svc.linkOutboundMessage(COMPANY_A, {
+            provider_message_id: 'out-str-1',
+            to_recipients_json: JSON.stringify([{ email: CONTACT_EMAIL }]),
+        });
+        expect(res).toMatchObject({ linked: true });
+        expect(emailQueries.findEmailContact).toHaveBeenCalledWith(CONTACT_EMAIL, COMPANY_A);
+    });
+
+    it('DRAFT-labelled outbound is excluded — no match, no link, no SSE (hard rule)', async () => {
+        const res = await svc.linkOutboundMessage(COMPANY_A, outboundMsg({ labelIds: ['DRAFT'] }));
+        expect(res).toEqual({ skipped: 'draft' });
+        expect(emailQueries.findEmailContact).not.toHaveBeenCalled();
+        expect(emailQueries.linkMessageToContact).not.toHaveBeenCalled();
+        expect(realtimeService.publishMessageAdded).not.toHaveBeenCalled();
+    });
+
+    it('first matching recipient wins (multiple To, only the 2nd is a contact)', async () => {
+        emailQueries.findEmailContact
+            .mockResolvedValueOnce(null)                                  // stranger@x.com
+            .mockResolvedValueOnce({ contact_id: CONTACT });             // alice@example.com
+        timelinesQueries.findOrCreateTimelineByContact.mockResolvedValue({ id: TIMELINE });
+        emailQueries.getMessageLinkState.mockResolvedValue(null);
+        emailQueries.linkMessageToContact.mockResolvedValue(linkedOutboundRow());
+
+        const res = await svc.linkOutboundMessage(COMPANY_A, outboundMsg({
+            to: [{ email: 'stranger@x.com' }, { email: CONTACT_EMAIL }],
+        }));
+
+        expect(res).toMatchObject({ linked: true, contactId: CONTACT });
+        expect(emailQueries.findEmailContact).toHaveBeenNthCalledWith(1, 'stranger@x.com', COMPANY_A);
+        expect(emailQueries.findEmailContact).toHaveBeenNthCalledWith(2, CONTACT_EMAIL, COMPANY_A);
+    });
+
+    it('no recipient matches a contact → skipped:no_contact (no link, no SSE)', async () => {
+        emailQueries.findEmailContact.mockResolvedValue(null);
+        const res = await svc.linkOutboundMessage(COMPANY_A, outboundMsg({ to: [{ email: 'nobody@x.com' }] }));
+        expect(res).toEqual({ skipped: 'no_contact' });
+        expect(emailQueries.linkMessageToContact).not.toHaveBeenCalled();
+        expect(realtimeService.publishMessageAdded).not.toHaveBeenCalled();
+    });
+
+    it('no recipients at all → skipped:no_recipient (never reaches contact match)', async () => {
+        const res = await svc.linkOutboundMessage(COMPANY_A, outboundMsg({ to: [] }));
+        expect(res).toEqual({ skipped: 'no_recipient' });
+        expect(emailQueries.findEmailContact).not.toHaveBeenCalled();
+    });
+
+    it('no provider_message_id → skipped:no_message (guard)', async () => {
+        const res = await svc.linkOutboundMessage(COMPANY_A, { to: [{ email: CONTACT_EMAIL }] });
+        expect(res).toEqual({ skipped: 'no_message' });
+        expect(emailQueries.findEmailContact).not.toHaveBeenCalled();
+    });
+
+    it('idempotent: already-linked row → no second SSE', async () => {
+        emailQueries.findEmailContact.mockResolvedValue({ contact_id: CONTACT });
+        timelinesQueries.findOrCreateTimelineByContact.mockResolvedValue({ id: TIMELINE });
+        emailQueries.getMessageLinkState.mockResolvedValue({
+            contact_id: CONTACT, timeline_id: TIMELINE, on_timeline: true,
+        });
+        emailQueries.linkMessageToContact.mockResolvedValue(linkedOutboundRow());
+
+        const res = await svc.linkOutboundMessage(COMPANY_A, outboundMsg());
+        expect(res).toEqual({ linked: true, contactId: CONTACT, timelineId: TIMELINE, alreadyLinked: true });
+        expect(realtimeService.publishMessageAdded).not.toHaveBeenCalled();
+    });
+
+    it('un-imported row (link UPDATE returns null) → skipped:no_message, no SSE', async () => {
+        emailQueries.findEmailContact.mockResolvedValue({ contact_id: CONTACT });
+        timelinesQueries.findOrCreateTimelineByContact.mockResolvedValue({ id: TIMELINE });
+        emailQueries.getMessageLinkState.mockResolvedValue(null);
+        emailQueries.linkMessageToContact.mockResolvedValue(null);
+        const res = await svc.linkOutboundMessage(COMPANY_A, outboundMsg());
+        expect(res).toEqual({ skipped: 'no_message' });
+        expect(realtimeService.publishMessageAdded).not.toHaveBeenCalled();
+    });
+
+    it('never throws: a findEmailContact rejection is caught → {error}', async () => {
+        emailQueries.findEmailContact.mockRejectedValue(new Error('db blip'));
+        const res = await svc.linkOutboundMessage(COMPANY_A, outboundMsg());
+        expect(res).toMatchObject({ error: 'db blip' });
+    });
+});
+
+// ─── F. ingest routing — outbound→linkOutbound, inbound→linkInbound ───────────────
+
+describe('ingestPushNotification — direction routing (P0)', () => {
+    it('routes SENT/is_outbound msgs to the outbound projector and inbound to the inbound one', async () => {
+        mockProvider.handlePushNotification.mockResolvedValue({ companyId: COMPANY_A, cursor: '500' });
+        mockProvider.pullChanges.mockResolvedValue({
+            messages: [
+                outboundMsg({ provider_message_id: 'o1' }),                                 // → outbound link
+                { provider_message_id: 'i1', from_email: 'alice@example.com',
+                  to: [{ email: 'mb@co.com' }], labelIds: ['INBOX'], is_outbound: false },  // → inbound link
+            ],
+            cursor: '501',
+        });
+        // Outbound o1 matches by recipient; inbound i1 matches by From. Both share the
+        // same findEmailContact mock (returns the contact) + link returning a row.
+        emailQueries.findEmailContact.mockResolvedValue({ contact_id: CONTACT });
+        timelinesQueries.findOrCreateTimelineByContact.mockResolvedValue({ id: TIMELINE });
+        emailQueries.getMessageLinkState.mockResolvedValue(null);
+        emailQueries.linkMessageToContact
+            .mockResolvedValueOnce(linkedOutboundRow({ id: 1 }))                  // o1
+            .mockResolvedValueOnce({ id: 2, direction: 'inbound' });             // i1
+
+        const res = await svc.ingestPushNotification({ message: { data: 'x' } });
+
+        expect(res).toEqual({ handled: true, company: COMPANY_A, processed: 2, linked: 2, skipped: 0 });
+        // Outbound matched on its recipient (mb@co.com is the From; CONTACT_EMAIL is the To).
+        expect(emailQueries.findEmailContact).toHaveBeenCalledWith(CONTACT_EMAIL, COMPANY_A);
+        // Inbound matched on its From.
+        expect(emailQueries.findEmailContact).toHaveBeenCalledWith('alice@example.com', COMPANY_A);
+    });
+
+    it('a DRAFT msg (even with SENT absent) routes to inbound which drops it as draft_or_sent', async () => {
+        mockProvider.handlePushNotification.mockResolvedValue({ companyId: COMPANY_A, cursor: '1' });
+        mockProvider.pullChanges.mockResolvedValue({
+            messages: [{ provider_message_id: 'd1', from_email: 'mb@co.com',
+                         to: [{ email: CONTACT_EMAIL }], labelIds: ['DRAFT'], is_outbound: false }],
+            cursor: '2',
+        });
+        const res = await svc.ingestPushNotification({ message: { data: 'x' } });
+        expect(res).toEqual({ handled: true, company: COMPANY_A, processed: 1, linked: 0, skipped: 1 });
+        // Neither projector linked it; no recipient/contact lookup leaked through.
+        expect(emailQueries.linkMessageToContact).not.toHaveBeenCalled();
+    });
+});
+
+describe('ingestPolledForCompany — outbound second pass (P1)', () => {
+    it('drains unlinked outbound rows (recipient-match) after the inbound scan', async () => {
+        emailQueries.listUnlinkedInboundForTimeline.mockResolvedValue([]); // no inbound backlog
+        emailQueries.listUnlinkedOutboundForTimeline.mockResolvedValue([
+            { provider_message_id: 'po1',
+              to_recipients_json: [{ name: 'Alice', email: CONTACT_EMAIL }],
+              subject: 'Re', body_text: 'b', gmail_internal_at: '2026-06-23T14:00:00.000Z' },
+        ]);
+        emailQueries.findEmailContact.mockResolvedValue({ contact_id: CONTACT });
+        timelinesQueries.findOrCreateTimelineByContact.mockResolvedValue({ id: TIMELINE });
+        emailQueries.getMessageLinkState.mockResolvedValue(null);
+        emailQueries.linkMessageToContact.mockResolvedValue(linkedOutboundRow({ id: 7 }));
+
+        const res = await svc.ingestPolledForCompany(COMPANY_A);
+
+        // processed counts BOTH passes (0 inbound + 1 outbound); the outbound row linked.
+        expect(res).toEqual({ company: COMPANY_A, processed: 1, linked: 1, skipped: 0 });
+        expect(emailQueries.listUnlinkedOutboundForTimeline).toHaveBeenCalledWith(COMPANY_A, { limit: 100 });
+        expect(emailQueries.findEmailContact).toHaveBeenCalledWith(CONTACT_EMAIL, COMPANY_A);
+        // No unread broadcast for the agent's own outbound.
+        expect(realtimeService.broadcast).not.toHaveBeenCalled();
+    });
+});
+
+// ─── G. extractRecipientEmails — helper unit (both shapes) ────────────────────────
+
+describe('extractRecipientEmails', () => {
+    it('reads msg.to (array of {email}) lower/trim/deduped', () => {
+        expect(svc.extractRecipientEmails({ to: [
+            { email: 'A@X.com' }, { email: ' a@x.com ' }, { email: 'b@x.com' },
+        ] })).toEqual(['a@x.com', 'b@x.com']);
+    });
+    it('reads to_recipients_json array when `to` absent', () => {
+        expect(svc.extractRecipientEmails({ to_recipients_json: [{ email: 'c@x.com' }] }))
+            .toEqual(['c@x.com']);
+    });
+    it('parses to_recipients_json JSON string', () => {
+        expect(svc.extractRecipientEmails({ to_recipients_json: '[{"email":"d@x.com"}]' }))
+            .toEqual(['d@x.com']);
+    });
+    it('returns [] for missing / malformed / empty', () => {
+        expect(svc.extractRecipientEmails(null)).toEqual([]);
+        expect(svc.extractRecipientEmails({})).toEqual([]);
+        expect(svc.extractRecipientEmails({ to_recipients_json: 'not-json' })).toEqual([]);
+        expect(svc.extractRecipientEmails({ to: [{ name: 'no addr' }] })).toEqual([]);
     });
 });

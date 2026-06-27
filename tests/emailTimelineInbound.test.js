@@ -34,6 +34,8 @@ jest.mock('../backend/src/db/emailQueries', () => ({
     getMessageLinkState: jest.fn(),
     linkMessageToContact: jest.fn(),
     listUnlinkedInboundForTimeline: jest.fn(),
+    // EMAIL-TIMELINE-001 follow-up: ingestPolledForCompany now also scans outbound.
+    listUnlinkedOutboundForTimeline: jest.fn(() => Promise.resolve([])),
     getTimelineEmailByContact: jest.fn(),
     getNewestThreadIdForContact: jest.fn(),
 }));

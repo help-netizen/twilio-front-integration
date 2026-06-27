@@ -11,6 +11,20 @@ lands on the timeline and replies go back out as email, with the composer routin
 by channel. Run through the full orchestration (Product → Architect → Spec →
 Test-cases → Planner → Implement → Test → Review).
 
+### Follow-up — outbound emails on the timeline
+- **Both sides now show.** Previously only inbound was linked (matched by `from_email`),
+  so a contact's timeline showed one side of the conversation. Outbound emails — the
+  agent's replies, **including ones sent directly from Gmail** — now land right-aligned
+  on the contact's timeline, matched by **recipient** (`to_recipients_json` / `msg.to`)
+  via the existing `findEmailContact`.
+- New `emailTimelineService.linkOutboundMessage` mirrors the inbound linker but: matches
+  by recipient (first match wins), **excludes drafts** (the `DRAFT` label is dropped — draft
+  activity still creates **zero** timeline entries), sets **no unread / no Action-Required**
+  (the agent sent it), and publishes the `message.added` SSE so a Gmail-sent reply appears
+  live. Wired into push (route by direction) and the 5-min poll (a second outbound
+  reconciliation pass over the new `emailQueries.listUnlinkedOutboundForTimeline`).
+- A one-time backfill links pre-existing outbound rows so historical sent emails surface.
+
 ### Receive
 - **Real-time push:** Gmail `users.watch` (INBOX) → Google Pub/Sub → `POST /api/email/push/google`.
   The endpoint mounts BEFORE `express.json` with a raw body parser (like the Stripe

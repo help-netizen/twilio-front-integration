@@ -499,6 +499,43 @@ async function listUnlinkedInboundForTimeline(companyId, { limit = 100 } = {}) {
 }
 
 /**
+ * Poll-path scan for OUTBOUND (EMAIL-TIMELINE-001 follow-up): a company's
+ * recently-imported OUTBOUND email_messages rows not yet projected onto a
+ * timeline — the stored-row sibling of `listUnlinkedInboundForTimeline`. These
+ * are emails the agent sent (incl. directly from Gmail) whose `from` is the
+ * mailbox, so `getDirection` stamped them `direction='outbound'`.
+ *
+ * DRAFT exclusion: `email_messages` carries no Gmail label / draft flag column
+ * (079), so there is nothing to filter on here beyond `direction`. The real-time
+ * PUSH path is the one that excludes drafts (its NormalizedInboundMessage carries
+ * `labelIds`, and `linkOutboundMessage` drops `DRAFT`). For the stored row,
+ * `direction='outbound'` is the only discriminator available — matching how the
+ * inbound poll relies on `direction='inbound'`. Returns `to_recipients_json`
+ * (the recipient source `extractRecipientEmails` reads). Newest-first, scoped.
+ */
+async function listUnlinkedOutboundForTimeline(companyId, { limit = 100 } = {}) {
+    const result = await db.query(
+        `SELECT id, provider_message_id, to_recipients_json, subject,
+                body_text, snippet, gmail_internal_at
+         FROM email_messages
+         WHERE company_id = $1
+           AND direction = 'outbound'
+           AND contact_id IS NULL
+           AND on_timeline = false
+           -- draft-safe: genuinely-sent emails carry a Message-ID header; a draft
+           -- being composed has none. email_messages stores no label, so this is the
+           -- discriminator that keeps drafts off the timeline on the poll/backfill path
+           -- (the push path excludes drafts via labelIds ∩ {DRAFT}).
+           AND message_id_header IS NOT NULL
+           AND message_id_header <> ''
+         ORDER BY gmail_internal_at DESC NULLS LAST, id DESC
+         LIMIT $2`,
+        [companyId, limit]
+    );
+    return result.rows;
+}
+
+/**
  * All currently-connected mailboxes (TASK-ET-4): drives the timeline-link poll
  * sibling scheduler — one `ingestPolledForCompany` per connected company.
  */
@@ -663,6 +700,7 @@ module.exports = {
     linkMessageToContact,
     getMessageLinkState,
     listUnlinkedInboundForTimeline,
+    listUnlinkedOutboundForTimeline,
     listConnectedMailboxes,
     getTimelineEmailByContact,
     getNewestThreadIdForContact,

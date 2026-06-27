@@ -210,6 +210,135 @@ async function linkInboundMessage(companyId, msg) {
 }
 
 /**
+ * Pull recipient email addresses out of either delivery shape (EMAIL-TIMELINE-001
+ * follow-up, outbound match-by-recipient). Accepts:
+ *   • the push shape — `msg.to` = `[{name,email}, …]` (NormalizedInboundMessage), or
+ *   • the stored-row shape — `to_recipients_json`, which is the same array OR a
+ *     JSON string of it (JSONB usually arrives parsed, but be defensive).
+ * Returns a lower/trim'd, deduped, non-empty list (empty when no recipients) — the
+ * same normalization `findEmailContact` applies to a single address.
+ */
+function extractRecipientEmails(msg) {
+    if (!msg) return [];
+    let list = msg.to != null ? msg.to : msg.to_recipients_json;
+    if (typeof list === 'string') {
+        try {
+            list = JSON.parse(list);
+        } catch (e) {
+            return [];
+        }
+    }
+    if (!Array.isArray(list)) return [];
+    const out = [];
+    const seen = new Set();
+    for (const r of list) {
+        const addr = String((r && r.email) || '').trim().toLowerCase();
+        if (addr && !seen.has(addr)) {
+            seen.add(addr);
+            out.push(addr);
+        }
+    }
+    return out;
+}
+
+/**
+ * Core per-message link for OUTBOUND email (EMAIL-TIMELINE-001 follow-up). Mirrors
+ * `linkInboundMessage` but projects the AGENT's side of the conversation — a reply
+ * (incl. one sent directly from Gmail) addressed to a known contact lands on that
+ * contact's timeline, RIGHT-aligned. Idempotent and safe-fail: never throws.
+ *
+ * Differences from inbound, by design:
+ *   • Match by RECIPIENT (`msg.to` / `to_recipients_json`), not the From.
+ *   • DRAFT excluded via `labelIds` (when present); a genuinely-sent email never
+ *     carries DRAFT. The customer's hard rule — draft activity must NOT create
+ *     timeline entries — is honored here exactly as inbound honors it.
+ *   • NO unread / NO Action-Required: the agent sent it, so it must not light the
+ *     Pulse badge or raise a task. We DO publish SSE so an open timeline shows the
+ *     outbound bubble live (e.g. a Gmail-sent reply appears without a refetch).
+ *
+ * @param {string} companyId
+ * @param {import('../mail/MailProvider').NormalizedInboundMessage} msg
+ * @returns {Promise<object>} one of:
+ *   {skipped:'draft'|'no_recipient'|'no_contact'|'no_message'} |
+ *   {linked:true, contactId, timelineId, alreadyLinked?:boolean} |
+ *   {error:string}
+ */
+async function linkOutboundMessage(companyId, msg) {
+    try {
+        if (!msg || !msg.provider_message_id) {
+            return { skipped: 'no_message' };
+        }
+
+        // (a) Draft guard (the customer's hard rule). Outbound = genuinely sent;
+        //     a Gmail draft save/edit carries the DRAFT label and dies here → zero
+        //     timeline activity, no matter how many times the draft is edited.
+        //     Only enforceable when labelIds are present (push path); the stored-row
+        //     poll path has no label column, so its query filters direction only.
+        if (Array.isArray(msg.labelIds) && msg.labelIds.includes('DRAFT')) {
+            return { skipped: 'draft' };
+        }
+
+        // (b) Recipient match (company-scoped). REUSE findEmailContact per recipient;
+        //     first matching recipient wins → a single deterministic timeline.
+        const recipients = extractRecipientEmails(msg);
+        if (recipients.length === 0) {
+            return { skipped: 'no_recipient' };
+        }
+        let contact = null;
+        for (const addr of recipients) {
+            contact = await emailQueries.findEmailContact(addr, companyId);
+            if (contact) break;
+        }
+        if (!contact) {
+            return { skipped: 'no_contact' };
+        }
+        const contactId = contact.contact_id || contact.id;
+
+        // (c) Resolve the contact's timeline (same single row the inbound/SMS path reaches).
+        const timeline = await timelinesQueries.findOrCreateTimelineByContact(contactId, companyId);
+        if (!timeline || !timeline.id) {
+            return { skipped: 'no_contact' };
+        }
+        const timelineId = timeline.id;
+
+        // Idempotency: detect a prior link BEFORE the (no-op) re-link UPDATE, so a
+        // redelivered push / poll-overlap does not re-emit SSE.
+        const existing = await emailQueries.getMessageLinkState(msg.provider_message_id, companyId);
+        const alreadyLinked = !!(existing && existing.on_timeline && existing.contact_id != null);
+
+        // (d) Link — keyed on unique (company_id, provider_message_id); re-link is a
+        //     no-op UPDATE. Returns null if no such message row exists locally.
+        const linked = await emailQueries.linkMessageToContact(
+            msg.provider_message_id,
+            companyId,
+            { contact_id: contactId, timeline_id: timelineId, on_timeline: true }
+        );
+        if (!linked) {
+            return { skipped: 'no_message' };
+        }
+
+        if (alreadyLinked) {
+            return { linked: true, contactId, timelineId, alreadyLinked: true };
+        }
+
+        // SSE only — NO unread, NO Action-Required (the agent sent it). Mirror the
+        // §5 send-path publish so a Gmail-sent reply appears right-aligned live.
+        // Email has no conversation; pass a minimal object so the publisher's
+        // `conversation.id` read is null-safe.
+        try {
+            realtimeService.publishMessageAdded(toEmailItem(linked), { id: null }, timelineId);
+        } catch (e) {
+            console.error('[EmailTimeline] linkOutboundMessage publishMessageAdded failed:', e.message);
+        }
+
+        return { linked: true, contactId, timelineId };
+    } catch (err) {
+        console.error(`[EmailTimeline] linkOutboundMessage error (company ${companyId}):`, err.message);
+        return { error: err.message };
+    }
+}
+
+/**
  * Push entrypoint (ET-5). Decode the provider push envelope → pull the touched
  * messages → link each. Never throws (the route has already fast-acked 200).
  *
@@ -231,7 +360,14 @@ async function ingestPushNotification(pushPayload) {
         let linked = 0;
         let skipped = 0;
         for (const msg of list) {
-            const res = await linkInboundMessage(companyId, msg);
+            // Route by direction: the agent's own sends (from === mailbox / SENT label)
+            // go to the outbound projector (recipient-match, no unread); everything
+            // else is treated as inbound (which still excludes DRAFT/SENT itself).
+            const isOutbound = msg && (msg.is_outbound === true
+                || (Array.isArray(msg.labelIds) && msg.labelIds.includes('SENT')));
+            const res = isOutbound
+                ? await linkOutboundMessage(companyId, msg)
+                : await linkInboundMessage(companyId, msg);
             if (res && res.linked) linked++;
             else skipped++;
         }
@@ -275,7 +411,27 @@ async function ingestPolledForCompany(companyId, { limit = 100 } = {}) {
             else skipped++;
         }
 
-        return { company: companyId, processed: list.length, linked, skipped };
+        // Second pass: OUTBOUND reconciliation (EMAIL-TIMELINE-001 follow-up).
+        // Drain recently-imported, not-yet-projected outbound rows (emails the agent
+        // sent, incl. directly from Gmail) and project them by recipient match. The
+        // `direction='outbound'` filter in the query IS the discriminator for this
+        // path (stored rows carry no Gmail label). Idempotent + guarded like above.
+        const outRows = await emailQueries.listUnlinkedOutboundForTimeline(companyId, { limit });
+        const outList = Array.isArray(outRows) ? outRows : [];
+        for (const row of outList) {
+            const msg = {
+                provider_message_id: row.provider_message_id,
+                to_recipients_json: row.to_recipients_json,
+                subject: row.subject,
+                body_text: row.body_text,
+                internal_at: row.gmail_internal_at,
+            };
+            const res = await linkOutboundMessage(companyId, msg);
+            if (res && res.linked) linked++;
+            else skipped++;
+        }
+
+        return { company: companyId, processed: list.length + outList.length, linked, skipped };
     } catch (err) {
         console.error(`[EmailTimeline] ingestPolledForCompany error (company ${companyId}):`, err.message);
         return { company: companyId, processed: 0, linked: 0, skipped: 0, error: err.message };
@@ -505,6 +661,8 @@ async function sendForContact(companyId, contactId, { body, toEmail, userId, use
 
 module.exports = {
     linkInboundMessage,
+    linkOutboundMessage,
+    extractRecipientEmails,
     ingestPushNotification,
     ingestPolledForCompany,
     sendForContact,
