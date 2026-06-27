@@ -2,7 +2,8 @@
   Albusto custom login template.
   Defines registrationLayout — the chrome every login-theme page renders into.
   Left column = page-specific form (login, reset password, OTP, …).
-  Right column = static "Why Albusto" benefits (hidden on mobile).
+  Right column = "Shipped recently" deploy history (generated → history.ftl),
+  hidden on mobile. ("Why Albusto" benefits live on the SPA /signup page.)
 -->
 <#macro registrationLayout bodyClass="" displayInfo=false displayMessage=true displayRequiredFields=false>
 <!DOCTYPE html>
@@ -62,41 +63,19 @@
       </div>
     </div>
 
-    <#-- ============ RIGHT: why Albusto ============ -->
+    <#-- ============ RIGHT: deploy history ============ -->
     <div class="auth__news-col" aria-hidden="true">
-      <div class="promo">
-        <div class="eyebrow">Why Albusto</div>
-        <h2 class="promo__title">Everything your front office needs</h2>
-        <ul class="benefits">
-          <li class="benefit">
-            <span class="benefit__icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18.178 8c5.096 0 5.096 8 0 8-5.095 0-7.133-8-12.739-8-4.585 0-4.585 8 0 8 5.606 0 7.644-8 12.74-8z"/></svg></span>
-            <div>
-              <div class="benefit__title">Free forever</div>
-              <div class="benefit__text">Unlimited users, no seat fees. You only pay for calls and minutes.</div>
-            </div>
-          </li>
-          <li class="benefit">
-            <span class="benefit__icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span>
-            <div>
-              <div class="benefit__title">Apps marketplace</div>
-              <div class="benefit__text">Connect the tools you already use in a click.</div>
-            </div>
-          </li>
-          <li class="benefit">
-            <span class="benefit__icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7h6M3 12h12M3 17h8"/><circle cx="17.5" cy="8" r="2.5"/><path d="M19 18.5a2.5 2.5 0 1 0-3.5 0"/></svg></span>
-            <div>
-              <div class="benefit__title">Automation built in</div>
-              <div class="benefit__text">Customer relationships and jobs, handled for you.</div>
-            </div>
-          </li>
-          <li class="benefit">
-            <span class="benefit__icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12h4l2 5 4-12 2 7h6"/></svg></span>
-            <div>
-              <div class="benefit__title">Stay on the pulse</div>
-              <div class="benefit__text">Calls, texts and email &mdash; all in one window.</div>
-            </div>
-          </li>
-        </ul>
+      <div class="news-head">
+        <div class="eyebrow">What's new</div>
+        <h2>Shipped recently</h2>
+        <p>Every update that reached production, newest first.</p>
+      </div>
+      <div class="news-scroll">
+        <#attempt>
+          <#include "history.ftl">
+        <#recover>
+          <div class="news-empty">Release history will appear here.</div>
+        </#attempt>
       </div>
     </div>
 

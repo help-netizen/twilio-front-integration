@@ -12,18 +12,36 @@ Two-column shell (`login/template.ftl` → `registrationLayout`):
   "Create an account" link to the SPA self-registration page (`signupUrl` in
   `theme.properties`). Every other login-theme page (reset password, OTP, update
   password) inherits the same shell automatically.
-- **Right** — a static "Why Albusto" benefits block (hidden on mobile).
+- **Right** — "Shipped recently": a scrollable deploy history auto-generated
+  from `git log` into `login/history.ftl` (date + the commit that shipped),
+  hidden on mobile.
 
 Styling is the Blanc design system (`login/resources/css/albusto-login.css`):
 near-white surface, floating labels, `--blanc-job` primary blue.
 
-### Keep it consistent with the SPA signup page
+### Regenerating the "Shipped recently" feed
 
-The React self-registration page (`frontend/src/pages/auth/SignupPage.tsx` +
-`auth-shell.css`) intentionally mirrors this theme — same two-column shell, same
-"Why Albusto" benefits. If you change the benefits copy or the shell here,
-update the SPA file too (and vice-versa); the two run in different runtimes
-(Keycloak FreeMarker vs Vite/React) and can't share a stylesheet.
+`login/history.ftl` is generated — do not hand-edit it. Rebuild it from git
+history (the prod box has no `.git`, so run this locally before deploying):
+
+```
+npm run gen:login-history    # → node scripts/gen-login-history.mjs
+```
+
+It keeps user-facing commits (feat / fix / perf / redesign / polish …), drops
+chore/docs/test/ci/build/merge noise, strips conventional-commit prefixes and
+leading/trailing ticket codes, and wraps the include in `<#noparse>` so a stray
+`${` or `<#` in a commit message can never break template rendering.
+
+### Login vs. the SPA signup page
+
+The login theme (here) and the React self-registration page
+(`frontend/src/pages/auth/SignupPage.tsx` + `auth-shell.css`) share the same
+two-column Blanc shell but **intentionally differ on the right**: login shows
+the deploy history, signup shows the static "Why Albusto" benefits. They run in
+different runtimes (Keycloak FreeMarker vs Vite/React) and can't share a
+stylesheet, so if you change the shared shell (brand, fields, colors) update
+both.
 
 ### Wiring
 
