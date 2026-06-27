@@ -13,7 +13,11 @@ function getCompanyId(req) {
 }
 
 function getUserId(req) {
-    const userId = req.user?.sub || req.user?.id || req.userId || null;
+    // created_by/updated_by FK → crm_users(id). Use the resolved CRM user id, NOT the
+    // Keycloak sub — they DIFFER (crm_users.id ≠ keycloak_sub), so writing the sub
+    // violates estimates_created_by_fkey. Falls back to sub only outside normal auth
+    // (dev); null for a non-UUID (dev 'dev-user').
+    const userId = req.user?.crmUser?.id || req.user?.sub || req.user?.id || req.userId || null;
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(userId || '')
         ? userId
         : null;

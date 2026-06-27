@@ -414,7 +414,7 @@ router.get('/:id/notes', requirePermission('jobs.view'), async (req, res) => {
 router.post('/:id/notes', requirePermission('jobs.edit'), upload.array('attachments', noteAttachmentsService.MAX_FILES_PER_NOTE), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id || null;
-        const userId = req.user?.sub || null;
+        const userId = req.user?.crmUser?.id || req.user?.sub || null;
         const jobId = parseInt(req.params.id, 10);
         const existing = await jobsService.getJobById(jobId, companyId, getProviderScope(req));
         if (!existing) return res.status(404).json({ ok: false, error: 'Job not found' });

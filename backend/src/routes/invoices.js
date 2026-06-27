@@ -13,8 +13,10 @@ function getCompanyId(req) {
 }
 
 // Return a valid UUID userId or null (dev-mode injects "dev-user" which would break UUID columns).
+// created_by/updated_by FK → crm_users(id): use the resolved CRM user id, NOT the Keycloak sub
+// (they differ — crm_users.id ≠ keycloak_sub — so writing the sub violates the created_by FK).
 function getUserId(req) {
-    const userId = req.user?.sub || req.user?.id || req.userId || null;
+    const userId = req.user?.crmUser?.id || req.user?.sub || req.user?.id || req.userId || null;
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(userId || '')
         ? userId
         : null;
