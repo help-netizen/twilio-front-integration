@@ -1,6 +1,6 @@
 # AUTH-FLOW-FIX-001 — Post-signup email-verification UX + 2FA SMS loop & throttle
 
-Status: PLANNED (orchestrate pipeline, 2026-06-27). Owner-reported after a real prod signup.
+Status: DEPLOYED to prod 2026-06-27 (master `550e56f`; migration 133 applied, app rebuilt, KC force-recreated, sessions logged out, smoke green). Owner-reported after a real prod signup.
 Areas: Keycloak `albusto` theme (FreeMarker), frontend (onboarding + 2FA gate), backend (otpService, onboarding).
 
 ## Problem (observed on prod)
