@@ -44,6 +44,7 @@ import LeadFormSettingsPage from './pages/LeadFormSettingsPage';
 import SuperAdminPage from './pages/SuperAdminPage';
 import AdminCompanyDetailPage from './pages/AdminCompanyDetailPage';
 import CompanyUsersPage from './pages/CompanyUsersPage';
+import RolesAccessPage from './pages/RolesAccessPage';
 import QuickMessagesPage from './pages/QuickMessagesPage';
 import PaymentsPage from './pages/PaymentsPage';
 import ProvidersPage from './pages/ProvidersPage';
@@ -147,6 +148,7 @@ function App() {
               <Route path="/settings/document-templates/:id" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><DocumentTemplateEditorPage /></ProtectedRoute>} />
               <Route path="/email" element={<ProtectedRoute permissions={['messages.view_internal']}><EmailPage /></ProtectedRoute>} />
               <Route path="/settings/users" element={<ProtectedRoute permissions={['tenant.users.manage']}><CompanyUsersPage /></ProtectedRoute>} />
+              <Route path="/settings/roles" element={<ProtectedRoute permissions={['tenant.roles.manage']}><RolesAccessPage /></ProtectedRoute>} />
               <Route path="/settings/admin" element={<ProtectedRoute platformRoles={['super_admin']}><SuperAdminPage /></ProtectedRoute>} />
               <Route path="/settings/admin/companies/:companyId" element={<ProtectedRoute platformRoles={['super_admin']}><AdminCompanyDetailPage /></ProtectedRoute>} />
 

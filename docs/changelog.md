@@ -4,6 +4,29 @@
 
 ---
 
+## 2026-06-28 — RBAC-ROLES-EDITOR-001 (RBAC-AUDIT-001 Wave 2 / R4): in-app access-grid editor
+
+Closed the one missing piece from the audit: the role matrix + per-member overrides existed as data +
+resolution but had no editor. New desktop-only **Settings → Roles & Access** page (gated `tenant.roles.manage`).
+No DB migration (tables 046/047 already exist).
+
+- **Backend:** new `services/permissionCatalog.js` (runtime `PERMISSION_CATALOG` for the 56 seeded permission
+  keys, grouped by area + labels — single UI source) + new gated route `routes/rolesPermissions.js`
+  (`/api/settings/roles`): `GET /` (catalog + per-role permission maps, lazy-seeds role configs),
+  `PUT /:roleKey/permissions` (toggle a role permission — **rejects the locked Admin role** + validates the
+  key), `GET /members`, `PUT /members/:membershipId/overrides` (per-user allow/deny/clear). Added
+  `roleQueries.setRolePermission` + `ensureRoleConfigs`, `membershipQueries.setPermissionOverride`,
+  `userService.listUsers` membership_id. Writes use `crmUser.id`; all tenant-scoped; audited.
+- **Frontend:** `RolesAccessPage` — **Roles** tab (permission×role matrix, Admin column locked, optimistic
+  toggles) + **People** tab (per-member tri-state Inherit/Allow/Deny overrides); desktop-only (mobile notice).
+  New `services/rolesApi.ts`, route in App.tsx, gated nav item.
+- **Guards (reviewer-verified):** Admin uneditable; cross-tenant isolation (no IDOR); **last-admin lockout
+  impossible** (resolver always re-adds MANDATORY_ADMIN_PERMISSIONS); resolver/seeds untouched. Edits apply
+  on the affected user's next request (no cache). Backend test 15/15; full route suite 200/200; frontend
+  build green. Spec: `docs/specs/RBAC-ROLES-EDITOR-001.md`.
+
+---
+
 ## 2026-06-28 — RBAC-AUDIT-001 (Wave 1): role-system audit + hardening
 
 Audited the RBAC system (4 preset roles tenant_admin/manager/dispatcher/provider, 42 permissions, 5 scopes,

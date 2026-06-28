@@ -57,6 +57,35 @@ async function getPermissionOverrides(membershipId) {
 }
 
 /**
+ * Set (or clear) a single per-member permission override (RBAC-ROLES-EDITOR-001).
+ *
+ * overrideMode:
+ *   'allow' | 'deny' → upsert the override row for (membership_id, permission_key)
+ *   null             → DELETE the override row (revert to the role default)
+ *
+ * Returns the upserted row for allow/deny, or null when clearing.
+ */
+async function setPermissionOverride(membershipId, permissionKey, overrideMode) {
+    if (overrideMode === null || overrideMode === undefined) {
+        await db.query(
+            `DELETE FROM company_membership_permission_overrides
+             WHERE membership_id = $1 AND permission_key = $2`,
+            [membershipId, permissionKey]
+        );
+        return null;
+    }
+    const { rows } = await db.query(
+        `INSERT INTO company_membership_permission_overrides (membership_id, permission_key, override_mode)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (membership_id, permission_key)
+         DO UPDATE SET override_mode = EXCLUDED.override_mode
+         RETURNING permission_key, override_mode`,
+        [membershipId, permissionKey, overrideMode]
+    );
+    return rows[0];
+}
+
+/**
  * Get scope overrides for a membership.
  */
 async function getScopeOverrides(membershipId) {
@@ -156,6 +185,7 @@ module.exports = {
     getActiveMembership,
     getMembershipById,
     getPermissionOverrides,
+    setPermissionOverride,
     getScopeOverrides,
     countActiveAdmins,
     getUserProfile,

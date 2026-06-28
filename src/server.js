@@ -256,6 +256,9 @@ app.use('/api/settings/technicians', authenticate, requireCompanyAccess,
 // COMPANY-PROFILE-001: tenant-facing company identity + branding (brand source for invoice/estimate PDFs).
 app.use('/api/settings/company-profile', authenticate, requirePermission('tenant.company.manage'), requireCompanyAccess,
     require('../backend/src/routes/companyProfile'));
+// RBAC-ROLES-EDITOR-001: in-app Roles & Access editor (role matrix + per-member overrides).
+app.use('/api/settings/roles', authenticate, requireCompanyAccess, requirePermission('tenant.roles.manage'),
+    require('../backend/src/routes/rolesPermissions'));
 // Technician base (home) locations for the slot engine (SLOT-ENGINE-001 Phase 2).
 app.use('/api/settings/technician-base-locations', authenticate, requireCompanyAccess,
     require('../backend/src/routes/technicianBaseLocations'));

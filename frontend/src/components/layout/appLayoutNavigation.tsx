@@ -87,6 +87,7 @@ const SETTINGS_ITEMS = [
     { label: 'Quick Messages', icon: MessageSquareText, path: '/settings/quick-messages', permission: 'tenant.company.manage' },
     { label: 'API Docs', icon: BookOpen, path: '/settings/api-docs', permission: 'tenant.integrations.manage' },
     { label: 'Users', icon: Users, path: '/settings/users', permission: 'tenant.users.manage' },
+    { label: 'Roles & Access', icon: Shield, path: '/settings/roles', permission: 'tenant.roles.manage' },
     { label: 'Providers', icon: Wrench, path: '/settings/providers', permission: 'tenant.company.manage' },
     { label: 'Telephony', icon: PhoneIncoming, path: '/settings/telephony', permission: 'tenant.telephony.manage' },
     { label: 'Actions & Notifications', icon: Bell, path: '/settings/actions-notifications', permission: 'tenant.company.manage' },
