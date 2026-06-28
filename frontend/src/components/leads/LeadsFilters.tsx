@@ -3,12 +3,12 @@ import { Badge } from '../ui/badge';
 import { X, SlidersHorizontal } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import type { LeadsListParams } from '../../types/lead';
-import { LEAD_STATUSES, JOB_SOURCES } from '../../types/lead';
+import { LEAD_STATUSES } from '../../types/lead';
 import { useFsmStates } from '../../hooks/useFsmActions';
 import { useLeadFormSettings } from '../../hooks/useLeadFormSettings';
 import { DateRangePickerPopover } from '../ui/DateRangePickerPopover';
 import { isMobileViewport } from '../../hooks/useViewportSafePosition';
-import { LEAD_STATUS_COLORS } from './leadStatusStyles';
+import { LeadsFilterBody } from './LeadsFilterBody';
 
 interface LeadsFiltersProps {
     filters: LeadsListParams;
@@ -122,45 +122,14 @@ export function LeadsFilters({
                 {dropdownOpen && (() => {
                     const isMobile = isMobileViewport();
                     const filterContent = (
-                        <>
-                            {/* Active filter badges */}
-                            {activeFilterCount > 0 && (
-                                <div className="flex flex-wrap gap-1.5 p-3 pb-0 items-center">
-                                    {(filters.status || []).map(s => (
-                                        <Badge key={`s-${s}`} variant="secondary" className="gap-1 text-xs">
-                                            {s}
-                                            <X className="size-3 cursor-pointer" onClick={() => toggleStatus(s)} />
-                                        </Badge>
-                                    ))}
-                                    {sourceFilter.map(s => (
-                                        <Badge key={`src-${s}`} variant="outline" className="gap-1 text-xs">
-                                            {s}
-                                            <X className="size-3 cursor-pointer" onClick={() => toggleSource(s)} />
-                                        </Badge>
-                                    ))}
-                                    {jobTypeFilter.map(t => (
-                                        <Badge key={`jt-${t}`} variant="default" className="gap-1 text-xs">
-                                            {t}
-                                            <X className="size-3 cursor-pointer" onClick={() => toggleJobType(t)} />
-                                        </Badge>
-                                    ))}
-                                    <button
-                                        onClick={clearAllFilters}
-                                        className="text-xs ml-1 transition-opacity hover:opacity-70"
-                                        style={{ color: 'var(--blanc-ink-3)' }}
-                                    >
-                                        Clear all
-                                    </button>
-                                </div>
-                            )}
-
-                            {/* Columns */}
-                            <div className="grid grid-cols-1 sm:grid-cols-3 p-3 gap-3 sm:gap-0" style={{ borderTop: activeFilterCount > 0 ? '1px solid var(--blanc-line)' : undefined, marginTop: activeFilterCount > 0 ? 8 : 0 }}>
-                                <FilterColumn title="STATUS" items={statuses} selected={filters.status || []} onToggle={toggleStatus} colorMap={LEAD_STATUS_COLORS} />
-                                <FilterColumn title="SOURCE" items={JOB_SOURCES as unknown as string[]} selected={sourceFilter} onToggle={toggleSource} />
-                                <FilterColumn title="JOB TYPE" items={dynamicJobTypes} selected={jobTypeFilter} onToggle={toggleJobType} />
-                            </div>
-                        </>
+                        <LeadsFilterBody
+                            statusFilter={filters.status || []} onToggleStatus={toggleStatus}
+                            sourceFilter={sourceFilter} onToggleSource={toggleSource}
+                            jobTypeFilter={jobTypeFilter} onToggleJobType={toggleJobType}
+                            statuses={statuses}
+                            dynamicJobTypes={dynamicJobTypes}
+                            onClearAll={clearAllFilters}
+                        />
                     );
 
                     if (isMobile) {
@@ -196,59 +165,5 @@ export function LeadsFilters({
                 })()}
             </div>
         </>
-    );
-}
-
-/* ────────────── Filter Column sub-component ────────────── */
-
-function FilterColumn({
-    title,
-    items,
-    selected,
-    onToggle,
-    colorMap,
-}: {
-    title: string;
-    items: string[];
-    selected: string[];
-    onToggle: (item: string) => void;
-    colorMap?: Record<string, string>;
-}) {
-    return (
-        <div className="px-3 space-y-1">
-            <div
-                className="text-[11px] font-semibold tracking-wider uppercase mb-2"
-                style={{ color: 'var(--blanc-ink-3)', letterSpacing: '0.08em' }}
-            >
-                {title}
-            </div>
-            <div className="space-y-0.5 max-h-[240px] overflow-y-auto">
-                {items.map((item) => {
-                    const isSelected = selected.includes(item);
-                    const dotColor = colorMap?.[item];
-                    return (
-                        <button
-                            key={item}
-                            type="button"
-                            onClick={() => onToggle(item)}
-                            className="flex items-center gap-2 w-full text-left px-2 py-1.5 rounded-lg text-sm transition-colors"
-                            style={{
-                                background: isSelected ? 'rgba(37, 99, 235, 0.08)' : undefined,
-                                color: isSelected ? 'var(--blanc-info)' : 'var(--blanc-ink-1)',
-                                fontWeight: isSelected ? 500 : 400,
-                            }}
-                        >
-                            {dotColor && (
-                                <span
-                                    className="shrink-0 rounded-full"
-                                    style={{ width: 10, height: 10, background: dotColor, opacity: isSelected ? 1 : 0.55, flexShrink: 0 }}
-                                />
-                            )}
-                            {item}
-                        </button>
-                    );
-                })}
-            </div>
-        </div>
     );
 }

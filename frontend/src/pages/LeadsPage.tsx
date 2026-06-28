@@ -3,6 +3,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { LeadsTable } from '../components/leads/LeadsTable';
 import { LeadsFilters } from '../components/leads/LeadsFilters';
+import { LeadsMobileBar } from '../components/leads/LeadsMobileBar';
+import { LeadsMobileList } from '../components/leads/LeadsMobileList';
 import { LeadDetailPanel } from '../components/leads/LeadDetailPanel';
 import { CreateLeadDialog } from '../components/leads/CreateLeadDialog';
 import { EditLeadDialog } from '../components/leads/EditLeadDialog';
@@ -16,6 +18,8 @@ import { serverNow, serverDate } from '../utils/serverClock';
 import { DEFAULT_COLUMNS } from '../types/lead';
 import { createLeadActions } from '../hooks/useLeadsActions';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
+import { useIsMobile } from '../hooks/useIsMobile';
+import { useAuthz } from '../hooks/useAuthz';
 
 const STORAGE_KEY = 'leads-table-columns';
 
@@ -39,12 +43,29 @@ export function LeadsPage() {
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
     const { customFields: allSettingsFields } = useLeadFormSettings();
     const searchableFields = useMemo(() => allSettingsFields.filter(f => f.is_searchable && !f.is_system).map(f => ({ api_name: f.api_name })), [allSettingsFields]);
+    const isMobile = useIsMobile();
+    const { company } = useAuthz();
 
     const loadLeads = async (newFilters?: LeadsListParams) => {
         setLoading(true);
         try { const params = newFilters || filters; const response = await leadsApi.listLeads(params); setLeads(response.data.results); setHasMore(response.data.pagination.has_more); }
         catch (error) { toast.error('Failed to load leads', { description: error instanceof Error ? error.message : 'Unknown error' }); }
         finally { setLoading(false); }
+    };
+
+    // Mobile "Load more" — append the next page (does NOT touch filters.offset, so
+    // the desktop replace-on-offset effect and prev/next pagination stay untouched).
+    const loadMoreLeads = async () => {
+        setLoading(true);
+        try {
+            const resp = await leadsApi.listLeads({ ...filters, offset: leads.length });
+            setLeads(prev => [...prev, ...resp.data.results]);
+            setHasMore(resp.data.pagination.has_more);
+        } catch (error) {
+            toast.error('Failed to load more leads', { description: error instanceof Error ? error.message : 'Unknown error' });
+        } finally {
+            setLoading(false);
+        }
     };
 
     useEffect(() => { loadLeads(); }, [filters.start_date, filters.end_date, filters.only_open, filters.status, filters.offset]);
@@ -80,42 +101,70 @@ export function LeadsPage() {
 
     return (
         <div className="blanc-page-wrapper">
-            {/* Unified header: title + search + controls in one row */}
-            <div className="blanc-unified-header">
-                <h1 className="blanc-header-title">Leads</h1>
+            {!isMobile && (
+                <>
+                    {/* Unified header: title + search + controls in one row */}
+                    <div className="blanc-unified-header">
+                        <h1 className="blanc-header-title">Leads</h1>
 
-                <div className="blanc-search-wrapper">
-                    <input
-                        type="text"
-                        placeholder="type to find anything..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="blanc-search-input"
+                        <div className="blanc-search-wrapper">
+                            <input
+                                type="text"
+                                placeholder="type to find anything..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                className="blanc-search-input"
+                            />
+                        </div>
+
+                        <div className="blanc-controls-group">
+                            <LeadsFilters filters={filters} sourceFilter={sourceFilter} jobTypeFilter={jobTypeFilter} onFiltersChange={handleFiltersChange} onSourceFilterChange={setSourceFilter} onJobTypeFilterChange={setJobTypeFilter} />
+                            <button
+                                onClick={() => setSettingsDialogOpen(true)}
+                                className="blanc-control-chip-icon"
+                                title="Column settings"
+                            >
+                                <Settings className="size-4" />
+                            </button>
+                            <button
+                                onClick={() => setCreateDialogOpen(true)}
+                                className="blanc-control-chip-primary"
+                            >
+                                <Plus className="size-4" />Create Lead
+                            </button>
+                        </div>
+                    </div>
+                    <div className="blanc-page-card">
+                        <div className="flex-1 flex flex-col overflow-x-auto">
+                            <LeadsTable leads={filteredLeads} loading={loading} selectedLeadId={selectedLead?.UUID} columns={columns} onSelectLead={handleSelectLead} onMarkLost={actions.handleMarkLost} onActivate={actions.handleActivate} onConvert={actions.handleConvert} offset={filters.offset || 0} hasMore={hasMore} onNextPage={handleNextPage} onPrevPage={handlePrevPage} sortBy={sortBy} sortOrder={sortOrder} onSortChange={(field, order) => { setSortBy(field); setSortOrder(order); }} />
+                        </div>
+                    </div>
+                </>
+            )}
+
+            {isMobile && (
+                <div className="flex flex-col gap-3 px-3 pt-3 flex-1 min-h-0">
+                    <LeadsMobileBar
+                        searchQuery={searchQuery} setSearchQuery={setSearchQuery}
+                        filters={filters} onFiltersChange={handleFiltersChange}
+                        sourceFilter={sourceFilter} onSourceFilterChange={setSourceFilter}
+                        jobTypeFilter={jobTypeFilter} onJobTypeFilterChange={setJobTypeFilter}
+                        sortBy={sortBy} sortOrder={sortOrder} onSortChange={(field, order) => { setSortBy(field); setSortOrder(order); }}
+                        onNewLead={() => setCreateDialogOpen(true)}
                     />
+                    <div className="flex-1 min-h-0 overflow-y-auto">
+                        <LeadsMobileList
+                            filteredLeads={filteredLeads}
+                            loading={loading}
+                            hasMore={hasMore}
+                            onLoadMore={loadMoreLeads}
+                            onSelectLead={handleSelectLead}
+                            timezone={company?.timezone}
+                        />
+                    </div>
                 </div>
+            )}
 
-                <div className="blanc-controls-group">
-                    <LeadsFilters filters={filters} sourceFilter={sourceFilter} jobTypeFilter={jobTypeFilter} onFiltersChange={handleFiltersChange} onSourceFilterChange={setSourceFilter} onJobTypeFilterChange={setJobTypeFilter} />
-                    <button
-                        onClick={() => setSettingsDialogOpen(true)}
-                        className="blanc-control-chip-icon"
-                        title="Column settings"
-                    >
-                        <Settings className="size-4" />
-                    </button>
-                    <button
-                        onClick={() => setCreateDialogOpen(true)}
-                        className="blanc-control-chip-primary"
-                    >
-                        <Plus className="size-4" />Create Lead
-                    </button>
-                </div>
-            </div>
-            <div className="blanc-page-card">
-                <div className="flex-1 flex flex-col overflow-x-auto">
-                    <LeadsTable leads={filteredLeads} loading={loading} selectedLeadId={selectedLead?.UUID} columns={columns} onSelectLead={handleSelectLead} onMarkLost={actions.handleMarkLost} onActivate={actions.handleActivate} onConvert={actions.handleConvert} offset={filters.offset || 0} hasMore={hasMore} onNextPage={handleNextPage} onPrevPage={handlePrevPage} sortBy={sortBy} sortOrder={sortOrder} onSortChange={(field, order) => { setSortBy(field); setSortOrder(order); }} />
-                </div>
-            </div>
             <FloatingDetailPanel open={!!selectedLead} onClose={() => { setSelectedLead(null); navigate('/leads', { replace: true }); }} wide>
                 <LeadDetailPanel lead={selectedLead} onClose={() => { setSelectedLead(null); navigate('/leads', { replace: true }); }} onEdit={l => setEditingLead(l)} onMarkLost={actions.handleMarkLost} onActivate={actions.handleActivate} onConvert={actions.handleConvert} onUpdateComments={actions.handleUpdateComments} onUpdateStatus={actions.handleUpdateStatus} onUpdateSource={actions.handleUpdateSource} onDelete={actions.handleDelete} />
             </FloatingDetailPanel>

@@ -4,6 +4,30 @@
 
 ---
 
+## 2026-06-28 — LEADS-MOBILE-001: mobile Leads view (tiles + one-gear filters)
+
+The Leads twin of JOBS-MOBILE-001. On mobile the Leads page rendered the desktop `<table>` (horizontal
+scroll); reworked the **mobile** view (desktop ≥768 untouched) to tiles + a one-gear bottom-sheet.
+
+- **Tiles** grouped by **created date** (Today/Yesterday else date; null → "No date") — new
+  `components/leads/LeadMobileCard.tsx`: **name (hero) → phone → "Job type · Source"**, a **worded status
+  chip** top-right (`getLeadStatusPillStyle`/`LEAD_STATUS_COLORS`), **left border = status color**, no
+  id/email/address, no call button (tap opens the lead detail); `LeadLost` → dimmed. New
+  `components/leads/LeadsMobileList.tsx` (grouping + **"Load more"**).
+- **One gear ⚙** → `ui/BottomSheet` "View options" — new `components/leads/LeadsMobileBar.tsx`: search in
+  the header; sheet holds status/source/job-type filters + date range + only-open toggle + sort
+  (Created/Name/Status) + reset + New lead.
+- **Desktop-safe refactor:** extracted `components/leads/LeadsFilterBody.tsx` (shared by desktop
+  `LeadsFilters` + the mobile sheet — behavior-preserving). `LeadsPage.tsx` branches on `useIsMobile`;
+  added `loadMoreLeads()` (append via `offset: leads.length`; desktop `loadLeads`/offset-effect/prev-next
+  untouched); date grouping uses `company?.timezone`.
+- Tap a tile → existing lead detail (`/leads/:id`). Frontend-only, no backend/migration. `npm run build`
+  (tsc -b strict) green; reviewer APPROVED (desktop no-regression verified). **Verified on dev preview**
+  (tiles grouped by date + worded status chips + the filter bottom-sheet). Spec:
+  `docs/specs/LEADS-MOBILE-001.md`. Tests deferred — no frontend component-test harness.
+
+---
+
 ## 2026-06-28 — JOBS-MOBILE-001: mobile Jobs view (tiles + one-gear filters)
 
 On mobile the Jobs page rendered the desktop `<table>` (horizontal scroll, unusable on a phone). Reworked
