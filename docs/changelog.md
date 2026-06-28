@@ -4,6 +4,32 @@
 
 ---
 
+## 2026-06-28 — JOBS-MOBILE-001: mobile Jobs view (tiles + one-gear filters)
+
+On mobile the Jobs page rendered the desktop `<table>` (horizontal scroll, unusable on a phone). Reworked
+the **mobile** view (desktop ≥768 untouched) to mirror the Schedule mobile pattern; techs can now read jobs
+on a phone.
+
+- **Tiles instead of a table** (`useIsMobile` branch in `pages/JobsPage.tsx`): jobs **grouped by date**
+  (Today/Tomorrow/Yesterday else `EEE, MMM d`; null `start_date` → trailing "No date" group) rendered as
+  Schedule-style tiles — new `components/jobs/JobMobileCard.tsx`: time hero → service → customer → address
+  (same size), technician + colored status dot (`BLANC_STATUS_COLORS`) top-right, 4px left provider border,
+  **no job number**, plus a **payment pill** (Paid/Partial/Unpaid · $total) gated by finance permission + a
+  real `invoice_status` (draft/void show no pill). New `components/jobs/JobsMobileList.tsx` (grouping +
+  **"Load more"**).
+- **One-gear toolbar** — new `components/jobs/JobsMobileBar.tsx`: title + search + a single gear ⚙ →
+  `ui/BottomSheet` "View options" holding all secondary controls (filters, date range, sort, reset, export,
+  New job). Filters reset each session (no persistence); default shows ALL jobs.
+- **Shared, desktop-safe refactor:** extracted the filter UI into `components/jobs/JobsFilterBody.tsx` (used
+  by both desktop `JobsFilters` and the mobile gear sheet — behavior-preserving). `hooks/useJobsData.ts`
+  gained `loadMoreJobs()` (append; desktop prev/next `loadJobs` untouched) + a once-only mobile
+  `start_date desc` default sort (ref-guarded; never affects desktop).
+- Tap a tile → existing job detail (`/jobs/:id`). Frontend-only, no backend/migration. `npm run build`
+  (tsc -b strict) green; reviewer APPROVED (desktop no-regression verified). Spec:
+  `docs/specs/JOBS-MOBILE-001.md`. Tests deferred — the frontend has no component-test harness.
+
+---
+
 ## 2026-06-27 — SCHED-TILE-001: Schedule job-tile recomposition (agenda layout)
 
 Owner feedback: a job tile in the calendar list had too many rows in a weak order (job# → status →
