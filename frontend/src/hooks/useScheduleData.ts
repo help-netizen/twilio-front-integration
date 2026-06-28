@@ -19,6 +19,7 @@ import {
     type CreateFromSlotPayload, type RouteSegment,
 } from '../services/scheduleApi';
 import { authedFetch } from '../services/apiClient';
+import { filterItemsByProviderTags } from '../services/scheduleFilters';
 import { useRealtimeEvents } from './useRealtimeEvents';
 import { toast } from 'sonner';
 
@@ -275,23 +276,10 @@ export function useScheduleData() {
 
     // ── Computed ─────────────────────────────────────────────────────────────
 
-    const providerFilteredItems = useMemo(() => {
-        let result = items;
-        if (filters.providerIds?.length) {
-            const wantUnassigned = filters.providerIds.includes('__unassigned__');
-            result = result.filter(item => {
-                const techs = item.assigned_techs;
-                if (!techs?.length) return wantUnassigned;
-                return techs.some(t => filters.providerIds!.includes(t.id || t.name));
-            });
-        }
-        if (filters.tags?.length) {
-            result = result.filter(item =>
-                item.tags?.some(t => filters.tags!.includes(t)),
-            );
-        }
-        return result;
-    }, [items, filters.providerIds, filters.tags]);
+    const providerFilteredItems = useMemo(
+        () => filterItemsByProviderTags(items, filters),
+        [items, filters.providerIds, filters.tags],
+    );
 
     const scheduledItems = useMemo(() => providerFilteredItems.filter(i => i.start_at != null), [providerFilteredItems]);
     const unscheduledItems = useMemo(() => providerFilteredItems.filter(i => i.start_at == null), [providerFilteredItems]);

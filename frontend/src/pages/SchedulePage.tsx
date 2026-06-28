@@ -180,11 +180,12 @@ export function SchedulePage() {
                     /* ── Mobile: date-first bar + a single gear → "View options" sheet ── */
                     <MobileScheduleBar
                         currentDate={schedule.currentDate}
+                        timezone={schedule.settings.timezone}
                         filters={schedule.filters}
                         providers={schedule.providers}
                         allTags={schedule.allTags}
-                        itemCounts={schedule.itemCounts}
                         onNavigateDate={schedule.navigateDate}
+                        onSelectDate={schedule.setCurrentDate}
                         onFiltersChange={schedule.setFilters}
                         onNewJob={canDispatch ? () => setNewJobOpen(true) : undefined}
                         onToggleAIAssistant={() => setShowAIAssistant(true)}

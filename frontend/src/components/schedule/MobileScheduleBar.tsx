@@ -16,11 +16,13 @@
  */
 
 import React, { useState } from 'react';
-import { ChevronLeft, ChevronRight, Settings2, Sparkles, Plus, X, RotateCcw } from 'lucide-react';
+import { Settings2, Sparkles, Plus, X, RotateCcw } from 'lucide-react';
 import { format } from 'date-fns';
 import type { ProviderInfo } from '../../hooks/useScheduleData';
 import type { ScheduleFilters } from '../../services/scheduleApi';
+import { todayInTZ } from '../../utils/companyTime';
 import { BottomSheet } from '../ui/BottomSheet';
+import { WeekStrip } from './WeekStrip';
 import {
     ScheduleFilterBody,
     ScheduleProviderChips,
@@ -29,11 +31,12 @@ import {
 
 interface MobileScheduleBarProps {
     currentDate: Date;
+    timezone: string;
     filters: Partial<ScheduleFilters>;
     providers: ProviderInfo[];
     allTags: string[];
-    itemCounts?: { total: number; jobs: number; leads: number; tasks: number };
     onNavigateDate: (direction: 'prev' | 'next' | 'today') => void;
+    onSelectDate: (date: Date) => void;
     onFiltersChange: (filters: Partial<ScheduleFilters>) => void;
     // Dispatch-only (omitted for field techs without schedule.dispatch).
     onNewJob?: () => void;
@@ -71,33 +74,45 @@ const SheetAction: React.FC<{ onClick: () => void; icon: React.ReactNode; label:
 );
 
 export const MobileScheduleBar: React.FC<MobileScheduleBarProps> = ({
-    currentDate, filters, providers, allTags, itemCounts,
-    onNavigateDate, onFiltersChange, onNewJob, onToggleAIAssistant, onOpenSettings,
+    currentDate, timezone, filters, providers, allTags,
+    onNavigateDate, onSelectDate, onFiltersChange, onNewJob, onToggleAIAssistant, onOpenSettings,
 }) => {
     const [sheetOpen, setSheetOpen] = useState(false);
     const activeFilterCount = getActiveFilterCount(filters);
     const hasDispatchActions = !!(onNewJob || onToggleAIAssistant || onOpenSettings);
+    const isOnToday = format(currentDate, 'yyyy-MM-dd') === todayInTZ(timezone);
 
     const close = () => setSheetOpen(false);
 
     return (
         <>
-            {/* ── Top bar: date is the hero + gear ── */}
+            {/* ── Top bar: date is the hero (tap → today) + gear ── */}
             <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
+                <button
+                    type="button"
+                    onClick={() => onNavigateDate('today')}
+                    aria-label={isOnToday ? 'Today' : 'Return to today'}
+                    className="min-w-0 text-left transition-opacity hover:opacity-70"
+                    style={{ background: 'transparent', border: 0, padding: 0 }}
+                >
                     <div style={eyebrow}>Schedule</div>
-                    <div
-                        className="font-bold leading-tight truncate"
-                        style={{
-                            fontFamily: 'Manrope, sans-serif',
-                            fontSize: '24px',
-                            letterSpacing: '-0.02em',
-                            color: 'var(--sched-ink-1)',
-                        }}
-                    >
-                        {format(currentDate, 'EEE, MMM d')}
+                    <div className="flex items-center gap-1.5">
+                        <span
+                            className="font-bold leading-tight truncate"
+                            style={{
+                                fontFamily: 'Manrope, sans-serif',
+                                fontSize: '24px',
+                                letterSpacing: '-0.02em',
+                                color: 'var(--sched-ink-1)',
+                            }}
+                        >
+                            {format(currentDate, 'EEE, MMM d')}
+                        </span>
+                        {!isOnToday && (
+                            <RotateCcw className="size-4 shrink-0" style={{ color: 'var(--sched-ink-3)' }} />
+                        )}
                     </div>
-                </div>
+                </button>
 
                 <button
                     type="button"
@@ -118,43 +133,13 @@ export const MobileScheduleBar: React.FC<MobileScheduleBarProps> = ({
                 </button>
             </div>
 
-            {/* ── Date navigation: ‹ / Today / › (42px tap targets) ── */}
-            <div className="flex items-center gap-2.5 mt-3">
-                <button
-                    type="button"
-                    onClick={() => onNavigateDate('prev')}
-                    aria-label="Previous day"
-                    className="w-[42px] h-[42px] flex items-center justify-center transition-opacity hover:opacity-70"
-                    style={controlBtn}
-                >
-                    <ChevronLeft className="size-5" />
-                </button>
-                <button
-                    type="button"
-                    onClick={() => onNavigateDate('today')}
-                    className="flex-1 h-[42px] text-[14px] font-semibold transition-opacity hover:opacity-70"
-                    style={controlBtn}
-                >
-                    Today
-                </button>
-                <button
-                    type="button"
-                    onClick={() => onNavigateDate('next')}
-                    aria-label="Next day"
-                    className="w-[42px] h-[42px] flex items-center justify-center transition-opacity hover:opacity-70"
-                    style={controlBtn}
-                >
-                    <ChevronRight className="size-5" />
-                </button>
-                {itemCounts && itemCounts.total > 0 && (
-                    <span
-                        className="h-[42px] px-3 inline-flex items-center text-[12px] font-semibold shrink-0"
-                        style={{ ...controlBtn, color: 'var(--sched-ink-2)', borderRadius: '999px' }}
-                    >
-                        {itemCounts.total}
-                    </span>
-                )}
-            </div>
+            {/* ── Week strip: tap a day, swipe to page weeks ── */}
+            <WeekStrip
+                selectedDate={currentDate}
+                timezone={timezone}
+                filters={filters}
+                onSelectDate={onSelectDate}
+            />
 
             {/* ── View options sheet ── */}
             <BottomSheet open={sheetOpen} onClose={close} title="View options">

@@ -4,6 +4,31 @@
 
 ---
 
+## 2026-06-27 — SCHED-MOBILE-002: mobile Schedule week strip (date navigation)
+
+Follow-up to SCHED-MOBILE-001 (owner feedback): the standalone **Today button confused** — it sat on
+screen on every date, so you'd read "Today" while looking at another day. Replaced the `‹ / Today / ›`
+row with a swipeable **7-day week strip** (mobile only; desktop untouched).
+
+- New `WeekStrip` (`components/schedule/WeekStrip.tsx`): one row of 7 day cells (Sun→Sat) — weekday label,
+  a **day-of-month circle**, and a **job-count caption**. **Selected day = filled accent circle**
+  (`--sched-job`); **today = thin accent ring** (distinct even on different days). **Tap** a day to load
+  its agenda; **swipe** left/right to page weeks — swiping changes only the **visible** week, the selection
+  stays put until you tap (a swipe can't accidentally select — the synthesized click is swallowed).
+- New `useWeekJobCounts` (`hooks/useWeekJobCounts.ts`): fetches the visible 7-day range with the same
+  filters as the agenda, applies the **same provider/tag filter**, and buckets scheduled items by
+  **company-TZ day** (`dateKeyInTZ`) → per-day counts that match what each day shows when tapped.
+  Client-side, best-effort (error → no counts). **No backend, no migration.**
+- `MobileScheduleBar`: the big date headline is now a **button — tap returns to today** (and snaps the strip
+  to today's week); a subtle ↺ affordance shows only when off-today. The old nav row + total-count pill are
+  gone. Refactor: the agenda's provider/tag filter was extracted to a shared pure
+  `services/scheduleFilters.ts#filterItemsByProviderTags` (used by both the hook and the strip; behavior
+  identical → desktop unaffected).
+
+Frontend-only; `npm run build` green (strict); independent review APPROVED (extraction byte-identical,
+desktop provably untouched, counts/today-marker consistent with the existing DayView agenda).
+Spec: `docs/specs/SCHED-MOBILE-002.md`. Deploy: app rebuild + logout-all (bundle changed).
+
 ## 2026-06-27 — SCHED-MOBILE-001: mobile Schedule reworked for the field technician
 
 Mobile-only Schedule rework (desktop unchanged). On a phone the toolbar is now just the
