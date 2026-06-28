@@ -11,6 +11,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db/connection');
 const { getTwilioClient } = require('../services/twilioClient');
+const { requirePermission } = require('../middleware/authorization');
 
 function getCompanyId(req) {
     return req.companyFilter?.company_id;
@@ -42,7 +43,7 @@ async function syncTwilioVoiceWebhook(phoneNumber) {
     });
 }
 
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('tenant.telephony.manage'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         if (!companyId) return res.status(401).json({ ok: false, error: 'No company context' });
@@ -73,7 +74,7 @@ router.get('/', async (req, res) => {
     }
 });
 
-router.put('/:id/group', async (req, res) => {
+router.put('/:id/group', requirePermission('tenant.telephony.manage'), async (req, res) => {
     const client = await db.pool.connect();
     try {
         const companyId = getCompanyId(req);

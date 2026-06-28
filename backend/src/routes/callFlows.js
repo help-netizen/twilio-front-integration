@@ -9,6 +9,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db/connection');
+const { requirePermission } = require('../middleware/authorization');
 
 function safeParseJSON(str) {
     try { return JSON.parse(str || '{}'); } catch { return {}; }
@@ -48,7 +49,7 @@ function hasRenderableGraph(graph) {
 
 // ─── LIST ─────────────────────────────────────────────────────────────────────
 
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('tenant.telephony.manage'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         if (!companyId) return res.status(401).json({ ok: false, error: 'No company context' });
@@ -83,7 +84,7 @@ router.get('/', async (req, res) => {
 
 // ─── DETAIL ───────────────────────────────────────────────────────────────────
 
-router.get('/:id', async (req, res) => {
+router.get('/:id', requirePermission('tenant.telephony.manage'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const { id } = req.params;
@@ -300,7 +301,7 @@ function normalizeGraphForRuntime(graph) {
 
 // ─── SAVE GRAPH ───────────────────────────────────────────────────────────────
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', requirePermission('tenant.telephony.manage'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const { id } = req.params;

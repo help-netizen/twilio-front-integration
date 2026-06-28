@@ -10,6 +10,7 @@
 
 const express = require('express');
 const db = require('../db/connection');
+const { requirePermission } = require('../middleware/authorization');
 
 const router = express.Router();
 
@@ -52,15 +53,9 @@ router.get('/', async (req, res) => {
 });
 
 // ─── PUT /api/settings/notifications ────────────────────────────────────
-router.put('/', async (req, res) => {
+// Changing company-wide policy requires tenant.company.manage (RBAC-AUDIT-001 R3).
+router.put('/', requirePermission('tenant.company.manage'), async (req, res) => {
     try {
-        // Admin-only check
-        const roles = req.user?.roles || [];
-        const isAdmin = roles.includes('company_admin') || roles.includes('super_admin');
-        if (!isAdmin) {
-            return res.status(403).json({ ok: false, error: 'Admin access required' });
-        }
-
         const { config } = req.body;
         if (!config || typeof config !== 'object') {
             return res.status(400).json({ ok: false, error: 'config must be an object' });

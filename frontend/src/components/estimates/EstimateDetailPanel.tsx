@@ -19,6 +19,7 @@ import {
     recordEstimateItemPresetUsage,
     type EstimateItemPreset,
 } from '../../services/estimateItemPresetsApi';
+import { useAuthz } from '../../hooks/useAuthz';
 import type { Estimate, EstimateEvent, EstimateItem, EstimateSendData, EstimateDiscountType } from '../../services/estimatesApi';
 import {
     convertEstimateToInvoice,
@@ -66,6 +67,8 @@ interface Props {
 
 export function EstimateDetailPanel({ estimate: initialEstimate, events, loading, onClose, onSend, onApprove, onDecline, onArchive, onRestore, onLinkJob, onInvoiceCreated, onChanged }: Props) {
     const navigate = useNavigate();
+    const { hasPermission } = useAuthz();
+    const canSend = hasPermission('estimates.send');
     // Local copy so we can apply optimistic updates while saving.
     const [estimate, setEstimate] = useState<Estimate>(initialEstimate);
     useEffect(() => { setEstimate(initialEstimate); }, [initialEstimate]);
@@ -524,13 +527,15 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     <div className="flex flex-wrap gap-2 md:justify-end">
                         {!archived ? (
                             <>
-                                <Button
-                                    variant={estimate.status === 'draft' || estimate.status === 'sent' || estimate.status === 'viewed' ? 'default' : 'outline'}
-                                    size="sm"
-                                    onClick={() => { if (requireItems()) setSendOpen(true); }}
-                                >
-                                    <Send className="mr-1 size-3.5" />Send
-                                </Button>
+                                {canSend && (
+                                    <Button
+                                        variant={estimate.status === 'draft' || estimate.status === 'sent' || estimate.status === 'viewed' ? 'default' : 'outline'}
+                                        size="sm"
+                                        onClick={() => { if (requireItems()) setSendOpen(true); }}
+                                    >
+                                        <Send className="mr-1 size-3.5" />Send
+                                    </Button>
+                                )}
                                 {estimate.status !== 'approved' && (
                                     <Button
                                         variant={estimate.status === 'sent' || estimate.status === 'viewed' ? 'default' : 'outline'}

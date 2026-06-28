@@ -49,6 +49,7 @@ import {
     updateInvoice,
     updateInvoiceItem,
 } from '../../services/invoicesApi';
+import { useAuthz } from '../../hooks/useAuthz';
 import { toast } from 'sonner';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -175,12 +176,16 @@ export function InvoiceDetailPanel({
         }
     }, [paymentOpen, invoice.balance_due]);
 
+    const { hasPermission, hasAnyPermission } = useAuthz();
     const isVoid = invoice.status === 'void' || invoice.status === 'refunded';
     const readOnly = isVoid;
     // Send is always available for non-void invoices (re-sends are a normal workflow).
-    const canSend = !invoice.status || (invoice.status !== 'void' && invoice.status !== 'refunded');
+    // Permission-gated: only roles with invoices.send may dispatch.
+    const canSend = hasPermission('invoices.send') && (!invoice.status || (invoice.status !== 'void' && invoice.status !== 'refunded'));
     const canVoid = !isVoid;
-    const canRecordPayment = !isVoid && Number(invoice.balance_due) > 0;
+    // Permission-gated: only roles that can collect a payment (online or offline) see the buttons.
+    const canCollectPayment = hasAnyPermission('payments.collect_online', 'payments.collect_offline');
+    const canRecordPayment = canCollectPayment && !isVoid && Number(invoice.balance_due) > 0;
 
     // F018: Stripe "Collect payment" — create a payment link and copy/send it.
     // Readiness is enforced by the backend (returns NOT_READY if Stripe isn't set up).

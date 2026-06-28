@@ -19,7 +19,8 @@ import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 export function JobsPage() {
     const page = useJobsPage();
     const isMobile = useIsMobile();
-    const { company } = useAuthz();
+    const { company, hasPermission } = useAuthz();
+    const canCreateJob = hasPermission('jobs.create');
     const [newJobOpen, setNewJobOpen] = useState(false);
     const [copyFrom, setCopyFrom] = useState<CopyJobData | null>(null);
 
@@ -48,14 +49,16 @@ export function JobsPage() {
                         </div>
 
                         <div className="blanc-controls-group">
-                            <button
-                                onClick={() => setNewJobOpen(true)}
-                                className="blanc-control-chip"
-                                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                            >
-                                <Plus className="size-3.5" />
-                                New Job
-                            </button>
+                            {canCreateJob && (
+                                <button
+                                    onClick={() => setNewJobOpen(true)}
+                                    className="blanc-control-chip"
+                                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                                >
+                                    <Plus className="size-3.5" />
+                                    New Job
+                                </button>
+                            )}
                             <JobsFilters
                                 statusFilter={page.statusFilter}
                                 onStatusFilterChange={page.setStatusFilter}
@@ -141,6 +144,7 @@ export function JobsPage() {
                         exporting={page.exporting}
                         canExport={page.filteredJobs.length > 0}
                         onNewJob={() => setNewJobOpen(true)}
+                        canCreateJob={canCreateJob}
                     />
                     <div className="flex-1 overflow-y-auto" style={{ minHeight: 0 }}>
                         <JobsMobileList

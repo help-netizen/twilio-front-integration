@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
 import { Plus, MoreHorizontal, Loader2, ChevronLeft, ChevronRight, DollarSign, TrendingDown, Clock, Minus } from 'lucide-react';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
+import { useAuthz } from '../hooks/useAuthz';
 
 // -- Constants ----------------------------------------------------------------
 
@@ -86,6 +87,8 @@ function SummaryCard({ label, value, icon: Icon, className }: { label: string; v
 
 export function TransactionsPage() {
     const page = useTransactions();
+    const { hasAnyPermission } = useAuthz();
+    const canRecordPayment = hasAnyPermission('payments.collect_online', 'payments.collect_offline');
     const [recordOpen, setRecordOpen] = useState(false);
 
     return (
@@ -144,9 +147,11 @@ export function TransactionsPage() {
                             ))}
                         </SelectContent>
                     </Select>
-                    <button onClick={() => setRecordOpen(true)} className="blanc-control-chip-primary">
-                        <Plus className="size-4" />Record Payment
-                    </button>
+                    {canRecordPayment && (
+                        <button onClick={() => setRecordOpen(true)} className="blanc-control-chip-primary">
+                            <Plus className="size-4" />Record Payment
+                        </button>
+                    )}
                 </div>
             </div>
 

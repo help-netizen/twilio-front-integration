@@ -11,6 +11,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db/connection');
+const { requirePermission } = require('../middleware/authorization');
 
 function getCompanyId(req) {
     return req.companyFilter?.company_id;
@@ -22,7 +23,7 @@ function maskAccountSid(accountSid) {
     return `${accountSid.slice(0, 2)}${'*'.repeat(Math.max(4, accountSid.length - 6))}${accountSid.slice(-4)}`;
 }
 
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('tenant.telephony.manage'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         if (!companyId) return res.status(401).json({ ok: false, error: 'No company context' });

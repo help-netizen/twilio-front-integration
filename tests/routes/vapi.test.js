@@ -27,6 +27,7 @@ function makeApp() {
     app.use((req, res, next) => {
         req.user = { id: 'user-1', company_id: 'company-1' };
         req.companyFilter = { company_id: 'company-1' };
+        req.authz = { permissions: ['tenant.integrations.manage'] };
         next();
     });
     app.use('/api/vapi', vapiRouter);

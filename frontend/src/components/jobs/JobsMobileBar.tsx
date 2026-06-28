@@ -73,6 +73,7 @@ interface JobsMobileBarProps {
     canExport: boolean;
 
     onNewJob: () => void;
+    canCreateJob: boolean;
 }
 
 export const JobsMobileBar: React.FC<JobsMobileBarProps> = ({
@@ -84,7 +85,7 @@ export const JobsMobileBar: React.FC<JobsMobileBarProps> = ({
     tagFilter, onTagFilterChange, allTags,
     startDate, onStartDateChange, endDate, onEndDateChange,
     sortBy, sortOrder, onSortChange,
-    jobs, onExportCSV, exporting, canExport, onNewJob,
+    jobs, onExportCSV, exporting, canExport, onNewJob, canCreateJob,
 }) => {
     const [sheetOpen, setSheetOpen] = useState(false);
     const [dynamicJobTypes, setDynamicJobTypes] = useState<string[]>([]);
@@ -216,15 +217,17 @@ export const JobsMobileBar: React.FC<JobsMobileBarProps> = ({
                     {/* Actions */}
                     <div className="flex flex-col gap-2.5">
                         <div style={eyebrow}>Actions</div>
-                        <button
-                            type="button"
-                            onClick={() => { close(); onNewJob(); }}
-                            className="flex items-center gap-3 w-full min-h-[52px] px-4 text-[15px] font-semibold transition-opacity hover:opacity-80"
-                            style={{ ...controlBtn, borderRadius: '16px', justifyContent: 'flex-start' }}
-                        >
-                            <Plus className="size-5" />
-                            <span>New job</span>
-                        </button>
+                        {canCreateJob && (
+                            <button
+                                type="button"
+                                onClick={() => { close(); onNewJob(); }}
+                                className="flex items-center gap-3 w-full min-h-[52px] px-4 text-[15px] font-semibold transition-opacity hover:opacity-80"
+                                style={{ ...controlBtn, borderRadius: '16px', justifyContent: 'flex-start' }}
+                            >
+                                <Plus className="size-5" />
+                                <span>New job</span>
+                            </button>
+                        )}
                         <button
                             type="button"
                             onClick={onExportCSV}

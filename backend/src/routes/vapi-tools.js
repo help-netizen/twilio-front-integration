@@ -32,8 +32,9 @@ const MAX_SLOTS = 3;
 function vapiSecretAuth(req, res, next) {
     const secret = process.env.VAPI_TOOLS_SECRET;
     if (!secret) {
-        console.warn('[vapi-tools] VAPI_TOOLS_SECRET not set — skipping auth (dev mode)');
-        return next();
+        // Fail closed: a public endpoint must never run unauthenticated.
+        console.error('[vapi-tools] VAPI_TOOLS_SECRET not set — refusing requests (fail-closed)');
+        return res.status(503).json({ error: 'vapi tools not configured' });
     }
     const header = req.headers['x-vapi-secret'];
     if (header !== secret) {

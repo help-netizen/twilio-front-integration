@@ -61,6 +61,7 @@ interface LeadsMobileBarProps {
     onSortChange: (field: string, order: 'asc' | 'desc') => void;
 
     onNewLead: () => void;
+    canCreateLead: boolean;
 }
 
 export const LeadsMobileBar: React.FC<LeadsMobileBarProps> = ({
@@ -69,7 +70,7 @@ export const LeadsMobileBar: React.FC<LeadsMobileBarProps> = ({
     sourceFilter, onSourceFilterChange,
     jobTypeFilter, onJobTypeFilterChange,
     sortBy, sortOrder, onSortChange,
-    onNewLead,
+    onNewLead, canCreateLead,
 }) => {
     const [sheetOpen, setSheetOpen] = useState(false);
     const { jobTypes: dynamicJobTypes } = useLeadFormSettings();
@@ -207,18 +208,20 @@ export const LeadsMobileBar: React.FC<LeadsMobileBarProps> = ({
                     )}
 
                     {/* Actions */}
-                    <div className="flex flex-col gap-2.5">
-                        <div style={eyebrow}>Actions</div>
-                        <button
-                            type="button"
-                            onClick={() => { close(); onNewLead(); }}
-                            className="flex items-center gap-3 w-full min-h-[52px] px-4 text-[15px] font-semibold transition-opacity hover:opacity-80"
-                            style={{ ...controlBtn, borderRadius: '16px', justifyContent: 'flex-start' }}
-                        >
-                            <Plus className="size-5" />
-                            <span>New lead</span>
-                        </button>
-                    </div>
+                    {canCreateLead && (
+                        <div className="flex flex-col gap-2.5">
+                            <div style={eyebrow}>Actions</div>
+                            <button
+                                type="button"
+                                onClick={() => { close(); onNewLead(); }}
+                                className="flex items-center gap-3 w-full min-h-[52px] px-4 text-[15px] font-semibold transition-opacity hover:opacity-80"
+                                style={{ ...controlBtn, borderRadius: '16px', justifyContent: 'flex-start' }}
+                            >
+                                <Plus className="size-5" />
+                                <span>New lead</span>
+                            </button>
+                        </div>
+                    )}
                 </div>
             </BottomSheet>
         </>

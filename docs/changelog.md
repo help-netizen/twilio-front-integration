@@ -4,6 +4,32 @@
 
 ---
 
+## 2026-06-28 — RBAC-AUDIT-001 (Wave 1): role-system audit + hardening
+
+Audited the RBAC system (4 preset roles tenant_admin/manager/dispatcher/provider, 42 permissions, 5 scopes,
+per-company role configs + per-member overrides). Verdict: **core is solid** — roles seeded + resolve;
+business routes (payments/invoices/estimates/leads/jobs/contacts) heavily permission-gated + company-scoped;
+recent features respect RBAC; the mobile reworks did not regress gating. Audit report: `docs/specs/RBAC-AUDIT-001.md`.
+
+Wave 1 remediation (R1 UI gating + R2 hardening + R3 route gating):
+- **R1 (frontend):** permission-gate action buttons so a role doesn't see actions it can't perform —
+  Create Lead (`leads.create`), New Job (`jobs.create`), Send estimate/invoice (`estimates.send`/
+  `invoices.send`), Collect/Record payment (`payments.collect_online|offline`); desktop + mobile.
+- **R3 (backend) — add `requirePermission` to authed-but-ungated routes** (matches their frontend route
+  gating; over-gating reviewed — no legit role loses access): telephony admin (overview/provider/
+  phoneNumbers/callFlows/userGroups[except GET /my]/phoneSettings) → `tenant.telephony.manage`; `vapi` →
+  `tenant.integrations.manage`; `quick-messages` + `text-polish` → `messages.send`; `notification-settings`
+  PUT → `tenant.company.manage` (GET left open for the SSE bridge).
+- **R2 (hardening):** `vapi-tools` now **fails closed** (503 when `VAPI_TOOLS_SECRET` unset, was open
+  "dev mode"). `crmMcpPublic` reviewed = **already protected** (env-flag + timing-safe bearer + company/user
+  scope + write-gating); no change.
+- Backend suite green for affected routes (6 route-test mocks updated to grant the new permissions; the 21
+  pre-existing unrelated failures are unchanged). Frontend `npm run build` green. Reviewer APPROVED.
+- **Deferred → Wave 2:** R4 (in-app editor for the access grid — role permission matrix + per-member
+  overrides; schema/resolution exist but no edit API/UI yet). Frontend-only Wave 1, no migration.
+
+---
+
 ## 2026-06-28 — LEADS-MOBILE-001: mobile Leads view (tiles + one-gear filters)
 
 The Leads twin of JOBS-MOBILE-001. On mobile the Leads page rendered the desktop `<table>` (horizontal

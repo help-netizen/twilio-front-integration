@@ -9,6 +9,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db/connection');
 const { getTwilioClient } = require('../services/twilioClient');
+const { requirePermission } = require('../middleware/authorization');
 
 // ─── Ensure table exists (auto-migration) ────────────────────────────────────
 const ENSURE_TABLE_SQL = `
@@ -75,7 +76,7 @@ function getCompanyId(req) {
  * Returns all phone numbers with their routing config.
  * Also syncs with Twilio account's phone numbers.
  */
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('tenant.telephony.manage'), async (req, res) => {
     try {
         await ensureTable();
         const companyId = getCompanyId(req);
@@ -130,7 +131,7 @@ router.get('/', async (req, res) => {
  * PUT /api/phone-settings/:id
  * Update routing_mode and client_identity for a phone number.
  */
-router.put('/:id', async (req, res) => {
+router.put('/:id', requirePermission('tenant.telephony.manage'), async (req, res) => {
     try {
         await ensureTable();
         const companyId = getCompanyId(req);

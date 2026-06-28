@@ -7,8 +7,9 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db/connection');
+const { requirePermission } = require('../middleware/authorization');
 
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('tenant.telephony.manage'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id;
         if (!companyId) return res.status(401).json({ ok: false, error: 'No company context' });

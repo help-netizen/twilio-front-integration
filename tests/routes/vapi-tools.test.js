@@ -135,16 +135,17 @@ describe('Group 1 — middleware/auth', () => {
         expect(res.status).toBe(401);
     });
 
-    // TC-LQV2-004
-    test('no VAPI_TOOLS_SECRET in env → dev mode, request passes', async () => {
+    // TC-LQV2-004 (RBAC-AUDIT-001 R2 hardening): missing secret must fail closed.
+    test('no VAPI_TOOLS_SECRET in env → 503, request refused', async () => {
         delete process.env.VAPI_TOOLS_SECRET;
-        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
         const res = await request(app)
             .post('/api/vapi-tools')
             .send({ message: { type: 'status-update' } });
-        expect(res.status).toBe(200);
-        expect(warn).toHaveBeenCalled();
-        warn.mockRestore();
+        expect(res.status).toBe(503);
+        expect(res.body).toEqual({ error: 'vapi tools not configured' });
+        expect(errSpy).toHaveBeenCalled();
+        errSpy.mockRestore();
     });
 });
 

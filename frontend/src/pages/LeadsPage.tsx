@@ -44,7 +44,8 @@ export function LeadsPage() {
     const { customFields: allSettingsFields } = useLeadFormSettings();
     const searchableFields = useMemo(() => allSettingsFields.filter(f => f.is_searchable && !f.is_system).map(f => ({ api_name: f.api_name })), [allSettingsFields]);
     const isMobile = useIsMobile();
-    const { company } = useAuthz();
+    const { company, hasPermission } = useAuthz();
+    const canCreateLead = hasPermission('leads.create');
 
     const loadLeads = async (newFilters?: LeadsListParams) => {
         setLoading(true);
@@ -126,12 +127,14 @@ export function LeadsPage() {
                             >
                                 <Settings className="size-4" />
                             </button>
-                            <button
-                                onClick={() => setCreateDialogOpen(true)}
-                                className="blanc-control-chip-primary"
-                            >
-                                <Plus className="size-4" />Create Lead
-                            </button>
+                            {canCreateLead && (
+                                <button
+                                    onClick={() => setCreateDialogOpen(true)}
+                                    className="blanc-control-chip-primary"
+                                >
+                                    <Plus className="size-4" />Create Lead
+                                </button>
+                            )}
                         </div>
                     </div>
                     <div className="blanc-page-card">
@@ -151,6 +154,7 @@ export function LeadsPage() {
                         jobTypeFilter={jobTypeFilter} onJobTypeFilterChange={setJobTypeFilter}
                         sortBy={sortBy} sortOrder={sortOrder} onSortChange={(field, order) => { setSortBy(field); setSortOrder(order); }}
                         onNewLead={() => setCreateDialogOpen(true)}
+                        canCreateLead={canCreateLead}
                     />
                     <div className="flex-1 min-h-0 overflow-y-auto">
                         <LeadsMobileList

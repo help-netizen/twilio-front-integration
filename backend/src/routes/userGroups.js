@@ -14,6 +14,7 @@ const db = require('../db/connection');
 const crypto = require('crypto');
 const agentPresence = require('../services/agentPresence');
 const { groupsForUser } = require('../services/groupRouting');
+const { requirePermission } = require('../middleware/authorization');
 
 /** Generate the default skeleton v2 call flow graph JSON for a group */
 function createSkeletonJSON(groupName) {
@@ -229,7 +230,7 @@ async function ensureDefaultGroup(companyId) {
 
 // ─── LIST ─────────────────────────────────────────────────────────────────────
 
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('tenant.telephony.manage'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         console.log('[UserGroups] GET list — companyId:', companyId, 'user:', req.user?.email);
@@ -276,7 +277,7 @@ router.get('/my', async (req, res) => {
 
 // ─── DETAIL ───────────────────────────────────────────────────────────────────
 
-router.get('/:id', async (req, res) => {
+router.get('/:id', requirePermission('tenant.telephony.manage'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const { id } = req.params;
@@ -300,7 +301,7 @@ router.get('/:id', async (req, res) => {
 
 // ─── CREATE ───────────────────────────────────────────────────────────────────
 
-router.post('/', async (req, res) => {
+router.post('/', requirePermission('tenant.telephony.manage'), async (req, res) => {
     const client = await db.pool.connect();
     try {
         const companyId = getCompanyId(req);
@@ -404,7 +405,7 @@ router.post('/', async (req, res) => {
 
 // ─── UPDATE ───────────────────────────────────────────────────────────────────
 
-router.put('/:id', async (req, res) => {
+router.put('/:id', requirePermission('tenant.telephony.manage'), async (req, res) => {
     const client = await db.pool.connect();
     try {
         const companyId = getCompanyId(req);
@@ -523,7 +524,7 @@ router.put('/:id', async (req, res) => {
 
 // ─── DELETE ───────────────────────────────────────────────────────────────────
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requirePermission('tenant.telephony.manage'), async (req, res) => {
     try {
         const companyId = getCompanyId(req);
         const { id } = req.params;

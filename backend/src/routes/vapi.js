@@ -28,6 +28,11 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db/connection');
 const crypto = require('crypto');
+const { requirePermission } = require('../middleware/authorization');
+
+// All VAPI integration-management endpoints require tenant.integrations.manage
+// (RBAC-AUDIT-001 R3). Mounted alongside authenticate + requireCompanyAccess in server.js.
+router.use(requirePermission('tenant.integrations.manage'));
 
 // Default tenant for single-tenant mode
 const DEFAULT_TENANT = 'default';
