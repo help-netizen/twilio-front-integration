@@ -1,8 +1,8 @@
 /**
  * Zenbooker Sync Service
  *
- * Bi-directional sync between Blanc contacts and Zenbooker customers.
- * Blanc is the master source of truth.
+ * Bi-directional sync between Albusto contacts and Zenbooker customers.
+ * Albusto is the master source of truth.
  *
  * All mutations are guarded by FEATURE_ZENBOOKER_SYNC env flag.
  */
@@ -87,7 +87,7 @@ function normalizeZbCustomerNotes(notes) {
 
 function mergeStructuredNotes(existingNotes, incomingNotes) {
     // Local notes are kept verbatim and incoming ZB notes are only appended when
-    // genuinely new. This preserves all Blanc-side fields on matched notes —
+    // genuinely new. This preserves all Albusto-side fields on matched notes —
     // edited text (edited_at), created_by, deleted_at, id — so an edit or
     // soft-delete never reverts on re-sync (NOTES-001).
     const merged = Array.isArray(existingNotes) ? [...existingNotes] : [];
@@ -160,10 +160,10 @@ function assertEnabled() {
 }
 
 // =============================================================================
-// Push: Create Zenbooker Customer from Blanc Contact
+// Push: Create Zenbooker Customer from Albusto Contact
 // =============================================================================
 /**
- * Creates a new Zenbooker customer from a Blanc contact.
+ * Creates a new Zenbooker customer from a Albusto contact.
  * Persists the returned Zenbooker ID back to the contact.
  *
  * @param {number} contactId
@@ -226,10 +226,10 @@ async function pushContactToZenbooker(contactId) {
 }
 
 // =============================================================================
-// Push: Sync Blanc Contact Updates to Zenbooker
+// Push: Sync Albusto Contact Updates to Zenbooker
 // =============================================================================
 /**
- * Pushes Blanc contact field updates to linked Zenbooker customer.
+ * Pushes Albusto contact field updates to linked Zenbooker customer.
  * Called after PATCH /api/contacts/:id.
  *
  * @param {number} contactId
@@ -395,7 +395,7 @@ async function pushExistingAddresses(contactId, zbCustomerId) {
 // =============================================================================
 /**
  * Process a Zenbooker webhook payload.
- * Resolves matching Blanc contact, creates or updates as needed.
+ * Resolves matching Albusto contact, creates or updates as needed.
  *
  * @param {Object} payload - { event, data, account, webhook_id, retry_count }
  */
@@ -470,7 +470,7 @@ async function handleWebhookPayload(payload, companyId = null) {
         }
     }
 
-    // 4. No match — create new Blanc contact
+    // 4. No match — create new Albusto contact
     const structuredNotes = normalizeZbCustomerNotes(data.notes);
     const legacyNotes = legacyTextFromZbNotes(data.notes);
     const { rows: newRows } = await db.query(

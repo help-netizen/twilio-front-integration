@@ -58,7 +58,7 @@ interface PhoneInputProps {
     onChange: (formatted: string) => void;
     onBlur?: () => void;
     placeholder?: string;
-    /** When set, renders as a floating-label field (Blanc canon). */
+    /** When set, renders as a floating-label field (Albusto canon). */
     label?: string;
     required?: boolean;
     disabled?: boolean;

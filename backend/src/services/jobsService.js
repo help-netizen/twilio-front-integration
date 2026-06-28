@@ -1,11 +1,11 @@
 /**
  * Jobs Service
  *
- * Local Blanc storage for Jobs with Zenbooker sync.
+ * Local Albusto storage for Jobs with Zenbooker sync.
  * A Job is created when a Lead is converted (status = 'Converted').
  *
  * FSM:
- *   blanc_status  — parent status in Blanc (Submitted, Waiting for parts, etc.)
+ *   blanc_status  — parent status in Albusto (Submitted, Waiting for parts, etc.)
  *   zb_status     — Zenbooker substatus (scheduled, en-route, complete)
  *   zb_rescheduled, zb_canceled — Zenbooker boolean flags
  */
@@ -33,7 +33,7 @@ const BLANC_STATUSES = [
     'On the way',
 ];
 
-/** Manual transitions allowed in Blanc UI (§7) */
+/** Manual transitions allowed in Albusto UI (§7) */
 const ALLOWED_TRANSITIONS = {
     'Submitted': ['Follow Up with Client', 'Waiting for parts', 'Canceled', 'On the way'],
     'Waiting for parts': ['Submitted', 'Follow Up with Client', 'Canceled'],
@@ -46,22 +46,22 @@ const ALLOWED_TRANSITIONS = {
 };
 
 /**
- * Blanc → Zenbooker outbound sync matrix (§6).
+ * Albusto → Zenbooker outbound sync matrix (§6).
  * Handled inline in updateBlancStatus. Documented here for reference:
  *
  *   Submitted             → no ZB action (operator-driven reopen; see note below)
- *   Waiting for parts     → no ZB action (Blanc-only operational state)
- *   Visit completed       → no ZB action (Blanc-only operational state)
+ *   Waiting for parts     → no ZB action (Albusto-only operational state)
+ *   Visit completed       → no ZB action (Albusto-only operational state)
  *   Job is Done           → markJobComplete                             (finalized)
  *   Canceled              → cancelJob
- *   Follow Up with Client → no ZB action (Blanc-only operational state)
+ *   Follow Up with Client → no ZB action (Albusto-only operational state)
  *   Rescheduled           → no ZB action (operator-driven reopen; see note below)
  *
  * Reopen limitation: Zenbooker API has NO endpoint to un-cancel or un-complete
  * a job. rescheduleJob only updates start_date + sets the rescheduled flag —
  * it does NOT reset status=complete or canceled=true back to scheduled.
- * For operator-driven reopens (Blanc → Submitted or Rescheduled on a job that
- * is still complete/canceled in ZB), Blanc maintains its own state and the
+ * For operator-driven reopens (Albusto → Submitted or Rescheduled on a job that
+ * is still complete/canceled in ZB), Albusto maintains its own state and the
  * inbound syncFromZenbooker logic preserves it (see "operator reopen override").
  *
  * All ZB calls are skipped if the ZB job is already in the target state, to
@@ -112,7 +112,7 @@ function rowToJob(row) {
         created_at: row.created_at ? row.created_at.toISOString() : null,
         updated_at: row.updated_at ? row.updated_at.toISOString() : null,
 
-        // Coordinates stored in Blanc DB
+        // Coordinates stored in Albusto DB
         lat: row.lat || null,
         lng: row.lng || null,
 
@@ -886,7 +886,7 @@ async function updateBlancStatus(jobId, newStatus, companyId) {
     // Note: Submitted and Rescheduled intentionally do NOT call ZB. Zenbooker
     // has no API to un-cancel or un-complete a job (reschedule only updates
     // start_date + rescheduled flag, not status/canceled). For operator-driven
-    // reopens, Blanc diverges intentionally; the inbound sync preserves the
+    // reopens, Albusto diverges intentionally; the inbound sync preserves the
     // override (see syncFromZenbooker "operator reopen override").
     if (job.zenbooker_job_id) {
         try {
@@ -919,7 +919,7 @@ async function updateBlancStatus(jobId, newStatus, companyId) {
  * Creates or updates the local job, recalculates blanc_status.
  */
 /**
- * Merge incoming Zenbooker notes with existing local notes, preserving Blanc-side
+ * Merge incoming Zenbooker notes with existing local notes, preserving Albusto-side
  * metadata (author, created, attachments) when a match is found.
  *
  * Match priority:
@@ -939,7 +939,7 @@ function mergeNotes(localNotes, zbNotes) {
         }
     }
 
-    // Always carry these Blanc-side fields forward when a ZB note matches a local
+    // Always carry these Albusto-side fields forward when a ZB note matches a local
     // one. When the local note was edited (edited_at set) we keep the local text —
     // otherwise an edit would silently revert on the next re-sync (NOTES-001).
     const preserveLocal = (ln) => ({
@@ -984,7 +984,7 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
     const cols = zbJobToColumns(zbData);
     const newBlancStatus = computeBlancStatusFromZb(cols.zb_status, cols.zb_canceled, cols.zb_rescheduled, eventType);
 
-    // Try to match ZB customer → Blanc contact
+    // Try to match ZB customer → Albusto contact
     let contactId = null;
     const zbCustomerId = zbData.customer?.id ? String(zbData.customer.id) : null;
     if (zbCustomerId) {
@@ -1008,9 +1008,9 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
         const autoStatuses = ['Submitted', 'Visit completed', 'Rescheduled', 'Canceled'];
         let shouldUpdateBlancStatus = autoStatuses.includes(existing.blanc_status);
 
-        // Operator-reopen override: Blanc can be reset to Submitted/Rescheduled by an
+        // Operator-reopen override: Albusto can be reset to Submitted/Rescheduled by an
         // operator even when the ZB job is still canceled or complete. Zenbooker has no
-        // API to un-cancel or un-complete, so Blanc maintains this divergence on purpose.
+        // API to un-cancel or un-complete, so Albusto maintains this divergence on purpose.
         // Without this override the next inbound webhook would snap blanc back to
         // Canceled / Visit completed.
         if (
@@ -1022,8 +1022,8 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
 
         const effectiveBlancStatus = shouldUpdateBlancStatus ? newBlancStatus : existing.blanc_status;
 
-        // Merge notes: keep Blanc-side metadata (author, created, attachments) for notes
-        // that originated in Blanc and were echoed back by Zenbooker.
+        // Merge notes: keep Albusto-side metadata (author, created, attachments) for notes
+        // that originated in Albusto and were echoed back by Zenbooker.
         const incomingZbNotes = JSON.parse(cols.notes || '[]');
         const mergedNotes = mergeNotes(existing.notes || [], incomingZbNotes);
         cols.notes = JSON.stringify(mergedNotes);

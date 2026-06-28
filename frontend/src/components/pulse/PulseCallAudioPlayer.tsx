@@ -2,7 +2,7 @@
  * PulseCallAudioPlayer — audio player, summary, transcription,
  * and live transcript for PulseCallListItem.
  *
- * Blanc design: warm tokens, no gray-* Tailwind colors,
+ * Albusto design: warm tokens, no gray-* Tailwind colors,
  * no decorative backgrounds on summary/entities.
  */
 import { useState, useRef, useEffect } from 'react';

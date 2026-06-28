@@ -16,7 +16,7 @@ Two-column shell (`login/template.ftl` → `registrationLayout`):
   from `git log` into `login/history.ftl` (date + the commit that shipped),
   hidden on mobile.
 
-Styling is the Blanc design system (`login/resources/css/albusto-login.css`):
+Styling is the Albusto design system (`login/resources/css/albusto-login.css`):
 near-white surface, floating labels, `--blanc-job` primary blue.
 
 ### Regenerating the "Shipped recently" feed
@@ -37,7 +37,7 @@ leading/trailing ticket codes, and wraps the include in `<#noparse>` so a stray
 
 The login theme (here) and the React self-registration page
 (`frontend/src/pages/auth/SignupPage.tsx` + `auth-shell.css`) share the same
-two-column Blanc shell but **intentionally differ on the right**: login shows
+two-column Albusto shell but **intentionally differ on the right**: login shows
 the deploy history, signup shows the static "Why Albusto" benefits. They run in
 different runtimes (Keycloak FreeMarker vs Vite/React) and can't share a
 stylesheet, so if you change the shared shell (brand, fields, colors) update

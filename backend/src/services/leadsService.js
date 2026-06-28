@@ -737,7 +737,7 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
         }
     }
 
-    // 2. Claim or create the local job row in Blanc.
+    // 2. Claim or create the local job row in Albusto.
     // This makes conversion idempotent: a retry after Zenbooker/network failure
     // reuses the same local job instead of inserting a duplicate.
     const serviceName = overrides.service?.name || lead.JobType || 'General Service';
@@ -935,7 +935,7 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
                 JSON.stringify(jobDetail || {}),
             ]);
 
-            // Link ZB customer to Blanc contact
+            // Link ZB customer to Albusto contact
             if (contactId) {
                 const zbCustomerId = jobDetail?.customer?.id;
                 if (zbCustomerId) {

@@ -21,7 +21,7 @@ interface FloatingFieldProps {
 }
 
 /**
- * Floating-label field (Blanc canon): the label starts as the placeholder inside
+ * Floating-label field (Albusto canon): the label starts as the placeholder inside
  * the field and lifts to sit on the top border on focus or when filled — so a form
  * needs no separate stacked/side labels. The label's background matches the field
  * so it cleanly notches the border.

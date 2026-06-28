@@ -131,7 +131,7 @@ export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChang
 
             {/* Status pill + source — same row, Lead card style */}
             <div className="flex items-center gap-2 flex-wrap">
-                {/* Blanc status — large pill dropdown */}
+                {/* Albusto status — large pill dropdown */}
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                         <button

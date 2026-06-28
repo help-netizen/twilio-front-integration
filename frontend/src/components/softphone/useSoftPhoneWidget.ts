@@ -31,7 +31,7 @@ export function useSoftPhoneWidget(voice: UseTwilioDeviceReturn, open: boolean) 
         }
     }, [open, pendingRequest, clearPending]);
 
-    // Fetch Blanc-enabled phone numbers for caller ID picker
+    // Fetch Albusto-enabled phone numbers for caller ID picker
     useEffect(() => {
         (async () => {
             try {

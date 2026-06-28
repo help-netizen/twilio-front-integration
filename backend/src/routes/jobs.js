@@ -1,7 +1,7 @@
 /**
  * Local Jobs Routes
  *
- * /api/jobs — CRUD + FSM actions for local Blanc jobs table
+ * /api/jobs — CRUD + FSM actions for local Albusto jobs table
  */
 
 const express = require('express');
@@ -247,7 +247,7 @@ router.patch('/:id/tags', requirePermission('jobs.edit'), async (req, res) => {
     }
 });
 
-// ─── Update Blanc Status (manual FSM transition) ────────────────────────────
+// ─── Update Albusto Status (manual FSM transition) ────────────────────────────
 
 router.patch('/:id/status', requirePermission('jobs.edit'), async (req, res) => {
     try {

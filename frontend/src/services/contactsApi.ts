@@ -163,7 +163,7 @@ export type SavedAddress = {
 const ZB_INTEGRATION_BASE = '/api/integrations/zenbooker';
 
 /**
- * Create a Zenbooker customer from an existing Blanc contact
+ * Create a Zenbooker customer from an existing Albusto contact
  */
 export async function createZenbookerCustomer(contactId: number): Promise<{
     ok: true;
@@ -186,7 +186,7 @@ export async function createZenbookerCustomer(contactId: number): Promise<{
 }
 
 /**
- * Sync a Blanc contact's data to Zenbooker
+ * Sync a Albusto contact's data to Zenbooker
  */
 export async function syncToZenbooker(contactId: number): Promise<{
     ok: true;

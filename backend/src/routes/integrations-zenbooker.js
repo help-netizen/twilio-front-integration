@@ -5,8 +5,8 @@
  * - POST /wh/:key          — Receive Zenbooker webhooks (per-company, key in URL)
  * - GET  /webhook-url      — Get webhook URL for the current company
  * - POST /webhook-url/regenerate — Regenerate webhook key
- * - POST /contacts/:contactId/create-customer — Create Zenbooker customer from Blanc contact
- * - POST /contacts/:contactId/sync — Sync Blanc contact to Zenbooker
+ * - POST /contacts/:contactId/create-customer — Create Zenbooker customer from Albusto contact
+ * - POST /contacts/:contactId/sync — Sync Albusto contact to Zenbooker
  */
 
 const express = require('express');
@@ -267,7 +267,7 @@ router.post('/contacts/:contactId/create-customer', authenticate, requireCompany
 });
 
 // =============================================================================
-// POST /contacts/:contactId/sync — Sync Blanc contact to Zenbooker
+// POST /contacts/:contactId/sync — Sync Albusto contact to Zenbooker
 // =============================================================================
 router.post('/contacts/:contactId/sync', authenticate, requireCompanyAccess, async (req, res) => {
     const reqId = requestId();

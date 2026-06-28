@@ -52,7 +52,7 @@ export default function SuperAdminPage() {
                     <Shield className="size-6 text-primary" />
                     <h2 className="text-2xl font-bold tracking-tight">Super Admin Platform</h2>
                 </div>
-                <p className="text-sm text-muted-foreground">Manage the Blanc platform, tenant companies, and global security policies.</p>
+                <p className="text-sm text-muted-foreground">Manage the Albusto platform, tenant companies, and global security policies.</p>
             </div>
 
             <Tabs defaultValue="companies" className="w-full">

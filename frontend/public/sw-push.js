@@ -13,7 +13,7 @@ self.addEventListener('push', (event) => {
     try {
         data = event.data.json();
     } catch {
-        data = { title: 'Blanc', body: event.data.text() };
+        data = { title: 'Albusto', body: event.data.text() };
     }
 
     const options = {
@@ -28,7 +28,7 @@ self.addEventListener('push', (event) => {
     };
 
     event.waitUntil(
-        self.registration.showNotification(data.title || 'Blanc', options)
+        self.registration.showNotification(data.title || 'Albusto', options)
     );
 });
 

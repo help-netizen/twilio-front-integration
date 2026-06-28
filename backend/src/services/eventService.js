@@ -89,7 +89,7 @@ async function getEntityHistory(companyId, aggregateType, aggregateId, entityNot
             type: 'event',
             event_type: e.event_type,
             description: describeEvent(e.event_type, e.event_data || {}),
-            actor: e.event_data?.actor_name || (e.actor_type === 'system' || e.actor_type === 'webhook' ? 'Blanc' : 'Unknown'),
+            actor: e.event_data?.actor_name || (e.actor_type === 'system' || e.actor_type === 'webhook' ? 'Albusto' : 'Unknown'),
             created_at: e.created_at.toISOString(),
             data: e.event_data || {},
         }));
@@ -102,9 +102,9 @@ async function getEntityHistory(companyId, aggregateType, aggregateId, entityNot
         type: 'note',
         event_type: 'note',
         text: note.text || '',
-        author: note.author || (note.migrated ? 'Blanc' : null),
+        author: note.author || (note.migrated ? 'Albusto' : null),
         attachments: note.attachments || [],
-        actor: note.author || (note.migrated ? 'Blanc' : ''),
+        actor: note.author || (note.migrated ? 'Albusto' : ''),
         created_at: note.created || null,
         data: {},
     }));

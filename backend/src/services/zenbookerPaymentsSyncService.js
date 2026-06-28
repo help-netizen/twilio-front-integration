@@ -708,7 +708,7 @@ async function listPayments(companyId, {
 }
 
 // =============================================================================
-// listPaymentsForExport — Enriched with Blanc job data (source, custom fields)
+// listPaymentsForExport — Enriched with Albusto job data (source, custom fields)
 // =============================================================================
 
 async function listPaymentsForExport(companyId, { dateFrom, dateTo, paymentMethod, search } = {}) {
@@ -782,7 +782,7 @@ async function listPaymentsForExport(companyId, { dateFrom, dateTo, paymentMetho
     return result.rows.map(r => {
         const inBlanc = r.blanc_job_id != null;
 
-        // Tech (providers) from Blanc assigned_techs JSONB array
+        // Tech (providers) from Albusto assigned_techs JSONB array
         let tech = '';
         if (inBlanc && Array.isArray(r.blanc_techs)) {
             tech = r.blanc_techs.map(t => t.name).filter(Boolean).join(', ');
@@ -790,7 +790,7 @@ async function listPaymentsForExport(companyId, { dateFrom, dateTo, paymentMetho
             tech = NOT_FOUND;
         }
 
-        // Custom fields from Blanc metadata (e.g. claim_id)
+        // Custom fields from Albusto metadata (e.g. claim_id)
         let customFields = '';
         if (!inBlanc) {
             customFields = NOT_FOUND;
@@ -842,7 +842,7 @@ async function getPaymentDetail(companyId, paymentId) {
             p.job_detail, p.invoice_detail, p.attachments, p.metadata,
             j.id as local_job_id
         FROM zb_payments p
-        -- Link the local Blanc job by the STABLE zenbooker_job_id (same key the
+        -- Link the local Albusto job by the STABLE zenbooker_job_id (same key the
         -- ledger uses), falling back to job_number only when the id is unknown.
         -- The old job_number-only join broke whenever the job body wasn't
         -- fetched at sync time (job_number stayed '—').
@@ -861,7 +861,7 @@ async function getPaymentDetail(companyId, paymentId) {
     const r = result.rows[0];
 
     return {
-        // Internal Blanc ID
+        // Internal Albusto ID
         id: r.id,
         // Flat row fields
         job_number: r.job_number,

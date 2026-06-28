@@ -1,5 +1,5 @@
 /**
- * Jobs API Client — Local Blanc Jobs
+ * Jobs API Client — Local Albusto Jobs
  * Frontend fetch wrapper for /api/jobs endpoints (local DB).
  */
 

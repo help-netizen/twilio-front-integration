@@ -1,5 +1,5 @@
 /* ===================================================================
-   Blanc Design System v2.0
+   Albusto Design System v2.0
    ===================================================================
    Single source of truth for the warm beige aesthetic.
    Extracted from the Schedule page redesign, promoted app-wide.
@@ -319,7 +319,7 @@ table tbody tr:hover {
     border-radius: 16px !important;
 }
 
-/* Icon-only buttons in page header — 42px square, Blanc style */
+/* Icon-only buttons in page header — 42px square, Albusto style */
 .blanc-page-header [data-slot="button"][class*="size-9"] {
     min-height: 42px !important;
     height: 42px !important;
@@ -442,7 +442,7 @@ table tbody tr:hover {
     align-self: center;
 }
 
-/* Control chip — 42px touch target, Blanc style */
+/* Control chip — 42px touch target, Albusto style */
 .blanc-control-chip {
     min-height: 42px;
     padding: 0 18px;

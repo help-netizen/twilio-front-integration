@@ -142,7 +142,7 @@ DialogPanelHeader.displayName = "DialogPanelHeader"
 // Scrollable region of a panel. Renders a soft top/bottom shadow ONLY when there
 // is hidden content in that direction — so the pinned header/footer stay visually
 // separated while scrolling, but the panel reads clean & borderless at rest (no
-// static <hr>-style lines, per the Blanc design system).
+// static <hr>-style lines, per the Albusto design system).
 const DialogBody = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
     ({ className, children, ...props }, forwardedRef) => {
         const innerRef = React.useRef<HTMLDivElement>(null)

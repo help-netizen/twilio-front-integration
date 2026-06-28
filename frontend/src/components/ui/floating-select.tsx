@@ -16,7 +16,7 @@ interface FloatingSelectProps {
 }
 
 /**
- * Floating-label select (Blanc canon): same look as FloatingField — 50px, border-only,
+ * Floating-label select (Albusto canon): same look as FloatingField — 50px, border-only,
  * the label sits as a placeholder and lifts onto the border once a value is chosen.
  */
 function FloatingSelect({

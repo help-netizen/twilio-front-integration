@@ -9,7 +9,7 @@
  * Tools handled:
  *   - checkServiceArea({ zip })              — check zip against service_territories DB
  *   - validateAddress({ street, apt, ... })  — Google Maps Geocoding (uses GOOGLE_GEOCODING_KEY)
- *   - checkAvailability({ zip, unitType })   — Blanc scheduleService.getAvailableSlots (dispatch_settings + booked items)
+ *   - checkAvailability({ zip, unitType })   — Albusto scheduleService.getAvailableSlots (dispatch_settings + booked items)
  *   - createLead({ ... })                    — create qualified lead in CRM
  *
  * Response format (VAPI expects):

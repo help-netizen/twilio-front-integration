@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS phone_number_settings (
     company_id      UUID REFERENCES companies(id),
     phone_number    TEXT NOT NULL UNIQUE,
     friendly_name   TEXT,
-    routing_mode    VARCHAR(20) NOT NULL DEFAULT 'sip',   -- 'sip' = Bria, 'client' = Blanc SoftPhone
+    routing_mode    VARCHAR(20) NOT NULL DEFAULT 'sip',   -- 'sip' = Bria, 'client' = Albusto SoftPhone
     client_identity TEXT,                                  -- Twilio Client identity when routing_mode='client'
     group_id        TEXT REFERENCES user_groups(id) ON DELETE SET NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),

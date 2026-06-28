@@ -112,7 +112,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
     };
 
     // Reschedule is always available when a schedule exists — Zenbooker's reschedule
-    // endpoint accepts calls regardless of ZB status (complete/canceled), and Blanc may
+    // endpoint accepts calls regardless of ZB status (complete/canceled), and Albusto may
     // legitimately be in an open operational state while ZB is still terminal
     // (operator-reopen scenario, see jobsService.js syncFromZenbooker override).
     const canReschedule = !!job.start_date;

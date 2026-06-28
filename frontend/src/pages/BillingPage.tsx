@@ -1,6 +1,6 @@
 /**
  * BillingPage.tsx — BILLING-UI. Subscription & billing cabinet for the company
- * owner (tenant.company.manage). Blanc design system, money-first:
+ * owner (tenant.company.manage). Albusto design system, money-first:
  * what do I pay, what's my next bill, how much have I used, how do I change.
  * No technical IDs (customer_id / subscription_id) surface here.
  */
