@@ -191,7 +191,7 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                         return (
                             <React.Fragment key={`${item.entity_type}-${item.entity_id}`}>
                                 <div data-schedule-item>
-                                    <ScheduleItemCard item={item} onClick={onSelectItem} onCopy={onCopy} timezone={tz} />
+                                    <ScheduleItemCard item={item} onClick={onSelectItem} onCopy={onCopy} timezone={tz} layout="agenda" />
                                 </div>
                                 {legText && (
                                     <div className="schedule-mobile-leg" style={{ display: 'flex', alignItems: 'center', gap: 10, paddingLeft: 20, marginTop: -2, marginBottom: -2 }}>

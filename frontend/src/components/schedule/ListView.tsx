@@ -236,6 +236,8 @@ export const ListView: React.FC<ListViewProps> = ({
                                                             onClick={onSelectItem}
                                                             onCopy={onCopy}
                                                             timezone={tz}
+                                                            layout="agenda"
+                                                            detailed
                                                         />
                                                     </div>
                                                     {seg && <RouteConnector segment={seg} unit={unit} />}

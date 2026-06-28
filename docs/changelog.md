@@ -4,6 +4,30 @@
 
 ---
 
+## 2026-06-27 — SCHED-TILE-001: Schedule job-tile recomposition (agenda layout)
+
+Owner feedback: a job tile in the calendar list had too many rows in a weak order (job# → status →
+title → time → …). Recomposed into a **timeframe-led** card — applied to the **mobile agenda** and the
+**desktop List view** only; all time-positioned views (day-grid, timeline, week, month) untouched.
+
+- New `layout` prop on `components/schedule/ScheduleItemCard.tsx`: `'classic'` (default — today's exact
+  rendering, byte-for-byte, everywhere it's already used) and `'agenda'` (additive early-return branch).
+  Plus `detailed?` (desktop List adds a customer-phone row).
+- Agenda composition: **timeframe = hero (largest, top-left)** → title → customer → address (customer &
+  address same 13px size). **Technician name + small colored status dot top-right** (status Variant A);
+  the left 4px border keeps the technician color. Job number, the uppercase status line, subtitle, and
+  the geocoding hint are dropped from this layout (all remain in the JobDetailPanel / classic views).
+- Edge cases: no time → title becomes the hero; missing customer/address/phone → row omitted (Blanc:
+  no empty placeholders); `Unassigned` when no tech; status dot omitted when no status; Maps + `tel:`
+  links keep `stopPropagation`; tap-to-open + Enter/Space preserved.
+- Call sites changed: DayView mobile branch (`layout="agenda"`) and ListView (`layout="agenda" detailed`).
+- Frontend-only, no backend/migration. `npm run build` (tsc -b strict) green; reviewer APPROVED.
+- Spec: `docs/specs/SCHED-TILE-001.md`. **Test deviation:** the spec's Jest+RTL cases were not written —
+  the frontend has no component-test harness (no RTL/jsdom/vitest); verified by strict build + adversarial
+  review. Adding a frontend test harness is a separate infra follow-up.
+
+---
+
 ## 2026-06-27 — SCHED-MOBILE-002: mobile Schedule week strip (date navigation)
 
 Follow-up to SCHED-MOBILE-001 (owner feedback): the standalone **Today button confused** — it sat on

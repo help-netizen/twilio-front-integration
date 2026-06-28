@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { MoreVertical, Copy } from 'lucide-react';
+import { MoreVertical, Copy, MapPin, Phone } from 'lucide-react';
 import type { ScheduleItem } from '../../services/scheduleApi';
 import { formatTimeInTZ } from '../../utils/companyTime';
 import { getProviderColor } from '../../utils/providerColors';
@@ -41,9 +41,17 @@ interface ScheduleItemCardProps {
     /** When provided (and the item is a job), shows a kebab menu with "Copy job". */
     onCopy?: (jobId: number) => void;
     timezone?: string;
+    /**
+     * SCHED-TILE-001: card composition.
+     * - 'classic' (default) → today's exact rendering, untouched everywhere it's already used.
+     * - 'agenda' → timeframe-led layout for the mobile agenda + desktop List view.
+     */
+    layout?: 'classic' | 'agenda';
+    /** Only meaningful with layout='agenda': adds a phone row when customer_phone is present. */
+    detailed?: boolean;
 }
 
-export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({ item, compact = false, onClick, onCopy, timezone }) => {
+export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({ item, compact = false, onClick, onCopy, timezone, layout = 'classic', detailed = false }) => {
     const primaryTech = item.assigned_techs?.[0];
     const provColor = primaryTech ? getProviderColor(primaryTech.id || primaryTech.name) : null;
     const style = provColor ? {
@@ -69,6 +77,147 @@ export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({ item, compac
     const geoLabel = item.entity_type === 'job' ? geocodingLabel(item.geocoding_status) : null;
     const stop = (e: React.MouseEvent) => e.stopPropagation();
     const canCopy = !!onCopy && item.entity_type === 'job';
+
+    // ── SCHED-TILE-001: timeframe-led "agenda" layout ─────────────────────────
+    // Used by the mobile agenda (DayView mobile) + desktop List view. Same card
+    // chrome as classic; only the inner composition differs. classic stays below.
+    if (layout === 'agenda') {
+        const hasTime = !!timeLabel;
+        // The status dot (Variant A) sits next to the technician name; omit when
+        // there's no status. The kebab (Copy job) ends the top-right cluster.
+        const statusDot = item.status ? (
+            <span
+                className="inline-block rounded-full flex-shrink-0"
+                style={{ width: 8, height: 8, background: statusColor }}
+                title={item.status}
+            />
+        ) : null;
+        const kebab = canCopy ? (
+            <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                    <button
+                        type="button"
+                        aria-label="Job actions"
+                        onClick={stop}
+                        onKeyDown={stop as unknown as React.KeyboardEventHandler}
+                        className="inline-flex items-center justify-center rounded-md transition-opacity opacity-70 hover:opacity-100 flex-shrink-0"
+                        style={{ width: 26, height: 26, color: 'var(--sched-ink-3)' }}
+                    >
+                        <MoreVertical className="size-4" />
+                    </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" onClick={stop}>
+                    <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onCopy?.(item.entity_id); }}>
+                        <Copy className="size-4 mr-2" />Copy job
+                    </DropdownMenuItem>
+                </DropdownMenuContent>
+            </DropdownMenu>
+        ) : null;
+
+        return (
+            <div
+                role="button"
+                tabIndex={0}
+                onClick={() => onClick?.(item)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.(item); } }}
+                className={`
+                    relative w-full h-full text-left overflow-hidden transition-shadow cursor-pointer
+                    hover:shadow-xl
+                    focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 outline-none
+                    ${isCanceled ? 'opacity-60' : ''}
+                `}
+                style={{
+                    background: style.gradient,
+                    border: `1px solid ${style.border}`,
+                    borderLeft: `4px solid ${style.accent}`,
+                    borderRadius: '18px',
+                    boxShadow: 'var(--sched-shadow-card)',
+                }}
+            >
+                <div className="p-3.5 pb-3 h-full flex flex-col gap-1" style={{ paddingLeft: '14px' }}>
+                    {/* Top row: timeframe hero (left) + tech · status dot · kebab (right) */}
+                    <div className="flex items-start justify-between gap-2" style={{ minWidth: 0 }}>
+                        {hasTime ? (
+                            <span
+                                className="font-bold whitespace-nowrap"
+                                style={{ fontSize: '17px', color: 'var(--sched-ink-1)' }}
+                            >
+                                {timeLabel}
+                            </span>
+                        ) : (
+                            <h3
+                                className="font-semibold truncate"
+                                style={{ fontFamily: 'Manrope, sans-serif', letterSpacing: '-0.03em', fontSize: '16px', color: 'var(--sched-ink-1)', margin: 0, minWidth: 0 }}
+                            >
+                                {item.title}
+                            </h3>
+                        )}
+                        <span className="flex items-center gap-1.5 flex-shrink-0 whitespace-nowrap">
+                            <span className="text-[13px]" style={{ color: 'var(--sched-ink-2)' }}>{techSummary}</span>
+                            {statusDot}
+                            {kebab}
+                        </span>
+                    </div>
+
+                    {/* Title — omitted when it became the hero (no time) */}
+                    {hasTime && (
+                        <h3
+                            className="font-semibold truncate"
+                            style={{ fontFamily: 'Manrope, sans-serif', letterSpacing: '-0.03em', fontSize: '15px', color: 'var(--sched-ink-1)', margin: 0 }}
+                        >
+                            {item.title}
+                        </h3>
+                    )}
+
+                    {/* Customer */}
+                    {item.customer_name && (
+                        <span className="text-[13px] truncate" style={{ color: 'var(--sched-ink-2)' }}>
+                            {item.customer_name}
+                        </span>
+                    )}
+
+                    {/* Address — map-pin + Maps link (same behavior as classic) */}
+                    {item.address_summary && (
+                        <span className="flex items-center gap-1.5 text-[13px]" style={{ color: 'var(--sched-ink-2)', minWidth: 0 }}>
+                            <MapPin className="size-3.5 flex-shrink-0" style={{ color: 'var(--sched-ink-3)' }} />
+                            {item.google_maps_url ? (
+                                <a
+                                    href={item.google_maps_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={stop}
+                                    onKeyDown={stop as unknown as React.KeyboardEventHandler}
+                                    className="truncate hover:underline"
+                                    style={{ color: 'var(--sched-ink-2)' }}
+                                    title={item.normalized_address || item.address_summary}
+                                >
+                                    {item.address_summary}
+                                </a>
+                            ) : (
+                                <span className="truncate" title={item.address_summary}>{item.address_summary}</span>
+                            )}
+                        </span>
+                    )}
+
+                    {/* Phone — desktop List (detailed) only */}
+                    {detailed && item.customer_phone && (
+                        <span className="flex items-center gap-1.5 text-[13px]" style={{ color: 'var(--sched-ink-3)', minWidth: 0 }}>
+                            <Phone className="size-3.5 flex-shrink-0" style={{ color: 'var(--sched-ink-3)' }} />
+                            <a
+                                href={`tel:${item.customer_phone}`}
+                                onClick={stop}
+                                onKeyDown={stop as unknown as React.KeyboardEventHandler}
+                                className="truncate hover:underline"
+                                style={{ color: 'var(--sched-ink-3)' }}
+                            >
+                                {item.customer_phone}
+                            </a>
+                        </span>
+                    )}
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div
