@@ -8,7 +8,6 @@ import type { Lead } from '../../types/lead';
 import { getLeadStatusPillStyle } from './leadStatusStyles';
 
 export function handleCopyPhone(phone: string, e: React.MouseEvent) { e.stopPropagation(); navigator.clipboard.writeText(phone); toast.success('Phone number copied to clipboard'); }
-export function handleCall(phone: string, e: React.MouseEvent) { e.stopPropagation(); window.location.href = `tel:${phone}`; }
 
 export function renderCell(columnId: string, lead: Lead, key: string) {
     const cellStyle = { padding: '12px 16px' };

@@ -3,7 +3,7 @@ import { Skeleton } from '../ui/skeleton';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { Phone, MoreVertical, PhoneOff, CheckCircle2, Briefcase, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import type { Lead, TableColumn } from '../../types/lead';
-import { renderCell, handleCall } from './leadsTableHelpers';
+import { renderCell } from './leadsTableHelpers';
 
 interface LeadsTableProps {
     leads: Lead[]; loading: boolean; selectedLeadId?: string; columns: TableColumn[];
@@ -81,7 +81,7 @@ export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLe
                                         </button>
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="end">
-                                        {lead.Phone && <DropdownMenuItem onClick={e => handleCall(lead.Phone!, e)}><Phone className="size-4 mr-2" />Call</DropdownMenuItem>}
+                                        {lead.Phone && <DropdownMenuItem asChild><a href={`tel:${lead.Phone.replace(/[^\d+]/g, '')}`} onClick={e => e.stopPropagation()} className="flex items-center cursor-pointer"><Phone className="size-4 mr-2" />Call</a></DropdownMenuItem>}
                                         <DropdownMenuSeparator />
                                         {!lead.LeadLost ? <DropdownMenuItem onClick={e => { e.stopPropagation(); onMarkLost(lead.UUID); }}><PhoneOff className="size-4 mr-2" />Mark Lost</DropdownMenuItem> : <DropdownMenuItem onClick={e => { e.stopPropagation(); onActivate(lead.UUID); }}><CheckCircle2 className="size-4 mr-2" />Activate</DropdownMenuItem>}
                                         {lead.Status !== 'Converted' && !lead.LeadLost && <><DropdownMenuSeparator /><DropdownMenuItem onClick={e => { e.stopPropagation(); onConvert(lead.UUID); }}><Briefcase className="size-4 mr-2" />Convert to Job</DropdownMenuItem></>}
