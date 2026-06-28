@@ -43,20 +43,32 @@ function vapiSecretAuth(req, res, next) {
     next();
 }
 
+// Normalize a ZIP to a 5-digit string, recovering a dropped leading zero. The
+// voice model sometimes treats a ZIP as a number, so a Boston-area "01721"
+// arrives as "1721" — left-pad it back to 5 so the (text, exact-match)
+// service-territory lookup and the stored lead ZIP stay correct.
+function normalizeZip(zip) {
+    if (zip == null) return '';
+    const digits = String(zip).replace(/\D/g, '');
+    if (!digits) return '';
+    return digits.length >= 5 ? digits.slice(0, 5) : digits.padStart(5, '0');
+}
+
 // ─── Tool: checkServiceArea ───────────────────────────────────────────────────
 
 async function handleCheckServiceArea({ zip }) {
-    if (!zip) return { inServiceArea: false, error: 'zip is required' };
+    const z = normalizeZip(zip);
+    if (!z) return { inServiceArea: false, error: 'zip is required' };
 
-    const row = await stQueries.search(DEFAULT_COMPANY_ID, String(zip).trim());
-    if (!row) return { inServiceArea: false };
+    const row = await stQueries.search(DEFAULT_COMPANY_ID, z);
+    if (!row) return { inServiceArea: false, zip: z };
 
     return {
         inServiceArea: true,
         area: row.area || '',
         city: row.city || '',
         state: row.state || '',
-        zip: row.zip || zip,
+        zip: row.zip || z,
     };
 }
 
@@ -72,7 +84,8 @@ async function handleValidateAddress({ street, apt, city, state, zip }) {
     }
 
     try {
-        const parts = [street, apt, city, state, zip].filter(Boolean);
+        const z = normalizeZip(zip);
+        const parts = [street, apt, city, state, z].filter(Boolean);
         const addressQuery = parts.join(', ');
         const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(addressQuery)}&key=${apiKey}`;
 
@@ -95,7 +108,7 @@ async function handleValidateAddress({ street, apt, city, state, zip }) {
         const components = result.address_components || [];
 
         const postalComponent = components.find(c => c.types.includes('postal_code'));
-        const correctedZip = postalComponent?.short_name || zip || '';
+        const correctedZip = postalComponent?.short_name || z || '';
 
         // Strip ", USA" from formatted address for cleaner speech output
         const standardized = (result.formatted_address || '').replace(/, USA$/, '').trim();
@@ -177,7 +190,7 @@ async function handleCreateLead(args) {
         ...(apt && { Unit: apt }),
         City:      city || '',
         State:     state || '',
-        PostalCode: zip || '',
+        PostalCode: normalizeZip(zip),
     };
 
     // Attempt with 1 retry on failure
