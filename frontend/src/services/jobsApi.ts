@@ -38,6 +38,7 @@ export interface LocalJob {
     customer_phone?: string;
     customer_email?: string;
     address?: string;
+    city?: string | null;
     territory?: string;
     invoice_total?: string;
     invoice_status?: string;

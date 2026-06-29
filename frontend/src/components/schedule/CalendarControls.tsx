@@ -11,6 +11,7 @@ import type { ScheduleFilters } from '../../services/scheduleApi';
 import { getProviderColor } from '../../utils/providerColors';
 import { Badge } from '../ui/badge';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { useAuthz } from '../../hooks/useAuthz';
 
 interface CalendarControlsProps {
     viewMode: ViewMode;
@@ -195,10 +196,14 @@ export const ScheduleFilterBody: React.FC<{
     layout: 'columns' | 'stack';
 }> = ({ filters, allTags, onFiltersChange, layout }) => {
     const { handleStatusToggle, handleSourceToggle, handleTagToggle } = useScheduleFilterHandlers(filters, onFiltersChange);
+    const { hasPermission } = useAuthz();
+    const canViewSource = hasPermission('lead_source.view');
+    // Columns shown: STATUS + (SOURCE if permitted) + (TAGS if any).
+    const colCount = 1 + (canViewSource ? 1 : 0) + (allTags.length > 0 ? 1 : 0);
     return (
         <div
             className={layout === 'columns' ? 'grid p-3 gap-0' : 'flex flex-col gap-4'}
-            style={layout === 'columns' ? { gridTemplateColumns: allTags.length > 0 ? '1fr 1fr 1fr' : '1fr 1fr' } : undefined}
+            style={layout === 'columns' ? { gridTemplateColumns: Array(colCount).fill('1fr').join(' ') } : undefined}
         >
             <FilterColumn
                 title="STATUS"
@@ -210,12 +215,14 @@ export const ScheduleFilterBody: React.FC<{
                 }}
                 colorMap={STATUS_COLOR_MAP}
             />
-            <FilterColumn
-                title="SOURCE"
-                items={SOURCE_OPTIONS}
-                selected={filters.source ? [SOURCE_OPTIONS.find(s => s.toLowerCase().replace(/\s+/g, '_') === filters.source) || ''] : []}
-                onToggle={handleSourceToggle}
-            />
+            {canViewSource && (
+                <FilterColumn
+                    title="SOURCE"
+                    items={SOURCE_OPTIONS}
+                    selected={filters.source ? [SOURCE_OPTIONS.find(s => s.toLowerCase().replace(/\s+/g, '_') === filters.source) || ''] : []}
+                    onToggle={handleSourceToggle}
+                />
+            )}
             {allTags.length > 0 && (
                 <FilterColumn
                     title="TAGS"
@@ -289,6 +296,8 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
     const [filterDropdownOpen, setFilterDropdownOpen] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
     const isMobile = useIsMobile();
+    const { hasPermission } = useAuthz();
+    const canViewSource = hasPermission('lead_source.view');
 
     // Close dropdown on outside click
     useEffect(() => {
@@ -446,7 +455,7 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
                                                     </Badge>
                                                 );
                                             })}
-                                            {filters.source && (
+                                            {canViewSource && filters.source && (
                                                 <Badge variant="outline" className="gap-1 text-xs">
                                                     {filters.source}
                                                     <X className="size-3 cursor-pointer" onClick={() => onFiltersChange({ ...filters, source: undefined })} />

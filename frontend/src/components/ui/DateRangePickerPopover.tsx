@@ -99,7 +99,7 @@ export function DateRangePickerPopover({
                 {open && (
                     <>
                         <div className="blanc-mobile-sheet-backdrop" onClick={() => setOpen(false)} />
-                        <div className="blanc-mobile-sheet" style={{ maxHeight: '85vh' }}>
+                        <div className="blanc-mobile-sheet">
                             <div className="blanc-mobile-sheet-header">
                                 <span className="text-sm font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>Date Range</span>
                                 <button onClick={() => setOpen(false)} className="p-1.5 rounded-lg" style={{ color: 'var(--blanc-ink-3)' }}><X className="size-4" /></button>

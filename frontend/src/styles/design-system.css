@@ -976,7 +976,7 @@ table tbody tr:hover {
     border-radius: 22px 22px 0 0;
     box-shadow: 0 -8px 32px rgba(47, 39, 28, 0.12);
     padding: 8px 0 env(safe-area-inset-bottom, 8px);
-    max-height: 70vh;
+    max-height: 85vh;
     overflow-y: auto;
     animation: blancSlideUp 0.25s ease-out;
 }

@@ -9,7 +9,12 @@ import { getLeadStatusPillStyle } from './leadStatusStyles';
 
 export function handleCopyPhone(phone: string, e: React.MouseEvent) { e.stopPropagation(); navigator.clipboard.writeText(phone); toast.success('Phone number copied to clipboard'); }
 
-export function renderCell(columnId: string, lead: Lead, key: string) {
+// SOURCE-PERM-001: `canViewSource` gates the jobSource cell. `renderCell` is
+// called inside LeadsTable's `visibleColumns.map(...)`, so it can't use the
+// useAuthz() hook itself (rules-of-hooks / variable column count). The caller
+// must compute `canViewSource = hasPermission('lead_source.view')` and pass it.
+// Defaults to `true` so callers that haven't been updated keep prior behavior.
+export function renderCell(columnId: string, lead: Lead, key: string, canViewSource = true) {
     const cellStyle = { padding: '12px 16px' };
 
     switch (columnId) {
@@ -85,7 +90,7 @@ export function renderCell(columnId: string, lead: Lead, key: string) {
         case 'jobType':
             return <TableCell key={key} style={{ ...cellStyle, color: 'var(--blanc-ink-2)' }} className="text-sm">{lead.JobType || null}</TableCell>;
         case 'jobSource':
-            return <TableCell key={key} style={{ ...cellStyle, color: 'var(--blanc-ink-2)' }} className="text-sm">{lead.JobSource || null}</TableCell>;
+            return <TableCell key={key} style={{ ...cellStyle, color: 'var(--blanc-ink-2)' }} className="text-sm">{canViewSource ? (lead.JobSource || null) : null}</TableCell>;
         case 'created':
             return <TableCell key={key} style={{ ...cellStyle, color: 'var(--blanc-ink-3)' }} className="text-sm">{lead.CreatedDate ? format(new Date(lead.CreatedDate), 'MMM dd, yyyy') : null}</TableCell>;
         case 'serialId':

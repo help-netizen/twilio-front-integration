@@ -7,6 +7,7 @@
  *   - 074_add_fsm_permissions.sql (fsm.viewer/editor/publisher/override)
  *   - 118_add_stripe_collection_permissions.sql (payments.collect_keyed/terminal)
  *   - 136_extend_tasks_for_crm_entities.sql (tasks.view/create/manage)
+ *   - 138_provider_finance_and_source_perm.sql (lead_source.view)
  *
  * Grouped per the RBAC audit categories. Keep this in sync with the seed
  * migrations so the matrix rows always match the keys the resolver understands.
@@ -53,6 +54,7 @@ const PERMISSION_CATALOG = [
             { key: 'leads.create', label: 'Create leads' },
             { key: 'leads.edit', label: 'Edit leads' },
             { key: 'leads.convert', label: 'Convert leads' },
+            { key: 'lead_source.view', label: 'View the lead/job marketing source (label + filters)' },
         ],
     },
     {

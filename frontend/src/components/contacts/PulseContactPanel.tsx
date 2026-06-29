@@ -14,6 +14,7 @@ import { Switch } from '../ui/switch';
 import { Label } from '../ui/label';
 import { Skeleton } from '../ui/skeleton';
 import { formatPhoneDisplay as formatPhone } from '../../utils/phoneUtils';
+import { useAuthz } from '../../hooks/useAuthz';
 import * as contactsApi from '../../services/contactsApi';
 import * as jobsApi from '../../services/jobsApi';
 import { EditContactDialog } from './EditContactDialog';
@@ -30,6 +31,8 @@ const ZENBOOKER_BASE_URL = 'https://zenbooker.com';
 
 export function PulseContactPanel({ contact, leads, loading, onAddressesChanged, onContactChanged }: PulseContactPanelProps) {
     const navigate = useNavigate();
+    const { hasPermission } = useAuthz();
+    const canViewSource = hasPermission('lead_source.view');
     const [editOpen, setEditOpen] = useState(false);
     const [onlyOpenLeads, setOnlyOpenLeads] = useState(true);
     const [notes, setNotes] = useState(contact.notes || '');
@@ -199,7 +202,7 @@ export function PulseContactPanel({ contact, leads, loading, onAddressesChanged,
                                             <TrendingUp className="size-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />
                                             <div className="min-w-0">
                                                 <div className="text-sm font-medium truncate" style={{ color: 'var(--blanc-ink-1)' }}>{lead.job_type || 'Lead'}</div>
-                                                <div className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>{lead.created_at ? format(new Date(lead.created_at), 'MMM dd, yyyy') : '—'}{lead.job_source && ` · ${lead.job_source}`}</div>
+                                                <div className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>{lead.created_at ? format(new Date(lead.created_at), 'MMM dd, yyyy') : '—'}{canViewSource && lead.job_source && ` · ${lead.job_source}`}</div>
                                             </div>
                                         </div>
                                         <span className="px-2 py-0.5 rounded-md text-xs font-semibold shrink-0" style={{ backgroundColor: `${getLeadStatusColor(lead.status)}15`, color: getLeadStatusColor(lead.status) }}>{lead.status}</span>

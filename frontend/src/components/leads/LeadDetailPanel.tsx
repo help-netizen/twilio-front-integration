@@ -18,6 +18,7 @@ import { MetadataSection, LeadDetailFooter } from './LeadDetailSections';
 import { LeadInfoSections } from './LeadInfoSections';
 import { LeadFinancialsTab } from './LeadFinancialsTab';
 import { LEAD_STATUS_COLORS, hexToRgba } from './leadStatusStyles';
+import { useAuthz } from '../../hooks/useAuthz';
 
 interface LeadDetailPanelProps {
     lead: Lead | null;
@@ -183,6 +184,8 @@ function LeadHeader({ lead, contactName, statusColor, onUpdateStatus, onUpdateSo
     onUpdateStatus: (uuid: string, status: string) => void;
     onUpdateSource: (uuid: string, source: string) => void;
 }) {
+    const { hasPermission } = useAuthz();
+    const canViewSource = hasPermission('lead_source.view');
     const { data: fsmData } = useFsmStates('lead', true);
     const allStatuses = fsmData?.states && fsmData.states.length > 0 ? fsmData.states : (LEAD_STATUSES as unknown as string[]);
     const initialState = fsmData?.initialState || null;
@@ -261,24 +264,26 @@ function LeadHeader({ lead, contactName, statusColor, onUpdateStatus, onUpdateSo
                     </DropdownMenuContent>
                 </DropdownMenu>
 
-                <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                        <button
-                            type="button"
-                            className="inline-flex items-center gap-1.5 px-4 text-sm font-medium transition-colors focus:outline-none"
-                            style={{ background: 'rgba(117,106,89,0.08)', color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)', minHeight: 42, borderRadius: 14 }}
-                        >
-                            {lead.JobSource || 'No Source'}<ChevronDown className="size-3.5" />
-                        </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start">
-                        {JOB_SOURCES.map(source => (
-                            <DropdownMenuItem key={source} onClick={() => onUpdateSource(lead.UUID, source)} className={source === lead.JobSource ? 'bg-accent' : ''}>
-                                {source}
-                            </DropdownMenuItem>
-                        ))}
-                    </DropdownMenuContent>
-                </DropdownMenu>
+                {canViewSource && (
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                            <button
+                                type="button"
+                                className="inline-flex items-center gap-1.5 px-4 text-sm font-medium transition-colors focus:outline-none"
+                                style={{ background: 'rgba(117,106,89,0.08)', color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)', minHeight: 42, borderRadius: 14 }}
+                            >
+                                {lead.JobSource || 'No Source'}<ChevronDown className="size-3.5" />
+                            </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start">
+                            {JOB_SOURCES.map(source => (
+                                <DropdownMenuItem key={source} onClick={() => onUpdateSource(lead.UUID, source)} className={source === lead.JobSource ? 'bg-accent' : ''}>
+                                    {source}
+                                </DropdownMenuItem>
+                            ))}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
+                )}
 
                 {lead.SubStatus && (
                     <span className="inline-flex items-center px-4 text-sm font-medium" style={{ background: 'rgba(117,106,89,0.08)', color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)', minHeight: 42, borderRadius: 14 }}>

@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-06-29 — JOBS-UX-RBAC-001: mobile UX polish + technician finance access
+
+Six related changes (one orchestrated pass, independently reviewed — verdict APPROVED, 0 blockers). Spec: `docs/specs/JOBS-UX-RBAC-001.md`.
+
+- **SHEET-HEIGHT-001** — mobile filter/settings sheets were inconsistent (Schedule "View options" = 85vh `BottomSheet`; Jobs/Leads filters = 70vh `.blanc-mobile-sheet`). Raised `.blanc-mobile-sheet` `max-height` 70vh→**85vh** to match Schedule; dropped the now-redundant DateRange inline override. It's a *max*-height, so small dropdowns (Snooze/Quick-Messages/etc.) are unaffected.
+- **TILE-CITY-001** — the full address took its own row in the mobile job tile **and** was a Google-Maps link → techs mis-tapped it instead of opening the job. Now the tile shows **"Customer, City"** on one line after the title as plain text (no Maps link), and the title + name·city lines are unified to one size / lighter weight (more air, fewer lines). New backend `jobs.city` column (migration **137**) populated from Zenbooker sync (`service_address.city`) + structured create, refreshed on re-sync (COALESCE), with a heuristic backfill for existing rows; exposed on `LocalJob` + `ScheduleItem`. Applies to `JobMobileCard` + the `ScheduleItemCard` **agenda** layout (classic untouched).
+- **PROVIDER-FINANCE-001** — the Technician (`provider`) role is now **full self-serve finance**: view payments + financials, view/create/**send** estimates & invoices, and **collect** (online link / offline / keyed / terminal). **No refunds.** Seeded in `050` (covers new companies via the onboarding bootstrap) + backfilled to existing companies in migration **138** (idempotent). Unlocks the Finance tab + Payments nav for techs; job visibility stays scoped to their own jobs.
+- **SOURCE-PERM-001** — new permission **`lead_source.view`** (granted to Admin/Manager/Dispatcher, **denied to Technician**) hides the lead/job marketing **source** — both display (job/lead tiles, detail headers, tables — header *and* cell) and the source **filter** column (Jobs/Leads/Schedule) — from anyone without it.
+- **JOB-ACTIONS-SLIM-001** — the job card's status actions were three stacked layers (primary buttons + plain-text secondary links + an all-statuses "quick buttons" row). Slimmed to a curated set of **framed primary buttons per state** — Submitted → [On the way] + [Start job]; En-route → [Start job]; In Progress → [Complete job] — and removed the secondary text-links + the quick-buttons row. Cancel and any non-standard transition stay available via the existing status dropdown under the job title. Shared mobile + desktop.
+
+Backend Jest: `tests/providerFinanceRbac.test.js` (14) + `tests/jobsRbacGates.test.js` regression (12) — 26/26 green; provider blocked from `payments.refund`. `npm run build` green. Backend + migrations 137/138 (no schema risk; both re-runnable). Not yet deployed.
+
+---
+
 ## 2026-06-29 — RBAC-FSM-FIX-001: technicians can operate their jobs + role-model audit
 
 Owner-reported 403s. Two things: (1) the reporter (`a5085140320`) is a **tenant_admin** whose

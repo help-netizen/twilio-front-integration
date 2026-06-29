@@ -14,6 +14,7 @@ import type { CustomFieldDef, Step } from './useConvertToJob';
 import { STEP_TITLES } from './useConvertToJob';
 import { CustomTimeModal } from '../conversations/CustomTimeModal';
 import { useAuth } from '../../auth/AuthProvider';
+import { useAuthz } from '../../hooks/useAuthz';
 import { todayInTZ } from '../../utils/companyTime';
 
 interface StepProps {
@@ -153,6 +154,8 @@ export function ConvertStep3({ selectedDate, setSelectedDate, timeslotsLoading, 
 }
 
 export function ConvertStep4({ name, phone, email, addressFields, serviceName, serviceDescription, servicePrice, serviceDuration, selectedTimeslot, territoryResult, lead, customFields, zipArea }: StepProps) {
+    const { hasPermission } = useAuthz();
+    const canViewSource = hasPermission('lead_source.view');
     const cardStyle = { background: 'rgba(117, 106, 89, 0.04)' };
     return (
         <div className="space-y-3 text-sm">
@@ -166,10 +169,10 @@ export function ConvertStep4({ name, phone, email, addressFields, serviceName, s
             <div className="rounded-2xl p-3.5" style={cardStyle}>{selectedTimeslot ? <p>{selectedTimeslot.formatted} — {new Date(selectedTimeslot.start).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</p> : <p className="text-destructive">No timeslot selected</p>}</div>
             <h4 className="font-semibold">Lead Details</h4>
             <div className="rounded-2xl p-3.5 space-y-1" style={cardStyle}>
-                {lead.JobSource && <p><span className="text-muted-foreground">Job Source:</span> {lead.JobSource}</p>}
+                {canViewSource && lead.JobSource && <p><span className="text-muted-foreground">Job Source:</span> {lead.JobSource}</p>}
                 {lead.Comments && lead.Comments !== lead.Description && <p><span className="text-muted-foreground">Comments:</span> {lead.Comments}</p>}
                 {lead.Metadata && Object.keys(lead.Metadata).length > 0 && <>{Object.entries(lead.Metadata).map(([key, value]) => { if (!value) return null; const fieldDef = customFields.find(f => f.api_name === key); return <p key={key}><span className="text-muted-foreground">{fieldDef?.display_name || key}:</span> {value}</p>; })}</>}
-                {!lead.JobSource && !lead.Comments && (!lead.Metadata || Object.keys(lead.Metadata).length === 0) && <p className="text-muted-foreground">No additional details</p>}
+                {!(canViewSource && lead.JobSource) && !lead.Comments && (!lead.Metadata || Object.keys(lead.Metadata).length === 0) && <p className="text-muted-foreground">No additional details</p>}
             </div>
             <div className="flex items-center gap-2 pt-1"><Badge variant="default" className="bg-green-600">✓ {zipArea || territoryResult?.service_territory?.name}</Badge></div>
         </div>

@@ -93,6 +93,7 @@ function rowToJob(row) {
         customer_phone: row.customer_phone,
         customer_email: row.customer_email,
         address: row.address,
+        city: row.city || null,
         territory: row.territory,
         invoice_total: row.invoice_total,
         invoice_status: row.invoice_status,
@@ -154,6 +155,7 @@ function zbJobToColumns(zbJob) {
         address: zbJob.service_address?.formatted ||
             [zbJob.service_address?.street, zbJob.service_address?.city,
             zbJob.service_address?.state, zbJob.service_address?.zip].filter(Boolean).join(', ') || null,
+        city: zbJob.service_address?.city || null,
         territory: zbJob.territory?.name || null,
         invoice_total: zbJob.invoice?.total || null,
         invoice_status: zbJob.invoice?.status || null,
@@ -266,10 +268,10 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
         INSERT INTO jobs (lead_id, contact_id, zenbooker_job_id, blanc_status,
             zb_status, zb_canceled, zb_rescheduled,
             job_number, service_name, start_date, end_date,
-            customer_name, customer_phone, customer_email, address,
+            customer_name, customer_phone, customer_email, address, city,
             territory, invoice_total, invoice_status, assigned_techs, notes,
             zb_raw, company_id, lat, lng, assigned_provider_user_ids)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
         ON CONFLICT (zenbooker_job_id) DO UPDATE SET
             lead_id = COALESCE(EXCLUDED.lead_id, jobs.lead_id),
             contact_id = COALESCE(EXCLUDED.contact_id, jobs.contact_id),
@@ -285,6 +287,7 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
             customer_phone = EXCLUDED.customer_phone,
             customer_email = EXCLUDED.customer_email,
             address = EXCLUDED.address,
+            city = EXCLUDED.city,
             territory = EXCLUDED.territory,
             invoice_total = EXCLUDED.invoice_total,
             invoice_status = EXCLUDED.invoice_status,
@@ -301,6 +304,7 @@ async function createJob({ leadId, contactId, zenbookerJobId, zbData, companyId 
         cols.zb_status || 'scheduled', cols.zb_canceled || false, cols.zb_rescheduled || false,
         cols.job_number || null, cols.service_name || null, cols.start_date || null, cols.end_date || null,
         cols.customer_name || null, cols.customer_phone || null, cols.customer_email || null, cols.address || null,
+        cols.city || null,
         cols.territory || null, cols.invoice_total || null, cols.invoice_status || null,
         cols.assigned_techs || '[]', cols.notes || '[]',
         cols.zb_raw || '{}', companyId || null, cols.lat || null, cols.lng || null,
@@ -523,17 +527,20 @@ async function createDirectJob(companyId, input = {}) {
         // (mirror of claimLocalJobForConversion's local insert shape).
         const addressStr = [address.line1, address.line2, address.city, address.state, address.postal_code]
             .filter(Boolean).join(', ') || null;
+        // No geocode in this path; the structured create input already carries the
+        // city, so persist it directly (TILE-CITY-001).
+        const cityValue = address.city || null;
         const assignedTechs = slot.tech_id ? JSON.stringify([{ id: slot.tech_id }]) : '[]';
         const { rows } = await db.query(`
             INSERT INTO jobs (
                 contact_id, company_id, blanc_status, service_name,
-                customer_name, customer_phone, customer_email, address,
+                customer_name, customer_phone, customer_email, address, city,
                 start_date, end_date, assigned_techs
-            ) VALUES ($1, $2, 'Submitted', $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+            ) VALUES ($1, $2, 'Submitted', $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
             RETURNING *
         `, [
             contactId, companyId, jobType,
-            customerName, customerPhone, customerEmail, addressStr,
+            customerName, customerPhone, customerEmail, addressStr, cityValue,
             slot.start || null, slot.end || null, assignedTechs,
         ]);
         localJob = rowToJob(rows[0]);
@@ -1049,6 +1056,7 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
                 customer_phone = COALESCE($10, customer_phone),
                 customer_email = COALESCE($11, customer_email),
                 address = COALESCE($12, address),
+                city = COALESCE($25, city),
                 territory = COALESCE($13, territory),
                 invoice_total = COALESCE($14, invoice_total),
                 invoice_status = COALESCE($15, invoice_status),
@@ -1071,6 +1079,7 @@ async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = 
             cols.assigned_techs, cols.notes, cols.zb_raw,
             zbJobId, contactId, cols.lat, cols.lng, companyId,
             assignedProviderUserIds,
+            cols.city ?? null,
         ]);
 
         if (!shouldUpdateBlancStatus) {

@@ -5,6 +5,7 @@ import {
 } from '../ui/dropdown-menu';
 import { BLANC_STATUSES, BLANC_STATUS_COLORS } from './jobHelpers';
 import { useFsmStates, useFsmActions } from '../../hooks/useFsmActions';
+import { useAuthz } from '../../hooks/useAuthz';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -29,6 +30,8 @@ function hexToRgba(hex: string, alpha: number) {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChange, onCancel, onCopy }: JobDetailHeaderProps) {
+    const { hasPermission } = useAuthz();
+    const canViewSource = hasPermission('lead_source.view');
     const { data: fsmData } = useFsmStates('job', true);
     const allStatuses = fsmData?.states && fsmData.states.length > 0 ? fsmData.states : BLANC_STATUSES;
     const initialState = fsmData?.initialState || null;
@@ -189,7 +192,7 @@ export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChang
                 </DropdownMenu>
 
                 {/* Source — static pill, same height */}
-                {job.job_source && (
+                {canViewSource && job.job_source && (
                     <span
                         className="inline-flex items-center px-4 text-sm font-medium"
                         style={{

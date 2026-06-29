@@ -51,21 +51,26 @@ export function useJobsData() {
     // Tag catalog and list-field settings live under tenant management APIs —
     // don't even request them without the backing permission (PF007).
     const canManageCompany = hasPermission('tenant.company.manage');
+    // When the operator can't see lead/job source, drop the job_source column
+    // from the table model entirely so it can't be rendered OR column-picked.
+    const canViewSource = hasPermission('lead_source.view');
 
     // ─── Derived data ────────────────────────────────────────────────
 
     const allColumns = useMemo<Record<string, ColumnDef>>(() => {
         const cols: Record<string, ColumnDef> = { ...STATIC_COLUMNS };
+        if (!canViewSource) delete cols.job_source;
         for (const cf of customFields) {
             if (cf.is_system) continue;
             cols[`meta:${cf.api_name}`] = makeMetaColumn(cf.api_name, cf.display_name);
         }
         return cols;
-    }, [customFields]);
+    }, [customFields, canViewSource]);
 
     const allFieldKeys = useMemo(() => {
-        return [...STATIC_FIELD_KEYS, ...customFields.filter(f => !f.is_system).map(f => `meta:${f.api_name}`)];
-    }, [customFields]);
+        const staticKeys = canViewSource ? STATIC_FIELD_KEYS : STATIC_FIELD_KEYS.filter(k => k !== 'job_source');
+        return [...staticKeys, ...customFields.filter(f => !f.is_system).map(f => `meta:${f.api_name}`)];
+    }, [customFields, canViewSource]);
 
     const filteredJobs = useMemo(() => {
         let result = jobs;

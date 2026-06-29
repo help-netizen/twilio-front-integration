@@ -2,6 +2,7 @@ import { Badge } from '../ui/badge';
 import { X } from 'lucide-react';
 import { JOB_SOURCES } from '../../types/lead';
 import { LEAD_STATUS_COLORS } from './leadStatusStyles';
+import { useAuthz } from '../../hooks/useAuthz';
 
 // ─── LeadsFilterBody ────────────────────────────────────────────────────────────
 // The active-filter chip row + the 3 FilterColumns (STATUS / SOURCE / JOB TYPE).
@@ -27,6 +28,8 @@ export function LeadsFilterBody({
     jobTypeFilter, onToggleJobType,
     statuses, dynamicJobTypes, onClearAll,
 }: LeadsFilterBodyProps) {
+    const { hasPermission } = useAuthz();
+    const canViewSource = hasPermission('lead_source.view');
     const activeFilterCount = statusFilter.length + sourceFilter.length + jobTypeFilter.length;
 
     return (
@@ -40,7 +43,7 @@ export function LeadsFilterBody({
                             <X className="size-3 cursor-pointer" onClick={() => onToggleStatus(s)} />
                         </Badge>
                     ))}
-                    {sourceFilter.map(s => (
+                    {canViewSource && sourceFilter.map(s => (
                         <Badge key={`src-${s}`} variant="outline" className="gap-1 text-xs">
                             {s}
                             <X className="size-3 cursor-pointer" onClick={() => onToggleSource(s)} />
@@ -65,7 +68,7 @@ export function LeadsFilterBody({
             {/* Columns */}
             <div className="grid grid-cols-1 sm:grid-cols-3 p-3 gap-3 sm:gap-0" style={{ borderTop: activeFilterCount > 0 ? '1px solid var(--blanc-line)' : undefined, marginTop: activeFilterCount > 0 ? 8 : 0 }}>
                 <FilterColumn title="STATUS" items={statuses} selected={statusFilter} onToggle={onToggleStatus} colorMap={LEAD_STATUS_COLORS} />
-                <FilterColumn title="SOURCE" items={JOB_SOURCES as unknown as string[]} selected={sourceFilter} onToggle={onToggleSource} />
+                {canViewSource && <FilterColumn title="SOURCE" items={JOB_SOURCES as unknown as string[]} selected={sourceFilter} onToggle={onToggleSource} />}
                 <FilterColumn title="JOB TYPE" items={dynamicJobTypes} selected={jobTypeFilter} onToggle={onToggleJobType} />
             </div>
         </>

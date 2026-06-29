@@ -4,7 +4,7 @@
  * Mirrors the Schedule agenda tile (ScheduleItemCard layout='agenda', SCHED-TILE-001)
  * but reads a `LocalJob`. Composition:
  *   time hero (start_date[–end_date]; if no time → service_name is the hero)
- *     → service_name (title) → customer_name → address (map-pin + optional Maps link)
+ *     → service_name (title) → "customer_name, city" (plain text, one line)
  *   top-right cluster = technician (assigned_techs[0].name +N / "Unassigned") + status dot
  *   left 4px border = provider color · canceled → opacity .6
  *   payment pill (bottom) only when finance-permitted AND invoice_status is present.
@@ -14,7 +14,6 @@
  */
 
 import React from 'react';
-import { MapPin } from 'lucide-react';
 import type { LocalJob } from '../../services/jobsApi';
 import { formatTimeInTZ } from '../../utils/companyTime';
 import { getProviderColor } from '../../utils/providerColors';
@@ -76,8 +75,7 @@ export const JobMobileCard: React.FC<JobMobileCardProps> = ({ job, timezone, can
         : 'Unassigned';
 
     const title = job.service_name || '';
-
-    const stop = (e: React.MouseEvent) => e.stopPropagation();
+    const nameCity = [job.customer_name, job.city].filter(Boolean).join(', ');
 
     // Payment pill — only with finance permission + a real invoice_status.
     const pill = (() => {
@@ -150,36 +148,17 @@ export const JobMobileCard: React.FC<JobMobileCardProps> = ({ job, timezone, can
                 {/* Title — omitted when it became the hero (no time) */}
                 {hasTime && title && (
                     <h3
-                        className="font-semibold truncate"
-                        style={{ fontFamily: 'Manrope, sans-serif', letterSpacing: '-0.03em', fontSize: '15px', color: 'var(--blanc-ink-1)', margin: 0 }}
+                        className="truncate"
+                        style={{ fontFamily: 'Manrope, sans-serif', letterSpacing: '-0.03em', fontSize: '14px', fontWeight: 500, color: 'var(--blanc-ink-1)', margin: 0 }}
                     >
                         {title}
                     </h3>
                 )}
 
-                {/* Customer */}
-                {job.customer_name && (
-                    <span className="text-[13px] truncate" style={{ color: 'var(--blanc-ink-2)' }}>
-                        {job.customer_name}
-                    </span>
-                )}
-
-                {/* Address — map-pin + optional Maps link */}
-                {job.address && (
-                    <span className="flex items-center gap-1.5 text-[13px]" style={{ color: 'var(--blanc-ink-2)', minWidth: 0 }}>
-                        <MapPin className="size-3.5 flex-shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />
-                        <a
-                            href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(job.address)}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={stop}
-                            onKeyDown={stop as unknown as React.KeyboardEventHandler}
-                            className="truncate hover:underline"
-                            style={{ color: 'var(--blanc-ink-2)' }}
-                            title={job.address}
-                        >
-                            {job.address}
-                        </a>
+                {/* Customer · City — plain text, one line */}
+                {nameCity && (
+                    <span className="truncate" style={{ fontSize: '14px', fontWeight: 400, color: 'var(--blanc-ink-2)' }}>
+                        {nameCity}
                     </span>
                 )}
 

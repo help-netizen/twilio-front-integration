@@ -4,6 +4,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Phone, MoreVertical, PhoneOff, CheckCircle2, Briefcase, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import type { Lead, TableColumn } from '../../types/lead';
 import { renderCell } from './leadsTableHelpers';
+import { useAuthz } from '../../hooks/useAuthz';
 
 interface LeadsTableProps {
     leads: Lead[]; loading: boolean; selectedLeadId?: string; columns: TableColumn[];
@@ -15,7 +16,11 @@ interface LeadsTableProps {
 }
 
 export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLead, onMarkLost, onActivate, onConvert, offset, hasMore, onNextPage, onPrevPage, sortBy, sortOrder, onSortChange }: LeadsTableProps) {
-    const visibleColumns = columns.filter(col => col.visible).sort((a, b) => a.order - b.order);
+    const { hasPermission } = useAuthz();
+    const canViewSource = hasPermission('lead_source.view');
+    const visibleColumns = columns
+        .filter(col => col.visible && (canViewSource || col.id !== 'jobSource'))
+        .sort((a, b) => a.order - b.order);
 
     const handleHeaderClick = (col: TableColumn) => {
         if (!col.sortKey || !onSortChange) return;

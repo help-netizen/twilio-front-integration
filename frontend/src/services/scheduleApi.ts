@@ -18,6 +18,7 @@ export interface ScheduleItem {
     start_at: string | null;
     end_at: string | null;
     address_summary: string;
+    city?: string | null;
     // SCHED-ROUTE-001: geocoding state + generated Maps link (no Google call on read).
     lat: number | null;
     lng: number | null;

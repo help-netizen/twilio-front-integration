@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { User, Phone, Mail, MapPin, Briefcase, Calendar, Tag, FileText } from 'lucide-react';
 import { useLeadByPhone } from '../../hooks/useLeadByPhone';
+import { useAuthz } from '../../hooks/useAuthz';
 import { Skeleton } from '../ui/skeleton';
 import { CreateLeadJobWizard } from './CreateLeadJobWizard';
 import type { Lead } from '../../types/lead';
@@ -46,6 +47,8 @@ function buildAddress(lead: Lead): string | null {
 
 export function LeadCard({ phone, hasActiveCall }: LeadCardProps) {
     const { lead, isLoading } = useLeadByPhone(phone);
+    const { hasPermission } = useAuthz();
+    const canViewSource = hasPermission('lead_source.view');
     const [confirmCall, setConfirmCall] = useState(false);
 
     if (isLoading) {
@@ -174,7 +177,7 @@ export function LeadCard({ phone, hasActiveCall }: LeadCardProps) {
                     )}
 
                     {/* Source */}
-                    {lead.JobSource && (
+                    {canViewSource && lead.JobSource && (
                         <InfoItem icon={<FileText />} label="Source">
                             {lead.JobSource}
                         </InfoItem>

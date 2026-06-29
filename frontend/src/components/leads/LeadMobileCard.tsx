@@ -18,6 +18,7 @@ import React from 'react';
 import type { Lead } from '../../types/lead';
 import { formatPhoneDisplay } from '../../utils/phoneUtils';
 import { LEAD_STATUS_COLORS, getLeadStatusPillStyle } from './leadStatusStyles';
+import { useAuthz } from '../../hooks/useAuthz';
 
 interface LeadMobileCardProps {
     lead: Lead;
@@ -25,12 +26,14 @@ interface LeadMobileCardProps {
 }
 
 export const LeadMobileCard: React.FC<LeadMobileCardProps> = ({ lead, onClick }) => {
+    const { hasPermission } = useAuthz();
+    const canViewSource = hasPermission('lead_source.view');
     const accent = LEAD_STATUS_COLORS[lead.Status] || 'var(--blanc-ink-3, rgba(117, 106, 89, 0.6))';
     const isLost = !!lead.LeadLost;
 
     const name = `${lead.FirstName || ''} ${lead.LastName || ''}`.trim() || lead.Company || 'No name';
     const phone = lead.Phone ? formatPhoneDisplay(lead.Phone) : '';
-    const typeSource = [lead.JobType, lead.JobSource].filter(Boolean).join(' · ');
+    const typeSource = [lead.JobType, canViewSource ? lead.JobSource : null].filter(Boolean).join(' · ');
 
     const pill = getLeadStatusPillStyle(lead.Status);
 

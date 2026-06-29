@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { MoreVertical, Copy, MapPin, Phone } from 'lucide-react';
+import { MoreVertical, Copy, Phone } from 'lucide-react';
 import type { ScheduleItem } from '../../services/scheduleApi';
 import { formatTimeInTZ } from '../../utils/companyTime';
 import { getProviderColor } from '../../utils/providerColors';
@@ -83,6 +83,7 @@ export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({ item, compac
     // chrome as classic; only the inner composition differs. classic stays below.
     if (layout === 'agenda') {
         const hasTime = !!timeLabel;
+        const nameCity = [item.customer_name, item.city].filter(Boolean).join(', ');
         // The status dot (Variant A) sits next to the technician name; omit when
         // there's no status. The kebab (Copy job) ends the top-right cluster.
         const statusDot = item.status ? (
@@ -162,40 +163,17 @@ export const ScheduleItemCard: React.FC<ScheduleItemCardProps> = ({ item, compac
                     {/* Title — omitted when it became the hero (no time) */}
                     {hasTime && (
                         <h3
-                            className="font-semibold truncate"
-                            style={{ fontFamily: 'Manrope, sans-serif', letterSpacing: '-0.03em', fontSize: '15px', color: 'var(--sched-ink-1)', margin: 0 }}
+                            className="truncate"
+                            style={{ fontFamily: 'Manrope, sans-serif', letterSpacing: '-0.03em', fontSize: '14px', fontWeight: 500, color: 'var(--sched-ink-1)', margin: 0 }}
                         >
                             {item.title}
                         </h3>
                     )}
 
-                    {/* Customer */}
-                    {item.customer_name && (
-                        <span className="text-[13px] truncate" style={{ color: 'var(--sched-ink-2)' }}>
-                            {item.customer_name}
-                        </span>
-                    )}
-
-                    {/* Address — map-pin + Maps link (same behavior as classic) */}
-                    {item.address_summary && (
-                        <span className="flex items-center gap-1.5 text-[13px]" style={{ color: 'var(--sched-ink-2)', minWidth: 0 }}>
-                            <MapPin className="size-3.5 flex-shrink-0" style={{ color: 'var(--sched-ink-3)' }} />
-                            {item.google_maps_url ? (
-                                <a
-                                    href={item.google_maps_url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    onClick={stop}
-                                    onKeyDown={stop as unknown as React.KeyboardEventHandler}
-                                    className="truncate hover:underline"
-                                    style={{ color: 'var(--sched-ink-2)' }}
-                                    title={item.normalized_address || item.address_summary}
-                                >
-                                    {item.address_summary}
-                                </a>
-                            ) : (
-                                <span className="truncate" title={item.address_summary}>{item.address_summary}</span>
-                            )}
+                    {/* Customer · City — plain text, one line */}
+                    {nameCity && (
+                        <span className="truncate" style={{ fontSize: '14px', fontWeight: 400, color: 'var(--sched-ink-2)' }}>
+                            {nameCity}
                         </span>
                     )}
 
