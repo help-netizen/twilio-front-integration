@@ -210,19 +210,45 @@ function firstId(...candidates) {
     return '';
 }
 
+// Read a flat id field off a ZB payload that may arrive in any of THREE shapes:
+//  - a parsed object (the normal case),
+//  - a JSON-encoded string (axios leaves res.data unparsed when the response
+//    content-type isn't application/json — the invoice then lands double-encoded),
+//  - or even MALFORMED JSON (ZB has shipped invoices like `..."price":}...` that
+//    JSON.parse rejects).
+// Reading across all three is what stops a job link from being silently dropped
+// when `invoice.job_id` is present in the body but unreachable as a property —
+// the root cause of payment 10754 ("payment without linked work").
+function readField(source, key) {
+    if (source == null) return undefined;
+    if (typeof source === 'object') return source[key];
+    if (typeof source === 'string') {
+        try {
+            const parsed = JSON.parse(source);
+            if (parsed && typeof parsed === 'object') return parsed[key];
+        } catch { /* malformed — fall through to a regex scan */ }
+        const m = source.match(new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`));
+        return m ? m[1] : undefined;
+    }
+    return undefined;
+}
+
 /** Resolve the Zenbooker invoice id for a transaction (flat id or nested object). */
 function resolveZbInvoiceId(txn) {
-    return firstId(txn?.invoice_id, txn?.invoice?.id);
+    return firstId(readField(txn, 'invoice_id'), txn?.invoice?.id);
 }
 
 /**
  * Resolve the Zenbooker job id for a transaction, preferring the invoice's job
  * reference and falling back to a job id carried directly on the transaction.
+ * Tolerates string/double-encoded/malformed payloads via readField (see 10754).
  */
 function resolveZbJobId(txn, invoice) {
     return firstId(
-        invoice?.job_id, invoice?.job?.id,
-        txn?.job_id, txn?.job?.id,
+        readField(invoice, 'job_id'),
+        (invoice && typeof invoice === 'object') ? invoice.job?.id : undefined,
+        readField(txn, 'job_id'),
+        (txn && typeof txn === 'object') ? txn.job?.id : undefined,
     );
 }
 
@@ -390,35 +416,46 @@ async function syncPayments(companyId, dateFrom, dateTo) {
                 $27, $28, $29,
                 $30
             )
+            -- Job-BODY-derived columns (job_number, job_type, status, tags,
+            -- source, tech, custom_fields, job_detail, attachments, zb_raw_job,
+            -- client) are guarded: when THIS sync didn't fetch the job body
+            -- (EXCLUDED.missing_job_link = true, i.e. getJob failed/was skipped),
+            -- a plain "= EXCLUDED.x" would WIPE good data with empties — that's
+            -- how work-note images vanished from already-synced payments after a
+            -- re-sync where the job fetch timed out (reconcileJobLinks heals the
+            -- link but never repopulates attachments). So keep the existing value
+            -- on a body-less run; take the fresh value only when we actually have
+            -- the job (legit note/image removals in ZB still propagate then).
             ON CONFLICT (company_id, transaction_id) DO UPDATE SET
                 invoice_id = EXCLUDED.invoice_id,
-                job_id = EXCLUDED.job_id,
-                job_number = EXCLUDED.job_number,
-                client = EXCLUDED.client,
-                job_type = EXCLUDED.job_type,
-                status = EXCLUDED.status,
+                job_id = COALESCE(NULLIF(EXCLUDED.job_id, ''), zb_payments.job_id),
+                job_number = CASE WHEN EXCLUDED.missing_job_link THEN zb_payments.job_number ELSE EXCLUDED.job_number END,
+                client = CASE WHEN EXCLUDED.missing_job_link THEN zb_payments.client ELSE EXCLUDED.client END,
+                job_type = CASE WHEN EXCLUDED.missing_job_link THEN zb_payments.job_type ELSE EXCLUDED.job_type END,
+                status = CASE WHEN EXCLUDED.missing_job_link THEN zb_payments.status ELSE EXCLUDED.status END,
                 payment_methods = EXCLUDED.payment_methods,
                 display_payment_method = EXCLUDED.display_payment_method,
                 amount_paid = EXCLUDED.amount_paid,
-                tags = EXCLUDED.tags,
+                tags = CASE WHEN EXCLUDED.missing_job_link THEN zb_payments.tags ELSE EXCLUDED.tags END,
                 payment_date = EXCLUDED.payment_date,
-                source = EXCLUDED.source,
-                tech = EXCLUDED.tech,
+                source = CASE WHEN EXCLUDED.missing_job_link THEN zb_payments.source ELSE EXCLUDED.source END,
+                tech = CASE WHEN EXCLUDED.missing_job_link THEN zb_payments.tech ELSE EXCLUDED.tech END,
                 transaction_status = EXCLUDED.transaction_status,
-                missing_job_link = EXCLUDED.missing_job_link,
+                -- never regress a previously-linked row to "missing" on a body-less run
+                missing_job_link = CASE WHEN EXCLUDED.missing_job_link THEN zb_payments.missing_job_link ELSE false END,
                 invoice_status = EXCLUDED.invoice_status,
                 invoice_total = EXCLUDED.invoice_total,
                 invoice_amount_paid = EXCLUDED.invoice_amount_paid,
                 invoice_amount_due = EXCLUDED.invoice_amount_due,
                 invoice_paid_in_full = EXCLUDED.invoice_paid_in_full,
-                job_detail = EXCLUDED.job_detail,
+                job_detail = CASE WHEN EXCLUDED.missing_job_link THEN zb_payments.job_detail ELSE EXCLUDED.job_detail END,
                 invoice_detail = EXCLUDED.invoice_detail,
-                attachments = EXCLUDED.attachments,
+                attachments = CASE WHEN EXCLUDED.missing_job_link THEN zb_payments.attachments ELSE EXCLUDED.attachments END,
                 metadata = EXCLUDED.metadata,
                 zb_raw_transaction = EXCLUDED.zb_raw_transaction,
                 zb_raw_invoice = EXCLUDED.zb_raw_invoice,
-                zb_raw_job = EXCLUDED.zb_raw_job,
-                custom_fields = EXCLUDED.custom_fields,
+                zb_raw_job = CASE WHEN EXCLUDED.missing_job_link THEN zb_payments.zb_raw_job ELSE EXCLUDED.zb_raw_job END,
+                custom_fields = CASE WHEN EXCLUDED.missing_job_link THEN zb_payments.custom_fields ELSE EXCLUDED.custom_fields END,
                 updated_at = now()
         `, [
             companyId, row.transaction_id, row.invoice_id || null, row.job_id || null,
