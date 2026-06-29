@@ -1,0 +1,5 @@
+{
+  "8611665": { "tag": "Feature", "text": "Tasks — track follow-ups on any job, lead, estimate or invoice" },
+  "2754e1b": { "tag": "Feature", "text": "Roles & Access editor — manage role permissions in-app" },
+  "3b328f8": { "tag": "Polish", "text": "Role-based access audit + hardening across the app" }
+}

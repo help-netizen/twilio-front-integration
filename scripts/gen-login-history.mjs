@@ -14,9 +14,16 @@
  * chore/docs/test/ci/build/merge noise is dropped, conventional-commit prefixes
  * are stripped, and the whole include is wrapped in <#noparse> so a stray
  * "${" or "<#" in a commit message can never break template rendering.
+ *
+ * CURATION: auto-derived text is only as good as the commit subject. To polish a
+ * line (or hide/retag it) durably — without hand-editing this generated file —
+ * add an entry to scripts/login-history-overrides.json keyed by the short sha:
+ *   { "8611665": { "tag": "Feature", "text": "Friendly, user-facing description" },
+ *     "abc1234": { "hide": true } }
+ * Overrides survive regeneration. Re-run `npm run gen:login-history` after editing.
  */
 import { execSync } from 'node:child_process';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -27,6 +34,17 @@ const US = '\x1f'; // unit separator between fields
 const RS = '\x1e'; // record separator between commits
 
 const SKIP = new Set(['chore', 'docs', 'doc', 'test', 'tests', 'ci', 'build', 'deps', 'dep', 'wip', 'revert']);
+
+// Curated overrides (sha → { text?, tag?, hide? }) — polish/hide/retag durably.
+let OVERRIDES = {};
+try {
+  OVERRIDES = JSON.parse(readFileSync(resolve(ROOT, 'scripts/login-history-overrides.json'), 'utf8'));
+} catch { /* no overrides file — fine */ }
+
+function tagToCat(tag) {
+  const t = String(tag).toLowerCase();
+  return t === 'feature' ? 'feature' : t === 'fix' ? 'fix' : 'polish';
+}
 
 function esc(s) {
   return String(s)
@@ -82,6 +100,12 @@ for (const rec of raw.split(RS)) {
   if (!sha || !iso || !subject) continue;
   const c = classify(subject);
   if (!c) continue;
+  const ov = OVERRIDES[sha];
+  if (ov) {
+    if (ov.hide) continue;
+    if (ov.text) c.text = ov.text;
+    if (ov.tag) { c.tag = ov.tag; c.cat = tagToCat(ov.tag); }
+  }
   items.push({ sha, iso, ...c });
   if (items.length >= MAX_ITEMS) break;
 }
