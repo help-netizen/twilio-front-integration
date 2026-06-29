@@ -1,0 +1,238 @@
+/**
+ * TASKS-001 — tasks route tests.
+ *
+ * DB is mocked like the other route tests; the query layer (tasksQueries) runs
+ * for real against the mocked db.query. The fake auth middleware sets
+ * req.user/req.authz/req.companyFilter so the per-route requirePermission gating
+ * and the own-vs-all visibility scoping are exercised. (401 is enforced by the
+ * real `authenticate` at mount time in production, consistent with the suite.)
+ */
+
+const express = require('express');
+const request = require('supertest');
+
+const mockQuery = jest.fn();
+jest.mock('../../backend/src/db/connection', () => ({ query: mockQuery }));
+jest.mock('../../backend/src/services/auditService', () => ({ log: jest.fn(async () => {}) }));
+jest.mock('../../backend/src/services/userService', () => ({ listUsers: jest.fn() }));
+
+const tasksRouter = require('../../backend/src/routes/tasks');
+const userService = require('../../backend/src/services/userService');
+
+const COMPANY = '00000000-0000-0000-0000-000000000001';
+const ME = 'crm-me';
+const OTHER = 'crm-other';
+
+function makeApp({ permissions = ['tasks.view', 'tasks.create', 'tasks.manage'], company = COMPANY, me = ME } = {}) {
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+        req.user = { sub: 'kc', email: 'u@x.com', crmUser: { id: me } };
+        req.authz = { scope: 'tenant', permissions };
+        req.companyFilter = { company_id: company };
+        next();
+    });
+    app.use('/api/tasks', tasksRouter);
+    return app;
+}
+
+beforeEach(() => jest.clearAllMocks());
+
+describe('gating', () => {
+    test('GET / without tasks.view → 403, no query', async () => {
+        const res = await request(makeApp({ permissions: ['jobs.view'] })).get('/api/tasks');
+        expect(res.status).toBe(403);
+        expect(mockQuery).not.toHaveBeenCalled();
+    });
+
+    test('POST / without tasks.create → 403, no query', async () => {
+        const res = await request(makeApp({ permissions: ['tasks.view'] }))
+            .post('/api/tasks').send({ parent_type: 'job', parent_id: 1, description: 'x' });
+        expect(res.status).toBe(403);
+        expect(mockQuery).not.toHaveBeenCalled();
+    });
+});
+
+describe('GET / — visibility scope', () => {
+    test('manager (tasks.manage) sees all — no owner scoping', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 1, parent_type: 'job' }] });
+        const res = await request(makeApp()).get('/api/tasks');
+        expect(res.status).toBe(200);
+        expect(res.body.data.tasks).toHaveLength(1);
+        const sql = mockQuery.mock.calls[0][0];
+        expect(sql).not.toMatch(/t\.owner_user_id = \$/);
+    });
+
+    test('provider (no manage) is scoped to own tasks', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [] });
+        const res = await request(makeApp({ permissions: ['tasks.view', 'tasks.create'] })).get('/api/tasks');
+        expect(res.status).toBe(200);
+        const [sql, params] = mockQuery.mock.calls[0];
+        expect(sql).toMatch(/t\.owner_user_id = \$2/);
+        expect(params[1]).toBe(ME);
+    });
+
+    test('default filter is status=open; ?status=all drops it', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [] });
+        await request(makeApp()).get('/api/tasks');
+        expect(mockQuery.mock.calls[0][0]).toMatch(/t\.status = \$/);
+        mockQuery.mockClear();
+        mockQuery.mockResolvedValueOnce({ rows: [] });
+        await request(makeApp()).get('/api/tasks?status=all');
+        expect(mockQuery.mock.calls[0][0]).not.toMatch(/t\.status = \$/);
+    });
+});
+
+describe('GET /assignees', () => {
+    test('403 without tasks.create/manage', async () => {
+        const res = await request(makeApp({ permissions: ['tasks.view'] })).get('/api/tasks/assignees');
+        expect(res.status).toBe(403);
+    });
+
+    test('returns id+name list', async () => {
+        userService.listUsers.mockResolvedValueOnce({ users: [{ id: 'u1', full_name: 'Ann', email: 'a@x.com' }] });
+        const res = await request(makeApp()).get('/api/tasks/assignees');
+        expect(res.status).toBe(200);
+        expect(userService.listUsers).toHaveBeenCalledWith(COMPANY, expect.objectContaining({ status: 'active' }));
+        expect(res.body.data.users).toEqual([{ id: 'u1', name: 'Ann', email: 'a@x.com' }]);
+    });
+});
+
+describe('GET /entity/:parentType/:parentId', () => {
+    test('invalid parent type → 400, no query', async () => {
+        const res = await request(makeApp()).get('/api/tasks/entity/widget/5');
+        expect(res.status).toBe(400);
+        expect(res.body.error.code).toBe('INVALID_PARENT_TYPE');
+        expect(mockQuery).not.toHaveBeenCalled();
+    });
+
+    test('parent not in company → 404 (only the existence check ran)', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [] }); // parentExists → none
+        const res = await request(makeApp()).get('/api/tasks/entity/job/999');
+        expect(res.status).toBe(404);
+        expect(mockQuery).toHaveBeenCalledTimes(1);
+        expect(mockQuery.mock.calls[0][1]).toEqual(['999', COMPANY]);
+    });
+
+    test('valid → returns the parent tasks', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ 1: 1 }] });            // parentExists
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 7, parent_type: 'job' }] }); // listEntityTasks
+        const res = await request(makeApp()).get('/api/tasks/entity/job/5');
+        expect(res.status).toBe(200);
+        expect(res.body.data.tasks).toHaveLength(1);
+        expect(mockQuery.mock.calls[1][0]).toMatch(/t\.job_id = \$2/);
+    });
+});
+
+describe('POST / — create', () => {
+    test('missing parent → 400', async () => {
+        const res = await request(makeApp()).post('/api/tasks').send({ description: 'x' });
+        expect(res.status).toBe(400);
+        expect(res.body.error.code).toBe('MISSING_PARENT');
+        expect(mockQuery).not.toHaveBeenCalled();
+    });
+
+    test('invalid parent type → 400', async () => {
+        const res = await request(makeApp()).post('/api/tasks').send({ parent_type: 'widget', parent_id: 1, description: 'x' });
+        expect(res.status).toBe(400);
+        expect(res.body.error.code).toBe('INVALID_PARENT_TYPE');
+    });
+
+    test('empty description → 400', async () => {
+        const res = await request(makeApp()).post('/api/tasks').send({ parent_type: 'job', parent_id: 1, description: '   ' });
+        expect(res.status).toBe(400);
+        expect(res.body.error.code).toBe('DESCRIPTION_REQUIRED');
+    });
+
+    test('invalid due_at → 400', async () => {
+        const res = await request(makeApp()).post('/api/tasks').send({ parent_type: 'job', parent_id: 1, description: 'x', due_at: 'not-a-date' });
+        expect(res.status).toBe(400);
+        expect(res.body.error.code).toBe('INVALID_DUE_AT');
+    });
+
+    test('parent not found → 404', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [] }); // parentExists → none
+        const res = await request(makeApp()).post('/api/tasks').send({ parent_type: 'lead', parent_id: 42, description: 'Call' });
+        expect(res.status).toBe(404);
+    });
+
+    test('valid → 201, author = crmUser.id, owner defaults to me, company-scoped', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ 1: 1 }] });          // parentExists
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 10 }] });         // INSERT RETURNING id
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 10, description: 'Call client', status: 'open', owner_user_id: ME, author_user_id: ME, parent_type: 'job', parent_id: 5 }] }); // getTaskById
+
+        const res = await request(makeApp()).post('/api/tasks')
+            .send({ parent_type: 'job', parent_id: 5, description: 'Call client' });
+
+        expect(res.status).toBe(201);
+        expect(res.body.data.task.id).toBe(10);
+        const [sql, vals] = mockQuery.mock.calls[1];
+        expect(sql).toMatch(/INSERT INTO tasks/i);
+        expect(sql).toMatch(/author_user_id/);
+        expect(vals[0]).toBe(COMPANY);
+        expect(vals[1]).toBe('Call client'); // title holds the text
+        expect(vals[5]).toBe(ME);            // owner defaults to me
+        expect(vals[6]).toBe(ME);            // author = crmUser.id
+        expect(vals[8]).toBe(5);             // parent id (job_id)
+    });
+});
+
+describe('PATCH /:id — edit / complete / snooze', () => {
+    test('not found (or cross-tenant) → 404', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [] }); // getTaskById → none (company-scoped)
+        const res = await request(makeApp()).patch('/api/tasks/123').send({ status: 'done' });
+        expect(res.status).toBe(404);
+        expect(mockQuery).toHaveBeenCalledTimes(1);
+    });
+
+    test('provider modifying a task they neither own nor authored → 403', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 7, owner_user_id: OTHER, author_user_id: OTHER, status: 'open' }] });
+        const res = await request(makeApp({ permissions: ['tasks.view', 'tasks.create'] }))
+            .patch('/api/tasks/7').send({ status: 'done' });
+        expect(res.status).toBe(403);
+        expect(mockQuery).toHaveBeenCalledTimes(1);
+    });
+
+    test('invalid status → 400', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 7, owner_user_id: ME, author_user_id: ME, status: 'open' }] });
+        const res = await request(makeApp()).patch('/api/tasks/7').send({ status: 'archived' });
+        expect(res.status).toBe(400);
+        expect(res.body.error.code).toBe('INVALID_STATUS');
+    });
+
+    test('done sets completed_at; returns updated task', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 7, owner_user_id: ME, author_user_id: ME, status: 'open' }] }); // getTaskById
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 7 }] });                                                          // UPDATE RETURNING id
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 7, status: 'done', completed_at: '2026-06-28T00:00:00Z' }] });    // getTaskById
+        const res = await request(makeApp()).patch('/api/tasks/7').send({ status: 'done' });
+        expect(res.status).toBe(200);
+        expect(res.body.data.task.status).toBe('done');
+        expect(mockQuery.mock.calls[1][0]).toMatch(/completed_at = CASE WHEN/i);
+    });
+
+    test('provider can complete their OWN task', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 8, owner_user_id: ME, author_user_id: OTHER, status: 'open' }] });
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 8 }] });
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 8, status: 'done' }] });
+        const res = await request(makeApp({ permissions: ['tasks.view', 'tasks.create'] }))
+            .patch('/api/tasks/8').send({ status: 'done' });
+        expect(res.status).toBe(200);
+    });
+});
+
+describe('DELETE /:id', () => {
+    test('foreign/unknown id → 404', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [] });
+        const res = await request(makeApp()).delete('/api/tasks/55');
+        expect(res.status).toBe(404);
+    });
+
+    test('allowed → deletes', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ id: 9, owner_user_id: ME, author_user_id: ME }] });
+        mockQuery.mockResolvedValueOnce({ rowCount: 1 });
+        const res = await request(makeApp()).delete('/api/tasks/9');
+        expect(res.status).toBe(200);
+        expect(res.body.ok).toBe(true);
+        expect(mockQuery.mock.calls[1][0]).toMatch(/DELETE FROM tasks/i);
+    });
+});

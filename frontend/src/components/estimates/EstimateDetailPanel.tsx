@@ -20,6 +20,7 @@ import {
     type EstimateItemPreset,
 } from '../../services/estimateItemPresetsApi';
 import { useAuthz } from '../../hooks/useAuthz';
+import { TaskStack } from '../tasks/TaskStack';
 import type { Estimate, EstimateEvent, EstimateItem, EstimateSendData, EstimateDiscountType } from '../../services/estimatesApi';
 import {
     convertEstimateToInvoice,
@@ -307,6 +308,8 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
 
             <div className="grid min-h-0 flex-1 overflow-hidden md:grid-cols-[minmax(0,1fr)_310px]">
                 <main className="min-h-0 space-y-6 overflow-y-auto p-5">
+                    {/* Tasks — TASKS-001 */}
+                    <TaskStack parentType="estimate" parentId={estimate.id} title="Tasks" />
                     {/* Summary */}
                     <section className="rounded-md border border-[var(--blanc-line)] bg-[var(--blanc-panel-surface,#fffdf9)]">
                         <div className="flex items-center justify-between px-4 py-3">

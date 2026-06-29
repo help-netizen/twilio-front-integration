@@ -4,6 +4,36 @@
 
 ---
 
+## 2026-06-28 — TASKS-001: cross-entity Tasks (no standalone card)
+
+A **Task** = assignee + deadline (date **and** time) + description, always attached to **one** parent
+(Job / Lead / Contact / Estimate / Invoice) with **no standalone view**. Spec: `docs/specs/TASKS-001.md`.
+
+- **In the parent card:** tasks render as a **stack** pinned at the top of the Notes feed (Job/Lead/Contact,
+  via shared `NotesSection`) with an **"Add task"** button beside "Add note"; on Estimate/Invoice (no notes
+  feed) the same stack is a compact block near the top. One task → a card; many → a stack that **expands on
+  click**. Per task: **Done** (optimistic + undo), **Snooze** (15 min / 1 h / 3 h / tomorrow 08:00 / pick a
+  date → 08:00, company TZ — reschedules `due_at`), and a **pencil** edit dialog.
+- **Global `/tasks` page** (new nav tab, gated `tasks.view`): cross-entity list grouped by due bucket
+  (Overdue/Today/Tomorrow/This week/Later/No date); clicking a row opens the **parent entity's card**
+  (jobs/leads/contacts by path, estimates/invoices via the existing `?openId`). Mobile = date-grouped tiles.
+- **Data:** migration **136** extends the existing `tasks` table (job/lead/estimate/invoice FK +
+  `author_user_id` + indexes; `contact_id` already existed; **no breaking CHECK**). Task text lives in the
+  NOT NULL `title` column, exposed to the API as `description`.
+- **RBAC:** new `tasks.view` / `tasks.create` / `tasks.manage` — seeded for existing companies (136) **and**
+  new-company bootstrap (`050`), + added to `permissionCatalog.js` so the Roles & Access editor lists them.
+  Provider (Technician) gets view+create and acts on **own** tasks; manage ⇒ see/act on all. Visibility:
+  `tasks.manage` → all company tasks, else own (assigned).
+- **API:** new `routes/tasks.js` (`/api/tasks`) — `GET /` (role-scoped list), `GET /assignees`,
+  `GET /entity/:type/:id`, `POST /`, `PATCH /:id`, `DELETE /:id`; all `company_id`-scoped, foreign id → 404,
+  exactly-one-parent enforced in-app, author/owner = `crmUser.id`. New `db/tasksQueries.js`.
+- **Verify:** backend `tests/routes/tasks.test.js` **23/23**; full route suite **223/223**; R4 suite 15/15
+  (catalog edit non-breaking); frontend `npm run build` (tsc -b strict) green; dev-preview verified (Tasks
+  page renders grouped rows + Done/Snooze, snooze popover shows the 5 presets, no console errors). Independent
+  adversarial backend review APPROVED after fixing the new-tenant seeding gap (the `050` addition above).
+
+---
+
 ## 2026-06-28 — RBAC-ROLES-EDITOR-001 (RBAC-AUDIT-001 Wave 2 / R4): in-app access-grid editor
 
 Closed the one missing piece from the audit: the role matrix + per-member overrides existed as data +

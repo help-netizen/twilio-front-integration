@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Tabs, TabsList, TabsTrigger } from '../ui/tabs';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '../ui/dropdown-menu';
-import { PhoneIncoming, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase, Bell, CalendarDays, MapPin, FileCog, Zap, CreditCard, Building2 } from 'lucide-react';
+import { PhoneIncoming, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase, Bell, CalendarDays, MapPin, FileCog, Zap, CreditCard, Building2, ListChecks } from 'lucide-react';
 import { useAuthz } from '../../hooks/useAuthz';
 
 interface AppNavProps { activeTab: string; pulseUnreadCount: number; hasRole: (r: string) => boolean; logout: () => void; }
@@ -15,6 +15,7 @@ const WORKSPACE_TABS = [
     { key: 'leads', label: 'Leads', icon: Users, path: '/leads', permission: 'leads.view' },
     { key: 'jobs', label: 'Jobs', icon: Briefcase, path: '/jobs', permission: 'jobs.view' },
     { key: 'schedule', label: 'Schedule', icon: CalendarDays, path: '/schedule', permission: 'schedule.view' },
+    { key: 'tasks', label: 'Tasks', icon: ListChecks, path: '/tasks', permission: 'tasks.view' },
     { key: 'contacts', label: 'Contacts', icon: Contact2, path: '/contacts', permission: 'contacts.view' },
     { key: 'payments', label: 'Payments', icon: DollarSign, path: '/payments', permission: 'payments.view' },
 ] as const;
@@ -137,6 +138,7 @@ export function getActiveTab(pathname: string): string {
     if (pathname.startsWith('/leads')) return 'leads';
     if (pathname.startsWith('/jobs')) return 'jobs';
     if (pathname.startsWith('/schedule')) return 'schedule';
+    if (pathname.startsWith('/tasks')) return 'tasks';
     if (pathname.startsWith('/contacts')) return 'contacts';
     if (pathname.startsWith('/payments')) return 'payments';
     if (pathname.startsWith('/settings')) return 'settings';

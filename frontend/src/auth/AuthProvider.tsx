@@ -61,6 +61,7 @@ const DEV_PERMISSIONS = [
     'jobs.view', 'jobs.create', 'jobs.edit', 'jobs.assign',
     'jobs.close', 'jobs.done_pending_approval',
     'schedule.view', 'schedule.dispatch',
+    'tasks.view', 'tasks.create', 'tasks.manage',
     'financial_data.view',
     'estimates.view', 'estimates.create', 'estimates.send',
     'invoices.view', 'invoices.create', 'invoices.send',

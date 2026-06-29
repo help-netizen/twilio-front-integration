@@ -50,6 +50,7 @@ import {
     updateInvoiceItem,
 } from '../../services/invoicesApi';
 import { useAuthz } from '../../hooks/useAuthz';
+import { TaskStack } from '../tasks/TaskStack';
 import { toast } from 'sonner';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -458,6 +459,8 @@ export function InvoiceDetailPanel({
 
             <div className="grid min-h-0 flex-1 overflow-hidden md:grid-cols-[minmax(0,1fr)_310px]">
                 <main className="min-h-0 space-y-6 overflow-y-auto p-5">
+                    {/* Tasks — TASKS-001 */}
+                    <TaskStack parentType="invoice" parentId={invoice.id} title="Tasks" />
                     {/* Summary (stored in `notes` field; labeled "Summary" to match estimates) */}
                     <section className="rounded-2xl border border-[var(--blanc-line)]">
                         <div className="flex items-center justify-between px-4 py-3">

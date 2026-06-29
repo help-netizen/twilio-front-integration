@@ -6,6 +6,7 @@
  *   - 050_seed_role_configs.sql   (the base 50 keys)
  *   - 074_add_fsm_permissions.sql (fsm.viewer/editor/publisher/override)
  *   - 118_add_stripe_collection_permissions.sql (payments.collect_keyed/terminal)
+ *   - 136_extend_tasks_for_crm_entities.sql (tasks.view/create/manage)
  *
  * Grouped per the RBAC audit categories. Keep this in sync with the seed
  * migrations so the matrix rows always match the keys the resolver understands.
@@ -65,6 +66,14 @@ const PERMISSION_CATALOG = [
             { key: 'jobs.done_pending_approval', label: 'Mark job done (pending approval)' },
             { key: 'schedule.view', label: 'View schedule' },
             { key: 'schedule.dispatch', label: 'Dispatch on schedule' },
+        ],
+    },
+    {
+        category: 'Tasks',
+        items: [
+            { key: 'tasks.view', label: 'View tasks' },
+            { key: 'tasks.create', label: 'Create tasks' },
+            { key: 'tasks.manage', label: 'Manage all tasks' },
         ],
     },
     {

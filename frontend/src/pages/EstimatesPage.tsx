@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useEstimates } from '../hooks/useEstimates';
 import { EstimateDetailPanel } from '../components/estimates/EstimateDetailPanel';
 import { EstimateEditorDialog } from '../components/estimates/EstimateEditorDialog';
@@ -47,6 +48,18 @@ export function EstimatesPage() {
     const [editingEstimate, setEditingEstimate] = useState<Estimate | null>(null);
     const [sendDialogOpen, setSendDialogOpen] = useState(false);
     const [sendEstimateId, setSendEstimateId] = useState<number | null>(null);
+    const [searchParams, setSearchParams] = useSearchParams();
+
+    // Auto-open an estimate when navigated with ?openId=<id> (e.g. from a Task).
+    useEffect(() => {
+        const openId = searchParams.get('openId');
+        if (!openId) return;
+        const idNum = Number(openId);
+        if (Number.isFinite(idNum)) page.selectEstimate(idNum);
+        searchParams.delete('openId');
+        setSearchParams(searchParams, { replace: true });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [searchParams]);
 
     const handleEdit = (estimate: Estimate) => {
         setEditingEstimate(estimate);

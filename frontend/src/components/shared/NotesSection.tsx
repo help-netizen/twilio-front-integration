@@ -11,6 +11,7 @@ import { NoteAttachmentInput } from './NoteAttachmentInput';
 import { NoteAttachmentDisplay } from './NoteAttachmentDisplay';
 import { authedFetch } from '../../services/apiClient';
 import { useAuthz } from '../../hooks/useAuthz';
+import { TaskStack } from '../tasks/TaskStack';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -72,9 +73,11 @@ function apiPath(entityType: string, entityId: string | number): string {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSectionProps) {
-    const { user, isTenantAdmin } = useAuthz();
+    const { user, isTenantAdmin, hasAnyPermission } = useAuthz();
     const myId = user?.sub;
     const isAdmin = isTenantAdmin();
+    const canCreateTask = hasAnyPermission('tasks.create', 'tasks.manage');
+    const [taskCreateOpen, setTaskCreateOpen] = useState(false);
 
     const [notes, setNotes] = useState<Note[]>([]);
     const [text, setText] = useState('');
@@ -280,24 +283,55 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                     </div>
                 </div>
             ) : (
-                <button
-                    onClick={expand}
-                    className="w-full flex items-center gap-2 transition-opacity hover:opacity-70"
-                    style={{
-                        height: 34,
-                        borderRadius: 10,
-                        border: '1px solid var(--blanc-line)',
-                        background: 'transparent',
-                        paddingLeft: 12,
-                        paddingRight: 12,
-                        cursor: 'text',
-                        textAlign: 'left',
-                    }}
-                >
-                    <Plus className="size-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />
-                    <span className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Add note…</span>
-                </button>
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={expand}
+                        className="flex-1 flex items-center gap-2 transition-opacity hover:opacity-70"
+                        style={{
+                            height: 34,
+                            borderRadius: 10,
+                            border: '1px solid var(--blanc-line)',
+                            background: 'transparent',
+                            paddingLeft: 12,
+                            paddingRight: 12,
+                            cursor: 'text',
+                            textAlign: 'left',
+                        }}
+                    >
+                        <Plus className="size-3.5 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />
+                        <span className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Add note…</span>
+                    </button>
+                    {canCreateTask && (
+                        <button
+                            onClick={() => setTaskCreateOpen(true)}
+                            className="flex items-center gap-1.5 shrink-0 transition-opacity hover:opacity-70"
+                            style={{
+                                height: 34,
+                                borderRadius: 10,
+                                border: '1px solid var(--blanc-line)',
+                                background: 'transparent',
+                                paddingLeft: 12,
+                                paddingRight: 12,
+                                cursor: 'pointer',
+                                color: 'var(--blanc-ink-2)',
+                            }}
+                            title="Add task"
+                        >
+                            <Plus className="size-3.5 shrink-0" />
+                            <span className="text-sm">Add task</span>
+                        </button>
+                    )}
+                </div>
             )}
+
+            {/* Pinned tasks — TASKS-001 (tasks live at the top of the notes feed) */}
+            <TaskStack
+                parentType={entityType}
+                parentId={entityId}
+                showAddButton={false}
+                createOpen={taskCreateOpen}
+                onCreateOpenChange={setTaskCreateOpen}
+            />
 
             {/* Notes list — newest first */}
             {sortedNotes.map((note, i) => {

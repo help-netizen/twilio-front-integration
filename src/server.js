@@ -196,6 +196,9 @@ app.use('/api/zenbooker/jobs', authenticate, requireCompanyAccess, zenbookerJobs
 app.use('/api/jobs', authenticate, requireCompanyAccess, localJobsRouter);
 app.use('/api/zenbooker', authenticate, requireCompanyAccess, zenbookerRouter);
 
+// TASKS-001 — cross-entity tasks (per-route requirePermission inside the router).
+app.use('/api/tasks', authenticate, requireCompanyAccess, require('../backend/src/routes/tasks'));
+
 // ─── PF100 Foundation Contract routes (Sprint 1 — skeleton 501 stubs) ─────
 const scheduleRouter = require('../backend/src/routes/schedule');
 const estimatesRouter = require('../backend/src/routes/estimates');

@@ -60,6 +60,7 @@ import JobsPage from './pages/JobsPage';
 import { SchedulePage } from './pages/SchedulePage';
 import EstimatesPage from './pages/EstimatesPage';
 import InvoicesPage from './pages/InvoicesPage';
+import TasksPage from './pages/TasksPage';
 import TransactionsPage from './pages/TransactionsPage';
 import RouteManagerOverviewPage from './pages/telephony/RouteManagerOverviewPage';
 import CallFlowBuilderPage from './pages/telephony/CallFlowBuilderPage';
@@ -114,6 +115,7 @@ function App() {
               <Route path="/jobs" element={<ProtectedRoute permissions={['jobs.view']}><JobsPage /></ProtectedRoute>} />
               <Route path="/jobs/:jobId" element={<ProtectedRoute permissions={['jobs.view']}><JobsPage /></ProtectedRoute>} />
               <Route path="/schedule" element={<ProtectedRoute permissions={['schedule.view']}><SchedulePage /></ProtectedRoute>} />
+              <Route path="/tasks" element={<ProtectedRoute permissions={['tasks.view']}><TasksPage /></ProtectedRoute>} />
               <Route path="/estimates" element={<ProtectedRoute permissions={['estimates.view']}><EstimatesPage /></ProtectedRoute>} />
               <Route path="/invoices" element={<ProtectedRoute permissions={['invoices.view']}><InvoicesPage /></ProtectedRoute>} />
               <Route path="/contacts" element={<ProtectedRoute permissions={['contacts.view']}><ContactsPage /></ProtectedRoute>} />

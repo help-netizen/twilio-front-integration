@@ -39,7 +39,8 @@ CROSS JOIN (VALUES
     ('reports.calls.view'), ('reports.payments.view'), ('reports.financial.view'),
     ('client_job_history.view'),
     ('provider.enabled'), ('phone_calls.use'), ('call_masking.use'),
-    ('gps_tracking.view'), ('gps_tracking.collect')
+    ('gps_tracking.view'), ('gps_tracking.collect'),
+    ('tasks.view'), ('tasks.create'), ('tasks.manage')
 ) AS p(key)
 WHERE rc.role_key = 'tenant_admin'
 ON CONFLICT (role_config_id, permission_key) DO NOTHING;
@@ -65,7 +66,8 @@ CROSS JOIN (VALUES
     ('reports.dashboard.view'), ('reports.jobs.view'), ('reports.leads.view'),
     ('reports.calls.view'), ('reports.payments.view'), ('reports.financial.view'),
     ('client_job_history.view'),
-    ('phone_calls.use')
+    ('phone_calls.use'),
+    ('tasks.view'), ('tasks.create'), ('tasks.manage')
 ) AS p(key)
 WHERE rc.role_key = 'manager'
 ON CONFLICT (role_config_id, permission_key) DO NOTHING;
@@ -85,7 +87,8 @@ CROSS JOIN (VALUES
     ('reports.dashboard.view'), ('reports.jobs.view'), ('reports.leads.view'),
     ('reports.calls.view'),
     ('client_job_history.view'),
-    ('phone_calls.use')
+    ('phone_calls.use'),
+    ('tasks.view'), ('tasks.create'), ('tasks.manage')
 ) AS p(key)
 WHERE rc.role_key = 'dispatcher'
 ON CONFLICT (role_config_id, permission_key) DO NOTHING;
@@ -101,7 +104,8 @@ CROSS JOIN (VALUES
     ('jobs.done_pending_approval'),
     ('schedule.view'),
     ('provider.enabled'),
-    ('phone_calls.use')
+    ('phone_calls.use'),
+    ('tasks.view'), ('tasks.create')
 ) AS p(key)
 WHERE rc.role_key = 'provider'
 ON CONFLICT (role_config_id, permission_key) DO NOTHING;
