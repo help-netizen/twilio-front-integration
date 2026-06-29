@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Trash2 } from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog';
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/select';
+import { Dialog, DialogContent, DialogPanelHeader, DialogTitle, DialogDescription, DialogBody, DialogPanelFooter } from '../ui/dialog';
+import { FloatingField, FloatingLabel } from '../ui/floating-field';
+import { FloatingSelect } from '../ui/floating-select';
+import { SelectItem } from '../ui/select';
 import { Button } from '../ui/button';
 import { toast } from 'sonner';
 import { useAuthz } from '../../hooks/useAuthz';
@@ -24,6 +26,9 @@ interface Props {
 }
 
 const UNASSIGNED = '__none__';
+
+const dateInputClass =
+    'h-[50px] w-full rounded-xl border-[1.5px] border-input bg-transparent px-3.5 text-[15px] font-medium text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-ring disabled:cursor-not-allowed disabled:opacity-50';
 
 export function TaskFormDialog({ open, onOpenChange, parentType, parentId, tz, task, onSaved, onDeleted }: Props) {
     const { user } = useAuthz();
@@ -110,60 +115,56 @@ export function TaskFormDialog({ open, onOpenChange, parentType, parentId, tz, t
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent size="sm">
-                <DialogHeader>
+            <DialogContent variant="panel">
+                <DialogPanelHeader>
                     <DialogTitle>{editing ? 'Edit task' : 'New task'}</DialogTitle>
-                </DialogHeader>
+                    <DialogDescription className="sr-only">
+                        {editing ? 'Edit this task' : 'Create a task on this record'}
+                    </DialogDescription>
+                </DialogPanelHeader>
 
-                <div className="space-y-4">
-                    <div className="space-y-1.5">
-                        <label className="blanc-eyebrow">Description</label>
-                        <textarea
-                            autoFocus
-                            className="w-full text-sm resize-none outline-none bg-transparent leading-5"
-                            style={{ border: '1px solid var(--blanc-line)', borderRadius: 10, padding: '8px 12px', minHeight: 72, color: 'var(--blanc-ink-1)' }}
-                            placeholder="What needs to be done?"
+                <DialogBody className="md:px-8 md:py-7">
+                    <div className="space-y-5">
+                        <FloatingField
+                            label="Description"
+                            textarea
+                            rows={3}
                             value={description}
                             onChange={e => setDescription(e.target.value)}
                         />
-                    </div>
 
-                    <div className="space-y-1.5">
-                        <label className="blanc-eyebrow">Assignee</label>
-                        <Select value={assigneeId} onValueChange={setAssigneeId}>
-                            <SelectTrigger><SelectValue placeholder="Unassigned" /></SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value={UNASSIGNED}>Unassigned</SelectItem>
-                                {assignees.map(a => (
-                                    <SelectItem key={a.id} value={a.id}>{a.name || a.email}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    </div>
+                        <FloatingSelect label="Assignee" value={assigneeId} onValueChange={setAssigneeId}>
+                            <SelectItem value={UNASSIGNED}>Unassigned</SelectItem>
+                            {assignees.map(a => (
+                                <SelectItem key={a.id} value={a.id}>{a.name || a.email}</SelectItem>
+                            ))}
+                        </FloatingSelect>
 
-                    <div className="space-y-1.5">
-                        <label className="blanc-eyebrow">Deadline</label>
-                        <div className="flex items-center gap-2">
-                            <input
-                                type="date"
-                                className="flex-1 text-sm outline-none"
-                                style={{ border: '1px solid var(--blanc-line)', borderRadius: 10, padding: '8px 12px', color: 'var(--blanc-ink-1)', background: 'transparent' }}
-                                value={dueDate}
-                                onChange={e => setDueDate(e.target.value)}
-                            />
-                            <input
-                                type="time"
-                                className="text-sm outline-none"
-                                style={{ border: '1px solid var(--blanc-line)', borderRadius: 10, padding: '8px 12px', color: 'var(--blanc-ink-1)', background: 'transparent' }}
-                                value={dueTime}
-                                onChange={e => setDueTime(e.target.value)}
-                                disabled={!dueDate}
-                            />
+                        <div className="grid grid-cols-2 gap-3">
+                            <FloatingLabel label="Deadline date" htmlFor="task-due-date" filled={!!dueDate}>
+                                <input
+                                    id="task-due-date"
+                                    type="date"
+                                    className={dateInputClass}
+                                    value={dueDate}
+                                    onChange={e => setDueDate(e.target.value)}
+                                />
+                            </FloatingLabel>
+                            <FloatingLabel label="Time" htmlFor="task-due-time" filled={!!dueTime}>
+                                <input
+                                    id="task-due-time"
+                                    type="time"
+                                    className={dateInputClass}
+                                    value={dueTime}
+                                    onChange={e => setDueTime(e.target.value)}
+                                    disabled={!dueDate}
+                                />
+                            </FloatingLabel>
                         </div>
                     </div>
-                </div>
+                </DialogBody>
 
-                <DialogFooter className="sm:justify-between">
+                <DialogPanelFooter className="justify-between">
                     {editing ? (
                         <Button variant="ghost" onClick={remove} disabled={saving} className="text-red-600 hover:text-red-700">
                             <Trash2 className="size-4 mr-1" /> Delete
@@ -173,7 +174,7 @@ export function TaskFormDialog({ open, onOpenChange, parentType, parentId, tz, t
                         <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
                         <Button onClick={save} disabled={saving || !description.trim()}>{editing ? 'Save' : 'Add task'}</Button>
                     </div>
-                </DialogFooter>
+                </DialogPanelFooter>
             </DialogContent>
         </Dialog>
     );

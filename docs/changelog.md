@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-06-29 — TASKS-FORM-PANEL-001: task form as a right-side panel
+
+The New/Edit Task form (`TaskFormDialog`) now opens as a **right-side slide-out layer**
+(`<DialogContent variant="panel">`) — the same mechanic as estimate creation — instead of a centered modal,
+for **both** create ("New task") and edit (pencil) modes. Fields adopt the FORM-CANON floating-label style
+(`FloatingField` description textarea, `FloatingSelect` assignee, `FloatingLabel`-wrapped date+time). All
+behavior unchanged (required description, self-default assignee, deadline → ISO in company TZ, Delete on
+edit, toasts); no prop/contract change, callers untouched. Frontend-only; `npm run build` green;
+dev-preview confirmed the panel renders with floating labels. Spec: `docs/specs/TASKS-FORM-PANEL-001.md`.
+
+---
+
 ## 2026-06-28 — TASKS-001: cross-entity Tasks (no standalone card)
 
 A **Task** = assignee + deadline (date **and** time) + description, always attached to **one** parent
