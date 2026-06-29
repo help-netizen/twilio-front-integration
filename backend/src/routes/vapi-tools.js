@@ -43,16 +43,9 @@ function vapiSecretAuth(req, res, next) {
     next();
 }
 
-// Normalize a ZIP to a 5-digit string, recovering a dropped leading zero. The
-// voice model sometimes treats a ZIP as a number, so a Boston-area "01721"
-// arrives as "1721" — left-pad it back to 5 so the (text, exact-match)
-// service-territory lookup and the stored lead ZIP stay correct.
-function normalizeZip(zip) {
-    if (zip == null) return '';
-    const digits = String(zip).replace(/\D/g, '');
-    if (!digits) return '';
-    return digits.length >= 5 ? digits.slice(0, 5) : digits.padStart(5, '0');
-}
+// ZIP normalization (recover a dropped leading zero) now lives in a shared util,
+// so the service-territory query layer and every caller normalize identically.
+const { normalizeZip } = require('../utils/zip');
 
 // ─── Tool: checkServiceArea ───────────────────────────────────────────────────
 

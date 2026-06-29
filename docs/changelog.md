@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-06-29 — ZIP normalization made consistent across services (0a3830c follow-up)
+
+The leading-zero ZIP fix (0a3830c) only normalized inside `vapi-tools.js`, so other service-area lookups
+still missed on a dropped zero. Promoted `normalizeZip` to a shared util (`backend/src/utils/zip.js`) and
+applied it **inside the service-territory query layer** (`serviceTerritoryQueries.findByZip`/`search`/
+`create`/`bulkReplace`/`remove`) — so **every** caller now recovers a dropped leading zero, not just
+vapi-tools. This fixes `GET /api/zip-check` (the SPA serviceability check), which previously passed the raw
+zip (`"1721"`) straight to the exact-text lookup and silently missed `"01721"`. `vapi-tools.js` now imports
+the shared util (deduped). Also fixed a **stale test**: `vapi-tools.test.js` "zip outside service area"
+expected `{inServiceArea:false}` but the fix correctly echoes the normalized `{inServiceArea:false,
+zip:"03801"}`. No migration; backend-only. New `tests/serviceTerritoryZip.test.js`; route suite 22/22 green.
+
+---
+
 ## 2026-06-29 — NOTE-ATTACH-UPLOAD-001: pre-upload note attachments with progress
 
 Fixes the silent ~30s freeze when adding a note with a file (the file used to upload at submit, with the

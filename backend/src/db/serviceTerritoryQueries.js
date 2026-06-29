@@ -1,4 +1,5 @@
 const db = require('./connection');
+const { normalizeZip } = require('../utils/zip');
 
 // =============================================================================
 // Service Territories CRUD (service_territories table, per-company)
@@ -32,7 +33,7 @@ async function create(companyId, { zip, area, city, state, county }) {
          VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (company_id, zip) DO NOTHING
          RETURNING zip, area, city, state, county, created_at`,
-        [companyId, zip, area || '', city || null, state || null, county || null]
+        [companyId, normalizeZip(zip), area || '', city || null, state || null, county || null]
     );
     return result.rows[0] || null;
 }
@@ -42,7 +43,7 @@ async function remove(companyId, zip) {
         `DELETE FROM service_territories
          WHERE company_id = $1 AND zip = $2
          RETURNING zip`,
-        [companyId, zip]
+        [companyId, normalizeZip(zip)]
     );
     return result.rows[0] || null;
 }
@@ -62,7 +63,7 @@ async function bulkReplace(companyId, rows) {
             const states = [];
             const counties = [];
             for (const r of rows) {
-                zips.push(r.zip);
+                zips.push(normalizeZip(r.zip));
                 areas.push(r.area || '');
                 cities.push(r.city || null);
                 states.push(r.state || null);
@@ -90,9 +91,11 @@ async function bulkReplace(companyId, rows) {
 // =============================================================================
 
 async function findByZip(companyId, zip) {
+    // Normalize so a dropped leading zero ("1721" → "01721") still matches the
+    // exact-text lookup — applies to every caller (vapi-tools, zip-check, search).
     const result = await db.query(
         `SELECT zip, area, city, state, county FROM service_territories WHERE company_id = $1 AND zip = $2`,
-        [companyId, zip]
+        [companyId, normalizeZip(zip)]
     );
     return result.rows[0] || null;
 }

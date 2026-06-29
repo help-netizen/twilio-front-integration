@@ -210,11 +210,11 @@ describe('Group 3 — checkServiceArea', () => {
     });
 
     // TC-LQV2-009
-    test('zip outside service area → inServiceArea false', async () => {
+    test('zip outside service area → inServiceArea false (echoes the normalized zip)', async () => {
         stQueries.search.mockResolvedValue(null);
         const res = await auth(request(app).post('/api/vapi-tools'))
             .send(toolCall('checkServiceArea', { zip: '03801' }));
-        expect(resultOf(res)).toEqual({ inServiceArea: false });
+        expect(resultOf(res)).toEqual({ inServiceArea: false, zip: '03801' });
     });
 
     // TC-LQV2-010
