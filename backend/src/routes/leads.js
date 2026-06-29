@@ -807,7 +807,8 @@ router.post('/:uuid/notes', requirePermission('leads.edit'), upload.array('attac
 
         const text = (req.body.text || '').trim();
         const files = req.files || [];
-        if (!text && files.length === 0) return res.status(400).json({ ok: false, error: 'text or attachments required' });
+        const attachmentIds = parseRemoveAttachmentIds(req.body.attachment_ids); // tolerant id-array parse
+        if (!text && files.length === 0 && attachmentIds.length === 0) return res.status(400).json({ ok: false, error: 'text or attachments required' });
 
         const leadId = lead.SerialId || lead.ClientId;
         const existingNotes = lead.structured_notes || [];
@@ -820,7 +821,12 @@ router.post('/:uuid/notes', requirePermission('leads.edit'), upload.array('attac
         const noteIndex = existingNotes.length;
         const noteId = randomUUID();
         let attachmentsMeta = [];
-        if (files.length > 0) {
+        if (attachmentIds.length > 0) {
+            // NOTE-ATTACH-UPLOAD-001: files pre-uploaded (staged) — link them to the note.
+            attachmentsMeta = await noteAttachmentsService.associateStagedAttachments(
+                companyId, 'lead', leadId, attachmentIds, noteId, noteIndex
+            );
+        } else if (files.length > 0) {
             attachmentsMeta = await noteAttachmentsService.createAttachments(
                 companyId, 'lead', leadId, noteIndex, files, userId, { noteId }
             );
@@ -883,6 +889,7 @@ router.patch('/:uuid/notes/:noteId', requirePermission('leads.edit'), upload.arr
             {
                 text: req.body.text,
                 removeAttachmentIds: parseRemoveAttachmentIds(req.body.remove_attachment_ids),
+                attachmentIds: parseRemoveAttachmentIds(req.body.attachment_ids),
                 files: req.files || [],
                 actor: buildNoteActor(req),
                 companyId,

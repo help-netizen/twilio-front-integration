@@ -7,7 +7,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Plus, MoreVertical, Pencil, Trash2, X } from 'lucide-react';
 import { Button } from '../ui/button';
-import { NoteAttachmentInput } from './NoteAttachmentInput';
+import { NoteAttachmentInput, type AttachmentState } from './NoteAttachmentInput';
 import { NoteAttachmentDisplay } from './NoteAttachmentDisplay';
 import { authedFetch } from '../../services/apiClient';
 import { useAuthz } from '../../hooks/useAuthz';
@@ -81,7 +81,8 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
 
     const [notes, setNotes] = useState<Note[]>([]);
     const [text, setText] = useState('');
-    const [files, setFiles] = useState<File[]>([]);
+    const [composeAttach, setComposeAttach] = useState<AttachmentState>({ ids: [], blocked: false });
+    const [composeAttachKey, setComposeAttachKey] = useState(0);
     const [expanded, setExpanded] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -90,7 +91,8 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
     // Edit state
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editText, setEditText] = useState('');
-    const [editFiles, setEditFiles] = useState<File[]>([]);
+    const [editAttach, setEditAttach] = useState<AttachmentState>({ ids: [], blocked: false });
+    const [editAttachKey, setEditAttachKey] = useState(0);
     const [removeIds, setRemoveIds] = useState<Set<string>>(new Set());
     const [editSubmitting, setEditSubmitting] = useState(false);
     const [editError, setEditError] = useState<string | null>(null);
@@ -117,16 +119,18 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
     useEffect(() => { fetchNotes(); }, [fetchNotes]);
 
     const handleSubmit = useCallback(async () => {
-        if (!text.trim() && files.length === 0) return;
+        if ((!text.trim() && composeAttach.ids.length === 0) || composeAttach.blocked) return;
         setSubmitting(true);
         try {
             const formData = new FormData();
             formData.append('text', text.trim());
-            files.forEach(f => formData.append('attachments', f));
+            // NOTE-ATTACH-UPLOAD-001: files are already uploaded (staged) — send their ids.
+            formData.append('attachment_ids', JSON.stringify(composeAttach.ids));
 
             await authedFetch(basePath, { method: 'POST', body: formData });
             setText('');
-            setFiles([]);
+            setComposeAttach({ ids: [], blocked: false });
+            setComposeAttachKey(k => k + 1); // remount the input → clears its chips
             setExpanded(false);
             fetchNotes();
             onNoteAdded?.();
@@ -135,7 +139,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
         } finally {
             setSubmitting(false);
         }
-    }, [text, files, basePath, fetchNotes, onNoteAdded]);
+    }, [text, composeAttach, basePath, fetchNotes, onNoteAdded]);
 
     const expand = () => {
         setExpanded(true);
@@ -144,10 +148,12 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
 
     // Click-outside to collapse
     const handleClickOutside = useCallback((e: MouseEvent) => {
-        if (!containerRef.current?.contains(e.target as Node) && !text.trim() && files.length === 0) {
+        // Don't collapse while an upload is in flight (blocked) — ids is still empty then,
+        // so collapsing would unmount the input and drop the in-progress chip.
+        if (!containerRef.current?.contains(e.target as Node) && !text.trim() && composeAttach.ids.length === 0 && !composeAttach.blocked) {
             setExpanded(false);
         }
-    }, [text, files.length]);
+    }, [text, composeAttach.ids.length, composeAttach.blocked]);
 
     useEffect(() => {
         if (expanded) {
@@ -162,7 +168,8 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
         setMenuOpenId(null);
         setEditingId(note.id ?? null);
         setEditText(note.text ?? '');
-        setEditFiles([]);
+        setEditAttach({ ids: [], blocked: false });
+        setEditAttachKey(k => k + 1);
         setRemoveIds(new Set());
         setEditError(null);
     };
@@ -170,7 +177,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
     const cancelEdit = () => {
         setEditingId(null);
         setEditText('');
-        setEditFiles([]);
+        setEditAttach({ ids: [], blocked: false });
         setRemoveIds(new Set());
         setEditError(null);
     };
@@ -192,7 +199,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
             const formData = new FormData();
             formData.append('text', editText.trim());
             formData.append('remove_attachment_ids', JSON.stringify([...removeIds]));
-            editFiles.forEach(f => formData.append('attachments', f));
+            formData.append('attachment_ids', JSON.stringify(editAttach.ids));
 
             const res = await authedFetch(`${basePath}/${note.id}`, { method: 'PATCH', body: formData });
             if (!res.ok) {
@@ -208,7 +215,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
         } finally {
             setEditSubmitting(false);
         }
-    }, [editText, removeIds, editFiles, basePath, fetchNotes, onNoteAdded]);
+    }, [editText, removeIds, editAttach, basePath, fetchNotes, onNoteAdded]);
 
     const deleteNote = useCallback(async (note: Note) => {
         if (!note.id) return;
@@ -235,8 +242,8 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
         return () => document.removeEventListener('mousedown', close);
     }, [menuOpenId]);
 
-    const canSubmit = (text.trim() || files.length > 0) && !submitting;
-    const canSaveEdit = (editText.trim() || editFiles.length > 0) && !editSubmitting;
+    const canSubmit = (!!text.trim() || composeAttach.ids.length > 0) && !submitting && !composeAttach.blocked;
+    const canSaveEdit = (!!editText.trim() || editAttach.ids.length > 0) && !editSubmitting && !editAttach.blocked;
 
     // Newest first
     const sortedNotes = [...notes].reverse();
@@ -274,7 +281,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                     />
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
-                            <NoteAttachmentInput files={files} onChange={setFiles} compact />
+                            <NoteAttachmentInput key={composeAttachKey} entityType={entityType} entityId={entityId} onStateChange={setComposeAttach} compact />
                             <p className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>Cmd + Enter</p>
                         </div>
                         <Button size="sm" onMouseDown={e => e.preventDefault()} onClick={handleSubmit} disabled={!canSubmit}>
@@ -396,7 +403,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                                 )}
 
                                 {/* New attachments */}
-                                <NoteAttachmentInput files={editFiles} onChange={setEditFiles} compact />
+                                <NoteAttachmentInput key={editAttachKey} entityType={entityType} entityId={entityId} onStateChange={setEditAttach} compact />
 
                                 {editError && (
                                     <p className="text-xs" style={{ color: '#b42318' }}>{editError}</p>

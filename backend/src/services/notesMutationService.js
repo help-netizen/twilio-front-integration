@@ -45,7 +45,7 @@ function findActiveNote(notes, noteId) {
  * Edit a note: replace text, add new file attachments, remove existing ones.
  * Returns { note, oldText, addedNames, removedNames } for audit logging.
  */
-async function editNote(adapter, noteId, { text, removeAttachmentIds = [], files = [], actor, companyId }) {
+async function editNote(adapter, noteId, { text, removeAttachmentIds = [], files = [], attachmentIds = [], actor, companyId }) {
     const notes = await adapter.loadNotes();
     const { note, index } = findActiveNote(notes, noteId);
     if (!note) throw Object.assign(new Error('Note not found'), { status: 404 });
@@ -74,10 +74,23 @@ async function editNote(adapter, noteId, { text, removeAttachmentIds = [], files
         note.attachments = surviving;
     }
 
-    // Add new files (capped at MAX counting survivors), stamping note_id = noteId.
-    if (files && files.length > 0) {
-        const survivingCount = (note.attachments || []).length;
-        const created = await noteAttachmentsService.createAttachments(
+    // Add new attachments (capped at MAX counting survivors), stamping note_id = noteId.
+    // Prefer pre-staged ids (NOTE-ATTACH-UPLOAD-001 — uploaded on attach); fall back to
+    // raw files (back-compat / old clients).
+    const survivingCount = (note.attachments || []).length;
+    let created = [];
+    if (attachmentIds && attachmentIds.length > 0) {
+        created = await noteAttachmentsService.associateStagedAttachments(
+            companyId,
+            adapter.entityType,
+            adapter.attachmentEntityId,
+            attachmentIds,
+            noteId,
+            index,
+            { existingCount: survivingCount }
+        );
+    } else if (files && files.length > 0) {
+        created = await noteAttachmentsService.createAttachments(
             companyId,
             adapter.entityType,
             adapter.attachmentEntityId,
@@ -86,6 +99,8 @@ async function editNote(adapter, noteId, { text, removeAttachmentIds = [], files
             actor?.crmUserId || null,
             { noteId, existingCount: survivingCount }
         );
+    }
+    if (created.length > 0) {
         const normalized = created.map(a => ({
             id: a.id,
             fileName: a.file_name,

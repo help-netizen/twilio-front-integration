@@ -473,7 +473,8 @@ router.post('/:id/notes', requirePermission('contacts.edit'), upload.array('atta
 
         const text = (req.body.text || '').trim();
         const files = req.files || [];
-        if (!text && files.length === 0) return res.status(400).json(errorResponse('BAD_REQUEST', 'text or attachments required', reqId));
+        const attachmentIds = parseRemoveAttachmentIds(req.body.attachment_ids); // tolerant id-array parse
+        if (!text && files.length === 0 && attachmentIds.length === 0) return res.status(400).json(errorResponse('BAD_REQUEST', 'text or attachments required', reqId));
 
         const existingNotes = contact.structured_notes || [];
 
@@ -485,7 +486,12 @@ router.post('/:id/notes', requirePermission('contacts.edit'), upload.array('atta
         const noteIndex = existingNotes.length;
         const noteId = randomUUID();
         let attachmentsMeta = [];
-        if (files.length > 0) {
+        if (attachmentIds.length > 0) {
+            // NOTE-ATTACH-UPLOAD-001: files pre-uploaded (staged) — link them to the note.
+            attachmentsMeta = await noteAttachmentsService.associateStagedAttachments(
+                companyId, 'contact', contactId, attachmentIds, noteId, noteIndex
+            );
+        } else if (files.length > 0) {
             attachmentsMeta = await noteAttachmentsService.createAttachments(
                 companyId, 'contact', contactId, noteIndex, files, userId, { noteId }
             );
@@ -550,6 +556,7 @@ router.patch('/:id/notes/:noteId', requirePermission('contacts.edit'), upload.ar
             {
                 text: req.body.text,
                 removeAttachmentIds: parseRemoveAttachmentIds(req.body.remove_attachment_ids),
+                attachmentIds: parseRemoveAttachmentIds(req.body.attachment_ids),
                 files: req.files || [],
                 actor: buildNoteActor(req),
                 companyId,

@@ -421,13 +421,19 @@ router.post('/:id/notes', requirePermission('jobs.edit'), upload.array('attachme
 
         const text = (req.body.text || '').trim();
         const files = req.files || [];
-        if (!text && files.length === 0) return res.status(400).json({ ok: false, error: 'text or attachments required' });
+        const attachmentIds = parseRemoveAttachmentIds(req.body.attachment_ids); // tolerant id-array parse
+        if (!text && files.length === 0 && attachmentIds.length === 0) return res.status(400).json({ ok: false, error: 'text or attachments required' });
 
         // Save note with attachment metadata
         const noteId = randomUUID();
         const noteIndex = (existing.notes || []).length;
         let attachments = [];
-        if (files.length > 0) {
+        if (attachmentIds.length > 0) {
+            // NOTE-ATTACH-UPLOAD-001: files were pre-uploaded (staged) — just link them to the note.
+            attachments = await noteAttachmentsService.associateStagedAttachments(
+                companyId, 'job', jobId, attachmentIds, noteId, noteIndex
+            );
+        } else if (files.length > 0) {
             attachments = await noteAttachmentsService.createAttachments(
                 companyId, 'job', jobId, noteIndex, files, userId, { noteId }
             );
@@ -478,6 +484,7 @@ router.patch('/:id/notes/:noteId', requirePermission('jobs.edit'), upload.array(
             {
                 text: req.body.text,
                 removeAttachmentIds: parseRemoveAttachmentIds(req.body.remove_attachment_ids),
+                attachmentIds: parseRemoveAttachmentIds(req.body.attachment_ids),
                 files: req.files || [],
                 actor: buildNoteActor(req),
                 companyId,

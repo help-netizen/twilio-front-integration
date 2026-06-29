@@ -428,6 +428,9 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
     // SCHED-ROUTE-001 (C-13): daily retention — purge stale segments + prune route cache
     require('../backend/src/services/routeRetentionScheduler').start();
 
+    // NOTE-ATTACH-UPLOAD-001: sweep abandoned staged note attachments (6h tick)
+    require('../backend/src/services/stagedAttachmentCleanupScheduler').start();
+
     // Start daily Zenbooker jobs sync cron
     const zbSyncCron = require('../backend/src/services/zbJobsSyncCron');
     zbSyncCron.start();

@@ -4,6 +4,30 @@
 
 ---
 
+## 2026-06-29 — NOTE-ATTACH-UPLOAD-001: pre-upload note attachments with progress
+
+Fixes the silent ~30s freeze when adding a note with a file (the file used to upload at submit, with the
+button merely disabled + no feedback). Now files **upload immediately on attach** (staged), show a **spinner**
+per file, and **"Add note"/"Save" is disabled until uploads finish** — for both the new-note composer and the
+edit flow, all entities (job/lead/contact), mobile + desktop.
+
+- **Backend:** new `POST /api/note-attachments/upload` stages files to S3 with `note_index = NULL` (the
+  staged marker — excluded from display). `noteAttachmentsService`: `stageAttachments`,
+  `associateStagedAttachments` (note-create/edit stamps `note_id`+`note_index` onto staged rows; ignores
+  foreign ids), `getAttachmentsForEntity` excludes staged, `deleteStaleStagedAttachments` + `entityExistsInCompany`.
+  Note POST/PATCH on jobs/leads/contacts + `notesMutationService.editNote` accept `attachment_ids` (associate)
+  with the raw-files path kept as fallback. **No migration** (reuse nullable columns). Company-isolated.
+- **Cleanup:** removing a file deletes it immediately (`DELETE /api/note-attachments/:id`); a new
+  `stagedAttachmentCleanupScheduler` (6h) sweeps abandoned staged rows (>24h) + their S3 objects.
+- **Frontend:** new `services/noteAttachmentsApi.ts`; `NoteAttachmentInput` uploads on attach (spinner /
+  error+retry / remove), reports staged ids + a `blocked` flag; `NotesSection` gates submit on `blocked`,
+  sends `attachment_ids`, and no longer collapses the composer mid-upload.
+- **Verify:** backend Jest 22/22 (stage/associate/exclude/cleanup/route isolation), existing note suites
+  green; `npm run build` green; dev-preview confirmed (attach → "Uploading…" spinner + filename chip,
+  "Add note" disabled during upload, composer stays open).
+
+---
+
 ## 2026-06-29 — TASKS-FORM-PANEL-001: task form as a right-side panel
 
 The New/Edit Task form (`TaskFormDialog`) now opens as a **right-side slide-out layer**
