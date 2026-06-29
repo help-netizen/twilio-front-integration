@@ -335,7 +335,7 @@ export function useScheduleData() {
             return { ...i, assigned_techs: newTechs };
         }));
         try {
-            await reassignItem(entityType, entityId, assigneeId);
+            await reassignItem(entityType, entityId, assigneeId, assigneeName);
             const target = assigneeName || 'Unassigned';
             toast.success(`${title || 'Item'} reassigned to ${target}`);
         } catch (err: any) {

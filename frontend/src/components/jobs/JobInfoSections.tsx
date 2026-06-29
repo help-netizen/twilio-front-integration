@@ -9,6 +9,7 @@ import { formatPhoneDisplay as formatPhone } from '../../utils/phoneUtils';
 import { ClickToCallButton } from '../softphone/ClickToCallButton';
 import { OpenTimelineButton } from '../softphone/OpenTimelineButton';
 import { CustomTimeModal } from '../conversations/CustomTimeModal';
+import { JobTechnicianControl } from './JobTechnicianControl';
 import { useNavigate } from 'react-router-dom';
 import { googleMapsUrl } from '../../utils/routeFormat';
 
@@ -276,27 +277,8 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
                         )}
                     </div>
 
-                    {/* Providers */}
-                    {job.assigned_techs && job.assigned_techs.length > 0 && (
-                        <div>
-                            <p style={{ ...eyebrow, marginBottom: 8 }}>Providers</p>
-                            <div className="flex flex-wrap gap-2">
-                                {job.assigned_techs.map((t: any) => (
-                                    <span
-                                        key={t.id}
-                                        className="inline-flex items-center gap-1 min-h-[34px] px-3.5 rounded-full text-[13px] font-medium"
-                                        style={{
-                                            background: 'rgba(117, 106, 89, 0.07)',
-                                            border: '1px solid rgba(117, 106, 89, 0.14)',
-                                            color: 'var(--blanc-ink-1)',
-                                        }}
-                                    >
-                                        {t.name}
-                                    </span>
-                                ))}
-                            </div>
-                        </div>
-                    )}
+                    {/* Technician — assign / change / unassign WITHOUT rescheduling (JOB-TECH-ASSIGN-001) */}
+                    <JobTechnicianControl job={job} onJobUpdated={onJobUpdated} />
                 </div>
             )}
 

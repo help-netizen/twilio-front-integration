@@ -385,15 +385,18 @@ async function rescheduleTask(companyId, entityId, startAt, endAt) {
 // Reassign mutations
 // =============================================================================
 
-async function reassignJob(companyId, entityId, assigneeId) {
-    // assigned_techs is jsonb array of {id, name, ...}
-    // We merge the new assignee; caller provides full tech object or id
+async function reassignJob(companyId, entityId, assigneeId, assigneeName = null) {
+    // Single-assignee REPLACE (not append): set assigned_techs to exactly the one
+    // chosen tech (with its display name), or [] to unassign. The old `|| $3`
+    // append accumulated stale techs when an already-assigned job was reassigned
+    // and stored only {id} (nameless chips) — JOB-TECH-ASSIGN-001.
+    const techs = assigneeId ? [{ id: assigneeId, name: assigneeName || '' }] : [];
     const { rows } = await db.query(
         `UPDATE jobs
-         SET assigned_techs = COALESCE(assigned_techs, '[]'::jsonb) || $3::jsonb,
+         SET assigned_techs = $3::jsonb,
              updated_at = NOW()
          WHERE id = $1 AND company_id = $2 RETURNING *`,
-        [entityId, companyId, JSON.stringify([{ id: assigneeId }])]
+        [entityId, companyId, JSON.stringify(techs)]
     );
     return rows[0] || null;
 }

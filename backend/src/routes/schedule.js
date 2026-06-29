@@ -90,13 +90,14 @@ router.patch('/items/:entityType/:entityId/reassign', requirePermission('schedul
     try {
         const companyId = req.companyFilter?.company_id;
         const { entityType, entityId } = req.params;
-        const { assignee_id } = req.body;
+        const { assignee_id, assignee_name } = req.body;
 
-        if (!assignee_id) {
-            return res.status(400).json({ ok: false, error: { code: 'MISSING_FIELD', message: 'assignee_id is required' } });
+        // null is the explicit "unassign" sentinel; only a MISSING field is invalid.
+        if (assignee_id === undefined) {
+            return res.status(400).json({ ok: false, error: { code: 'MISSING_FIELD', message: 'assignee_id is required (use null to unassign)' } });
         }
 
-        const result = await scheduleService.reassignItem(companyId, entityType, entityId, assignee_id);
+        const result = await scheduleService.reassignItem(companyId, entityType, entityId, assignee_id, assignee_name ?? null);
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Schedule] PATCH reassign error:', err.message);

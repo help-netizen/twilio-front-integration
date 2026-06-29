@@ -196,10 +196,11 @@ export async function reassignItem(
     entityType: string,
     entityId: number,
     assigneeId: string | null,
+    assigneeName?: string | null,
 ): Promise<void> {
     await scheduleRequest<void>(`${SCHEDULE_BASE}/items/${entityType}/${entityId}/reassign`, {
         method: 'PATCH',
-        body: JSON.stringify({ assignee_id: assigneeId }),
+        body: JSON.stringify({ assignee_id: assigneeId, assignee_name: assigneeName ?? null }),
     });
 }
 

@@ -34,6 +34,29 @@ A **Task** = assignee + deadline (date **and** time) + description, always attac
 
 ---
 
+## 2026-06-29 — JOB-TECH-ASSIGN-001: reassign the technician from the Job card (no reschedule)
+
+Owner: changing a job's technician used to require the **Reschedule** flow, which also
+moves the appointment time. Now the technician can be assigned / changed / unassigned
+straight from the job-detail card, leaving the schedule untouched.
+
+- **Frontend:** new `JobTechnicianControl` (a "Change"/"Assign" button → popover with a
+  **searchable** technician list + an **Unassign** row that asks to confirm) replaces the
+  read-only "Providers" block in `JobInfoSections`. Gated on `schedule.dispatch` (non-
+  dispatchers see the tech read-only); optimistic update + parent refresh. New
+  `hooks/useProviders.ts` (lazy `/api/zenbooker/team-members`). Desktop + mobile; not on list tiles.
+- **Backend (two bugs fixed in the reused reassign path — they also hit the Schedule
+  drag-reassign):** `scheduleQueries.reassignJob` **appended** the new tech (and stored a
+  nameless `{id}`) instead of replacing → reassigning an already-assigned job accumulated
+  stale, unnamed techs. Now it **replaces** with exactly `[{id,name}]` (or `[]` to unassign);
+  the display name is threaded through `reassignItem`/the route/`scheduleApi`. And the
+  reassign route rejected `assignee_id: null`, so **Unassign was impossible** — now `null`
+  is the explicit unassign sentinel (only a *missing* field is a 400). Never touches `start_at`/`end_at`.
+- **Tests:** `tests/scheduleReassign.test.js` (replace / null-unassign / name) + updated
+  `tests/scheduleRoute.test.js` (name threading, null→200, missing→400); 12 green. Frontend
+  build green; independent review found+confirmed both backend bugs (fixed). Spec:
+  `docs/specs/JOB-TECH-ASSIGN-001.md`. Deploy: app rebuild (frontend bundle changed → logout-all).
+
 ## 2026-06-28 — RBAC-ROLES-EDITOR-001 (RBAC-AUDIT-001 Wave 2 / R4): in-app access-grid editor
 
 Closed the one missing piece from the audit: the role matrix + per-member overrides existed as data +

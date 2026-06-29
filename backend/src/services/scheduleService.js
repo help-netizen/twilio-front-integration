@@ -178,13 +178,13 @@ async function captureJobTechDays(companyId, jobId) {
  * Jobs use assigned_techs (jsonb), tasks use assigned_provider_id.
  * Leads do not support assignment in this version.
  */
-async function reassignItem(companyId, entityType, entityId, assigneeId) {
+async function reassignItem(companyId, entityType, entityId, assigneeId, assigneeName = null) {
     // SCHED-ROUTE-001: capture old technician/days so the vacated route repairs.
     const before = entityType === 'job' ? await captureJobTechDays(companyId, entityId) : null;
     let updated;
     switch (entityType) {
         case 'job':
-            updated = await scheduleQueries.reassignJob(companyId, entityId, assigneeId);
+            updated = await scheduleQueries.reassignJob(companyId, entityId, assigneeId, assigneeName);
             break;
         case 'task':
             updated = await scheduleQueries.reassignTask(companyId, entityId, assigneeId);
