@@ -248,13 +248,18 @@ router.post('/:machineKey/apply', requirePermission('jobs.edit'), async (req, re
       return res.status(400).json({ ok: false, error: result.error || 'Transition not allowed' });
     }
 
-    // Closing transitions require a closing permission (PF007)
-    if (machineKey === 'job'
-        && ['Job is Done', 'Canceled'].includes(result.targetState)
-        && !req.user?._devMode) {
+    // Closing transitions need a closing permission (PF007). Cancel is a dispatch
+    // decision → jobs.close only; "Done" may be marked by a field provider (pending
+    // approval) → jobs.close OR jobs.done_pending_approval. (Mirrors PATCH /jobs/:id/
+    // status so the FSM /apply side-door can't bypass the cancel guard — RBAC-FSM-FIX-001.)
+    if (machineKey === 'job' && !req.user?._devMode) {
       const perms = req.authz?.permissions || [];
-      if (!perms.includes('jobs.close') && !perms.includes('jobs.done_pending_approval')) {
-        return res.status(403).json({ ok: false, error: 'Insufficient permissions to close jobs' });
+      if (result.targetState === 'Canceled' && !perms.includes('jobs.close')) {
+        return res.status(403).json({ ok: false, error: 'Insufficient permissions to cancel jobs' });
+      }
+      if (result.targetState === 'Job is Done'
+          && !perms.includes('jobs.close') && !perms.includes('jobs.done_pending_approval')) {
+        return res.status(403).json({ ok: false, error: 'Insufficient permissions to complete jobs' });
       }
     }
 

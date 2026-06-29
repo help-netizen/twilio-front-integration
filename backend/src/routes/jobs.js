@@ -249,7 +249,7 @@ router.patch('/:id/tags', requirePermission('jobs.edit'), async (req, res) => {
 
 // ─── Update Albusto Status (manual FSM transition) ────────────────────────────
 
-router.patch('/:id/status', requirePermission('jobs.edit'), async (req, res) => {
+router.patch('/:id/status', requirePermission('jobs.edit', 'jobs.done_pending_approval'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id || null;
         const existing = await jobsService.getJobById(req.params.id, companyId, getProviderScope(req));
@@ -262,11 +262,17 @@ router.patch('/:id/status', requirePermission('jobs.edit'), async (req, res) => 
             if (parsedReason.error) return res.status(400).json({ ok: false, error: parsedReason.error });
             cancelReason = parsedReason.reason;
         }
-        // Closing transitions require a closing permission (PF007-HARDENING-001)
-        if (['Job is Done', 'Canceled'].includes(blanc_status) && !req.user?._devMode) {
+        // Closing transitions need a closing permission (PF007-HARDENING-001).
+        // Cancel is a dispatch decision → jobs.close only. Marking "Done" may be done
+        // by a field provider (pending approval) → jobs.close OR jobs.done_pending_approval.
+        if (!req.user?._devMode) {
             const perms = req.authz?.permissions || [];
-            if (!perms.includes('jobs.close') && !perms.includes('jobs.done_pending_approval')) {
-                return res.status(403).json({ ok: false, error: 'Insufficient permissions to close jobs' });
+            if (blanc_status === 'Canceled' && !perms.includes('jobs.close')) {
+                return res.status(403).json({ ok: false, error: 'Insufficient permissions to cancel jobs' });
+            }
+            if (blanc_status === 'Job is Done'
+                && !perms.includes('jobs.close') && !perms.includes('jobs.done_pending_approval')) {
+                return res.status(403).json({ ok: false, error: 'Insufficient permissions to complete jobs' });
             }
         }
         const result = await jobsService.updateBlancStatus(parseInt(req.params.id, 10), blanc_status, companyId);
@@ -411,7 +417,7 @@ router.get('/:id/notes', requirePermission('jobs.view'), async (req, res) => {
 
 // ─── Add Note ────────────────────────────────────────────────────────────────
 
-router.post('/:id/notes', requirePermission('jobs.edit'), upload.array('attachments', noteAttachmentsService.MAX_FILES_PER_NOTE), async (req, res) => {
+router.post('/:id/notes', requirePermission('jobs.edit', 'jobs.done_pending_approval'), upload.array('attachments', noteAttachmentsService.MAX_FILES_PER_NOTE), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id || null;
         const userId = req.user?.crmUser?.id || req.user?.sub || null;
@@ -469,7 +475,7 @@ function buildJobNoteAdapter(companyId, jobId, scope) {
     };
 }
 
-router.patch('/:id/notes/:noteId', requirePermission('jobs.edit'), upload.array('attachments', noteAttachmentsService.MAX_FILES_PER_NOTE), async (req, res) => {
+router.patch('/:id/notes/:noteId', requirePermission('jobs.edit', 'jobs.done_pending_approval'), upload.array('attachments', noteAttachmentsService.MAX_FILES_PER_NOTE), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id || null;
         const jobId = parseInt(req.params.id, 10);
@@ -506,7 +512,7 @@ router.patch('/:id/notes/:noteId', requirePermission('jobs.edit'), upload.array(
     }
 });
 
-router.delete('/:id/notes/:noteId', requirePermission('jobs.edit'), async (req, res) => {
+router.delete('/:id/notes/:noteId', requirePermission('jobs.edit', 'jobs.done_pending_approval'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id || null;
         const jobId = parseInt(req.params.id, 10);
@@ -555,7 +561,7 @@ router.post('/:id/cancel', requirePermission('jobs.close'), async (req, res) => 
 
 // ─── Mark En-route ───────────────────────────────────────────────────────────
 
-router.post('/:id/enroute', requirePermission('jobs.edit'), async (req, res) => {
+router.post('/:id/enroute', requirePermission('jobs.edit', 'jobs.done_pending_approval'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id || null;
         const existing = await jobsService.getJobById(req.params.id, companyId, getProviderScope(req));
@@ -570,7 +576,7 @@ router.post('/:id/enroute', requirePermission('jobs.edit'), async (req, res) => 
 
 // ─── Mark In-Progress ────────────────────────────────────────────────────────
 
-router.post('/:id/start', requirePermission('jobs.edit'), async (req, res) => {
+router.post('/:id/start', requirePermission('jobs.edit', 'jobs.done_pending_approval'), async (req, res) => {
     try {
         const companyId = req.companyFilter?.company_id || null;
         const existing = await jobsService.getJobById(req.params.id, companyId, getProviderScope(req));

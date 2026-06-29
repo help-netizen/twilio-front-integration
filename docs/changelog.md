@@ -4,6 +4,37 @@
 
 ---
 
+## 2026-06-29 — RBAC-FSM-FIX-001: technicians can operate their jobs + role-model audit
+
+Owner-reported 403s. Two things: (1) the reporter (`a5085140320`) is a **tenant_admin** whose
+403 was an **onboarding race** — the account existed ~40 s before the company's role configs
+were seeded, resolving to 0 perms in that window (verified on the live resolver; a re-login fixes
+their client). (2) The real bug: the **Technician (`provider`) role genuinely can't operate jobs.**
+
+- **Provider FSM/notes gates (jobs.js):** `start` / `enroute` / `PATCH /:id/status` and notes
+  `POST`/`PATCH`/`DELETE /:id/notes` required `jobs.edit` (which `provider` lacks) — only
+  `complete` had the provider-friendly gate. Now all accept `requirePermission('jobs.edit',
+  'jobs.done_pending_approval')`. Handlers already scope to the assignee (`getProviderScope` →
+  404 on a foreign job) and note edit/delete stay author-only (`notesMutationService`), so a tech
+  can run/annotate **only their own** job. Managers/dispatchers/admins are unaffected (they have
+  `jobs.edit`).
+- **Cancel stays dispatch-only:** the `/status` closing guard was **split** — `Canceled` requires
+  `jobs.close`; `Job is Done` allows `jobs.close` OR `jobs.done_pending_approval`. An adversarial
+  review caught a **parallel side-door** (`fsm.js POST /:machineKey/apply`) with the old un-split
+  guard that let a `dispatcher` cancel — mirrored the split there too.
+- **Resolver lockout fix (authorizationService.js):** `resolveEffectivePermissionsAndScopes` no
+  longer early-returns `[]` on a missing role config — the MANDATORY_ADMIN baseline still applies
+  for `tenant_admin` (never 0-perms / locked out of their own company).
+- **Audit:** full 4-role × main-entity gate matrix in `docs/specs/RBAC-FSM-FIX-001.md` — the only
+  false-403s were the provider FSM + notes gaps (fixed); `tasks` PATCH/DELETE's `tasks.view` gate
+  is correct (inner `canActOn` enforces own/manage); no over-grants found.
+- **Tests:** `tests/jobsRbacGates.test.js` (provider start/enroute/status/done pass, cancel blocked,
+  view-only blocked, `/apply` cancel side-door blocked, resolver baseline) — 12; regression suites
+  green. Backend-only, no migration (providers already hold `jobs.done_pending_approval`). Deploy:
+  app rebuild (frontend bundle unchanged).
+
+---
+
 ## 2026-06-29 — ZIP normalization made consistent across services (0a3830c follow-up)
 
 The leading-zero ZIP fix (0a3830c) only normalized inside `vapi-tools.js`, so other service-area lookups
