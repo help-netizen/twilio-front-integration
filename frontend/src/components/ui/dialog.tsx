@@ -46,6 +46,14 @@ const PANEL_WIDTH: Record<DialogSize, string> = {
     wide: "md:w-[min(1020px,calc(100vw-100px))]",
     full: "md:w-[min(1320px,calc(100vw-72px))]",
 }
+// Raw width per size (mirrors PANEL_WIDTH without the `md:w-[]`) — used to anchor
+// the hover-reveal close just LEFT of the panel's edge at any width.
+const PANEL_CLOSE_RIGHT: Record<DialogSize, string> = {
+    sm: "var(--blanc-layer-width)",
+    default: "var(--blanc-layer-width)",
+    wide: "min(1020px,calc(100vw-100px))",
+    full: "min(1320px,calc(100vw-72px))",
+}
 
 const DialogContent = React.forwardRef<
     React.ElementRef<typeof DialogPrimitive.Content>,
@@ -98,24 +106,27 @@ const DialogContent = React.forwardRef<
             {...props}
         >
             {children}
-            {/* Top-right X — centered dialogs, wide/full document panels, and the MOBILE sheet of standard panels */}
+            {/* Top-right X — centered dialogs always; for PANELS it's the MOBILE bottom-sheet
+                only (md:hidden), since on desktop every panel uses the hover-left close below. */}
             <DialogPrimitive.Close
                 className={cn(
                     "absolute right-4 top-[18px] rounded-md p-1 opacity-60 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none",
-                    variant === "panel" && (size === "default" || size === "sm") && "right-3 top-3 md:hidden",
+                    variant === "panel" && "right-3 top-3 md:hidden",
                 )}
             >
                 <X className="h-4 w-4" />
                 <span className="sr-only">Close</span>
             </DialogPrimitive.Close>
         </DialogPrimitive.Content>
-        {/* Standard panel, desktop: hover-reveal close to the LEFT of the layer — identical to the view card */}
-        {variant === "panel" && (size === "default" || size === "sm") && (
+        {/* Every panel (any size), desktop: hover-reveal close to the LEFT of the layer — the
+            single canonical close, identical to the FloatingDetailPanel view card. `right` is
+            anchored to the panel's actual width so it sits just outside the left edge at any size. */}
+        {variant === "panel" && (
             <DialogPrimitive.Close asChild>
                 <button
                     type="button"
                     title="Close"
-                    style={{ top: "calc(var(--blanc-layer-top) + 12px)", right: "calc(var(--blanc-layer-width) + 8px)" }}
+                    style={{ top: "calc(var(--blanc-layer-top) + 12px)", right: `calc(${PANEL_CLOSE_RIGHT[size]} + 8px)` }}
                     className="fixed z-[141] hidden h-7 w-7 items-center justify-center rounded-full bg-transparent text-transparent opacity-0 transition-all duration-150 focus:outline-none md:flex peer-hover:bg-[var(--blanc-ink-1)] peer-hover:text-white peer-hover:opacity-100 peer-hover:shadow-[0_4px_12px_rgba(0,0,0,0.15)] hover:bg-[var(--blanc-ink-1)] hover:text-white hover:opacity-100 hover:shadow-[0_4px_12px_rgba(0,0,0,0.15)]"
                 >
                     <X className="h-3.5 w-3.5" />

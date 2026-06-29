@@ -6,6 +6,7 @@ import { Plus, History, Trash2, Loader2, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { automationApi, type AutomationRule, type Catalog, type RuleRun } from '../services/automationApi';
 import { RuleEditor } from '../components/automation/RuleEditor';
+import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
 
 const LINE = 'var(--blanc-line, rgba(117,106,89,0.18))';
 const INK2 = 'var(--blanc-ink-2, #536070)';
@@ -127,18 +128,18 @@ export default function AutomationPage() {
 
             {/* Editor drawer */}
             {editing && catalog && (
-                <div style={{ position: 'fixed', inset: 0, background: 'rgba(32,39,52,0.45)', zIndex: 50, display: 'flex', justifyContent: 'flex-end' }} onClick={() => setEditing(null)}>
-                    <div onClick={e => e.stopPropagation()} style={{ width: 720, maxWidth: '100%', height: '100%', background: 'var(--blanc-bg, #efe9df)', padding: 26, overflowY: 'auto' }}>
+                <FloatingDetailPanel open wide onClose={() => setEditing(null)}>
+                    <div style={{ padding: 26, height: '100%', overflowY: 'auto' }}>
                         <h2 style={{ fontSize: 19, fontWeight: 600, margin: '0 0 18px', fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1, #202734)' }}>{(editing as AutomationRule).id ? 'Edit rule' : 'New rule'}</h2>
                         <RuleEditor catalog={catalog} initial={editing} onSave={save} onCancel={() => setEditing(null)} saving={saving} />
                     </div>
-                </div>
+                </FloatingDetailPanel>
             )}
 
             {/* Runs drawer */}
             {runsFor && (
-                <div style={{ position: 'fixed', inset: 0, background: 'rgba(32,39,52,0.45)', zIndex: 50, display: 'flex', justifyContent: 'flex-end' }} onClick={() => setRunsFor(null)}>
-                    <div onClick={e => e.stopPropagation()} style={{ width: 480, maxWidth: '100%', height: '100%', background: 'var(--blanc-bg, #efe9df)', padding: 26, overflowY: 'auto' }}>
+                <FloatingDetailPanel open onClose={() => setRunsFor(null)}>
+                    <div style={{ padding: 26, height: '100%', overflowY: 'auto' }}>
                         <h2 style={{ fontSize: 18, fontWeight: 600, margin: '0 0 4px', fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1, #202734)' }}>Run history</h2>
                         <p style={{ fontSize: 13, color: INK3, margin: '0 0 16px' }}>{runsFor.name}</p>
                         {runs.length === 0 ? <div style={{ color: INK3, fontSize: 13 }}>No runs yet.</div> : runs.map(run => (
@@ -151,7 +152,7 @@ export default function AutomationPage() {
                             </div>
                         ))}
                     </div>
-                </div>
+                </FloatingDetailPanel>
             )}
         </div>
     );

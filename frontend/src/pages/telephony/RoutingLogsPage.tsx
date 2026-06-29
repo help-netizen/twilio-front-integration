@@ -10,6 +10,7 @@ import { ArrowUp, ArrowDown, ArrowUpDown, PhoneIncoming, PhoneOutgoing, Download
 import { format } from 'date-fns';
 import { telephonyApi } from '../../services/telephonyApi';
 import { DateRangePickerPopover } from '../../components/ui/DateRangePickerPopover';
+import { FloatingDetailPanel } from '../../components/ui/FloatingDetailPanel';
 import type { RoutingLogEntry, UserGroup } from '../../types/telephony';
 import { authedFetch } from '../../services/apiClient';
 
@@ -564,23 +565,15 @@ function DetailPanel({ log, onClose }: { log: RoutingLogEntry; onClose: () => vo
     const rc = RESULT_CONFIG[log.result] || RESULT_CONFIG.error;
 
     return (
-        <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(32,39,52,0.35)', zIndex: 50, display: 'flex', justifyContent: 'flex-end' }}>
-        <div onClick={e => e.stopPropagation()} style={{
-            width: 380, maxWidth: '100%', height: '100%',
-            background: 'var(--blanc-surface-strong, #fffdf9)',
-            borderLeft: '1px solid var(--blanc-line)', padding: 22, overflowY: 'auto',
-        }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+        <FloatingDetailPanel open onClose={onClose}>
+        <div style={{ padding: 22, height: '100%', overflowY: 'auto' }}>
+            <div style={{ marginBottom: 14 }}>
                 <span style={{
                     fontSize: 11, fontWeight: 600, color: 'var(--blanc-ink-3)',
                     textTransform: 'uppercase', letterSpacing: '0.14em',
                 }}>
                     Call Details
                 </span>
-                <button onClick={onClose} style={{
-                    background: 'none', border: 'none', cursor: 'pointer',
-                    color: 'var(--blanc-ink-3)', fontSize: 16, padding: '2px 6px', borderRadius: 6,
-                }}>×</button>
             </div>
 
             {log.contact_name && (
@@ -625,6 +618,6 @@ function DetailPanel({ log, onClose }: { log: RoutingLogEntry; onClose: () => vo
                 </div>
             )}
         </div>
-        </div>
+        </FloatingDetailPanel>
     );
 }

@@ -49,6 +49,26 @@ their client). (2) The real bug: the **Technician (`provider`) role genuinely ca
 
 ---
 
+## 2026-06-29 — LAYER-CLOSE-CANON-001: one slide-over close affordance (hover-left)
+
+Every slide-over "layer" now closes the SAME way — a hover-reveal × to the **left, outside** the panel (the
+`FloatingDetailPanel` pattern). The inside top-right × on desktop is gone; it remains only for the mobile
+bottom-sheet and for genuinely centered modals.
+
+- **`ui/dialog.tsx` (`variant="panel"`):** the hover-left close now renders for **all** panel sizes
+  (previously only default/sm), with `right` anchored to the panel's actual width so it sits just outside
+  the left edge even on the full-width document editors. The inside top-right × is now `md:hidden` for **all**
+  panel sizes (desktop hidden, mobile sheet keeps it). This fixes the Estimate/Invoice editors + Estimate
+  preview (`size="full"`) and unifies every form dialog (New job, task, etc.).
+- **Hand-rolled drawers → `FloatingDetailPanel`:** `RoutingLogsPage` "Call Details" (read-only) and
+  `AutomationPage`'s rule-editor + run-history drawers dropped their bespoke `position:fixed`/backdrop/×
+  markup and now render inside `FloatingDetailPanel` (hover-left, ESC, adaptive width).
+- Centered modals (User Groups, Workflow Builder) keep the conventional top-right × — they're not slide-over
+  layers. Frontend-only, no migration; `npm run build` green; dev-preview confirmed (desktop: hover-left
+  shown, inside × hidden; mobile flips).
+
+---
+
 ## 2026-06-29 — ZIP normalization made consistent across services (0a3830c follow-up)
 
 The leading-zero ZIP fix (0a3830c) only normalized inside `vapi-tools.js`, so other service-area lookups
