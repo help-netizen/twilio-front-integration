@@ -152,7 +152,7 @@ export const JobsMobileBar: React.FC<JobsMobileBarProps> = ({
             </div>
 
             {/* ── View options sheet ── */}
-            <BottomSheet open={sheetOpen} onClose={close} title="View options">
+            <BottomSheet open={sheetOpen} onClose={close} title="View options" size="standard">
                 <div className="flex flex-col gap-5">
                     {/* Filters — shared body (single column on mobile) */}
                     <JobsFilterBody

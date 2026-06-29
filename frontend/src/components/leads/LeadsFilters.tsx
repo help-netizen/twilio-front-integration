@@ -1,6 +1,6 @@
 import { Switch } from '../ui/switch';
 import { Badge } from '../ui/badge';
-import { X, SlidersHorizontal } from 'lucide-react';
+import { SlidersHorizontal } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import type { LeadsListParams } from '../../types/lead';
 import { LEAD_STATUSES } from '../../types/lead';
@@ -8,6 +8,7 @@ import { useFsmStates } from '../../hooks/useFsmActions';
 import { useLeadFormSettings } from '../../hooks/useLeadFormSettings';
 import { DateRangePickerPopover } from '../ui/DateRangePickerPopover';
 import { isMobileViewport } from '../../hooks/useViewportSafePosition';
+import { BottomSheet } from '../ui/BottomSheet';
 import { LeadsFilterBody } from './LeadsFilterBody';
 
 interface LeadsFiltersProps {
@@ -132,18 +133,12 @@ export function LeadsFilters({
                         />
                     );
 
+                    // mobile only — desktop popover unchanged
                     if (isMobile) {
                         return (
-                            <>
-                                <div className="blanc-mobile-sheet-backdrop" onClick={() => setDropdownOpen(false)} />
-                                <div className="blanc-mobile-sheet">
-                                    <div className="blanc-mobile-sheet-header">
-                                        <span className="text-sm font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>Filters</span>
-                                        <button onClick={() => setDropdownOpen(false)} className="p-1.5 rounded-lg" style={{ color: 'var(--blanc-ink-3)' }}><X className="size-4" /></button>
-                                    </div>
-                                    {filterContent}
-                                </div>
-                            </>
+                            <BottomSheet open={dropdownOpen} onClose={() => setDropdownOpen(false)} title="Filters" size="standard">
+                                {filterContent}
+                            </BottomSheet>
                         );
                     }
 

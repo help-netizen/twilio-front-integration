@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
-import { UserRound, X } from 'lucide-react';
+import { UserRound } from 'lucide-react';
 import { pulseApi } from '../../services/pulseApi';
 import { authedFetch } from '../../services/apiClient';
 import { isMobileViewport, clampToViewport } from '../../hooks/useViewportSafePosition';
+import { BottomSheet } from '../ui/BottomSheet';
 
 export function AssignOwnerDropdown({ timelineId, onAssigned }: { timelineId: number | null; onAssigned?: () => void }) {
     const [open, setOpen] = useState(false);
@@ -83,19 +84,11 @@ export function AssignOwnerDropdown({ timelineId, onAssigned }: { timelineId: nu
             >
                 <UserRound className="size-4" /> Assign
             </button>
-            {open && isMobile && (
-                <>
-                    <div className="blanc-mobile-sheet-backdrop" onClick={() => setOpen(false)} />
-                    <div ref={dropdownRef} className="blanc-mobile-sheet">
-                        <div className="blanc-mobile-sheet-header">
-                            <h3>Assign Owner</h3>
-                            <button onClick={() => setOpen(false)} className="p-1 rounded-lg" style={{ color: 'var(--blanc-ink-3)' }}>
-                                <X className="size-5" />
-                            </button>
-                        </div>
-                        {listContent}
-                    </div>
-                </>
+            {/* mobile only — desktop dropdown unchanged */}
+            {isMobile && (
+                <BottomSheet open={open} onClose={() => setOpen(false)} title="Assign Owner" size="auto">
+                    {listContent}
+                </BottomSheet>
             )}
             {open && !isMobile && desktopPos && (
                 <div

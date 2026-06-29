@@ -11,6 +11,7 @@ import { authedFetch } from '../../services/apiClient';
 import { formatFileSize, resolveVariables, buildMessageTargets } from './smsFormHelpers';
 import type { SmsFormProps, QuickMessage, MessageTarget } from './smsFormHelpers';
 import { isMobileViewport, clampToViewport } from '../../hooks/useViewportSafePosition';
+import { BottomSheet } from '../ui/BottomSheet';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -176,17 +177,11 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
                                 </>
                             );
                             if (isMobileViewport()) {
+                                // mobile only — desktop dropdown unchanged
                                 return (
-                                    <>
-                                        <div className="blanc-mobile-sheet-backdrop" onClick={() => setIsPresetsOpen(false)} />
-                                        <div ref={quickDropdownRef} className="blanc-mobile-sheet flex flex-col">
-                                            <div className="blanc-mobile-sheet-header">
-                                                <h3>Quick Messages</h3>
-                                                <button onClick={() => setIsPresetsOpen(false)} className="p-1 rounded-lg" style={{ color: 'var(--blanc-ink-3)' }}><X className="size-5" /></button>
-                                            </div>
-                                            {quickContent}
-                                        </div>
-                                    </>
+                                    <BottomSheet open={isPresetsOpen} onClose={() => setIsPresetsOpen(false)} title="Quick Messages" size="auto">
+                                        {quickContent}
+                                    </BottomSheet>
                                 );
                             }
                             const btnRect = quickBtnRef.current?.getBoundingClientRect();

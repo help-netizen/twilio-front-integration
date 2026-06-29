@@ -83,6 +83,13 @@
     --blanc-radius-lg: 22px;
     --blanc-radius-xl: 28px;
 
+    /* ── Mobile bottom-sheet height (single knob) ──
+       Canonical sheet heights so two different "standard" sheets are pixel-
+       identical: BottomSheet size="standard" pins to --blanc-sheet-h, size="full"
+       pins to --blanc-sheet-h-full. Both FIXED — internal body scrolls. */
+    --blanc-sheet-h: 85dvh;
+    --blanc-sheet-h-full: 92dvh;
+
     /* ── Glass blur ── */
     --blanc-glass-blur: blur(20px);
     --blanc-glass-blur-strong: blur(24px);
@@ -964,48 +971,11 @@ table tbody tr:hover {
    11. MOBILE OVERLAY PATTERNS (shared across all pages)
    ═══════════════════════════════════════════════════════════════════ */
 
-/* Bottom-sheet container for custom dropdowns on mobile */
-.blanc-mobile-sheet {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    z-index: 101;
-    background: var(--blanc-surface-strong);
-    border-top: 1px solid var(--blanc-line);
-    border-radius: 22px 22px 0 0;
-    box-shadow: 0 -8px 32px rgba(47, 39, 28, 0.12);
-    padding: 8px 0 env(safe-area-inset-bottom, 8px);
-    max-height: 85vh;
-    overflow-y: auto;
-    animation: blancSlideUp 0.25s ease-out;
-}
-
-.blanc-mobile-sheet-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 20px 8px;
-    border-bottom: 1px solid var(--blanc-line);
-}
-
-.blanc-mobile-sheet-header h3 {
-    font-family: var(--blanc-font-heading);
-    font-size: 16px;
-    font-weight: 700;
-    color: var(--blanc-ink-1);
-    margin: 0;
-}
-
-/* Semi-transparent backdrop for mobile sheets */
-.blanc-mobile-sheet-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 100;
-    background: rgba(32, 39, 52, 0.4);
-    backdrop-filter: blur(2px);
-    animation: blancFadeIn 0.15s ease-out;
-}
+/* Mobile bottom sheets are now the canonical <BottomSheet> component
+   (components/ui/BottomSheet.tsx) — the old `.blanc-mobile-sheet` copy-paste
+   pattern (container + header + backdrop) was removed in favour of one
+   fixed-height source of truth. The blancSlideUp / blancFadeIn keyframes above
+   are kept (still used by BottomSheet + dialog.tsx). */
 
 /* Touch-visible: elements that should be visible on touch devices */
 @media (max-width: 767px) {

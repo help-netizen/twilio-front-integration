@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { Clock, X } from 'lucide-react';
+import { Clock } from 'lucide-react';
 import { SNOOZE_OPTIONS, getSnoozeUntil } from './PulseContactItem';
 import { isMobileViewport, clampToViewport } from '../../hooks/useViewportSafePosition';
+import { BottomSheet } from '../ui/BottomSheet';
 
 interface SnoozeDropdownProps {
     onSnooze: (until: string) => void;
@@ -70,19 +71,11 @@ export function SnoozeDropdown({ onSnooze, companyTz }: SnoozeDropdownProps) {
             >
                 <Clock className="size-4" /> Snooze
             </button>
-            {open && isMobile && (
-                <>
-                    <div className="blanc-mobile-sheet-backdrop" onClick={() => setOpen(false)} />
-                    <div ref={dropdownRef} className="blanc-mobile-sheet">
-                        <div className="blanc-mobile-sheet-header">
-                            <h3>Snooze</h3>
-                            <button onClick={() => setOpen(false)} className="p-1 rounded-lg" style={{ color: 'var(--blanc-ink-3)' }}>
-                                <X className="size-5" />
-                            </button>
-                        </div>
-                        {dropdownContent}
-                    </div>
-                </>
+            {/* mobile only — desktop dropdown unchanged */}
+            {isMobile && (
+                <BottomSheet open={open} onClose={() => setOpen(false)} title="Snooze" size="auto">
+                    {dropdownContent}
+                </BottomSheet>
             )}
             {open && !isMobile && desktopPos && (
                 <div

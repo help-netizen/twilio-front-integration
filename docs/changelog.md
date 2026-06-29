@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-06-29 — SHEET-CANON-001: one canonical mobile BottomSheet (guaranteed-equal heights)
+
+Mobile bottom sheets rendered at inconsistent heights. Root cause: **two parallel mechanisms** that shared no code — a real `ui/BottomSheet.tsx` component (used only by Schedule "View options") and a hand-rolled `.blanc-mobile-sheet` CSS class copy-pasted across ~9 sheets — and **every one of them was content-driven `max-height`**, so a filter sheet with many rows and one with few rows were genuinely different heights no matter the cap. (The earlier 70→85vh cap bump couldn't fix that.)
+
+- **Canonical component:** evolved `ui/BottomSheet.tsx` into the single source of truth — `size` variants where **`standard`/`full` are a FIXED `dvh` height** (`var(--blanc-sheet-h, 85dvh)` / `92dvh`) so any two standard sheets are pixel-identical, with the body scrolling internally (flex column, `min-height:0`). `auto` stays content-sized (capped) for small action menus. Unified `dvh` (was `vh` — fixes the iOS URL-bar resize), radius (22px), animation (`blancSlideUp`), backdrop colour, z-index (190/200), plus drag-to-dismiss, focus trap/restore, body-scroll-lock, SSR guard.
+- **Migrated all 9 sheets** to it (mobile branch only — desktop popovers byte-for-byte untouched): Jobs/Leads/Payments **filters** + Jobs "Visible Fields" → `standard`; Payments/DateRange **date pickers** → `full`; Snooze / Assign owner / Quick messages → `auto`. The Schedule/Jobs/Leads "View options" bars are explicitly `standard`.
+- **Removed** the `.blanc-mobile-sheet` / `-header` / `-backdrop` CSS (kept the `blancSlideUp`/`blancFadeIn` keyframes, still used by `dialog.tsx`). FORM dialogs (`ui/dialog.tsx`) are a separate canon — untouched, only share tokens.
+- **Proof:** dev-preview at 375×812 — Jobs / Leads / Schedule "View options" all measure **690px (0.850 × viewport)**, identical, where they previously varied. Independent review APPROVED (height guarantee confirmed structurally; no z-index occlusion in the 9). `npm run build` green. Frontend-only, no backend/migration. Note: Schedule's sheet animation/radius shifted (0.22s/28px → 0.25s/22px) — intentional, now matches the system.
+
+---
+
 ## 2026-06-29 — JOBS-UX-RBAC-001: mobile UX polish + technician finance access
 
 Six related changes (one orchestrated pass, independently reviewed — verdict APPROVED, 0 blockers). Spec: `docs/specs/JOBS-UX-RBAC-001.md`.

@@ -1,6 +1,6 @@
 import type { JobTag } from '../../services/jobsApi';
 import { Badge } from '../ui/badge';
-import { SlidersHorizontal, X } from 'lucide-react';
+import { SlidersHorizontal } from 'lucide-react';
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { authedFetch } from '../../services/apiClient';
 import type { LocalJob } from '../../services/jobsApi';
@@ -9,6 +9,7 @@ import { BLANC_STATUSES } from './jobsFilterHelpers';
 import { JobsFilterBody } from './JobsFilterBody';
 import { useFsmStates } from '../../hooks/useFsmActions';
 import { isMobileViewport } from '../../hooks/useViewportSafePosition';
+import { BottomSheet } from '../ui/BottomSheet';
 
 interface JobsFiltersProps {
     statusFilter: string[]; onStatusFilterChange: (v: string[]) => void;
@@ -74,17 +75,11 @@ export function JobsFilters({ statusFilter, onStatusFilterChange, providerFilter
                     );
 
                     if (isMobile) {
+                        // mobile only — desktop popover unchanged
                         return (
-                            <>
-                                <div className="blanc-mobile-sheet-backdrop" onClick={() => setDropdownOpen(false)} />
-                                <div className="blanc-mobile-sheet">
-                                    <div className="blanc-mobile-sheet-header">
-                                        <span className="text-sm font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>Filters</span>
-                                        <button onClick={() => setDropdownOpen(false)} className="p-1.5 rounded-lg" style={{ color: 'var(--blanc-ink-3)' }}><X className="size-4" /></button>
-                                    </div>
-                                    {filterContent}
-                                </div>
-                            </>
+                            <BottomSheet open={dropdownOpen} onClose={() => setDropdownOpen(false)} title="Filters" size="standard">
+                                {filterContent}
+                            </BottomSheet>
                         );
                     }
 
