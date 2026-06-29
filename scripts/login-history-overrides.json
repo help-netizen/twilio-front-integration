@@ -4,5 +4,6 @@
   "3b328f8": { "tag": "Polish", "text": "Role-based access audit + hardening across the app" },
   "2412bf9": { "tag": "Fix", "text": "Technicians can start, update & complete their own jobs" },
   "800fe6c": { "tag": "Fix", "text": "More reliable service-area check for ZIP codes" },
-  "b44da9e": { "tag": "Feature", "text": "Note attachments upload instantly with a progress indicator" }
+  "b44da9e": { "tag": "Feature", "text": "Note attachments upload instantly with a progress indicator" },
+  "5f7de54": { "tag": "Feature", "text": "Technicians can prepare estimates & invoices and take payment" }
 }
