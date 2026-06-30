@@ -4,6 +4,12 @@
 
 ---
 
+## 2026-06-30 — DETAIL-PANEL-MOBILE-BACK-001: restore the close affordance on mobile detail cards (regression fix)
+
+On a phone, opening a detail card (Job/Lead/Contact + a few pages — all use the shared `FloatingDetailPanel`) left no visible way to close it and return to the list. **Regression from OVERLAY-CLOSE-CANON-001:** the mobile close `<OverlayClose variant="corner">` was a *sibling* of the panel with `z-index:auto`, while the mobile panel is full-screen `z-index:120` — so the panel painted over the close button and it was buried/untappable. (Desktop's hover-left × is `z-[141]`, so only mobile broke.) Fix: replaced it with a mobile-only **back-arrow (←) at the top-left**, rendered as a *child* of the panel (inside its stacking context → visible), in a slim `md:hidden` top bar so the content flows below it. Tapping it calls `onClose` → back to the list. Applies to every `FloatingDetailPanel` mobile detail card. Desktop unchanged. Independent review APPROVED; `npm run build` green; frontend-only.
+
+---
+
 ## 2026-06-30 — JOBS-MOBILE-ORDER-001: mobile Jobs reads earliest-first within each day
 
 On the mobile Jobs list (date-grouped tiles) the jobs inside each day were ordered latest→earliest — the first job of the day sat at the bottom. The list is globally `start_date` DESC for coherent date-grouped paging, so each day rendered bottom-up. Fixed in `JobsMobileList.tsx` by sorting each *dated* day-bucket ascending by `start_date` (earliest→latest) inside the grouping `useMemo`; the day-group order (most-recent day first) and the "No date" bucket are untouched, and paging/loadMore + the desktop table are unaffected. Frontend-only; independent review APPROVED; `npm run build` green.
