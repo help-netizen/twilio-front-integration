@@ -4,7 +4,9 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { X, Wand2, Sparkles, Send } from 'lucide-react';
+import { Wand2, Sparkles, Send } from 'lucide-react';
+import { useOverlayDismiss } from '../../hooks/useOverlayDismiss';
+import { OverlayClose } from '../ui/OverlayClose';
 
 interface AIAssistantModalProps {
     isOpen: boolean;
@@ -16,13 +18,8 @@ export const AIAssistantModal: React.FC<AIAssistantModalProps> = ({ isOpen, onCl
     const [input, setInput] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
 
-    useEffect(() => {
-        const handleEscape = (e: KeyboardEvent) => {
-            if (e.key === 'Escape' && isOpen) onClose();
-        };
-        window.addEventListener('keydown', handleEscape);
-        return () => window.removeEventListener('keydown', handleEscape);
-    }, [isOpen, onClose]);
+    // Hook owns Esc + body-scroll-lock + backdrop close (OVERLAY-CLOSE-CANON-001).
+    const { backdropProps } = useOverlayDismiss({ open: isOpen, onClose, esc: true, closeOnBackdrop: true, scrollLock: true, focusTrap: false });
 
     useEffect(() => {
         if (isOpen) {
@@ -55,7 +52,7 @@ export const AIAssistantModal: React.FC<AIAssistantModalProps> = ({ isOpen, onCl
             <div
                 className="fixed inset-0 z-50 transition-opacity"
                 style={{ background: 'rgba(32, 39, 52, 0.65)', backdropFilter: 'blur(8px)' }}
-                onClick={onClose}
+                onClick={backdropProps.onClick}
             />
 
             {/* Modal */}
@@ -94,14 +91,12 @@ export const AIAssistantModal: React.FC<AIAssistantModalProps> = ({ isOpen, onCl
                                     </p>
                                 </div>
                             </div>
-                            <button
-                                type="button"
-                                onClick={onClose}
-                                className="flex items-center justify-center w-9 h-9 transition-all hover:bg-black/5"
-                                style={{ borderRadius: '10px', color: 'var(--sched-ink-2)' }}
-                            >
-                                <X className="size-5" />
-                            </button>
+                            <OverlayClose
+                                variant="corner"
+                                onClose={onClose}
+                                className="static flex items-center justify-center w-9 h-9 p-0 rounded-[10px] transition-all hover:bg-black/5 hover:opacity-100"
+                                style={{ background: 'transparent', color: 'var(--sched-ink-2)' }}
+                            />
                         </div>
 
                         {/* Processing indicator */}

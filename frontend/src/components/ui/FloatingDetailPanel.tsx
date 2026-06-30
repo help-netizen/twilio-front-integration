@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { X } from 'lucide-react';
+import { useOverlayDismiss } from '../../hooks/useOverlayDismiss';
+import { OverlayClose } from './OverlayClose';
 
 interface Props {
     open: boolean;
@@ -10,63 +10,36 @@ interface Props {
 }
 
 export function FloatingDetailPanel({ open, onClose, wide, children }: Props) {
-    const panelRef = useRef<HTMLDivElement>(null);
-    const [hovered, setHovered] = useState(false);
-
-    useEffect(() => {
-        if (!open) return;
-        const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-        document.addEventListener('keydown', handler);
-        return () => document.removeEventListener('keydown', handler);
-    }, [open, onClose]);
-
-    useEffect(() => { if (!open) setHovered(false); }, [open]);
+    // NON-MODAL on desktop: no scroll-lock, no focus-trap (so the background list stays
+    // scrollable + clickable). Esc-to-close and mobile backdrop-tap-to-close are kept.
+    // focusTrap:false → panelProps gives aria-modal: undefined, preserving non-modal a11y.
+    const { panelProps, backdropProps } = useOverlayDismiss({
+        open,
+        onClose,
+        esc: true,
+        closeOnBackdrop: true,
+        scrollLock: false,
+        focusTrap: false,
+    });
 
     if (!open) return null;
 
     return createPortal(
         <>
-            {/* Mobile: dark backdrop that closes on tap. Desktop: no backdrop — list stays clickable */}
-            <div className="blanc-floating-backdrop" onClick={onClose} />
+            {/* Mobile: dark backdrop that closes on tap. Desktop: CSS-hidden — list stays clickable */}
+            <div className="blanc-floating-backdrop" onClick={backdropProps.onClick} />
+            {/* `peer` so the desktop slideover close button's peer-hover reveal fires */}
             <div
-                className="blanc-floating-close-zone"
-                onMouseEnter={() => setHovered(true)}
-                onMouseLeave={() => setHovered(false)}
+                {...panelProps}
+                className={`blanc-floating-panel peer${wide ? ' blanc-floating-panel--wide' : ''}`}
             >
-                {/* Hover bridge — always receives pointer events so cursor can travel from panel to close button */}
-                <div className="blanc-floating-hover-bridge" />
-                <div
-                    ref={panelRef}
-                    className={`blanc-floating-panel${wide ? ' blanc-floating-panel--wide' : ''}`}
-                    onMouseEnter={() => setHovered(true)}
-                >
-                    {/* Mobile close button — visible only on mobile since hover close is hidden */}
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        className="absolute top-3 right-3 z-10 p-2 rounded-xl md:hidden"
-                        style={{ background: 'rgba(117, 106, 89, 0.08)', color: 'var(--blanc-ink-2)' }}
-                    >
-                        <X className="size-4" />
-                    </button>
-                    {children}
-                </div>
-                {/* Hover close button — left of the panel */}
-                <button
-                    type="button"
-                    onClick={onClose}
-                    className="blanc-floating-close-btn"
-                    style={{
-                        opacity: hovered ? 1 : 0,
-                        background: hovered ? 'var(--blanc-ink-1)' : 'transparent',
-                        color: hovered ? '#fff' : 'transparent',
-                        boxShadow: hovered ? '0 4px 12px rgba(0,0,0,0.15)' : 'none',
-                    }}
-                    title="Close"
-                >
-                    <X className="size-3.5" />
-                </button>
+                {children}
             </div>
+            {/* Mobile inside-× (desktop hidden) */}
+            <OverlayClose variant="corner" className="md:hidden" onClose={onClose} />
+            {/* Desktop hover-reveal × anchored to THIS panel's real width (not the shared
+                size table) so the panel keeps its own 420px / --blanc-layer-width sizing */}
+            <OverlayClose variant="slideover" anchorRight={wide ? 'var(--blanc-layer-width)' : '420px'} onClose={onClose} />
         </>,
         document.body
     );

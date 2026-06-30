@@ -788,24 +788,18 @@ table tbody tr:hover {
     display: none;
 }
 
-/* Close zone wraps panel + hover close button */
-.blanc-floating-close-zone {
+/* Desktop: docked flush to the right edge, below the app header, full height — the
+   same right-side "layer" mechanic as the form drawer (dialog.tsx panel variant).
+   Self-positioned (previously a wrapper provided the fixed anchoring); width matches
+   --blanc-layer-width so the OverlayClose `slideover` × (anchored via
+   PANEL_CLOSE_RIGHT.default) lands exactly at the panel's left edge. */
+.blanc-floating-panel {
     position: fixed;
     top: var(--blanc-layer-top);
     right: 0;
     bottom: 0;
     z-index: 80;
-    pointer-events: none;
-    /* extra width for close button hover area */
-    padding-left: 44px;
-    display: flex;
-    align-items: flex-start;
-}
-
-.blanc-floating-panel {
-    position: relative;
     width: 420px;
-    height: 100%;
     pointer-events: auto;
     /* Solid near-white — same surface as form drawers (no frosted glass), so all
        "layers" (forms + view panels) read as one consistent surface. */
@@ -821,64 +815,28 @@ table tbody tr:hover {
     animation: blancFadeIn 0.15s ease-out;
 }
 
+/* Wide variant — heavier content. The slideover close × tracks this width via the
+   `anchorRight` prop FloatingDetailPanel passes (not the shared size table). */
 .blanc-floating-panel--wide {
     width: var(--blanc-layer-width);
 }
 
-/* Invisible bridge that keeps pointer-events alive between panel and close button */
-.blanc-floating-hover-bridge {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 44px;
-    height: 80px;
-    pointer-events: auto;
-}
-
-/* Hover close button to the left of the panel */
-.blanc-floating-close-btn {
-    position: absolute;
-    left: 8px;
-    top: 12px;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    border: none;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    pointer-events: auto;
-    transition: opacity 0.15s, background 0.15s, box-shadow 0.15s;
-}
-
 @media (max-width: 768px) {
-    /* Mobile: full-screen panel, no backdrop needed */
-    .blanc-floating-backdrop {
-        display: none;
-    }
-    .blanc-floating-close-zone {
+    /* Mobile: full-screen panel, dark backdrop handled by .blanc-floating-backdrop */
+    .blanc-floating-panel,
+    .blanc-floating-panel--wide {
         top: 0;
         right: 0;
         bottom: 0;
         left: 0;
-        padding-left: 0;
-        z-index: 120;
-        justify-content: flex-start;
-    }
-    .blanc-floating-panel,
-    .blanc-floating-panel--wide {
         width: 100vw;
         height: 100dvh;
         max-height: 100dvh;
+        z-index: 120;
         border-radius: 0;
         transform: none;
         animation: blancFadeIn 0.15s ease-out;
         box-shadow: none;
-    }
-    .blanc-floating-close-btn,
-    .blanc-floating-hover-bridge {
-        display: none;
     }
 }
 

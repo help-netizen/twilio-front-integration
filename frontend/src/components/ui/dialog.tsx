@@ -1,7 +1,8 @@
 import * as React from "react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
-import { X } from "lucide-react"
 import { cn } from "../../lib/utils"
+import { OverlayClose } from "./OverlayClose"
+import type { DialogSize } from "./overlayLayout"
 
 const Dialog = DialogPrimitive.Root
 const DialogTrigger = DialogPrimitive.Trigger
@@ -30,7 +31,8 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 //  • variant="panel" — a right-side slide-in "layer", the SAME mechanic as the
 //    job-detail card: anchored to the right, full-height (top/bottom inset),
 //    slides in from the right, scrolls as one. This is the target for forms.
-type DialogSize = "sm" | "default" | "wide" | "full"
+// `DialogSize` is imported from ./overlayLayout (the lower layer that also owns the
+// close-anchoring math) so the panel width and the close-× anchor never drift.
 const DIALOG_SIZE: Record<DialogSize, string> = {
     sm: "md:max-w-md",
     default: "md:max-w-lg",
@@ -46,14 +48,9 @@ const PANEL_WIDTH: Record<DialogSize, string> = {
     wide: "md:w-[min(1020px,calc(100vw-100px))]",
     full: "md:w-[min(1320px,calc(100vw-72px))]",
 }
-// Raw width per size (mirrors PANEL_WIDTH without the `md:w-[]`) — used to anchor
-// the hover-reveal close just LEFT of the panel's edge at any width.
-const PANEL_CLOSE_RIGHT: Record<DialogSize, string> = {
-    sm: "var(--blanc-layer-width)",
-    default: "var(--blanc-layer-width)",
-    wide: "min(1020px,calc(100vw-100px))",
-    full: "min(1320px,calc(100vw-72px))",
-}
+// NB: the hover-reveal close's left-anchor math (was a local PANEL_CLOSE_RIGHT table)
+// now lives in ./overlayLayout and is applied inside <OverlayClose variant="slideover">
+// from the same `size` — single source of truth, so width and × anchor never drift.
 
 const DialogContent = React.forwardRef<
     React.ElementRef<typeof DialogPrimitive.Content>,
@@ -106,32 +103,21 @@ const DialogContent = React.forwardRef<
             {...props}
         >
             {children}
-            {/* Top-right X — centered dialogs always; for PANELS it's the MOBILE bottom-sheet
-                only (md:hidden), since on desktop every panel uses the hover-left close below. */}
-            <DialogPrimitive.Close
-                className={cn(
-                    "absolute right-4 top-[18px] rounded-md p-1 opacity-60 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none",
-                    variant === "panel" && "right-3 top-3 md:hidden",
-                )}
-            >
-                <X className="h-4 w-4" />
-                <span className="sr-only">Close</span>
+            {/* Top-right inside × (OverlayClose `corner`) — centered dialogs always; for
+                PANELS it's the MOBILE bottom-sheet only (md:hidden), since on desktop every
+                panel uses the hover-left close below. Radix still owns the close via Close asChild. */}
+            <DialogPrimitive.Close asChild>
+                <OverlayClose variant="corner" className={variant === "panel" ? "md:hidden" : undefined} />
             </DialogPrimitive.Close>
         </DialogPrimitive.Content>
         {/* Every panel (any size), desktop: hover-reveal close to the LEFT of the layer — the
-            single canonical close, identical to the FloatingDetailPanel view card. `right` is
-            anchored to the panel's actual width so it sits just outside the left edge at any size. */}
+            single canonical close (OverlayClose `slideover`), identical to the FloatingDetailPanel
+            view card. It MUST stay a sibling rendered AFTER the `peer` DialogContent above so the
+            `peer-hover:*` reveal still fires; it anchors itself just outside the left edge from `size`.
+            Radix still owns the close via Close asChild. */}
         {variant === "panel" && (
             <DialogPrimitive.Close asChild>
-                <button
-                    type="button"
-                    title="Close"
-                    style={{ top: "calc(var(--blanc-layer-top) + 12px)", right: `calc(${PANEL_CLOSE_RIGHT[size]} + 8px)` }}
-                    className="fixed z-[141] hidden h-7 w-7 items-center justify-center rounded-full bg-transparent text-transparent opacity-0 transition-all duration-150 focus:outline-none md:flex peer-hover:bg-[var(--blanc-ink-1)] peer-hover:text-white peer-hover:opacity-100 peer-hover:shadow-[0_4px_12px_rgba(0,0,0,0.15)] hover:bg-[var(--blanc-ink-1)] hover:text-white hover:opacity-100 hover:shadow-[0_4px_12px_rgba(0,0,0,0.15)]"
-                >
-                    <X className="h-3.5 w-3.5" />
-                    <span className="sr-only">Close</span>
-                </button>
+                <OverlayClose variant="slideover" size={size} />
             </DialogPrimitive.Close>
         )}
     </DialogPortal>

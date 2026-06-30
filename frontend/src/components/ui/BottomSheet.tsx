@@ -15,16 +15,19 @@
  * (flex-1, min-height:0, overflow-y:auto) → footer (shrink-0). `min-height:0` on the
  * body is REQUIRED or the internal scroll never engages in a fixed-height flex panel.
  *
- * Mirrors the dialog.tsx panel canon (DialogPanelHeader → DialogBody → DialogPanelFooter)
- * but stays a self-contained component — no import of dialog.tsx. Albusto tokens only.
+ * Mirrors the dialog.tsx panel canon (DialogPanelHeader → DialogBody → DialogPanelFooter).
+ * Albusto tokens only.
  *
- * Behavior: Esc + backdrop close, body-scroll-lock, focus capture/restore + Tab trap,
- * drag-to-dismiss from the handle/header (not the scrollable body), iOS safe-area.
+ * Behavior (Esc + backdrop close, body-scroll-lock, focus capture/restore + Tab trap,
+ * drag-to-dismiss from the handle/header — not the scrollable body) is owned by the
+ * shared `useOverlayDismiss` hook (OVERLAY-CLOSE-CANON-001); this file keeps only the
+ * visuals — the slide-up animation, fixed-height policy, and the translateY/spring
+ * mapping of the hook's raw drag offset. iOS safe-area lives here too.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X } from 'lucide-react';
+import { useOverlayDismiss } from '../../hooks/useOverlayDismiss';
+import { OverlayClose } from './OverlayClose';
 
 export type BottomSheetSize = 'standard' | 'full' | 'auto';
 
@@ -54,12 +57,6 @@ export interface BottomSheetProps {
     children: React.ReactNode;
 }
 
-// Drag past this many px (downward) on release → dismiss; otherwise spring back.
-const DISMISS_THRESHOLD_PX = 80;
-
-const FOCUSABLE_SELECTOR =
-    'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
 export function BottomSheet({
     open,
     onClose,
@@ -75,133 +72,23 @@ export function BottomSheet({
     ariaLabel,
     children,
 }: BottomSheetProps) {
-    const panelRef = useRef<HTMLDivElement>(null);
-    // Element focused before the sheet opened — restored on close.
-    const restoreFocusRef = useRef<HTMLElement | null>(null);
-    // Live drag offset (px). 0 when idle / not dragging.
-    const [dragY, setDragY] = useState(0);
-    // While dragging we suppress the spring transition so the panel tracks the finger 1:1.
-    const [dragging, setDragging] = useState(false);
-    const dragStartY = useRef<number | null>(null);
-
     const headerVisible = showHeader ?? !!title;
     const label = title ?? ariaLabel;
 
-    // ── Esc to close ──────────────────────────────────────────────────────────
-    useEffect(() => {
-        if (!open) return;
-        const handler = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') {
-                e.stopPropagation();
-                onClose();
-            }
-        };
-        document.addEventListener('keydown', handler);
-        return () => document.removeEventListener('keydown', handler);
-    }, [open, onClose]);
-
-    // ── Lock body scroll while open ───────────────────────────────────────────
-    useEffect(() => {
-        if (!open) return;
-        const prev = document.body.style.overflow;
-        document.body.style.overflow = 'hidden';
-        return () => {
-            document.body.style.overflow = prev;
-        };
-    }, [open]);
-
-    // ── Focus capture → move to panel; restore on close ───────────────────────
-    useEffect(() => {
-        if (!open) return;
-        restoreFocusRef.current = (document.activeElement as HTMLElement) ?? null;
-        // Focus the panel itself (tabIndex=-1) so the Tab trap has an anchor.
-        const id = requestAnimationFrame(() => panelRef.current?.focus());
-        return () => {
-            cancelAnimationFrame(id);
-            const el = restoreFocusRef.current;
-            restoreFocusRef.current = null;
-            // Restore focus to whatever was focused before opening (if still in the DOM).
-            if (el && typeof el.focus === 'function' && document.contains(el)) {
-                el.focus();
-            }
-        };
-    }, [open]);
-
-    // ── Minimal Tab trap: keep focus cycling inside the panel ─────────────────
-    const onKeyDownTrap = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
-        if (e.key !== 'Tab') return;
-        const panel = panelRef.current;
-        if (!panel) return;
-        const focusable = Array.from(
-            panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
-        ).filter((el) => el.offsetParent !== null || el === document.activeElement);
-        if (focusable.length === 0) {
-            // Nothing focusable — keep focus on the panel.
-            e.preventDefault();
-            panel.focus();
-            return;
-        }
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
-        const active = document.activeElement as HTMLElement | null;
-        if (e.shiftKey) {
-            if (active === first || active === panel) {
-                e.preventDefault();
-                last.focus();
-            }
-        } else if (active === last) {
-            e.preventDefault();
-            first.focus();
-        }
-    }, []);
-
-    // ── Drag-to-dismiss (handle / header region only) ─────────────────────────
-    const onDragPointerDown = useCallback(
-        (e: React.PointerEvent<HTMLDivElement>) => {
-            if (!dragToDismiss) return;
-            // Don't hijack interactions with the close button (or any control) in the header.
-            if ((e.target as HTMLElement).closest('button')) return;
-            dragStartY.current = e.clientY;
-            setDragging(true);
-            e.currentTarget.setPointerCapture(e.pointerId);
-        },
-        [dragToDismiss],
-    );
-
-    const onDragPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-        if (dragStartY.current === null) return;
-        const delta = e.clientY - dragStartY.current;
-        // Only track downward drags; ignore upward pull.
-        setDragY(Math.max(0, delta));
-    }, []);
-
-    const endDrag = useCallback(
-        (e: React.PointerEvent<HTMLDivElement>) => {
-            if (dragStartY.current === null) return;
-            const delta = e.clientY - dragStartY.current;
-            dragStartY.current = null;
-            setDragging(false);
-            if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
-                e.currentTarget.releasePointerCapture(e.pointerId);
-            }
-            if (delta > DISMISS_THRESHOLD_PX) {
-                onClose();
-            } else {
-                // Spring back to rest.
-                setDragY(0);
-            }
-        },
-        [onClose],
-    );
-
-    // Reset transient drag state whenever the sheet is (re)opened.
-    useEffect(() => {
-        if (open) {
-            setDragY(0);
-            setDragging(false);
-            dragStartY.current = null;
-        }
-    }, [open]);
+    // Behavior (Esc / backdrop / scroll-lock / focus-trap / drag-to-dismiss) is owned
+    // by the shared hook — the drag/focus/esc logic was lifted VERBATIM from here, so
+    // this is a no-op behaviorally. We map its raw drag offset to translateY below.
+    const { panelProps, backdropProps, dragHandlers, dragOffset, isDragging } = useOverlayDismiss({
+        open,
+        onClose,
+        esc: true,
+        closeOnBackdrop: true,
+        scrollLock: true,
+        focusTrap: true,
+        dragToDismiss,
+        dragThreshold: 80,
+        stopEscPropagation: true,
+    });
 
     if (typeof document === 'undefined') return null; // SSR-safe.
     if (!open) return null;
@@ -215,27 +102,17 @@ export function BottomSheet({
                 : { maxHeight };
 
     // While dragging: 1:1 finger tracking, no transition. On release: spring back.
-    const transform = dragY > 0 ? `translateY(${dragY}px)` : undefined;
-    const dragTransition = dragging ? 'none' : 'transform 0.25s cubic-bezier(0.32, 0.72, 0, 1)';
+    const transform = dragOffset > 0 ? `translateY(${dragOffset}px)` : undefined;
+    const dragTransition = isDragging ? 'none' : 'transform 0.25s cubic-bezier(0.32, 0.72, 0, 1)';
 
     // No footer → the body owns the safe-area bottom padding; with a footer the footer does.
     const bodyPaddingBottom = footer ? undefined : 'max(env(safe-area-inset-bottom), 12px)';
-
-    const dragHandlers = dragToDismiss
-        ? {
-            onPointerDown: onDragPointerDown,
-            onPointerMove: onDragPointerMove,
-            onPointerUp: endDrag,
-            onPointerCancel: endDrag,
-            style: { touchAction: 'none' as const },
-        }
-        : {};
 
     return createPortal(
         <>
             {/* Dark backdrop — tap to close */}
             <div
-                onClick={onClose}
+                {...backdropProps}
                 style={{
                     position: 'fixed',
                     inset: 0,
@@ -249,12 +126,8 @@ export function BottomSheet({
 
             {/* Sheet panel */}
             <div
-                ref={panelRef}
-                role="dialog"
-                aria-modal="true"
+                {...panelProps}
                 aria-label={label}
-                tabIndex={-1}
-                onKeyDown={onKeyDownTrap}
                 style={{
                     position: 'fixed',
                     left: 0,
@@ -327,17 +200,7 @@ export function BottomSheet({
                         ) : (
                             <span />
                         )}
-                        {!hideCloseButton && (
-                            <button
-                                type="button"
-                                onClick={onClose}
-                                aria-label="Close"
-                                className="p-2 rounded-xl transition-opacity hover:opacity-70"
-                                style={{ background: 'rgba(117, 106, 89, 0.08)', color: 'var(--blanc-ink-2)' }}
-                            >
-                                <X className="size-4" />
-                            </button>
-                        )}
+                        {!hideCloseButton && <OverlayClose variant="corner" onClose={onClose} />}
                     </div>
                 )}
 

@@ -9,8 +9,10 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
     ChevronLeft, ChevronRight as ChevronRightIcon,
-    ExternalLink, RotateCcw, X,
+    ExternalLink, RotateCcw,
 } from 'lucide-react';
+import { useOverlayDismiss } from '../../hooks/useOverlayDismiss';
+import { OverlayClose } from '../ui/OverlayClose';
 
 // ─── Public interfaces ───────────────────────────────────────────────────────
 
@@ -73,21 +75,20 @@ export function FullscreenImageViewer({
     }, []);
 
     const handleKeyDown = useCallback((e: KeyboardEvent) => {
-        if (e.key === 'Escape') onClose();
         if (e.key === 'ArrowLeft') navigate(-1);
         if (e.key === 'ArrowRight') navigate(1);
         if (e.key === 'ArrowUp') { e.preventDefault(); zoomIn(); }
         if (e.key === 'ArrowDown') { e.preventDefault(); zoomOut(); }
-    }, [onClose, navigate, zoomIn, zoomOut]);
+    }, [navigate, zoomIn, zoomOut]);
 
     useEffect(() => {
         document.addEventListener('keydown', handleKeyDown);
-        document.body.style.overflow = 'hidden';
-        return () => {
-            document.removeEventListener('keydown', handleKeyDown);
-            document.body.style.overflow = '';
-        };
+        return () => document.removeEventListener('keydown', handleKeyDown);
     }, [handleKeyDown]);
+
+    // Hook owns Esc + body-scroll-lock (OVERLAY-CLOSE-CANON-001); backdrop close
+    // stays bespoke below (the `target === currentTarget` guard).
+    useOverlayDismiss({ open: !!current, onClose, esc: true, closeOnBackdrop: false, scrollLock: true, focusTrap: false });
 
     if (!current) return null;
 
@@ -112,9 +113,12 @@ export function FullscreenImageViewer({
                     <a href={current.url} target="_blank" rel="noopener noreferrer" className="p-2 rounded-lg hover:bg-white/10 transition-colors" title="Open original">
                         <ExternalLink className="size-4 text-white/70" />
                     </a>
-                    <button onClick={onClose} className="p-2 rounded-lg hover:bg-white/10 transition-colors" title="Close">
-                        <X className="size-4 text-white/70" />
-                    </button>
+                    <OverlayClose
+                        variant="corner"
+                        onClose={onClose}
+                        className="static p-2 rounded-lg text-white/70 hover:bg-white/10 hover:opacity-100"
+                        style={{ background: 'transparent' }}
+                    />
                 </div>
             </div>
 

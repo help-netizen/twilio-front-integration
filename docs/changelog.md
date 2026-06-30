@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-06-29 — OVERLAY-CLOSE-CANON-001: one shared close logic for every overlay
+
+Overlay "close" had grown two dialects (slide-over hover-left × from LAYER-CLOSE-CANON-001 vs the bottom-sheet's own ×/swipe/backdrop) and the close BEHAVIOR (Esc/backdrop/scroll-lock/focus) was hand-re-implemented in every non-Radix overlay. Now there is **one source of truth** — edit it once, it changes everywhere.
+
+- **`hooks/useOverlayDismiss.ts` (behavior):** one hook encapsulating Esc, backdrop-click, **ref-counted** body-scroll-lock (nested overlays no longer clobber each other's restore), focus-trap/restore, and swipe-down drag-to-dismiss — each independently togglable. The drag/focus/Esc logic was lifted verbatim from BottomSheet, so no behavior changed.
+- **`components/ui/OverlayClose.tsx` (affordance):** one renderer of the close control — `variant="corner"` (inside top-right ×) and `variant="slideover"` (desktop hover-left ×, anchored via the shared `PANEL_CLOSE_RIGHT` table or an `anchorRight` override). `forwardRef` + prop-spread so it drops into `<DialogPrimitive.Close asChild>`.
+- **Adopted by all hand-rolled overlays:** `BottomSheet` (keeps its fixed height + all 4 close methods — ×/swipe/backdrop/Esc — now from the hook), `FloatingDetailPanel` (stays non-modal on desktop: no scroll-lock/focus-trap; keeps its 420px/`--blanc-layer-width` widths via `anchorRight`), `FullscreenImageViewer` (Esc+scroll-lock; keeps arrow/zoom keys), `AIAssistantModal` (Esc+backdrop, **gains** scroll-lock). `ui/dialog.tsx` keeps Radix's native Esc/scroll-lock/focus and only adopts the shared `OverlayClose` affordance. `TwoFactorGate` stays intentionally non-dismissible. Decisions: sheets keep all 3 affordances; Radix keeps its own behavior; all hand-rolled overlays unified.
+- **Net:** removed ~330 lines of duplicated close boilerplate; deleted the dead `.blanc-floating-close-*` CSS. Independent review APPROVED (after fixing a panel-width regression — panels are NOT resized). `npm run build` green; dev-preview confirmed a bottom sheet still closes via × / swipe / backdrop / Esc at its fixed height, app error-free. Frontend-only, no backend/migration. Cosmetic side-effects to confirm: centered-modal × now uses the shared soft-pill look.
+
+---
+
 ## 2026-06-29 — SHEET-CANON-001: one canonical mobile BottomSheet (guaranteed-equal heights)
 
 Mobile bottom sheets rendered at inconsistent heights. Root cause: **two parallel mechanisms** that shared no code — a real `ui/BottomSheet.tsx` component (used only by Schedule "View options") and a hand-rolled `.blanc-mobile-sheet` CSS class copy-pasted across ~9 sheets — and **every one of them was content-driven `max-height`**, so a filter sheet with many rows and one with few rows were genuinely different heights no matter the cap. (The earlier 70→85vh cap bump couldn't fix that.)
