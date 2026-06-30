@@ -5,5 +5,8 @@
   "2412bf9": { "tag": "Fix", "text": "Technicians can start, update & complete their own jobs" },
   "800fe6c": { "tag": "Fix", "text": "More reliable service-area check for ZIP codes" },
   "b44da9e": { "tag": "Feature", "text": "Note attachments upload instantly with a progress indicator" },
-  "5f7de54": { "tag": "Feature", "text": "Technicians can prepare estimates & invoices and take payment" }
+  "5f7de54": { "tag": "Feature", "text": "Technicians can prepare estimates & invoices and take payment" },
+  "81efead": { "tag": "Polish", "text": "More consistent panels, sheets & menus across the app" },
+  "96758c7": { "hide": true },
+  "11c2693": { "hide": true }
 }
