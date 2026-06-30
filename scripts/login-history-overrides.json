@@ -11,5 +11,7 @@
   "11c2693": { "hide": true },
   "d7f8c21": { "tag": "Feature", "text": "Job tiles show paid vs. due at a glance" },
   "2079c67": { "tag": "Fix", "text": "Easier to close detail cards on mobile" },
-  "610107f": { "hide": true }
+  "610107f": { "hide": true },
+  "ca5aa2a": { "tag": "Feature", "text": "Pulse conversations grouped by day, with Action Required pinned on top" },
+  "cb736d5": { "hide": true }
 }
