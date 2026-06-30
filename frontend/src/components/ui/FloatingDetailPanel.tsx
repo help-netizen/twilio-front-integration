@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom';
-import { ArrowLeft } from 'lucide-react';
+import { X } from 'lucide-react';
 import { useOverlayDismiss } from '../../hooks/useOverlayDismiss';
 import { OverlayClose } from './OverlayClose';
 
@@ -34,22 +34,22 @@ export function FloatingDetailPanel({ open, onClose, wide, children }: Props) {
                 {...panelProps}
                 className={`blanc-floating-panel peer${wide ? ' blanc-floating-panel--wide' : ''}`}
             >
-                {/* Mobile-only back affordance. Rendered as a CHILD of the full-screen panel
+                {/* Mobile-only close ×. Rendered as a CHILD of the full-screen panel
                     (NOT a sibling) so it lives in the panel's own stacking context and paints
                     ABOVE the content → tappable on mobile (the OVERLAY-CLOSE-CANON regression
-                    was a sibling × hidden behind the z-index:120 panel). A slim flex-shrink-0
-                    top bar pushes the content header (px-5 pt-5) below it → no overlap. */}
-                <div className="md:hidden flex-shrink-0 flex items-center px-5 pt-4 pb-1">
-                    <button
-                        type="button"
-                        aria-label="Back"
-                        onClick={onClose}
-                        className="inline-flex items-center justify-center h-10 w-10 rounded-full transition-colors"
-                        style={{ background: 'rgba(117,106,89,0.08)', color: 'var(--blanc-ink-1)' }}
-                    >
-                        <ArrowLeft size={20} />
-                    </button>
-                </div>
+                    was a sibling × hidden behind the z-index:120 panel). Absolutely positioned
+                    at the top-right corner, aligned with the header's top row, so it does NOT
+                    push the content down. Content headers add a max-md: right-gutter to keep
+                    their own top-right clusters clear of this ×. */}
+                <button
+                    type="button"
+                    aria-label="Close"
+                    onClick={onClose}
+                    className="md:hidden absolute top-3 right-3 z-10 inline-flex items-center justify-center h-10 w-10 rounded-xl transition-colors"
+                    style={{ background: 'rgba(117,106,89,0.08)', color: 'var(--blanc-ink-1)' }}
+                >
+                    <X size={20} />
+                </button>
                 {children}
             </div>
             {/* Desktop hover-reveal × anchored to THIS panel's real width (not the shared

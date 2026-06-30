@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Archive, Check, ChevronDown, Clock, Eye, FileText, Link2, Loader2, MoreHorizontal, Pencil, RotateCcw, Send, Trash2, X, XCircle } from 'lucide-react';
+import { Archive, Check, ChevronDown, Clock, Eye, FileText, Link2, Loader2, MoreHorizontal, Pencil, RotateCcw, Send, Trash2, XCircle } from 'lucide-react';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -66,7 +66,7 @@ interface Props {
     onChanged?: (estimate: Estimate) => void;
 }
 
-export function EstimateDetailPanel({ estimate: initialEstimate, events, loading, onClose, onSend, onApprove, onDecline, onArchive, onRestore, onLinkJob, onInvoiceCreated, onChanged }: Props) {
+export function EstimateDetailPanel({ estimate: initialEstimate, events, loading, onClose: _onClose, onSend, onApprove, onDecline, onArchive, onRestore, onLinkJob, onInvoiceCreated, onChanged }: Props) {
     const navigate = useNavigate();
     const { hasPermission } = useAuthz();
     const canSend = hasPermission('estimates.send');
@@ -299,9 +299,6 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                         <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--blanc-ink-3)]">Total</p>
                         <p className="font-mono text-xl font-semibold">{money(estimate.total)}</p>
                     </div>
-                    <Button variant="ghost" size="sm" className="size-7 p-0 md:hidden" onClick={onClose}>
-                        <X className="size-4" />
-                    </Button>
                 </div>
                 </div>
             </div>

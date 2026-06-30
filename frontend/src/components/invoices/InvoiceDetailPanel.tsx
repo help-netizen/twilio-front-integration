@@ -11,7 +11,6 @@ import {
     Pencil,
     Send,
     Trash2,
-    X,
 } from 'lucide-react';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
@@ -117,7 +116,7 @@ export function InvoiceDetailPanel({
     invoice: initialInvoice,
     events,
     loading,
-    onClose,
+    onClose: _onClose,
     onSend,
     onVoid,
     onRecordPayment,
@@ -450,9 +449,6 @@ export function InvoiceDetailPanel({
                             </p>
                             <p className="text-[11px] text-[var(--blanc-ink-3)]">of {money(invoice.total)}</p>
                         </div>
-                        <Button variant="ghost" size="sm" className="size-7 p-0 md:hidden" onClick={onClose}>
-                            <X className="size-4" />
-                        </Button>
                     </div>
                 </div>
             </div>

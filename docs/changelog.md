@@ -4,6 +4,12 @@
 
 ---
 
+## 2026-06-30 — DETAIL-PANEL-MOBILE-CLOSE-002: mobile detail close is a top-right × (no content shift)
+
+Follow-up to DETAIL-PANEL-MOBILE-BACK-001: the back-arrow lived in a thin top BAR that pushed the card content down. Replaced it with a close **× at the panel's top-right corner** (mobile only), rendered as a *child* of the full-screen panel so it stays visible (same stacking fix), with NO content shift. Headers that have a top-right cluster get a mobile-only right-gutter (`max-md:pr-14`) so the cluster sits just left of the × — e.g. JobDetailHeader's `⋮` kebab and ContactDetailPanel's action icons now read `[ … ⋮ × ]`. The × is a single 40px affordance shared by every `FloatingDetailPanel` card; the redundant own `md:hidden` ×'s in the Estimate/Invoice/Transaction detail panels were removed (no more double-× on mobile; their nested Radix-dialog render keeps its own ×). Desktop hover-left × + Esc/backdrop untouched. Independent review APPROVED (verified the own-close removal is safe at all 7 render sites and `onClose` was dead-wired only to the removed button); `npm run build` green; frontend-only.
+
+---
+
 ## 2026-06-30 — JOB-TILE-PAYMENT-001: readable paid/due payment status on the mobile job tile
 
 The mobile job tile showed "{status} · ${invoice_total}" (e.g. "Partial · $100") — it paired the Zenbooker status with the invoice *total*, so it never revealed how much was actually owed (and mixed a Zenbooker-cached total with a locally-summed `amount_paid`). Now the tile reads paid vs. due from one consistent source and shows it plainly:

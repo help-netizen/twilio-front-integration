@@ -94,7 +94,7 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
                         </div>
 
                         {/* Name + action icons */}
-                        <div className="flex items-center gap-2 mb-1">
+                        <div className="flex items-center gap-2 mb-1 max-md:pr-14">
                             <h2
                                 className="text-2xl font-bold leading-tight truncate"
                                 style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)', letterSpacing: '-0.03em' }}

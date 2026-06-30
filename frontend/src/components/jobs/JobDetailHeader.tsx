@@ -51,7 +51,7 @@ export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChang
     return (
         <div className="px-5 pt-5 pb-3">
             {/* Eyebrow: JOB · #629656 · Dryer */}
-            <div className="mb-2 flex items-start justify-between gap-2">
+            <div className="mb-2 flex items-start justify-between gap-2 max-md:pr-14">
                 <span
                     className="text-[10px] font-semibold uppercase tracking-widest inline-flex items-center gap-1.5 select-text"
                     style={{ color: 'var(--blanc-ink-3)', letterSpacing: '0.12em' }}
