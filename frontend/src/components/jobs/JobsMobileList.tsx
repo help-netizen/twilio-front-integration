@@ -4,9 +4,10 @@
  *
  * Groups `filteredJobs` by scheduled date (date-key in the company timezone from
  * start_date). Jobs with no start_date fall into a trailing "No date" group.
- * Groups are ordered by date descending (most recent first), with friendly
- * headers: Today / Tomorrow / Yesterday, else "EEE, MMM d". A "Load more" button
- * appears at the end when there are more pages.
+ * Groups are ordered by date descending (most recent first); WITHIN a day the
+ * jobs read earliest scheduled time first (top-down). Friendly headers: Today /
+ * Tomorrow / Yesterday, else "EEE, MMM d". A "Load more" button appears at the
+ * end when there are more pages.
  *
  * Rendered only on mobile (JobsPage gates it behind useIsMobile); desktop uses
  * JobsTable, untouched.
@@ -70,7 +71,18 @@ export const JobsMobileList: React.FC<JobsMobileListProps> = ({
             if (b === NO_DATE_KEY) return -1;
             return a < b ? 1 : a > b ? -1 : 0;
         });
-        return keys.map(key => ({ key, label: groupLabel(key, timezone), jobs: map.get(key)! }));
+        // Within a day, show jobs EARLIEST scheduled time first. `filteredJobs` is
+        // start_date DESC (for coherent date-grouped paging), which would otherwise
+        // render each day bottom-up; sort each dated bucket ascending so the day reads
+        // top-down. The "No date" bucket has no times — leave its order untouched.
+        return keys.map(key => {
+            const jobs = map.get(key)!;
+            const ordered = key === NO_DATE_KEY
+                ? jobs
+                : [...jobs].sort((a, b) =>
+                    new Date(a.start_date!).getTime() - new Date(b.start_date!).getTime());
+            return { key, label: groupLabel(key, timezone), jobs: ordered };
+        });
     }, [filteredJobs, timezone]);
 
     if (loading && filteredJobs.length === 0) {

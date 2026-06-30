@@ -4,6 +4,12 @@
 
 ---
 
+## 2026-06-30 — JOBS-MOBILE-ORDER-001: mobile Jobs reads earliest-first within each day
+
+On the mobile Jobs list (date-grouped tiles) the jobs inside each day were ordered latest→earliest — the first job of the day sat at the bottom. The list is globally `start_date` DESC for coherent date-grouped paging, so each day rendered bottom-up. Fixed in `JobsMobileList.tsx` by sorting each *dated* day-bucket ascending by `start_date` (earliest→latest) inside the grouping `useMemo`; the day-group order (most-recent day first) and the "No date" bucket are untouched, and paging/loadMore + the desktop table are unaffected. Frontend-only; independent review APPROVED; `npm run build` green.
+
+---
+
 ## 2026-06-29 — OVERLAY-CLOSE-CANON-001: one shared close logic for every overlay
 
 Overlay "close" had grown two dialects (slide-over hover-left × from LAYER-CLOSE-CANON-001 vs the bottom-sheet's own ×/swipe/backdrop) and the close BEHAVIOR (Esc/backdrop/scroll-lock/focus) was hand-re-implemented in every non-Radix overlay. Now there is **one source of truth** — edit it once, it changes everywhere.
