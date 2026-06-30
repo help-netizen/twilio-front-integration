@@ -8,5 +8,8 @@
   "5f7de54": { "tag": "Feature", "text": "Technicians can prepare estimates & invoices and take payment" },
   "81efead": { "tag": "Polish", "text": "More consistent panels, sheets & menus across the app" },
   "96758c7": { "hide": true },
-  "11c2693": { "hide": true }
+  "11c2693": { "hide": true },
+  "d7f8c21": { "tag": "Feature", "text": "Job tiles show paid vs. due at a glance" },
+  "2079c67": { "tag": "Fix", "text": "Easier to close detail cards on mobile" },
+  "610107f": { "hide": true }
 }
