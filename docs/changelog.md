@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-06-30 — JOB-TILE-PAYMENT-001: readable paid/due payment status on the mobile job tile
+
+The mobile job tile showed "{status} · ${invoice_total}" (e.g. "Partial · $100") — it paired the Zenbooker status with the invoice *total*, so it never revealed how much was actually owed (and mixed a Zenbooker-cached total with a locally-summed `amount_paid`). Now the tile reads paid vs. due from one consistent source and shows it plainly:
+
+- **Fully paid** → `Paid · $100` (green). **Partial** → `$30 paid · $70 due` (amber). **Nothing paid** → `$100 due` (red). **No invoice / nothing billed** → no pill. Money is compact (whole = no decimals, fractional = 2; thousands separators).
+- **Data:** the jobs list query's existing per-job batch aggregate (one query, no N+1, company-scoped) now also sums `invoices.balance_due` alongside `amount_paid`, **excluding void/voided/refunded** invoices so a refund can't skew it. `total = paid + due`. A job with no local invoice gets `balance_due = null` → the tile falls back to the coarse Zenbooker `invoice_status` pill (unchanged for those). New `LocalJob.balance_due` field; no migration.
+- **Logic** lives in a pure, exported `jobPaymentDisplay()` + compact `money()` in `JobMobileCard.tsx` (overpay clamped, NaN/null → no amount, `paid<=0` ⇒ "unpaid" not "partial"). Gated by `canViewFinance` (unchanged). Desktop table + `ScheduleItemCard` untouched (candidates for the same treatment later).
+- **Verify:** logic demo across all states/edges (paid/partial/unpaid/$0/overpaid/fractional/large/ZB-fallback/draft) ✓; independent review APPROVED (backend sums, company scope, void-exclusion, null-signal correct); `npm run build` green. Frontend + a 1-line backend aggregate; no migration.
+
+---
+
 ## 2026-06-30 — DETAIL-PANEL-MOBILE-BACK-001: restore the close affordance on mobile detail cards (regression fix)
 
 On a phone, opening a detail card (Job/Lead/Contact + a few pages — all use the shared `FloatingDetailPanel`) left no visible way to close it and return to the list. **Regression from OVERLAY-CLOSE-CANON-001:** the mobile close `<OverlayClose variant="corner">` was a *sibling* of the panel with `z-index:auto`, while the mobile panel is full-screen `z-index:120` — so the panel painted over the close button and it was buried/untappable. (Desktop's hover-left × is `z-[141]`, so only mobile broke.) Fix: replaced it with a mobile-only **back-arrow (←) at the top-left**, rendered as a *child* of the panel (inside its stacking context → visible), in a slim `md:hidden` top bar so the content flows below it. Tapping it calls `onClose` → back to the list. Applies to every `FloatingDetailPanel` mobile detail card. Desktop unchanged. Independent review APPROVED; `npm run build` green; frontend-only.

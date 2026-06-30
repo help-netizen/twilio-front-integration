@@ -24,27 +24,63 @@ const UNASSIGNED_BG = 'linear-gradient(180deg, rgba(248, 246, 242, 0.98), rgba(2
 const UNASSIGNED_BORDER = 'rgba(117, 106, 89, 0.18)';
 
 // ── Payment pill ────────────────────────────────────────────────────────────
-// invoice_status comes from either the local invoices service ('paid' | 'partial'
-// | 'sent' | 'viewed' | 'overdue' | 'draft' | 'void') or Zenbooker
-// ('paid' | 'partially_paid' | 'unpaid' | …). Collapse to the 3 buckets the spec
-// defines: Paid (green) / Partial (amber) / Unpaid (red).
-type PayTone = { label: string; bg: string; fg: string };
+// Prefer the LOCAL invoice math (amount_paid + balance_due, summed across this
+// job's non-void/refunded invoices) so the tile shows real paid-vs-due money.
+// When there is NO local invoice (balance_due == null) we fall back to the coarse
+// Zenbooker `invoice_status` + `invoice_total`, collapsing to 3 buckets:
+// Paid (green) / Partial (amber) / Unpaid (red).
 
-function paymentTone(invoiceStatus: string): PayTone | null {
-    const s = invoiceStatus.toLowerCase();
-    if (s === 'paid') return { label: 'Paid', bg: 'rgba(34, 197, 94, 0.14)', fg: '#15803d' };
-    if (s === 'partial' || s === 'partially_paid') return { label: 'Partial', bg: 'rgba(245, 158, 11, 0.16)', fg: '#b45309' };
-    // Non-payable states carry no useful payment signal on a job tile — hide the pill.
-    if (s === 'draft' || s === 'void' || s === 'voided') return null;
-    return { label: 'Unpaid', bg: 'rgba(239, 68, 68, 0.14)', fg: '#b91c1c' };
+export type PayDisplay = { text: string; tone: 'paid' | 'partial' | 'unpaid' } | null;
+
+/** Compact currency: "$100", "$70.50", "$1,234.25". null/NaN → '' (caller omits). */
+export function money(v?: string | number | null): string {
+    if (v == null || v === '') return '';
+    const n = typeof v === 'number' ? v : Number(v);
+    if (!Number.isFinite(n)) return '';
+    const fractional = !Number.isInteger(n);
+    return '$' + n.toLocaleString('en-US', {
+        minimumFractionDigits: fractional ? 2 : 0,
+        maximumFractionDigits: 2,
+    });
 }
 
-function formatMoney(v?: string): string | null {
-    if (v == null || v === '') return null;
-    const n = Number(v);
-    if (!Number.isFinite(n)) return null;
-    return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/**
+ * Pure, unit-testable mapping of a job's payment state to a pill.
+ * Local invoices (balance_due != null) drive paid/due amounts; otherwise the
+ * coarse Zenbooker status is used. Returns null when there's nothing to show.
+ */
+export function jobPaymentDisplay(
+    job: Pick<LocalJob, 'amount_paid' | 'balance_due' | 'invoice_status' | 'invoice_total'>,
+): PayDisplay {
+    // Local invoices present → real paid/due breakdown.
+    if (job.balance_due != null) {
+        const paid = Math.max(0, Number(job.amount_paid) || 0);
+        const due = Math.max(0, Number(job.balance_due) || 0);
+        const total = paid + due;
+        if (total <= 0) return null; // nothing billed
+        if (due <= 0) return { text: 'Paid · ' + money(total), tone: 'paid' };
+        if (paid <= 0) return { text: money(due) + ' due', tone: 'unpaid' };
+        return { text: money(paid) + ' paid · ' + money(due) + ' due', tone: 'partial' };
+    }
+
+    // No local invoice → coarse Zenbooker fallback.
+    if (!job.invoice_status) return null;
+    const s = job.invoice_status.toLowerCase();
+    let label: string;
+    let tone: 'paid' | 'partial' | 'unpaid';
+    if (s === 'paid') { label = 'Paid'; tone = 'paid'; }
+    else if (s === 'partial' || s === 'partially_paid') { label = 'Partial'; tone = 'partial'; }
+    else if (s === 'draft' || s === 'void' || s === 'voided') { return null; }
+    else { label = 'Unpaid'; tone = 'unpaid'; }
+    const amount = money(job.invoice_total);
+    return { text: label + (amount ? ' · ' + amount : ''), tone };
 }
+
+const PAY_TONE_STYLE: Record<'paid' | 'partial' | 'unpaid', { bg: string; fg: string }> = {
+    paid: { bg: 'rgba(34, 197, 94, 0.14)', fg: '#15803d' },
+    partial: { bg: 'rgba(245, 158, 11, 0.16)', fg: '#b45309' },
+    unpaid: { bg: 'rgba(239, 68, 68, 0.14)', fg: '#b91c1c' },
+};
 
 interface JobMobileCardProps {
     job: LocalJob;
@@ -77,18 +113,18 @@ export const JobMobileCard: React.FC<JobMobileCardProps> = ({ job, timezone, can
     const title = job.service_name || '';
     const nameCity = [job.customer_name, job.city].filter(Boolean).join(', ');
 
-    // Payment pill — only with finance permission + a real invoice_status.
+    // Payment pill — only with finance permission + a displayable payment state.
     const pill = (() => {
-        if (!canViewFinance || !job.invoice_status) return null;
-        const tone = paymentTone(job.invoice_status);
-        if (!tone) return null;
-        const money = formatMoney(job.invoice_total);
+        if (!canViewFinance) return null;
+        const pay = jobPaymentDisplay(job);
+        if (!pay) return null;
+        const style = PAY_TONE_STYLE[pay.tone];
         return (
             <span
                 className="inline-flex items-center self-start rounded-full px-2.5 py-0.5 text-[12px] font-semibold whitespace-nowrap"
-                style={{ background: tone.bg, color: tone.fg }}
+                style={{ background: style.bg, color: style.fg }}
             >
-                {tone.label}{money ? ` · ${money}` : ''}
+                {pay.text}
             </span>
         );
     })();

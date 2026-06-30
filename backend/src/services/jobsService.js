@@ -803,24 +803,33 @@ async function listJobs({ blancStatus, zbCanceled, search, offset = 0, limit = 5
         }
     }
 
-    // Fetch actual paid amounts from invoices for all jobs in batch
-    let amountPaidMap = {};
+    // Fetch actual paid + outstanding amounts from invoices for all jobs in batch.
+    // Exclude void/refunded invoices (not real money owed) so they can't skew the
+    // totals. A job present in this map has local invoices → both amounts are
+    // strings; a job absent from it has no local invoice → amount_paid/balance_due
+    // stay null, which is the signal the tile uses to fall back to Zenbooker.
+    let paymentsMap = {};
     if (jobIds.length > 0 && companyId) {
         const { rows: paidRows } = await db.query(`
-            SELECT i.job_id, SUM(COALESCE(i.amount_paid, 0)) AS total_paid
+            SELECT i.job_id,
+                   SUM(CASE WHEN i.status NOT IN ('void','voided','refunded') THEN COALESCE(i.amount_paid, 0) ELSE 0 END) AS total_paid,
+                   SUM(CASE WHEN i.status NOT IN ('void','voided','refunded') THEN COALESCE(i.balance_due, 0) ELSE 0 END) AS total_due
             FROM invoices i
             WHERE i.job_id = ANY($1) AND i.company_id = $2
             GROUP BY i.job_id
         `, [jobIds, companyId]);
         for (const pr of paidRows) {
-            amountPaidMap[pr.job_id] = pr.total_paid;
+            paymentsMap[pr.job_id] = { total_paid: pr.total_paid, total_due: pr.total_due };
         }
     }
 
     const results = rows.map(r => {
         const job = rowToJob(r);
         job.tags = tagsMap[r.id] || [];
-        job.amount_paid = amountPaidMap[r.id] || null;
+        const pay = paymentsMap[r.id];
+        // No local invoice → leave both null so the tile uses the Zenbooker fallback.
+        job.amount_paid = pay ? pay.total_paid : null;
+        job.balance_due = pay ? pay.total_due : null;
         return job;
     });
 
