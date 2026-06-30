@@ -44,6 +44,28 @@
     overflow-y: auto;
 }
 
+/* ── Sticky group headers (Action Required + day groups) ──
+   Mirrors the Jobs mobile list: small uppercase eyebrow that sticks to the top
+   of the scroll container while rows scroll under it. The opaque --blanc-bg
+   background keeps rows from showing through. */
+.pulse-sidebar-group-header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--blanc-bg);
+    padding: 6px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--blanc-ink-3);
+}
+
+/* Action Required keeps the same eyebrow shape but a warm danger tint. */
+.pulse-sidebar-group-header-ar {
+    color: var(--blanc-danger, #b91c1c);
+}
+
 /* ── Right column: scrollable stack of floating cards ── */
 .pulse-right-column {
     flex: 1;
@@ -183,10 +205,20 @@
         gap: 8px;
     }
 
-    /* Sidebar: full width in list mode, hidden in content mode */
+    /* Sidebar: full width in list mode, hidden in content mode.
+       Strip the floating-card box so the list runs edge-to-edge on the page bg.
+       (Desktop/tablet .pulse-sidebar-card keeps its card chrome — untouched.) */
     .pulse-layout[data-mobile-panel="list"] .pulse-sidebar-card {
         width: 100%;
         flex: 1;
+        background: transparent;
+        border: none;
+        border-radius: 0;
+        box-shadow: none;
+        padding-left: 0;
+        padding-right: 0;
+        margin-left: 0;
+        margin-right: 0;
     }
 
     .pulse-layout[data-mobile-panel="content"] .pulse-sidebar-card {

@@ -2,8 +2,9 @@
  * PulsePage — Three-column layout: contacts | lead/contact detail | timeline + SMS
  * Responsive: mobile shows one panel at a time with back navigation.
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { toast } from 'sonner';
+import { format } from 'date-fns';
 import { usePulsePage } from '../hooks/usePulsePage';
 import { PulseContactItem, REASON_LABELS } from '../components/pulse/PulseContactItem';
 import { AssignOwnerDropdown } from '../components/pulse/AssignOwnerDropdown';
@@ -22,7 +23,24 @@ import { pulseApi } from '../services/pulseApi';
 import { useAuth } from '../auth/AuthProvider';
 import { useNavigate } from 'react-router-dom';
 import { isAnonymousPhone } from '../utils/phoneUtils';
+import { dateKeyInTZ, todayInTZ } from '../utils/companyTime';
 import './PulsePage.css';
+
+const NO_DATE_KEY = '__no_date__';
+
+/** Friendly group label from a "YYYY-MM-DD" date-key (mirrors JobsMobileList). */
+function groupLabel(key: string, timezone: string): string {
+    if (key === NO_DATE_KEY) return 'Earlier';
+    const today = todayInTZ(timezone);
+    // Parse keys at local noon to avoid any TZ-boundary drift when we only care
+    // about the calendar date.
+    const toDate = (k: string) => new Date(k + 'T12:00:00');
+    const oneDay = 24 * 60 * 60 * 1000;
+    const diffDays = Math.round((toDate(key).getTime() - toDate(today).getTime()) / oneDay);
+    if (diffDays === 0) return 'Today';
+    if (diffDays === -1) return 'Yesterday';
+    return format(toDate(key), 'EEE, MMM d');
+}
 
 export const PulsePage: React.FC = () => {
     const p = usePulsePage();
@@ -43,6 +61,39 @@ export const PulsePage: React.FC = () => {
             ? p.filteredCalls.filter((c: any) => c.tl_has_unread || c.sms_has_unread || c.has_unread)
             : p.filteredCalls.filter((c: any) => c.is_action_required);
 
+    // Grouped sidebar: an "Action Required" section pinned at the top (AR and not
+    // currently snoozed), then the rest grouped by activity day (descending).
+    // O(n) single pass; within a day we keep the backend order (most-recent-first).
+    const sidebarGroups = useMemo(() => {
+        const now = Date.now();
+        const actionRequired: typeof displayedCalls = [];
+        const byDay = new Map<string, typeof displayedCalls>();
+        for (const call of displayedCalls) {
+            const c = call as any;
+            const isSnoozed = c.snoozed_until && new Date(c.snoozed_until).getTime() > now;
+            if (c.is_action_required === true && !isSnoozed) {
+                actionRequired.push(call);
+                continue;
+            }
+            const raw = c.last_interaction_at || call.started_at || call.created_at;
+            const key = raw && !isNaN(new Date(raw).getTime())
+                ? dateKeyInTZ(raw, companyTz)
+                : NO_DATE_KEY;
+            const bucket = byDay.get(key);
+            if (bucket) bucket.push(call);
+            else byDay.set(key, [call]);
+        }
+        // Day groups descending (most recent day first).
+        const dayGroups = [...byDay.keys()]
+            .sort((a, b) => {
+                if (a === NO_DATE_KEY) return 1;
+                if (b === NO_DATE_KEY) return -1;
+                return a < b ? 1 : a > b ? -1 : 0;
+            })
+            .map(key => ({ key, label: groupLabel(key, companyTz), calls: byDay.get(key)! }));
+        return { actionRequired, dayGroups };
+    }, [displayedCalls, companyTz]);
+
     // Disable app-main scroll so sidebar and right column scroll independently
     useEffect(() => {
         const appMain = document.querySelector('.app-main') as HTMLElement;
@@ -62,6 +113,43 @@ export const PulsePage: React.FC = () => {
     const handleMobileBack = () => {
         setMobilePanel('list');
         navigate('/pulse');
+    };
+
+    // Per-item render — shared by the "Action Required" section and the day groups
+    // so the big callbacks block isn't duplicated. `idx` only feeds the key fallback.
+    const renderItem = (call: typeof displayedCalls[number], idx: number) => {
+        const tlId = (call as any).timeline_id;
+        const cId = call.contact?.id || call.id;
+        const isActive = tlId
+            ? p.location.pathname === `/pulse/timeline/${tlId}`
+            : (!!cId && p.location.pathname === `/pulse/contact/${cId}`);
+        return (
+            <PulseContactItem
+                key={tlId ?? call.id ?? `c-${call.contact?.id ?? (call.from_number || idx)}`}
+                call={call}
+                isActive={isActive}
+                prefetchedLead={p.getLeadForPhone(
+                    (call as any).tl_phone || call.contact?.phone_e164 || call.from_number || call.to_number
+                )}
+                onMarkUnread={async (timelineId) => {
+                    try { await callsApi.markTimelineUnread(timelineId); p.refetchContacts(); toast.success('Marked as unread'); }
+                    catch { toast.error('Failed to mark as unread'); }
+                }}
+                onMarkHandled={async (timelineId) => {
+                    try { await pulseApi.markHandled(timelineId); p.refetchContacts(); toast.success('Marked as handled'); }
+                    catch { toast.error('Failed to mark handled'); }
+                }}
+                onSnooze={async (timelineId, until) => {
+                    try { await pulseApi.snoozeThread(timelineId, until); p.refetchContacts(); toast.success('Thread snoozed'); }
+                    catch { toast.error('Failed to snooze'); }
+                }}
+                onRead={() => p.refetchContacts()}
+                onSetActionRequired={async (timelineId) => {
+                    try { await pulseApi.setActionRequired(timelineId); p.refetchContacts(); toast.success('Marked as Action Required'); }
+                    catch { toast.error('Failed to set Action Required'); }
+                }}
+            />
+        );
     };
 
     return (
@@ -119,40 +207,26 @@ export const PulsePage: React.FC = () => {
                                 <p className="text-sm text-muted-foreground">No contacts found</p>
                             </div>
                         ) : (
-                            displayedCalls.map((call, idx) => {
-                                const tlId = (call as any).timeline_id;
-                                const cId = call.contact?.id || call.id;
-                                const isActive = tlId
-                                    ? p.location.pathname === `/pulse/timeline/${tlId}`
-                                    : (!!cId && p.location.pathname === `/pulse/contact/${cId}`);
-                                return (
-                                    <PulseContactItem
-                                        key={tlId ?? call.id ?? `c-${call.contact?.id ?? (call.from_number || idx)}`}
-                                        call={call}
-                                        isActive={isActive}
-                                        prefetchedLead={p.getLeadForPhone(
-                                            (call as any).tl_phone || call.contact?.phone_e164 || call.from_number || call.to_number
-                                        )}
-                                        onMarkUnread={async (timelineId) => {
-                                            try { await callsApi.markTimelineUnread(timelineId); p.refetchContacts(); toast.success('Marked as unread'); }
-                                            catch { toast.error('Failed to mark as unread'); }
-                                        }}
-                                        onMarkHandled={async (timelineId) => {
-                                            try { await pulseApi.markHandled(timelineId); p.refetchContacts(); toast.success('Marked as handled'); }
-                                            catch { toast.error('Failed to mark handled'); }
-                                        }}
-                                        onSnooze={async (timelineId, until) => {
-                                            try { await pulseApi.snoozeThread(timelineId, until); p.refetchContacts(); toast.success('Thread snoozed'); }
-                                            catch { toast.error('Failed to snooze'); }
-                                        }}
-                                        onRead={() => p.refetchContacts()}
-                                        onSetActionRequired={async (timelineId) => {
-                                            try { await pulseApi.setActionRequired(timelineId); p.refetchContacts(); toast.success('Marked as Action Required'); }
-                                            catch { toast.error('Failed to set Action Required'); }
-                                        }}
-                                    />
-                                );
-                            })
+                            <>
+                                {/* Action Required — pinned at the very top */}
+                                {sidebarGroups.actionRequired.length > 0 && (
+                                    <div>
+                                        <div className="pulse-sidebar-group-header pulse-sidebar-group-header-ar">
+                                            Action Required
+                                        </div>
+                                        {sidebarGroups.actionRequired.map((call, idx) => renderItem(call, idx))}
+                                    </div>
+                                )}
+                                {/* The rest — grouped by activity day, most recent first */}
+                                {sidebarGroups.dayGroups.map(group => (
+                                    <div key={group.key}>
+                                        <div className="pulse-sidebar-group-header">
+                                            {group.label}
+                                        </div>
+                                        {group.calls.map((call, idx) => renderItem(call, idx))}
+                                    </div>
+                                ))}
+                            </>
                         )}
                         <div ref={p.loadMoreRef} className="h-8 flex items-center justify-center">
                             {p.isFetchingNextPage && (

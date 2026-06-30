@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-06-30 — PULSE-LIST-GROUP-001: Pulse conversation list — Action Required section + day grouping + mobile full-bleed
+
+The Pulse sidebar (the list of conversations/timelines) was a flat list. Now it's organized like the Jobs list:
+- **"Action Required" section pinned at the top** — conversations flagged `is_action_required` and not currently snoozed (snoozing still drops them out of the pinned section).
+- **The rest grouped by activity day** (`last_interaction_at` in company TZ) with **sticky day headers** (Today / Yesterday / "EEE, MMM d"), most-recent day first; within a day the backend's recent-first order is kept. (Same component on desktop + mobile, so both get the grouping.)
+- **Mobile full-bleed:** the sidebar's floating `.pulse-card` box (border/radius/shadow/bg) is stripped on mobile so the list runs edge-to-edge on the screen; the desktop floating card is unchanged.
+
+Implemented as a render-only change in `PulsePage.tsx` (an O(n) grouping `useMemo` + a shared `renderItem` helper so every `PulseContactItem` keeps all its callbacks) + `PulsePage.css` (sticky header + mobile rule). Filter chips (all/unread/action_required), infinite scroll, dedup, active-highlight, real-time, and send are all untouched; a `NO_DATE` guard prevents a crash if a conversation lacks any timestamp. Grouping logic demo-verified (AR pinning, snoozed→day, descending days, every item placed once); `npm run build` green. Frontend-only, no backend/migration. (Visual confirmation pending on a device with live conversations.)
+
+---
+
 ## 2026-06-30 — DETAIL-PANEL-MOBILE-CLOSE-002: mobile detail close is a top-right × (no content shift)
 
 Follow-up to DETAIL-PANEL-MOBILE-BACK-001: the back-arrow lived in a thin top BAR that pushed the card content down. Replaced it with a close **× at the panel's top-right corner** (mobile only), rendered as a *child* of the full-screen panel so it stays visible (same stacking fix), with NO content shift. Headers that have a top-right cluster get a mobile-only right-gutter (`max-md:pr-14`) so the cluster sits just left of the × — e.g. JobDetailHeader's `⋮` kebab and ContactDetailPanel's action icons now read `[ … ⋮ × ]`. The × is a single 40px affordance shared by every `FloatingDetailPanel` card; the redundant own `md:hidden` ×'s in the Estimate/Invoice/Transaction detail panels were removed (no more double-× on mobile; their nested Radix-dialog render keeps its own ×). Desktop hover-left × + Esc/backdrop untouched. Independent review APPROVED (verified the own-close removal is safe at all 7 render sites and `onClose` was dead-wired only to the removed button); `npm run build` green; frontend-only.
