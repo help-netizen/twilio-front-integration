@@ -1,0 +1,15 @@
+{
+  "shape": "package",
+  "pkg": "albusto-ui",
+  "globalName": "AlbustoUI",
+  "srcDir": "src/components/ui",
+  "tsconfig": "/Users/rgareev91/contact_center/twilio-front-integration/.claude/worktrees/laughing-tu-208341/.design-sync/tsconfig.paths.json",
+  "cssEntry": "dist/albusto-ds.css",
+  "readmeHeader": ".design-sync/conventions.md",
+  "overrides": {
+    "Tooltip": { "cardMode": "single", "primaryStory": "OnProvider" },
+    "Dialog": { "cardMode": "single", "primaryStory": "CancelJob" },
+    "DropdownMenu": { "cardMode": "single", "primaryStory": "JobActions" },
+    "Select": { "cardMode": "single", "primaryStory": "Field" }
+  }
+}
