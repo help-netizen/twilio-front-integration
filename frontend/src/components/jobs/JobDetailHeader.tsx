@@ -29,7 +29,7 @@ function hexToRgba(hex: string, alpha: number) {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChange, onCancel, onCopy }: JobDetailHeaderProps) {
+export function JobDetailHeader({ job, onBlancStatusChange, onCancel, onCopy }: JobDetailHeaderProps) {
     const { hasPermission } = useAuthz();
     const canViewSource = hasPermission('lead_source.view');
     const { data: fsmData } = useFsmStates('job', true);
@@ -41,16 +41,17 @@ export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChang
     const unreachable = allStatuses.filter(s => s !== job.blanc_status && !allowedTargets.has(s));
     const canReset = initialState && job.blanc_status !== initialState;
 
-    const customerName = contactInfo?.name || job.customer_name;
-    const showServiceInEyebrow = !!job.service_name && !!customerName;
-    const mainTitle = customerName || job.service_name || 'Job';
+    // Title = the job type (service), matching the list tile (JobMobileCard) so
+    // the card and the list read consistently. The customer stays in the Contact
+    // row below, so the service is no longer duplicated in the eyebrow.
+    const mainTitle = job.service_name || 'Job';
 
     const statusColor = BLANC_STATUS_COLORS[job.blanc_status] || '#9CA3AF';
     const statusBg = hexToRgba(statusColor, 0.1);
 
     return (
         <div className="px-5 pt-5 pb-3">
-            {/* Eyebrow: JOB · #629656 · Dryer */}
+            {/* Eyebrow: JOB · #629656 (service moved to the title) */}
             <div className="mb-2 flex items-start justify-between gap-2 max-md:pr-14">
                 <span
                     className="text-[10px] font-semibold uppercase tracking-widest inline-flex items-center gap-1.5 select-text"
@@ -59,17 +60,6 @@ export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChang
                     Job
                     {(job.job_number || job.id) && (
                         <span className="font-mono">#{job.job_number || job.id}</span>
-                    )}
-                    {showServiceInEyebrow && (
-                        <span style={{
-                                color: 'var(--blanc-ink-3)',
-                                fontWeight: 500,
-                                textTransform: 'none',
-                                letterSpacing: 'normal',
-                                fontSize: 11,
-                            }}>
-                                {job.service_name}
-                        </span>
                     )}
                     {job.zenbooker_job_id && (
                         <span className="inline-flex items-center gap-0.5">
@@ -111,7 +101,7 @@ export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChang
                 )}
             </div>
 
-            {/* Customer name — large heading */}
+            {/* Job type (service) — large heading */}
             <h2
                 className="text-2xl font-bold leading-tight mb-3"
                 style={{
@@ -120,16 +110,7 @@ export function JobDetailHeader({ job, contactInfo, navigate, onBlancStatusChang
                     letterSpacing: '-0.03em',
                 }}
             >
-                {contactInfo ? (
-                    <button
-                        onClick={() => navigate(`/contacts/${contactInfo.id}`)}
-                        className="hover:opacity-70 transition-opacity text-left"
-                    >
-                        {mainTitle}
-                    </button>
-                ) : (
-                    mainTitle
-                )}
+                {mainTitle}
             </h2>
 
             {/* Status pill + source — same row, Lead card style */}
