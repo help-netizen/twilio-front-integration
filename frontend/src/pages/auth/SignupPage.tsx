@@ -11,7 +11,7 @@
 
 import { useEffect, useState } from 'react';
 import { Loader2, Mail, ArrowRight, Eye, EyeOff } from 'lucide-react';
-import { getKeycloak } from '../../auth/AuthProvider';
+import { loginWithIdp } from '../../auth/AuthProvider';
 import './auth-shell.css';
 
 const BENEFITS = [
@@ -103,8 +103,13 @@ export function SignupPage() {
         finally { setBusy(false); }
     };
 
-    const googleSignup = () => {
-        getKeycloak().login({ idpHint: 'google', redirectUri: window.location.origin + '/onboarding' });
+    const googleSignup = async () => {
+        setError(null);
+        try {
+            await loginWithIdp('google', window.location.origin + '/onboarding');
+        } catch {
+            setError('Could not start Google sign-in — please try again');
+        }
     };
 
     return (

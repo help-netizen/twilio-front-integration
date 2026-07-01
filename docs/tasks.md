@@ -3866,3 +3866,22 @@ Cross-cutting:            TASK-SD-15 (backend tests) — alongside SD-2/3/5/6/8/
 - **Critical path:** SD-1 → SD-2 → SD-3 → SD-10 (public page) and SD-4 → SD-5 → SD-11 → SD-12 (estimate send end-to-end). PART B chain: SD-8 → SD-9 → SD-14 → SD-13.
 - **Shared-file sequencing (do NOT parallelize within a group):** **`src/server.js`** — SD-3 only. **`estimatesService.js`** — SD-2 then SD-5. **`invoicesService.js`** — SD-6 only. **`marketplaceService.js`** — SD-9 only. **`App.tsx`** — SD-10, SD-13, SD-14 (route adds) must be serialized. **`IntegrationsPage.tsx`** — SD-13 (:58 fallback) + SD-14 (card override) must be serialized. **`estimatesApi.ts`** — SD-11 only. **`routes/estimates.js`** — SD-5 only (adds `/:id/public-link`). **`email-oauth.js`** — SD-7 only (string).
 - **Fully parallel-safe (disjoint files):** SD-1 ∥ SD-8 ∥ SD-4 ∥ SD-7; later SD-5 ∥ SD-6.
+
+---
+
+## GOOGLE-SSO-FIX-001 — "Continue with Google" fix + Keycloak hardening
+
+Spec: `Docs/specs/GOOGLE-SSO-FIX-001.md` · Tests: `Docs/test-cases/GOOGLE-SSO-FIX-001.md` · Status: implemented, **not deployed**.
+
+| ID | Task | Files | Status |
+|----|------|-------|--------|
+| GS-1 | Lazy init + PKCE seam; `loginWithIdp`/`ensureKeycloakInitialized` | `frontend/src/auth/AuthProvider.tsx` | ✅ done (`tsc -b` green) |
+| GS-2 | Signup button uses `loginWithIdp` (drop bare `getKeycloak().login`) | `frontend/src/pages/auth/SignupPage.tsx` | ✅ done |
+| GS-3 | Codify `google` IdP + given/family/email mappers + auto-link flow | `keycloak/realm-export.json` | ✅ done (valid JSON) |
+| GS-4 | Idempotent prod applier (Admin REST create-or-update) | `scripts/setup-google-idp.sh` | ✅ done (`bash -n` ok) |
+| GS-5 | Google button on sign-IN page + CSS | `keycloak-themes/albusto/login/{login.ftl,resources/css/albusto-login.css}` | ✅ done |
+| GS-6 | Verify Google onboarding (phone→SMS→company) — no change needed | `frontend/src/pages/auth/OnboardingPage.tsx` (read-only) | ✅ verified |
+| GS-7 | Env + docs | `.env.example`, `Docs/*` | ✅ done |
+
+- **Shared-file sequencing:** `AuthProvider.tsx` GS-1 only; `SignupPage.tsx` GS-2 only; `login.ftl`+theme CSS GS-5 only; `realm-export.json` GS-3 only — all disjoint, no serialization needed.
+- **Deploy notes:** frontend rebuild + theme redeploy (KC theme CSS needs `up -d --force-recreate keycloak` per login-theme memory). Run `scripts/setup-google-idp.sh` against prod with `GOOGLE_IDP_CLIENT_ID/SECRET` if the auto-link flow / mappers aren't already present. Ensure the Google Cloud OAuth client lists `<KC>/realms/crm-prod/broker/google/endpoint`.

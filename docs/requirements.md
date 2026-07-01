@@ -2203,3 +2203,43 @@ The result: the sales→delivery loop is broken at the last step, and integratio
 - `crypto.randomBytes` token scheme + the unique partial index pattern (mirror, don't alter, the invoice one).
 - Wallet gating (`walletService.assertServiceActive`) and `resolveCompanyProxyE164` contract (422 on missing proxy).
 - `src/server.js` public-router mount order (auth-skipping `/api/public/*` + `/i/:token`); the new estimate public router mounts alongside the same way.
+
+---
+
+## GOOGLE-SSO-FIX-001: "Continue with Google" fix + account-architecture hardening
+
+**Status:** Implemented (pending deploy) · **Priority:** P0 · **Area:** Auth (Keycloak) / Frontend / Onboarding
+**Spec:** `Docs/specs/GOOGLE-SSO-FIX-001.md`
+
+### Description
+Fix the non-working **Continue with Google** button on `/signup` (console
+`TypeError … reading 'login'`). Root cause is the frontend calling Keycloak
+`login()` on an uninitialized instance (no adapter, no PKCE) — the prod `google`
+IdP itself works. Also: pull full name + email (and split given/family) from Google,
+codify the drifted Keycloak IdP config in git, auto-link on verified email, and add
+the Google button to the sign-in page.
+
+### User scenarios
+1. New user clicks **Continue with Google** on `/signup` → redirected to Google →
+   returns to `/onboarding` authenticated; `crm_users` gets `full_name`+`email` from Google.
+2. Google user whose email already has a password account → auto-linked (no manual prompt).
+3. Existing user clicks **Continue with Google** on the sign-in page → logs in.
+4. Google user completes onboarding: phone → SMS OTP (kept) → company creation.
+
+### Constraints / non-functional
+- No DB migration (given/family live in Keycloak; no avatar column). `picture`/`locale` not consumed.
+- Secrets never in git — realm export uses `${GOOGLE_IDP_CLIENT_ID/SECRET}`.
+- Realm import does not reconfigure the existing prod realm → apply via `scripts/setup-google-idp.sh`.
+- Email/password signup + existing password sign-in unchanged.
+
+### Involved modules
+- Frontend: `auth/AuthProvider.tsx`, `pages/auth/SignupPage.tsx` (`OnboardingPage.tsx` verified, unchanged).
+- Keycloak: `keycloak/realm-export.json`, `keycloak-themes/albusto/login/{login.ftl,resources/css/albusto-login.css}`, `scripts/setup-google-idp.sh`.
+- Backend (unchanged, relied upon): `middleware/keycloakAuth.js` → `services/userService.findOrCreateUser`, `routes/onboarding.js`.
+
+### Integrations
+- Google OIDC (via Keycloak broker). No Twilio/Front/Zenbooker impact (SMS OTP path reused as-is).
+
+### Protected parts (must not break)
+- `src/server.js`, `frontend/src/lib/authedFetch.ts`, `useRealtimeEvents.ts`, `backend/db/` — untouched.
+- JIT provisioning contract in `userService.findOrCreateUser` (upsert by `keycloak_sub`) — relied upon, not modified.

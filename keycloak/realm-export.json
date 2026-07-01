@@ -171,5 +171,60 @@
         "default-roles-crm-prod"
       ]
     }
+  ],
+  "identityProviders": [
+    {
+      "alias": "google",
+      "providerId": "google",
+      "enabled": true,
+      "trustEmail": true,
+      "storeToken": false,
+      "addReadTokenRoleOnCreate": false,
+      "authenticateByDefault": false,
+      "linkOnly": false,
+      "hideOnLoginPage": false,
+      "firstBrokerLoginFlowAlias": "first broker login auto link",
+      "config": {
+        "clientId": "${GOOGLE_IDP_CLIENT_ID:}",
+        "clientSecret": "${GOOGLE_IDP_CLIENT_SECRET:}",
+        "useJwksUrl": "true",
+        "syncMode": "IMPORT",
+        "defaultScope": "openid profile email"
+      }
+    }
+  ],
+  "identityProviderMappers": [
+    {
+      "name": "email",
+      "identityProviderAlias": "google",
+      "identityProviderMapper": "oidc-user-attribute-idp-mapper",
+      "config": { "syncMode": "INHERIT", "claim": "email", "user.attribute": "email" }
+    },
+    {
+      "name": "given name",
+      "identityProviderAlias": "google",
+      "identityProviderMapper": "oidc-user-attribute-idp-mapper",
+      "config": { "syncMode": "INHERIT", "claim": "given_name", "user.attribute": "firstName" }
+    },
+    {
+      "name": "family name",
+      "identityProviderAlias": "google",
+      "identityProviderMapper": "oidc-user-attribute-idp-mapper",
+      "config": { "syncMode": "INHERIT", "claim": "family_name", "user.attribute": "lastName" }
+    }
+  ],
+  "authenticationFlows": [
+    {
+      "alias": "first broker login auto link",
+      "description": "GOOGLE-SSO-FIX-001: first broker login that auto-links a social identity to an existing account when the email is verified (trustEmail), skipping the profile-review and manual-link prompts.",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        { "authenticator": "idp-review-profile", "requirement": "DISABLED", "priority": 10, "authenticatorFlow": false, "userSetupAllowed": false },
+        { "authenticator": "idp-create-user-if-unique", "requirement": "ALTERNATIVE", "priority": 20, "authenticatorFlow": false, "userSetupAllowed": false },
+        { "authenticator": "idp-auto-link", "requirement": "ALTERNATIVE", "priority": 30, "authenticatorFlow": false, "userSetupAllowed": false }
+      ]
+    }
   ]
 }

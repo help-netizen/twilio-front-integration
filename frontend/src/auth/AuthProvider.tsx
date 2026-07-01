@@ -90,6 +90,31 @@ export function getKeycloak(): Keycloak {
     return keycloakInstance;
 }
 
+// GOOGLE-SSO-FIX-001: the public /signup page skips the main kc.init() below
+// (see the `publicPage` guard), so the shared instance has no adapter and no
+// pkceMethod. Calling kc.login() directly therefore throws
+// "Cannot read properties of undefined (reading 'login')", and even if it built
+// a URL the crm-web client (PKCE-required) would reject a challenge-less
+// request. This helper lazily initializes the instance WITHOUT an onLoad (no
+// auto-redirect — it only wires the adapter + PKCE) and then starts the social
+// login. keycloak-js persists the PKCE verifier in callback storage, so the
+// return page's init (onLoad:'login-required', same pkceMethod) completes the
+// code→token exchange.
+let kcInitPromise: Promise<boolean> | null = null;
+export function ensureKeycloakInitialized(): Promise<boolean> {
+    const kc = getKeycloak();
+    if (!kcInitPromise) {
+        kcInitialized = true;
+        kcInitPromise = kc.init({ pkceMethod: 'S256', checkLoginIframe: false });
+    }
+    return kcInitPromise;
+}
+
+export async function loginWithIdp(idpHint: string, redirectUri: string): Promise<void> {
+    await ensureKeycloakInitialized();
+    await getKeycloak().login({ idpHint, redirectUri });
+}
+
 // ─── Extract roles from Keycloak token ──────────────────────────────────────
 
 function extractRoles(kc: Keycloak): string[] {

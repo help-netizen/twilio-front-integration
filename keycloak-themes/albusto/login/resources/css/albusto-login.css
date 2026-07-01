@@ -113,6 +113,22 @@ body{
 a.btn{display:flex; align-items:center; justify-content:center; text-decoration:none}
 a.btn:hover{text-decoration:none}
 
+/* GOOGLE-SSO-FIX-001: secondary "Continue with Google" button + email divider,
+   mirroring the React /signup page (auth-shell.css .btn--ghost / .divider). */
+.btn--ghost{
+  background:#fff; color:var(--blanc-ink-1); border:1px solid var(--blanc-line);
+  box-shadow:none; gap:10px; font-weight:600;
+}
+.btn--ghost:hover{background:#fff; border-color:var(--blanc-ink-3); box-shadow:none}
+.btn--ghost svg{flex:0 0 auto}
+.social{margin:0 0 4px}
+.social .btn--ghost + .btn--ghost{margin-top:10px}
+.divider{
+  display:flex; align-items:center; gap:12px; margin:18px 0;
+  color:var(--blanc-ink-3); font-size:12.5px;
+}
+.divider::before,.divider::after{content:""; flex:1; height:1px; background:var(--blanc-line)}
+
 
 /* secondary instructional copy (e.g. "check your spam folder") */
 .instruction{color:var(--blanc-ink-2); font-size:14px; line-height:1.55; margin:0 0 18px}

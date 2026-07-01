@@ -16,6 +16,18 @@ Applied live + verified: root → `302 https://app.albusto.com/`; `/admin/` → 
 
 ---
 
+## 2026-07-01 — GOOGLE-SSO-FIX-001: fix "Continue with Google" (frontend init/PKCE) + Keycloak IdP hardening
+
+«Continue with Google» на `/signup` не работал: в консоли `TypeError: Cannot read properties of undefined (reading 'login')`. Причина — **фронт**, а не Keycloak: прод-realm `crm-prod` уже имеет рабочий `google` identity provider (бро́кер корректно уходит на `accounts.google.com`, client `730558866466-…`, scope `openid email profile`). Но публичная страница `/signup` пропускает `kc.init()` (guard `publicPage` в `AuthProvider`), поэтому `getKeycloak().login()` вызывался на инстансе без `adapter` — и без `pkceMethod` из `init()` не проставлялся PKCE `code_challenge`, который клиент `crm-web` требует (`Missing parameter: code_challenge_method`).
+
+**Фикс (первопричина):** новый `loginWithIdp()` в `AuthProvider` лениво инициализирует общий инстанс `kc.init({ pkceMethod:'S256', checkLoginIframe:false })` (без `onLoad` → без авто-редиректа, только adapter+PKCE) и затем `kc.login({ idpHint:'google', redirectUri: origin+'/onboarding' })`. keycloak-js хранит PKCE-verifier в callback-storage, поэтому страница возврата `/onboarding` (init с `onLoad:'login-required'`, тот же `pkceMethod`) завершает обмен code→token. `SignupPage` использует `loginWithIdp`.
+
+**Сопутствующее:** (1) устранён **дрейф конфигурации** — `keycloak/realm-export.json` теперь содержит `identityProviders[google]` (секреты через `${GOOGLE_IDP_CLIENT_ID/SECRET}`, `trustEmail:true`), мапперы `given_name→firstName` / `family_name→lastName` / `email`, и flow **«first broker login auto link»** (`idp-review-profile` DISABLED, `idp-create-user-if-unique` + `idp-auto-link` ALTERNATIVE) → **авто-связывание** Google-идентичности с существующим аккаунтом по verified email без ручного prompt'а. (2) Т.к. realm-import НЕ переконфигурирует уже импортированный realm, добавлен идемпотентный `scripts/setup-google-idp.sh` (Admin REST create-or-update) для применения к живому проду. (3) `login.ftl` (+ CSS) теперь рендерит «Continue with Google» и на странице **входа**. (4) `.env.example`: `GOOGLE_IDP_CLIENT_ID/SECRET` (отдельно от Gmail `GOOGLE_CLIENT_ID`).
+
+**Данные из Google:** полное имя + email тянутся автоматически (`userService.findOrCreateUser` уже пишет `full_name`+`email` из токена) — без изменений; given/family — через мапперы. `picture`/`locale` намеренно не берём (нет колонки аватара). **Onboarding не тронут** — Google-юзер проходит существующий шаг телефон→SMS→компания (SMS оставлен по решению). Миграций БД нет; защищённые файлы не тронуты. Фронт: `tsc -b` зелёный. Спека `Docs/specs/GOOGLE-SSO-FIX-001.md`, тест-кейсы `Docs/test-cases/GOOGLE-SSO-FIX-001.md`. НЕ задеплоено.
+
+---
+
 ## 2026-06-30 — NOTES-ID-STABLE-001: fix "add a note → editing/deleting it right away fails" on ZB-linked jobs
 
 Adding a note to a job and then editing or deleting it immediately failed ("Note not found") until the page was refreshed. Root cause: on a Zenbooker-linked job, when Zenbooker echoed the new note back (`job.note_added`), `jobsService.mergeNotes` couldn't correlate the echo to the just-created local note — its text-match fallback was gated on `!ln.id`, but a freshly-created note has a local `id` (UUID) and no `zb_note_id` yet — so it **re-id'd the note to the Zenbooker id**. The client kept using the now-stale UUID, so `PATCH/DELETE /notes/:id` 404'd; a refresh re-read the new id and worked.

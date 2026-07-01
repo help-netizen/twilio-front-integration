@@ -2775,3 +2775,44 @@ The app's Disconnect calls the existing `POST /api/settings/email/disconnect` (p
 - **Removing `/settings/email`** → keep a `Navigate` redirect for old bookmarks and the in-flight OAuth callback; update the callback `SETTINGS_URL` so new flows never hit the old path.
 - **Marketplace "connected" vs install-row mismatch** → `google-email` connected-state is **derived from the real mailbox** (D.3), not a `marketplace_installations` row; disconnecting the mailbox flips the app to Not connected even with a stale install row; `isAppConnected('google-email')` (if used by gates like mail-secretary) must consult the mailbox, not just an install row.
 - **Idempotent resend** → `ensurePublicLink` reuses the token; re-sending re-flips `sent`/`sent_at` and adds another `sent` event (acceptable: an audit trail of each send).
+
+---
+
+## GOOGLE-SSO-FIX-001 — Google login architecture
+
+**Identity plane (unchanged, relied upon).** Keycloak stays the sole identity plane.
+Any authenticated request → `middleware/keycloakAuth.authenticate` verifies the RS256
+token then calls `userService.findOrCreateUser({ sub, email, name, preferred_username })`,
+which **JIT-upserts `crm_users` by `keycloak_sub`** and pulls `full_name`+`email` from the
+token. This is IdP-agnostic — a Google-brokered token provisions a `crm_users` row exactly
+like a password token. No backend change was needed for "pull name/email from Google".
+
+**Frontend init seam (the fix).** `getKeycloak()` returns a singleton that is only
+`init()`-ed by `AuthProvider`'s main effect — which the `publicPage` guard skips on
+`/signup`. New exports in `AuthProvider.tsx`:
+- `ensureKeycloakInitialized()` — lazy, once-only `kc.init({ pkceMethod:'S256', checkLoginIframe:false })`
+  (no `onLoad` → wires adapter + PKCE without redirecting). Guarded by a module `kcInitPromise`
+  and the existing `kcInitialized` flag, so app pages still init exactly once.
+- `loginWithIdp(idpHint, redirectUri)` — awaits the init, then `kc.login(...)`.
+`SignupPage.googleSignup` calls `loginWithIdp('google', origin + '/onboarding')`. The PKCE
+verifier lives in keycloak-js callback storage across the full-page redirect; `/onboarding`
+(a protected page, so `AuthProvider` inits with `onLoad:'login-required'`, same `pkceMethod`)
+completes the code→token exchange.
+
+**Keycloak config as source-of-truth.** `keycloak/realm-export.json` now carries the
+`google` IdP (`${GOOGLE_IDP_CLIENT_ID/SECRET}`, `trustEmail:true`, `syncMode:IMPORT`),
+`identityProviderMappers` (given→firstName, family→lastName, email), and the custom
+first-broker-login flow **"first broker login auto link"** (`idp-review-profile` DISABLED,
+`idp-create-user-if-unique` ∥ `idp-auto-link` ALTERNATIVE) for verified-email auto-linking.
+Because `--import-realm` only configures a realm on first import, `scripts/setup-google-idp.sh`
+(idempotent Admin REST create-or-update) is the apply-path for the already-imported prod realm.
+
+**Sign-in surface.** `login.ftl` renders `social.providers` as a styled Google button; the
+React `/signup` keeps its own button (now wired via `loginWithIdp`).
+
+**Edge cases.**
+- **login() before init** → previously `TypeError (adapter undefined)`; now `ensureKeycloakInitialized` guarantees the adapter + PKCE first.
+- **PKCE-required client** → `pkceMethod:'S256'` is set on init so `code_challenge` is always present (crm-web rejects otherwise).
+- **Google email already registered (password)** → `trustEmail` + `idp-auto-link` link silently; no duplicate user (`duplicateEmailsAllowed:false` upheld).
+- **Missing broker redirect URI in Google Console** → Google returns `redirect_uri_mismatch`; required URI is `<KC>/realms/crm-prod/broker/google/endpoint` (documented in the script + `.env.example`).
+- **Dev import without `GOOGLE_IDP_*`** → `${…:}` empty-string defaults keep the realm import valid.
