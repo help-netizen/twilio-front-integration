@@ -4,6 +4,24 @@
 
 ---
 
+## 2026-06-30 — NOTES-ID-STABLE-001: fix "add a note → editing/deleting it right away fails" on ZB-linked jobs
+
+Adding a note to a job and then editing or deleting it immediately failed ("Note not found") until the page was refreshed. Root cause: on a Zenbooker-linked job, when Zenbooker echoed the new note back (`job.note_added`), `jobsService.mergeNotes` couldn't correlate the echo to the just-created local note — its text-match fallback was gated on `!ln.id`, but a freshly-created note has a local `id` (UUID) and no `zb_note_id` yet — so it **re-id'd the note to the Zenbooker id**. The client kept using the now-stale UUID, so `PATCH/DELETE /notes/:id` 404'd; a refresh re-read the new id and worked.
+
+Fix (`mergeNotes`): (1) text-match **any** not-yet-correlated local note (dropped the `!ln.id` gate) so the echo re-correlates and **preserves the local id**; (2) carry forward Albusto-authored notes Zenbooker hasn't echoed yet (`id` + `created_by`, not soft-deleted, no `zb_note_id`) so a sync firing before the echo can't drop or re-id a fresh note. Genuine ZB-side deletes of already-correlated notes are still honoured. Exported `mergeNotes` + added `tests/mergeNotesIdStability.test.js` (6 cases: id-preserved-on-echo, no-drop, no-dup, ZB-delete-honoured, soft-delete-not-resurrected, local-edit-wins); existing notes + jobsService tests stay green.
+
+Also checked **Tasks** (per the report): NOT affected — `createTask` returns the real serial id and `TaskStack` refetches, with no Zenbooker sync, so create→edit/delete works immediately. Leads/contacts notes aren't Zenbooker-synced, so this was job-only. Backend-only, no migration.
+
+---
+
+## 2026-06-30 — JOB-CARD-TITLE-001: job card title is the job type (not the contact name)
+
+The job detail card used the **contact's name** as its big heading, with the job type (service) duplicated in small font up in the eyebrow (`JOB · #832990 · Repair`). The list tile, meanwhile, already titles each job by its **service**. Now the card matches the list: the large heading is `job.service_name` (falling back to "Job"), and the redundant service is removed from the eyebrow (which is now just `JOB · #<number>` + the ZB link). The customer is unchanged in the **Contact** row just below (still a link to the contact), so nothing is lost — the title just stops linking to a person (a service name shouldn't), and the card/list read consistently.
+
+`frontend/src/components/jobs/JobDetailHeader.tsx` only (shared by mobile + desktop job cards): `mainTitle = job.service_name || 'Job'`; dropped `showServiceInEyebrow` + `customerName`; title is now plain text (the `contactInfo`/`navigate` props stay on the interface — passed by `JobDetailPanel` — but are no longer read here, to avoid a prop-removal cascade up the tree). `npm run build` green. Frontend-only, no migration. (Visual confirmation pending on live job data.)
+
+---
+
 ## 2026-06-30 — AR-TASK-UNIFY-001: Pulse "Action Required" is now a Task
 
 "Action Required" and Tasks were two views of the same `tasks` table seen through disjoint windows — a Pulse thread-task (via `thread_id`) was invisible to the Stacks UI. They're now **one model**: a Pulse **timeline (thread) is a first-class task parent** (`parent_type='timeline'`, reusing the existing `tasks.thread_id` column), and **"Action Required" = the timeline has an open task** (derived, not a separate flag).

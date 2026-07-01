@@ -941,16 +941,27 @@ async function updateBlancStatus(jobId, newStatus, companyId) {
  * Match priority:
  *   1. by zb_note_id captured from previous addNote response
  *   2. by raw ZB id (for idempotent re-sync after a merge has already happened)
- *   3. by text match against a local note that has an `author` but no ZB id yet
- *      (covers the transition period / existing data predating id capture)
+ *   3. by text match against any not-yet-correlated local note (no zb_note_id) —
+ *      INCLUDING freshly-created in-app notes, which carry a local `id` but no ZB
+ *      id until their `job.note_added` echo arrives. Matching by text preserves
+ *      that local id so the client's edit/delete keep working (NOTES-ID-STABLE-001;
+ *      previously the echo re-id'd the note and edits 404'd until a page refresh).
+ * Finally, Albusto-authored notes ZB hasn't echoed yet are carried forward instead
+ * of dropped (a sync firing before the echo must not lose or re-id a fresh note).
  */
 function mergeNotes(localNotes, zbNotes) {
     const byZbId = new Map();          // zb id → local note
     const unmatchedLocalByText = [];   // [{ note, used }]
+    const matched = new Set();         // local notes folded into a ZB note (by ref)
     for (const ln of (localNotes || [])) {
         const lid = ln.zb_note_id || ln.id;
         if (lid) byZbId.set(String(lid), ln);
-        if (!ln.zb_note_id && !ln.id && ln.author && ln.text) {
+        // Any not-yet-correlated local note (no zb_note_id) with text is a text-match
+        // candidate — including in-app notes that already have a local `id`
+        // (NOTES-ID-STABLE-001). No `author` gate: it must stay aligned with the
+        // `unechoed` filter below, else an author-less local note would be appended
+        // AND left un-text-matched → a persistent duplicate.
+        if (!ln.zb_note_id && ln.text) {
             unmatchedLocalByText.push({ note: ln, used: false });
         }
     }
@@ -968,10 +979,11 @@ function mergeNotes(localNotes, zbNotes) {
         ...(ln.edited_at ? { edited_at: ln.edited_at, edited_by: ln.edited_by || null, text: ln.text } : {}),
     });
 
-    return (zbNotes || []).map(zn => {
+    const merged = (zbNotes || []).map(zn => {
         const znId = zn.id ? String(zn.id) : null;
         if (znId && byZbId.has(znId)) {
             const ln = byZbId.get(znId);
+            matched.add(ln);
             return {
                 ...zn,
                 ...preserveLocal(ln),
@@ -983,6 +995,7 @@ function mergeNotes(localNotes, zbNotes) {
             for (const entry of unmatchedLocalByText) {
                 if (!entry.used && String(entry.note.text || '').trim() === znText) {
                     entry.used = true;
+                    matched.add(entry.note);
                     return {
                         ...zn,
                         ...preserveLocal(entry.note),
@@ -994,6 +1007,14 @@ function mergeNotes(localNotes, zbNotes) {
         }
         return zn;
     });
+
+    // Carry forward Albusto-authored notes ZB hasn't echoed yet: created in-app
+    // (local id + created_by), not soft-deleted, and never correlated to a ZB id
+    // (a correlated note ZB no longer returns is a genuine ZB-side delete → drop).
+    const unechoed = (localNotes || []).filter(ln =>
+        ln && ln.id && ln.created_by && !ln.deleted_at && !ln.zb_note_id && !matched.has(ln)
+    );
+    return [...merged, ...unechoed];
 }
 
 async function syncFromZenbooker(zbJobId, zbData, companyId = null, eventType = '') {
@@ -1444,6 +1465,7 @@ module.exports = {
     listJobs,
     updateBlancStatus,
     syncFromZenbooker,
+    mergeNotes,
     addNote,
     cancelJob,
     markEnroute,
