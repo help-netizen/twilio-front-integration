@@ -13,5 +13,6 @@
   "2079c67": { "tag": "Fix", "text": "Easier to close detail cards on mobile" },
   "610107f": { "hide": true },
   "ca5aa2a": { "tag": "Feature", "text": "Pulse conversations grouped by day, with Action Required pinned on top" },
-  "cb736d5": { "hide": true }
+  "cb736d5": { "hide": true },
+  "abf8417": { "tag": "Feature", "text": "Pulse: a conversation you flag for action is now a real task — assign it, set a due date, and track it" }
 }
