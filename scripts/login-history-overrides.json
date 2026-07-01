@@ -14,5 +14,7 @@
   "610107f": { "hide": true },
   "ca5aa2a": { "tag": "Feature", "text": "Pulse conversations grouped by day, with Action Required pinned on top" },
   "cb736d5": { "hide": true },
-  "abf8417": { "tag": "Feature", "text": "Pulse: a conversation you flag for action is now a real task — assign it, set a due date, and track it" }
+  "abf8417": { "tag": "Feature", "text": "Pulse: a conversation you flag for action is now a real task — assign it, set a due date, and track it" },
+  "b8790e4": { "tag": "Polish", "text": "Job cards now lead with the job type, matching the jobs list" },
+  "94eec53": { "tag": "Fix", "text": "Fixed editing or deleting a job note right after adding it" }
 }
