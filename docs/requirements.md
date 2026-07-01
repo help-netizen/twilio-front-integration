@@ -2359,7 +2359,8 @@ Groups and Categories tabs are unchanged.
 7. If she navigates away with unsaved changes, she is warned.
 
 ### Functional requirements
-- Inline-editable cells for all 7 item fields; Description is a 2-line textarea cell; Taxable is a checkbox;
+- Inline-editable cells for all 7 item fields; Description is a single-line cell that expands to ≥3 lines
+  (or fits content) on focus and collapses on blur; Taxable is a checkbox;
   Category is an inline select of existing (non-archived) categories.
 - Trailing "+ add row" affordance always visible; adds a blank draft row.
 - Single **Save changes** button, enabled only when the grid is dirty; a **Discard** reverts to server state.

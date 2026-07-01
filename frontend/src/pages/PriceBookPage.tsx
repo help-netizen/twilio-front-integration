@@ -167,6 +167,42 @@ const isBlankNewRow = (r: RowDraft) =>
     !r.name.trim() && !r.description.trim() && !r.code.trim() && !r.unit.trim() &&
     !r.default_unit_price.trim() && r.category_id === '' && !r.default_taxable;
 
+// Opt grid inputs out of browser autofill / password-manager injection, which
+// otherwise writes into the first row's Name cell on load and falsely dirties it.
+const NO_AUTOFILL = { autoComplete: 'off', autoCorrect: 'off', autoCapitalize: 'off', spellCheck: false, 'data-1p-ignore': true, 'data-lpignore': 'true', 'data-form-type': 'other' } as const;
+
+// Description cell: single line at rest; on focus expands to ≥3 lines (grows to fit
+// content) and collapses back on blur.
+function DescriptionCell({ className, style, value, disabled, onChange }: {
+    className: string; style?: React.CSSProperties; value: string; disabled?: boolean;
+    onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
+}) {
+    const ref = useRef<HTMLTextAreaElement>(null);
+    const [focused, setFocused] = useState(false);
+    const grow = () => {
+        const el = ref.current; if (!el) return;
+        el.style.height = 'auto';
+        const cs = getComputedStyle(el);
+        const lh = parseFloat(cs.lineHeight) || 20;
+        const pad = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+        el.style.height = `${Math.max(el.scrollHeight, lh * 3 + pad)}px`;
+    };
+    return (
+        <textarea
+            ref={ref}
+            className={`${className} resize-none`}
+            style={{ ...style, overflow: 'hidden' }}
+            rows={1}
+            value={value}
+            disabled={disabled}
+            onFocus={() => { setFocused(true); grow(); }}
+            onBlur={() => { setFocused(false); const el = ref.current; if (el) el.style.height = ''; }}
+            onChange={(e) => { onChange(e); if (focused) grow(); }}
+            {...NO_AUTOFILL}
+        />
+    );
+}
+
 // Validation-error cell key: `${scope}:${index}:${field}`.
 type CellErrors = Record<string, string>;
 
@@ -308,9 +344,7 @@ function ItemsTab({ categories, version, dirtyRef }: { categories: PriceBookCate
         : rows;
 
     const inputBase = 'w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[var(--blanc-ink-3)]';
-    // Opt grid inputs out of browser autofill / password-manager injection, which
-    // otherwise writes into the first row's Name cell on load and falsely dirties it.
-    const noAutofill = { autoComplete: 'off', autoCorrect: 'off', autoCapitalize: 'off', spellCheck: false, 'data-1p-ignore': true, 'data-lpignore': 'true', 'data-form-type': 'other' } as const;
+    const noAutofill = NO_AUTOFILL;
 
     return (
         <div className="mt-4">
@@ -347,7 +381,7 @@ function ItemsTab({ categories, version, dirtyRef }: { categories: PriceBookCate
                                                 <input className={cell('name', nameMissing)} style={struck} value={r.name} disabled={deleted} placeholder="Name" onChange={e => editRow(r.key, { name: e.target.value })} {...noAutofill} />
                                             </td>
                                             <td className="px-2 py-1.5" style={{ minWidth: 200 }}>
-                                                <textarea className={`${cell('description')} resize-none`} style={struck} rows={2} value={r.description} disabled={deleted} onChange={e => editRow(r.key, { description: e.target.value })} {...noAutofill} />
+                                                <DescriptionCell className={cell('description')} style={struck} value={r.description} disabled={deleted} onChange={e => editRow(r.key, { description: e.target.value })} />
                                             </td>
                                             <td className="px-2 py-1.5" style={{ minWidth: 120 }}>
                                                 <input className={cell('code')} style={struck} value={r.code} disabled={deleted} onChange={e => editRow(r.key, { code: e.target.value })} {...noAutofill} />
