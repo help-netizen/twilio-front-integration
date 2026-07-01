@@ -27,6 +27,8 @@ interface AuthContextType {
     logout: () => void;
     accessDeniedMessage: string | null;
     clearAccessDenied: () => void;
+    /** Re-pull permissions/company/membership from /api/auth/me (e.g. right after onboarding). */
+    refreshAuthz: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -38,6 +40,7 @@ const AuthContext = createContext<AuthContextType>({
     logout: () => { },
     accessDeniedMessage: null,
     clearAccessDenied: () => { },
+    refreshAuthz: async () => { },
 });
 
 // ─── Feature flag ─────────────────────────────────────────────────────────────
@@ -203,6 +206,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
     };
 
+    // ONBOARD-FIX-001 (A): re-pull the authz context on demand (permissions,
+    // company, membership) WITHOUT a full reload. Called right after onboarding so
+    // the SPA reflects the freshly created company + tenant_admin membership —
+    // otherwise the stale post-init context (no company) loops the onboarding gate
+    // and 403s /pulse. The backend resolves from company_memberships, so the
+    // current token is sufficient (no token refresh needed).
+    const refreshAuthz = useCallback(async () => {
+        if (!FEATURE_AUTH) return;
+        const t = getKeycloak().token;
+        if (t) await fetchAuthzContext(t);
+    }, []);
+
     useEffect(() => {
         if (!FEATURE_AUTH) {
             // Dev mode mock context
@@ -352,7 +367,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         <AuthContext.Provider value={{
             authenticated, user, token, loading, 
             platformRole, company, membership, permissions, scopes,
-            hasRole, logout, accessDeniedMessage, clearAccessDenied 
+            hasRole, logout, accessDeniedMessage, clearAccessDenied, refreshAuthz
         }}>
             {children}
         </AuthContext.Provider>

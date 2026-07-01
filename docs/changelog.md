@@ -26,6 +26,22 @@ Root cause (frontend-only): `InvoiceDetailPanel` rendered whatever `invoice` pro
 
 ---
 
+## 2026-07-01 — ONBOARD-FIX-001: tenant-isolation leak fix + onboarding access + phone mask + theme audit
+
+Follow-up to GOOGLE-SSO-FIX-001, four parts.
+
+**SEC (P0) — cross-tenant leak.** `requireCompanyAccess` resolved the tenant as `req.authz?.company?.id || req.user?.company_id`. `req.user.company_id` mirrors `crm_users.company_id`, which **migration 012 backfilled to the seed company `…0001` (Boston Masters)** — so any user with **no active membership** but a stale shadow resolved to Boston Masters and could read its data. Fix: `const companyId = req.authz?.company?.id || null;` — tenant scope now comes **only** from an active membership (`company_memberships` via `resolveAuthzContext`); no membership → `403 TENANT_CONTEXT_REQUIRED`. Also: the `!FEATURE_AUTH` dev bypass (which hard-codes the same seed company) now **fails closed in production** (`NODE_ENV==='production'` → `500 AUTH_MISCONFIGURED`). **Migration 140** clears `crm_users.company_id` wherever it isn't backed by an active membership (neutralizes the backfill; logs affected count; idempotent). Verified `resolveAuthzContext` only ever sets `company` from `membership.company_id`, and the remaining `req.user.company_id` refs are audit-log-only (`tenant-safety-allow`). Jest: 4 new cases (deny-without-membership-even-with-shadow, allow-scopes-to-membership, platform-only-denied, dev-fail-closed) — 27/27 green.
+
+**A — onboarding landed on "no access" + flicker.** After `POST /api/onboarding` created the company + tenant_admin membership, the SPA navigated client-side to `/pulse` but the authz context (loaded once at app init, pre-company) was never refreshed → `OnboardingGate` looped back to `/onboarding` (flicker) and `/pulse` `ProtectedRoute` denied. Fix: `AuthProvider` exposes `refreshAuthz()` (re-`GET /api/auth/me`; backend resolves from DB so no token refresh needed), and `OnboardingPage.createCompany` awaits it before navigating (success + `ALREADY_ONBOARDED`). The reporter's own case is UNCONFIRMED: the actual Google signup account was `help@abchomes-appliance.com` (the `office@bostonmasters.com` seen earlier was on a confirm page, possibly a different test). A fresh cross-domain email is unlikely to be a pre-seeded Boston Masters member, so this may be a genuine leak — MUST be verified with a prod DB check (a post-mig-012 new user would have `company_id=NULL` → 403, so seeing Boston Masters implies a seed `company_id`). The SEC fix closes the structural hole regardless.
+
+**B — masked phone.** Onboarding "Verify your phone" masks input via the shared `formatUSPhone` util (same as the New Lead `PhoneInput`) and sends `toE164(phone)` to the OTP endpoints; onboarding's own input styling kept.
+
+**C — theme audit.** The albusto theme ships only its own CSS, so non-overridden pages render unstyled. Themed the 6 reachable-but-missing templates: `login-otp`, `select-authenticator`, `login-reset-password`, `login-update-password`, `error`, `idp-review-user-profile` (all via `registrationLayout` + `.field`/`.btn`).
+
+Frontend `tsc -b` green. Spec `Docs/specs/ONBOARD-FIX-001.md`, tests `Docs/test-cases/ONBOARD-FIX-001.md`. NOT deployed. Deploy: backend + frontend + `up -d --force-recreate keycloak` (theme cache) + run migration 140.
+
+---
+
 ## 2026-07-01 — KC-ROOT-BRAND-001: auth.albusto.com root no longer exposes raw Keycloak
 
 `https://auth.albusto.com/` (the bare root) `302`-redirected into Keycloak's **raw Administration Console** (`/admin/…`) — an unbranded "bare Keycloak" page. The branded `albusto` theme only wraps the *login flow*; nothing wrapped the root. Fixed at the **reverse-proxy (Caddy) layer** on prod, not in app code:

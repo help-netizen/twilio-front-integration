@@ -2243,3 +2243,40 @@ the Google button to the sign-in page.
 ### Protected parts (must not break)
 - `src/server.js`, `frontend/src/lib/authedFetch.ts`, `useRealtimeEvents.ts`, `backend/db/` — untouched.
 - JIT provisioning contract in `userService.findOrCreateUser` (upsert by `keycloak_sub`) — relied upon, not modified.
+
+---
+
+## ONBOARD-FIX-001: tenant-isolation leak + onboarding access + phone mask + theme audit
+
+**Status:** Implemented (pending deploy) · **Priority:** P0 (SEC) · **Area:** Auth / Frontend onboarding / Keycloak theme
+**Spec:** `Docs/specs/ONBOARD-FIX-001.md` · Follow-up to GOOGLE-SSO-FIX-001
+
+### Description
+Four parts: (SEC) close a cross-tenant leak where a user with no active membership resolved
+to the seed company via the `crm_users.company_id` shadow fallback + a mig-012 backfill;
+(A) fix onboarding landing on "You don't have access here" + a redirect flicker (stale authz
+context after company creation); (B) mask the onboarding phone field like the New Lead card;
+(C) theme the reachable Keycloak pages that fell back to unstyled base markup.
+
+### User scenarios
+1. New user finishes onboarding → lands on THEIR company's Pulse, no flicker, no false 403.
+2. A user with no active membership can NOT read any other company's data (403).
+3. Onboarding phone masks to `(617) 555-0142`; OTP sent/verified in E.164.
+4. OTP / method-picker / password-reset / error / review-profile pages render branded.
+
+### Constraints / non-functional
+- Tenant scope is membership-only; `crm_users.company_id` is not consulted for access.
+- Dev auth bypass must fail closed in production.
+- Migration 140 is idempotent and logs the affected row count.
+- No token-shape change; `refreshAuthz` avoids a hard reload (keeps the 401→2FA-loop guard).
+
+### Involved modules
+- Backend: `middleware/keycloakAuth.js` (`requireCompanyAccess`, `authenticate`), migration 140. Verify-only: `authorizationService.resolveAuthzContext`, `platformCompanyService.bootstrapCompany`.
+- Frontend: `auth/AuthProvider.tsx` (`refreshAuthz`), `pages/auth/OnboardingPage.tsx`. Reuse: `components/ui/PhoneInput` (`formatUSPhone`/`toE164`).
+- Keycloak theme: 6 new `.ftl` templates.
+
+### Integrations
+- SMS OTP (phone now E.164). No Twilio/Front/Zenbooker behavior change.
+
+### Protected parts
+- `src/server.js`, `authedFetch.ts`, `useRealtimeEvents.ts` untouched. `backend/db/` only via migration 140 (additive/idempotent, per plan).

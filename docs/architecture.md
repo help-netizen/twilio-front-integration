@@ -2816,3 +2816,44 @@ React `/signup` keeps its own button (now wired via `loginWithIdp`).
 - **Google email already registered (password)** → `trustEmail` + `idp-auto-link` link silently; no duplicate user (`duplicateEmailsAllowed:false` upheld).
 - **Missing broker redirect URI in Google Console** → Google returns `redirect_uri_mismatch`; required URI is `<KC>/realms/crm-prod/broker/google/endpoint` (documented in the script + `.env.example`).
 - **Dev import without `GOOGLE_IDP_*`** → `${…:}` empty-string defaults keep the realm import valid.
+
+---
+
+## ONBOARD-FIX-001 — tenant-isolation model + onboarding authz refresh
+
+**Tenant scope = membership only.** `requireCompanyAccess` now sets `req.companyFilter`
+solely from `req.authz.company.id`, which `authorizationService.resolveAuthzContext` derives
+**only** from an active `company_memberships` row (or null). The removed fallback to
+`req.user.company_id` (the `crm_users.company_id` "shadow", backfilled to the seed company by
+migration 012) was the leak: a membership-less user resolved to Boston Masters. `crm_users.company_id`
+is now audit-context only (the three `sessions.js` refs are marked `tenant-safety-allow`); it is
+never consulted for data scoping. All 53 tenant routes read `req.companyFilter` — so a
+membership-less request gets `403 TENANT_CONTEXT_REQUIRED` and no data.
+
+**Fail-closed dev bypass.** `authenticate`'s `!FEATURE_AUTH` branch hands out the seed company
+as `company_admin` — fine for local dev, catastrophic in prod. It now returns
+`500 AUTH_MISCONFIGURED` when `NODE_ENV==='production'`, so a missing `FEATURE_AUTH_ENABLED`
+can never silently expose Boston Masters.
+
+**Shadow hygiene (migration 140).** Idempotently NULLs `crm_users.company_id` wherever it is
+not backed by an active membership in that company, so no other code path can resurrect the
+leak. Preserves the shadow where it correctly mirrors a membership.
+
+**Frontend authz refresh seam.** `AuthProvider` gains `refreshAuthz()` (re-`GET /api/auth/me`
+with the current token — backend resolves from `company_memberships`, so the token needn't
+change). `OnboardingPage.createCompany` awaits it before navigating (success + `ALREADY_ONBOARDED`).
+Because `useAuthz` reads from `useAuth`, `ProtectedRoute` and `OnboardingGate` both see the fresh
+`company`/`permissions` immediately — no redirect loop, no false 403, no full-page reload (which
+would risk the 401→2FA loop the onboarding flow deliberately avoids).
+
+**Phone normalization.** Onboarding masks via the shared `formatUSPhone` and posts `toE164(phone)`
+to `/api/public/otp/{send,verify}` — one canonical phone util across New Lead + onboarding.
+
+**Theme completeness.** The albusto theme (own CSS only, no base styles) now overrides the 6
+reachable pages that previously rendered unstyled: `login-otp`, `select-authenticator`,
+`login-reset-password`, `login-update-password`, `error`, `idp-review-user-profile`.
+
+**Edge cases.**
+- Membership-less user on any tenant route → 403 (was: seed-company data). Regression-tested.
+- Reporter's case (`office@bostonmasters.com`) → most likely a pre-existing Boston Masters member (Google account-link) → `409 ALREADY_ONBOARDED` → their own company's Pulse; not a leak, but the fix closes the structural hole.
+- Prod `FEATURE_AUTH_ENABLED` unset → 500 (fail closed) instead of universal Boston Masters admin.

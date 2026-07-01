@@ -11,6 +11,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, MapPin, ArrowRight, ArrowLeft, ShieldCheck } from 'lucide-react';
 import { authedFetch } from '../../services/apiClient';
+import { useAuth } from '../../auth/AuthProvider';
+import { formatUSPhone, toE164 } from '../../components/ui/PhoneInput';
 
 const card: React.CSSProperties = {
     width: '100%', maxWidth: 440, background: 'var(--blanc-surface-strong, #fdf8f0)',
@@ -79,6 +81,7 @@ function OtpCells({ value, onChange, disabled }: { value: string; onChange: (v: 
 
 export function OnboardingPage() {
     const navigate = useNavigate();
+    const { refreshAuthz } = useAuth();
     const [step, setStep] = useState<'phone' | 'code' | 'company'>('phone');
     const [phone, setPhone] = useState('');
     const [code, setCode] = useState('');
@@ -118,7 +121,7 @@ export function OnboardingPage() {
         try {
             const res = await fetch('/api/public/otp/send', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ phone, purpose: 'signup' }),
+                body: JSON.stringify({ phone: toE164(phone), purpose: 'signup' }),
             });
             const json = await res.json();
             // Rate limited (AUTH-FLOW-FIX-001 R7): show the wait and start the
@@ -141,7 +144,7 @@ export function OnboardingPage() {
         try {
             const res = await fetch('/api/public/otp/verify', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ phone, purpose: 'signup', code: value }),
+                body: JSON.stringify({ phone: toE164(phone), purpose: 'signup', code: value }),
             });
             const json = await res.json();
             if (!res.ok) {
@@ -175,9 +178,19 @@ export function OnboardingPage() {
             });
             const json = await res.json();
             if (!res.ok) {
-                if (json.code === 'ALREADY_ONBOARDED') { navigate('/pulse', { replace: true }); return; }
+                // Already belongs to a company (e.g. a Google login linked to an
+                // existing account): refresh authz so the SPA reflects that company
+                // before landing — otherwise the stale (no-company) context loops
+                // the onboarding gate and 403s /pulse. (ONBOARD-FIX-001 A)
+                if (json.code === 'ALREADY_ONBOARDED') { await refreshAuthz(); navigate('/pulse', { replace: true }); return; }
                 setError(json.message || 'Could not create the company'); return;
             }
+
+            // ONBOARD-FIX-001 (A): the company + tenant_admin membership now exist
+            // server-side, but the authz context was loaded at app init (no company).
+            // Re-pull it BEFORE navigating so OnboardingGate sees a company (no
+            // redirect loop / flicker) and /pulse's permission check passes.
+            await refreshAuthz();
             // The device is now trusted server-side (AUTH-FLOW-FIX-001 R4), so the
             // 2FA gate won't fire on /pulse. Land via client-side navigation when
             // the target is in-SPA — a full-page reload here would re-boot the app
@@ -219,7 +232,7 @@ export function OnboardingPage() {
                         <h1 style={{ fontFamily: 'Manrope, sans-serif', fontSize: 22, fontWeight: 600, margin: 0, color: 'var(--blanc-ink-1, #202734)' }}>Verify your phone</h1>
                         <div>
                             <label style={labelStyle}>Mobile phone</label>
-                            <input style={inputStyle} type="tel" value={phone} autoFocus required placeholder="(617) 555-0142" onChange={e => setPhone(e.target.value)} />
+                            <input style={inputStyle} type="tel" inputMode="tel" value={phone} autoFocus required placeholder="(617) 555-0142" autoComplete="tel" onChange={e => setPhone(formatUSPhone(e.target.value))} />
                             <p style={{ margin: '8px 0 0', fontSize: 12.5, color: 'var(--blanc-ink-3, #7d8796)', display: 'flex', gap: 6, alignItems: 'center' }}>
                                 <ShieldCheck size={14} /> Used to confirm sign-ins with a 6-digit SMS code
                             </p>

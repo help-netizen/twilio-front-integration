@@ -3885,3 +3885,24 @@ Spec: `Docs/specs/GOOGLE-SSO-FIX-001.md` · Tests: `Docs/test-cases/GOOGLE-SSO-F
 
 - **Shared-file sequencing:** `AuthProvider.tsx` GS-1 only; `SignupPage.tsx` GS-2 only; `login.ftl`+theme CSS GS-5 only; `realm-export.json` GS-3 only — all disjoint, no serialization needed.
 - **Deploy notes:** frontend rebuild + theme redeploy (KC theme CSS needs `up -d --force-recreate keycloak` per login-theme memory). Run `scripts/setup-google-idp.sh` against prod with `GOOGLE_IDP_CLIENT_ID/SECRET` if the auto-link flow / mappers aren't already present. Ensure the Google Cloud OAuth client lists `<KC>/realms/crm-prod/broker/google/endpoint`.
+
+---
+
+## ONBOARD-FIX-001 — tenant-isolation leak + onboarding access + phone mask + theme audit
+
+Spec: `Docs/specs/ONBOARD-FIX-001.md` · Tests: `Docs/test-cases/ONBOARD-FIX-001.md` · Status: implemented, **not deployed**.
+
+| ID | Task | Files | Status |
+|----|------|-------|--------|
+| OF-SEC1 | Remove `req.user.company_id` fallback; tenant scope = membership only | `backend/src/middleware/keycloakAuth.js` (`requireCompanyAccess`) | ✅ done |
+| OF-SEC2 | Dev bypass fails closed in production (`500 AUTH_MISCONFIGURED`) | `backend/src/middleware/keycloakAuth.js` (`authenticate`) | ✅ done |
+| OF-SEC3 | Migration: NULL `crm_users.company_id` w/o active membership (idempotent, logs count) | `backend/db/migrations/140_clear_orphan_company_id_shadow.sql` | ✅ done |
+| OF-SEC4 | Jest: deny-without-membership(+shadow), allow-to-membership, platform-only, dev-fail-closed | `tests/keycloakAuth.test.js` | ✅ 27/27 |
+| OF-A1 | `refreshAuthz()` exposed from AuthProvider | `frontend/src/auth/AuthProvider.tsx` | ✅ done |
+| OF-A2 | Onboarding awaits `refreshAuthz()` before navigate (success + ALREADY_ONBOARDED) | `frontend/src/pages/auth/OnboardingPage.tsx` | ✅ done |
+| OF-B1 | Masked phone (`formatUSPhone`) + `toE164` to OTP endpoints | `frontend/src/pages/auth/OnboardingPage.tsx` | ✅ done |
+| OF-C1..6 | Theme login-otp, select-authenticator, login-reset-password, login-update-password, error, idp-review-user-profile | `keycloak-themes/albusto/login/*.ftl` | ✅ done |
+| OF-DOC | Spec, test-cases, requirements/architecture/tasks/changelog | `Docs/*` | ✅ done |
+
+- **Migration numbering:** uses **140** (max committed = 139). PRICEBOOK-001 (not yet built) must renumber to 141+ if it lands after this. Renumber-before-commit if a parallel worktree also claims 140.
+- **Deploy:** backend + frontend + `up -d --force-recreate keycloak` (theme cache) + **run migration 140**. Recommended: prod DB check (TC-SEC-DB) to size the exposure + confirm the reporter's case.
