@@ -69,6 +69,27 @@
   flex-direction: column;
 }
 
+/* ── Autonomous-mode bottom banner (TELEPHONY-AUTONOMOUS-MODE-001) ── */
+/* Slim fixed strip at the very bottom on desktop. When it's shown, push
+   page content up so nothing is hidden behind it. Height ≈ 38px. */
+.app-layout.has-autonomous-banner .app-main {
+  padding-bottom: 38px;
+}
+
+@media (max-width: 767px) {
+  /* On mobile the bottom nav owns the very bottom (60px + safe-area, z-index 90),
+     so lift the banner to sit directly ABOVE it and never cover the nav. */
+  .autonomous-banner {
+    bottom: calc(60px + env(safe-area-inset-bottom)) !important;
+  }
+
+  /* Content already clears the bottom nav (60px). Add the banner's height on top
+     so the last row of a page isn't tucked under the banner. */
+  .app-layout.has-autonomous-banner .app-main {
+    padding-bottom: calc(60px + 40px + env(safe-area-inset-bottom));
+  }
+}
+
 /* Pulse nav unread badge */
 .pulse-unread-badge {
   display: inline-flex;

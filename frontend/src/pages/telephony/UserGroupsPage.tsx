@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Plus, Users, Phone, Calendar, Play, Pencil, X, Trash2, Shuffle, Eye } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useRealtimeEvents } from '../../hooks/useRealtimeEvents';
+import { useIsMobile } from '../../hooks/useIsMobile';
 import { getScheduleStatus } from './scheduleStatus';
 
 // ── Types (kept local, matches API response) ─────────────────────────────────
@@ -26,17 +27,41 @@ const STATUS_COLORS: Record<string, { bg: string; dot: string }> = {
 import { authedFetch } from '../../services/apiClient';
 
 // ── Modal backdrop ───────────────────────────────────────────────────────────
+// MOBILE FIX (TELEPHONY-AUTONOMOUS-MODE-001): the old modal was a hardcoded
+// 600px-wide centered box — on a phone it overflowed the viewport and the group
+// editor (incl. the Business Hours editor) was unusable. It's now responsive:
+// centered + capped on desktop, and a full-width bottom sheet (slide-up, rounded
+// top, internal scroll, safe-area) on mobile so it always fits a 375px screen.
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+    const isMobile = useIsMobile();
     return (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
-            onClick={onClose}>
-            <div style={{ background: '#fff', borderRadius: 14, width: 600, maxHeight: '85vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}
-                onClick={e => e.stopPropagation()}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid #e5e7eb', position: 'sticky', top: 0, background: '#fff', zIndex: 1 }}>
+        <div
+            style={{
+                position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex',
+                alignItems: isMobile ? 'flex-end' : 'center', justifyContent: 'center', zIndex: 1000,
+            }}
+            onClick={onClose}
+        >
+            <div
+                style={{
+                    background: '#fff',
+                    borderRadius: isMobile ? '18px 18px 0 0' : 14,
+                    width: isMobile ? '100%' : 600,
+                    maxWidth: '100%',
+                    maxHeight: isMobile ? '92dvh' : '85vh',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    overflow: 'hidden',
+                    boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
+                    animation: isMobile ? 'blancSlideUp 0.25s ease-out' : undefined,
+                }}
+                onClick={e => e.stopPropagation()}
+            >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid #e5e7eb', background: '#fff', flexShrink: 0 }}>
                     <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>{title}</h2>
                     <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: 4 }}><X size={18} /></button>
                 </div>
-                <div style={{ padding: '16px 20px' }}>{children}</div>
+                <div style={{ padding: '16px 20px', overflowY: 'auto', flex: '1 1 auto', minHeight: 0, paddingBottom: isMobile ? 'max(env(safe-area-inset-bottom), 16px)' : 16 }}>{children}</div>
             </div>
         </div>
     );
@@ -81,6 +106,7 @@ const sectionLabel = { fontSize: 12, fontWeight: 600 as const, color: '#6b7280',
 
 // ── Unified Group Form Modal ─────────────────────────────────────────────────
 function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClose: () => void }) {
+    const isMobile = useIsMobile();
     const isNew = !group;
     const [name, setName] = useState(group?.name || '');
     const [members, setMembers] = useState<string[]>(group?.members.map(m => m.id) || []);
@@ -230,27 +256,36 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
                 <div style={sectionLabel}><Calendar size={13} />Business Hours</div>
                 {hours.map((h, i) => {
                     const isOpen = h.open !== 'Closed';
+                    // Mobile: stack the two time selects onto their own full-width row below the
+                    // day + Open/Off toggle, so the row never overflows a narrow (375px) screen.
+                    const timeSelectStyle: React.CSSProperties = {
+                        flex: isMobile ? '1 1 0' : '0 0 auto',
+                        minWidth: isMobile ? 0 : 100,
+                        maxWidth: isMobile ? undefined : 100,
+                        height: 40, padding: '0 10px 0 8px', fontSize: 14, fontWeight: 600,
+                        background: 'rgba(9,30,66,0.04)', border: '1px solid #f6f6f6', borderRadius: 8,
+                        color: '#0c0c0d', cursor: 'pointer', appearance: 'auto' as const,
+                    };
+                    const timeRow = isOpen ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: isMobile ? '1 1 100%' : '0 0 auto', minWidth: 0 }}>
+                            <select value={snapTo30(h.open)} onChange={e => setTime(i, 'open', e.target.value)} style={timeSelectStyle}>
+                                {TIME_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                            </select>
+                            <span style={{ color: '#a3a3a3', fontSize: 14, flexShrink: 0 }}>—</span>
+                            <select value={snapTo30(h.close)} onChange={e => setTime(i, 'close', e.target.value)} style={timeSelectStyle}>
+                                {TIME_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                            </select>
+                        </div>
+                    ) : null;
                     return (
-                        <div key={h.day} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid #f3f4f6' }}>
-                            <span style={{ width: 36, fontSize: 13, fontWeight: 600, color: '#374151' }}>{h.day}</span>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', minWidth: 56 }}>
+                        <div key={h.day} style={{ display: 'flex', alignItems: 'center', flexWrap: isMobile ? 'wrap' : 'nowrap', gap: 10, padding: '8px 0', borderBottom: '1px solid #f3f4f6' }}>
+                            <span style={{ width: 36, fontSize: 13, fontWeight: 600, color: '#374151', flexShrink: 0 }}>{h.day}</span>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', minWidth: 56, flexShrink: 0 }}>
                                 <input type="checkbox" checked={isOpen} onChange={() => toggleDay(i)}
-                                    style={{ width: 15, height: 15, accentColor: '#6366f1' }} />
+                                    style={{ width: 18, height: 18, accentColor: '#6366f1' }} />
                                 <span style={{ fontSize: 11, color: isOpen ? '#22c55e' : '#9ca3af', fontWeight: 600 }}>{isOpen ? 'Open' : 'Off'}</span>
                             </label>
-                            {isOpen && (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                    <select value={snapTo30(h.open)} onChange={e => setTime(i, 'open', e.target.value)}
-                                        style={{ minWidth: 100, maxWidth: 100, height: 36, padding: '0 15px 0 6px', fontSize: 14, fontWeight: 600, background: 'rgba(9,30,66,0.04)', border: '1px solid #f6f6f6', borderRadius: 8, color: '#0c0c0d', cursor: 'pointer', appearance: 'auto' as const }}>
-                                        {TIME_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                                    </select>
-                                    <span style={{ color: '#a3a3a3', fontSize: 14 }}>—</span>
-                                    <select value={snapTo30(h.close)} onChange={e => setTime(i, 'close', e.target.value)}
-                                        style={{ minWidth: 100, maxWidth: 100, height: 36, padding: '0 15px 0 6px', fontSize: 14, fontWeight: 600, background: 'rgba(9,30,66,0.04)', border: '1px solid #f6f6f6', borderRadius: 8, color: '#0c0c0d', cursor: 'pointer', appearance: 'auto' as const }}>
-                                        {TIME_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                                    </select>
-                                </div>
-                            )}
+                            {timeRow}
                         </div>
                     );
                 })}

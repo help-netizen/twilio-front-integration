@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-07-01 — TELEPHONY-AUTONOMOUS-MODE-001: company-wide "Autonomous mode" + mobile hours editor
+
+Two parts on the telephony settings surface.
+
+- **Autonomous mode** — a company-level toggle (top of `/settings/telephony`, gated `tenant.telephony.manage`, **confirm-on-enable**; disable is immediate) that forces **every inbound call, in every flow, down its After-Hours branch** regardless of the working-hours schedule. Backend: new `company_telephony.autonomous_mode` (migration **142**); `callFlowRuntime.startExecution` reads it and sets `context.isBusinessHours = false` when ON — so each flow's existing `after_hours` edge (`isBusinessHours === false`) is taken (VM / AI / forward, whatever it routes to). **OFF (default) is byte-identical to previous routing**; the flag read is **fail-open** (a DB error degrades to normal-hours routing, never rejects a call). API `GET /api/telephony/provider/autonomous-mode` (readable by any authenticated company user — the banner needs it) + `PATCH` (gated). A persistent, non-dismissible **bottom banner** ("Autonomous mode is ON — all incoming calls are handled as after-hours") shows app-wide for all roles while ON, via a shell-mounted `useAutonomousMode` hook + context.
+- **Mobile working-hours editor fix** — the real per-group business-hours editor (`GroupFormModal` in `UserGroupsPage`) was unusable on a phone: a hardcoded `width:600` modal overflowed and the time-select rows didn't wrap. Now a full-width bottom sheet on mobile with wrapping time selects and larger tap targets (desktop unchanged, all `isMobile`-gated).
+
+Orchestrated: parallel backend + frontend implementers → independent adversarial review **APPROVED** (routing override verified: OFF byte-identical, ON forces after-hours everywhere, `group.company_id` always present, fail-closed→now fail-open, multi-tenant clean) → 2 hardenings (fail-open + a `condExpr`-path test). **25 backend jest green** (incl. voice/callFlows regression) + frontend `npm run build` green. Multi-tenant `company_id`-scoped throughout.
+
+---
+
 ## 2026-07-01 — PRICEBOOK-002: Items tab → spreadsheet-style inline-editable grid
 
 Replaced the Price Book **Items & products** tab's row-list + per-item slide-over editor with an inline **editable grid**: all 7 fields (Name, Description [2-line textarea], Code/SKU, Unit, Unit price, Taxable, Category) are edited in place, a pinned **"+ Add row"** starts a blank item, and the whole sheet is persisted at once via a single **Save changes** button (atomic). Groups & Categories tabs unchanged.

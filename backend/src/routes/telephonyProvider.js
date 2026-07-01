@@ -12,6 +12,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db/connection');
 const { requirePermission } = require('../middleware/authorization');
+const telephonyTenantService = require('../services/telephonyTenantService');
 
 function getCompanyId(req) {
     return req.companyFilter?.company_id;
@@ -51,6 +52,46 @@ router.get('/', requirePermission('tenant.telephony.manage'), async (req, res) =
     } catch (err) {
         console.error('[TelephonyProvider] GET error:', err.message);
         res.status(500).json({ ok: false, error: 'Failed to fetch telephony provider status' });
+    }
+});
+
+// ── Autonomous mode (TELEPHONY-AUTONOMOUS-MODE-001) ──────────────────────────
+//
+// Company-wide toggle that forces EVERY inbound call down its After-Hours
+// branch. The GET is deliberately readable by ANY authenticated company user
+// (no tenant.telephony.manage) so the global banner renders for every role;
+// the PATCH is gated by tenant.telephony.manage.
+
+router.get('/autonomous-mode', async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        if (!companyId) return res.status(401).json({ ok: false, error: 'No company context' });
+
+        const autonomousMode = await telephonyTenantService.getAutonomousMode(companyId);
+        res.json({ ok: true, data: { autonomous_mode: autonomousMode } });
+    } catch (err) {
+        console.error('[TelephonyProvider] GET autonomous-mode error:', err.message);
+        res.status(500).json({ ok: false, error: 'Failed to fetch autonomous mode' });
+    }
+});
+
+router.patch('/autonomous-mode', requirePermission('tenant.telephony.manage'), async (req, res) => {
+    try {
+        const companyId = getCompanyId(req);
+        if (!companyId) return res.status(401).json({ ok: false, error: 'No company context' });
+
+        const { autonomous_mode } = req.body || {};
+        if (typeof autonomous_mode !== 'boolean') {
+            return res.status(422).json({ ok: false, error: 'autonomous_mode must be a boolean' });
+        }
+
+        const saved = await telephonyTenantService.setAutonomousMode(
+            companyId, autonomous_mode, req.user?.crmUser?.id
+        );
+        res.json({ ok: true, data: { autonomous_mode: saved } });
+    } catch (err) {
+        console.error('[TelephonyProvider] PATCH autonomous-mode error:', err.message);
+        res.status(500).json({ ok: false, error: 'Failed to update autonomous mode' });
     }
 });
 

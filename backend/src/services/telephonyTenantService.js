@@ -69,6 +69,48 @@ async function getTelephonyState(companyId) {
     };
 }
 
+// ── Autonomous mode (force every inbound call down the After-Hours branch) ───
+
+/**
+ * Whether company-wide Autonomous mode is ON. A missing company_telephony row
+ * (company never connected a subaccount) reads as OFF. Single indexed PK lookup.
+ */
+async function getAutonomousMode(companyId) {
+    if (!companyId) return false;
+    const { rows } = await db.query(
+        `SELECT autonomous_mode FROM company_telephony WHERE company_id = $1`,
+        [companyId]
+    );
+    return rows[0]?.autonomous_mode === true;
+}
+
+/**
+ * Set company-wide Autonomous mode. Upserts so it works even when the company
+ * has no company_telephony row yet (e.g. the master/default company that never
+ * created a subaccount). Returns the persisted boolean.
+ */
+async function setAutonomousMode(companyId, on, actorId) {
+    const value = on === true;
+    const { rows } = await db.query(
+        `INSERT INTO company_telephony (company_id, autonomous_mode)
+         VALUES ($1, $2)
+         ON CONFLICT (company_id) DO UPDATE SET
+            autonomous_mode = EXCLUDED.autonomous_mode,
+            updated_at = now()
+         RETURNING autonomous_mode`,
+        [companyId, value]
+    );
+
+    auditService.log({
+        actor_id: actorId || null,
+        action: 'telephony.autonomous_mode_changed',
+        target_type: 'company', target_id: companyId, company_id: companyId,
+        details: { autonomous_mode: value },
+    }).catch(() => {});
+
+    return rows[0].autonomous_mode === true;
+}
+
 /**
  * Connect telephony for a tenant: create a Twilio subaccount and store its
  * credentials (token encrypted). Idempotent — an existing connection is
@@ -416,6 +458,8 @@ async function getUsageSummary(companyId) {
 
 module.exports = {
     getTelephonyState,
+    getAutonomousMode,
+    setAutonomousMode,
     connectTelephony,
     getClientForCompany,
     resolveCompanyByAccountSid,

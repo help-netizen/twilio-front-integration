@@ -14,6 +14,9 @@ import { SoftPhoneProvider } from '../../contexts/SoftPhoneContext';
 import { warmUpAudio } from '../../utils/ringtone';
 import { SoftPhoneHeaderButton } from './SoftPhoneHeaderButton';
 import { AppNavTabs, SettingsMenu, BottomNavBar, getActiveTab } from './appLayoutNavigation';
+import { AutonomousModeBanner } from './AutonomousModeBanner';
+import { useAutonomousMode } from '../../hooks/useAutonomousMode';
+import { AutonomousModeProvider } from '../../contexts/AutonomousModeContext';
 import './AppLayout.css';
 
 interface AppLayoutProps { children: React.ReactNode; }
@@ -34,6 +37,10 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
     // audio), so fully disable it on mobile — no Device registration, no nav button,
     // no warm-up modal, no widget, no incoming-call screen. Desktop unchanged.
     const isMobile = useIsMobile();
+    // TELEPHONY-AUTONOMOUS-MODE-001: one fetch-on-mount instance for the whole shell.
+    // The banner reads it here; the telephony toggle page reads/writes the SAME
+    // instance via AutonomousModeProvider so toggling updates the banner immediately.
+    const autonomous = useAutonomousMode();
     const softPhoneEnabled = !isMobile && softPhoneGroupsLoaded && softPhoneGroups.length > 0;
     const voice = useTwilioDevice({ enabled: softPhoneEnabled });
     const [softPhoneOpen, setSoftPhoneOpen] = useState(false);
@@ -143,7 +150,8 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
 
     return (
         <SoftPhoneProvider onOpenRequested={() => { setSoftPhoneOpen(true); setSoftPhoneMinimized(false); }}>
-            <div className="app-layout">
+          <AutonomousModeProvider value={autonomous}>
+            <div className={`app-layout${autonomous.autonomousMode ? ' has-autonomous-banner' : ''}`}>
                 <header className="app-header"><div className="header-content">
                     <AppNavTabs activeTab={activeTab} pulseUnreadCount={pulseUnreadCount} leadsNewCount={leadsNewCount} hasRole={hasRole} logout={logout} />
                     <div className="header-actions">
@@ -159,7 +167,9 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
                 </main>
                 <Dialog open={showWarmUp && !location.pathname.startsWith('/schedule')} onOpenChange={open => { if (!open) handleWarmUpDismiss(); }}><DialogContent className="sm:max-w-[360px]" onPointerDownOutside={e => e.preventDefault()}><DialogHeader className="text-center sm:text-center"><div className="flex justify-center mb-2"><Phone className="size-8 text-primary" /></div><DialogTitle>SoftPhone Ready</DialogTitle><DialogDescription>Enable incoming call ringtone so you don't miss any calls.</DialogDescription></DialogHeader><DialogFooter className="sm:justify-center"><Button onClick={handleWarmUpDismiss} size="lg" className="w-full"><Phone />Enable Ringtone</Button></DialogFooter></DialogContent></Dialog>
                 {!isMobile && <SoftPhoneWidget voice={voice} open={softPhoneOpen} minimized={softPhoneMinimized} disabledReason={!softPhoneEnabled && softPhoneGroupsLoaded ? 'You are not assigned to any group. Ask your administrator.' : undefined} onClose={() => { setSoftPhoneOpen(false); setSoftPhoneMinimized(false); }} onMinimize={() => setSoftPhoneMinimized(true)} />}
+                <AutonomousModeBanner visible={autonomous.autonomousMode} />
             </div>
+          </AutonomousModeProvider>
         </SoftPhoneProvider>
     );
 };
