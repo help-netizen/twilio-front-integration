@@ -22,14 +22,15 @@ import { ClickToCallButton } from '../softphone/ClickToCallButton';
 import { OpenTimelineButton } from '../softphone/OpenTimelineButton';
 import type { Contact, ContactLead } from '../../types/contact';
 import { getLeadStatusColor, getJobStatusStyle, AddressCard } from './PulseContactHelpers';
+import { TaskStack } from '../tasks/TaskStack';
 
-interface PulseContactPanelProps { contact: Contact; leads: ContactLead[]; loading: boolean; onAddressesChanged?: () => void; onContactChanged?: () => void; }
+interface PulseContactPanelProps { contact: Contact; leads: ContactLead[]; loading: boolean; timelineId?: number | null; onAddressesChanged?: () => void; onContactChanged?: () => void; onTasksChanged?: () => void; }
 
 const ZENBOOKER_BASE_URL = 'https://zenbooker.com';
 
 /* No background cards — clean flat layout, content breathes */
 
-export function PulseContactPanel({ contact, leads, loading, onAddressesChanged, onContactChanged }: PulseContactPanelProps) {
+export function PulseContactPanel({ contact, leads, loading, timelineId, onAddressesChanged, onContactChanged, onTasksChanged }: PulseContactPanelProps) {
     const navigate = useNavigate();
     const { hasPermission } = useAuthz();
     const canViewSource = hasPermission('lead_source.view');
@@ -158,20 +159,32 @@ export function PulseContactPanel({ contact, leads, loading, onAddressesChanged,
                     </div>
                 </div>
 
-                {/* Right: Notes — sticky note, aligned with name */}
-                <div style={{ padding: '14px 16px 16px', borderRadius: 16, background: '#fef9e7', borderLeft: '3px solid #f6d860' }}>
-                    <h4 className="blanc-eyebrow mb-2">Notes</h4>
-                    <textarea
-                        ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } }}
-                        className="w-full text-sm resize-none bg-transparent border-none outline-none leading-6"
-                        style={{ minHeight: 36, color: notes ? 'var(--blanc-ink-1)' : undefined }}
-                        value={notes}
-                        onChange={e => setNotes(e.target.value)}
-                        onBlur={handleSaveNotes}
-                        onInput={e => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = `${t.scrollHeight}px`; }}
-                        placeholder="Add notes…"
-                        rows={2}
-                    />
+                {/* Right: Notes + Tasks — identity-adjacent, aligned with name */}
+                <div className="space-y-3">
+                    {/* Notes — sticky note */}
+                    <div style={{ padding: '14px 16px 16px', borderRadius: 16, background: '#fef9e7', borderLeft: '3px solid #f6d860' }}>
+                        <h4 className="blanc-eyebrow mb-2">Notes</h4>
+                        <textarea
+                            ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } }}
+                            className="w-full text-sm resize-none bg-transparent border-none outline-none leading-6"
+                            style={{ minHeight: 36, color: notes ? 'var(--blanc-ink-1)' : undefined }}
+                            value={notes}
+                            onChange={e => setNotes(e.target.value)}
+                            onBlur={handleSaveNotes}
+                            onInput={e => { const t = e.target as HTMLTextAreaElement; t.style.height = 'auto'; t.style.height = `${t.scrollHeight}px`; }}
+                            placeholder="Add notes…"
+                            rows={2}
+                        />
+                    </div>
+                    {/* Tasks — the timeline's task stack; an open task = Action Required */}
+                    {timelineId ? (
+                        <TaskStack
+                            parentType="timeline"
+                            parentId={timelineId}
+                            title="Tasks"
+                            onTasksChanged={onTasksChanged}
+                        />
+                    ) : null}
                 </div>
             </div>
 

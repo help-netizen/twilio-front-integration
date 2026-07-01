@@ -160,6 +160,9 @@ router.get('/by-contact', async (req, res) => {
                 action_required_set_at: c.action_required_set_at || null,
                 snoozed_until: c.snoozed_until || null,
                 owner_user_id: c.owner_user_id || null,
+                // AR-TASK-UNIFY-001: "Action Required" is derived from open tasks.
+                has_open_task: !!c.open_task_id,
+                open_task_count: Number(c.open_task_count) || 0,
                 open_task: c.open_task_id ? {
                     id: c.open_task_id,
                     title: c.open_task_title,
@@ -261,6 +264,7 @@ router.get('/by-contact', async (req, res) => {
                     if (tl.tl_digits) timelineByDigits[tl.tl_digits] = tl;
                 }
 
+                const smsOnlyPushed = [];
                 for (const smsRow of smsOnlyRows) {
                     const contact = contactByDigits[smsRow.customer_digits] || null;
                     let timeline = timelineByDigits[smsRow.customer_digits] || null;
@@ -278,7 +282,7 @@ router.get('/by-contact', async (req, res) => {
                         }
                     }
 
-                    conversations.push({
+                    const row = {
                         id: null,
                         call_sid: null,
                         direction: smsRow.last_message_direction === 'inbound' ? 'inbound' : 'outbound',
@@ -312,7 +316,39 @@ router.get('/by-contact', async (req, res) => {
                         last_interaction_at: smsRow.last_message_at,
                         last_interaction_type: smsRow.last_message_direction === 'inbound' ? 'sms_inbound' : 'sms_outbound',
                         last_interaction_phone: smsRow.customer_e164,
-                    });
+                        // AR-TASK-UNIFY-001: default; patched below in one batched query.
+                        has_open_task: false,
+                        open_task_count: 0,
+                        open_task: null,
+                    };
+                    conversations.push(row);
+                    if (timeline?.id) smsOnlyPushed.push({ row, timelineId: timeline.id });
+                }
+
+                // AR-TASK-UNIFY-001: SMS-only rows are built independently of
+                // getCallsByTimeline, so their derived "Action Required" (= has an
+                // open task) is populated here too — one batched query over all
+                // resolved timeline ids (earliest-due open task + open count).
+                const smsTlIds = [...new Set(smsOnlyPushed.map(p => p.timelineId))];
+                if (smsTlIds.length > 0) {
+                    const openTasksResult = await dbConn.query(
+                        `SELECT DISTINCT ON (thread_id)
+                                thread_id, id, title, due_at, priority,
+                                count(*) OVER (PARTITION BY thread_id) AS task_count
+                         FROM tasks
+                         WHERE thread_id = ANY($1) AND status = 'open'
+                         ORDER BY thread_id, due_at ASC NULLS LAST, created_at ASC`,
+                        [smsTlIds]
+                    );
+                    const openByThread = {};
+                    for (const t of openTasksResult.rows) openByThread[t.thread_id] = t;
+                    for (const { row, timelineId } of smsOnlyPushed) {
+                        const ot = openByThread[timelineId];
+                        if (!ot) continue;
+                        row.has_open_task = true;
+                        row.open_task_count = Number(ot.task_count) || 0;
+                        row.open_task = { id: ot.id, title: ot.title, due_at: ot.due_at, priority: ot.priority };
+                    }
                 }
             }
         } catch (smsOnlyErr) {

@@ -280,6 +280,7 @@ async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, se
              open_task.title as open_task_title,
              open_task.due_at as open_task_due_at,
              open_task.priority as open_task_priority,
+             COALESCE(open_task.task_count, 0) as open_task_count,
              sms.last_message_at as sms_last_message_at,
              sms.last_message_direction as sms_last_message_direction,
              sms.last_message_preview as sms_last_message_preview,
@@ -295,7 +296,15 @@ async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, se
              ORDER BY c2.started_at DESC NULLS LAST
              LIMIT 1
          ) latest_call ON true
-         LEFT JOIN tasks open_task ON open_task.thread_id = tl.id AND open_task.status = 'open'
+         LEFT JOIN LATERAL (
+             SELECT ot.id, ot.title, ot.due_at, ot.priority,
+                    (SELECT count(*) FROM tasks tc
+                      WHERE tc.thread_id = tl.id AND tc.status = 'open') AS task_count
+             FROM tasks ot
+             WHERE ot.thread_id = tl.id AND ot.status = 'open'
+             ORDER BY ot.due_at ASC NULLS LAST, ot.created_at ASC
+             LIMIT 1
+         ) open_task ON true
          LEFT JOIN LATERAL (
              SELECT sc.last_message_at, sc.last_message_direction,
                     sc.last_message_preview, sc.has_unread, sc.id as sms_conversation_id
@@ -310,11 +319,12 @@ async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, se
              LIMIT 1
          ) sms ON true
          WHERE (latest_call.id IS NOT NULL OR sms.sms_conversation_id IS NOT NULL
+                OR open_task.id IS NOT NULL
                 OR tl.is_action_required = true OR tl.has_unread = true)
            ${companyFilter}
            ${searchFilter}
          ORDER BY
-           CASE WHEN tl.is_action_required = true
+           CASE WHEN open_task.id IS NOT NULL
                  AND (tl.snoozed_until IS NULL OR tl.snoozed_until <= now())
                 THEN 0
                 WHEN tl.has_unread = true OR sms.has_unread = true
@@ -395,11 +405,15 @@ async function snoozeThread(timelineId, snoozedUntil) {
 }
 
 async function unsnoozeExpiredThreads() {
+    // AR-TASK-UNIFY-001: "Action Required" is now derived from open tasks, so a
+    // snoozed thread is one that has an open task (or the legacy flag). Expire
+    // the snooze for either.
     const result = await db.query(
         `UPDATE timelines SET
             snoozed_until = NULL,
             updated_at = now()
-         WHERE is_action_required = true
+         WHERE (is_action_required = true
+                OR EXISTS (SELECT 1 FROM tasks WHERE tasks.thread_id = timelines.id AND tasks.status = 'open'))
            AND snoozed_until IS NOT NULL
            AND snoozed_until <= now()
          RETURNING id`
@@ -425,18 +439,43 @@ async function assignThread(timelineId, ownerUserId) {
 }
 
 async function createTask({ companyId, threadId, subjectType, subjectId, title, description, priority, dueAt, ownerUserId, createdBy }) {
+    const provenance = createdBy || 'user';
+    // AR-TASK-UNIFY-001: a timeline can now hold MANY open tasks (the v1
+    // one-open-per-thread unique index was dropped in mig 139). Auto callers
+    // (inbound SMS/call/email, rules, agent) still keep a SINGLE open task per
+    // thread — upserted here at the app layer instead of via ON CONFLICT. A
+    // user-created task is always additive and is never clobbered by an auto
+    // upsert (we only ever update an existing AUTO-provenance open task).
+    const AUTO = ['system', 'automation', 'agent'];
+    if (AUTO.includes(provenance)) {
+        const existing = await db.query(
+            `SELECT id FROM tasks
+              WHERE thread_id = $1 AND status = 'open' AND created_by = ANY($2::text[])
+              ORDER BY created_at ASC
+              LIMIT 1`,
+            [threadId, AUTO]
+        );
+        if (existing.rows[0]) {
+            const upd = await db.query(
+                `UPDATE tasks SET
+                    title = $2,
+                    description = $3,
+                    priority = $4,
+                    due_at = $5,
+                    owner_user_id = COALESCE($6, owner_user_id),
+                    updated_at = now()
+                 WHERE id = $1
+                 RETURNING *`,
+                [existing.rows[0].id, title, description || null, priority || 'p2', dueAt || null, ownerUserId || null]
+            );
+            return upd.rows[0];
+        }
+    }
     const result = await db.query(
         `INSERT INTO tasks (company_id, thread_id, subject_type, subject_id, title, description, priority, due_at, owner_user_id, created_by)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-         ON CONFLICT (thread_id) WHERE status = 'open'
-         DO UPDATE SET
-            title = EXCLUDED.title,
-            description = EXCLUDED.description,
-            priority = EXCLUDED.priority,
-            due_at = EXCLUDED.due_at,
-            owner_user_id = COALESCE(EXCLUDED.owner_user_id, tasks.owner_user_id)
          RETURNING *`,
-        [companyId, threadId, subjectType || 'contact', subjectId || null, title, description || null, priority || 'p2', dueAt || null, ownerUserId || null, createdBy || 'user']
+        [companyId, threadId, subjectType || 'contact', subjectId || null, title, description || null, priority || 'p2', dueAt || null, ownerUserId || null, provenance]
     );
     return result.rows[0];
 }

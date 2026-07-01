@@ -3,11 +3,16 @@
 /**
  * tasksQueries.js — TASKS-001 cross-entity tasks.
  *
- * Tasks attach to exactly one parent (job/lead/estimate/invoice/contact) and have
- * no standalone view. Reuses the shared `tasks` table; the task text lives in the
- * NOT NULL `title` column but is exposed to the API as `description`. Every query
- * is company-scoped (req.companyFilter.company_id). Sales-CRM/Pulse task columns
- * (thread_id/account_id/deal_id/subject_*) are left untouched by this module.
+ * Tasks attach to exactly one parent (job/lead/estimate/invoice/contact/timeline)
+ * and have no standalone view. Reuses the shared `tasks` table; the task text
+ * lives in the NOT NULL `title` column but is exposed to the API as `description`.
+ * Every query is company-scoped (req.companyFilter.company_id).
+ *
+ * AR-TASK-UNIFY-001: a Pulse `timeline` (thread) is a first-class parent via the
+ * existing `tasks.thread_id` column — an open timeline task IS "Action Required".
+ * Auto-generated timeline tasks (inbound/rules, created_by <> 'user') stay
+ * Pulse-only and are excluded from the global cross-entity list. Sales-CRM
+ * columns (account_id/deal_id/subject_*) are still left untouched here.
  */
 
 const db = require('./connection');
@@ -20,6 +25,7 @@ const PARENTS = {
     estimate: { col: 'estimate_id', table: 'estimates', alias: 'e', path: 'estimates' },
     invoice: { col: 'invoice_id', table: 'invoices', alias: 'iv', path: 'invoices' },
     contact: { col: 'contact_id', table: 'contacts', alias: 'co', path: 'contacts' },
+    timeline: { col: 'thread_id', table: 'timelines', alias: 'tl', path: 'pulse' },
 };
 
 const PARENT_TYPES = Object.keys(PARENTS);
@@ -41,14 +47,16 @@ const SELECT_TASK = `
                WHEN t.estimate_id IS NOT NULL THEN 'estimate'
                WHEN t.invoice_id  IS NOT NULL THEN 'invoice'
                WHEN t.contact_id  IS NOT NULL THEN 'contact'
+               WHEN t.thread_id   IS NOT NULL THEN 'timeline'
            END AS parent_type,
-           COALESCE(t.job_id, t.lead_id, t.estimate_id, t.invoice_id, t.contact_id) AS parent_id,
+           COALESCE(t.job_id, t.lead_id, t.estimate_id, t.invoice_id, t.contact_id, t.thread_id) AS parent_id,
            CASE
                WHEN t.job_id      IS NOT NULL THEN COALESCE(NULLIF(j.service_name,''), NULLIF(j.customer_name,''), 'Job #' || j.id)
                WHEN t.lead_id     IS NOT NULL THEN COALESCE(NULLIF(TRIM(CONCAT_WS(' ', l.first_name, l.last_name)),''), NULLIF(l.company,''), 'Lead')
                WHEN t.estimate_id IS NOT NULL THEN COALESCE(NULLIF(e.estimate_number,''), 'Estimate')
                WHEN t.invoice_id  IS NOT NULL THEN COALESCE(NULLIF(iv.invoice_number,''), 'Invoice')
                WHEN t.contact_id  IS NOT NULL THEN COALESCE(NULLIF(co.full_name,''), 'Contact')
+               WHEN t.thread_id   IS NOT NULL THEN COALESCE(NULLIF(tlc.full_name,''), NULLIF(tl.phone_e164,''), 'Conversation')
            END AS parent_label
     FROM tasks t
     LEFT JOIN crm_users ow ON ow.id = t.owner_user_id
@@ -58,11 +66,14 @@ const SELECT_TASK = `
     LEFT JOIN estimates e  ON e.id  = t.estimate_id AND e.company_id  = t.company_id
     LEFT JOIN invoices iv  ON iv.id = t.invoice_id  AND iv.company_id = t.company_id
     LEFT JOIN contacts co  ON co.id = t.contact_id  AND co.company_id = t.company_id
+    LEFT JOIN timelines tl ON tl.id = t.thread_id   AND tl.company_id = t.company_id
+    LEFT JOIN contacts tlc ON tlc.id = tl.contact_id AND tlc.company_id = t.company_id
 `;
 
-// Only rows owned by TASKS-001 (one of the 5 parents set).
+// Rows shown in the global cross-entity list: one of the 5 entity parents, OR a
+// USER-created timeline task (auto inbound/rules tasks stay Pulse-only).
 const HAS_ENTITY_PARENT =
-    '(t.job_id IS NOT NULL OR t.lead_id IS NOT NULL OR t.estimate_id IS NOT NULL OR t.invoice_id IS NOT NULL OR t.contact_id IS NOT NULL)';
+    "(t.job_id IS NOT NULL OR t.lead_id IS NOT NULL OR t.estimate_id IS NOT NULL OR t.invoice_id IS NOT NULL OR t.contact_id IS NOT NULL OR (t.thread_id IS NOT NULL AND t.created_by = 'user'))";
 
 /** Confirm a parent row exists in this company. Returns boolean. */
 async function parentExists(companyId, parentType, parentId, client = null) {

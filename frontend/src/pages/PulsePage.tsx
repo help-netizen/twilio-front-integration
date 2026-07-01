@@ -13,6 +13,8 @@ import { PulseTimeline } from '../components/pulse/PulseTimeline';
 import { SmsForm } from '../components/pulse/SmsForm';
 import { LeadDetailPanel } from '../components/leads/LeadDetailPanel';
 import { PulseContactPanel } from '../components/contacts/PulseContactPanel';
+import { TaskFormDialog } from '../components/tasks/TaskFormDialog';
+import { createTask, type Task } from '../components/tasks/tasksApi';
 import { CreateLeadJobWizard } from '../components/conversations/CreateLeadJobWizard';
 import { EditLeadDialog } from '../components/leads/EditLeadDialog';
 import { ConvertToJobDialog } from '../components/leads/ConvertToJobDialog';
@@ -52,6 +54,9 @@ export const PulsePage: React.FC = () => {
     const [mobilePanel, setMobilePanel] = useState<'list' | 'content'>('list');
     // Sidebar filter chips
     const [activeFilter, setActiveFilter] = useState<'all' | 'unread' | 'action_required'>('all');
+    // Page-level task editor — opened right after flagging a timeline for action
+    // so the user can refine the freshly-created default task.
+    const [taskEditor, setTaskEditor] = useState<{ parentId: number; task: Task } | null>(null);
 
     const isContactSelected = !!(p.contactId || p.timelineId);
 
@@ -59,7 +64,7 @@ export const PulsePage: React.FC = () => {
         ? p.filteredCalls
         : activeFilter === 'unread'
             ? p.filteredCalls.filter((c: any) => c.tl_has_unread || c.sms_has_unread || c.has_unread)
-            : p.filteredCalls.filter((c: any) => c.is_action_required);
+            : p.filteredCalls.filter((c: any) => c.has_open_task);
 
     // Grouped sidebar: an "Action Required" section pinned at the top (AR and not
     // currently snoozed), then the rest grouped by activity day (descending).
@@ -71,7 +76,7 @@ export const PulsePage: React.FC = () => {
         for (const call of displayedCalls) {
             const c = call as any;
             const isSnoozed = c.snoozed_until && new Date(c.snoozed_until).getTime() > now;
-            if (c.is_action_required === true && !isSnoozed) {
+            if (c.has_open_task === true && !isSnoozed) {
                 actionRequired.push(call);
                 continue;
             }
@@ -145,8 +150,14 @@ export const PulsePage: React.FC = () => {
                 }}
                 onRead={() => p.refetchContacts()}
                 onSetActionRequired={async (timelineId) => {
-                    try { await pulseApi.setActionRequired(timelineId); p.refetchContacts(); toast.success('Marked as Action Required'); }
-                    catch { toast.error('Failed to set Action Required'); }
+                    // AR-TASK-UNIFY-001: flagging a timeline = creating a task on it.
+                    // Create a default "Follow up" task immediately, then open the
+                    // editor so the user can refine it (cancel keeps the default).
+                    try {
+                        const task = await createTask({ parent_type: 'timeline', parent_id: timelineId, description: 'Follow up' });
+                        p.refetchContacts();
+                        setTaskEditor({ parentId: timelineId, task });
+                    } catch { toast.error('Failed to add task'); }
                 }}
             />
         );
@@ -250,7 +261,7 @@ export const PulsePage: React.FC = () => {
                             {/* Action Required bar — its own floating card */}
                             {(() => {
                                 const conv = p.selectedConv as any;
-                                if (!conv?.is_action_required) return null;
+                                if (!conv?.has_open_task) return null;
                                 const isSnoozed = conv.snoozed_until && new Date(conv.snoozed_until) > new Date();
                                 const tlId = conv.timeline_id;
                                 return (
@@ -338,8 +349,10 @@ export const PulsePage: React.FC = () => {
                                             contact={p.contactDetail.contact}
                                             leads={p.contactDetail.leads}
                                             loading={false}
+                                            timelineId={p.timelineId || (p.selectedConv as any)?.timeline_id || null}
                                             onAddressesChanged={p.refreshContactDetail}
                                             onContactChanged={p.refreshContactDetail}
+                                            onTasksChanged={p.refetchContacts}
                                         />
                                     </div>
                                 ) : !p.leadLoading && !p.contact?.id ? (
@@ -408,6 +421,18 @@ export const PulsePage: React.FC = () => {
                     open={!!p.convertingLead}
                     onOpenChange={(open) => !open && p.setConvertingLead(null)}
                     onSuccess={p.handleConvertSuccess}
+                />
+            )}
+            {taskEditor && (
+                <TaskFormDialog
+                    open={!!taskEditor}
+                    onOpenChange={(o) => { if (!o) setTaskEditor(null); }}
+                    parentType="timeline"
+                    parentId={taskEditor.parentId}
+                    tz={companyTz}
+                    task={taskEditor.task}
+                    onSaved={() => { setTaskEditor(null); p.refetchContacts(); }}
+                    onDeleted={() => { setTaskEditor(null); p.refetchContacts(); }}
                 />
             )}
         </div>

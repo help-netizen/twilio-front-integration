@@ -15,6 +15,7 @@ const PARENT_META: Record<TaskParentType, { label: string; color: string }> = {
     contact: { label: 'Contact', color: '#1D9E75' },
     estimate: { label: 'Estimate', color: '#EF9F27' },
     invoice: { label: 'Invoice', color: '#D85A30' },
+    timeline: { label: 'Conversation', color: '#C2683B' },
 };
 
 interface Group { key: string; label: string; danger?: boolean; compactTime?: boolean; tasks: Task[]; }

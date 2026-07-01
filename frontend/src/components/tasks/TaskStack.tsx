@@ -17,9 +17,12 @@ interface Props {
     /** Controlled create dialog (when the host owns the "Add task" button). */
     createOpen?: boolean;
     onCreateOpenChange?: (open: boolean) => void;
+    /** Fired after any create/edit/complete/snooze/delete so hosts (e.g. Pulse)
+     *  can refresh derived state such as the Action Required badge. */
+    onTasksChanged?: () => void;
 }
 
-export function TaskStack({ parentType, parentId, showAddButton = true, title, createOpen, onCreateOpenChange }: Props) {
+export function TaskStack({ parentType, parentId, showAddButton = true, title, createOpen, onCreateOpenChange, onTasksChanged }: Props) {
     const { company, user, hasPermission, hasAnyPermission } = useAuthz();
     const tz = company?.timezone || 'America/New_York';
     const myEmail = user?.email;
@@ -40,11 +43,12 @@ export function TaskStack({ parentType, parentId, showAddButton = true, title, c
         setTasks(prev => prev.filter(x => x.id !== t.id));
         try {
             await completeTask(t.id);
-            toast.success('Task completed', { action: { label: 'Undo', onClick: () => { reopenTask(t.id).then(refetch).catch(() => {}); } } });
+            toast.success('Task completed', { action: { label: 'Undo', onClick: () => { reopenTask(t.id).then(() => { refetch(); onTasksChanged?.(); }).catch(() => {}); } } });
         } catch {
             toast.error('Failed to complete task');
             refetch();
         }
+        onTasksChanged?.();
     };
 
     const handleSnooze = async (t: Task, iso: string) => {
@@ -52,6 +56,7 @@ export function TaskStack({ parentType, parentId, showAddButton = true, title, c
             await snoozeTask(t.id, iso);
             toast.success('Task snoozed');
             refetch();
+            onTasksChanged?.();
         } catch {
             toast.error('Failed to snooze task');
         }
@@ -127,7 +132,7 @@ export function TaskStack({ parentType, parentId, showAddButton = true, title, c
                     parentType={parentType}
                     parentId={parentId}
                     tz={tz}
-                    onSaved={() => refetch()}
+                    onSaved={() => { refetch(); onTasksChanged?.(); }}
                 />
             )}
 
@@ -139,8 +144,8 @@ export function TaskStack({ parentType, parentId, showAddButton = true, title, c
                 parentId={parentId}
                 tz={tz}
                 task={editingTask}
-                onSaved={() => { setEditingTask(null); refetch(); }}
-                onDeleted={() => { setEditingTask(null); refetch(); }}
+                onSaved={() => { setEditingTask(null); refetch(); onTasksChanged?.(); }}
+                onDeleted={() => { setEditingTask(null); refetch(); onTasksChanged?.(); }}
             />
         </div>
     );

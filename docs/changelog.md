@@ -4,6 +4,22 @@
 
 ---
 
+## 2026-06-30 — AR-TASK-UNIFY-001: Pulse "Action Required" is now a Task
+
+"Action Required" and Tasks were two views of the same `tasks` table seen through disjoint windows — a Pulse thread-task (via `thread_id`) was invisible to the Stacks UI. They're now **one model**: a Pulse **timeline (thread) is a first-class task parent** (`parent_type='timeline'`, reusing the existing `tasks.thread_id` column), and **"Action Required" = the timeline has an open task** (derived, not a separate flag).
+
+- **Flagging a timeline** (the `⋮ → Action Required` action) now **creates a default "Follow up" task** on that timeline (assigned to the current user) and **immediately opens the task editor** (slide-over) to refine it — cancel keeps the default, so it's flagged either way. Replaces the old bare `set-action-required` flag write.
+- **The timeline's tasks show in its view card**, a `TaskStack` **beside the Notes** in `PulseContactPanel` — add / edit / complete / snooze, exactly like a Job or Lead stack. A timeline can hold **many** open tasks.
+- **Everywhere AR is shown** — the sidebar "Action Required" section (PULSE-LIST-GROUP-001), the `action_required` filter chip, the `PulseContactItem` badge (now shows the task title + "+N" + due), and the content-column AR bar — is driven by **`has_open_task`** instead of `is_action_required`. Completing the last open task (or "Mark Handled", which closes all open thread tasks) clears it automatically.
+- **Global `/tasks`**: user-created timeline tasks appear like any entity task (labeled by contact/phone, click → opens the Pulse conversation). System/automation auto-tasks stay **Pulse-only** (excluded from the global list) so it doesn't flood.
+- **Inbound / unread: untouched.** The deprecated, config-gated inbound auto-AR path is left as-is per owner instruction.
+
+Backend: **migration 139** drops the `uq_tasks_one_open_per_thread` unique index (a timeline can now hold many open tasks); `timelinesQueries.createTask` replaces its `ON CONFLICT (thread_id)` upsert with an app-level "find-open-auto-task-or-insert" so inbound/rules keep a single auto-task per thread and **never clobber a user task**; `tasksQueries` gains the `timeline` parent (SELECT projection + company-scoped `timelines`/`contacts` joins + a global-list filter that shows only user-created timeline tasks); the sidebar list query swaps its `LEFT JOIN tasks` (which would fan out duplicate rows now) for a `LATERAL … LIMIT 1` + `open_task_count`, exposing `has_open_task`. Frontend: `TaskStack` gains an `onTasksChanged` hook so card edits refresh the sidebar AR.
+
+Verify: `npm run build` green; backend syntax-checked (`tasksQueries` loads `timeline` as a valid parent). Independent adversarial review **found + fixed one blocker** — SMS-only timelines (a call-less inbound text, the dominant Action-Required case) are built in a *second* `calls.js` code path that wasn't emitting `has_open_task`, so they'd have lost their AR indicator; that branch now batch-loads open tasks too. Also broadened the background auto-unsnooze to task-only threads. All other review checks (SQL fan-out, upsert provenance, multi-tenant scoping, AR-derivation completeness, permissions, mark-handled) passed. Live-data visual confirmation pending (authed Pulse data can't load against the local backend). **NOT yet merged/deployed.**
+
+---
+
 ## 2026-06-30 — PULSE-LIST-GROUP-001: Pulse conversation list — Action Required section + day grouping + mobile full-bleed
 
 The Pulse sidebar (the list of conversations/timelines) was a flat list. Now it's organized like the Jobs list:

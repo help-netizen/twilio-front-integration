@@ -1,6 +1,6 @@
 import { authedFetch } from '../../services/apiClient';
 
-export type TaskParentType = 'job' | 'lead' | 'contact' | 'estimate' | 'invoice';
+export type TaskParentType = 'job' | 'lead' | 'contact' | 'estimate' | 'invoice' | 'timeline';
 
 export interface Task {
     id: number;
@@ -56,6 +56,8 @@ export function parentPath(task: Pick<Task, 'parent_type' | 'parent_id'>): strin
         // Estimates/Invoices open via the existing ?openId query mechanism.
         case 'estimate': return `/estimates?openId=${task.parent_id}`;
         case 'invoice': return `/invoices?openId=${task.parent_id}`;
+        // Timeline (Pulse thread) tasks open the conversation.
+        case 'timeline': return `/pulse/timeline/${task.parent_id}`;
         default: return '/tasks';
     }
 }

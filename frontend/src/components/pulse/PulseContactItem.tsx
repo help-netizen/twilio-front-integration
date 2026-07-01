@@ -123,11 +123,13 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
     const displayDate = new Date(call.last_interaction_at || call.started_at || call.created_at);
     const interactionType = call.last_interaction_type || 'call';
 
-    const isActionRequired = (call as any).is_action_required || false;
+    const openTask = (call as any).open_task || null;
+    const openTaskCount = (call as any).open_task_count || 0;
+    // AR-TASK-UNIFY-001: "Action Required" = the thread has an open task.
+    const isActionRequired = (call as any).has_open_task ?? !!openTask;
     const arReason = (call as any).action_required_reason || null;
     const snoozedUntil = (call as any).snoozed_until;
     const isSnoozed = snoozedUntil && new Date(snoozedUntil) > new Date();
-    const openTask = (call as any).open_task || null;
     const [snoozeMenuOpen, setSnoozeMenuOpen] = useState(false);
     const [menuOpen, setMenuOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
@@ -221,11 +223,16 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                     {isActionRequired && !isSnoozed && (
                         <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                             <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-orange-100 text-orange-800">
-                                <AlertTriangle className="size-2.5" /> AR
+                                <AlertTriangle className="size-2.5" /> Task
                             </span>
-                            {arReason && (
-                                <span className="text-[10px]" style={{ color: 'var(--blanc-ink-3)' }}>
-                                    {REASON_LABELS[arReason] || arReason}
+                            {(openTask?.title || arReason) && (
+                                <span className="text-[10px] truncate max-w-[150px]" style={{ color: 'var(--blanc-ink-3)' }}>
+                                    {openTask?.title || REASON_LABELS[arReason] || arReason}
+                                </span>
+                            )}
+                            {openTaskCount > 1 && (
+                                <span className="text-[10px] font-medium" style={{ color: 'var(--blanc-ink-3)' }}>
+                                    +{openTaskCount - 1}
                                 </span>
                             )}
                             {openTask?.due_at && (
