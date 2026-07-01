@@ -47,11 +47,12 @@ export const updateCategory = (id: number, b: Partial<{ name: string; descriptio
 export const archiveCategory = (id: number) => authedFetch(`${BASE}/categories/${id}`, json('DELETE')).then(ok<PriceBookCategory>);
 
 // ── Items ────────────────────────────────────────────────────────────────────
-export async function listItems(opts: { search?: string; category_id?: number | null; includeArchived?: boolean } = {}): Promise<PriceBookItem[]> {
+export async function listItems(opts: { search?: string; category_id?: number | null; includeArchived?: boolean; limit?: number } = {}): Promise<PriceBookItem[]> {
     const p = new URLSearchParams();
     if (opts.search) p.set('search', opts.search);
     if (opts.category_id != null) p.set('category_id', String(opts.category_id));
     if (opts.includeArchived) p.set('includeArchived', 'true');
+    if (opts.limit != null) p.set('limit', String(opts.limit));
     const res = await authedFetch(`${BASE}/items?${p.toString()}`);
     return (await ok<{ items: PriceBookItem[] }>(res)).items;
 }
@@ -59,6 +60,13 @@ export interface ItemInput { name: string; description?: string | null; default_
 export const createItem = (b: ItemInput) => authedFetch(`${BASE}/items`, json('POST', b)).then(ok<PriceBookItem>);
 export const updateItem = (id: number, b: Partial<ItemInput>) => authedFetch(`${BASE}/items/${id}`, json('PATCH', b)).then(ok<PriceBookItem>);
 export const archiveItem = (id: number) => authedFetch(`${BASE}/items/${id}`, json('DELETE')).then(ok<PriceBookItem>);
+
+// ── Bulk items save (PRICEBOOK-002 — spreadsheet grid) ─────────────────────────
+export interface BulkItemCreate { clientKey?: string; name: string; description?: string | null; code?: string | null; unit?: string | null; default_unit_price?: number; default_taxable?: boolean; category_id?: number | null; }
+export interface BulkItemUpdate extends BulkItemCreate { id: number; }
+export interface BulkItemsPayload { creates: BulkItemCreate[]; updates: BulkItemUpdate[]; deletes: number[]; }
+export interface BulkItemsResult { items: PriceBookItem[]; summary: { created: number; updated: number; deleted: number }; createdMap: { clientKey: string; id: number }[]; }
+export const bulkSaveItems = (b: BulkItemsPayload) => authedFetch(`${BASE}/items/bulk`, json('PUT', b)).then(ok<BulkItemsResult>);
 
 // ── Groups ───────────────────────────────────────────────────────────────────
 export async function listGroups(opts: { search?: string; includeArchived?: boolean } = {}): Promise<PriceBookGroup[]> {

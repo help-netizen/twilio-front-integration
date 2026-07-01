@@ -2917,3 +2917,53 @@ keys so the page shows in local dev.
 
 **Edge cases.** Archived category/group/item → hidden from pickers (SET NULL / soft-delete); group
 expansion skips archived items; `normalizeItems` filters non-numeric item_ids (jest-caught).
+
+## PRICEBOOK-002 — Inline-editable Items grid
+
+**Goal.** Replace the Items tab's row-list + slide-over editor with a spreadsheet-style
+grid where all 7 item fields are edited in place and saved as one atomic batch.
+
+### Backend
+- New endpoint `PUT /api/price-book/items/bulk` — company-scoped, gated `price_book.manage`
+  (mounted under the existing `authenticate, requireCompanyAccess` router; no server.js change).
+- Payload: `{ creates:[{clientKey?,name,description,code,unit,default_unit_price,default_taxable,category_id}],
+  updates:[{id,...same}], deletes:[id] }`.
+- Response: `{ items:[<full listForManage snapshot>], summary:{created,updated,deleted},
+  createdMap:[{clientKey,id}] }`.
+- Logic lives in `estimateItemPresetsService.bulkSaveItems(companyId, payload, {actorId})`,
+  which validates the whole batch first (name required per non-deleted row; price finite ≥0;
+  category_id must belong to the company or be null; fully-empty new rows are discarded), then
+  calls `estimateItemPresetsQueries.bulkSaveItems`, a single `db.getClient()` BEGIN/COMMIT/ROLLBACK
+  transaction modeled on `priceBookQueries.setGroupItems`. It reuses `insertPreset` /
+  `updatePresetScoped` / `archivePresetScoped` with the shared `client`.
+- **All-or-nothing:** any invalid row, foreign item id, or foreign category id rejects the whole
+  request (422/404 with structured `details`) before COMMIT — nothing is written. Already-archived
+  deletes are idempotent no-ops.
+- `listForManage` internal limit cap raised 200→1000 so the grid can load the full catalog.
+  Per-row `POST/PATCH/DELETE /items/:id` are retained for back-compat (CSV import, external callers).
+
+### Frontend
+- `ItemsTab` (in `PriceBookPage.tsx`) becomes a draft grid holding `RowDraft[]` with a
+  per-row status (`pristine|new|edited|deleted`) + stable local key. Loads all items once
+  (`?limit=500`) and filters client-side so unsaved edits survive search.
+- Per-row trash marks a server row `deleted` (undoable client-side until Save); actual soft-delete
+  (`archived_at`) happens inside the bulk transaction on Save. New rows are removed locally.
+- Pinned "+ add empty row"; single **Save changes** (enabled only when dirty) + **Discard**.
+  Unsaved-changes guard on tab switch and page unload.
+- `ItemPanel` (per-item slide-over) is **removed from the Items flow** — documented exception to
+  the right-side "layer" canon: inline table edit, Blanc tokens, IBM Plex/Manrope, no decorative
+  `<hr>`/separators, horizontal scroll on narrow screens. Groups/Categories keep the layer pattern.
+- API client gains `bulkSaveItems` + bulk types in `priceBookApi.ts`.
+
+### Decisions (boundary questions resolved)
+- Duplicate item names allowed (spreadsheet semantics; no unique-name constraint on presets).
+- Inline category creation out of scope (Categories tab owns that). `default_quantity` preserved, not
+  surfaced. Last-write-wins on concurrent edits (no version column). Save errors highlight offending
+  cells + toast.
+
+### Compatibility
+- `estimate_item_presets` is shared with the inline estimate/invoice picker (`searchForCompany`,
+  `getGroupExpansion`), both of which filter `archived_at IS NULL`; soft-deleting here removes items
+  from those paths as intended without breaking group memberships (soft-delete, not hard-delete).
+- Bulk updates carry only the 7 grid fields, so `default_quantity/usage_count/last_used_at/created_by`
+  are never clobbered. No schema migration required (columns exist since migration 141).

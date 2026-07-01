@@ -135,6 +135,23 @@ async function archivePresetScoped(companyId, id, client = null) {
     return rows[0] || null;
 }
 
+// PRICEBOOK-002: given a list of ids, return the subset that are active
+// (exist AND belong to this company AND are not archived). Used by the service
+// to pre-validate update ids before opening the bulk-save transaction.
+async function findActiveIdsScoped(companyId, ids, client = null) {
+    const query = queryFor(client);
+    const numericIds = (Array.isArray(ids) ? ids : [])
+        .map(id => Number(id))
+        .filter(id => Number.isInteger(id));
+    if (numericIds.length === 0) return [];
+    const { rows } = await query(
+        `SELECT id FROM estimate_item_presets
+         WHERE company_id = $1 AND archived_at IS NULL AND id = ANY($2::int[])`,
+        [companyId, numericIds],
+    );
+    return rows.map(r => Number(r.id));
+}
+
 async function incrementUsageScoped(companyId, id, client = null) {
     const query = queryFor(client);
     const { rows } = await query(
@@ -160,7 +177,7 @@ async function listForManage(companyId, { search = '', category_id = null, inclu
         params.push(`%${search.trim()}%`);
         where += ` AND (p.name ILIKE $${params.length} OR coalesce(p.code,'') ILIKE $${params.length} OR coalesce(p.description,'') ILIKE $${params.length})`;
     }
-    params.push(Math.min(Math.max(limit | 0, 1), 200));
+    params.push(Math.min(Math.max(limit | 0, 1), 1000));
     params.push(Math.max(offset | 0, 0));
     const { rows } = await query(
         `SELECT ${COLUMNS.split(',').map(c => 'p.' + c.trim()).join(', ')}, c.name AS category_name
@@ -174,6 +191,47 @@ async function listForManage(companyId, { search = '', category_id = null, inclu
     return rows;
 }
 
+// PRICEBOOK-002: atomic bulk save (creates/updates/deletes) in ONE transaction.
+// Reuses insertPreset/updatePresetScoped/archivePresetScoped with a shared client.
+// A foreign/absent id on an UPDATE (updatePresetScoped → null) aborts the whole
+// batch (all-or-nothing). A no-op DELETE (already archived / foreign id → null)
+// is skipped silently and NOT counted (idempotent).
+async function bulkSaveItems(companyId, { creates = [], updates = [], deletes = [] } = {}, { actorId = null } = {}) {
+    const client = await db.getClient();
+    const createdMap = [];
+    const counts = { created: 0, updated: 0, deleted: 0 };
+    try {
+        await client.query('BEGIN');
+        for (const c of creates) {
+            const { clientKey, ...fields } = c;
+            const row = await insertPreset(companyId, { ...fields, createdBy: actorId }, client);
+            createdMap.push({ clientKey: clientKey ?? null, id: row.id });
+            counts.created += 1;
+        }
+        for (const u of updates) {
+            const { id, ...fields } = u;
+            const row = await updatePresetScoped(companyId, id, fields, client);
+            if (!row) {
+                // TOCTOU: id vanished (foreign/concurrently-archived) between the
+                // service pre-check and COMMIT. Tag it so the service maps to 409.
+                throw Object.assign(new Error('preset_not_found'), { code: 'preset_not_found', itemId: id });
+            }
+            counts.updated += 1;
+        }
+        for (const id of deletes) {
+            const row = await archivePresetScoped(companyId, id, client);
+            if (row) counts.deleted += 1;
+        }
+        await client.query('COMMIT');
+    } catch (err) {
+        try { await client.query('ROLLBACK'); } catch (_) { /* noop */ }
+        throw err;
+    } finally {
+        client.release();
+    }
+    return { createdMap, counts };
+}
+
 module.exports = {
     searchForCompany,
     listForManage,
@@ -182,5 +240,7 @@ module.exports = {
     insertPreset,
     updatePresetScoped,
     archivePresetScoped,
+    findActiveIdsScoped,
     incrementUsageScoped,
+    bulkSaveItems,
 };

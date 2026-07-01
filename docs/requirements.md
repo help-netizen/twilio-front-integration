@@ -2337,3 +2337,51 @@ their Items when added to a doc), Items (`estimate_item_presets` extended). Stan
 
 ### Protected parts
 - No protected file broken. `backend/db/` only via migration 141 (idempotent, additive).
+
+## PRICEBOOK-002: Items grid — inline spreadsheet editing
+
+**Status:** Implemented (verified local; pending deploy) · **Area:** Settings → Price Book / Items tab · **Spec:** `Docs/specs/PRICEBOOK-002.md`
+
+### Description
+Replace the "list row + right-side slide-over editor per item" model on the **Items & products** tab with a
+**spreadsheet-style editable grid**: every cell of every item is edited inline (Name, Description, Code/SKU,
+Unit, Unit Price, Taxable, Category), a **"+" row** pinned at the end starts a new empty item, and the whole
+table is persisted at once via a **single Save button** (atomic bulk save). No per-item slide-over on this tab.
+Groups and Categories tabs are unchanged.
+
+### User scenarios
+1. Manager opens Settings → Price Book → Items and sees all items as an editable grid.
+2. She edits several cells across several rows (price, taxable, category, name…) without opening any panel.
+3. She clicks the "+" at the end of the list, a blank row appears, she types a new item inline.
+4. She marks a row for deletion with a per-row trash icon (undo-able before saving).
+5. She clicks **Save changes** once; all creates/edits/deletes commit atomically; the grid re-hydrates.
+6. She types in Search to filter the visible rows client-side; her unsaved edits are preserved.
+7. If she navigates away with unsaved changes, she is warned.
+
+### Functional requirements
+- Inline-editable cells for all 7 item fields; Description is a 2-line textarea cell; Taxable is a checkbox;
+  Category is an inline select of existing (non-archived) categories.
+- Trailing "+ add row" affordance always visible; adds a blank draft row.
+- Single **Save changes** button, enabled only when the grid is dirty; a **Discard** reverts to server state.
+- Atomic bulk persistence via `PUT /api/price-book/items/bulk` (create/update/archive in one transaction);
+  all-or-nothing — a validation error rejects the whole save with a per-row reason and commits nothing.
+- Validation: name required on every non-deleted row; price numeric ≥ 0; category must belong to the company
+  or be empty; fully-empty new rows are ignored (not an error).
+- Client-side Search filters loaded rows only (no refetch); dirty edits survive filtering.
+
+### Constraints
+- Manage-only (`price_book.manage`); company-scoped on every statement; a row id from another company must
+  not be updatable/deletable (foreign id → rejected). No new migration (reuses `estimate_item_presets`).
+- Bulk update must NOT clobber columns the grid doesn't edit; archiving here must not break the estimate/invoice
+  inline item picker that shares `estimate_item_presets`.
+- **Documented exception to the "right-side layer" canon**: inline table editing is allowed here, but Blanc
+  tokens / fonts / "no decorative horizontal separators" still apply.
+
+### Involved modules
+- Backend: `estimateItemPresetsService` (new `bulkSaveItems`), `estimateItemPresetsQueries` (tx helper),
+  `routes/price-book.js` (`PUT /items/bulk`). No migration, no new permission.
+- Frontend: `PriceBookPage` (`ItemsTab` rewritten to a grid; `ItemPanel` dropped from the Items flow),
+  `priceBookApi` (`bulkSaveItems`).
+
+### Protected parts
+- No protected file touched. No `backend/db/` change.

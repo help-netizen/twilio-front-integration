@@ -3945,3 +3945,61 @@ Spec: `Docs/specs/PRICEBOOK-001.md` · Status: implemented, **not deployed**.
 - **Migration = 141** (140 = ONBOARD-FIX, deployed). Renumber-before-commit only if a parallel worktree claims 141.
 - Gap-review before coding fixed G1–G8 (route number, bulk vs N round-trips, archived-skip/snapshot/order, group total, permissionCatalog, code/unit). Jest caught a NaN item_id leak.
 - **Deploy:** backend + frontend rebuild + **run migration 141**. No KC/theme change.
+
+---
+
+## PRICEBOOK-002: Items grid — inline spreadsheet editing
+
+**Feature:** Replace the Items tab list+slide-over with an editable grid; atomic bulk save.
+**Status:** implemented (verified local; not deployed) · **Spec:** `Docs/specs/PRICEBOOK-002.md` · **Tests:** `Docs/test-cases/PRICEBOOK-002.md`
+**No migration, no new permission** (reuses `estimate_item_presets` + `price_book.manage`).
+
+### TASK-PB2-001: Backend queries — `bulkSaveItems` + list cap
+- File: `backend/src/db/estimateItemPresetsQueries.js`
+- Add `bulkSaveItems(companyId, { creates, updates, deletes }, { actorId })`: single `db.getClient()`
+  BEGIN/COMMIT/ROLLBACK (model on `priceBookQueries.setGroupItems`); reuse `insertPreset` /
+  `updatePresetScoped` / `archivePresetScoped` with the shared `client`. Foreign update id (null result)
+  → throw → ROLLBACK; foreign/already-archived delete → skip. Return `{ createdMap, counts }`.
+- Bump `listForManage` internal limit cap 200→1000.
+- Covers TC-PB2-001/006/007/008/014.
+
+### TASK-PB2-002: Backend service — `bulkSaveItems`
+- File: `backend/src/services/estimateItemPresetsService.js` (+ export)
+- Normalize payload; **discard fully-empty new rows**; validate whole batch (name required per
+  non-deleted row, price finite ≥0, description ≤4000) collecting all errors → `422 validation_failed`
+  with `details[]` BEFORE any write; verify each distinct `category_id` belongs to company
+  (`priceBookQueries.getCategory`) else error; call queries helper; re-read `listForManage(limit high)`;
+  return `{ items, summary:{created,updated,deleted}, createdMap }`.
+- Covers TC-PB2-001..010.
+
+### TASK-PB2-003: Backend route — `PUT /items/bulk`
+- File: `backend/src/routes/price-book.js`
+- Add `router.put('/items/bulk', MANAGE, …)` → `presets.bulkSaveItems(companyId, req.body, { actorId })`;
+  errors via existing `sendErr`. No `src/server.js` change (protected).
+- Covers TC-PB2-011/012/013.
+
+### TASK-PB2-004: Frontend API client
+- File: `frontend/src/services/priceBookApi.ts`
+- Add `BulkItemCreate/Update/Payload/Result` types + `bulkSaveItems(payload)` (PUT). Keep existing
+  create/update/archive item fns.
+
+### TASK-PB2-005: Frontend grid — rewrite `ItemsTab`, drop `ItemPanel`
+- File: `frontend/src/pages/PriceBookPage.tsx`
+- `ItemsTab` → draft grid: `RowDraft[]` (status pristine|new|edited|deleted + stable key), all 7 inline
+  cells (Name / Description 2-line textarea / Code / Unit / Price / Taxable checkbox / Category select),
+  per-row trash (mark+undo), pinned "+ add row", single **Save changes** (dirty-gated) + **Discard**,
+  client-side search over loaded rows. Load all via `?limit=500`. On save → `api.bulkSaveItems`, re-hydrate
+  from returned `items`, toast counts; on 422 highlight cells. Remove `ItemPanel` from the Items flow
+  (keep Group/Category panels). Make Tabs controlled + unsaved-changes guard (tab switch + `beforeunload`).
+  Blanc tokens / fonts / no decorative `<hr>`; `overflow-x-auto` for narrow screens.
+- Covers TC-PB2-020..029.
+
+### TASK-PB2-006: Tests
+- File: `tests/priceBookBulk.test.js` (mock `estimateItemPresetsQueries` + `priceBookQueries`)
+- Service partitioning, empty-row discard, whole-batch validation reject, category-ownership,
+  foreign-id rollback, idempotent delete, no-clobber, empty payload, duplicate names.
+
+### TASK-PB2-007: Verify + docs
+- `npm run build` (frontend tsc -b) green; jest green (bulk suite + regressions); backend `node --check`.
+- Manual local test (grid CRUD + bulk save + delete + search + guard) with screenshots.
+- Update `Docs/changelog.md`; keep requirements/architecture/spec/tasks consistent.

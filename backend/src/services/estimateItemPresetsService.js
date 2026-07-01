@@ -104,6 +104,161 @@ async function archive(companyId, id) {
     return mapRow(archived);
 }
 
+// PRICEBOOK-002: atomic bulk save for the Items management grid.
+// Whole-batch all-or-nothing: validate everything BEFORE any DB write, collect
+// ALL errors into details[]. Empty payload → 200 with counts {0,0,0}.
+function toNumOrNull(v) {
+    if (v === undefined || v === null || v === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+}
+function toPrice(v) {
+    if (v === undefined || v === null || v === '') return 0;
+    return Number(v);
+}
+function trimOrNull(v) {
+    if (v === undefined || v === null) return null;
+    const s = String(v).trim();
+    return s === '' ? null : s;
+}
+
+function normalizeCreate(raw) {
+    return {
+        clientKey: raw.clientKey ?? null,
+        name: trimOrNull(raw.name),
+        description: trimOrNull(raw.description),
+        code: trimOrNull(raw.code),
+        unit: trimOrNull(raw.unit),
+        default_unit_price: toPrice(raw.default_unit_price),
+        default_taxable: !!raw.default_taxable,
+        category_id: toNumOrNull(raw.category_id),
+    };
+}
+function normalizeUpdate(raw) {
+    return {
+        id: toNumOrNull(raw.id),
+        name: trimOrNull(raw.name),
+        description: trimOrNull(raw.description),
+        code: trimOrNull(raw.code),
+        unit: trimOrNull(raw.unit),
+        default_unit_price: toPrice(raw.default_unit_price),
+        default_taxable: !!raw.default_taxable,
+        category_id: toNumOrNull(raw.category_id),
+    };
+}
+
+// A brand-new row with nothing meaningful in it → drop silently.
+function isEmptyCreate(c) {
+    return !c.name && !c.code && !c.description && !c.unit
+        && (c.default_unit_price === 0 || c.default_unit_price === null || c.default_unit_price === undefined)
+        && c.category_id == null;
+}
+
+function validateRow(row, scope, index, details) {
+    if (!row.name || !String(row.name).trim()) {
+        details.push({ scope, index, field: 'name', error: 'name is required' });
+    } else if (String(row.name).length > 200) {
+        details.push({ scope, index, field: 'name', error: 'name too long (max 200)' });
+    }
+    const price = Number(row.default_unit_price);
+    if (!Number.isFinite(price) || price < 0) {
+        details.push({ scope, index, field: 'default_unit_price', error: 'default_unit_price must be a number >= 0' });
+    }
+    if (row.description != null && String(row.description).length > 4000) {
+        details.push({ scope, index, field: 'description', error: 'description too long (max 4000)' });
+    }
+}
+
+async function bulkSaveItems(companyId, payload = {}, { actorId = null } = {}) {
+    const rawCreates = Array.isArray(payload.creates) ? payload.creates : [];
+    const rawUpdates = Array.isArray(payload.updates) ? payload.updates : [];
+    const rawDeletes = Array.isArray(payload.deletes) ? payload.deletes : [];
+
+    const creates = rawCreates
+        .filter(r => r && typeof r === 'object')
+        .map(normalizeCreate)
+        .filter(c => !isEmptyCreate(c));
+    const updates = rawUpdates
+        .filter(r => r && typeof r === 'object')
+        .map(normalizeUpdate)
+        .filter(u => u.id != null);
+    const deletes = rawDeletes
+        .map(toNumOrNull)
+        .filter(id => id != null);
+
+    // ── Validate the whole batch BEFORE any DB write ──────────────────────────
+    const details = [];
+    creates.forEach((c, i) => validateRow(c, 'creates', i, details));
+    updates.forEach((u, i) => validateRow(u, 'updates', i, details));
+
+    // Category ownership: every DISTINCT non-null category_id must belong to us.
+    const catIds = [...new Set(
+        [...creates, ...updates].map(r => r.category_id).filter(id => id != null),
+    )];
+    if (catIds.length) {
+        const pbQueries = require('../db/priceBookQueries');
+        const owned = new Set();
+        for (const id of catIds) {
+            // eslint-disable-next-line no-await-in-loop
+            const cat = await pbQueries.getCategory(companyId, id);
+            if (cat) owned.add(id);
+        }
+        creates.forEach((c, i) => {
+            if (c.category_id != null && !owned.has(c.category_id)) {
+                details.push({ scope: 'creates', index: i, field: 'category_id', error: 'category not found' });
+            }
+        });
+        updates.forEach((u, i) => {
+            if (u.category_id != null && !owned.has(u.category_id)) {
+                details.push({ scope: 'updates', index: i, field: 'category_id', error: 'category not found' });
+            }
+        });
+    }
+
+    // Pre-validate update ids: each must resolve to an active preset owned by us.
+    // A foreign/archived id writes nothing and surfaces as a per-cell 422 detail
+    // (consistent with the whole-batch validation above).
+    if (updates.length) {
+        const activeIds = new Set(
+            await queries.findActiveIdsScoped(companyId, updates.map(u => u.id)),
+        );
+        updates.forEach((u, i) => {
+            if (!activeIds.has(Number(u.id))) {
+                details.push({ scope: 'updates', index: i, field: 'id', error: 'Item not found or archived' });
+            }
+        });
+    }
+
+    if (details.length) {
+        throw new EstimateItemPresetError('validation_failed', 422, 'Validation failed', details);
+    }
+
+    let createdMap;
+    let counts;
+    try {
+        ({ createdMap, counts } = await queries.bulkSaveItems(
+            companyId, { creates, updates, deletes }, { actorId },
+        ));
+    } catch (err) {
+        // Safety net for the true TOCTOU race between the pre-check and COMMIT:
+        // the query layer tags a vanished update id so we render a clean 409.
+        if (err && err.code === 'preset_not_found') {
+            throw new EstimateItemPresetError(
+                'preset_not_found', 409,
+                'An item changed since the page loaded — reload and try again.',
+            );
+        }
+        throw err;
+    }
+
+    const rows = await queries.listForManage(companyId, { limit: 1000, offset: 0, includeArchived: false });
+    return {
+        items: rows.map(mapRow),
+        summary: { created: counts.created, updated: counts.updated, deleted: counts.deleted },
+        createdMap,
+    };
+}
+
 async function recordUsage(companyId, id) {
     const updated = await queries.incrementUsageScoped(companyId, id);
     if (!updated) throw new EstimateItemPresetError('preset_not_found', 404, `Preset ${id} not found`);
@@ -118,5 +273,6 @@ module.exports = {
     create,
     update,
     archive,
+    bulkSaveItems,
     recordUsage,
 };

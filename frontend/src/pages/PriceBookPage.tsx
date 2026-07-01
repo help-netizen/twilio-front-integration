@@ -7,19 +7,19 @@
  * Editors follow the canonical right-side slide-over "layer" (variant="panel" +
  * floating-label fields) — see CLAUDE.md "Layers & overlays" + docs/specs/FORM-CANON.md.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle, DialogDescription } from '../components/ui/dialog';
 import { FloatingField } from '../components/ui/floating-field';
 import { FloatingSelect } from '../components/ui/floating-select';
-import { SelectItem } from '../components/ui/select';
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../components/ui/select';
 import { Checkbox } from '../components/ui/checkbox';
 import { toast } from 'sonner';
-import { Plus, Pencil, Archive, Trash2, Loader2, Upload, Download, FileDown, CheckCircle2 } from 'lucide-react';
+import { Plus, Pencil, Archive, Trash2, Loader2, Upload, Download, FileDown, CheckCircle2, RotateCcw } from 'lucide-react';
 import * as api from '../services/priceBookApi';
-import type { PriceBookCategory, PriceBookItem, PriceBookGroup, GroupItemInput, ImportSummary } from '../services/priceBookApi';
+import type { PriceBookCategory, PriceBookItem, PriceBookGroup, GroupItemInput, ImportSummary, BulkItemsPayload } from '../services/priceBookApi';
 
 const money = (n: number | null | undefined) => `$${(Number(n) || 0).toFixed(2)}`;
 
@@ -27,9 +27,18 @@ export default function PriceBookPage() {
     const [categories, setCategories] = useState<PriceBookCategory[]>([]);
     const [version, setVersion] = useState(0);          // bump to force tab re-fetch (after import)
     const [ioOpen, setIoOpen] = useState(false);
+    const [tab, setTab] = useState('items');
+    // Items tab reports its dirty state up here so tab-switching can guard it.
+    const itemsDirtyRef = useRef(false);
     const loadCategories = useCallback(async () => { try { setCategories(await api.listCategories()); } catch { /* */ } }, []);
     useEffect(() => { loadCategories(); }, [loadCategories, version]);
     const refreshAll = () => { setVersion(v => v + 1); loadCategories(); };
+
+    const changeTab = (next: string) => {
+        if (next === tab) return;
+        if (tab === 'items' && itemsDirtyRef.current && !window.confirm('Discard unsaved changes?')) return;
+        setTab(next);
+    };
 
     return (
         <div className="p-6 max-w-5xl mx-auto">
@@ -43,13 +52,13 @@ export default function PriceBookPage() {
                     <Button variant="ghost" onClick={() => setIoOpen(true)}><Download size={16} /> Export</Button>
                 </div>
             </div>
-            <Tabs defaultValue="items">
+            <Tabs value={tab} onValueChange={changeTab}>
                 <TabsList>
                     <TabsTrigger value="items">Items &amp; products</TabsTrigger>
                     <TabsTrigger value="groups">Item groups</TabsTrigger>
                     <TabsTrigger value="categories">Item categories</TabsTrigger>
                 </TabsList>
-                <TabsContent value="items"><ItemsTab categories={categories} version={version} /></TabsContent>
+                <TabsContent value="items"><ItemsTab categories={categories} version={version} dirtyRef={itemsDirtyRef} /></TabsContent>
                 <TabsContent value="groups"><GroupsTab categories={categories} version={version} /></TabsContent>
                 <TabsContent value="categories"><CategoriesTab onChanged={loadCategories} version={version} /></TabsContent>
             </Tabs>
@@ -125,102 +134,279 @@ function ImportExportPanel({ open, onClose, onImported }: { open: boolean; onClo
     );
 }
 
-// ─────────────────────────── Items ───────────────────────────
-function ItemsTab({ categories, version }: { categories: PriceBookCategory[]; version: number }) {
-    const [items, setItems] = useState<PriceBookItem[]>([]);
+// ─────────────────────────── Items (spreadsheet grid) ───────────────────────────
+type RowStatus = 'pristine' | 'new' | 'edited' | 'deleted';
+interface RowDraft {
+    key: string;
+    id: number | null;
+    name: string;
+    description: string;
+    code: string;
+    unit: string;
+    default_unit_price: string;
+    default_taxable: boolean;
+    category_id: string;   // '' = uncategorized
+    status: RowStatus;
+}
+
+const rowFromItem = (it: PriceBookItem): RowDraft => ({
+    key: `row-${it.id}`,
+    id: it.id,
+    name: it.name || '',
+    description: it.description || '',
+    code: it.code || '',
+    unit: it.unit || '',
+    default_unit_price: it.default_unit_price != null ? String(it.default_unit_price) : '',
+    default_taxable: it.default_taxable ?? false,
+    category_id: it.category_id != null ? String(it.category_id) : '',
+    status: 'pristine',
+});
+
+// A `new` row with everything blank is dropped at save (mirrors server).
+const isBlankNewRow = (r: RowDraft) =>
+    !r.name.trim() && !r.description.trim() && !r.code.trim() && !r.unit.trim() &&
+    !r.default_unit_price.trim() && r.category_id === '' && !r.default_taxable;
+
+// Validation-error cell key: `${scope}:${index}:${field}`.
+type CellErrors = Record<string, string>;
+
+function ItemsTab({ categories, version, dirtyRef }: { categories: PriceBookCategory[]; version: number; dirtyRef: React.MutableRefObject<boolean> }) {
+    const [rows, setRows] = useState<RowDraft[]>([]);
+    const [loaded, setLoaded] = useState<RowDraft[]>([]);   // snapshot for Discard
     const [search, setSearch] = useState('');
     const [loading, setLoading] = useState(true);
-    const [editing, setEditing] = useState<PriceBookItem | 'new' | null>(null);
+    const [saving, setSaving] = useState(false);
+    const [cellErrors, setCellErrors] = useState<CellErrors>({});
+    const tmpSeq = useRef(0);
 
     const load = useCallback(async () => {
         setLoading(true);
-        try { setItems(await api.listItems({ search })); } catch { toast.error('Failed to load items'); }
+        try {
+            const items = await api.listItems({ limit: 500 });
+            const next = items.map(rowFromItem);
+            setRows(next);
+            setLoaded(next);
+            setCellErrors({});
+        } catch { toast.error('Failed to load items'); }
         finally { setLoading(false); }
-    }, [search]);
-    useEffect(() => { const t = setTimeout(load, 200); return () => clearTimeout(t); }, [load, version]);
+    }, []);
+    useEffect(() => { load(); }, [load, version]);
+
+    const dirty = rows.some(r => r.status !== 'pristine');
+
+    // Report dirty state up (tab-switch guard) + guard browser navigation while dirty.
+    useEffect(() => { dirtyRef.current = dirty; }, [dirty, dirtyRef]);
+    useEffect(() => {
+        if (!dirty) return;
+        const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+        window.addEventListener('beforeunload', handler);
+        return () => window.removeEventListener('beforeunload', handler);
+    }, [dirty]);
+    useEffect(() => () => { dirtyRef.current = false; }, [dirtyRef]);
+
+    // Edit a field on a row — pristine → edited, new stays new, deleted untouched.
+    const editRow = (key: string, patch: Partial<RowDraft>) => {
+        setRows(prev => prev.map(r => {
+            if (r.key !== key) return r;
+            const status: RowStatus = r.status === 'new' ? 'new' : r.status === 'deleted' ? 'deleted' : 'edited';
+            return { ...r, ...patch, status };
+        }));
+    };
+
+    const removeRow = (r: RowDraft) => {
+        if (r.id == null) setRows(prev => prev.filter(x => x.key !== r.key));   // new → drop
+        else setRows(prev => prev.map(x => x.key === r.key ? { ...x, status: 'deleted' } : x));
+    };
+    const undoRemove = (r: RowDraft) => {
+        // Restore to edited if it differs from the loaded snapshot, else pristine.
+        const orig = loaded.find(x => x.key === r.key);
+        setRows(prev => prev.map(x => x.key === r.key
+            ? { ...x, status: orig && sameRow(orig, x) ? 'pristine' : 'edited' }
+            : x));
+    };
+
+    const addRow = () => {
+        tmpSeq.current += 1;
+        const key = `tmp-${tmpSeq.current}`;
+        setRows(prev => [...prev, {
+            key, id: null, name: '', description: '', code: '', unit: '',
+            default_unit_price: '', default_taxable: false, category_id: '', status: 'new',
+        }]);
+    };
+
+    const discard = () => { setRows(loaded.map(r => ({ ...r }))); setCellErrors({}); };
+
+    const save = async () => {
+        setSaving(true);
+        setCellErrors({});
+        const creates: BulkItemsPayload['creates'] = [];
+        const updates: BulkItemsPayload['updates'] = [];
+        const deletes: number[] = [];
+        for (const r of rows) {
+            if (r.status === 'deleted') { if (r.id != null) deletes.push(r.id); continue; }
+            if (r.status === 'new') {
+                if (isBlankNewRow(r)) continue;   // drop empty new rows
+                creates.push({
+                    clientKey: r.key, name: r.name.trim(), description: r.description.trim() || null,
+                    code: r.code.trim() || null, unit: r.unit.trim() || null,
+                    default_unit_price: Number(r.default_unit_price) || 0, default_taxable: r.default_taxable,
+                    category_id: r.category_id ? Number(r.category_id) : null,
+                });
+            } else if (r.status === 'edited' && r.id != null) {
+                updates.push({
+                    id: r.id, name: r.name.trim(), description: r.description.trim() || null,
+                    code: r.code.trim() || null, unit: r.unit.trim() || null,
+                    default_unit_price: Number(r.default_unit_price) || 0, default_taxable: r.default_taxable,
+                    category_id: r.category_id ? Number(r.category_id) : null,
+                });
+            }
+        }
+        try {
+            const res = await api.bulkSaveItems({ creates, updates, deletes });
+            const next = res.items.map(rowFromItem);
+            setRows(next);
+            setLoaded(next);
+            const { created, updated, deleted } = res.summary;
+            toast.success(`Saved: ${created} added · ${updated} updated · ${deleted} archived`);
+        } catch (e) {
+            const err = e as Error & { status?: number };
+            const body = parseValidation(err.message);
+            if (err.status === 422 && body) {
+                const errs: CellErrors = {};
+                for (const d of body.details) errs[`${d.scope}:${d.index}:${d.field}`] = d.error;
+                setCellErrors(errs);
+                toast.error(body.message || 'Some rows have errors — check the highlighted cells');
+            } else {
+                toast.error('Save failed');
+            }
+        } finally { setSaving(false); }
+    };
+
+    // Map the offending-cell key back to a row key for red-border rendering.
+    const errKeyFor = (r: RowDraft): CellErrors => {
+        if (Object.keys(cellErrors).length === 0) return {};
+        // Rebuild the same partition indexing used in save().
+        let ci = 0, ui = 0;
+        const out: CellErrors = {};
+        for (const row of rows) {
+            if (row.status === 'deleted') continue;
+            if (row.status === 'new') {
+                if (isBlankNewRow(row)) continue;
+                if (row.key === r.key) { for (const k in cellErrors) { const [s, i, f] = k.split(':'); if (s === 'creates' && Number(i) === ci) out[f] = cellErrors[k]; } }
+                ci += 1;
+            } else if (row.status === 'edited') {
+                if (row.key === r.key) { for (const k in cellErrors) { const [s, i, f] = k.split(':'); if (s === 'updates' && Number(i) === ui) out[f] = cellErrors[k]; } }
+                ui += 1;
+            }
+        }
+        return out;
+    };
+
+    const q = search.trim().toLowerCase();
+    const visible = q
+        ? rows.filter(r => r.name.toLowerCase().includes(q) || r.code.toLowerCase().includes(q) || r.description.toLowerCase().includes(q))
+        : rows;
+
+    const inputBase = 'w-full rounded-md border bg-transparent px-2 py-1.5 text-sm outline-none focus:border-[var(--blanc-ink-3)]';
+    // Opt grid inputs out of browser autofill / password-manager injection, which
+    // otherwise writes into the first row's Name cell on load and falsely dirties it.
+    const noAutofill = { autoComplete: 'off', autoCorrect: 'off', autoCapitalize: 'off', spellCheck: false, 'data-1p-ignore': true, 'data-lpignore': 'true', 'data-form-type': 'other' } as const;
 
     return (
         <div className="mt-4">
             <div className="flex items-center gap-2 mb-3">
-                <Input placeholder="Search items…" value={search} onChange={e => setSearch(e.target.value)} className="max-w-xs" />
+                <Input placeholder="Search items…" autoComplete="off" value={search} onChange={e => setSearch(e.target.value)} className="max-w-xs" />
                 <div className="flex-1" />
-                <Button onClick={() => setEditing('new')}><Plus size={16} /> Add item</Button>
+                <Button variant="ghost" onClick={discard} disabled={!dirty || saving}>Discard</Button>
+                <Button onClick={save} disabled={!dirty || saving}>{saving ? <Loader2 size={16} className="animate-spin" /> : 'Save changes'}</Button>
             </div>
-            {loading ? <Spinner /> : items.length === 0 ? <Empty label="No items yet" /> : (
-                <Table head={['Name', 'Code', 'Unit', 'Price', 'Taxable', 'Category', '']}>
-                    {items.map(it => (
-                        <tr key={it.id} className="border-t" style={{ borderColor: 'var(--blanc-line)' }}>
-                            <Td>{it.name}</Td><Td muted>{it.code || '—'}</Td><Td muted>{it.unit || '—'}</Td>
-                            <Td>{money(it.default_unit_price)}</Td><Td muted>{it.default_taxable ? 'Yes' : 'No'}</Td>
-                            <Td muted>{it.category_name || '—'}</Td>
-                            <Td><RowActions onEdit={() => setEditing(it)} onArchive={async () => { await api.archiveItem(it.id); toast.success('Archived'); load(); }} /></Td>
-                        </tr>
-                    ))}
-                </Table>
+            {loading ? <Spinner /> : (
+                <div className="rounded-lg border overflow-hidden" style={{ borderColor: 'var(--blanc-line)' }}>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm" style={{ minWidth: 920 }}>
+                            <thead>
+                                <tr style={{ background: 'rgba(117,106,89,0.04)' }}>
+                                    {['Name', 'Description', 'Code / SKU', 'Unit', 'Unit price', 'Taxable', 'Category', ''].map((h, i) => (
+                                        <th key={i} className="text-left px-3 py-2 font-medium" style={{ color: 'var(--blanc-ink-2)' }}>{h}</th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {visible.length === 0 ? (
+                                    <tr><td colSpan={8} className="text-center py-10 text-sm" style={{ color: 'var(--blanc-ink-3)' }}>{q ? 'No matching items' : 'No items yet'}</td></tr>
+                                ) : visible.map(r => {
+                                    const deleted = r.status === 'deleted';
+                                    const errs = errKeyFor(r);
+                                    const nameMissing = !deleted && !r.name.trim();
+                                    const cell = (field: string, bad?: boolean) =>
+                                        `${inputBase} ${errs[field] || bad ? 'border-[var(--blanc-danger,#d44d3c)]' : 'border-[var(--blanc-line)]'}`;
+                                    const struck = deleted ? { textDecoration: 'line-through', opacity: 0.5 } as React.CSSProperties : undefined;
+                                    return (
+                                        <tr key={r.key} className="border-t align-top" style={{ borderColor: 'var(--blanc-line)' }}>
+                                            <td className="px-2 py-1.5" style={{ minWidth: 180 }}>
+                                                <input className={cell('name', nameMissing)} style={struck} value={r.name} disabled={deleted} placeholder="Name" onChange={e => editRow(r.key, { name: e.target.value })} {...noAutofill} />
+                                            </td>
+                                            <td className="px-2 py-1.5" style={{ minWidth: 200 }}>
+                                                <textarea className={`${cell('description')} resize-none`} style={struck} rows={2} value={r.description} disabled={deleted} onChange={e => editRow(r.key, { description: e.target.value })} {...noAutofill} />
+                                            </td>
+                                            <td className="px-2 py-1.5" style={{ minWidth: 120 }}>
+                                                <input className={cell('code')} style={struck} value={r.code} disabled={deleted} onChange={e => editRow(r.key, { code: e.target.value })} {...noAutofill} />
+                                            </td>
+                                            <td className="px-2 py-1.5" style={{ minWidth: 80 }}>
+                                                <input className={cell('unit')} style={struck} value={r.unit} disabled={deleted} onChange={e => editRow(r.key, { unit: e.target.value })} {...noAutofill} />
+                                            </td>
+                                            <td className="px-2 py-1.5" style={{ minWidth: 100 }}>
+                                                <input className={`${cell('default_unit_price')} text-right`} style={struck} inputMode="decimal" value={r.default_unit_price} disabled={deleted} onChange={e => editRow(r.key, { default_unit_price: e.target.value })} {...noAutofill} />
+                                            </td>
+                                            <td className="px-2 py-1.5 text-center">
+                                                <Checkbox checked={r.default_taxable} disabled={deleted} onCheckedChange={c => editRow(r.key, { default_taxable: !!c })} />
+                                            </td>
+                                            <td className="px-2 py-1.5" style={{ minWidth: 150 }}>
+                                                <Select value={r.category_id || 'none'} disabled={deleted} onValueChange={v => editRow(r.key, { category_id: v === 'none' ? '' : v })}>
+                                                    <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="none">Uncategorized</SelectItem>
+                                                        {categories.map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
+                                                    </SelectContent>
+                                                </Select>
+                                            </td>
+                                            <td className="px-2 py-1.5 text-right whitespace-nowrap">
+                                                {deleted
+                                                    ? <button type="button" onClick={() => undoRemove(r)} aria-label="Undo remove" style={{ color: 'var(--blanc-ink-3)' }}><RotateCcw size={15} /></button>
+                                                    : <button type="button" onClick={() => removeRow(r)} aria-label="Remove item" style={{ color: 'var(--blanc-ink-3)' }}><Trash2 size={15} /></button>}
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                    <button type="button" onClick={addRow} className="flex w-full items-center justify-center gap-1.5 px-3 py-2.5 text-sm border-t" style={{ borderColor: 'var(--blanc-line)', color: 'var(--blanc-ink-2)', background: 'rgba(117,106,89,0.02)' }}>
+                        <Plus size={15} /> Add row
+                    </button>
+                </div>
             )}
-            <ItemPanel open={!!editing} item={editing === 'new' ? null : editing} categories={categories} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />
         </div>
     );
 }
 
-function ItemPanel({ open, item, categories, onClose, onSaved }: { open: boolean; item: PriceBookItem | null; categories: PriceBookCategory[]; onClose: () => void; onSaved: () => void }) {
-    const empty = { name: '', code: '', unit: '', default_unit_price: '', default_taxable: false, category_id: '', description: '' };
-    const [f, setF] = useState(empty);
-    useEffect(() => {
-        if (!open) return;
-        setF(item ? {
-            name: item.name || '', code: item.code || '', unit: item.unit || '',
-            default_unit_price: String(item.default_unit_price ?? ''), default_taxable: item.default_taxable ?? false,
-            category_id: item.category_id != null ? String(item.category_id) : '', description: item.description || '',
-        } : empty);
-    }, [open, item]);
-    const [busy, setBusy] = useState(false);
-    const canSave = f.name.trim().length > 0;
-    const save = async () => {
-        if (!canSave) return;
-        setBusy(true);
-        try {
-            const body = { name: f.name.trim(), code: f.code.trim() || null, unit: f.unit.trim() || null, default_unit_price: Number(f.default_unit_price) || 0, default_taxable: f.default_taxable, category_id: f.category_id ? Number(f.category_id) : null, description: f.description.trim() || null };
-            if (item) await api.updateItem(item.id, body); else await api.createItem(body);
-            toast.success(item ? 'Item updated' : 'Item created'); onSaved();
-        } catch { toast.error('Save failed'); } finally { setBusy(false); }
-    };
-    return (
-        <Dialog open={open} onOpenChange={o => !o && onClose()}>
-            <DialogContent variant="panel">
-                <DialogPanelHeader>
-                    <DialogTitle className="text-[22px] font-semibold leading-tight" style={{ fontFamily: 'var(--blanc-font-heading)', color: 'var(--blanc-ink-1)' }}>{item ? 'Edit item' : 'New item'}</DialogTitle>
-                    <DialogDescription className="sr-only">Add or edit a price-book item</DialogDescription>
-                </DialogPanelHeader>
-                <DialogBody className="md:px-8 md:py-7">
-                    <div className="mx-auto w-full max-w-[740px] space-y-6">
-                        <div className="space-y-3.5">
-                            <FloatingField id="pb-item-name" label="Name" value={f.name} onChange={e => setF({ ...f, name: e.target.value })} />
-                            <FloatingField id="pb-item-desc" label="Description" textarea rows={3} value={f.description} onChange={e => setF({ ...f, description: e.target.value })} />
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                                <FloatingField id="pb-item-code" label="Code / SKU" value={f.code} onChange={e => setF({ ...f, code: e.target.value })} />
-                                <FloatingField id="pb-item-unit" label="Unit (hr, ea…)" value={f.unit} onChange={e => setF({ ...f, unit: e.target.value })} />
-                            </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                                <FloatingField id="pb-item-price" label="Unit price" inputMode="decimal" value={f.default_unit_price} onChange={e => setF({ ...f, default_unit_price: e.target.value })} />
-                                <FloatingSelect id="pb-item-cat" label="Category" value={f.category_id || 'none'} onValueChange={v => setF({ ...f, category_id: v === 'none' ? '' : v })}>
-                                    <SelectItem value="none">Uncategorized</SelectItem>
-                                    {categories.map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
-                                </FloatingSelect>
-                            </div>
-                        </div>
-                        <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: 'var(--blanc-ink-1)' }}>
-                            <Checkbox checked={f.default_taxable} onCheckedChange={c => setF({ ...f, default_taxable: !!c })} /> Taxable
-                        </label>
-                    </div>
-                </DialogBody>
-                <DialogPanelFooter>
-                    <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
-                    <Button type="button" onClick={save} disabled={!canSave || busy}>{busy ? <Loader2 size={16} className="animate-spin" /> : (item ? 'Save changes' : 'Add item')}</Button>
-                </DialogPanelFooter>
-            </DialogContent>
-        </Dialog>
-    );
+// Two drafts equal on the persisted fields (for undo → pristine detection).
+function sameRow(a: RowDraft, b: RowDraft) {
+    return a.name === b.name && a.description === b.description && a.code === b.code &&
+        a.unit === b.unit && a.default_unit_price === b.default_unit_price &&
+        a.default_taxable === b.default_taxable && a.category_id === b.category_id;
+}
+
+interface ValidationBody { message: string; details: { scope: 'creates' | 'updates'; index: number; field: string; error: string }[]; }
+// bulkSaveItems throws Error(`Request failed: 422 {json}`) — pull the JSON tail out.
+function parseValidation(msg: string): ValidationBody | null {
+    const i = msg.indexOf('{');
+    if (i < 0) return null;
+    try {
+        const body = JSON.parse(msg.slice(i)) as { error?: string; message?: string; details?: ValidationBody['details'] };
+        if (body.error !== 'validation_failed' || !Array.isArray(body.details)) return null;
+        return { message: body.message || '', details: body.details };
+    } catch { return null; }
 }
 
 // ─────────────────────────── Groups ───────────────────────────

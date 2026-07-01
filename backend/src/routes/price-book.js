@@ -21,7 +21,9 @@ const bool = (v) => v === 'true' || v === '1' || v === true;
 
 function sendErr(res, err) {
     if (err instanceof priceBook.PriceBookError || err instanceof presets.EstimateItemPresetError) {
-        return res.status(err.httpStatus).json({ error: err.code, message: err.message });
+        const body = { error: err.code, message: err.message };
+        if (err.details) body.details = err.details;
+        return res.status(err.httpStatus).json(body);
     }
     // eslint-disable-next-line no-console
     console.error('[price-book] unexpected error', err);
@@ -93,6 +95,11 @@ router.get('/items', VIEW, async (req, res) => {
 });
 router.post('/items', MANAGE, async (req, res) => {
     try { res.status(201).json(await presets.create(companyId(req), req.body || {}, { createdBy: actorId(req) })); }
+    catch (e) { sendErr(res, e); }
+});
+// PRICEBOOK-002: atomic bulk save (creates/updates/deletes) for the Items grid.
+router.put('/items/bulk', MANAGE, async (req, res) => {
+    try { res.json(await presets.bulkSaveItems(companyId(req), req.body || {}, { actorId: actorId(req) })); }
     catch (e) { sendErr(res, e); }
 });
 router.patch('/items/:id', MANAGE, async (req, res) => {
