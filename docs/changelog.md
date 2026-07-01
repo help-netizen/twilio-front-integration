@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-07-01 — INVOICE-ITEMS-HYDRATE-001: invoice detail showed "no items" though items were saved
+
+Reported on a job invoice: create an invoice with a line item → the total is right, but reopening the invoice shows an empty item list and "This invoice has no items"; adding another item makes the previously-saved one reappear, and the count appears to grow by one each reopen→add cycle. The items were **never lost** — prod DB confirmed all rows present with the correct total.
+
+Root cause (frontend-only): `InvoiceDetailPanel` rendered whatever `invoice` prop it was handed and **never fetched the full record on open** — it only refetched (via `refreshAfterItemChange → fetchInvoice`) *after* an item add/edit/delete. But the callers pass a **list row**: `JobFinancialsTab`/`LeadFinancialsTab` `openInvoice` and the Invoices list all hand over `i.*` from `GET /api/invoices` (list), which returns **no `items`** (only `getInvoiceById`/`GET /api/invoices/:id` includes them). So `hasItems = !!invoice.items?.length` was false on open → the empty-state; the first inline add then triggered a full refetch that revealed **all** persisted items at once — the "reappear / grows by one" illusion.
+
+- **Fix** (`InvoiceDetailPanel.tsx`): hydrate the full invoice on open. The prop-sync effect now also `fetchInvoice(id)`s when `initialInvoice.items` is absent, and a `hydrating` flag shows a brief "Loading items…" row instead of flashing the "no items" warning. A genuinely empty invoice (items `[]` present) skips the fetch and correctly shows the CTA. Also enriches `contact_email/phone` + freshest totals. One extra lightweight GET per open; covers every caller (Job/Lead Financials + Invoices list) in one place.
+- **Verified:** prod DB shows the 3 items + correct total were always stored; in dev-preview, opening the item-less list row now fires `GET /api/invoices/:id` (the hydrate) on open; `npm run build` green. Frontend-only, no backend/migration.
+- **Adjacent (NOT fixed here):** editing an invoice through the *full editor* (`PUT /api/invoices/:id`) drops item changes — `invoicesService.updateInvoice` ignores `data.items` (only the granular `/:id/items` endpoints persist items, which the inline panel uses). Flagged separately.
+
+---
+
 ## 2026-07-01 — KC-ROOT-BRAND-001: auth.albusto.com root no longer exposes raw Keycloak
 
 `https://auth.albusto.com/` (the bare root) `302`-redirected into Keycloak's **raw Administration Console** (`/admin/…`) — an unbranded "bare Keycloak" page. The branded `albusto` theme only wraps the *login flow*; nothing wrapped the root. Fixed at the **reverse-proxy (Caddy) layer** on prod, not in app code:

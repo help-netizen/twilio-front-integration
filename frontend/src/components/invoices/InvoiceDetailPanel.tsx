@@ -125,7 +125,24 @@ export function InvoiceDetailPanel({
 }: Props) {
     // Local copy so we can apply optimistic updates while saving.
     const [invoice, setInvoice] = useState<Invoice>(initialInvoice);
-    useEffect(() => { setInvoice(initialInvoice); }, [initialInvoice]);
+    const [hydrating, setHydrating] = useState(!initialInvoice.items);
+    // Sync from the prop AND hydrate the full record. Callers frequently pass a
+    // list row WITHOUT its line items — the Financials tabs (Job/Lead) and the
+    // Invoices list all hand us `i.*` (no `items`). Without this fetch a freshly
+    // opened invoice renders "This invoice has no items" until an item mutation
+    // triggers a refetch, even though the items are persisted (they were never lost).
+    // Fetching also enriches contact_email/phone and pulls the freshest totals.
+    useEffect(() => {
+        setInvoice(initialInvoice);
+        if (initialInvoice.items) { setHydrating(false); return; }
+        let cancelled = false;
+        setHydrating(true);
+        fetchInvoice(initialInvoice.id)
+            .then(fresh => { if (!cancelled) setInvoice(fresh); })
+            .catch(() => { /* keep the row we have — item mutations still refetch */ })
+            .finally(() => { if (!cancelled) setHydrating(false); });
+        return () => { cancelled = true; };
+    }, [initialInvoice]);
 
     // Default to expanded whenever the invoice has summary/notes content — saves a click
     // for the common "open invoice to read it" path.
@@ -517,6 +534,10 @@ export function InvoiceDetailPanel({
                                         )}
                                     </div>
                                 ))}
+                            </div>
+                        ) : hydrating ? (
+                            <div className="flex items-center gap-2 rounded-md border border-[var(--blanc-line)] px-4 py-3 text-sm text-[var(--blanc-ink-3)]">
+                                <Loader2 className="size-4 animate-spin" /> Loading items…
                             </div>
                         ) : (
                             <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
