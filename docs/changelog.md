@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-07-01 — LEADS-NEW-BADGE-001: "new leads" counter badge in the nav
+
+Dispatchers didn't notice incoming leads. Added a number-in-a-circle badge on the **Leads** nav item (like the Pulse "new events" badge) showing the company's count of **new/unactioned** leads — `status ∈ {Submitted, New, Review}` and `lead_lost = false` (Submitted is the creation default; New/Review are the other pre-contact states). **No read/unread**: purely status-derived, so it does NOT clear on opening the page — only as leads get actioned (a persistent "N awaiting triage" indicator). Company-scoped; visibility follows `leads.view`.
+
+- **Backend:** `leadsService.countNewLeads(companyId)` + exported `NEW_LEAD_STATUSES` (single source of truth); `GET /api/leads/new-count` (gated `leads.view`, `req.companyFilter.company_id`) placed **above** `/:uuid` so Express doesn't match it as `uuid="new-count"`.
+- **Freshness = hybrid:** mount + route-change fetch + **60s poll** + **live SSE** (`lead.created`/`lead.updated`). Emits from `leadsService`: `lead.created` on `createLead` (single creation chokepoint → covers manual + VAPI + web-form/integration), `lead.updated` on `updateLead` (status change), `markLost`, `activateLead`, `convertLead`. Emits are best-effort; poll is the fallback for missed events/reconnects.
+- **SSE is a global broadcast** (no per-tenant channel), so the event payload is **minimal & PII-free** (`{company_id, status, lead_id}`) and the client refetches its own company-scoped count only when `event.company_id === company.id`. Routed via the existing `useRealtimeEvents` generic-event channel (added the two event types; consumed by `onGenericEvent`) — a minimal additive touch to the protected hook.
+- **UI:** reuses `.pulse-unread-badge` (number, "9+"), desktop + mobile, `position:relative` added to the Leads trigger.
+
+Independent plan review caught + fixed: route-ordering trap (G1), global-SSE→client company-filter + PII-free payload (G2), status emits needed in 5 functions not 1 (G3), `position:relative` (G4). No migration (indexes + `lead_lost` exist). `tests/leadsNewCount.test.js` (7 cases: count scoping/null-guard, PII-free emit, best-effort, no-company); frontend `tsc -b` green; existing convert test stays green. Spec `Docs/specs/LEADS-NEW-BADGE-001.md`. NOT deployed.
+
+---
+
 ## 2026-07-01 — INVOICE-EDIT-ITEMS-PERSIST-001: full-editor invoice edit now persists line-item changes
 
 Follow-up to INVOICE-ITEMS-HYDRATE-001 (found while diagnosing it). Editing an existing invoice through the **full editor** (`InvoiceEditorDialog`) silently dropped all line-item changes — added/removed/edited items were lost; only scalar fields (tax/discount/notes/terms) persisted. Root cause: `PUT /api/invoices/:id` → `invoicesService.updateInvoice()` only wrote the scalar allowlist and **never touched `data.items`** (unlike `createInvoice`, which loops `addInvoiceItem`). The editor always posts the full `items` array (no per-item id). The inline `InvoiceDetailPanel` was unaffected — it edits items through the granular `/:id/items` endpoints.

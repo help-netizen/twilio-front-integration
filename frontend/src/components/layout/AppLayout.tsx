@@ -85,16 +85,48 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
     useEffect(() => { if (!voice.incomingCall) { setIncomingCallerName(null); return; } const p = voice.callerInfo?.number; if (!p) return; authedFetch(`/api/pulse/timeline-by-phone?phone=${encodeURIComponent(p)}`).then(r => r.json()).then(d => { if (d.contactName) setIncomingCallerName(d.contactName); }).catch(() => { }); }, [voice.incomingCall, voice.callerInfo?.number]);
 
     const [pulseUnreadCount, setPulseUnreadCount] = useState(0);
-    const fetchUnreadCount = useCallback(async () => { 
+    const fetchUnreadCount = useCallback(async () => {
         if (!company) return;
-        try { 
-            const res = await authedFetch('/api/pulse/unread-count'); 
-            const data = await res.json(); 
-            setPulseUnreadCount(data.count || 0); 
-        } catch { } 
+        try {
+            const res = await authedFetch('/api/pulse/unread-count');
+            const data = await res.json();
+            setPulseUnreadCount(data.count || 0);
+        } catch { }
     }, [company]);
     useEffect(() => { fetchUnreadCount(); }, [fetchUnreadCount, location.pathname]);
-    useRealtimeEvents({ onCallCreated: () => fetchUnreadCount(), onCallUpdate: () => fetchUnreadCount(), onMessageAdded: () => fetchUnreadCount(), onContactRead: () => fetchUnreadCount() });
+
+    // LEADS-NEW-BADGE-001: count of new/unactioned leads (Submitted/New/Review) for
+    // the Leads nav badge. Hybrid freshness: mount + route change + 60s poll +
+    // SSE (lead.created/lead.updated), the poll being the fallback for missed
+    // events / reconnects. Response shape = successResponse → data.data.count.
+    const [leadsNewCount, setLeadsNewCount] = useState(0);
+    const fetchLeadsNewCount = useCallback(async () => {
+        if (!company) return;
+        try {
+            const res = await authedFetch('/api/leads/new-count');
+            const json = await res.json();
+            setLeadsNewCount(json?.data?.count ?? json?.count ?? 0);
+        } catch { }
+    }, [company]);
+    useEffect(() => { fetchLeadsNewCount(); }, [fetchLeadsNewCount, location.pathname]);
+    useEffect(() => {
+        if (!company) return;
+        const t = setInterval(() => fetchLeadsNewCount(), 60000);
+        return () => clearInterval(t);
+    }, [company, fetchLeadsNewCount]);
+
+    useRealtimeEvents({
+        onCallCreated: () => fetchUnreadCount(),
+        onCallUpdate: () => fetchUnreadCount(),
+        onMessageAdded: () => fetchUnreadCount(),
+        onContactRead: () => fetchUnreadCount(),
+        // SSE fans out to ALL tenants → only refetch for our own company.
+        onGenericEvent: (type, d) => {
+            if ((type === 'lead.created' || type === 'lead.updated') && d?.company_id === company?.id) {
+                fetchLeadsNewCount();
+            }
+        },
+    });
 
     const handleRefresh = async () => {
         if (!company) return;
@@ -113,14 +145,14 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
         <SoftPhoneProvider onOpenRequested={() => { setSoftPhoneOpen(true); setSoftPhoneMinimized(false); }}>
             <div className="app-layout">
                 <header className="app-header"><div className="header-content">
-                    <AppNavTabs activeTab={activeTab} pulseUnreadCount={pulseUnreadCount} hasRole={hasRole} logout={logout} />
+                    <AppNavTabs activeTab={activeTab} pulseUnreadCount={pulseUnreadCount} leadsNewCount={leadsNewCount} hasRole={hasRole} logout={logout} />
                     <div className="header-actions">
                         {softPhoneEnabled && voice.phoneAllowed && <SoftPhoneHeaderButton voice={voice} softPhoneOpen={softPhoneOpen} softPhoneMinimized={softPhoneMinimized} onAcceptIncoming={handleAcceptIncoming} incomingCallerName={incomingCallerName} onOpenOrRestore={() => { if (softPhoneMinimized) setSoftPhoneMinimized(false); else setSoftPhoneOpen(true); }} />}
                         {activeTab === 'calls' && <button onClick={handleRefresh} disabled={isRefreshing} className="refresh-button" title="Refresh calls from last 3 days from Twilio">{isRefreshing ? '🔄 Refreshing...' : '🔄 Refresh'}</button>}
                         <SettingsMenu activeTab={activeTab} hasRole={hasRole} logout={logout} />
                     </div>
                 </div></header>
-                <BottomNavBar activeTab={activeTab} pulseUnreadCount={pulseUnreadCount} />
+                <BottomNavBar activeTab={activeTab} pulseUnreadCount={pulseUnreadCount} leadsNewCount={leadsNewCount} />
                 <main className="app-main">
                     {accessDeniedMessage && <div style={{ position: 'fixed', top: '72px', left: '50%', transform: 'translateX(-50%)', zIndex: 9999, background: '#dc2626', color: '#fff', padding: '12px 24px', borderRadius: '8px', fontWeight: 500, fontSize: '14px', boxShadow: '0 4px 12px rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', gap: '12px' }}><span>🚫 {accessDeniedMessage}</span><button onClick={clearAccessDenied} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '16px', padding: 0 }}>×</button></div>}
                     {children}

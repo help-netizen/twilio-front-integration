@@ -71,6 +71,9 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
             'thread.unsnoozed', 'thread.assigned', 'timeline.read',
             'timeline.unread', 'contact.unread', 'call.holding',
             'agent.status.changed', 'group.call.queued', 'group.call.accepted', 'group.call.ended',
+            // LEADS-NEW-BADGE-001: routed through onGenericEvent so the "new leads"
+            // nav badge can refresh live (consumer filters by company_id).
+            'lead.created', 'lead.updated',
         ];
         for (const et of genericEventTypes) {
             ids.push(subscribe(et, (d) => onGenericEventRef.current?.(et, d)));

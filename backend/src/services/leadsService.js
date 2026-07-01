@@ -354,6 +354,7 @@ async function createLead(fields, companyId = null) {
     `;
 
     const { rows } = await db.query(sql, values);
+    emitLeadChange('lead.created', columns.company_id, columns.status || 'Submitted', rows[0].id);
     return {
         UUID: rows[0].uuid,
         SerialId: rows[0].serial_id,
@@ -434,6 +435,9 @@ async function updateLead(uuid, fields, companyId = null) {
         throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
     }
 
+    // Only a status change can move a lead in/out of the "new" set → refresh badge.
+    if (columns.status) emitLeadChange('lead.updated', companyId, columns.status, rows[0].id);
+
     return {
         UUID: rows[0].uuid,
         ClientId: String(rows[0].id),
@@ -460,6 +464,7 @@ async function markLost(uuid, companyId = null) {
     if (rows.length === 0) {
         throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
     }
+    emitLeadChange('lead.updated', companyId, 'Lost', rows[0].id);
     return { message: 'Lead marked as lost' };
 }
 
@@ -482,6 +487,7 @@ async function activateLead(uuid, companyId = null) {
     if (rows.length === 0) {
         throw new LeadsServiceError('LEAD_NOT_FOUND', `Lead ${uuid} not found`, 404);
     }
+    emitLeadChange('lead.updated', companyId, 'Submitted', rows[0].id);
     return { message: 'Lead activated' };
 }
 
@@ -1017,6 +1023,8 @@ async function convertLead(uuid, overrides = {}, companyId = null) {
         console.error(`[ConvertLead] Note sync error (non-blocking):`, noteErr.message);
     }
 
+    emitLeadChange('lead.updated', companyId, 'Converted', leadRow.id);
+
     return {
         UUID: lead.UUID,
         ClientId: String(leadRow.id),
@@ -1155,8 +1163,49 @@ async function getLeadTransitions(companyId, currentStatus, userRoles) {
 // =============================================================================
 // Exports
 // =============================================================================
+// =============================================================================
+// LEADS-NEW-BADGE-001 — "new / unactioned" lead counter + live events
+// =============================================================================
+
+// Statuses that count as "new / not yet actioned" for the nav badge. The DB
+// default on creation is 'Submitted'; 'New'/'Review' are the other pre-contact
+// states. Single source of truth — the count query and any UI reuse this.
+const NEW_LEAD_STATUSES = ['Submitted', 'New', 'Review'];
+
+// Company-scoped count of new/unactioned leads (excludes lost). Used by the
+// GET /api/leads/new-count endpoint that feeds the nav badge.
+async function countNewLeads(companyId) {
+    if (!companyId) return 0;
+    const { rows } = await db.query(
+        `SELECT COUNT(*)::int AS count FROM leads
+         WHERE company_id = $1 AND lead_lost = false AND status = ANY($2::text[])`,
+        [companyId, NEW_LEAD_STATUSES]
+    );
+    return rows[0]?.count || 0;
+}
+
+// Notify connected clients so the "new leads" badge refreshes live. Payload is
+// intentionally MINIMAL (company_id + status only, NO PII) because
+// realtimeService.broadcast fans out to every connected client regardless of
+// tenant; the client refetches its own company-scoped count and filters by
+// company_id. Best-effort — a broadcast failure never breaks the lead write.
+function emitLeadChange(eventType, companyId, status, leadId = null) {
+    if (!companyId) return;
+    try {
+        require('./realtimeService').broadcast(eventType, {
+            company_id: companyId,
+            status: status || null,
+            lead_id: leadId != null ? String(leadId) : null,
+        });
+    } catch (err) {
+        console.warn('[leadsService] lead event broadcast failed:', err.message);
+    }
+}
+
 module.exports = {
     listLeads,
+    NEW_LEAD_STATUSES,
+    countNewLeads,
     getLeadByUUID,
     getLeadById,
     getLeadByPhone,

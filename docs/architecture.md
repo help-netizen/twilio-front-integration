@@ -2857,3 +2857,33 @@ reachable pages that previously rendered unstyled: `login-otp`, `select-authenti
 - Membership-less user on any tenant route → 403 (was: seed-company data). Regression-tested.
 - Reporter's case (`office@bostonmasters.com`) → most likely a pre-existing Boston Masters member (Google account-link) → `409 ALREADY_ONBOARDED` → their own company's Pulse; not a leak, but the fix closes the structural hole.
 - Prod `FEATURE_AUTH_ENABLED` unset → 500 (fail closed) instead of universal Boston Masters admin.
+
+---
+
+## LEADS-NEW-BADGE-001 — nav count badge (mirrors the Pulse pattern)
+
+**Count source.** `leadsService.countNewLeads(companyId)` → `COUNT(*) WHERE company_id=$1 AND
+lead_lost=false AND status = ANY(NEW_LEAD_STATUSES)`, `NEW_LEAD_STATUSES=['Submitted','New','Review']`
+(exported single source of truth). Exposed at `GET /api/leads/new-count` (`leads.view`,
+`req.companyFilter.company_id`) — registered **before** `/:uuid` (Express route-ordering trap).
+Uses the existing `idx_leads_status`; no migration.
+
+**Live refresh (hybrid).** `AppLayout` mirrors the Pulse-badge pattern: `leadsNewCount` state,
+`fetchLeadsNewCount()` (guarded on `company`), refetch on mount + `location.pathname`, a **60s
+poll**, and SSE. Emits: `leadsService.emitLeadChange()` → `realtimeService.broadcast('lead.created'|'lead.updated', {company_id,status,lead_id})`
+from `createLead` (creation chokepoint — manual/VAPI/integration) and the four status mutators
+(`updateLead` on status change, `markLost`, `activateLead`, `convertLead`). Best-effort (never
+breaks the write); the 60s poll self-heals any missed emit.
+
+**Tenant safety.** `realtimeService.broadcast` fans out to ALL clients (no per-company channel),
+so: the payload is minimal & PII-free; the client refetches its own company-scoped count **only**
+when `event.company_id === company.id`. No cross-tenant data crosses the wire (the count endpoint is
+company-scoped regardless). The global-broadcast SSE design is a pre-existing property, noted for a
+possible future per-company-channel refactor (out of scope here).
+
+**Protected-hook touch.** `useRealtimeEvents` gains `lead.created`/`lead.updated` in its
+`genericEventTypes` array only — routed to consumers via the existing `onGenericEvent(type, data)`
+callback (no new callback plumbing). Minimal additive change.
+
+**Semantics.** Purely status-derived — no read/unread. The badge does not clear on viewing the page;
+it reflects the live count of leads still in the new set. Persistent triage indicator.

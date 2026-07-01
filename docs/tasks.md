@@ -3906,3 +3906,22 @@ Spec: `Docs/specs/ONBOARD-FIX-001.md` · Tests: `Docs/test-cases/ONBOARD-FIX-001
 
 - **Migration numbering:** uses **140** (max committed = 139). PRICEBOOK-001 (not yet built) must renumber to 141+ if it lands after this. Renumber-before-commit if a parallel worktree also claims 140.
 - **Deploy:** backend + frontend + `up -d --force-recreate keycloak` (theme cache) + **run migration 140**. Recommended: prod DB check (TC-SEC-DB) to size the exposure + confirm the reporter's case.
+
+---
+
+## LEADS-NEW-BADGE-001 — "new leads" nav count badge
+
+Spec: `Docs/specs/LEADS-NEW-BADGE-001.md` · Tests: `Docs/test-cases/LEADS-NEW-BADGE-001.md` · Status: implemented, **not deployed**.
+
+| ID | Task | Files | Status |
+|----|------|-------|--------|
+| LB-1 | `countNewLeads` + `NEW_LEAD_STATUSES`; `GET /api/leads/new-count` **before** `/:uuid` | `services/leadsService.js`, `routes/leads.js` | ✅ done |
+| LB-2 | `emitLeadChange` + `lead.created` (createLead) / `lead.updated` (updateLead status, markLost, activateLead, convertLead), PII-free payload | `services/leadsService.js` | ✅ done |
+| LB-3 | `leadsNewCount` state + fetch + 60s poll + SSE (company-filtered); `useRealtimeEvents` generic `lead.*` | `AppLayout.tsx`, `useRealtimeEvents.ts` | ✅ done |
+| LB-4 | Badge on Leads (desktop+mobile) + `position:relative` | `appLayoutNavigation.tsx` | ✅ done |
+| LB-5 | Jest: count scoping/null-guard, PII-free emit, best-effort, no-company (7 cases) | `tests/leadsNewCount.test.js` | ✅ done |
+| LB-6 | Docs (spec/test-cases/requirements/architecture/tasks/changelog) | `Docs/*` | ✅ done |
+
+- **No migration** (reuses `idx_leads_status`, `lead_lost`). **No new permission** (reuses `leads.view`).
+- Independent plan-review fixes applied: G1 route order, G2 global-SSE→client company-filter + PII-free payload, G3 emits in 5 fns, G4 `position:relative`.
+- **Deploy:** backend + frontend rebuild. No KC/theme change, no migration.

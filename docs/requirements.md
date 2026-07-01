@@ -2280,3 +2280,33 @@ context after company creation); (B) mask the onboarding phone field like the Ne
 
 ### Protected parts
 - `src/server.js`, `authedFetch.ts`, `useRealtimeEvents.ts` untouched. `backend/db/` only via migration 140 (additive/idempotent, per plan).
+
+---
+
+## LEADS-NEW-BADGE-001: "new leads" counter badge in navigation
+
+**Status:** Implemented (pending deploy) · **Priority:** P1 · **Area:** Frontend nav + Leads backend
+**Spec:** `Docs/specs/LEADS-NEW-BADGE-001.md`
+
+### Description
+Badge (number in a circle, like the Pulse new-events badge) on the Leads nav item = company's count
+of new/unactioned leads (`status ∈ {Submitted, New, Review}`, `lead_lost=false`). No read/unread —
+status-derived, persists until leads are actioned. Company-scoped; hybrid freshness (mount +
+route-change + 60s poll + SSE `lead.created`/`lead.updated`).
+
+### User scenarios
+1. New lead created (any path) → Leads badge increments live for that company.
+2. Lead actioned (contacted/lost/converted) → badge decrements.
+3. Opening Leads does NOT clear the badge.
+
+### Constraints
+- Company-scoped count; visibility follows `leads.view`. SSE payload PII-free; client filters by company_id.
+- No migration (indexes + `lead_lost` exist). No new permission.
+- `/new-count` route MUST precede `/:uuid`.
+
+### Involved modules
+- `leadsService` (`countNewLeads`, `NEW_LEAD_STATUSES`, emits), `routes/leads.js`, `realtimeService`.
+- `AppLayout.tsx`, `appLayoutNavigation.tsx`, `useRealtimeEvents.ts` (additive), `AppLayout.css`.
+
+### Protected parts
+- `useRealtimeEvents.ts` touched **additively** (two event types added to the generic channel), per approved plan. No backend/db schema change.

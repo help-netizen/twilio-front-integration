@@ -156,6 +156,20 @@ router.get('/by-id/:id', requirePermission('leads.view'), async (req, res) => {
 });
 
 // =============================================================================
+// GET /api/leads/new-count — count of new/unactioned leads (nav badge).
+// MUST stay ABOVE the /:uuid route or Express matches it as uuid="new-count".
+// =============================================================================
+router.get('/new-count', requirePermission('leads.view'), async (req, res) => {
+    const reqId = requestId();
+    try {
+        const count = await leadsService.countNewLeads(req.companyFilter?.company_id);
+        res.json(successResponse({ count }, reqId));
+    } catch (err) {
+        handleError(err, reqId, res);
+    }
+});
+
+// =============================================================================
 // GET /api/leads/:uuid — Get lead details
 // =============================================================================
 router.get('/:uuid', requirePermission('leads.view'), async (req, res) => {
