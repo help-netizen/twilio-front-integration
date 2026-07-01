@@ -374,6 +374,84 @@ async function addInvoiceItem(invoiceId, item) {
 }
 
 /**
+ * Replace ALL line items on an invoice with the given payload, atomically.
+ *
+ * INVOICE-EDIT-ITEMS-PERSIST-001 — the full editor (InvoiceEditorDialog) always
+ * sends the complete `items` array (no per-item id) on update, but `updateInvoice`
+ * only wrote scalar fields, so edited/added/removed items were silently dropped.
+ * This delete-then-reinsert reconciliation runs on its own client inside a single
+ * transaction so a partial failure never leaves the invoice with a torn item set.
+ *
+ * Reuses addInvoiceItem's column + amount logic (amount = (quantity||1)*(unit_price||0),
+ * taxable defaults true, metadata defaults '{}'::jsonb, unit nullable). `sort_order`
+ * comes from each item's own value when present, otherwise the array index.
+ *
+ * `items = []` is valid — it clears the invoice (summary-only invoices are allowed).
+ * NOTE: totals are NOT recalculated here — the caller invokes
+ * recalculateInvoiceTotals(invoiceId) AFTER this commits.
+ *
+ * @param {number|string} invoiceId
+ * @param {Array<object>} items
+ * @returns {Promise<object[]>} inserted rows, ordered by sort_order
+ */
+async function replaceInvoiceItems(invoiceId, items) {
+    const list = Array.isArray(items) ? items : [];
+    const client = await db.getClient();
+    try {
+        await client.query('BEGIN');
+        await client.query(`DELETE FROM invoice_items WHERE invoice_id = $1`, [invoiceId]);
+
+        for (let idx = 0; idx < list.length; idx++) {
+            const item = list[idx] || {};
+            const {
+                name,
+                description,
+                quantity,
+                unit_price,
+                unit,
+                taxable,
+                metadata,
+                sort_order,
+            } = item;
+
+            const amount = (quantity || 1) * (unit_price || 0);
+
+            await client.query(
+                `INSERT INTO invoice_items (
+                    invoice_id, name, description, quantity, unit_price, unit,
+                    amount, taxable, metadata, sort_order
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+                [
+                    invoiceId,
+                    name || '',
+                    description || '',
+                    quantity || 1,
+                    unit_price || 0,
+                    unit || null,
+                    amount,
+                    taxable != null ? taxable : true,
+                    // metadata column is NOT NULL; default to empty JSON object when not provided.
+                    JSON.stringify(metadata ?? {}),
+                    // Preserve the caller's explicit ordering; fall back to the array index.
+                    sort_order != null ? sort_order : idx,
+                ]
+            );
+        }
+
+        await client.query('COMMIT');
+    } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+    } finally {
+        client.release();
+    }
+
+    // Return the freshly-persisted items (ordered), reusing the shared reader.
+    return getInvoiceItems(invoiceId);
+}
+
+/**
  * Update a line item.
  */
 async function updateInvoiceItem(itemId, data) {
@@ -605,6 +683,7 @@ module.exports = {
     updateInvoiceStatus,
     getInvoiceItems,
     addInvoiceItem,
+    replaceInvoiceItems,
     updateInvoiceItem,
     deleteInvoiceItem,
     recalculateInvoiceTotals,

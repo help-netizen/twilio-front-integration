@@ -4,6 +4,16 @@
 
 ---
 
+## 2026-07-01 — INVOICE-EDIT-ITEMS-PERSIST-001: full-editor invoice edit now persists line-item changes
+
+Follow-up to INVOICE-ITEMS-HYDRATE-001 (found while diagnosing it). Editing an existing invoice through the **full editor** (`InvoiceEditorDialog`) silently dropped all line-item changes — added/removed/edited items were lost; only scalar fields (tax/discount/notes/terms) persisted. Root cause: `PUT /api/invoices/:id` → `invoicesService.updateInvoice()` only wrote the scalar allowlist and **never touched `data.items`** (unlike `createInvoice`, which loops `addInvoiceItem`). The editor always posts the full `items` array (no per-item id). The inline `InvoiceDetailPanel` was unaffected — it edits items through the granular `/:id/items` endpoints.
+
+- **Backend fix** (backend-only, no migration): new `invoicesQueries.replaceInvoiceItems(invoiceId, items)` — an **atomic** delete-then-reinsert on a dedicated `db.getClient()` transaction (`BEGIN` → `DELETE` → per-item `INSERT` reusing `addInvoiceItem`'s column/amount logic → `COMMIT`; `ROLLBACK` + `release()` on failure), so a partial write never leaves a torn item set. `invoicesService.updateInvoice` now reconciles items **only when `Array.isArray(data.items)`** and recalculates totals when items were reconciled *or* a totals-affecting scalar changed.
+- **Critical guard:** `data.items` **absent** ⇒ items left untouched — the inline panel's scalar-only auto-saves (`{notes}`, `{tax_rate}`, `{discount_amount}`, `{due_date}`) must never wipe items. `items: []` ⇒ clears all items (summary-only invoices are valid) and zeroes totals. The existing revision-snapshot-before-update ordering is preserved so a non-draft snapshot captures the OLD items; multi-tenant `company_id` guard (`getInvoiceById` → NOT_FOUND) unchanged.
+- **Orchestrated:** independent adversarial review **APPROVED** (regression guard verified against every payload shape — `undefined`/`null`/`{}`/non-array all skip reconcile — no exploit found). Tests: `tests/invoicesUpdateItems.test.js` (service reconcile incl. the no-items-key regression guard + `items:[]` + foreign-invoice NOT_FOUND + snapshot-before-replace) and `tests/invoicesQueriesReplaceItems.test.js` (query-layer transaction: BEGIN→DELETE-before-INSERT→COMMIT ordering, `items:[]`=DELETE-only, INSERT-failure→ROLLBACK+release). **69 backend Jest green** (20 new/changed + 49 regression across estimate-convert / stripe / provider-finance). Frontend untouched.
+
+---
+
 ## 2026-07-01 — INVOICE-ITEMS-HYDRATE-001: invoice detail showed "no items" though items were saved
 
 Reported on a job invoice: create an invoice with a line item → the total is right, but reopening the invoice shows an empty item list and "This invoice has no items"; adding another item makes the previously-saved one reappear, and the count appears to grow by one each reopen→add cycle. The items were **never lost** — prod DB confirmed all rows present with the correct total.

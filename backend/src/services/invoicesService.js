@@ -166,14 +166,27 @@ async function updateInvoice(companyId, userId, id, data) {
         await invoicesQueries.createRevision(id, snapshot, userId);
     }
 
+    // `updateInvoice`'s allowlist ignores `items`, so passing the full `data`
+    // (scalars + items) is safe — only whitelisted scalar columns are written.
     const updated = await invoicesQueries.updateInvoice(id, companyId, data);
     if (!updated) {
         throw new InvoicesServiceError('NOT_FOUND', `Invoice ${id} not found`, 404);
     }
 
-    // Recalculate totals when totals-affecting fields change.
+    // INVOICE-EDIT-ITEMS-PERSIST-001 — reconcile line items when (and ONLY when)
+    // the caller sends an `items` array. The full editor always posts the complete
+    // array (no per-item id); an empty array is a valid "clear all items" instruction.
+    // Scalar-only patches from InvoiceDetailPanel.persist() (e.g. { notes }, { tax_rate })
+    // omit `items` entirely — those must NOT touch the persisted items.
+    const itemsReconciled = Array.isArray(data.items);
+    if (itemsReconciled) {
+        await invoicesQueries.replaceInvoiceItems(id, data.items);
+    }
+
+    // Recalculate totals when items were reconciled OR a totals-affecting scalar changed.
     const TOTALS_AFFECTING = new Set(['tax_rate', 'discount_amount']);
-    if (Object.keys(data).some(k => TOTALS_AFFECTING.has(k))) {
+    const scalarTotalsChanged = Object.keys(data).some(k => TOTALS_AFFECTING.has(k));
+    if (itemsReconciled || scalarTotalsChanged) {
         await invoicesQueries.recalculateInvoiceTotals(id);
     }
 
