@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, Clock, Loader2 } from 'lucide-react';
+import { Plus, Clock, Loader2, Layers } from 'lucide-react';
 import { searchEstimateItemPresets, type EstimateItemPreset } from '../../services/estimateItemPresetsApi';
+import { listGroups, type PriceBookGroup } from '../../services/priceBookApi';
 
 interface Props {
     disabled?: boolean;
@@ -8,17 +9,21 @@ interface Props {
     onPickPreset: (preset: EstimateItemPreset) => void | Promise<void>;
     /** Called when user chooses to create a brand-new item. Combobox passes the typed name. */
     onCreateNew: (name: string) => void | Promise<void>;
+    /** PRICEBOOK-001: when set, the dropdown also offers Price Book groups; picking
+     *  one expands it into its items on the parent (bulk add). */
+    onPickGroup?: (groupId: number) => void | Promise<void>;
 }
 
 function money(value: number): string {
     return '$' + Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew }: Props) {
+export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew, onPickGroup }: Props) {
     const [query, setQuery] = useState('');
     const [open, setOpen] = useState(false);
     const [loading, setLoading] = useState(false);
     const [presets, setPresets] = useState<EstimateItemPreset[]>([]);
+    const [groups, setGroups] = useState<PriceBookGroup[]>([]);
     const [highlighted, setHighlighted] = useState(0);
     const inputRef = useRef<HTMLInputElement>(null);
     const boxRef = useRef<HTMLDivElement>(null);
@@ -34,6 +39,9 @@ export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew }
                 if (!cancelled) {
                     setPresets(items);
                     setHighlighted(0);
+                }
+                if (onPickGroup) {
+                    try { const gs = await listGroups({ search: query.trim() }); if (!cancelled) setGroups(gs.slice(0, 5)); } catch { /* */ }
                 }
             } catch {
                 // Silent — combobox stays open with "no items"
@@ -71,6 +79,11 @@ export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew }
     const createNew = async () => {
         if (!trimmed) return;
         await onCreateNew(trimmed);
+        setQuery('');
+        setOpen(false);
+    };
+    const pickGroup = async (groupId: number) => {
+        if (onPickGroup) await onPickGroup(groupId);
         setQuery('');
         setOpen(false);
     };
@@ -125,6 +138,26 @@ export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew }
                     )}
                     {!loading && presets.length === 0 && trimmed && !canCreate && (
                         <div className="px-4 py-3 text-xs" style={{ color: 'var(--blanc-ink-3)' }}>No matches.</div>
+                    )}
+
+                    {onPickGroup && groups.length > 0 && (
+                        <>
+                            <div className="flex items-center gap-1.5 px-4 pt-2 pb-1 text-[10px] uppercase tracking-wider" style={{ color: 'var(--blanc-ink-3)' }}>
+                                <Layers className="size-3" /> Groups
+                            </div>
+                            {groups.map(g => (
+                                <button key={`g${g.id}`} type="button"
+                                    onMouseDown={(e) => { e.preventDefault(); pickGroup(g.id); }}
+                                    className="w-full text-left px-4 py-2 text-sm flex items-center justify-between gap-3 hover:bg-[rgba(117,106,89,0.06)]">
+                                    <div className="min-w-0">
+                                        <div className="font-medium truncate" style={{ color: 'var(--blanc-ink-1)' }}>{g.name}</div>
+                                        <div className="text-xs truncate" style={{ color: 'var(--blanc-ink-3)' }}>{g.item_count ?? 0} item(s) — adds all</div>
+                                    </div>
+                                    <div className="text-sm font-mono whitespace-nowrap shrink-0" style={{ color: 'var(--blanc-ink-1)' }}>{money(Number(g.total) || 0)}</div>
+                                </button>
+                            ))}
+                            {presets.length > 0 && <div className="border-t border-[var(--blanc-line)]" />}
+                        </>
                     )}
 
                     {!trimmed && presets.length > 0 && (

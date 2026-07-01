@@ -97,6 +97,13 @@ const PERMISSION_CATALOG = [
         ],
     },
     {
+        category: 'Price Book',
+        items: [
+            { key: 'price_book.view', label: 'View & use the price book (items/groups)' },
+            { key: 'price_book.manage', label: 'Manage the price book (items, groups, categories)' },
+        ],
+    },
+    {
         category: 'Reports',
         items: [
             { key: 'reports.dashboard.view', label: 'View reports dashboard' },

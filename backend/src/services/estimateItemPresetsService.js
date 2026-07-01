@@ -32,6 +32,10 @@ function mapRow(row) {
         default_quantity: row.default_quantity == null ? null : Number(row.default_quantity),
         default_unit_price: row.default_unit_price == null ? null : Number(row.default_unit_price),
         default_taxable: !!row.default_taxable,
+        category_id: row.category_id == null ? null : Number(row.category_id),
+        category_name: row.category_name ?? null,
+        code: row.code ?? null,
+        unit: row.unit ?? null,
         usage_count: Number(row.usage_count || 0),
         last_used_at: row.last_used_at,
         archived_at: row.archived_at,
@@ -61,6 +65,12 @@ function validatePayload(payload, { partial = false } = {}) {
 
 async function search(companyId, params = {}) {
     const rows = await queries.searchForCompany(companyId, params);
+    return rows.map(mapRow);
+}
+
+// PRICEBOOK-001: paginated Items-tab list (category filter, archived toggle).
+async function listForManage(companyId, params = {}) {
+    const rows = await queries.listForManage(companyId, params);
     return rows.map(mapRow);
 }
 
@@ -103,6 +113,7 @@ async function recordUsage(companyId, id) {
 module.exports = {
     EstimateItemPresetError,
     search,
+    listForManage,
     get,
     create,
     update,

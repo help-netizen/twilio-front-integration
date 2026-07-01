@@ -280,6 +280,27 @@ async function addItem(companyId, estimateId, userId, item) {
     return newItem;
 }
 
+// PRICEBOOK-001: bulk add (e.g. a Price Book group expanded into its items).
+// One status-reset + ONE recalc + ONE event, vs N round-trips of addItem.
+async function addItems(companyId, estimateId, userId, items) {
+    const estimate = await estimatesQueries.getEstimateById(companyId, estimateId);
+    if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${estimateId} not found`, 404);
+    assertNotArchived(estimate);
+
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) return { added: 0, items: [] };
+
+    await resetStatusAfterItemEdit(companyId, userId, estimate);
+    const created = [];
+    for (const item of list) {
+        created.push(await estimatesQueries.addEstimateItem(estimateId, normalizeItem(item)));
+    }
+    await estimatesQueries.recalculateEstimateTotals(estimateId);
+    await estimatesQueries.createEvent(estimateId, 'items_added', 'user', userId, { count: created.length });
+
+    return { added: created.length, items: created };
+}
+
 async function updateItem(companyId, estimateId, userId, itemId, data) {
     const estimate = await estimatesQueries.getEstimateById(companyId, estimateId);
     if (!estimate) throw new EstimatesServiceError('NOT_FOUND', `Estimate ${estimateId} not found`, 404);
@@ -732,6 +753,7 @@ module.exports = {
     archiveEstimate,
     restoreEstimate,
     addItem,
+    addItems,
     updateItem,
     removeItem,
     sendEstimate,

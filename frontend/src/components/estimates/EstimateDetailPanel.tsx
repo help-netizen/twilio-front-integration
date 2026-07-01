@@ -14,6 +14,7 @@ import { EstimateSendDialog } from './EstimateSendDialog';
 import { EstimateItemDialog, type ItemDraft } from './EstimateItemDialog';
 import { EstimateSummaryDialog } from './EstimateSummaryDialog';
 import { ItemPresetSearchCombobox } from './ItemPresetSearchCombobox';
+import { expandGroup } from '../../services/priceBookApi';
 import {
     createEstimateItemPreset,
     recordEstimateItemPresetUsage,
@@ -26,6 +27,7 @@ import {
     convertEstimateToInvoice,
     updateEstimate,
     addEstimateItem,
+    addEstimateItemsBulk,
     updateEstimateItem,
     deleteEstimateItem,
 } from '../../services/estimatesApi';
@@ -141,6 +143,22 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
             recordEstimateItemPresetUsage(preset.id).catch(() => {});
             await refreshAfterItemChange();
             toast.success(`Added "${preset.name}"`);
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Add failed');
+        }
+    };
+
+    /** Combobox: picked a Price Book group → expand into its items (single bulk add). */
+    const pickGroup = async (groupId: number) => {
+        try {
+            const items = await expandGroup(groupId);
+            if (items.length === 0) { toast.info('That group has no active items'); return; }
+            await addEstimateItemsBulk(estimate.id, items.map(i => ({
+                name: i.name, description: i.description, quantity: i.quantity,
+                unit: i.unit || undefined, unit_price: i.unit_price, taxable: i.taxable,
+            })) as any);
+            await refreshAfterItemChange();
+            toast.success(`Added ${items.length} item(s) from group`);
         } catch (err) {
             toast.error(err instanceof Error ? err.message : 'Add failed');
         }
@@ -378,6 +396,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                                 <ItemPresetSearchCombobox
                                     onPickPreset={pickPreset}
                                     onCreateNew={startCreateFromName}
+                                    onPickGroup={pickGroup}
                                 />
                             </div>
                         )}

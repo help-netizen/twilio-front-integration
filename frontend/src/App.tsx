@@ -53,6 +53,7 @@ import AutomationPage from './pages/AutomationPage';
 import BillingPage from './pages/BillingPage';
 import GoogleEmailSettingsPage from './pages/GoogleEmailSettingsPage';
 import DocumentTemplatesPage from './pages/DocumentTemplatesPage';
+import PriceBookPage from './pages/PriceBookPage';
 import DocumentTemplateEditorPage from './pages/DocumentTemplateEditorPage';
 import { EmailPage } from './pages/EmailPage';
 import ServiceTerritoriesPage from './pages/ServiceTerritoriesPage';
@@ -148,6 +149,7 @@ function App() {
               <Route path="/settings/email" element={<Navigate to="/settings/integrations/google-email" replace />} />
               <Route path="/settings/document-templates" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><DocumentTemplatesPage /></ProtectedRoute>} />
               <Route path="/settings/document-templates/:id" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><DocumentTemplateEditorPage /></ProtectedRoute>} />
+              <Route path="/settings/price-book" element={<ProtectedRoute permissions={['price_book.manage']}><PriceBookPage /></ProtectedRoute>} />
               <Route path="/email" element={<ProtectedRoute permissions={['messages.view_internal']}><EmailPage /></ProtectedRoute>} />
               <Route path="/settings/users" element={<ProtectedRoute permissions={['tenant.users.manage']}><CompanyUsersPage /></ProtectedRoute>} />
               <Route path="/settings/roles" element={<ProtectedRoute permissions={['tenant.roles.manage']}><RolesAccessPage /></ProtectedRoute>} />

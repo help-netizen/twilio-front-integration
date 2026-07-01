@@ -232,6 +232,14 @@ export async function addInvoiceItem(invoiceId: number, item: InvoiceItemCreateD
     });
 }
 
+// PRICEBOOK-001: bulk add (a Price Book group expanded into its items) — one call.
+export async function addInvoiceItemsBulk(invoiceId: number, items: InvoiceItemCreateData[]): Promise<{ added: number }> {
+    return invoicesRequest<{ added: number }>(`${INVOICES_BASE}/${invoiceId}/items/bulk`, {
+        method: 'POST',
+        body: JSON.stringify({ items }),
+    });
+}
+
 export async function updateInvoiceItem(invoiceId: number, itemId: number, data: Partial<InvoiceItemCreateData>): Promise<InvoiceItem> {
     return invoicesRequest<InvoiceItem>(`${INVOICES_BASE}/${invoiceId}/items/${itemId}`, {
         method: 'PUT',

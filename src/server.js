@@ -210,6 +210,9 @@ app.use('/api/schedule', authenticate, requireCompanyAccess, scheduleRouter);
 app.use('/api/estimates', authenticate, requireCompanyAccess, estimatesRouter);
 const estimateItemPresetsRouter = require('../backend/src/routes/estimate-item-presets');
 app.use('/api/estimate-item-presets', authenticate, requireCompanyAccess, estimateItemPresetsRouter);
+// PRICEBOOK-001: Price Book management API (categories/groups/items).
+const priceBookRouter = require('../backend/src/routes/price-book');
+app.use('/api/price-book', authenticate, requireCompanyAccess, priceBookRouter);
 // VAPI Tool Call Handler — public endpoint, secured by x-vapi-secret header
 const vapiToolsRouter = require('../backend/src/routes/vapi-tools');
 app.use('/api/vapi-tools', vapiToolsRouter);

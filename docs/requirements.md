@@ -2310,3 +2310,30 @@ route-change + 60s poll + SSE `lead.created`/`lead.updated`).
 
 ### Protected parts
 - `useRealtimeEvents.ts` touched **additively** (two event types added to the generic channel), per approved plan. No backend/db schema change.
+
+---
+
+## PRICEBOOK-001: Price Book (Category → Group → Item)
+
+**Status:** Implemented (pending deploy) · **Area:** Estimates/Invoices catalog / Settings · **Spec:** `Docs/specs/PRICEBOOK-001.md`
+
+### Description
+A 3-level catalog for estimate/invoice line items: Categories (grouping only), Groups (expand into
+their Items when added to a doc), Items (`estimate_item_presets` extended). Standalone
+**Settings → Price Book** editor + picker integration (pick a group → its items are inserted).
+
+### User scenarios
+1. Manage Items/Groups/Categories in Settings → Price Book (create/edit/archive).
+2. A group holds several items with per-item quantities; selecting it in an estimate/invoice inserts all items.
+3. Items and groups can be organized under categories.
+
+### Constraints
+- Manage = admin+manager (`price_book.manage`); use = any doc-editing role (`price_book.view`).
+- Company-scoped; snapshot semantics; group expansion skips archived items. Migration 141.
+
+### Involved modules
+- Backend: migration 141, `priceBookQueries`/`priceBookService`, extended `estimateItemPresets*`, `routes/price-book.js`, bulk endpoints on estimates/invoices, `permissionCatalog.js`, `050`.
+- Frontend: `PriceBookPage`, `priceBookApi`, extended `ItemPresetSearchCombobox` + Estimate/Invoice panels, nav/route/dev-perms.
+
+### Protected parts
+- No protected file broken. `backend/db/` only via migration 141 (idempotent, additive).

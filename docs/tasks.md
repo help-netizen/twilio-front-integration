@@ -3925,3 +3925,23 @@ Spec: `Docs/specs/LEADS-NEW-BADGE-001.md` · Tests: `Docs/test-cases/LEADS-NEW-B
 - **No migration** (reuses `idx_leads_status`, `lead_lost`). **No new permission** (reuses `leads.view`).
 - Independent plan-review fixes applied: G1 route order, G2 global-SSE→client company-filter + PII-free payload, G3 emits in 5 fns, G4 `position:relative`.
 - **Deploy:** backend + frontend rebuild. No KC/theme change, no migration.
+
+---
+
+## PRICEBOOK-001 — Price Book (Category → Group → Item)
+
+Spec: `Docs/specs/PRICEBOOK-001.md` · Status: implemented, **not deployed**.
+
+| ID | Task | Files | Status |
+|----|------|-------|--------|
+| PB-1 | Migration 141 (3 tables + preset cols + perm backfill) + 050 seed + permissionCatalog | `141_create_price_book.sql`, `050`, `permissionCatalog.js` | ✅ (applied+validated local) |
+| PB-2 | `priceBookQueries` + extended `estimateItemPresetsQueries` (category/code/unit, mgmt list) | `db/priceBookQueries.js`, `db/estimateItemPresetsQueries.js` | ✅ |
+| PB-3 | `priceBookService` + presets service extend + bulk `addItems` (estimates+invoices) | `services/priceBookService.js` + 3 services | ✅ |
+| PB-4 | `routes/price-book.js` + mount + bulk `/:id/items/bulk` on estimates/invoices | `routes/price-book.js`, `server.js`, `estimates.js`, `invoices.js` | ✅ |
+| PB-5 | `PriceBookPage` (tabs+editors) + `priceBookApi` + nav/route + DEV_PERMISSIONS | `pages/PriceBookPage.tsx` + nav/App/AuthProvider | ✅ |
+| PB-6 | Combobox Groups section + panel `pickGroup` (bulk expand) + api bulk helpers | combobox + Estimate/Invoice panels + apis | ✅ |
+| PB-7 | Jest (7) + local end-to-end verify (screenshot) + docs | `tests/priceBook.test.js`, `Docs/*` | ✅ |
+
+- **Migration = 141** (140 = ONBOARD-FIX, deployed). Renumber-before-commit only if a parallel worktree claims 141.
+- Gap-review before coding fixed G1–G8 (route number, bulk vs N round-trips, archived-skip/snapshot/order, group total, permissionCatalog, code/unit). Jest caught a NaN item_id leak.
+- **Deploy:** backend + frontend rebuild + **run migration 141**. No KC/theme change.

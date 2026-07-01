@@ -6,6 +6,17 @@
 
 **Every element must justify its presence.** If it doesn't help the user complete a task — remove it. Don't decorate — design.
 
+### Layers & overlays — THE canonical pattern (always use this)
+
+**Every entity view/edit surface is a right-side slide-over "layer" (шторка), never a center modal.** This is the app's core interaction model — job view, lead card, estimate/invoice editors, forms all slide in from the right. New UIs MUST follow it. Full spec: `docs/specs/FORM-CANON.md`. Gold-standard examples: `EstimateItemDialog.tsx`, `NewJobModal.tsx`, `TaskFormDialog.tsx`.
+
+- **Component:** `<Dialog><DialogContent variant="panel">` with `DialogPanelHeader` (pinned title) → `DialogBody className="md:px-8 md:py-7"` (scrollable; inner `<div className="mx-auto w-full max-w-[740px] space-y-6">`) → `DialogPanelFooter` (sticky; `<Button variant="ghost">Cancel</Button>` + primary `<Button>Save</Button>`). On mobile this variant **automatically becomes a bottom-sheet** — no extra code. Read-only detail views may instead use `ui/FloatingDetailPanel`.
+- **Center modals (`variant="dialog"`) are ONLY for confirmations / short alerts** ("Delete this?"), never for viewing or editing entities.
+- **Fields = floating-label canon:** `FloatingField` (text/number/textarea), `FloatingSelect` (+ `SelectItem`), `PhoneInput` (phones). No stacked/side `<Label>` above fields; fields are border-only on the panel surface. Toggles/checkboxes use `Checkbox` and are NOT floated (label beside).
+- **Field rhythm:** groups separated by `space-y-6`; fields within a group `space-y-3.5`; short pairs `grid grid-cols-1 sm:grid-cols-2 gap-3.5`.
+- **Close affordance** is built in (OverlayClose / OVERLAY-CLOSE-CANON) — don't hand-roll close buttons. `Escape`/backdrop handled by the shared overlay logic.
+- **Tokens only** (see Design System below); never hardcode hex outside the `--blanc-*` set.
+
 ### Hierarchy & Composition
 
 - **Entity name/title — always large** (`h2`, `text-2xl`, font `--blanc-font-heading`). This is the entry point — the eye catches it first.

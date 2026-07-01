@@ -241,6 +241,28 @@ async function addItem(companyId, invoiceId, userId, item) {
 }
 
 /**
+ * PRICEBOOK-001: bulk add (Price Book group expanded into items).
+ * ONE recalc + ONE event vs N round-trips.
+ */
+async function addItems(companyId, invoiceId, userId, items) {
+    const invoice = await invoicesQueries.getInvoiceById(companyId, invoiceId);
+    if (!invoice) {
+        throw new InvoicesServiceError('NOT_FOUND', `Invoice ${invoiceId} not found`, 404);
+    }
+    const list = Array.isArray(items) ? items : [];
+    if (list.length === 0) return { added: 0, items: [] };
+
+    const created = [];
+    for (const item of list) {
+        created.push(await invoicesQueries.addInvoiceItem(invoiceId, item));
+    }
+    await invoicesQueries.recalculateInvoiceTotals(invoiceId);
+    await invoicesQueries.createEvent(invoiceId, 'items_added', 'user', userId, { count: created.length });
+
+    return { added: created.length, items: created };
+}
+
+/**
  * Update a line item.
  */
 async function updateItem(companyId, invoiceId, userId, itemId, data) {
@@ -613,6 +635,7 @@ module.exports = {
     updateInvoice,
     deleteInvoice,
     addItem,
+    addItems,
     updateItem,
     removeItem,
     sendInvoice,

@@ -4,6 +4,19 @@
 
 ---
 
+## 2026-07-01 — PRICEBOOK-001: Price Book (Category → Group → Item) editor + estimate/invoice integration
+
+Evolved the flat `estimate_item_presets` catalog into a 3-level **Price Book**. **Item** = the existing presets table extended with `category_id`/`code`(SKU)/`unit` (data preserved). **Category** (`price_book_categories`) groups items & groups but is never added to a document. **Group** (`price_book_groups` + M2M `price_book_group_items` with per-item `quantity`+`sort_order`) — selecting a group in an estimate/invoice inserts ALL its active items as line items; the group itself isn't stored.
+
+- **Backend:** migration **141** (3 tables + preset columns + perm backfill); new `price_book.view`/`.manage` perms (050 for new companies + 141 backfill + `permissionCatalog.js`); `priceBookQueries` + `priceBookService` (categories/groups CRUD, membership replace, group expansion that snapshots price/qty and **skips archived** items, in `sort_order`); `estimateItemPresets` queries/service extended (category/code/unit + paginated management list with category join); `/api/price-book` router (reads `price_book.view`, writes `price_book.manage`, company-scoped); **bulk** `POST /api/estimates|invoices/:id/items/bulk` (one status-reset + ONE recalc + ONE `items_added` event, vs N round-trips).
+- **Frontend:** **Settings → Price Book** page (`/settings/price-book`, gated `price_book.manage`) — tabs Items/Groups/Categories with list+search+create/edit dialog+archive; group editor picks items + qty. `ItemPresetSearchCombobox` gains a Groups section (`onPickGroup`); Estimate/Invoice panels expand a picked group into its items via the bulk endpoint. `priceBookApi.ts` + bulk helpers.
+- **Independent gap-review before coding fixed:** stale migration number (G1→141), N-round-trip expansion → bulk endpoint (G2), archived-item skip + snapshot + order (G4/G5), group total (G6), `permissionCatalog` registration (G7), item `code`/`unit` (G8). A jest failure also caught a `NaN` item_id leak in `normalizeItems` (now filtered).
+- **UX canon:** editors rewritten from center Dialogs → canonical **right-side slide-over "layer"** (`DialogContent variant="panel"` + `FloatingField`/`FloatingSelect`, mirroring `EstimateItemDialog`; mobile auto→bottom-sheet). The "layers = right-side panel, never a center modal for view/edit" rule is now recorded in the project **CLAUDE.md** (top UI principle) + `docs/specs/FORM-CANON.md`.
+- **Import/Export (CSV):** Import/Export buttons at the top of the page open a right-side layer with a drop-zone + "Download the fill-in template" link + Export button. Columns `Name, Description, Code, Unit, Unit Price, Taxable, Category, Group, Group Quantity` (header order flexible). Import upserts items by name, **find-or-creates** the named Category & Group and adds the item to the group with quantity (existing category/group → item added there); partial-success with a per-row error summary. Export = one row per (item, active membership), round-trips. Endpoints `GET /template|/export` (view) + `POST /import` (manage); hand-rolled CSV (no lib).
+- **Verified end-to-end on the local stack:** migration 141 applied; API create category→items→group (total=355); **CSV import round-trip** (2 items → 1 category + 1 group, total=330 → export round-trips); Price Book page + all editors + the Import/Export layer rendered live (screenshots). `tests/priceBook.test.js` 10/10 (CRUD + expansion + CSV import); frontend `tsc -b` green. No cost/brand/images, no read/unread, snapshot semantics. Spec `Docs/specs/PRICEBOOK-001.md`. NOT deployed.
+
+---
+
 ## 2026-07-01 — LEADS-NEW-BADGE-001: "new leads" counter badge in the nav
 
 Dispatchers didn't notice incoming leads. Added a number-in-a-circle badge on the **Leads** nav item (like the Pulse "new events" badge) showing the company's count of **new/unactioned** leads — `status ∈ {Submitted, New, Review}` and `lead_lost = false` (Submitted is the creation default; New/Review are the other pre-contact states). **No read/unread**: purely status-derived, so it does NOT clear on opening the page — only as leads get actioned (a persistent "N awaiting triage" indicator). Company-scoped; visibility follows `leads.view`.
@@ -14,6 +27,8 @@ Dispatchers didn't notice incoming leads. Added a number-in-a-circle badge on th
 - **UI:** reuses `.pulse-unread-badge` (number, "9+"), desktop + mobile, `position:relative` added to the Leads trigger.
 
 Independent plan review caught + fixed: route-ordering trap (G1), global-SSE→client company-filter + PII-free payload (G2), status emits needed in 5 functions not 1 (G3), `position:relative` (G4). No migration (indexes + `lead_lost` exist). `tests/leadsNewCount.test.js` (7 cases: count scoping/null-guard, PII-free emit, best-effort, no-company); frontend `tsc -b` green; existing convert test stays green. Spec `Docs/specs/LEADS-NEW-BADGE-001.md`. NOT deployed.
+
+**Follow-up (local manual testing caught a live-update bug):** `sseManager.connect()` attaches native `EventSource` listeners only for a **hardcoded `namedEvents` array**, so adding `lead.created`/`lead.updated` to `useRealtimeEvents` alone wasn't enough — the events never fired client-side and the badge only refreshed via the 60s poll. Fixed by adding `lead.created`/`lead.updated` to `sseManager` `namedEvents`. Verified live on the local stack (backend :3000 + frontend :3001 vs the dev DB, company …0001): create Submitted lead → badge 1→2, mark-lost → 2→1, instantly via SSE. Full jest suite: 1297 pass / 14 pre-existing failures in unrelated subsystems (slot-engine, inbox, fsm, state-machine, routeGuards `/e/:token`); the 4 feature-relevant suites 42/42 green.
 
 ---
 

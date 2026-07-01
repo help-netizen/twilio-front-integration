@@ -19,6 +19,9 @@ const COLUMNS = `
     default_quantity,
     default_unit_price,
     default_taxable,
+    category_id,
+    code,
+    unit,
     usage_count,
     last_used_at,
     created_by,
@@ -75,14 +78,17 @@ async function insertPreset(companyId, payload, client = null) {
         default_quantity = 1,
         default_unit_price = 0,
         default_taxable = false,
+        category_id = null,
+        code = null,
+        unit = null,
         createdBy = null,
     } = payload;
     const { rows } = await query(
         `INSERT INTO estimate_item_presets
-            (company_id, name, description, default_quantity, default_unit_price, default_taxable, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+            (company_id, name, description, default_quantity, default_unit_price, default_taxable, category_id, code, unit, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING ${COLUMNS}`,
-        [companyId, name, description, default_quantity, default_unit_price, !!default_taxable, createdBy],
+        [companyId, name, description, default_quantity, default_unit_price, !!default_taxable, category_id, code, unit, createdBy],
     );
     return rows[0];
 }
@@ -97,6 +103,9 @@ async function updatePresetScoped(companyId, id, payload, client = null) {
         ['default_quantity', 'default_quantity'],
         ['default_unit_price', 'default_unit_price'],
         ['default_taxable', 'default_taxable'],
+        ['category_id', 'category_id'],
+        ['code', 'code'],
+        ['unit', 'unit'],
     ]) {
         if (payload[k] !== undefined) {
             params.push(payload[k]);
@@ -138,8 +147,36 @@ async function incrementUsageScoped(companyId, id, client = null) {
     return rows[0] || null;
 }
 
+// PRICEBOOK-001: paginated management list (Items tab) — category filter,
+// archived toggle, joined category name. Distinct from searchForCompany (the
+// inline combobox, capped active-only search).
+async function listForManage(companyId, { search = '', category_id = null, includeArchived = false, limit = 50, offset = 0 } = {}, client = null) {
+    const query = queryFor(client);
+    const params = [companyId];
+    let where = `p.company_id = $1`;
+    if (!includeArchived) where += ` AND p.archived_at IS NULL`;
+    if (category_id != null) { params.push(category_id); where += ` AND p.category_id = $${params.length}`; }
+    if (search && search.trim()) {
+        params.push(`%${search.trim()}%`);
+        where += ` AND (p.name ILIKE $${params.length} OR coalesce(p.code,'') ILIKE $${params.length} OR coalesce(p.description,'') ILIKE $${params.length})`;
+    }
+    params.push(Math.min(Math.max(limit | 0, 1), 200));
+    params.push(Math.max(offset | 0, 0));
+    const { rows } = await query(
+        `SELECT ${COLUMNS.split(',').map(c => 'p.' + c.trim()).join(', ')}, c.name AS category_name
+         FROM estimate_item_presets p
+         LEFT JOIN price_book_categories c ON c.id = p.category_id
+         WHERE ${where}
+         ORDER BY p.archived_at IS NOT NULL, lower(p.name) ASC
+         LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        params,
+    );
+    return rows;
+}
+
 module.exports = {
     searchForCompany,
+    listForManage,
     getByIdScoped,
     findByNameScoped,
     insertPreset,

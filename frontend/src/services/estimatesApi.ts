@@ -306,6 +306,14 @@ export async function addEstimateItem(estimateId: number, item: EstimateItemCrea
     });
 }
 
+// PRICEBOOK-001: bulk add (a Price Book group expanded into its items) — one call.
+export async function addEstimateItemsBulk(estimateId: number, items: EstimateItemCreateData[]): Promise<{ added: number }> {
+    return estimatesRequest<{ added: number }>(`${ESTIMATES_BASE}/${estimateId}/items/bulk`, {
+        method: 'POST',
+        body: JSON.stringify({ items }),
+    });
+}
+
 export async function updateEstimateItem(estimateId: number, itemId: number, data: Partial<EstimateItemCreateData>): Promise<EstimateItem> {
     return estimatesRequest<EstimateItem>(`${ESTIMATES_BASE}/${estimateId}/items/${itemId}`, {
         method: 'PUT',

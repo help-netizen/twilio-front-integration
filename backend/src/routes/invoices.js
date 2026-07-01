@@ -284,6 +284,18 @@ router.post('/:id/items', requirePermission('invoices.create'), async (req, res)
     }
 });
 
+// PRICEBOOK-001: bulk add (a Price Book group expanded into its items).
+router.post('/:id/items/bulk', requirePermission('invoices.create'), async (req, res) => {
+    try {
+        const result = await invoicesService.addItems(getCompanyId(req), req.params.id, getUserId(req), req.body?.items);
+        res.status(201).json({ ok: true, data: result });
+    } catch (err) {
+        console.error('[Invoices] POST /:id/items/bulk error:', err.message);
+        const status = err.httpStatus || 500;
+        res.status(status).json({ ok: false, error: { code: err.code || 'INTERNAL', message: err.message } });
+    }
+});
+
 // PUT /api/invoices/:id/items/:itemId — Update line item
 router.put('/:id/items/:itemId', requirePermission('invoices.create'), async (req, res) => {
     try {

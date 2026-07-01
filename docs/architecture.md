@@ -2887,3 +2887,33 @@ callback (no new callback plumbing). Minimal additive change.
 
 **Semantics.** Purely status-derived — no read/unread. The badge does not clear on viewing the page;
 it reflects the live count of leads still in the new set. Persistent triage indicator.
+
+---
+
+## PRICEBOOK-001 — Price Book architecture
+
+**Data.** `estimate_item_presets` IS the Items table (extended with `category_id`/`code`/`unit`).
+`price_book_categories` (grouping only) + `price_book_groups` + M2M `price_book_group_items`
+(`quantity`+`sort_order` on the link, unique `(group_id,item_id)`). Category FK `ON DELETE SET NULL`.
+Migration 141; all company-scoped, soft-delete, unique active name per company.
+
+**Layering.** `priceBookQueries` (SQL, transactional `setGroupItems` via `db.getClient()`) →
+`priceBookService` (validation, membership replace, `getGroupExpansion`) → `routes/price-book.js`
+(`price_book.view` reads / `price_book.manage` writes). Items CRUD delegates to the extended
+`estimateItemPresetsService`. The inline picker keeps its own `/api/estimate-item-presets` route.
+
+**Group → document.** A group is never stored on an estimate/invoice. Adding it = fetch
+`GET /groups/:id/expand` (active items only, snapshot price/qty, ordered) → `POST .../items/bulk`
+(one status-reset + ONE recalc + ONE `items_added` event). Group `total` is a read-time
+Σ(price×qty) over active items.
+
+**RBAC.** `price_book.view`/`.manage` in `permissionCatalog.js` (Roles editor) + `050` (new companies)
++ 141 backfill (existing). view→all doc-editing roles; manage→admin+manager.
+
+**Frontend.** `PriceBookPage` (Settings → Price Book, tabs Items/Groups/Categories, dialog editors) +
+`priceBookApi`. `ItemPresetSearchCombobox` gains an optional Groups section (`onPickGroup`) — the
+Estimate/Invoice panels' `pickGroup` expands via the bulk endpoint. `DEV_PERMISSIONS` include the new
+keys so the page shows in local dev.
+
+**Edge cases.** Archived category/group/item → hidden from pickers (SET NULL / soft-delete); group
+expansion skips archived items; `normalizeItems` filters non-numeric item_ids (jest-caught).

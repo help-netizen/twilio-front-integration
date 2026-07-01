@@ -68,6 +68,7 @@ const DEV_PERMISSIONS = [
     'financial_data.view',
     'estimates.view', 'estimates.create', 'estimates.send',
     'invoices.view', 'invoices.create', 'invoices.send',
+    'price_book.view', 'price_book.manage',
     'payments.view', 'payments.collect_online', 'payments.collect_offline', 'payments.refund',
     'reports.dashboard.view', 'reports.jobs.view', 'reports.leads.view',
     'reports.calls.view', 'reports.payments.view', 'reports.financial.view',
