@@ -1,0 +1,40 @@
+{
+	email help@bostonmasters.com
+}
+
+albusto.com, www.albusto.com {
+	root * /var/www/albusto
+	encode zstd gzip
+	file_server
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer-when-downgrade
+	}
+}
+
+app.albusto.com, api.albusto.com {
+	encode zstd gzip
+
+	# Marketplace apps (isolated runtimes) under /apps/<key>
+	handle_path /apps/leads* {
+		reverse_proxy 127.0.0.1:4001
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:3000
+	}
+
+	handle_errors {
+		respond "Albusto backend is not deployed yet." {err.status_code}
+	}
+}
+
+auth.albusto.com {
+	encode zstd gzip
+	# Bare root otherwise 302s into the raw Keycloak admin console; send
+	# visitors to the app instead (unauthenticated users get the branded login).
+	@root path /
+	redir @root https://app.albusto.com/ 302
+
+	reverse_proxy 127.0.0.1:8081
+}

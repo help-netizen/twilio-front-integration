@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-07-01 — KC-ROOT-BRAND-001: auth.albusto.com root no longer exposes raw Keycloak
+
+`https://auth.albusto.com/` (the bare root) `302`-redirected into Keycloak's **raw Administration Console** (`/admin/…`) — an unbranded "bare Keycloak" page. The branded `albusto` theme only wraps the *login flow*; nothing wrapped the root. Fixed at the **reverse-proxy (Caddy) layer** on prod, not in app code:
+
+- **Root redirect** — added `@root path /` + `redir @root https://app.albusto.com/ 302` to the `auth.albusto.com` block in `/etc/caddy/Caddyfile`. The bare root now bounces to the app; unauthenticated users pick up the branded Albusto login from there. The matcher is **root-only** (exact `path /`) — the login flow, OIDC discovery, `/resources/*`, and the admin console are untouched.
+- **Admin console kept** — `/admin` stays reachable (login-gated) for browser-based Keycloak administration; only the *bare-root shortcut* into it is removed (owner's call).
+- **Infra now tracked** — the prod Caddyfile was previously untracked (lived only on the box). Added a reference copy at `infra/Caddyfile` + `infra/README.md` (apply/rollback procedure). The live `/etc/caddy/Caddyfile` stays authoritative.
+
+Applied live + verified: root → `302 https://app.albusto.com/`; `/admin/` → KC console (`302 …/admin/master/console/`); `.well-known/openid-configuration` → `200`; login flow → `200` branded (`albusto-login` / `Shipped recently` markers present). `caddy validate` clean, graceful `systemctl reload caddy`, timestamped backup on the box for rollback. **No app code, migration, or app deploy** — a proxy-config change independent of the release pipeline.
+
+---
+
 ## 2026-06-30 — NOTES-ID-STABLE-001: fix "add a note → editing/deleting it right away fails" on ZB-linked jobs
 
 Adding a note to a job and then editing or deleting it immediately failed ("Note not found") until the page was refreshed. Root cause: on a Zenbooker-linked job, when Zenbooker echoed the new note back (`job.note_added`), `jobsService.mergeNotes` couldn't correlate the echo to the just-created local note — its text-match fallback was gated on `!ln.id`, but a freshly-created note has a local `id` (UUID) and no `zb_note_id` yet — so it **re-id'd the note to the Zenbooker id**. The client kept using the now-stale UUID, so `PATCH/DELETE /notes/:id` 404'd; a refresh re-read the new id and worked.
