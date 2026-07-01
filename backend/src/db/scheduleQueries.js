@@ -388,18 +388,28 @@ async function rescheduleTask(companyId, entityId, startAt, endAt) {
 // Reassign mutations
 // =============================================================================
 
-async function reassignJob(companyId, entityId, assigneeId, assigneeName = null) {
-    // Single-assignee REPLACE (not append): set assigned_techs to exactly the one
-    // chosen tech (with its display name), or [] to unassign. The old `|| $3`
-    // append accumulated stale techs when an already-assigned job was reassigned
-    // and stored only {id} (nameless chips) — JOB-TECH-ASSIGN-001.
-    const techs = assigneeId ? [{ id: assigneeId, name: assigneeName || '' }] : [];
+async function reassignJob(companyId, entityId, assignees = [], providerUserIds = null) {
+    // REPLACE assigned_techs with exactly the given providers (ZB team-member
+    // shape [{id,name}]); [] unassigns. Supports one OR many providers, deduped by
+    // id (JOB-PROVIDER-MULTI-001). REPLACE (not append) still guards the old bug
+    // where reassigning an already-assigned job accumulated stale/nameless chips
+    // (JOB-TECH-ASSIGN-001). When `providerUserIds` (a JSON string of internal
+    // crm_users ids) is supplied, the visibility mirror is refreshed in the same
+    // UPDATE so an assigned provider immediately sees the job on their schedule.
+    const seen = new Set();
+    const techs = (assignees || [])
+        .filter(a => a && a.id != null && String(a.id) !== '')
+        .map(a => ({ id: String(a.id), name: a.name || '' }))
+        .filter(a => (seen.has(a.id) ? false : (seen.add(a.id), true)));
+    const sets = ['assigned_techs = $3::jsonb', 'updated_at = NOW()'];
+    const params = [entityId, companyId, JSON.stringify(techs)];
+    if (providerUserIds != null) {
+        params.push(providerUserIds);
+        sets.push(`assigned_provider_user_ids = $${params.length}::jsonb`);
+    }
     const { rows } = await db.query(
-        `UPDATE jobs
-         SET assigned_techs = $3::jsonb,
-             updated_at = NOW()
-         WHERE id = $1 AND company_id = $2 RETURNING *`,
-        [entityId, companyId, JSON.stringify(techs)]
+        `UPDATE jobs SET ${sets.join(', ')} WHERE id = $1 AND company_id = $2 RETURNING *`,
+        params
     );
     return rows[0] || null;
 }

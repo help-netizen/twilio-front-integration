@@ -798,7 +798,7 @@ table tbody tr:hover {
     top: var(--blanc-layer-top);
     right: 0;
     bottom: 0;
-    z-index: 80;
+    z-index: 80; /* === OVERLAY_Z.panel (overlayLayout.ts) — non-modal right view card */
     width: 420px;
     pointer-events: auto;
     /* Solid near-white — same surface as form drawers (no frosted glass), so all
@@ -832,6 +832,8 @@ table tbody tr:hover {
         width: 100vw;
         height: 100dvh;
         max-height: 100dvh;
+        /* Mobile full-cover. Intentionally 120 (between OVERLAY_Z.panel 80 and modal 140)
+           — preserved as-is; no scale tier maps here and changing it would alter z-order. */
         z-index: 120;
         border-radius: 0;
         transform: none;

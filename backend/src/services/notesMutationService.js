@@ -28,12 +28,17 @@ const noteAttachmentsService = require('./noteAttachmentsService');
  * Server-side authority for whether `actor` may mutate `note`.
  * ZB-synced and legacy/no-author notes are admin-only; otherwise owner-only.
  */
-function canMutateNote(note, { isAdmin, actorSub }) {
+function canMutateNote(note, { isAdmin, actorSub, actorCrmUserId }) {
     if (isAdmin) return true;
     if (!note) return false;
     if (note.source === 'zenbooker' || note.zb_note_id) return false; // ZB-synced → admin only
     if (!note.created_by) return false;                               // legacy/no author → admin only
-    return note.created_by === actorSub;                              // owner only
+    // created_by may be the Keycloak sub OR the crm_users.id — the POST-note path
+    // stamped `crmUser.id || sub`, so a non-admin author whose crm_users.id differs
+    // from their sub would otherwise lose edit/delete on their own note. Match either
+    // (NOTE-AUTHOR-FIX-001).
+    return note.created_by === actorSub
+        || (actorCrmUserId != null && note.created_by === actorCrmUserId);
 }
 
 function findActiveNote(notes, noteId) {
@@ -51,7 +56,7 @@ async function editNote(adapter, noteId, { text, removeAttachmentIds = [], files
     if (!note) throw Object.assign(new Error('Note not found'), { status: 404 });
 
     const isAdmin = !!actor?.isAdmin;
-    if (!canMutateNote(note, { isAdmin, actorSub: actor?.sub })) {
+    if (!canMutateNote(note, { isAdmin, actorSub: actor?.sub, actorCrmUserId: actor?.crmUserId })) {
         throw Object.assign(new Error('Not allowed to edit this note'), { status: 403 });
     }
 
@@ -131,7 +136,7 @@ async function softDeleteNote(adapter, noteId, { actor, companyId }) {
     if (!note) throw Object.assign(new Error('Note not found'), { status: 404 });
 
     const isAdmin = !!actor?.isAdmin;
-    if (!canMutateNote(note, { isAdmin, actorSub: actor?.sub })) {
+    if (!canMutateNote(note, { isAdmin, actorSub: actor?.sub, actorCrmUserId: actor?.crmUserId })) {
         throw Object.assign(new Error('Not allowed to delete this note'), { status: 403 });
     }
 

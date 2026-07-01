@@ -1,45 +1,7 @@
-/* ─── Lead Form Settings Page ─────────────────────────────────────────────── */
-.lfsp-page {
-    max-width: 780px;
-    margin: 0 auto;
-    padding: 32px 24px 80px;
-    overflow-y: auto;
-    flex: 1;
-}
-
-.lfsp-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 32px;
-}
-
-.lfsp-title {
-    font-size: 24px;
-    font-weight: 700;
-    color: var(--blanc-ink-1);
-    margin: 0 0 4px;
-}
-
-.lfsp-subtitle {
-    font-size: 14px;
-    color: var(--blanc-ink-3);
-    margin: 0;
-}
-
-/* Section */
-.lfsp-section {
-    margin-bottom: 40px;
-    background: rgba(117, 106, 89, 0.04);
-    border-radius: 16px;
-    padding: 16px;
-}
-
-.lfsp-section-desc {
-    font-size: 13px;
-    color: var(--blanc-ink-3);
-    margin: 0 0 16px;
-}
+/* ─── Lead Form Settings — sortable rows ──────────────────────────────────────
+   Page shell, header, section cards, add-rows and the new-field form now live
+   inline on the page (Blanc tokens + ui/ components). Only the shared sortable
+   row / field-badge / tag styles used by Sortable*.tsx remain here. */
 
 /* Sortable list */
 .lfsp-list {
@@ -168,24 +130,6 @@
     cursor: not-allowed;
 }
 
-/* Searchable checkbox in add-field form */
-.lfsp-searchable-checkbox {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 13px;
-    color: var(--blanc-ink-2);
-    white-space: nowrap;
-    cursor: pointer;
-}
-
-.lfsp-searchable-checkbox input[type="checkbox"] {
-    width: 15px;
-    height: 15px;
-    accent-color: var(--blanc-job);
-    cursor: pointer;
-}
-
 .lfsp-lock {
     color: var(--blanc-ink-3);
     display: inline-flex;
@@ -195,13 +139,7 @@
     flex-shrink: 0;
 }
 
-/* Add row */
-.lfsp-add-row {
-    display: flex;
-    gap: 8px;
-    margin-top: 12px;
-}
-
+/* Inline input — reused by the tag rename field inside SortableTag */
 .lfsp-input {
     flex: 1;
     padding: 8px 12px;
@@ -215,52 +153,6 @@
 }
 
 .lfsp-input:focus {
-    border-color: var(--blanc-job);
-    box-shadow: 0 0 0 3px rgba(47, 99, 216, 0.12);
-}
-
-/* New field form — two rows */
-.lfsp-new-field-form {
-    margin-top: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    background: rgba(117, 106, 89, 0.04);
-    border-radius: 16px;
-    padding: 14px;
-}
-
-/* New field row — inputs */
-.lfsp-new-field-row {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-}
-
-.lfsp-new-field-actions {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-}
-
-.lfsp-new-field-buttons {
-    display: flex;
-    gap: 6px;
-}
-
-.lfsp-select {
-    padding: 8px 12px;
-    border: 1px solid var(--blanc-line);
-    border-radius: 10px;
-    font-size: 14px;
-    outline: none;
-    background: var(--blanc-surface-strong);
-    color: var(--blanc-ink-1);
-    cursor: pointer;
-    min-width: 130px;
-}
-
-.lfsp-select:focus {
     border-color: var(--blanc-job);
     box-shadow: 0 0 0 3px rgba(47, 99, 216, 0.12);
 }
@@ -365,19 +257,4 @@
     text-transform: uppercase;
     letter-spacing: 0.3px;
     flex-shrink: 0;
-}
-
-.lfsp-tag-add-row {
-    align-items: center;
-}
-
-.lfsp-tag-new-palette {
-    display: flex;
-    gap: 3px;
-    align-items: center;
-}
-
-.lfsp-swatch-small {
-    width: 18px;
-    height: 18px;
 }

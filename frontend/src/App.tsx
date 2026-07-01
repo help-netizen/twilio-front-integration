@@ -79,6 +79,7 @@ import { EventNotification } from './components/EventNotification';
 import NotificationReminderBanner from './components/NotificationReminderBanner';
 import SSEPushBridge from './components/SSEPushBridge';
 import { Toaster } from './components/ui/sonner';
+import { OverlayStackProvider } from './components/ui/OverlayStack';
 import './App.css';
 
 const queryClient = new QueryClient({
@@ -95,6 +96,7 @@ function App() {
     <AuthProvider>
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
+          <OverlayStackProvider>
           <OnboardingGate />
           <TwoFactorGate />
           <AppLayout>
@@ -181,6 +183,7 @@ function App() {
           <NotificationReminderBanner />
           <SSEPushBridge />
           <Toaster />
+          </OverlayStackProvider>
         </BrowserRouter>
       </QueryClientProvider>
     </AuthProvider>

@@ -78,6 +78,8 @@ const CORNER_PILL_STYLE: React.CSSProperties = { background: "rgba(117,106,89,0.
 // fixed, desktop-only (`md:flex hidden`), hidden until the `peer` panel (or the button
 // itself) is hovered.
 const SLIDEOVER_DESKTOP_CLASSES = cn(
+    // z-[141] === OVERLAY_CLOSE_Z (overlayLayout.ts), one notch above a modal panel —
+    // kept as a literal class (a computed z-[${n}] is invisible to the Tailwind JIT).
     "fixed z-[141] hidden h-7 w-7 items-center justify-center rounded-full",
     "bg-transparent text-transparent opacity-0 transition-all duration-150",
     "focus:outline-none md:flex",

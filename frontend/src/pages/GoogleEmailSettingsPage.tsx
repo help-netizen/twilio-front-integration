@@ -86,7 +86,7 @@ export default function GoogleEmailSettingsPage() {
     const status = mailbox ? STATUS_CONFIG[mailbox.status] || STATUS_CONFIG.disconnected : null;
 
     return (
-        <div className="p-6 max-w-2xl mx-auto">
+        <div className="p-6 max-w-4xl">
             <button
                 onClick={() => navigate('/settings/integrations')}
                 className="inline-flex items-center gap-1.5 text-sm mb-4"

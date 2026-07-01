@@ -33,6 +33,8 @@ interface Note {
     source?: string | null;
     created_by?: string | null;
     zb_note_id?: string | null;
+    /** Server-authoritative edit/delete permission for the current user (NOTE-AUTHOR-FIX-001). */
+    can_edit?: boolean;
     attachments?: NoteAttachment[];
 }
 
@@ -100,12 +102,17 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
 
     const basePath = apiPath(entityType, entityId);
 
-    // Permission predicate — UI convenience; server is the real gate.
+    // Prefer the server-authoritative flag (NOTE-AUTHOR-FIX-001) — it matches the
+    // note author by EITHER the Keycloak sub OR the crm_users.id, which the client
+    // can't do (it only knows `sub`). Fall back to the local heuristic when a note
+    // predates the flag (older payloads / entities not yet returning it).
     const canEdit = (n: Note) =>
-        isAdmin ? true
-        : (n.source === 'zenbooker' || n.zb_note_id) ? false
-        : n.created_by ? n.created_by === myId
-        : false;
+        n.can_edit ?? (
+            isAdmin ? true
+            : (n.source === 'zenbooker' || n.zb_note_id) ? false
+            : n.created_by ? n.created_by === myId
+            : false
+        );
     const canDelete = canEdit;
 
     const fetchNotes = useCallback(async () => {

@@ -106,13 +106,13 @@ export function RecommendationSettings() {
         <div className="rounded-2xl p-4" style={{ background: 'rgba(117, 106, 89, 0.04)' }}>
             <div className="blanc-eyebrow" style={LABELS}>Recommendation settings</div>
             <p className="mt-1 text-[11px]" style={{ color: 'var(--blanc-ink-3)' }}>
-                How the scheduler suggests arrival windows and technicians.
+                How the scheduler suggests arrival windows and providers.
             </p>
 
             <div className="mt-4 space-y-4">
                 <NumberField
                     label="Max distance (mi)"
-                    helper="Limits how far a technician can be from the nearest existing job — and from their base on an empty day — to be recommended."
+                    helper="Limits how far a provider can be from the nearest existing job — and from their base on an empty day — to be recommended."
                     value={form.max_distance_miles}
                     error={errors.max_distance_miles}
                     disabled={loading || saving}

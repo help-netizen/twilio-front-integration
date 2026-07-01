@@ -176,7 +176,7 @@ export const MobileScheduleBar: React.FC<MobileScheduleBarProps> = ({
                     {/* Technician selector */}
                     {providers.length > 0 && (
                         <div>
-                            <div style={eyebrow} className="mb-2">Technician</div>
+                            <div style={eyebrow} className="mb-2">Provider</div>
                             <div className="flex items-center gap-2 flex-wrap">
                                 <ScheduleProviderChips providers={providers} filters={filters} onFiltersChange={onFiltersChange} />
                             </div>

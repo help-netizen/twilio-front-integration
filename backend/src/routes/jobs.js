@@ -41,7 +41,10 @@ function isAdminActor(req) {
 function buildNoteActor(req) {
     return {
         sub: req.user?.sub || null,
-        crmUserId: req.user?.sub || null, // note_attachments.uploaded_by (matches POST-note path)
+        // Real crm_users.id (matches the POST-note path's `crmUser.id || sub`), used
+        // both for note_attachments.uploaded_by AND to authorise the note author when
+        // created_by was stamped with the crm_users.id (NOTE-AUTHOR-FIX-001).
+        crmUserId: req.user?.crmUser?.id || req.user?.sub || null,
         name: req.user?.name || null,
         isAdmin: isAdminActor(req),
     };
@@ -337,7 +340,7 @@ function zbUrlToAttachment(id, url, isImage) {
     return { id, fileName, contentType, fileSize: 0, url, source: 'zenbooker' };
 }
 
-function normalizeJobNote(n, index, localAttachments = []) {
+function normalizeJobNote(n, index, localAttachments = [], actor = null) {
     const zbMatch = typeof n.id === 'string' ? n.id.match(ZB_ID_RE) : null;
 
     // created: prefer existing; else derive from Zenbooker id; else null (frontend handles absent date)
@@ -372,11 +375,16 @@ function normalizeJobNote(n, index, localAttachments = []) {
         author,
         source: zbMatch ? 'zenbooker' : (n.source || null),
         zb_note_id: n.zb_note_id || null,
+        // Server-authoritative edit/delete permission for THIS actor (NOTE-AUTHOR-FIX-001).
+        // The client shows the ⋮ menu from this rather than guessing the author id.
+        can_edit: actor
+            ? notesMutationService.canMutateNote(n, { isAdmin: actor.isAdmin, actorSub: actor.sub, actorCrmUserId: actor.crmUserId })
+            : undefined,
     };
 }
 
 // Build the GET-shaped, soft-delete-excluded notes list for a job.
-async function enrichJobNotes(companyId, jobId, notes, fallbackCreated) {
+async function enrichJobNotes(companyId, jobId, notes, fallbackCreated, actor = null) {
     // Join by note_id; fall back to note_index for legacy rows whose note_id is null.
     const attachments = await noteAttachmentsService.getAttachmentsForEntity(companyId, 'job', jobId);
     const byNoteId = {};
@@ -390,7 +398,7 @@ async function enrichJobNotes(companyId, jobId, notes, fallbackCreated) {
         .filter(({ n }) => !n.deleted_at)
         .map(({ n, i }) => {
             const local = (n.id && byNoteId[n.id]) || byNoteIndex[i] || [];
-            const normalized = normalizeJobNote(n, i, local);
+            const normalized = normalizeJobNote(n, i, local, actor);
             if (!normalized.created) normalized.created = fallbackCreated;
             return normalized;
         });
@@ -406,7 +414,7 @@ router.get('/:id/notes', requirePermission('jobs.view'), async (req, res) => {
         // Fallback date for notes with no id-derived timestamp: use job.updated_at
         // (closest signal we have to when Zenbooker delivered the note).
         const fallbackCreated = job.updated_at || new Date().toISOString();
-        const enriched = await enrichJobNotes(companyId, jobId, job.notes || [], fallbackCreated);
+        const enriched = await enrichJobNotes(companyId, jobId, job.notes || [], fallbackCreated, buildNoteActor(req));
 
         res.json({ ok: true, data: enriched });
     } catch (err) {
@@ -503,7 +511,7 @@ router.patch('/:id/notes/:noteId', requirePermission('jobs.edit', 'jobs.done_pen
         }, 'user', req.user?.sub);
 
         const fallbackCreated = existing.updated_at || new Date().toISOString();
-        const enriched = await enrichJobNotes(companyId, jobId, await adapter.loadNotes(), fallbackCreated);
+        const enriched = await enrichJobNotes(companyId, jobId, await adapter.loadNotes(), fallbackCreated, buildNoteActor(req));
         res.json({ ok: true, data: { notes: enriched } });
     } catch (err) {
         const status = err.status || 500;
@@ -531,7 +539,7 @@ router.delete('/:id/notes/:noteId', requirePermission('jobs.edit', 'jobs.done_pe
         }, 'user', req.user?.sub);
 
         const fallbackCreated = existing.updated_at || new Date().toISOString();
-        const enriched = await enrichJobNotes(companyId, jobId, await adapter.loadNotes(), fallbackCreated);
+        const enriched = await enrichJobNotes(companyId, jobId, await adapter.loadNotes(), fallbackCreated, buildNoteActor(req));
         res.json({ ok: true, data: { notes: enriched } });
     } catch (err) {
         const status = err.status || 500;

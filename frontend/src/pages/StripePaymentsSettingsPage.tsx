@@ -84,7 +84,7 @@ export default function StripePaymentsSettingsPage() {
     const acct = status?.account;
 
     return (
-        <div className="max-w-3xl mx-auto px-6 py-8" style={{ color: 'var(--blanc-ink-1)' }}>
+        <div className="max-w-4xl px-6 py-8" style={{ color: 'var(--blanc-ink-1)' }}>
             <Button variant="ghost" onClick={() => navigate('/settings/integrations')} className="mb-6 h-auto px-0 hover:bg-transparent">
                 <ArrowLeft className="h-4 w-4" /> Integrations
             </Button>

@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Wand2, Sparkles, Send } from 'lucide-react';
-import { useOverlayDismiss } from '../../hooks/useOverlayDismiss';
+import { Overlay } from '../ui/Overlay';
 import { OverlayClose } from '../ui/OverlayClose';
 
 interface AIAssistantModalProps {
@@ -17,9 +17,6 @@ interface AIAssistantModalProps {
 export const AIAssistantModal: React.FC<AIAssistantModalProps> = ({ isOpen, onClose, onSubmit }) => {
     const [input, setInput] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
-
-    // Hook owns Esc + body-scroll-lock + backdrop close (OVERLAY-CLOSE-CANON-001).
-    const { backdropProps } = useOverlayDismiss({ open: isOpen, onClose, esc: true, closeOnBackdrop: true, scrollLock: true, focusTrap: false });
 
     useEffect(() => {
         if (isOpen) {
@@ -44,27 +41,39 @@ export const AIAssistantModal: React.FC<AIAssistantModalProps> = ({ isOpen, onCl
         if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSubmit();
     };
 
-    if (!isOpen) return null;
-
+    // Portal + backdrop + behavior (Esc / body-scroll-lock / backdrop close) come from the
+    // shared Overlay core (variant="centered"). OVERLAY-CANON-002 Phase 1 fix: focus-trap
+    // is now ENABLED (the centered variant's default) — this modal previously had none.
     return (
-        <>
-            {/* Backdrop */}
-            <div
-                className="fixed inset-0 z-50 transition-opacity"
-                style={{ background: 'rgba(32, 39, 52, 0.65)', backdropFilter: 'blur(8px)' }}
-                onClick={backdropProps.onClick}
-            />
-
-            {/* Modal */}
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-6 pointer-events-none">
+        <Overlay
+            open={isOpen}
+            onClose={onClose}
+            variant="centered"
+            backdropClassName="fixed inset-0 transition-opacity"
+        >
+            {/* Modal — OVERLAY-CANON-002: was z-50 (below the z-80 detail panel — a modal
+                could sit BEHIND the panel); lifted to the modal tier (140). Deliberate fix. */}
+            {({ panelProps, z, stack }) => (
+            <div className="fixed inset-0 flex items-center justify-center p-6 pointer-events-none" style={{ zIndex: z }}>
                 <div
+                    {...panelProps}
                     className="w-full max-w-[680px] overflow-hidden pointer-events-auto"
                     style={{
                         background: 'linear-gradient(135deg, rgba(255, 251, 245, 0.98), rgba(252, 246, 237, 0.96))',
                         border: '1px solid rgba(178, 106, 29, 0.22)',
                         borderRadius: 'var(--sched-radius-xl)',
+                        // The panel's own frosted-glass blur. The card-stack DIM is a separate
+                        // `filter` (brightness/saturate) below; both coexist since backdropFilter
+                        // and filter are independent properties.
                         backdropFilter: 'blur(24px)',
                         boxShadow: '0 24px 80px rgba(48, 39, 28, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.7)',
+                        outline: 'none',
+                        // Desktop card-stack when a layer is above (empty ⇒ unchanged / mobile).
+                        // This panel has no base transform (parent flex-centers it), so compose directly.
+                        transform: stack.transform || undefined,
+                        transformOrigin: stack.transformOrigin,
+                        filter: stack.filter,
+                        transition: stack.transition,
                     }}
                     onClick={(e) => e.stopPropagation()}
                 >
@@ -136,7 +145,7 @@ export const AIAssistantModal: React.FC<AIAssistantModalProps> = ({ isOpen, onCl
                             borderRadius: '14px',
                         }}>
                             <p className="text-[12px] font-medium leading-relaxed" style={{ color: 'var(--sched-ink-3)' }}>
-                                <strong style={{ color: 'var(--sched-ink-1)' }}>What AI will do:</strong> Automatically parse address, identify work type, find optimal time slot, and assign the most suitable technician based on skills and availability.
+                                <strong style={{ color: 'var(--sched-ink-1)' }}>What AI will do:</strong> Automatically parse address, identify work type, find optimal time slot, and assign the most suitable provider based on skills and availability.
                             </p>
                         </div>
 
@@ -182,6 +191,7 @@ export const AIAssistantModal: React.FC<AIAssistantModalProps> = ({ isOpen, onCl
                     </div>
                 </div>
             </div>
-        </>
+            )}
+        </Overlay>
     );
 };

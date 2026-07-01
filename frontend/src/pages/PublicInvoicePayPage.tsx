@@ -128,8 +128,8 @@ export default function PublicInvoicePayPage() {
                                     ? <img src={info.technician.photo_url} alt={info.technician.name || ''} style={{ width: 52, height: 52, borderRadius: '50%', objectFit: 'cover' }} />
                                     : <div style={{ width: 52, height: 52, borderRadius: '50%', background: '#efe7d8', color: '#8a7d68', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>{initials(info.technician.name)}</div>}
                                 <div>
-                                    <div style={{ fontSize: 12, color: '#a99e8a' }}>Your technician</div>
-                                    <div style={{ fontWeight: 600 }}>{info.technician.name || 'Our technician'}</div>
+                                    <div style={{ fontSize: 12, color: '#a99e8a' }}>Your provider</div>
+                                    <div style={{ fontWeight: 600 }}>{info.technician.name || 'Our provider'}</div>
                                 </div>
                             </div>
                         )}

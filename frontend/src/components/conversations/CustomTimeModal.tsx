@@ -629,7 +629,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
         getTeamMembers().then(members => {
             if (!cancelled) setProviders(members);
         }).catch((err) => {
-            if (!cancelled) setProviderError('Failed to load technicians');
+            if (!cancelled) setProviderError('Failed to load providers');
             console.error('[CustomTimeModal] getTeamMembers error:', err);
         });
         return () => { cancelled = true; };
@@ -839,7 +839,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                                     onClick={() => { onClose(); navigate('/settings/technicians'); }}
                                     style={{ marginTop: 8, padding: '8px 4px 2px', textAlign: 'left', fontSize: 11, lineHeight: 1.4, color: 'var(--blanc-ink-3)', borderTop: '1px solid var(--blanc-line)', background: 'transparent', cursor: 'pointer', width: '100%' }}
                                 >
-                                    {recsCoverage.technicians_total - recsCoverage.technicians_with_base} of {recsCoverage.technicians_total} technicians have no base address — suggestions may be incomplete. <span style={{ color: 'var(--blanc-job)', fontWeight: 600 }}>Set bases →</span>
+                                    {recsCoverage.technicians_total - recsCoverage.technicians_with_base} of {recsCoverage.technicians_total} providers have no base address — suggestions may be incomplete. <span style={{ color: 'var(--blanc-job)', fontWeight: 600 }}>Set bases →</span>
                                 </button>
                             )}
                         </div>
@@ -894,7 +894,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
                         )}
 
                         {techGroups.length === 0 && !loading && (
-                            <div className="ctm-timelines__empty">{providerError || 'No technicians found'}</div>
+                            <div className="ctm-timelines__empty">{providerError || 'No providers found'}</div>
                         )}
 
                         {techGroups.length > 0 && (
@@ -953,7 +953,7 @@ export function CustomTimeModal({ open, onClose, onConfirm, newJobCoords, newJob
 
                 <DialogFooter className="ctm-footer">
                     {selectedSlot && !techGroups.find(g => g.id === selectedSlot.techId)?.matchesTerritory && (
-                        <span className="ctm-footer__territory-warn">⚠ This technician does not serve this territory</span>
+                        <span className="ctm-footer__territory-warn">⚠ This provider does not serve this territory</span>
                     )}
                     <Button variant="ghost" onClick={onClose}>Cancel</Button>
                     <Button onClick={handleConfirm} disabled={!selectedSlot}>

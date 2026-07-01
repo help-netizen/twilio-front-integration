@@ -90,14 +90,20 @@ router.patch('/items/:entityType/:entityId/reassign', requirePermission('schedul
     try {
         const companyId = req.companyFilter?.company_id;
         const { entityType, entityId } = req.params;
-        const { assignee_id, assignee_name } = req.body;
+        const { assignees, assignee_id, assignee_name } = req.body;
 
-        // null is the explicit "unassign" sentinel; only a MISSING field is invalid.
-        if (assignee_id === undefined) {
-            return res.status(400).json({ ok: false, error: { code: 'MISSING_FIELD', message: 'assignee_id is required (use null to unassign)' } });
+        // Prefer the multi-provider `assignees` array; fall back to the legacy
+        // single {assignee_id, assignee_name} (Schedule drag). null/[] = unassign.
+        let list;
+        if (Array.isArray(assignees)) {
+            list = assignees;
+        } else if (assignee_id !== undefined) {
+            list = assignee_id ? [{ id: assignee_id, name: assignee_name ?? null }] : [];
+        } else {
+            return res.status(400).json({ ok: false, error: { code: 'MISSING_FIELD', message: 'assignees (array) or assignee_id (use null to unassign) is required' } });
         }
 
-        const result = await scheduleService.reassignItem(companyId, entityType, entityId, assignee_id, assignee_name ?? null);
+        const result = await scheduleService.reassignItem(companyId, entityType, entityId, list);
         res.json({ ok: true, data: result });
     } catch (err) {
         console.error('[Schedule] PATCH reassign error:', err.message);

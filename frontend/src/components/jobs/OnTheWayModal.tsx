@@ -176,7 +176,7 @@ export function OnTheWayModal({ open, onClose, job, onDone }: Props) {
                         On the way
                     </DialogTitle>
                     <DialogDescription className="sr-only">
-                        Notify the customer that the technician is en route
+                        Notify the customer that the provider is en route
                     </DialogDescription>
                 </DialogPanelHeader>
 

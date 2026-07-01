@@ -141,7 +141,7 @@ export default function ActionRequiredSettingsPage() {
 
     if (isLoading) {
         return (
-            <div className="max-w-3xl mx-auto p-6">
+            <div className="max-w-4xl p-6">
                 <div className="animate-pulse space-y-4">
                     <div className="h-8 rounded w-64" style={{ background: 'rgba(117,106,89,0.08)' }} />
                     <div className="h-40 rounded" style={{ background: 'rgba(117,106,89,0.04)' }} />
@@ -152,7 +152,7 @@ export default function ActionRequiredSettingsPage() {
 
     if (error || !config) {
         return (
-            <div className="max-w-3xl mx-auto p-6">
+            <div className="max-w-4xl p-6">
                 <p style={{ color: 'var(--blanc-danger)' }}>Failed to load settings</p>
             </div>
         );
@@ -169,7 +169,7 @@ export default function ActionRequiredSettingsPage() {
     };
 
     return (
-        <div className="max-w-3xl mx-auto p-6">
+        <div className="max-w-4xl p-6">
             <div className="blanc-eyebrow">Settings</div>
             <h1 className="text-2xl font-semibold mt-1 mb-1" style={{ fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1, #202734)' }}>Actions &amp; notifications</h1>
             <p className="text-sm mb-7" style={{ color: 'var(--blanc-ink-3, #7d8796)' }}>

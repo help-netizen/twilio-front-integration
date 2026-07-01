@@ -205,6 +205,18 @@ export async function reassignItem(
     });
 }
 
+/** Set the FULL provider list on a job (multi-assign + Save). [] unassigns all.
+ *  Pushes the assign/unassign diff to Zenbooker server-side (JOB-PROVIDER-MULTI-001). */
+export async function setJobProviders(
+    jobId: number,
+    providers: { id: string; name: string }[],
+): Promise<void> {
+    await scheduleRequest<void>(`${SCHEDULE_BASE}/items/job/${jobId}/reassign`, {
+        method: 'PATCH',
+        body: JSON.stringify({ assignees: providers }),
+    });
+}
+
 export interface CreateFromSlotPayload {
     title: string;
     start_at: string;

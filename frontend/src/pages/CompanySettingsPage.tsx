@@ -259,7 +259,7 @@ export default function CompanySettingsPage() {
     const refetch = () => qc.invalidateQueries({ queryKey: ['company-profile'] });
 
     return (
-        <div className="max-w-2xl mx-auto px-6 py-8" style={{ color: 'var(--blanc-ink-1)' }}>
+        <div className="max-w-4xl px-6 py-8" style={{ color: 'var(--blanc-ink-1)' }}>
             <button onClick={() => navigate('/settings/integrations')} className="flex items-center gap-1.5 text-sm mb-6" style={{ color: 'var(--blanc-ink-3)' }}>
                 <ArrowLeft className="h-4 w-4" /> Settings
             </button>

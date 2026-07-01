@@ -6,12 +6,11 @@
  * that displays image attachments.
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { createPortal } from 'react-dom';
 import {
     ChevronLeft, ChevronRight as ChevronRightIcon,
     ExternalLink, RotateCcw,
 } from 'lucide-react';
-import { useOverlayDismiss } from '../../hooks/useOverlayDismiss';
+import { Overlay } from '../ui/Overlay';
 import { OverlayClose } from '../ui/OverlayClose';
 
 // ─── Public interfaces ───────────────────────────────────────────────────────
@@ -86,16 +85,19 @@ export function FullscreenImageViewer({
         return () => document.removeEventListener('keydown', handleKeyDown);
     }, [handleKeyDown]);
 
-    // Hook owns Esc + body-scroll-lock (OVERLAY-CLOSE-CANON-001); backdrop close
-    // stays bespoke below (the `target === currentTarget` guard).
-    useOverlayDismiss({ open: !!current, onClose, esc: true, closeOnBackdrop: false, scrollLock: true, focusTrap: false });
-
     if (!current) return null;
 
-    return createPortal(
+    // Portal + Esc + body-scroll-lock come from the shared Overlay core (variant="lightbox":
+    // scroll-lock on, focus-trap off, no default backdrop, backdrop-close off). This lightbox
+    // is its OWN scrim (the full-screen container), and backdrop close stays bespoke below
+    // (the `target === currentTarget` guard), so we render no core backdrop and don't spread
+    // panelProps — the container markup is unchanged.
+    return (
+        <Overlay open={!!current} onClose={onClose} variant="lightbox" backdrop={false}>
+            {({ z }) => (
         <div
-            className="fixed inset-0 z-[9999] flex flex-col"
-            style={{ background: 'rgba(0,0,0,0.92)' }}
+            className="fixed inset-0 flex flex-col"
+            style={{ background: 'rgba(0,0,0,0.92)', zIndex: z }}
             onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
         >
             {/* Top bar */}
@@ -172,8 +174,9 @@ export function FullscreenImageViewer({
                     ))}
                 </div>
             )}
-        </div>,
-        document.body,
+        </div>
+            )}
+        </Overlay>
     );
 }
 

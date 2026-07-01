@@ -78,7 +78,7 @@ function ZenbookerLinkField({ value, onChange }: { value: string | null; onChang
                     </Select>
                     <p className="text-[12px] text-muted-foreground">
                         {linked
-                            ? 'Jobs assigned to this technician in Zenbooker are visible to this user.'
+                            ? 'Jobs assigned to this provider in Zenbooker are visible to this user.'
                             : 'Without a link, a provider with "assigned jobs only" sees no jobs.'}
                     </p>
                 </>

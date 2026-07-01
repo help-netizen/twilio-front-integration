@@ -402,7 +402,9 @@ function isAdminActor(req) {
 function buildNoteActor(req) {
     return {
         sub: req.user?.sub || null,
-        crmUserId: req.user?.sub || null,
+        // Real crm_users.id so a non-admin author is recognised when created_by was
+        // stamped with the crm_users.id (NOTE-AUTHOR-FIX-001).
+        crmUserId: req.user?.crmUser?.id || req.user?.sub || null,
         name: req.user?.name || null,
         isAdmin: isAdminActor(req),
     };
@@ -425,7 +427,7 @@ function parseRemoveAttachmentIds(raw) {
 }
 
 // Build the GET-shaped, soft-delete-excluded notes list for a contact.
-async function enrichContactNotes(companyId, contactId, notes) {
+async function enrichContactNotes(companyId, contactId, notes, actor = null) {
     const attachments = await noteAttachmentsService.getAttachmentsForEntity(companyId, 'contact', contactId);
     const byNoteId = {};
     const byNoteIndex = {};
@@ -443,6 +445,10 @@ async function enrichContactNotes(companyId, contactId, notes) {
             source: n.source || null,
             zb_note_id: n.zb_note_id || null,
             attachments: (n.id && byNoteId[n.id]) || byNoteIndex[i] || [],
+            // Server-authoritative edit/delete permission (NOTE-AUTHOR-FIX-001).
+            can_edit: actor
+                ? notesMutationService.canMutateNote(n, { isAdmin: actor.isAdmin, actorSub: actor.sub, actorCrmUserId: actor.crmUserId })
+                : undefined,
         }));
 }
 
@@ -454,7 +460,7 @@ router.get('/:id/notes', requirePermission('contacts.view'), async (req, res) =>
         const contact = await contactsService.getById(contactId, companyId, getProviderScope(req));
         if (!contact) return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));
 
-        const enriched = await enrichContactNotes(companyId, contactId, contact.structured_notes || []);
+        const enriched = await enrichContactNotes(companyId, contactId, contact.structured_notes || [], buildNoteActor(req));
         res.json(successResponse(enriched, reqId));
     } catch (err) {
         console.error(`[ContactsAPI][${reqId}] Get notes error:`, err.message);
@@ -568,7 +574,7 @@ router.patch('/:id/notes/:noteId', requirePermission('contacts.edit'), upload.ar
             added: addedNames, removed: removedNames, actor_name: eventService.actorName(req),
         }, 'user', req.user?.sub);
 
-        const enriched = await enrichContactNotes(companyId, contactId, await adapter.loadNotes());
+        const enriched = await enrichContactNotes(companyId, contactId, await adapter.loadNotes(), buildNoteActor(req));
         res.json(successResponse({ notes: enriched }, reqId));
     } catch (err) {
         const status = err.status || 500;
@@ -596,7 +602,7 @@ router.delete('/:id/notes/:noteId', requirePermission('contacts.edit'), async (r
             note_id: note.id, deleted_text: note.text || '', actor_name: eventService.actorName(req),
         }, 'user', req.user?.sub);
 
-        const enriched = await enrichContactNotes(companyId, contactId, await adapter.loadNotes());
+        const enriched = await enrichContactNotes(companyId, contactId, await adapter.loadNotes(), buildNoteActor(req));
         res.json(successResponse({ notes: enriched }, reqId));
     } catch (err) {
         const status = err.status || 500;

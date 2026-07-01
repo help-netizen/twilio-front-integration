@@ -332,7 +332,7 @@ export function NewJobDialog({ open, onClose, copyFrom, presetSlot }: NewJobDial
                             </button>
                         ) : (
                             <Button type="button" variant="secondary" className="w-full justify-center h-[50px] text-[15px] rounded-xl" onClick={() => setTimeOpen(true)}>
-                                <Clock className="size-4 mr-2" /> Pick time &amp; technician
+                                <Clock className="size-4 mr-2" /> Pick time &amp; provider
                             </Button>
                         )}
 

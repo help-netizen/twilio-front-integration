@@ -178,16 +178,44 @@ async function captureJobTechDays(companyId, jobId) {
  * Jobs use assigned_techs (jsonb), tasks use assigned_provider_id.
  * Leads do not support assignment in this version.
  */
-async function reassignItem(companyId, entityType, entityId, assigneeId, assigneeName = null) {
+async function reassignItem(companyId, entityType, entityId, assignees = []) {
+    // JOB-PROVIDER-MULTI-001: one OR many providers. Normalize to [{id,name}] and
+    // dedupe by id (a client could send the same provider twice).
+    const seenIds = new Set();
+    const list = (assignees || [])
+        .filter(a => a && a.id != null && String(a.id) !== '')
+        .map(a => ({ id: String(a.id), name: a.name || '' }))
+        .filter(a => (seenIds.has(a.id) ? false : (seenIds.add(a.id), true)));
+
     // SCHED-ROUTE-001: capture old technician/days so the vacated route repairs.
     const before = entityType === 'job' ? await captureJobTechDays(companyId, entityId) : null;
+
+    // Capture the job's current providers + ZB linkage BEFORE the write so we can
+    // push the assign/unassign diff to Zenbooker (fixes the bug where a card
+    // reassignment never reached ZB). assigned_techs ids ARE ZB team-member ids.
+    // Also resolve the NEW providers to internal user ids so the visibility mirror
+    // (assigned_provider_user_ids) is refreshed → an assigned provider sees the job
+    // on their own schedule immediately.
+    let oldTechIds = [];
+    let zbJobId = null;
+    let providerUserIds = null;
+    if (entityType === 'job') {
+        try {
+            const jobsService = require('./jobsService');
+            const job = await jobsService.getJobById(entityId, companyId);
+            oldTechIds = (job?.assigned_techs || []).map(t => String(t.id)).filter(Boolean);
+            zbJobId = job?.zenbooker_job_id || null;
+            providerUserIds = await jobsService.resolveAssignedProviderUserIds(companyId, list);
+        } catch { /* best-effort — ZB push / mirror refresh skipped if we can't read it */ }
+    }
+
     let updated;
     switch (entityType) {
         case 'job':
-            updated = await scheduleQueries.reassignJob(companyId, entityId, assigneeId, assigneeName);
+            updated = await scheduleQueries.reassignJob(companyId, entityId, list, providerUserIds);
             break;
         case 'task':
-            updated = await scheduleQueries.reassignTask(companyId, entityId, assigneeId);
+            updated = await scheduleQueries.reassignTask(companyId, entityId, list[0]?.id ?? null);
             break;
         case 'lead':
             throw new ScheduleServiceError('NOT_SUPPORTED', 'Leads do not support provider assignment', 400);
@@ -199,8 +227,24 @@ async function reassignItem(companyId, entityType, entityId, assigneeId, assigne
         throw new ScheduleServiceError('NOT_FOUND', `${entityType} ${entityId} not found`, 404);
     }
 
+    // Push the assignment change to Zenbooker. Best-effort: a ZB failure is logged
+    // but never rolls back the local reassignment.
+    if (entityType === 'job' && zbJobId) {
+        const newTechIds = list.map(t => t.id);
+        const assign = newTechIds.filter(id => !oldTechIds.includes(id));
+        const unassign = oldTechIds.filter(id => !newTechIds.includes(id));
+        if (assign.length || unassign.length) {
+            try {
+                const zenbookerClient = require('./zenbookerClient');
+                await zenbookerClient.assignProviders(zbJobId, { assign, unassign });
+            } catch (err) {
+                console.error('[Schedule] ZB assignProviders failed (non-fatal):', err.response?.data || err.message);
+            }
+        }
+    }
+
     if (entityType === 'job') await recalcAfterJobChange(companyId, entityId, before);
-    return { entity_type: entityType, entity_id: entityId, assignee_id: assigneeId };
+    return { entity_type: entityType, entity_id: entityId, assignees: list, assignee_id: list[0]?.id ?? null };
 }
 
 /**

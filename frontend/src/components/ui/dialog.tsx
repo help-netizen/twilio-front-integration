@@ -2,7 +2,10 @@ import * as React from "react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { cn } from "../../lib/utils"
 import { OverlayClose } from "./OverlayClose"
-import type { DialogSize } from "./overlayLayout"
+import { cardStackStyle, type DialogSize } from "./overlayLayout"
+import { useIsMobile } from "../../hooks/useIsMobile"
+import { useOverlayDismiss } from "../../hooks/useOverlayDismiss"
+import { useOverlayStack } from "./OverlayStack"
 
 const Dialog = DialogPrimitive.Root
 const DialogTrigger = DialogPrimitive.Trigger
@@ -17,6 +20,8 @@ const DialogOverlay = React.forwardRef<
     <DialogPrimitive.Overlay
         ref={ref}
         className={cn(
+            // z-[140] === OVERLAY_Z.modal (overlayLayout.ts). Kept as a literal class, not
+            // an imported const: a computed z-[${n}] is invisible to the Tailwind JIT.
             "fixed inset-0 z-[140] bg-black/50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
             className
         )}
@@ -55,7 +60,73 @@ const PANEL_WIDTH: Record<DialogSize, string> = {
 const DialogContent = React.forwardRef<
     React.ElementRef<typeof DialogPrimitive.Content>,
     React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { size?: DialogSize; variant?: "dialog" | "panel" }
->(({ className, children, size = "default", variant = "dialog", onInteractOutside, ...props }, ref) => (
+>(({ className, children, size = "default", variant = "dialog", onInteractOutside, style, ...props }, ref) => {
+    // ── Mobile → canonical bottom-sheet chrome (OVERLAY-CANON-002, Phase 2a) ──────
+    // On mobile the `max-md:` classes already pin the content to the bottom, full-width,
+    // rounded-top-22 + blancSlideUp — but that lacked the canon's GRAB HANDLE and
+    // DRAG-TO-DISMISS, so dialogs felt different from a real <BottomSheet>. We add both,
+    // WITHOUT replacing Radix: it keeps ownership of state / Esc / focus / portal.
+    const isMobile = useIsMobile()
+    // A hidden Radix <Close> we click to dismiss on a completed drag — this routes the
+    // close through Radix's own onOpenChange(false), exactly like the corner × does, so
+    // no call site needs an extra prop.
+    const dragCloseRef = React.useRef<HTMLButtonElement>(null)
+    // Reuse ONLY the pointer-drag logic from the shared hook. Radix already owns Esc /
+    // focus-trap / scroll-lock / backdrop for dialogs, so every non-drag capability is
+    // turned OFF here to avoid double-handling; the hook is used purely for its
+    // dragHandlers + dragOffset + isDragging (offset → translateY, spring on release).
+    const { dragHandlers, dragOffset, isDragging } = useOverlayDismiss({
+        open: isMobile,
+        onClose: () => dragCloseRef.current?.click(),
+        esc: false,
+        closeOnBackdrop: false,
+        scrollLock: false,
+        focusTrap: false,
+        dragToDismiss: isMobile,
+    })
+    // While dragging: 1:1 finger tracking (no transition). On release: spring back — the
+    // SAME mapping BottomSheet uses. Only applied on mobile; desktop style is untouched.
+    const dragStyle: React.CSSProperties = isMobile
+        ? {
+            // Keep the transition present at REST (not only while offset>0) so an
+            // under-threshold drag release springs back smoothly instead of jumping —
+            // matching BottomSheet, which applies its transition unconditionally.
+            transform: dragOffset > 0 ? `translateY(${dragOffset}px)` : undefined,
+            transition: isDragging ? "none" : "transform 0.25s cubic-bezier(0.32, 0.72, 0, 1)",
+        }
+        : {}
+
+    // ── Desktop card-stack (OVERLAY-CANON-002, Phase 3) ──────────────────────────
+    // Radix's <DialogContent> is mounted ONLY while the dialog is open, so we register
+    // it in the OverlayStack with a stable id and open=true for its whole mounted life.
+    // This lets a Dialog-over-Dialog (e.g. the estimate/invoice item/summary editor over
+    // its parent editor) OR a Dialog-over-FloatingDetailPanel take part in the depth math.
+    // We DON'T route Esc/focus through useOverlayDismiss here — Radix owns those (and the
+    // onInteractOutside nested-dialog guard below stays intact); this registration is
+    // depth-only. When something is above THIS content on desktop, it slides left + dims.
+    const dialogStackId = React.useId()
+    const { depth, count } = useOverlayStack(dialogStackId, true)
+    const layersAbove = Math.max(0, count - 1 - depth)
+    const card = cardStackStyle(layersAbove, isMobile)
+    // Compose the card-stack fragment onto the variant's BASE transform so it never
+    // clobbers centering: a "dialog" is centered via translate(-50%,-50%) (a Tailwind
+    // class → an inline transform would REPLACE it, so we re-state the centering here);
+    // a "panel" has translate-x-0 at rest (nothing to preserve). Desktop only — on mobile
+    // `card` is empty (top covers lower) and the mobile drag translateY owns the transform.
+    const cardStyle: React.CSSProperties =
+        !isMobile && card.transform
+            ? {
+                transform:
+                    variant === "dialog"
+                        ? `translate(-50%, -50%) ${card.transform}`
+                        : card.transform,
+                transformOrigin: card.transformOrigin,
+                filter: card.filter,
+                transition: card.transition,
+            }
+            : {}
+
+    return (
     <DialogPortal>
         {/* Panel: no dimming scrim — the page stays visible behind it (job-card mechanic) */}
         <DialogOverlay className={variant === "panel" ? "bg-transparent" : undefined} />
@@ -75,8 +146,10 @@ const DialogContent = React.forwardRef<
                 onInteractOutside?.(event)
             }}
             className={cn(
+                // z-[140] === OVERLAY_Z.modal (overlayLayout.ts) — literal class for the Tailwind JIT.
                 "fixed z-[140] w-full border bg-[var(--blanc-panel-surface,#fffdf9)] shadow-lg duration-200",
-                // Mobile: bottom-sheet — pinned to bottom, slides up (both variants)
+                // Mobile: bottom-sheet — pinned to bottom, slides up (both variants). max-h caps at
+                // content (like BottomSheet size="auto"); the internal region scrolls, not the sheet.
                 "max-md:bottom-0 max-md:left-0 max-md:right-0 max-md:top-auto max-md:translate-x-0 max-md:translate-y-0 max-md:max-w-full max-md:max-h-[calc(100dvh-16px)] max-md:rounded-t-[22px] max-md:rounded-b-none max-md:animate-[blancSlideUp_0.25s_ease-out]",
                 variant === "panel"
                     ? cn(
@@ -100,8 +173,43 @@ const DialogContent = React.forwardRef<
                     ),
                 className
             )}
+            // Merge caller style + the DESKTOP card-stack (when a layer is above) + the
+            // MOBILE drag translateY. These two are mutually exclusive by viewport
+            // (cardStyle is {} on mobile, dragStyle is {} on desktop), so neither clobbers
+            // the other's transform. Single desktop dialog with nothing above → both empty →
+            // rendered style byte-identical to before Phase 3.
+            style={{ ...style, ...cardStyle, ...dragStyle }}
             {...props}
         >
+            {/* Mobile-only grab handle (same markup / tokens as BottomSheet's). It is the
+                drag region: dragging it down past the hook's threshold clicks the hidden
+                Close below → Radix onOpenChange(false). Absolutely pinned at the rounded top
+                so it disturbs neither the centered grid nor the panel's flex column, and — being
+                a separate strip above the scrollable body — dragging it never hijacks body scroll.
+                md:hidden → desktop renders nothing here. */}
+            {isMobile && (
+                <div
+                    {...dragHandlers}
+                    aria-hidden
+                    className="md:hidden absolute inset-x-0 top-0 z-[1] flex justify-center pt-[10px] pb-1"
+                    style={{
+                        cursor: "grab",
+                        ...(dragHandlers as { style?: React.CSSProperties }).style,
+                    }}
+                >
+                    <div
+                        style={{
+                            width: 40,
+                            height: 4,
+                            borderRadius: 999,
+                            background: "var(--blanc-line-strong, rgba(97, 86, 71, 0.28))",
+                        }}
+                    />
+                </div>
+            )}
+            {/* Hidden Radix close — the drag-dismiss target. Clicking it routes through
+                Radix state exactly like the visible × does. */}
+            <DialogPrimitive.Close ref={dragCloseRef} className="sr-only" aria-hidden tabIndex={-1} />
             {children}
             {/* Top-right inside × (OverlayClose `corner`) — centered dialogs always; for
                 PANELS it's the MOBILE bottom-sheet only (md:hidden), since on desktop every
@@ -121,7 +229,8 @@ const DialogContent = React.forwardRef<
             </DialogPrimitive.Close>
         )}
     </DialogPortal>
-))
+    )
+})
 DialogContent.displayName = DialogPrimitive.Content.displayName
 
 // ── Panel canon (MODAL-REDESIGN-001) ─────────────────────────────────────────

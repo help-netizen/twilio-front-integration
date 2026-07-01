@@ -289,7 +289,7 @@ export default function VapiSettingsPage() {
     }
 
     return (
-        <div style={{ maxWidth: 580, margin: '0 auto', padding: '32px 24px' }}>
+        <div style={{ maxWidth: 860, padding: '32px 24px' }}>
             {/* Header */}
             <button
                 onClick={() => navigate('/settings/integrations')}

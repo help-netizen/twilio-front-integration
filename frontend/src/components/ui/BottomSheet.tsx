@@ -25,8 +25,7 @@
  * mapping of the hook's raw drag offset. iOS safe-area lives here too.
  */
 
-import { createPortal } from 'react-dom';
-import { useOverlayDismiss } from '../../hooks/useOverlayDismiss';
+import { Overlay } from './Overlay';
 import { OverlayClose } from './OverlayClose';
 
 export type BottomSheetSize = 'standard' | 'full' | 'auto';
@@ -75,24 +74,6 @@ export function BottomSheet({
     const headerVisible = showHeader ?? !!title;
     const label = title ?? ariaLabel;
 
-    // Behavior (Esc / backdrop / scroll-lock / focus-trap / drag-to-dismiss) is owned
-    // by the shared hook — the drag/focus/esc logic was lifted VERBATIM from here, so
-    // this is a no-op behaviorally. We map its raw drag offset to translateY below.
-    const { panelProps, backdropProps, dragHandlers, dragOffset, isDragging } = useOverlayDismiss({
-        open,
-        onClose,
-        esc: true,
-        closeOnBackdrop: true,
-        scrollLock: true,
-        focusTrap: true,
-        dragToDismiss,
-        dragThreshold: 80,
-        stopEscPropagation: true,
-    });
-
-    if (typeof document === 'undefined') return null; // SSR-safe.
-    if (!open) return null;
-
     // Height policy — one knob (tokens) drives standard/full; auto is content-sized.
     const heightStyle: React.CSSProperties =
         size === 'standard'
@@ -101,30 +82,28 @@ export function BottomSheet({
                 ? { height: 'var(--blanc-sheet-h-full)' }
                 : { maxHeight };
 
-    // While dragging: 1:1 finger tracking, no transition. On release: spring back.
-    const transform = dragOffset > 0 ? `translateY(${dragOffset}px)` : undefined;
-    const dragTransition = isDragging ? 'none' : 'transform 0.25s cubic-bezier(0.32, 0.72, 0, 1)';
-
     // No footer → the body owns the safe-area bottom padding; with a footer the footer does.
     const bodyPaddingBottom = footer ? undefined : 'max(env(safe-area-inset-bottom), 12px)';
 
-    return createPortal(
-        <>
-            {/* Dark backdrop — tap to close */}
-            <div
-                {...backdropProps}
-                style={{
-                    position: 'fixed',
-                    inset: 0,
-                    background: 'rgba(40, 33, 22, 0.42)',
-                    backdropFilter: 'blur(2px)',
-                    WebkitBackdropFilter: 'blur(2px)',
-                    zIndex: 190,
-                    animation: 'blancFadeIn 0.15s ease-out',
-                }}
-            />
-
-            {/* Sheet panel */}
+    // Portal + backdrop (warm dark scrim, tap-to-close) + behavior (Esc / scroll-lock /
+    // focus-trap / drag-to-dismiss) come from the shared Overlay core — the drag/focus/esc
+    // logic there was lifted VERBATIM from here, so this is a no-op behaviorally. This file
+    // keeps only the sheet's own panel visuals; we map the raw drag offset to translateY.
+    return (
+        <Overlay open={open} onClose={onClose} variant="bottom-sheet" dragToDismiss={dragToDismiss}>
+            {({ panelProps, dragHandlers, dragOffset, isDragging, z, stack }) => {
+                // While dragging: 1:1 finger tracking, no transition. On release: spring back.
+                // On DESKTOP with a layer above, compose the card-stack fragment after the drag
+                // translateY (mobile → `stack` is empty, so this is byte-identical there). While
+                // dragging we suppress the transition; otherwise we prefer the card-stack transition
+                // (identical spring curve, adds the filter fade) and fall back to the sheet spring.
+                const dragTransform = dragOffset > 0 ? `translateY(${dragOffset}px)` : '';
+                const transform = [dragTransform, stack.transform].filter(Boolean).join(' ') || undefined;
+                const dragTransition = isDragging
+                    ? 'none'
+                    : stack.transition ?? 'transform 0.25s cubic-bezier(0.32, 0.72, 0, 1)';
+                // Sheet panel
+                return (
             <div
                 {...panelProps}
                 aria-label={label}
@@ -133,7 +112,7 @@ export function BottomSheet({
                     left: 0,
                     right: 0,
                     bottom: 0,
-                    zIndex: 200,
+                    zIndex: z,
                     display: 'flex',
                     flexDirection: 'column',
                     overflow: 'hidden',
@@ -144,6 +123,8 @@ export function BottomSheet({
                     animation: 'blancSlideUp 0.25s ease-out',
                     outline: 'none',
                     transform,
+                    transformOrigin: stack.transformOrigin,
+                    filter: stack.filter,
                     transition: dragTransition,
                     ...heightStyle,
                 }}
@@ -239,7 +220,8 @@ export function BottomSheet({
                     </div>
                 )}
             </div>
-        </>,
-        document.body,
+                );
+            }}
+        </Overlay>
     );
 }

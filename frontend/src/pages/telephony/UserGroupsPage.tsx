@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useRealtimeEvents } from '../../hooks/useRealtimeEvents';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { getScheduleStatus } from './scheduleStatus';
+import { BottomSheet } from '../../components/ui/BottomSheet';
 
 // ── Types (kept local, matches API response) ─────────────────────────────────
 interface ScheduleDay { day: string; open: string; close: string }
@@ -27,13 +28,21 @@ const STATUS_COLORS: Record<string, { bg: string; dot: string }> = {
 import { authedFetch } from '../../services/apiClient';
 
 // ── Modal backdrop ───────────────────────────────────────────────────────────
-// MOBILE FIX (TELEPHONY-AUTONOMOUS-MODE-001): the old modal was a hardcoded
-// 600px-wide centered box — on a phone it overflowed the viewport and the group
-// editor (incl. the Business Hours editor) was unusable. It's now responsive:
-// centered + capped on desktop, and a full-width bottom sheet (slide-up, rounded
-// top, internal scroll, safe-area) on mobile so it always fits a 375px screen.
+// Mobile → canonical BottomSheet (grab handle + drag). Desktop → the centered
+// 600px card, unchanged. Only the presentation switches; form logic is untouched.
+// (Supersedes the earlier hand-rolled responsive modal from TELEPHONY-AUTONOMOUS-MODE-001:
+// the mobile Business Hours editor now uses the canonical sheet — same fix, via the canon.)
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
     const isMobile = useIsMobile();
+
+    if (isMobile) {
+        return (
+            <BottomSheet open onClose={onClose} size="full" title={title}>
+                {children}
+            </BottomSheet>
+        );
+    }
+
     return (
         <div
             style={{

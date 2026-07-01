@@ -72,7 +72,7 @@ export default function ProvidersPage() {
                         <h2 className="text-xl font-semibold">Service Providers</h2>
                     </div>
                     <p className="text-sm text-muted-foreground">
-                        Technicians and their assigned service territories (from Zenbooker).
+                        Providers and their assigned service territories (from Zenbooker).
                     </p>
                 </div>
                 <Button variant="outline" size="sm" onClick={fetchProviders} disabled={loading}>

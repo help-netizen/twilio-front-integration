@@ -20,7 +20,10 @@
  */
 
 import type * as React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useOverlayStack } from '../components/ui/OverlayStack'
+import { cardStackStyle, type CardStackStyle } from '../components/ui/overlayLayout'
+import { useIsMobile } from './useIsMobile'
 
 const FOCUSABLE_SELECTOR =
     'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
@@ -98,6 +101,22 @@ export interface UseOverlayDismissReturn {
     dragOffset: number
     isDragging: boolean
     panelRef: React.RefObject<HTMLDivElement | null>
+    // ── Stacking (OVERLAY-CANON-002, Phase 3) ─────────────────────────────────
+    /** 0-based position of this overlay in open-order (0 = opened first / lone). */
+    depth: number
+    /** Total open overlays (1 when lone / no provider). */
+    count: number
+    /** True when this is the top-most open overlay (always true when lone). */
+    isTop: boolean
+    /** How many overlays sit ON TOP of this one (count - 1 - depth; 0 when top). */
+    layersAbove: number
+    /**
+     * Desktop card-stack fragments for this layer (translateX/scale/dim/transition),
+     * or the EMPTY result on mobile / when nothing is above it. The consumer COMPOSES
+     * `stack.transform` into its own base transform (centering, drag) — it is only the
+     * card-stack fragment, never a full transform. Empty ⇒ single-overlay is unchanged.
+     */
+    stack: CardStackStyle
 }
 
 export function useOverlayDismiss(options: UseOverlayDismissOptions): UseOverlayDismissReturn {
@@ -114,6 +133,25 @@ export function useOverlayDismiss(options: UseOverlayDismissOptions): UseOverlay
         stopEscPropagation = true,
     } = options
 
+    // ── Stacking awareness (OVERLAY-CANON-002) ────────────────────────────────
+    // Register this overlay in the OverlayStack while open and learn whether it's the
+    // top-most layer. Global key handling (Esc + Tab-trap) is gated on `isTop` so two
+    // stacked overlays don't BOTH react to one keypress. Provider-optional: with no
+    // <OverlayStackProvider> (or when closed) `isTop` is always true → a single overlay
+    // behaves byte-identically to before this change.
+    const overlayId = useId()
+    const { depth, isTop, count } = useOverlayStack(overlayId, open)
+
+    // ── Desktop card-stack (Phase 3) ──────────────────────────────────────────
+    // `layersAbove` = overlays stacked on top of this one. The top layer (and the
+    // lone-overlay case) is 0 → `stack` is the EMPTY fragment set → nothing changes.
+    // On mobile the top simply covers the lower (owner-explicit), so `cardStackStyle`
+    // returns empty there too. NB: useIsMobile is a hook → always called (never behind
+    // a condition), so hook order is stable.
+    const isMobile = useIsMobile()
+    const layersAbove = Math.max(0, count - 1 - depth)
+    const stack = cardStackStyle(layersAbove, isMobile)
+
     const panelRef = useRef<HTMLDivElement>(null)
     // Element focused before the overlay opened — restored on close.
     const restoreFocusRef = useRef<HTMLElement | null>(null)
@@ -125,9 +163,13 @@ export function useOverlayDismiss(options: UseOverlayDismissOptions): UseOverlay
 
     // ── Esc to close ──────────────────────────────────────────────────────────
     // (Copied from BottomSheet; the stopPropagation() is now opt-out via stopEscPropagation.)
+    // OVERLAY-CANON-002: only the TOP-MOST overlay responds — otherwise two stacked
+    // overlays both close on one Esc. A lone overlay is always top → unchanged.
+    // The `isTop` gate is the real guarantor here — NOT stopPropagation, which can't
+    // suppress a sibling document listener. Don't drop the gate and lean on stopProp.
     useEffect(() => {
         if (typeof document === 'undefined') return
-        if (!open || !esc) return
+        if (!open || !esc || !isTop) return
         const handler = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
                 if (stopEscPropagation) e.stopPropagation()
@@ -136,7 +178,7 @@ export function useOverlayDismiss(options: UseOverlayDismissOptions): UseOverlay
         }
         document.addEventListener('keydown', handler)
         return () => document.removeEventListener('keydown', handler)
-    }, [open, esc, stopEscPropagation, onClose])
+    }, [open, esc, isTop, stopEscPropagation, onClose])
 
     // ── Lock body scroll while open (reference-counted at module scope) ────────
     useEffect(() => {
@@ -167,9 +209,11 @@ export function useOverlayDismiss(options: UseOverlayDismissOptions): UseOverlay
 
     // ── Minimal Tab trap: keep focus cycling inside the panel ─────────────────
     // (Copied from BottomSheet. No-op when focusTrap is off.)
+    // OVERLAY-CANON-002: only the top-most overlay traps Tab, so focus can't be captured
+    // by a lower layer while a higher one is open. A lone overlay is always top → unchanged.
     const onKeyDown = useCallback(
         (e: React.KeyboardEvent<HTMLDivElement>) => {
-            if (!focusTrap) return
+            if (!focusTrap || !isTop) return
             if (e.key !== 'Tab') return
             const panel = panelRef.current
             if (!panel) return
@@ -195,7 +239,7 @@ export function useOverlayDismiss(options: UseOverlayDismissOptions): UseOverlay
                 first.focus()
             }
         },
-        [focusTrap],
+        [focusTrap, isTop],
     )
 
     // ── Drag-to-dismiss (handle / header region only) ─────────────────────────
@@ -272,5 +316,10 @@ export function useOverlayDismiss(options: UseOverlayDismissOptions): UseOverlay
         dragOffset,
         isDragging,
         panelRef,
+        depth,
+        count,
+        isTop,
+        layersAbove,
+        stack,
     }
 }

@@ -29,6 +29,13 @@ describe('canMutateNote matrix', () => {
         expect(canMutateNote(note, { isAdmin: false, actorSub: OTHER })).toBe(false);
     });
 
+    it('author matched by crm_users.id when created_by != sub → ok (NOTE-AUTHOR-FIX-001)', () => {
+        const note = { id: 'n1', created_by: 'crm-user-99' }; // created_by is the crm_users.id, not the sub
+        expect(canMutateNote(note, { isAdmin: false, actorSub: OWNER, actorCrmUserId: 'crm-user-99' })).toBe(true);
+        // a DIFFERENT crm id must NOT match (no over-grant)
+        expect(canMutateNote(note, { isAdmin: false, actorSub: OWNER, actorCrmUserId: 'crm-user-other' })).toBe(false);
+    });
+
     it('legacy note with no created_by → admin-only (non-admin denied)', () => {
         const note = { id: 'n1' }; // no created_by
         expect(canMutateNote(note, { isAdmin: false, actorSub: OWNER })).toBe(false);
@@ -78,6 +85,17 @@ describe('404 vs 403 ordering through the service', () => {
             })
         ).rejects.toMatchObject({ status: 403 });
         expect(adapter.saveNotes).not.toHaveBeenCalled();
+    });
+
+    it('author whose created_by is their crm_users.id (≠ sub) CAN edit via the service (NOTE-AUTHOR-FIX-001)', async () => {
+        // Guards the enforcement wiring: editNote/softDeleteNote must forward
+        // actorCrmUserId, not just actorSub — otherwise the ⋮ shows but PATCH 403s.
+        const adapter = adapterWith([{ id: 'n1', created_by: 'crm-user-99' }]);
+        const res = await notesMutationService.editNote(adapter, 'n1', {
+            text: 'updated', actor: { sub: OWNER, crmUserId: 'crm-user-99', isAdmin: false }, companyId: 'c1',
+        });
+        expect(res.note.text).toBe('updated');
+        expect(adapter.saveNotes).toHaveBeenCalled();
     });
 
     it('soft-deleted note is treated as not found (404)', async () => {

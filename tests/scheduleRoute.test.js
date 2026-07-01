@@ -202,7 +202,7 @@ describeIfSupertest('F013 Schedule Route — Middleware & Data Isolation', () =>
     // ── Reassign ─────────────────────────────────────────────────────────────
 
     describe('PATCH /items/:entityType/:entityId/reassign', () => {
-        test('passes companyId + assignee name for isolation', async () => {
+        test('legacy single assignee_id → normalized to a 1-element array', async () => {
             const app = createApp('auth', COMPANY_A);
             mockReassign.mockResolvedValue({ ok: true });
 
@@ -211,10 +211,10 @@ describeIfSupertest('F013 Schedule Route — Middleware & Data Isolation', () =>
                 .send({ assignee_id: 'provider-1', assignee_name: 'Alex Kim' });
 
             expect(res.status).toBe(200);
-            expect(mockReassign).toHaveBeenCalledWith(COMPANY_A, 'job', '100', 'provider-1', 'Alex Kim');
+            expect(mockReassign).toHaveBeenCalledWith(COMPANY_A, 'job', '100', [{ id: 'provider-1', name: 'Alex Kim' }]);
         });
 
-        test('accepts null assignee_id to unassign (JOB-TECH-ASSIGN-001)', async () => {
+        test('null assignee_id → empty array (unassign)', async () => {
             const app = createApp('auth', COMPANY_A);
             mockReassign.mockResolvedValue({ ok: true });
 
@@ -223,10 +223,22 @@ describeIfSupertest('F013 Schedule Route — Middleware & Data Isolation', () =>
                 .send({ assignee_id: null });
 
             expect(res.status).toBe(200);
-            expect(mockReassign).toHaveBeenCalledWith(COMPANY_A, 'job', '100', null, null);
+            expect(mockReassign).toHaveBeenCalledWith(COMPANY_A, 'job', '100', []);
         });
 
-        test('400 only when assignee_id is missing entirely', async () => {
+        test('multi-provider assignees array is passed through (JOB-PROVIDER-MULTI-001)', async () => {
+            const app = createApp('auth', COMPANY_A);
+            mockReassign.mockResolvedValue({ ok: true });
+
+            const res = await request(app)
+                .patch('/items/job/100/reassign')
+                .send({ assignees: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] });
+
+            expect(res.status).toBe(200);
+            expect(mockReassign).toHaveBeenCalledWith(COMPANY_A, 'job', '100', [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }]);
+        });
+
+        test('400 only when neither assignees nor assignee_id is provided', async () => {
             const app = createApp('auth', COMPANY_A);
             const res = await request(app)
                 .patch('/items/job/100/reassign')

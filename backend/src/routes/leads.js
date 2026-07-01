@@ -752,7 +752,9 @@ function isAdminActor(req) {
 function buildNoteActor(req) {
     return {
         sub: req.user?.sub || null,
-        crmUserId: req.user?.sub || null,
+        // Real crm_users.id so a non-admin author is recognised when created_by was
+        // stamped with the crm_users.id (NOTE-AUTHOR-FIX-001).
+        crmUserId: req.user?.crmUser?.id || req.user?.sub || null,
         name: req.user?.name || null,
         isAdmin: isAdminActor(req),
     };
@@ -775,7 +777,7 @@ function parseRemoveAttachmentIds(raw) {
 }
 
 // Build the GET-shaped, soft-delete-excluded notes list for a lead.
-async function enrichLeadNotes(companyId, leadId, notes) {
+async function enrichLeadNotes(companyId, leadId, notes, actor = null) {
     const attachments = await noteAttachmentsService.getAttachmentsForEntity(companyId, 'lead', leadId);
     const byNoteId = {};
     const byNoteIndex = {};
@@ -793,6 +795,10 @@ async function enrichLeadNotes(companyId, leadId, notes) {
             source: n.source || null,
             zb_note_id: n.zb_note_id || null,
             attachments: (n.id && byNoteId[n.id]) || byNoteIndex[i] || [],
+            // Server-authoritative edit/delete permission (NOTE-AUTHOR-FIX-001).
+            can_edit: actor
+                ? notesMutationService.canMutateNote(n, { isAdmin: actor.isAdmin, actorSub: actor.sub, actorCrmUserId: actor.crmUserId })
+                : undefined,
         }));
 }
 
@@ -803,7 +809,7 @@ router.get('/:uuid/notes', requirePermission('leads.view'), async (req, res) => 
         if (!lead) return res.status(404).json({ ok: false, error: 'Lead not found' });
 
         const leadId = lead.SerialId || lead.ClientId;
-        const enriched = await enrichLeadNotes(companyId, leadId, lead.structured_notes || []);
+        const enriched = await enrichLeadNotes(companyId, leadId, lead.structured_notes || [], buildNoteActor(req));
 
         res.json({ ok: true, data: enriched });
     } catch (err) {
@@ -915,7 +921,7 @@ router.patch('/:uuid/notes/:noteId', requirePermission('leads.edit'), upload.arr
             added: addedNames, removed: removedNames, actor_name: eventService.actorName(req),
         }, 'user', req.user?.sub);
 
-        const enriched = await enrichLeadNotes(companyId, leadId, await adapter.loadNotes());
+        const enriched = await enrichLeadNotes(companyId, leadId, await adapter.loadNotes(), buildNoteActor(req));
         res.json({ ok: true, data: { notes: enriched } });
     } catch (err) {
         if (err.status === 403 || err.status === 404) {
@@ -943,7 +949,7 @@ router.delete('/:uuid/notes/:noteId', requirePermission('leads.edit'), async (re
             note_id: note.id, deleted_text: note.text || '', actor_name: eventService.actorName(req),
         }, 'user', req.user?.sub);
 
-        const enriched = await enrichLeadNotes(companyId, leadId, await adapter.loadNotes());
+        const enriched = await enrichLeadNotes(companyId, leadId, await adapter.loadNotes(), buildNoteActor(req));
         res.json({ ok: true, data: { notes: enriched } });
     } catch (err) {
         if (err.status === 403 || err.status === 404) {

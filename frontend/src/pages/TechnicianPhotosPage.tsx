@@ -140,11 +140,11 @@ export default function TechnicianPhotosPage() {
         : { color: 'var(--blanc-ink-3)', opacity: disabled ? 0.5 : 1 };
 
     return (
-        <div className="max-w-2xl mx-auto px-6 py-8" style={{ color: 'var(--blanc-ink-1)' }}>
+        <div className="max-w-4xl px-6 py-8" style={{ color: 'var(--blanc-ink-1)' }}>
             <button onClick={() => navigate('/settings/integrations')} className="flex items-center gap-1.5 text-sm mb-6" style={{ color: 'var(--blanc-ink-3)' }}>
                 <ArrowLeft className="h-4 w-4" /> Settings
             </button>
-            <h2 className="text-2xl font-semibold" style={{ fontFamily: 'var(--blanc-font-heading, inherit)' }}>Technicians</h2>
+            <h2 className="text-2xl font-semibold" style={{ fontFamily: 'var(--blanc-font-heading, inherit)' }}>Providers</h2>
             <p className="text-sm mt-1 mb-5" style={{ color: 'var(--blanc-ink-3)' }}>
                 A photo builds trust on the payment page and lifts tips. A base location lets the scheduler suggest the best arrival times.
             </p>
@@ -152,7 +152,7 @@ export default function TechnicianPhotosPage() {
             <div className="mb-6">
                 <CompanyBaseAddress
                     title="Company base address"
-                    hint="The default base for technicians who match it. Also editable in Settings → Company."
+                    hint="The default base for providers who match it. Also editable in Settings → Company."
                     onChange={setCompanyBase}
                 />
             </div>
@@ -164,7 +164,7 @@ export default function TechnicianPhotosPage() {
             {loading ? (
                 <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--blanc-ink-3)' }}><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
             ) : techs.length === 0 ? (
-                <p className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>No technicians found yet — they appear here once assigned to jobs.</p>
+                <p className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>No providers found yet — they appear here once assigned to jobs.</p>
             ) : (
                 <div className="space-y-3">
                     {techs.map(t => {
@@ -197,7 +197,7 @@ export default function TechnicianPhotosPage() {
 
                                     {/* Right: name + base */}
                                     <div className="flex-1 min-w-0">
-                                        <div className="font-medium truncate">{t.name || 'Unnamed technician'}</div>
+                                        <div className="font-medium truncate">{t.name || 'Unnamed provider'}</div>
                                         <div className="text-xs mt-0.5" style={{ color: 'var(--blanc-ink-3)' }}>{t.has_photo ? 'Photo set' : 'No photo'}</div>
                                         <div className="mt-3 flex items-start justify-between gap-2">
                                             <div className="min-w-0">
