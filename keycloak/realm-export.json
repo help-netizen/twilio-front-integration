@@ -111,6 +111,64 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "crm-mobile",
+      "name": "CRM Mobile App (native iOS)",
+      "description": "MOBILE-TECH-APP-001 / MTECH-T3: public PKCE OIDC client for the native provider app (albusto-mobile). Custom-scheme redirect albusto://auth. Mirrors crm-web claim/scope config so the mobile token resolves /api/auth/me identically. Do not add a client secret — this is a public client.",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": false,
+      "protocol": "openid-connect",
+      "rootUrl": "",
+      "baseUrl": "",
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "albusto://auth/*"
+      },
+      "redirectUris": [
+        "albusto://auth",
+        "albusto://auth/*"
+      ],
+      "webOrigins": [],
+      "fullScopeAllowed": true,
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "email"
+      ],
+      "protocolMappers": [
+        {
+          "name": "realm-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "realm_roles",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "audience-crm",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "crm-mobile",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
     }
   ],
   "users": [

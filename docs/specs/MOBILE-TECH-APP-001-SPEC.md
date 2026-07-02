@@ -13,6 +13,12 @@
 
 Расхождения между дизайн-доком и кодом, которые этот spec фиксирует явно:
 
+> **КОРРЕКЦИИ ПО ФАКТУ РЕАЛИЗАЦИИ (Phase 0, 2026-07-02, проверено по live-исходникам):**
+> - **G3 — устарело: бага НЕТ.** RBAC-гейт `enroute`/`start`/`PATCH status` уже расширен до `('jobs.edit','jobs.done_pending_approval')` в коммите `2412bf9` (RBAC-FSM-FIX-001, 2026-06-29). MTECH-T0 = только регрешн-тест (`tests/jobsStatusRbac.test.js`), кода не менял. `Cancel`/`Job is Done`-закрытие остаётся `jobs.close` (in-handler guard).
+> - **G5 — устарело: `pushService.js` УЖЕ существует** (Web Push VAPID, используется leads/conversations). MTECH-T2 его РАСШИРИЛ (`sendToUser` APNs через http2+jsonwebtoken ES256, fail-soft, 410→delete), не переписал; web-push экспорты сохранены. Хуки — в `scheduleService.js` (reassignItem/rescheduleItem), НЕ в jobsService.js.
+> - **Hard-delete работ в коде НЕТ** (grep `DELETE FROM jobs` = 0) — `job_tombstones` (mig 150) готова как forward-hook, исчезновение работы = только `unassigned[]` (переназначение).
+
+
 | # | Факт (проверено) | Файл | Следствие для мобилы |
 |---|---|---|---|
 | G1 | **Заметки job хранятся в `jobs.notes` JSONB**, не в `crm_notes` (та — sales-CRM, без `updated_at`). `addNote` делает `UPDATE jobs SET notes=$1::jsonb, updated_at=NOW()`. | `services/jobsService.js:909` | **Изменение заметки бампает `jobs.updated_at`** → delta-sync тянет заметки внутри строки job. Отдельный курсор по заметкам НЕ нужен. |

@@ -5,6 +5,7 @@ const webhooksRouter = require('../backend/src/routes/webhooks'); // Updated to 
 const healthRouter = require('./routes/health');
 const callsRouter = require('../backend/src/routes/calls');
 const syncRouter = require('../backend/src/routes/sync');
+const devicesRouter = require('../backend/src/routes/devices');
 const eventsRouter = require('../backend/src/routes/events');
 const twimlRouter = require('../backend/src/routes/twiml');
 const { tokenRouter: voiceTokenRouter, twimlRouter: voiceTwimlRouter } = require('../backend/src/routes/voice');
@@ -152,6 +153,7 @@ app.use('/api/pulse', authenticate, requireCompanyAccess, pulseRouter);
 app.use('/api/quick-messages', authenticate, requireCompanyAccess, quickMessagesRouter);
 app.use('/api/text/polish', authenticate, requireCompanyAccess, textPolishRouter);
 app.use('/api/sync', authenticate, requireCompanyAccess, syncRouter);
+app.use('/api/devices', authenticate, requireCompanyAccess, devicesRouter);
 
 // Leads API (behind feature flag)
 if (process.env.FEATURE_LEADS_TAB !== 'false') {

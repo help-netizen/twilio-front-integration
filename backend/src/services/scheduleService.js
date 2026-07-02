@@ -160,6 +160,27 @@ async function rescheduleItem(companyId, entityType, entityId, newStartAt, newEn
         throw new ScheduleServiceError('NOT_FOUND', `${entityType} ${entityId} not found`, 404);
     }
 
+    // MTECH-T2: notify the job's CURRENTLY-assigned providers that their job moved
+    // (spec §3.7, §4.2). A reschedule doesn't change the assignee set, so we read
+    // the internal mirror after the write and push job_rescheduled to each id.
+    // Best-effort and guarded — a push failure never affects the reschedule.
+    if (entityType === 'job') {
+        try {
+            const jobsService = require('./jobsService');
+            const job = await jobsService.getJobById(entityId, companyId);
+            const assignedUserIds = (job?.assigned_provider_user_ids || []).map(String).filter(Boolean);
+            if (assignedUserIds.length) {
+                const pushService = require('./pushService');
+                for (const userId of assignedUserIds) {
+                    pushService.sendToUser(companyId, userId, { type: 'job_rescheduled', job_id: entityId })
+                        .catch(err => console.error('[Schedule] job_rescheduled push failed (non-fatal):', err.message));
+                }
+            }
+        } catch (err) {
+            console.error('[Schedule] reschedule push hook failed (non-fatal):', err.message);
+        }
+    }
+
     if (entityType === 'job') await recalcAfterJobChange(companyId, entityId, before);
     return { entity_type: entityType, entity_id: entityId, start_at: newStartAt, end_at: newEndAt };
 }
@@ -197,6 +218,7 @@ async function reassignItem(companyId, entityType, entityId, assignees = []) {
     // (assigned_provider_user_ids) is refreshed → an assigned provider sees the job
     // on their own schedule immediately.
     let oldTechIds = [];
+    let oldProviderUserIds = [];
     let zbJobId = null;
     let providerUserIds = null;
     if (entityType === 'job') {
@@ -204,6 +226,9 @@ async function reassignItem(companyId, entityType, entityId, assignees = []) {
             const jobsService = require('./jobsService');
             const job = await jobsService.getJobById(entityId, companyId);
             oldTechIds = (job?.assigned_techs || []).map(t => String(t.id)).filter(Boolean);
+            // MTECH-T2: internal assignee mirror (crm_users.id) BEFORE the write,
+            // so the reassign push targets only providers NEWLY added to the job.
+            oldProviderUserIds = (job?.assigned_provider_user_ids || []).map(String).filter(Boolean);
             zbJobId = job?.zenbooker_job_id || null;
             providerUserIds = await jobsService.resolveAssignedProviderUserIds(companyId, list);
         } catch { /* best-effort — ZB push / mirror refresh skipped if we can't read it */ }
@@ -240,6 +265,27 @@ async function reassignItem(companyId, entityType, entityId, assignees = []) {
             } catch (err) {
                 console.error('[Schedule] ZB assignProviders failed (non-fatal):', err.response?.data || err.message);
             }
+        }
+    }
+
+    // MTECH-T2: notify providers NEWLY added to the job (spec §3.7, §4.2). Diff
+    // old→new internal assignee mirror; push job_assigned to each added id.
+    // Best-effort: sendToUser is itself fail-soft, and we still guard so a push
+    // failure can never affect the reassign result.
+    if (entityType === 'job') {
+        try {
+            const newProviderUserIds = providerUserIds ? JSON.parse(providerUserIds) : [];
+            const oldSet = new Set(oldProviderUserIds);
+            const addedUserIds = newProviderUserIds.map(String).filter(id => id && !oldSet.has(id));
+            if (addedUserIds.length) {
+                const pushService = require('./pushService');
+                for (const userId of addedUserIds) {
+                    pushService.sendToUser(companyId, userId, { type: 'job_assigned', job_id: entityId })
+                        .catch(err => console.error('[Schedule] job_assigned push failed (non-fatal):', err.message));
+                }
+            }
+        } catch (err) {
+            console.error('[Schedule] reassign push hook failed (non-fatal):', err.message);
         }
     }
 
