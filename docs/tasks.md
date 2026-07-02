@@ -4348,3 +4348,263 @@ Phase 4:  T13 (migration-DB на копии prod + jest-свип + build + struc
 ---
 
 Ключевые решения плана (для Orchestrator): 14 задач в границах 8–14; слияния по требованию — C1+C4 (один файл `twilioWebhooks.js`) + C2b (та же изоляционная тема и тот же jest-файл) = T6; C5 + маппинг ошибок `routes/voice.js` = T7; сиды 145+146 = T1, харднинг 147+148 = T2; ни одна задача не касается защищённых файлов (`src/server.js` — 0 изменений by design архитектуры); каждый TC-ID из тест-кейс-дока закреплён за конкретной задачей; фронт верифицируется только `npm run build` + manual-preview (харнесса нет).
+
+---
+
+## MOBILE-TECH-APP-001 — tasks
+
+**Тип:** greenfield нативный iOS-клиент (`albusto-mobile` — НОВЫЙ отдельный репо, RN + Expo dev-client, TS) + аддитивные изменения существующего backend (**этот** репо). Кода ещё нет.
+**Авторитетные источники:** `Docs/specs/MOBILE-TECH-APP-001.md` (дизайн + LOCKED decisions + фазы) и `Docs/specs/MOBILE-TECH-APP-001-SPEC.md` (детальный spec: §0 ground-truth, §2 sync-протокол, §2.5 SQLite-схема, §3 поведение по фичам, §4 контракты, §5 Tap to Pay, §6 edge C1–C14, §8 checklist T0–T5, §10 security/tests).
+**Дата:** 2026-07-02 · **Продукт:** Albusto (в UI — только «Albusto»).
+
+**Конвенция репозитория (для каждой задачи явно указан репо):**
+- `backend` = **этот** репо (`twilio-front-integration`), Node/Express + Postgres + Keycloak.
+- `albusto-mobile` = **новый** репо (создаётся в MTECH-M00), RN/Expo/TS.
+- `shared` = общий TS-пакет типов (`@albusto/shared-types`), потребляется вебом и мобилой (создаётся в MTECH-M14).
+
+**Верификация по фазам (house rules):**
+- **backend (этот репо):** Jest. В worktree обязателен флаг `--testPathIgnorePatterns "/node_modules/"` (иначе тянет node_modules-тесты — см. JOBS-UX-RBAC-001). Плюс реальный прогон миграции против PG в одноразовом контейнере `docker compose run app` ДО `up -d` (урок LIST-PAGINATION-001: Jest мокает БД → SQL-опечатки/алиасы не ловятся; гонять реальный запрос против прод-подобной БД). Каждая backend-задача с роутом — тесты `401` (нет токена) + `403` (чужая компания / platform-only) + межтенантная изоляция (юзер компании A не видит данные B) + provider-scope.
+- **albusto-mobile:** у нового репо СВОЙ toolchain, **здесь Jest-харнесса нет**. Верификация = `expo prebuild` + type-check (`tsc --noEmit`) + сборка + запуск в iOS Simulator + on-device. **Xcode / code-signing / entitlements / TestFlight — на стороне владельца** (нужен Apple Developer Program). Юнит-логику (SyncEngine reducers, cursor-парсинг, FSM-кнопки) покрываем изолированными TS-тестами внутри `albusto-mobile` (Jest в новом репо, не в этом).
+- **Deploy:** любой выход в прод — **owner-gated** (в задачах нет deploy-шагов; максимум «готово к owner-gated выпуску»).
+
+**Нумерация миграций:** максимум применённой = **148**. Новые: **149** = `job_tombstones` (T1), **150** = `device_tokens` (T2). Проверять на момент старта (могли добавиться) — брать следующие свободные подряд.
+
+**Найденные коллизии в backend (учтено в задачах, чтобы не сломать существующее):**
+- `backend/src/routes/sync.js` **уже существует** (twilio call-sync: `POST /api/sync/today|recent`), смонтирован `app.use('/api/sync', authenticate, requireCompanyAccess, syncRouter)` (server.js:154). **`GET /api/sync/jobs` добавляется В ЭТОТ роутер** — новый mount НЕ создавать, существующие call-sync хендлеры НЕ трогать.
+- `backend/src/routes/authDevice.js` **уже существует** и владеет `/api/auth/*` OTP (2FA). Это НЕ APNs. Новый роутер устройств монтируется по **другому** префиксу `/api/devices` (`routes/devices.js`) — коллизии нет; имя `devices.js` выбрано, чтобы не путать с `authDevice.js`.
+- `/api/stripe-terminal` **уже смонтирован** (server.js:257, `authenticate, requireCompanyAccess`). T4 добавляет ОДИН роут в существующий `routes/stripeTerminal.js` — новый mount НЕ создавать.
+- `src/server.js` = **core middleware (защищённый файл)**. Трогаем хирургически: только T2 добавляет 1× `require` + 1× `app.use('/api/devices', …)`. T1 mount НЕ меняет (роутер `/api/sync` уже смонтирован). T4 mount НЕ меняет.
+
+---
+
+## PHASE 0 — Backend prerequisites (репо: `backend`, ЭТОТ репо)
+
+> Всё аддитивно. Порядок: **T0 первым** (разблокирует смену статуса из приложения), далее T1–T3 параллелизуемы, T4 — из фазы 1.5, но backend-часть можно готовить в Phase 0 (Apple-ожидание не блокирует).
+
+### MTECH-T0: Fix RBAC-гейтов статуса для provider (enroute/start/status) — БАГ/prereq
+
+**Repo:** backend · **Size:** S · **Depends-on:** — (**ПЕРВАЯ задача; блокирует MTECH-M07**)
+**Описание (what/where):** В `backend/src/routes/jobs.js` (строки ~393/408/423/432) роуты `POST /:id/enroute` и `POST /:id/start` гейтятся `requirePermission('jobs.edit')` — а у роли `provider` этого права НЕТ (spec §0 G3), поэтому смена статуса из мобилы даёт `403`. Расширить оба до **`requirePermission('jobs.edit','jobs.done_pending_approval')`** (OR-гейт — мирроринг того, что уже сделано для notes `POST` и заявлено в RBAC-FSM-FIX-001). Для консистентности так же расширить **`PATCH /:id/status`** (операционные переходы). `POST /:id/complete` уже `('jobs.close','jobs.done_pending_approval')` — НЕ трогать. `POST /:id/cancel` / close остаются `jobs.close` — **НЕ расширять** (Cancel = dispatch-only, spec §3.3). Scope уже защищён `getProviderScope` (чужой job → 404), поэтому расширение права безопасно.
+**Файлы можно менять:** `backend/src/routes/jobs.js` · (тесты) `backend/src/routes/__tests__/jobs.status.test.js` (новый или существующий).
+**Файлы трогать нельзя:** `backend/src/middleware/providerScope.js` (scope корректен); `backend/src/services/jobsService.js` (семантика статусов не меняется); `src/server.js`.
+**Acceptance:** provider на СВОЁМ job успешно вызывает enroute/start/`PATCH status` (`200`, `zb_status` меняется per §0); чужой job → `404`; отсутствие обоих прав → `403`; Cancel остаётся `403` для provider. Jest: `401`/`403`/isolation/provider-scope (per §10). Покрывает spec G3, §3.3 (Provider-permission ERROR-ветка), C6.
+**Статус:** pending
+
+### MTECH-T1: `GET /api/sync/jobs` delta-endpoint + `job_tombstones` (mig 149) + hard-delete hook
+
+**Repo:** backend · **Size:** L · **Depends-on:** — (параллельно T2/T3; логически после T0 не требуется)
+**Описание (what/where):**
+1. **Миграция 149** `backend/db/migrations/149_job_tombstones.sql` (+ rollback): `job_tombstones(company_id UUID, job_id BIGINT, deleted_at TIMESTAMPTZ DEFAULT now(), PK(company_id, job_id))` + индекс `(company_id, deleted_at)`. (spec §8.T1, §2.3)
+2. **Hard-delete hook:** в путь физического удаления job (в `backend/src/services/jobsService.js`) — `INSERT INTO job_tombstones(...)` в той же транзакции. (spec §2.3, §0 G2 — soft-delete нет)
+3. **Новый сервис** `backend/src/db/syncQueries.js` (или `services/syncJobsService.js`): три запроса per spec §4.1 SQL-скелет — `changed` (forward-курсор `(updated_at,id) > ($ts,$id)`, `ORDER BY updated_at ASC, id ASC`, `LIMIT $lim+1` для `has_more`), `unassigned` (`updated_at > $ts AND NOT (assigned_provider_user_ids @> $me)`, только id), `tombstones` (`deleted_at > $ts`). Курсорный паттерн — мирроринг `backend/src/db/emailQueries.js` (`"{ts}|{id}"`), но forward (spec §2.2). Initial full sync (`since` пуст): WHERE по окну `window_days` + open-фильтр (не `Visit completed`/`Job is Done`/`Canceled`) вместо курсора (spec §2.4).
+4. **Роут** `GET /api/sync/jobs` — **добавить в существующий `backend/src/routes/sync.js`** (уже смонтирован `/api/sync` c `authenticate, requireCompanyAccess`, server.js:154 — mount НЕ создавать). Внутри хендлера `requirePermission('jobs.view')` + `getProviderScope(req)`. `company_id` только из `req.authz.company.id`. Deny-by-default (нет `crm_users.id`) → `{changed:[],unassigned:[],tombstones:[], next_cursor:<input>, scope_empty:true}` (spec §2.1, C3). Форма `Job` = как `GET /api/jobs/:id` + гарантированный `notes[]` (attachments БЕЗ presigned URL). `unassigned/tombstones` отдаём ТОЛЬКО на последней странице (`has_more:false`) (spec §2.3).
+**Файлы можно менять:** `backend/db/migrations/149_job_tombstones.sql`, `backend/db/migrations/rollback_149_*.sql`, `backend/src/db/syncQueries.js` (новый), `backend/src/routes/sync.js` (добавить хендлер), `backend/src/services/jobsService.js` (только delete-hook), тесты `backend/src/routes/__tests__/sync.jobs.test.js`.
+**Файлы трогать нельзя:** существующие call-sync хендлеры в `sync.js` (`/today`,`/recent`); `src/server.js` (mount `/api/sync` уже есть); `backend/src/middleware/providerScope.js`.
+**Acceptance:** initial pull страницируется (`has_more`+`next_cursor`), идемпотентен; incremental по `since` возвращает только `(updated_at,id) > cursor`; батч одинаковых `updated_at` не теряется/не дублируется (tiebreak по id); снятый с назначения job попадает в `unassigned`; hard-deleted → в `tombstones`; deny-by-default → `scope_empty:true` (не ошибка, не 404); битый `since` → `400`. Тесты `401`/`403`/межтенантная изоляция/provider-scope (spec §10). **Реальный прогон миграции 149 + реального SQL против PG** до owner-gated выпуска (урок LIST-PAGINATION-001). Покрывает spec §2.1–§2.4, §4.1, §8.T1, C10, C12.
+**Статус:** pending
+
+### MTECH-T2: APNs — `device_tokens` (mig 150) + `POST/DELETE /api/devices` + `pushService` (.p8) + reassign/reschedule хуки
+
+**Repo:** backend · **Size:** L · **Depends-on:** — (параллельно T1/T3)
+**Описание (what/where):**
+1. **Миграция 150** `backend/db/migrations/150_device_tokens.sql` (+ rollback): `device_tokens(company_id UUID, crm_user_id UUID, apns_token TEXT UNIQUE, platform TEXT, app_version TEXT, device_model TEXT, last_seen_at TIMESTAMPTZ, created_at TIMESTAMPTZ)`; индекс `(company_id, crm_user_id)`. (spec §4.2, §8.T2)
+2. **Новый роутер** `backend/src/routes/devices.js` (имя выбрано чтобы не путать с существующим `authDevice.js`): `POST /api/devices` (upsert по `(apns_token)`, `crm_user_id = req.user.crmUser.id`, нет → `409 {code:'NO_CRM_USER'}`; смена владельца токена — перепривязка) и `DELETE /api/devices/:token` (только свой `crm_user_id`, идемпотентно `200`). (spec §4.2, C9, C13)
+3. **Mount в `src/server.js`** (защищённый файл — минимально): 1× `require('../backend/src/routes/devices')` + 1× `app.use('/api/devices', authenticate, requireCompanyAccess, devicesRouter)`.
+4. **Новый сервис** `backend/src/services/pushService.js`: `sendToUser(company_id, crm_user_id, {type, job_id})` — резолв `device_tokens` по `(company_id, crm_user_id)`, отправка через APNs (token-based `.p8`, env `APNS_KEY_ID`/`APNS_TEAM_ID`/`APNS_BUNDLE_ID`/`APNS_PRIVATE_KEY`); payload `alert` + `data:{type,job_id}` + `content-available:1` (silent-триггер incremental). APNs `410 Unregistered` → удалить строку (spec C9). Fail-soft (пуш best-effort, не ломает основной путь).
+5. **Хуки:** в reassign-путь (`backend/src/services/scheduleService.js` `reassignItem` / `jobsService` reassign) после успешного `UPDATE assigned_provider_user_ids` — diff old→new, для КАЖДОГО добавленного id → `pushService.sendToUser(..., {type:'job_assigned', job_id})`. В reschedule-путь (изменение `start_date`/`end_date`) — для текущих назначенных → `{type:'job_rescheduled', job_id}`. (spec §3.7, §4.2, §8.T2; переиспользует JOB-TECH-ASSIGN-001 путь)
+**Файлы можно менять:** `backend/db/migrations/150_device_tokens.sql` (+rollback), `backend/src/routes/devices.js` (новый), `backend/src/services/pushService.js` (новый), `backend/src/services/scheduleService.js` (хук), `backend/src/services/jobsService.js` (хук — согласовать с T1, тот же файл), `.env.example` (APNS_* ключи), `src/server.js` (1 require + 1 mount), тесты `backend/src/routes/__tests__/devices.test.js`.
+**Файлы трогать нельзя:** `backend/src/routes/authDevice.js` (это OTP `/api/auth/*`, не APNs); `backend/src/routes/push-subscriptions.js` (web-push VAPID — не трогаем).
+**Acceptance:** `POST /api/devices` без `crm_user_id` → `409 NO_CRM_USER`; upsert идемпотентен, уникальность по `apns_token`; `DELETE` идемпотентен; назначение provider → пуш `job_assigned` только добавленным id; reschedule → `job_rescheduled` назначенным; APNs `410` → строка удалена. Тесты `401`/`403`/межтенантная изоляция (юзер A не регистрирует/не читает токены B) (spec §10). **Реальный прогон миграции 150 против PG.** Покрывает spec §3.7, §4.2, §8.T2, C9.
+**Статус:** pending
+
+### MTECH-T3: Keycloak public client `crm-mobile` (realm-export + setup-скрипт)
+
+**Repo:** backend · **Size:** S · **Depends-on:** — (параллельно T1/T2) · **КОНФИГ, не эндпоинт**
+**Описание (what/where):** Добавить в `keycloak/realm-export.json` и `scripts/setup-keycloak.sh` public OIDC-клиент `crm-mobile` (realm `crm-prod`): `publicClient=true`, `standardFlowEnabled=true`, `implicitFlowEnabled=false`, `pkce.code.challenge.method=S256`, `redirectUris=["albusto://auth","albusto://auth/*"]`, `webOrigins=[]`. Мирроринг блока создания `crm-web` в setup-скрипте (как делали для google-idp). Веб-клиент `crm-web` **НЕ трогать**. Bundle id (напр. `com.albusto.crm`) и custom scheme `albusto://` фиксируются на стороне приложения (MTECH-M00). (spec §4.3, §8.T3)
+**Файлы можно менять:** `keycloak/realm-export.json`, `scripts/setup-keycloak.sh`.
+**Файлы трогать нельзя:** конфиг `crm-web` в обоих файлах; `keycloak/*.ftl` (темы).
+**Acceptance:** запуск setup-скрипта на локальном Keycloak создаёт `crm-mobile` с PKCE S256 и custom-scheme redirect; `crm-web` не изменён; realm-export содержит клиент идемпотентно (повторный импорт не дублирует). Прод-конфиг Keycloak = **owner-gated** (внешний чек-лист). Покрывает spec §4.3, §8.T3, §6.C11 (2FA — SMS-OTP внутри Keycloak browser-flow при PKCE-логине).
+**Статус:** pending
+
+---
+
+## PHASE 1 — RN app core v1 (репо: `albusto-mobile`, НОВЫЙ репо)
+
+> Внутрифазовый порядок: M00 → M01/M02 (auth, SQLite-схема) → M03 (SyncEngine) → M04/M05 (Schedule/Detail) → M07 (статусы) → M08 (notes+photos) → M09/M10 (nav/call) → M11 (APNs). M14 (shared types) параллелен M01+ и подключается по мере готовности T-контрактов.
+
+### MTECH-M00: Scaffold `albusto-mobile` (Expo dev-client, TS, навигация, Albusto-токены)
+
+**Repo:** albusto-mobile (создание репо) · **Size:** M · **Depends-on:** —
+**Описание (what/where):** Инициализировать НОВЫЙ репо `albusto-mobile`: Expo **prebuild/dev-client** workflow, TypeScript. Настроить: config-plugins для нативных модулей (заготовки под StripeTerminal/APNs), navigation (stack + tabs), bundle id `com.albusto.crm`, custom URL-scheme `albusto://` (для redirect и deep-link), базовые Albusto-дизайн-токены (порт `--blanc-*` набора: `--blanc-bg`, `--blanc-ink-1/2/3`, `--blanc-line`, радиусы 10/16/22/28, шрифты IBM Plex Sans / Manrope). Заглушки экранов: Schedule / JobDetail / Settings. `app.config.ts` c scheme + bundle id. (spec §3, дизайн §12.1/§12.2 — Expo + отдельный репо приняты)
+**Acceptance:** `expo prebuild` проходит; `tsc --noEmit` чист; приложение стартует в iOS Simulator, показывает пустые Schedule/Settings; deep-link `albusto://` регистрируется в Info.plist. **Сборка/подпись/запуск на устройстве — owner-side (Xcode).** Токены Albusto применяются (тёмный ink на тёплом фоне).
+**Статус:** pending
+
+### MTECH-M01: Auth — PKCE (`crm-mobile`) + Keychain + `/api/auth/me` кэш + provider-scope deny-by-default
+
+**Repo:** albusto-mobile · **Size:** L · **Depends-on:** MTECH-M00, **MTECH-T3** (клиент `crm-mobile` должен существовать)
+**Описание (what/where):** `react-native-app-auth` → PKCE S256 против Keycloak realm `crm-prod`, client `crm-mobile`, redirect `albusto://auth`. Access/refresh — в **iOS Keychain** (не UserDefaults). Refresh — SDK↔Keycloak напрямую (наш backend не участвует). После логина: `GET /api/auth/me` → кэш authz-контекста (`company_id`, `crm_user_id`, `role`, `permissions`, `scopes`) в защищённом storage. Ревалидация `/api/auth/me` на каждом cold-start и после refresh. Различать «реально 0 назначено» vs `scope_empty` (нет `crm_users.id`) → экран re-auth (spec C3). Обработка `401` на API → silent refresh → retry раз; refresh мёртв (>30д / сессия отозвана деплоем) → мягкий редирект на логин, **кэш НЕ стирать** (spec C2, C14). FaceID — локальный анлок закэшированной сессии (spec §6 дизайна). Смена `crm_user_id` в `/api/auth/me` → сигнал wipe (реализуется в M03/M11, spec C13). (spec §2 A, §6 дизайна, §4 Auth-строка, C2/C3/C11/C14)
+**Acceptance:** полный PKCE-логин → токен в Keychain; cold-start ревалидирует `/api/auth/me`; `401` → авто-refresh → retry; истёкшая 30д-сессия → экран «Please sign in again to sync», кэш цел; `scope_empty` → «Can't load your jobs — please sign in again» (не «нет работ»); FaceID-анлок. (Изолированные TS-тесты на ветвление auth-состояний.)
+**Статус:** pending
+
+### MTECH-M02: SQLite-схема кэша + локальные миграции (`jobs`, `notes`, `schedule_index`, `sync_state`)
+
+**Repo:** albusto-mobile · **Size:** M · **Depends-on:** MTECH-M00 (**параллельно M01**)
+**Описание (what/where):** `op-sqlite` (или `expo-sqlite`), WAL, файл в app-sandbox с `NSURLIsExcludedFromBackupKey` (кэш восстановим, не в iCloud). Таблицы строго по **spec §2.5**: `jobs` (колонки id/blanc_status/zb_status/customer_*/address/city/normalized_address/lat/lng/start_date/end_date/service_name/job_number/invoice_*/zenbooker_job_id/assigned_techs_json/updated_at/**raw_json**), `notes` (`PK(job_id,note_index)`, `attachments_json` без URL), `schedule_index` (`job_id` PK, `day` YYYY-MM-DD в TZ компании, `start_at`, `sort_key` epoch; индекс `(day,sort_key)`), `sync_state` (синглтон `CHECK(id=1)`: `last_cursor`, `last_synced_at`, `crm_user_id`, `company_id`, `schema_version`, `full_sync_done`). Локальный migration-runner по `schema_version`. Хелпер `wipeAllCaches()` (БД + image-кэш) для C13. (spec §2.5)
+**Acceptance:** БД создаётся, WAL включён, исключена из бэкапа; все 4 таблицы + индексы по схеме; upsert job перезаписывает его `notes` целиком (`DELETE WHERE job_id` + reinsert); `sync_state` — ровно одна строка; `wipeAllCaches()` очищает всё. (Изолированные TS-тесты схемы/миграций.)
+**Статус:** pending
+
+### MTECH-M03: SyncEngine — state-machine, `applyDelta` (txn), курсор, unassigned/tombstones, staleness
+
+**Repo:** albusto-mobile · **Size:** L · **Depends-on:** MTECH-M01, MTECH-M02, **MTECH-T1** (контракт `GET /api/sync/jobs`)
+**Описание (what/where):** State-machine `UNINITIALIZED → FULL_SYNCING → READY → INCREMENTAL_SYNCING → READY` (+ `ERROR`, `OFFLINE`) точно по **spec §2.6**. `applyDelta` — **атомарно в ОДНОЙ SQLite-транзакции**: upsert `changed`, delete `unassigned`+`tombstones`, rebuild `notes`+`schedule_index` затронутых job, продвинуть `last_cursor`+`last_synced_at`; сбой → rollback, курсор не двигается (идемпотентный повтор, spec C10). Курсор `"{ts}|{id}"` — парсинг/сериализация (spec §2.2). Full sync: цикл страниц пока `has_more`, `full_sync_done=1` только по последней (spec §2.4, C10). Триггеры incremental: app-foreground, pull-to-refresh, push data-received, 60-с таймер при активном экране, открытие job detail (spec §2.6 READY). Staleness (spec §2.7): онлайн<5мин — нет баннера; офлайн — `Offline — showing data from {relativeTime}` (из `last_synced_at`/`server_time`, не `Date.now()` — spec C12); ≥7д офлайн — усиленный `Offline — data may be outdated (last updated {date})`. Смена `crm_user_id` (из M01) → `wipeAllCaches()` + full re-sync (spec C13). Full re-sync recovery-триггеры (spec §2.4): «Reload data» в настройках, разрыв, смена аккаунта. (spec §2.2/§2.4/§2.6/§2.7, C10/C12/C13)
+**Acceptance:** fresh install → FULL_SYNCING страницируется → READY; incremental по `last_cursor`; `applyDelta` атомарен (kill во время apply → курсор на месте, повтор идемпотентен); `unassigned`/`tombstones` удаляют из кэша; офлайн-баннер показывает верное относительное время; смена аккаунта → wipe+full. Изолированные TS-тесты reducer/state-machine/cursor. Покрывает spec §2, C10/C12/C13.
+**Статус:** pending
+
+### MTECH-M04: Schedule screen (офлайн-чтение из кэша, Day/Week)
+
+**Repo:** albusto-mobile · **Size:** M · **Depends-on:** MTECH-M03
+**Описание (what/where):** Экран Schedule рисуется мгновенно из `schedule_index`+`jobs` (spec §3.1). Дни-заголовки; тайл = бейдж `blanc_status` + `CustomerName, City` (одна строка, **plain-text, НЕ Maps-ссылка** — JOBS-UX-RBAC-001) + окно времени. Переключатель Day/Week, по умолчанию сегодня. Pull-to-refresh → INCREMENTAL_SYNCING. Состояния: OFFLINE (кэш + staleness-баннер, pull-to-refresh → тост «Offline», мгновенно завершается); ERROR (sync упал, кэша нет) → «Couldn't load your schedule. [Retry]»; Empty/`scope_empty` → «No jobs assigned to you» (+ подсказка refresh, НЕ ошибка); `start_date=NULL` → секция «Unscheduled» внизу дня. Дизайн Albusto (крупный ink-1, карточки `--blanc-line`/`rounded-xl`, без теней). (spec §3.1, C1)
+**Acceptance:** список из кэша мгновенно; Day/Week работают; pull-to-refresh обновляет; офлайн-баннер; ERROR/Empty/Unscheduled-ветки корректны; scope_empty ≠ ошибка. On-device визуальная проверка (owner-side для финального билда).
+**Статус:** pending
+
+### MTECH-M05: Job detail (офлайн-чтение из `raw_json`)
+
+**Repo:** albusto-mobile · **Size:** M · **Depends-on:** MTECH-M03 (**параллельно M04**)
+**Описание (what/where):** Карточка из кэша (`jobs.raw_json`) per spec §3.2 + дизайн Albusto: **крупный заголовок** (имя/клиент, h2/text-2xl/Manrope), контакт (phone/email **в шапке под именем**, без «CONTACT INFORMATION»-заголовка — CLAUDE.md), адрес, окно, статус, назначение, финансы (`invoice_total`/`invoice_status`), лента заметок (текст + миниатюры). Технические id (`zenbooker_job_id`, `contact_id`) **не показывать** (опц. маленькая ZB-иконка-ссылка). Секции — spacing, **без `<hr>`/Separator** (CLAUDE.md). Открытие карточки → тихий incremental этой работы. OFFLINE: всё из кэша, миниатюры только если файл в локальном image-кэше, иначе плейсхолдер «Photo — needs connection» (M08); staleness-баннер. Edge (работа исчезла — `unassigned`/`tombstone` пришёл, юзер внутри): мягкий оверлей `This job is no longer assigned to you` + [Back to schedule], строка удаляется по выходу (spec §3.2, C6). ZB-расхождение статуса → мягкая плашка `Status may differ from the office system` (spec C4). (spec §3.2, C4/C6)
+**Acceptance:** карточка из кэша; заголовок крупный, контакт в шапке, без tech-id и без горизонтальных линий; открытие → incremental; исчезнувшая работа → оверлей + удаление; ZB-mismatch плашка. On-device проверка (owner-side финал).
+**Статус:** pending
+
+### MTECH-M07: Смена статуса (онлайн, FSM-кнопки, On-the-way/ONWAY, error/race)
+
+**Repo:** albusto-mobile · **Size:** L · **Depends-on:** MTECH-M05, **MTECH-T0** (иначе `403`)
+**Описание (what/where):** Кнопки по состоянию (мирроринг `JobStatusTags` JOBS-UX-RBAC-001): scheduled/Submitted → [On the way]+[Start job]; en-route → [Start job]; in-progress → [Complete job]; terminal → нет. **Cancel-кнопки НЕТ вовсе** (spec §3.3). Действия — **только онлайн**: `POST /api/jobs/:id/{enroute,start,complete}` → in-flight (disabled+spinner, клиентский дедуп — spec C7) → `200` → тост (`Job started`/`Job completed`) → точечный incremental → перерисовка кнопок. On-the-way = **ONWAY-001**: лист geolocation→ETA-плитки→«Notify client» (SMS первично → статус best-effort), контракт `jobsApi.notifyOnTheWay(id,{eta_minutes})`; geolocation = нативный **CoreLocation** (permission `NSLocationWhenInUseUsageDescription`), фейл → плитки без ETA. OFFLINE: все кнопки `disabled` + `Needs connection`, тап → тост `You're offline — reconnect to update this job` (без очереди — LOCKED). Ветки ошибок: FSM-guard `400` → `Can't change status — this job was updated. Refreshing…` + форс-incremental; `403` → `You don't have permission for this action` (не должно после T0); race `404` → `This job is no longer assigned to you` + удалить из кэша + [Back to schedule] (spec C6). (spec §3.3, ONWAY-001, C6/C7)
+**Acceptance:** валидные переходы работают онлайн (`200`+тост+refresh); дедуп in-flight; ONWAY-лист с/без ETA; офлайн — кнопки disabled + верный тост; FSM `400`/race `404` ветки; Cancel отсутствует. Зависит от T0 (иначе `403`). On-device проверка (owner-side финал).
+**Статус:** pending
+
+### MTECH-M08: Заметки + фото (онлайн, камера, note-attachments upload)
+
+**Repo:** albusto-mobile · **Size:** L · **Depends-on:** MTECH-M05 (**параллельно M07**)
+**Описание (what/where):** Добавление заметки (текст и/или до **5** фото с камеры/галереи) — **только онлайн**, per spec §3.4 + NOTE-ATTACH-UPLOAD-001. Камера — нативная (permission `NSCameraUsageDescription`); сжатие на устройстве (длинная сторона ~2048px, JPEG q~0.7, ≤10MB — под multer-лимит). **Опция А (рекоменд.):** каждое фото сразу `POST /api/note-attachments/upload` (FormData: `attachments`, `entity_type=job`, `entity_id`) → чип со спиннером → `{id}`; «Save» disabled пока идёт хоть один upload; submit `POST /api/jobs/:id/notes` c `text`+`attachment_ids` (JSON, без байт). **Опция Б (фолбэк):** мультипарт `attachments[]` напрямую. Успех → тост `Note added` → incremental (заметка в ленте, `jobs.updated_at` бампнут — spec §0 G1). Просмотр вложения: `GET /api/note-attachments/:id/url` → presigned S3 → загрузка + локальный image-кэш по `attachment.id` (переживает офлайн). OFFLINE: «Add note»+камера `disabled`+`Needs connection`. ERROR: upload упал → чип ⚠+[Retry], «Save» disabled пока не убрать/переуспеть (spec C5); `413`/большой → `400` → «Photo too large — try again»; сеть отвалилась на submit → `Upload failed — you're offline. Nothing was saved.` (write-through, без очереди). (spec §3.4, C5)
+**Acceptance:** заметка с фото отправляется онлайн (staged upload → чипы → submit → тост → incremental); «Save» заблокирован во время upload; просмотр вложения кэшируется и виден офлайн; офлайн — кнопки disabled; upload-ошибка → ⚠+Retry; большой файл → «Photo too large». On-device (камера — только на устройстве, owner-side).
+**Статус:** pending
+
+### MTECH-M09: Навигация (Apple Maps deep-link из кэша)
+
+**Repo:** albusto-mobile · **Size:** S · **Depends-on:** MTECH-M05
+**Описание (what/where):** Кнопка «Directions» → Apple Maps: предпочтительно координаты `maps://?daddr={lat},{lng}` если есть в кэше, иначе адрес `maps://?daddr={urlEncoded(normalized_address||address)}` (universal link `https://maps.apple.com/?daddr=...` — фолбэк). Работает офлайн (адрес из кэша; кнопку **не** дизейблить). Нет адреса/координат → кнопка скрыта. Google Maps — НЕ в v1 (Apple Maps LOCKED). (spec §3.5)
+**Acceptance:** тап открывает Apple Maps с daddr (координаты приоритетнее адреса); работает офлайн; без адреса — кнопка скрыта. On-device.
+**Статус:** pending
+
+### MTECH-M10: Звонок клиенту (`tel:`)
+
+**Repo:** albusto-mobile · **Size:** S · **Depends-on:** MTECH-M05 (**параллельно M09**)
+**Описание (what/where):** Кнопка «Call» → `tel:{e164}` → системный dialer (MOBILE-NO-SOFTPHONE-001: VoIP не в v1; CallKit — v2). `customer_phone` из кэша. Caller ID = личный номер устройства (company caller-id придёт с CallKit v2). Работает офлайн (сотовая сеть, не наш backend; не дизейблить). Нет номера → кнопка скрыта. (spec §3.6)
+**Acceptance:** тап открывает системный набор с номером клиента; офлайн работает; без номера — кнопка скрыта. On-device.
+**Статус:** pending
+
+### MTECH-M11: APNs — регистрация + deep-link + foreground + wipe-on-account-change
+
+**Repo:** albusto-mobile · **Size:** L · **Depends-on:** MTECH-M03, MTECH-M01, **MTECH-T2** (роуты `/api/devices` + pushService)
+**Описание (what/where):** После логина + APNs-permission (`UNUserNotificationCenter`) → device token → `POST /api/devices` (idempotent upsert); переотправка на каждый cold-start/token-rotation (spec C9); logout → `DELETE /api/devices/:token`. Приём: `data:{type:'job_assigned'|'job_rescheduled', job_id}` + `content-available:1` → фон-incremental (spec §3.7). Тап по пушу → deep-link `albusto://job/{job_id}` → карточка; нет в кэше → сначала incremental, потом открыть; гонка → «Loading job…» → по появлению открыть, иначе тост. Foreground: тихий in-app баннер + фон-incremental (не выдёргивать экран). Нет прав на пуши → работать на foreground/60-с таймере + подсказка в настройках включить нотификации (spec §3.7 edge). Смена аккаунта (C13): `DELETE /api/devices/:token` старого + регистрация нового (координация с M03 wipe). (spec §3.7, C9/C13)
+**Acceptance:** токен регистрируется/переотправляется/удаляется; тап открывает нужную карточку (в т.ч. с pre-sync при гонке); foreground — баннер + тихий refresh; без прав — деградация на таймер. On-device (пуши — только на устройстве, owner-side APNs-окружение).
+**Статус:** pending
+
+### MTECH-M14: Shared TS-types package (общий с вебом)
+
+**Repo:** shared (`@albusto/shared-types`) · **Size:** M · **Depends-on:** MTECH-T1 (форма `Job`/sync-контракта); **параллельно M01+**
+**Описание (what/where):** Выделить общий TS-пакет типов сущностей/контрактов, потребляемый и вебом (`frontend/`), и мобилой (`albusto-mobile`): типы `Job` (форма `GET /api/jobs/:id` = форма sync `changed[]`), `Note`+`attachments`, `ScheduleItem`, sync-конверт (`{changed,unassigned,tombstones,next_cursor,has_more,scope_empty,server_time}`), `blanc_status` enum, `zb_status` enum, FSM-переходы. Публикация как локальный workspace-пакет (в этом репо `frontend` подключает его, в `albusto-mobile` — как dependency). **Веб-`frontend/` — трогать минимально/только импорты типов**, без изменения рантайм-логики. (spec §12.2 дизайна — общий пакет типов; §9 «Read/Write» контракты)
+**Файлы трогать нельзя:** `frontend/src/lib/authedFetch.ts`, `frontend/src/hooks/useRealtimeEvents.ts` (защищённые — не менять рантайм).
+**Acceptance:** пакет собирается; веб и мобила импортируют один `Job`-тип; `tsc` зелёный в обоих; рантайм веба не изменён. **Верификация веба — `npm run build` (tsc -b), не только `--noEmit`** (frontend-build-command).
+**Статус:** pending
+
+---
+
+## PHASE 1.5 — Tap to Pay (Stripe Terminal)
+
+> Вынесено отдельно (LOCKED), чтобы ожидание Apple-entitlement НЕ блокировало выпуск ядра v1. **Backend T4 можно делать уже в Phase 0** (параллельно), RN-часть — после ядра.
+
+### MTECH-T4 [1.5]: `POST /api/stripe-terminal/payment-intents` (create → существующий `createTapToPayIntent`)
+
+**Repo:** backend · **Size:** S · **Depends-on:** — (можно в Phase 0; независимо от M-задач)
+**Описание (what/where):** Добавить ОДИН роут в **существующий** `backend/src/routes/stripeTerminal.js` (mount `/api/stripe-terminal` уже есть, server.js:257 — новый mount НЕ создавать): `POST /api/stripe-terminal/payment-intents`, гейт `requirePermission('payments.collect_terminal')`. Req `{amount(cents), invoice_id?|job_id?|contact_id?}` (сумма валидируется против баланса инвойса если задан). Вызывает существующий `stripePaymentsService.createTapToPayIntent(companyId, actor, params)` → `assertCollectable()` → `provider.createTerminalPaymentIntent` (`card_present`, `capture_method:'automatic'`) → строка `stripe_payment_sessions(surface='tap_to_pay', status='open')` + аудит. `200 {session_id, client_secret, payment_intent_id, account_id, amount}`. Ошибки: `400 INVALID_AMOUNT`; `409 NOT_READY` (онбординг/entitlement не готовы); `503 NOT_CONFIGURED`; `401/403`. Идемпотентность — `idempotencyKey` (surface-company-invoice/job-amount-ts). **CRM-запись платежа НЕ надо** — уже автоматом через webhook `payment_intent.succeeded` → ledger (spec §4.4, §0 G4). connection-token и cancel **уже существуют** — не трогать. (spec §4.4, §8.T4, C8)
+**Файлы можно менять:** `backend/src/routes/stripeTerminal.js` (добавить роут), тесты `backend/src/routes/__tests__/stripeTerminal.paymentIntents.test.js`.
+**Файлы трогать нельзя:** `backend/src/services/stripePaymentsService.js` (переиспользуем `createTapToPayIntent` как есть); существующие connection-token/cancel роуты; webhook-хендлер; `src/server.js` (mount есть).
+**Acceptance:** create возвращает `client_secret`+session; `409 NOT_READY` когда `assertCollectable` не проходит; `400 INVALID_AMOUNT`; идемпотентный повтор не создаёт вторую сессию. Тесты `401`/`403`/межтенантная изоляция + `NOT_READY→409`. **Реальный прогон против PG (без новой миграции).** Покрывает spec §4.4, §8.T4, C8.
+**Статус:** pending
+
+### MTECH-M12 [1.5]: Tap to Pay экран (Stripe Terminal RN, `localMobile`) — flow + деклайны
+
+**Repo:** albusto-mobile · **Size:** L · **Depends-on:** MTECH-M05, **MTECH-T4**
+**Описание (what/where):** `@stripe/stripe-terminal-react-native`, reader `localMobile` (NFC, без железа). Flow per **spec §5**: token-provider зовёт существующий `POST /api/stripe-terminal/connection-token`; `discoverReaders(localMobile)` → `connectLocalMobileReader` (первый раз — системный Apple T&C prompt); экран «Take payment» (сумма префилл из `invoice_total`/баланса или ручной ввод) → `POST /api/stripe-terminal/payment-intents` (T4) → `collectPaymentMethod(client_secret)` («Hold card near top of iPhone») → `confirmPaymentIntent` на устройстве → успех → `GET /api/jobs/:id`/incremental для обновления `invoice_status` → тост `Payment received`. CRM-запись — автоматом (webhook). Гейтить показ кнопки «Take payment» по readiness (из существующего Stripe `/status`) — если `≠ collectable`, кнопку не показывать (spec §5, C8). Ошибки: `409 NOT_READY` → «Card payments aren't set up yet» (фиче-флаг OFF; ядро v1 при этом полностью функционально); `card_declined`/`expired_card` → «Card declined — try another card» (PI жив, повтор collect или `POST /payment-intents/:id/cancel`); reader/NFC/T&C → «Tap to Pay isn't available on this device»; сеть пропала с созданным-но-неподтверждённым PI → «Payment not completed» + [Cancel]; двойной тап — in-flight disabled; офлайн — `Needs connection`. (spec §5, C8)
+**Acceptance:** happy-path Tap to Pay (connect → intent → collect → confirm → «Payment received» → invoice обновился); readiness-гейт скрывает кнопку когда не collectable; деклайн/NFC/сеть-ветки корректны; идемпотентный create. **Требует Apple entitlement + Stripe Terminal онбординг (owner-side, внешний чек-лист) + физический iPhone с Tap to Pay — верификация on-device owner-side.**
+**Статус:** pending
+
+---
+
+## PHASE 2 — CallKit VoIP (только outline, ОТЛОЖЕНО — v2)
+
+> Не реализуется сейчас. Задачи-заглушки для полноты roadmap; детали не специфицированы (spec §4.5, §7 non-goals).
+
+### MTECH-T5 [v2]: Twilio Voice token-refresh + VoIP-push (PushKit) маршрут — OUTLINE
+
+**Repo:** backend · **Size:** — (defer) · **Depends-on:** — · **Статус:** deferred (v2)
+**Outline:** `GET /api/voice/token` уже отдаёт `{token, identity:"{companyId}:{userId}", expiresAt, allowed}` (TTL 3600). Для CallKit добавить refresh-механику токена + VoIP-push (PushKit) маршрут. Сохранить company-caller-id на исходящих (как в софтфоне). Не специфицировано (spec §4.5).
+
+### MTECH-M13 [v2]: CallKit + VoIP-push + voice-token refresh (RN) — OUTLINE
+
+**Repo:** albusto-mobile · **Size:** — (defer) · **Depends-on:** MTECH-T5, MTECH-M10 · **Статус:** deferred (v2)
+**Outline:** Twilio Voice iOS SDK + CallKit + PushKit/VoIP-push; входящие как системные звонки; заменяет `tel:` из M10; company caller-id на исходящих. Требует VoIP-push entitlement (owner-side). Не в v1/v1.5 (LOCKED).
+
+---
+
+## Порядок выполнения и параллелизм
+
+```
+Phase 0 (backend, этот репо):
+  T0 ─────────────────────────────────►(разблокирует M07)
+  T1 ─┐ (параллельно)                   ►(разблокирует M03)
+  T2 ─┤ параллельны друг другу          ►(разблокирует M11)
+  T3 ─┘                                 ►(разблокирует M01)
+  T4 [1.5] можно уже здесь, независимо  ►(разблокирует M12)
+
+Phase 1 (albusto-mobile):
+  M00 (scaffold)
+   ├─► M01 (auth)      ── needs T3
+   ├─► M02 (SQLite)    ── параллельно M01
+   │      └─► M03 (SyncEngine) ── needs M01+M02+T1
+   │             ├─► M04 (Schedule)
+   │             └─► M05 (JobDetail) ── параллельно M04
+   │                    ├─► M07 (статусы) ── needs T0
+   │                    ├─► M08 (notes+photos) ── параллельно M07
+   │                    ├─► M09 (Maps) ── параллельно M08
+   │                    └─► M10 (tel:) ── параллельно M09
+   │                    M11 (APNs) ── needs M03+M01+T2
+   └─► M14 (shared types) ── needs T1, параллельно M01+
+
+Phase 1.5:  T4 (backend, можно в Phase 0) → M12 (Tap to Pay RN, needs M05)
+Phase 2:    T5 → M13   (DEFERRED)
+```
+
+**Явные группы для параллельной работы:**
+- **Backend Phase 0:** {T1, T2, T3} независимы друг от друга (T0 логически первый, но тоже независим по файлам от T1/T2/T3 — правит только `routes/jobs.js`). T4 можно вести параллельно всей четвёрке.
+- **RN после M03:** {M04, M05} параллельны; после M05 — {M07, M08, M09, M10} параллельны (разные фичи одной карточки). M11 параллелен всей группе (зависит от M03/M01/T2, не от M04–M10).
+- **M14 (shared types)** параллелен всей RN-ветке, подключается по мере готовности T1-контракта.
+
+**Критический путь v1:** T3 → M00 → M01 → M03 → M05 → M07 (и параллельно T0 как gate для M07). Всё остальное навешивается сбоку.
+
+---
+
+## External / owner — long-lead чек-лист (начать ЗАРАНЕЕ, до/во время кода)
+
+- [ ] **Apple Developer Program (Organization)** — нужен для entitlements, signing, TestFlight, App Store. Оформление может занять дни. **Блокирует любую сборку на устройстве.** (дизайн §10, §11)
+- [ ] **Bundle id** зафиксировать (напр. `com.albusto.crm`) — используется в M00, APNs (`APNS_BUNDLE_ID`), Keycloak redirect-scheme.
+- [ ] **APNs .p8 key** (token-based auth): `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_PRIVATE_KEY` (+ `APNS_BUNDLE_ID`) — сгенерировать в Apple Developer, положить в backend env. Нужно для T2/M11. (spec §4.2)
+- [ ] **Tap to Pay entitlement** `com.apple.developer.proximity-reader.payment.acceptance` — запрос у Apple (аппрув ~дни). Нужно для M12. Начать до кода оплаты. (дизайн §10, spec §5)
+- [ ] **Stripe Terminal онбординг** на connected-аккаунте компании: `charges_enabled` + card capability `active` (иначе backend `409 NOT_READY`). Нужно для M12. (spec §5, C8)
+- [ ] **Физический iPhone с поддержкой Tap to Pay** (модель + iOS-версия по требованиям Stripe; Apple ID/регион аккаунта поддерживает фичу) — для on-device верификации M12.
+- [ ] **Keycloak PROD-конфиг клиента `crm-mobile`** — применить T3-конфиг к прод-realm (owner-gated; realm-export + setup-скрипт готовятся в T3, но применение к прод — на владельце). (spec §4.3)
+- [ ] **VoIP-push entitlement** (PushKit) — для v2/CallKit (MTECH-T5/M13). Пока не требуется.
+- [ ] **TestFlight** (внутренние тесты у техников) → далее App Store или Apple Business Manager (приватное распространение). Требует Apple Developer Program. (дизайн §11)
+
+---
+
