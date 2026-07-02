@@ -908,7 +908,7 @@ export default function WorkflowBuilderPage() {
                     onClick={() => setShowAddState(false)}
                 >
                     <div
-                        className="bg-white rounded-2xl shadow-xl w-[360px]"
+                        className="bg-[var(--blanc-panel-surface)] rounded-2xl shadow-xl w-[360px]"
                         style={{ padding: 24 }}
                         onClick={(e) => e.stopPropagation()}
                     >

@@ -413,7 +413,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                             {discountType ? (
                                 <div className="flex items-center gap-2 text-sm">
                                     <span className="text-[var(--blanc-ink-2)]">Discount</span>
-                                    <div className="inline-flex rounded-[10px] border border-[var(--blanc-line)] p-0.5 bg-white shrink-0">
+                                    <div className="inline-flex rounded-[10px] border border-[var(--blanc-line)] p-0.5 bg-[var(--blanc-panel-surface,#fffdf9)] shrink-0">
                                         <button
                                             type="button"
                                             disabled={readOnly}

@@ -125,7 +125,7 @@ export const SlotContextMenu: React.FC<SlotContextMenuProps> = ({
     return (
         <div
             ref={containerRef}
-            className="fixed z-50 bg-white border rounded-lg shadow-lg py-1 min-w-[220px]"
+            className="fixed z-50 bg-[var(--blanc-panel-surface)] border rounded-lg shadow-lg py-1 min-w-[220px]"
             style={{
                 top: Math.min(anchorRect.top, window.innerHeight - 160),
                 left: Math.min(anchorRect.left, window.innerWidth - 240),

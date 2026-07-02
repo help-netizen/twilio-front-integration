@@ -72,7 +72,7 @@ function getDateLabel(date: Date, mode: ViewMode): string {
 
 const frostedCard: React.CSSProperties = {
     background: 'linear-gradient(135deg, rgba(255, 253, 249, 0.94), rgba(249, 244, 238, 0.9))',
-    border: '1px solid rgba(104, 95, 80, 0.16)',
+    border: '1px solid var(--sched-line)',
     borderRadius: '24px',
     backdropFilter: 'blur(20px)',
     boxShadow: '0 12px 32px rgba(48, 39, 28, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.7)',
@@ -80,7 +80,7 @@ const frostedCard: React.CSSProperties = {
 
 const controlBtn: React.CSSProperties = {
     background: 'var(--sched-surface-strong)',
-    border: '1px solid rgba(104, 95, 80, 0.14)',
+    border: '1px solid var(--sched-line)',
     color: 'var(--sched-ink-1)',
     boxShadow: '0 6px 16px rgba(48, 39, 28, 0.06)',
     borderRadius: '14px',
@@ -415,7 +415,7 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
                                 className="flex items-center gap-2 min-h-[42px] px-4 text-[14px] font-semibold transition-all"
                                 style={{
                                     background: filterDropdownOpen ? 'var(--sched-ink-1)' : 'var(--sched-surface-strong)',
-                                    border: '1px solid ' + (filterDropdownOpen ? 'var(--sched-ink-1)' : 'rgba(104, 95, 80, 0.14)'),
+                                    border: '1px solid ' + (filterDropdownOpen ? 'var(--sched-ink-1)' : 'var(--sched-line)'),
                                     color: filterDropdownOpen ? '#fff' : 'var(--sched-ink-1)',
                                     boxShadow: '0 6px 16px rgba(48, 39, 28, 0.06)',
                                     borderRadius: '14px',

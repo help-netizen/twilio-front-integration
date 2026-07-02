@@ -159,7 +159,7 @@ export default function NotificationsSection() {
     return (
         <div className="space-y-5">
             {/* ── Card 1: Browser Push Status ─────────────────────────────── */}
-            <div className="rounded-xl p-4 bg-white border border-[rgba(117,106,89,0.18)]">
+            <div className="rounded-xl p-4 bg-[var(--blanc-panel-surface)] border border-[rgba(117,106,89,0.18)]">
                 <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
                         <Bell className="size-5 text-[#2f63d8]" />
@@ -241,7 +241,7 @@ export default function NotificationsSection() {
 
             {/* ── Card 2: Company Notification Types ──────────────────────── */}
             {config && (
-                <div className="rounded-xl p-4 bg-white border border-[rgba(117,106,89,0.18)]">
+                <div className="rounded-xl p-4 bg-[var(--blanc-panel-surface)] border border-[rgba(117,106,89,0.18)]">
                     <div className="flex items-center gap-2 mb-1">
                         <Shield className="size-5 text-gray-500" />
                         <h3 className="font-medium text-sm">Company Notification Types</h3>

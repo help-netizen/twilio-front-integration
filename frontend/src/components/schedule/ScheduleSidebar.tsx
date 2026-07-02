@@ -34,7 +34,7 @@ const ENTITY_BADGE_STYLES: Record<string, React.CSSProperties> = {
 const sectionCard: React.CSSProperties = {
     padding: '16px 16px 18px',
     borderRadius: '20px',
-    border: '1px solid rgba(118, 106, 89, 0.14)',
+    border: '1px solid var(--sched-line)',
     background: 'rgba(255, 255, 255, 0.5)',
 };
 
@@ -53,7 +53,7 @@ const infoRow: React.CSSProperties = {
     justifyContent: 'space-between',
     gap: '14px',
     padding: '10px 0',
-    borderBottom: '1px dashed rgba(118, 106, 89, 0.16)',
+    borderBottom: '1px dashed var(--sched-line)',
 };
 
 function getDetailLink(item: ScheduleItem): string {
@@ -138,9 +138,9 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
                         )}
                         {/* Schedule rail visualization */}
                         <div className="grid gap-1.5 mt-3.5" style={{ gridTemplateColumns: '1fr 1.8fr 0.8fr' }}>
-                            <div className="h-2.5 rounded-full" style={{ background: 'rgba(118, 106, 89, 0.16)' }} />
+                            <div className="h-2.5 rounded-full" style={{ background: 'var(--sched-line)' }} />
                             <div className="h-2.5 rounded-full" style={{ background: 'linear-gradient(90deg, rgba(47, 99, 216, 0.78), rgba(47, 99, 216, 0.46))' }} />
-                            <div className="h-2.5 rounded-full" style={{ background: 'rgba(118, 106, 89, 0.16)' }} />
+                            <div className="h-2.5 rounded-full" style={{ background: 'var(--sched-line)' }} />
                         </div>
                     </div>
                 )}
@@ -305,7 +305,7 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
                             className="w-full min-h-[44px] text-sm font-bold"
                             style={{
                                 background: 'rgba(255, 255, 255, 0.74)',
-                                border: '1px solid rgba(118, 106, 89, 0.14)',
+                                border: '1px solid var(--sched-line)',
                                 borderRadius: '14px',
                                 color: 'var(--sched-ink-1)',
                             }}

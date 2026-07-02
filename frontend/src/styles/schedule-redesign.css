@@ -3,22 +3,25 @@
 
 :root {
     /* Backgrounds */
-    --sched-bg: #efe9df;
-    --sched-bg-deep: #e3dacd;
+    --sched-bg: var(--blanc-bg);
+    --sched-bg-deep: var(--blanc-bg-deep);
 
     /* Surfaces (frosted glass) */
-    --sched-surface: rgba(252, 249, 244, 0.84);
-    --sched-surface-strong: #fffdf9;
-    --sched-surface-muted: #f4ede2;
+    --sched-surface: var(--blanc-surface);
+    /* NOTE: value-preserving — this file wins the cascade over the design-system
+       aliases, and its live value was #fffdf9 (= --blanc-panel-surface), NOT
+       --blanc-surface-strong (#fdf8f0). Keep the pixel-identical mapping. */
+    --sched-surface-strong: var(--blanc-panel-surface);
+    --sched-surface-muted: var(--blanc-surface-muted);
 
     /* Borders */
-    --sched-line: rgba(117, 106, 89, 0.18);
-    --sched-line-strong: rgba(97, 86, 71, 0.28);
+    --sched-line: var(--blanc-line);
+    --sched-line-strong: var(--blanc-line-strong);
 
     /* Text */
-    --sched-ink-1: #202734;
-    --sched-ink-2: #536070;
-    --sched-ink-3: #7d8796;
+    --sched-ink-1: var(--blanc-ink-1);
+    --sched-ink-2: var(--blanc-ink-2);
+    --sched-ink-3: var(--blanc-ink-3);
 
     /* Entity colors */
     --sched-job: #2f63d8;

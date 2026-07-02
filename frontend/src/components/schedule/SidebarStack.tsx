@@ -25,7 +25,7 @@ const LAYER_PEEK = 10; // px visible for each underlying layer
 const sectionCard: React.CSSProperties = {
     padding: '16px 16px 18px',
     borderRadius: '20px',
-    border: '1px solid rgba(118, 106, 89, 0.14)',
+    border: '1px solid var(--sched-line)',
     background: 'rgba(255, 255, 255, 0.5)',
 };
 
@@ -36,7 +36,7 @@ const sectionEyebrow: React.CSSProperties = {
 
 const sectionRow: React.CSSProperties = {
     display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
-    gap: '14px', padding: '10px 0', borderBottom: '1px dashed rgba(118, 106, 89, 0.16)',
+    gap: '14px', padding: '10px 0', borderBottom: '1px dashed var(--sched-line)',
 };
 
 export const SidebarStack: React.FC<SidebarStackProps> = ({
@@ -265,7 +265,7 @@ export const SidebarStack: React.FC<SidebarStackProps> = ({
                                         onClick={onPopLayer}
                                         className="flex items-center gap-1.5 px-4 py-2.5 text-[13px] font-semibold"
                                         style={{
-                                            background: 'rgba(255, 253, 249, 0.96)',
+                                            background: 'var(--blanc-panel-surface)',
                                             color: 'var(--sched-ink-2)',
                                             borderBottom: '1px solid var(--sched-line)',
                                         }}

@@ -208,7 +208,7 @@ export const WeekView: React.FC<WeekViewProps> = ({ currentDate, items, settings
                 {/* Time labels */}
                 <div className="relative" style={{
                     borderRight: '1px solid var(--sched-line)',
-                    background: `linear-gradient(180deg, rgba(255, 255, 255, 0.52), rgba(242, 235, 223, 0.62)), repeating-linear-gradient(to bottom, transparent 0 ${HOUR_HEIGHT - 1}px, rgba(118, 106, 89, 0.14) ${HOUR_HEIGHT - 1}px ${HOUR_HEIGHT}px)`,
+                    background: `linear-gradient(180deg, rgba(255, 255, 255, 0.52), rgba(242, 235, 223, 0.62)), repeating-linear-gradient(to bottom, transparent 0 ${HOUR_HEIGHT - 1}px, var(--sched-line) ${HOUR_HEIGHT - 1}px ${HOUR_HEIGHT}px)`,
                 }}>
                     {hourSlots.map(h => (
                         <div key={h} className="flex justify-end pr-3 pt-2 text-sm" style={{ height: `${HOUR_HEIGHT}px`, color: 'var(--sched-ink-1)' }}>
@@ -231,8 +231,8 @@ export const WeekView: React.FC<WeekViewProps> = ({ currentDate, items, settings
                             style={{
                                 borderRight: '1px solid var(--sched-line)',
                                 background: isToday
-                                    ? `linear-gradient(180deg, rgba(255, 249, 237, 0.88), rgba(255, 249, 237, 0.58)), repeating-linear-gradient(to bottom, transparent 0 ${HOUR_HEIGHT - 1}px, rgba(118, 106, 89, 0.14) ${HOUR_HEIGHT - 1}px ${HOUR_HEIGHT}px)`
-                                    : `linear-gradient(180deg, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0.06)), repeating-linear-gradient(to bottom, transparent 0 ${HOUR_HEIGHT - 1}px, rgba(118, 106, 89, 0.14) ${HOUR_HEIGHT - 1}px ${HOUR_HEIGHT}px)`,
+                                    ? `linear-gradient(180deg, rgba(255, 249, 237, 0.88), rgba(255, 249, 237, 0.58)), repeating-linear-gradient(to bottom, transparent 0 ${HOUR_HEIGHT - 1}px, var(--sched-line) ${HOUR_HEIGHT - 1}px ${HOUR_HEIGHT}px)`
+                                    : `linear-gradient(180deg, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0.06)), repeating-linear-gradient(to bottom, transparent 0 ${HOUR_HEIGHT - 1}px, var(--sched-line) ${HOUR_HEIGHT - 1}px ${HOUR_HEIGHT}px)`,
                             }}
                             onDragOver={makeDragOver(i)}
                             onDrop={makeDrop(i)}

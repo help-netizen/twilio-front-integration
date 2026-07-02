@@ -43,7 +43,7 @@ export const OverflowPopover: React.FC<OverflowPopoverProps> = ({
     return (
         <div
             ref={ref}
-            className="fixed z-50 w-56 max-h-48 overflow-auto rounded-lg border bg-white shadow-lg p-2 space-y-1"
+            className="fixed z-50 w-56 max-h-48 overflow-auto rounded-lg border bg-[var(--blanc-panel-surface)] shadow-lg p-2 space-y-1"
             style={{ top, left }}
         >
             <div className="text-xs font-medium text-gray-500 px-1 mb-1">
