@@ -4,6 +4,16 @@
 
 ---
 
+## 2026-07-01 — PULSE-MOBILE-FULLSCREEN-001: Pulse mobile list scrolls the app scroll area (no floating container / bottom void)
+
+Owner (real device) reported the mobile list pages put the list in a floating sub-container that leaves an empty gap at the bottom (worst in the installed PWA), unlike Schedule which fills the screen. Jobs/Leads/Tasks were already converted to Schedule's model (scroll `.app-main`, no inner container) in the mobile layout pass above — **Pulse was the remaining offender**: `PulsePage` set `appMain.style.overflow = 'hidden'` and scrolled its own `.pulse-sidebar-card` → `.pulse-sidebar-scroll` inner box.
+
+- **Fix (mobile-only, desktop byte-identical):** the `overflow:hidden` effect is now gated behind `useIsMobile()` (desktop still needs it for its two independent columns); on mobile `.app-main` stays scrollable. In `PulsePage.css` `@media (max-width:767px)` list mode, the `.pulse-layout`/`.pulse-sidebar-card`/`.pulse-sidebar-scroll` chain drops its fixed-height/overflow (→ `display:block; overflow:visible`, flat full-bleed, transparent bg, 8px inset) so the list flows into `.app-main` like Schedule. The conversation content panel keeps its own scroll.
+- **Verified** in dev-preview at 375px with an injected **34px safe-area** (iOS PWA proxy): Pulse last-item→nav gap constant (40px) at inset 0 and 34px (nav clearance tracks the inset), no void, no frame, no horizontal overflow. Jobs/Leads/Tasks cross-checked sufficient under 34px safe-area too. Build green.
+- NOTE: the Jobs/Leads/Tasks + Telephony + this Pulse fix were all merged to master but were **NOT on prod** — a parallel deploy (running image built 2026-07-01T23:53Z) predated commit `581e108`, so the fixes need a deploy to reach devices.
+
+---
+
 ## 2026-07-01 — Mobile layout pass: canonical list shell + Telephony sub-nav (TASKS-MOBILE-TILES-001 + TELEPHONY-MOBILE-SIDEBAR-001)
 
 Two mobile-layout fixes from one 375px audit (empirical dev-preview sweep + code root-cause). Frontend-only, no migration; desktop byte-identical (all behind `useIsMobile()`).
