@@ -172,7 +172,7 @@ export const STATIC_COLUMNS: Record<string, ColumnDef> = {
         ),
     },
     assigned_techs: {
-        key: 'assigned_techs', label: 'Techs',
+        key: 'assigned_techs', label: 'Providers',
         render: (j) => <span>{j.assigned_techs?.map((p: any) => p.name).join(', ') || '—'}</span>,
     },
     start_date: {
