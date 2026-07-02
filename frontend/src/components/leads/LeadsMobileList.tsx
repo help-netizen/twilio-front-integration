@@ -70,15 +70,15 @@ export const LeadsMobileList: React.FC<LeadsMobileListProps> = ({
 
     if (loading && filteredLeads.length === 0) {
         return (
-            <div className="flex items-center justify-center py-16" style={{ color: 'var(--blanc-ink-3)' }}>
-                <Loader2 className="size-5 animate-spin mr-2" /> Loading…
+            <div className="mobile-list-page__empty" style={{ color: 'var(--blanc-ink-3)' }}>
+                <span className="inline-flex items-center"><Loader2 className="size-5 animate-spin mr-2" /> Loading…</span>
             </div>
         );
     }
 
     if (filteredLeads.length === 0) {
         return (
-            <div className="flex flex-col items-center justify-center py-16 text-center" style={{ color: 'var(--blanc-ink-3)' }}>
+            <div className="mobile-list-page__empty" style={{ color: 'var(--blanc-ink-3)' }}>
                 <p className="text-sm">No leads</p>
             </div>
         );

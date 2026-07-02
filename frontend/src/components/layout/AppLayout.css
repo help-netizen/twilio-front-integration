@@ -336,3 +336,70 @@
     justify-content: center;
   }
 }
+
+/* ── Canonical mobile list shell (TASKS-MOBILE-TILES-001) ──────────────────
+   ONE definition shared by the mobile Jobs / Leads / Tasks pages so their
+   inset, scroll model and nav-clearance never drift again (MobileListPage.tsx).
+
+   Model: the shell is a plain block that does NOT create its own scroll context
+   — the page scrolls in `.app-main` (which already carries the fixed 60px
+   bottom-nav clearance: padding-bottom: calc(60px + safe-area)). We add a small
+   extra bottom pad on the content so the last tile clears the nav with a little
+   breathing room instead of sitting against it. No `flex-1 overflow` inner
+   scroller, no `overflow:hidden` wrapper → no flex:1 void on short lists, and the
+   background is the uniform body `--blanc-bg` (no bordered sub-card). */
+.mobile-list-page {
+  /* Block flow (NOT flex): a flex-column scroll child has its trailing padding
+     dropped from the scrollable overflow in both Chromium and WebKit, which is
+     exactly why the bottom-nav clearance was going inert. Block flow keeps the
+     content's bottom padding in `.app-main`'s scrollHeight, so the last tile
+     actually clears the fixed nav. */
+  display: block;
+  /* ~8px side inset, matching Jobs (the audit's standard). */
+  padding: 0 8px;
+}
+
+/* Sticky search/gear (or Tasks header) bar — pins to the top of the app-main
+   scroll. Sits above the tiles; opaque `--blanc-bg` so tiles scroll under it. */
+.mobile-list-page__bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--blanc-bg);
+  /* Breathing room under the app-header; a hair of bottom pad before content. */
+  padding: 10px 0 8px;
+}
+
+/* Scrollable content region. `.app-main` is the scroller and already reserves
+   the fixed 60px bottom-nav clearance via its own `padding-bottom: calc(60px +
+   safe-area)` — which IS honored here because this content is block flow (a
+   flex-column scroll child would have that trailing space dropped, the original
+   inert-clearance bug). We add only a little breathing room on top so the last
+   tile lands a comfortable ~36px above the nav (12px here + the list's own
+   bottom gap), never tight against it and never excessive. */
+.mobile-list-page__content {
+  padding-bottom: 12px;
+}
+
+/* Empty / loading state — vertically centered in the viewport space left after
+   the header + sticky bar + bottom nav, instead of clinging to the top. */
+.mobile-list-page__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  /* Header (52) + bottom nav (60) + bar (~48) ≈ 160px of chrome. */
+  min-height: calc(100dvh - 200px);
+  color: var(--blanc-ink-3);
+}
+
+/* Jobs/Leads day-group eyebrows are `sticky top-0` (pinned day labels). With
+   the single app-main scroll they now share that scroll with the shell bar, so
+   pin them just BELOW the bar (~62px: 44px search row + 18px bar padding)
+   instead of at 0 where the bar would hide them. Tasks group eyebrows aren't
+   sticky, so this only affects Jobs/Leads. */
+.mobile-list-page__content .blanc-eyebrow.sticky {
+  top: 62px;
+  z-index: 10;
+}

@@ -13,6 +13,7 @@ import { buildCopyJobData, type CopyJobData } from '../components/jobs/copyJobDa
 import { getJob, type LocalJob } from '../services/jobsApi';
 import { Download, Loader2, Plus } from 'lucide-react';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
+import { MobileListPage } from '../components/layout/MobileListPage';
 
 // ─── Jobs Page ───────────────────────────────────────────────────────────────
 
@@ -31,11 +32,92 @@ export function JobsPage() {
             .catch(() => setCopyFrom(buildCopyJobData(job)));
     };
 
+    const detailAndDialogs = (
+        <>
+            <FloatingDetailPanel open={!!page.selectedJob} onClose={page.handleCloseDetail} wide>
+                {page.selectedJob && (
+                    <JobDetailPanel
+                        job={page.selectedJob}
+                        contactInfo={page.contactInfo}
+                        detailLoading={page.detailLoading}
+                        noteJobId={page.noteJobId}
+                        noteText={page.noteText}
+                        setNoteText={page.setNoteText}
+                        setNoteJobId={page.setNoteJobId}
+                        onClose={page.handleCloseDetail}
+                        onBlancStatusChange={page.handleBlancStatusChange}
+                        onAddNote={page.handleAddNote}
+                        onMarkEnroute={page.handleMarkEnroute}
+                        onMarkInProgress={page.handleMarkInProgress}
+                        onMarkComplete={page.handleMarkComplete}
+                        onCancel={page.handleCancel}
+                        navigate={page.navigate}
+                        allTags={page.allTags}
+                        onTagsChange={page.handleTagsChange}
+                        onJobUpdated={page.handleJobUpdated}
+                        onNotified={page.afterMutation}
+                        onCopy={() => page.selectedJob && setCopyFrom(buildCopyJobData(page.selectedJob))}
+                    />
+                )}
+            </FloatingDetailPanel>
+            <NewJobDialog open={newJobOpen} onClose={() => setNewJobOpen(false)} />
+            <NewJobDialog open={!!copyFrom} copyFrom={copyFrom} onClose={() => setCopyFrom(null)} />
+        </>
+    );
+
+    if (isMobile) {
+        return (
+            <>
+                <MobileListPage
+                    stickyBar={
+                        <JobsMobileBar
+                            searchQuery={page.searchQuery}
+                            setSearchQuery={page.setSearchQuery}
+                            statusFilter={page.statusFilter}
+                            onStatusFilterChange={page.setStatusFilter}
+                            providerFilter={page.providerFilter}
+                            onProviderFilterChange={page.setProviderFilter}
+                            sourceFilter={page.sourceFilter}
+                            onSourceFilterChange={page.setSourceFilter}
+                            jobTypeFilter={page.jobTypeFilter}
+                            onJobTypeFilterChange={page.setJobTypeFilter}
+                            tagFilter={page.tagFilter}
+                            onTagFilterChange={page.setTagFilter}
+                            allTags={page.allTags}
+                            startDate={page.startDate}
+                            onStartDateChange={page.setStartDate}
+                            endDate={page.endDate}
+                            onEndDateChange={page.setEndDate}
+                            sortBy={page.sortBy}
+                            sortOrder={page.sortOrder}
+                            onSortChange={page.handleSortChange}
+                            jobs={page.jobs}
+                            onExportCSV={page.handleExportCSV}
+                            exporting={page.exporting}
+                            canExport={page.filteredJobs.length > 0}
+                            onNewJob={() => setNewJobOpen(true)}
+                            canCreateJob={canCreateJob}
+                        />
+                    }
+                >
+                    <JobsMobileList
+                        filteredJobs={page.filteredJobs}
+                        loading={page.loading}
+                        hasMore={page.hasMore}
+                        onLoadMore={page.loadMoreJobs}
+                        onSelectJob={page.handleSelectJob}
+                        timezone={company?.timezone}
+                    />
+                </MobileListPage>
+                {detailAndDialogs}
+            </>
+        );
+    }
+
+    // Desktop only — mobile early-returns above.
     return (
         <div className="blanc-page-wrapper">
-            {!isMobile ? (
-                <>
-                    <div className="blanc-unified-header">
+            <div className="blanc-unified-header">
                         <h1 className="blanc-header-title">Jobs</h1>
 
                         <div className="blanc-search-wrapper">
@@ -115,77 +197,7 @@ export function JobsPage() {
                             />
                         </div>
                     </div>
-                </>
-            ) : (
-                <>
-                    <JobsMobileBar
-                        searchQuery={page.searchQuery}
-                        setSearchQuery={page.setSearchQuery}
-                        statusFilter={page.statusFilter}
-                        onStatusFilterChange={page.setStatusFilter}
-                        providerFilter={page.providerFilter}
-                        onProviderFilterChange={page.setProviderFilter}
-                        sourceFilter={page.sourceFilter}
-                        onSourceFilterChange={page.setSourceFilter}
-                        jobTypeFilter={page.jobTypeFilter}
-                        onJobTypeFilterChange={page.setJobTypeFilter}
-                        tagFilter={page.tagFilter}
-                        onTagFilterChange={page.setTagFilter}
-                        allTags={page.allTags}
-                        startDate={page.startDate}
-                        onStartDateChange={page.setStartDate}
-                        endDate={page.endDate}
-                        onEndDateChange={page.setEndDate}
-                        sortBy={page.sortBy}
-                        sortOrder={page.sortOrder}
-                        onSortChange={page.handleSortChange}
-                        jobs={page.jobs}
-                        onExportCSV={page.handleExportCSV}
-                        exporting={page.exporting}
-                        canExport={page.filteredJobs.length > 0}
-                        onNewJob={() => setNewJobOpen(true)}
-                        canCreateJob={canCreateJob}
-                    />
-                    <div className="flex-1 overflow-y-auto" style={{ minHeight: 0 }}>
-                        <JobsMobileList
-                            filteredJobs={page.filteredJobs}
-                            loading={page.loading}
-                            hasMore={page.hasMore}
-                            onLoadMore={page.loadMoreJobs}
-                            onSelectJob={page.handleSelectJob}
-                            timezone={company?.timezone}
-                        />
-                    </div>
-                </>
-            )}
-            <FloatingDetailPanel open={!!page.selectedJob} onClose={page.handleCloseDetail} wide>
-                {page.selectedJob && (
-                    <JobDetailPanel
-                        job={page.selectedJob}
-                        contactInfo={page.contactInfo}
-                        detailLoading={page.detailLoading}
-                        noteJobId={page.noteJobId}
-                        noteText={page.noteText}
-                        setNoteText={page.setNoteText}
-                        setNoteJobId={page.setNoteJobId}
-                        onClose={page.handleCloseDetail}
-                        onBlancStatusChange={page.handleBlancStatusChange}
-                        onAddNote={page.handleAddNote}
-                        onMarkEnroute={page.handleMarkEnroute}
-                        onMarkInProgress={page.handleMarkInProgress}
-                        onMarkComplete={page.handleMarkComplete}
-                        onCancel={page.handleCancel}
-                        navigate={page.navigate}
-                        allTags={page.allTags}
-                        onTagsChange={page.handleTagsChange}
-                        onJobUpdated={page.handleJobUpdated}
-                        onNotified={page.afterMutation}
-                        onCopy={() => page.selectedJob && setCopyFrom(buildCopyJobData(page.selectedJob))}
-                    />
-                )}
-            </FloatingDetailPanel>
-            <NewJobDialog open={newJobOpen} onClose={() => setNewJobOpen(false)} />
-            <NewJobDialog open={!!copyFrom} copyFrom={copyFrom} onClose={() => setCopyFrom(null)} />
+            {detailAndDialogs}
         </div>
     );
 }

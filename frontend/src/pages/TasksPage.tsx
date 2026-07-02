@@ -4,6 +4,7 @@ import { Check, Loader2, AlarmClock } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuthz } from '../hooks/useAuthz';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { MobileListPage } from '../components/layout/MobileListPage';
 import { TaskSnoozeMenu } from '../components/tasks/TaskSnoozeMenu';
 import { listTasks, completeTask, snoozeTask, parentPath, type Task, type TaskParentType } from '../components/tasks/tasksApi';
 import { isOverdue } from '../components/tasks/taskUtils';
@@ -121,83 +122,113 @@ export function TasksPage() {
         </span>
     );
 
+    // Filter controls — shared markup for desktop header and the mobile sticky bar.
+    const controls = (
+        <div className="flex items-center gap-2">
+            <select value={parentType} onChange={e => setParentType(e.target.value as TaskParentType | '')}
+                className="text-sm outline-none"
+                style={{ border: '1px solid var(--blanc-line)', borderRadius: 10, padding: '6px 10px', background: 'transparent', color: 'var(--blanc-ink-1)' }}>
+                <option value="">All types</option>
+                <option value="job">Jobs</option>
+                <option value="lead">Leads</option>
+                <option value="contact">Contacts</option>
+                <option value="estimate">Estimates</option>
+                <option value="invoice">Invoices</option>
+            </select>
+            <div className="flex items-center rounded-[10px] overflow-hidden" style={{ border: '1px solid var(--blanc-line)' }}>
+                {(['open', 'all'] as const).map(s => (
+                    <button key={s} type="button" onClick={() => setStatus(s)}
+                        className="text-sm capitalize transition-colors"
+                        style={{ padding: '6px 12px', background: status === s ? 'var(--blanc-ink-1)' : 'transparent', color: status === s ? '#fff' : 'var(--blanc-ink-2)' }}>
+                        {s}
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+
+    // A single task row — mobile = full-width tile (JobMobileCard/LeadMobileCard
+    // family: border var(--blanc-line), rounded-xl, no shadow), desktop = compact row.
+    const renderTask = (t: Task, group: Group) => {
+        const meta = PARENT_META[t.parent_type];
+        const done = t.status === 'done';
+        return isMobile ? (
+            <div key={t.id} onClick={() => navigate(parentPath(t))}
+                className="w-full rounded-xl p-3 space-y-2 cursor-pointer transition-colors"
+                style={{ border: '1px solid var(--blanc-line)', background: 'var(--blanc-surface-strong, #fffdf9)', opacity: done ? 0.6 : 1 }}>
+                <div className="flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-1.5" style={{ fontSize: 11, color: 'var(--blanc-ink-3)' }}>
+                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: meta.color }} />{meta.label}
+                    </span>
+                    <TimeLabel t={t} compact={group.compactTime} />
+                </div>
+                <p className="text-sm" style={{ color: 'var(--blanc-ink-1)' }}>{t.description}</p>
+                <div className="flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-2 min-w-0" style={{ fontSize: 12, color: 'var(--blanc-ink-2)' }}>
+                        <Avatar t={t} /><span className="truncate">{t.parent_label || meta.label}</span>
+                    </span>
+                    <Actions t={t} />
+                </div>
+            </div>
+        ) : (
+            <div key={t.id} onClick={() => navigate(parentPath(t))}
+                className="flex items-center gap-3 rounded-[10px] px-3 py-2.5 cursor-pointer transition-colors hover:bg-[rgba(117,106,89,0.04)]"
+                style={{ border: '1px solid var(--blanc-line)', opacity: done ? 0.6 : 1 }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: meta.color, flex: 'none' }} title={meta.label} />
+                <span className="shrink-0" style={{ fontSize: 11, color: 'var(--blanc-ink-3)', width: 60 }}>{meta.label}</span>
+                <span className="flex-1 min-w-0 truncate text-sm" style={{ color: 'var(--blanc-ink-1)' }}>
+                    {t.description}
+                    <span style={{ color: 'var(--blanc-ink-3)' }}> · {t.parent_label}</span>
+                </span>
+                <TimeLabel t={t} compact={group.compactTime} />
+                <Avatar t={t} />
+                <Actions t={t} />
+            </div>
+        );
+    };
+
+    // Grouped list body (due-bucket groups + .blanc-eyebrow headers). Shared by
+    // both layouts; on mobile the tiles inside are full-width.
+    const body = loading ? (
+        <div className={isMobile ? 'mobile-list-page__empty' : 'flex items-center justify-center py-16'}>
+            <Loader2 className="size-5 animate-spin" style={{ color: 'var(--blanc-ink-3)' }} />
+        </div>
+    ) : groups.length === 0 ? (
+        <div className={isMobile ? 'mobile-list-page__empty text-sm' : 'text-center py-16 text-sm'} style={{ color: 'var(--blanc-ink-3)' }}>No tasks</div>
+    ) : (
+        <div className="space-y-6">
+            {groups.map(group => (
+                <div key={group.key} className="space-y-2">
+                    <div className="blanc-eyebrow" style={group.danger ? { color: '#b42318' } : undefined}>{group.label}</div>
+                    {group.tasks.map(t => renderTask(t, group))}
+                </div>
+            ))}
+        </div>
+    );
+
+    if (isMobile) {
+        return (
+            <MobileListPage
+                stickyBar={
+                    <div className="flex items-center justify-between gap-3">
+                        <div className="blanc-eyebrow" style={{ marginBottom: 0 }}>Tasks</div>
+                        {controls}
+                    </div>
+                }
+            >
+                {body}
+            </MobileListPage>
+        );
+    }
+
+    // Desktop — unchanged centered layout.
     return (
         <div className="mx-auto max-w-4xl px-4 py-5 md:px-6">
             <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
                 <h2 className="text-2xl font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>Tasks</h2>
-                <div className="flex items-center gap-2">
-                    <select value={parentType} onChange={e => setParentType(e.target.value as TaskParentType | '')}
-                        className="text-sm outline-none"
-                        style={{ border: '1px solid var(--blanc-line)', borderRadius: 10, padding: '6px 10px', background: 'transparent', color: 'var(--blanc-ink-1)' }}>
-                        <option value="">All types</option>
-                        <option value="job">Jobs</option>
-                        <option value="lead">Leads</option>
-                        <option value="contact">Contacts</option>
-                        <option value="estimate">Estimates</option>
-                        <option value="invoice">Invoices</option>
-                    </select>
-                    <div className="flex items-center rounded-[10px] overflow-hidden" style={{ border: '1px solid var(--blanc-line)' }}>
-                        {(['open', 'all'] as const).map(s => (
-                            <button key={s} type="button" onClick={() => setStatus(s)}
-                                className="text-sm capitalize transition-colors"
-                                style={{ padding: '6px 12px', background: status === s ? 'var(--blanc-ink-1)' : 'transparent', color: status === s ? '#fff' : 'var(--blanc-ink-2)' }}>
-                                {s}
-                            </button>
-                        ))}
-                    </div>
-                </div>
+                {controls}
             </div>
-
-            {loading ? (
-                <div className="flex items-center justify-center py-16"><Loader2 className="size-5 animate-spin" style={{ color: 'var(--blanc-ink-3)' }} /></div>
-            ) : groups.length === 0 ? (
-                <div className="text-center py-16 text-sm" style={{ color: 'var(--blanc-ink-3)' }}>No tasks</div>
-            ) : (
-                <div className="space-y-6">
-                    {groups.map(group => (
-                        <div key={group.key} className="space-y-2">
-                            <div className="blanc-eyebrow" style={group.danger ? { color: '#b42318' } : undefined}>{group.label}</div>
-                            {group.tasks.map(t => {
-                                const meta = PARENT_META[t.parent_type];
-                                const done = t.status === 'done';
-                                return isMobile ? (
-                                    <div key={t.id} onClick={() => navigate(parentPath(t))}
-                                        className="rounded-xl p-3 space-y-2 cursor-pointer transition-colors"
-                                        style={{ border: '1px solid var(--blanc-line)', background: 'var(--blanc-surface-strong, #fffdf9)', opacity: done ? 0.6 : 1 }}>
-                                        <div className="flex items-center justify-between gap-2">
-                                            <span className="inline-flex items-center gap-1.5" style={{ fontSize: 11, color: 'var(--blanc-ink-3)' }}>
-                                                <span style={{ width: 8, height: 8, borderRadius: '50%', background: meta.color }} />{meta.label}
-                                            </span>
-                                            <TimeLabel t={t} compact={group.compactTime} />
-                                        </div>
-                                        <p className="text-sm" style={{ color: 'var(--blanc-ink-1)' }}>{t.description}</p>
-                                        <div className="flex items-center justify-between gap-2">
-                                            <span className="inline-flex items-center gap-2 min-w-0" style={{ fontSize: 12, color: 'var(--blanc-ink-2)' }}>
-                                                <Avatar t={t} /><span className="truncate">{t.parent_label || meta.label}</span>
-                                            </span>
-                                            <Actions t={t} />
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div key={t.id} onClick={() => navigate(parentPath(t))}
-                                        className="flex items-center gap-3 rounded-[10px] px-3 py-2.5 cursor-pointer transition-colors hover:bg-[rgba(117,106,89,0.04)]"
-                                        style={{ border: '1px solid var(--blanc-line)', opacity: done ? 0.6 : 1 }}>
-                                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: meta.color, flex: 'none' }} title={meta.label} />
-                                        <span className="shrink-0" style={{ fontSize: 11, color: 'var(--blanc-ink-3)', width: 60 }}>{meta.label}</span>
-                                        <span className="flex-1 min-w-0 truncate text-sm" style={{ color: 'var(--blanc-ink-1)' }}>
-                                            {t.description}
-                                            <span style={{ color: 'var(--blanc-ink-3)' }}> · {t.parent_label}</span>
-                                        </span>
-                                        <TimeLabel t={t} compact={group.compactTime} />
-                                        <Avatar t={t} />
-                                        <Actions t={t} />
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    ))}
-                </div>
-            )}
+            {body}
         </div>
     );
 }

@@ -18,6 +18,7 @@ import { serverNow, serverDate } from '../utils/serverClock';
 import { DEFAULT_COLUMNS } from '../types/lead';
 import { createLeadActions } from '../hooks/useLeadsActions';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
+import { MobileListPage } from '../components/layout/MobileListPage';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useAuthz } from '../hooks/useAuthz';
 
@@ -100,6 +101,49 @@ export function LeadsPage() {
 
     const actions = createLeadActions(leads, selectedLead, setLeads, setSelectedLead, setEditingLead, setConvertingLead, setCreateDialogOpen);
 
+    const detailAndDialogs = (
+        <>
+            <FloatingDetailPanel open={!!selectedLead} onClose={() => { setSelectedLead(null); navigate('/leads', { replace: true }); }} wide>
+                <LeadDetailPanel lead={selectedLead} onClose={() => { setSelectedLead(null); navigate('/leads', { replace: true }); }} onEdit={l => setEditingLead(l)} onMarkLost={actions.handleMarkLost} onActivate={actions.handleActivate} onConvert={actions.handleConvert} onUpdateComments={actions.handleUpdateComments} onUpdateStatus={actions.handleUpdateStatus} onUpdateSource={actions.handleUpdateSource} onDelete={actions.handleDelete} />
+            </FloatingDetailPanel>
+            <CreateLeadDialog open={createDialogOpen} onOpenChange={setCreateDialogOpen} onSuccess={actions.handleCreateLead} />
+            {editingLead && <EditLeadDialog lead={editingLead} open={!!editingLead} onOpenChange={open => !open && setEditingLead(null)} onSuccess={actions.handleUpdateLead} />}
+            <ColumnSettingsDialog open={settingsDialogOpen} onOpenChange={setSettingsDialogOpen} columns={columns} onSave={handleSaveColumns} />
+            {convertingLead && <ConvertToJobDialog lead={convertingLead} open={!!convertingLead} onOpenChange={open => !open && setConvertingLead(null)} onSuccess={actions.handleConvertSuccess} />}
+        </>
+    );
+
+    if (isMobile) {
+        return (
+            <>
+                <MobileListPage
+                    stickyBar={
+                        <LeadsMobileBar
+                            searchQuery={searchQuery} setSearchQuery={setSearchQuery}
+                            filters={filters} onFiltersChange={handleFiltersChange}
+                            sourceFilter={sourceFilter} onSourceFilterChange={setSourceFilter}
+                            jobTypeFilter={jobTypeFilter} onJobTypeFilterChange={setJobTypeFilter}
+                            sortBy={sortBy} sortOrder={sortOrder} onSortChange={(field, order) => { setSortBy(field); setSortOrder(order); }}
+                            onNewLead={() => setCreateDialogOpen(true)}
+                            canCreateLead={canCreateLead}
+                        />
+                    }
+                >
+                    <LeadsMobileList
+                        filteredLeads={filteredLeads}
+                        loading={loading}
+                        hasMore={hasMore}
+                        onLoadMore={loadMoreLeads}
+                        onSelectLead={handleSelectLead}
+                        timezone={company?.timezone}
+                    />
+                </MobileListPage>
+                {detailAndDialogs}
+            </>
+        );
+    }
+
+    // Desktop only — mobile early-returns above.
     return (
         <div className="blanc-page-wrapper">
             {!isMobile && (
@@ -144,38 +188,7 @@ export function LeadsPage() {
                     </div>
                 </>
             )}
-
-            {isMobile && (
-                <div className="flex flex-col gap-3 px-3 pt-3 flex-1 min-h-0">
-                    <LeadsMobileBar
-                        searchQuery={searchQuery} setSearchQuery={setSearchQuery}
-                        filters={filters} onFiltersChange={handleFiltersChange}
-                        sourceFilter={sourceFilter} onSourceFilterChange={setSourceFilter}
-                        jobTypeFilter={jobTypeFilter} onJobTypeFilterChange={setJobTypeFilter}
-                        sortBy={sortBy} sortOrder={sortOrder} onSortChange={(field, order) => { setSortBy(field); setSortOrder(order); }}
-                        onNewLead={() => setCreateDialogOpen(true)}
-                        canCreateLead={canCreateLead}
-                    />
-                    <div className="flex-1 min-h-0 overflow-y-auto">
-                        <LeadsMobileList
-                            filteredLeads={filteredLeads}
-                            loading={loading}
-                            hasMore={hasMore}
-                            onLoadMore={loadMoreLeads}
-                            onSelectLead={handleSelectLead}
-                            timezone={company?.timezone}
-                        />
-                    </div>
-                </div>
-            )}
-
-            <FloatingDetailPanel open={!!selectedLead} onClose={() => { setSelectedLead(null); navigate('/leads', { replace: true }); }} wide>
-                <LeadDetailPanel lead={selectedLead} onClose={() => { setSelectedLead(null); navigate('/leads', { replace: true }); }} onEdit={l => setEditingLead(l)} onMarkLost={actions.handleMarkLost} onActivate={actions.handleActivate} onConvert={actions.handleConvert} onUpdateComments={actions.handleUpdateComments} onUpdateStatus={actions.handleUpdateStatus} onUpdateSource={actions.handleUpdateSource} onDelete={actions.handleDelete} />
-            </FloatingDetailPanel>
-            <CreateLeadDialog open={createDialogOpen} onOpenChange={setCreateDialogOpen} onSuccess={actions.handleCreateLead} />
-            {editingLead && <EditLeadDialog lead={editingLead} open={!!editingLead} onOpenChange={open => !open && setEditingLead(null)} onSuccess={actions.handleUpdateLead} />}
-            <ColumnSettingsDialog open={settingsDialogOpen} onOpenChange={setSettingsDialogOpen} columns={columns} onSave={handleSaveColumns} />
-            {convertingLead && <ConvertToJobDialog lead={convertingLead} open={!!convertingLead} onOpenChange={open => !open && setConvertingLead(null)} onSuccess={actions.handleConvertSuccess} />}
+            {detailAndDialogs}
         </div>
     );
 }
