@@ -3,6 +3,7 @@ import {
     LayoutDashboard, Phone, PhoneIncoming, Users, Music,
     Shield, FileText,
 } from 'lucide-react';
+import { useIsMobile } from '../../hooks/useIsMobile';
 
 const sections = [
     {
@@ -33,7 +34,40 @@ const sections = [
 export default function TelephonyNav() {
     const location = useLocation();
     const navigate = useNavigate();
+    const isMobile = useIsMobile();
     const isActive = (path: string) => path === '/settings/telephony' ? location.pathname === path : location.pathname.startsWith(path);
+
+    if (isMobile) {
+        // Mobile: flatten all groups into one horizontal, scrollable tab strip
+        // at the top (group titles + "Telephony" heading dropped — the chips are
+        // self-explanatory). Content renders full-width below (see TelephonyLayout).
+        const items = sections.flatMap(s => s.items);
+        return (
+            <nav style={{
+                display: 'flex', flexWrap: 'nowrap', gap: 8, alignItems: 'center',
+                overflowX: 'auto', WebkitOverflowScrolling: 'touch',
+                background: '#f9fafb', borderBottom: '1px solid #e5e7eb',
+                padding: '10px 12px', flexShrink: 0,
+            }}>
+                {items.map(item => {
+                    const active = isActive(item.path);
+                    return (
+                        <button key={item.path} onClick={() => navigate(item.path)} style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0,
+                            minHeight: 40, padding: '8px 14px', fontSize: 13, whiteSpace: 'nowrap',
+                            fontWeight: active ? 600 : 400, color: active ? '#6366f1' : '#374151',
+                            background: active ? '#ede9fe' : 'transparent',
+                            border: `1px solid ${active ? '#ede9fe' : '#e5e7eb'}`, borderRadius: 999,
+                            cursor: 'pointer', transition: 'background 0.1s',
+                        }}>
+                            <span style={{ color: active ? '#6366f1' : '#6b7280', flexShrink: 0, display: 'inline-flex' }}>{item.icon}</span>
+                            <span>{item.label}</span>
+                        </button>
+                    );
+                })}
+            </nav>
+        );
+    }
 
     return (
         <nav style={{ width: 220, background: '#f9fafb', borderRight: '1px solid #e5e7eb', padding: '16px 0', overflowY: 'auto', flexShrink: 0, height: '100%' }}>
