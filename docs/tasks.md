@@ -4003,3 +4003,348 @@ Spec: `Docs/specs/PRICEBOOK-001.md` · Status: implemented, **not deployed**.
 - `npm run build` (frontend tsc -b) green; jest green (bulk suite + regressions); backend `node --check`.
 - Manual local test (grid CRUD + bulk save + delete + search + guard) with screenshots.
 - Update `Docs/changelog.md`; keep requirements/architecture/spec/tasks consistent.
+
+---
+
+## ONBTEL-001 — tasks (2026-07-02)
+
+> **STATUS: planned** — task breakdown by Planner (05). Not started.
+>
+> Три части одной фичи: **A** — онбординг-чеклист tenant_admin'а на `/pulse` (derived-статус, write-once `completed_at`, БЕЗ новой таблицы/миграции); **B** — Marketplace-приложение «Telephony — Twilio» (seed 145, derived-connected overlay БЕЗ install-строк, 3-шаговый визард Connect → Тариф (новый план Pay-as-you-go, seed 146) → Номер, redirect неподключённых из Settings → Telephony); **C** — 5 фиксов изоляции Twilio (C1 Reject unknown + лог, C2 NOT NULL+backfill mig 147, C2b master-sync bind DEFAULT, C3 guarded UNIQUE ×2 mig 148, C4 wallet-гейт на резолвнутой компании, C5 fail-closed softphone-токен 409).
+> Требования `Docs/requirements.md` §«Фича ONBTEL-001» (решения владельца обязательны) · Архитектура `Docs/architecture.md` §«ONBTEL-001» (авторитетна: файлы §6, миграции §5, контракты §7) · Спека `Docs/specs/ONBTEL-001.md` (A1–A8, E-A/E-B/E-C матрицы) · Тест-кейсы `Docs/test-cases/ONBTEL-001.md` (TC-A/TC-B/TC-C/TC-R, 112 кейсов, 52 P0).
+
+### Сквозные ограничения (действуют для КАЖДОЙ задачи ниже)
+
+- **`src/server.js` НЕ меняется вообще** (все mounts существуют: `/api/onboarding:314`, billing, marketplace, voice, webhooks). Ни одна задача его не трогает.
+- **Защищённые файлы (запрещены ВЕЗДЕ):** `src/server.js`, `frontend/src/lib/authedFetch.ts`, `frontend/src/hooks/useRealtimeEvents.ts`, `frontend/src/hooks/usePulsePage.ts`, миграции ≤144, `backend/src/routes/billingWebhook.js` (+ raw-body mount). Также protected по архитектуре §6: `platformCompanyService.bootstrapCompany`, `callFlowRuntime`/`groupRouting`/autonomous-mode (fail-open чтение), `walletService.assertServiceActive`, `telephonyTenantService.connectTelephony/buyNumber/searchNumbers` (reuse без правок), `MarketplaceConnectDialog`, существующие 5 marketplace-приложений и их страницы.
+- **Номера миграций 145–148** — свободны на 2026-07-02 (max на диске = `144_rehome_orphan_open_tasks.sql`). **Перепроверить фактический max непосредственно перед созданием файлов и перенумеровать при занятости** (параллельные ветки делят дерево).
+- **Tenancy:** `company_id` — ТОЛЬКО из `req.companyFilter?.company_id` (НЕ `req.companyId` — его не существует); каждый SQL фильтрует по `company_id`; чеклист и `subscribe` не принимают company из payload вовсе. Webhook-путь — компания по `AccountSid`→`To` (канон ALB-107, per-subaccount подпись — без изменений).
+- **Boston Masters (DEFAULT `00000000-0000-0000-0000-000000000001`) — байт-в-байт:** master AccountSid → DEFAULT в C1; env-creds в C5; C2b для default — идентичные значения; чеклист на её `/pulse` не появляется (E-A1).
+- **Backend-тесты:** `npx jest --runTestsByPath tests/<file>.test.js --testPathIgnorePatterns "/node_modules/"` (worktree-гочта). **Frontend:** харнесса НЕТ — верификация `cd frontend && npm run build` (tsc -b; prod-сборка строже, `noUnusedLocals`) + manual-preview.
+- **UI-тексты** — английские, продукт **Albusto** (не «Blanc»); только Blanc-токены `--blanc-*`, без `<hr>`, канон CLAUDE.md.
+- Деплой в прод — только по явному подтверждению владельца; перед деплоем — прогон РЕАЛЬНОГО SQL миграций на копии prod DB (урок LIST-PAGINATION-001, задача T13).
+
+---
+
+### Phase 1 — Backend foundations (T1–T7; все 7 задач попарно НЕ пересекаются по файлам → параллель-safe)
+
+### ONBTEL-T1: Миграции-сиды — 145 marketplace-app + 146 payg-план + регистрация в ensureMarketplaceSchema (P0, S)
+
+**Цель:** данные-основа Части B: плитка `telephony-twilio` в `marketplace_apps` и план `payg` в `billing_plans`; обе идемпотентны.
+
+**Что сделать:**
+- `backend/db/migrations/145_seed_telephony_twilio_marketplace_app.sql` — INSERT `marketplace_apps` `ON CONFLICT (app_key) DO UPDATE` (шаблон seed 116) со значениями спеки §2.1 дословно: `app_key='telephony-twilio'`, `name='Telephony — Twilio'`, `provider_name='Albusto'`, `category='telephony'`, `app_type='internal'`, `short_description='Business phone numbers, calls and texts for your company — powered by Twilio.'`, `requested_scopes='[]'`, `provisioning_mode='none'`, `status='published'`, `metadata='{"setup_path":"/settings/integrations/telephony-twilio","derived_connection":true,"access_summary":["Buy and manage phone numbers","Route inbound calls and SMS"]}'`.
+- `backend/db/migrations/rollback_145_seed_telephony_twilio_marketplace_app.sql` — DELETE строки app (install-строк у приложения не бывает by construction — FK-безопасно).
+- `backend/db/migrations/146_seed_payg_billing_plan.sql` — INSERT `billing_plans` `ON CONFLICT (id) DO UPDATE` (как 107): `id='payg'`, `name='Pay as you go'`, `monthly_base_usd=0`, `included_seats=3`/`per_seat_usd=0`, `metered='{"sms":0.03,"call_minutes":0.04,"agent_runs":0}'`, `included_units` все 0, `max_phone_numbers=1`, `provider_price_id=NULL`, `is_active=true`.
+- `backend/db/migrations/rollback_146_seed_payg_billing_plan.sql` — `UPDATE … SET is_active=false` (**НЕ DELETE** — возможен FK из `billing_subscriptions`).
+- `backend/src/db/marketplaceQueries.js` — в `ensureMarketplaceSchema` += `readMigration('145_seed_telephony_twilio_marketplace_app.sql')` после 132 (одна строка).
+
+**files-forbidden:** миграции ≤144; `routes/billingWebhook.js`; `src/server.js`.
+
+**Ожидаемый результат:** после прогона обеих плитка доступна `listApps`, план `payg` автоматически попадает в `plans[]` `GET /api/billing` (существующий SELECT, side effect E-B19); повторный прогон — те же значения.
+
+**Проверка:** migration-DB **TC-B-20, TC-B-21, TC-B-22, TC-B-23, TC-B-24** (исполняются в T13 на копии prod); косвенно — моки строки app в `tests/marketplaceTelephonyOverlay.test.js` (T11). **⚑ Миграции — прогнать на деплое.**
+
+**Зависимости:** нет (foundation). **Параллельность:** wave 1 (∥ T2–T7).
+
+**Статус:** done ✅
+
+---
+
+### ONBTEL-T2: Миграции-харднинг — 147 NOT NULL + backfill, 148 guarded UNIQUE ×2 (P0, M)
+
+**Цель:** фиксы C2 и C3 на уровне схемы: «бесхозный» номер невозможен; уникальность `phone_number` и `twilio_subaccount_sid` формализована guarded-блоками (на prod оба unique уже есть → no-op).
+
+**Что сделать:**
+- `backend/db/migrations/147_phone_number_settings_company_not_null.sql` — идемпотентно, паттерн mig 140 (`DO $$`, `RAISE NOTICE` с числом строк на КАЖДОМ шаге), порядок строго (спека §3.3): (1) посчитать/залогировать `company_id IS NULL`; (2) backfill правилом mig 091 из `user_group_numbers → user_groups.company_id`; (3) остальные NULL → DEFAULT `00000000-0000-0000-0000-000000000001` (НЕ DELETE — анти-лик, обоснование в архитектуре C2); (4) guarded `ALTER COLUMN company_id SET NOT NULL`. Не-NULL строки (в т.ч. исторически mis-claimed, E-C15) — НЕ трогать.
+- `backend/db/migrations/rollback_147_phone_number_settings_company_not_null.sql` — только DROP NOT NULL; в заголовке задокументировать: данные backfill'а не откатываются (односторонняя data-миграция).
+- `backend/db/migrations/148_telephony_unique_guards.sql` — **БЕЗ безусловного `ADD CONSTRAINT`** (на prod упадёт duplicate — E-C11!). Два guarded DO-блока (guard по `pg_constraint`/`pg_indexes`): (а) `phone_number_settings.phone_number` — если unique по колонке нет → pre-dedup (оставить строку с `twilio_number_sid IS NOT NULL`, tie → новейшая `updated_at`; удалённые — NOTICE с количеством) → `uq_phone_number_settings_phone_number`; (б) `company_telephony.twilio_subaccount_sid` — UNIQUE с множественными NULL (Postgres-default; autonomous-mode строки легальны); pre-dedup: у позднего по `connected_at` дубля SID → `twilio_subaccount_sid=NULL` (строка сохраняется) + `RAISE WARNING` с обоими `company_id` (fail-closed) → `uq_company_telephony_twilio_subaccount_sid`.
+- `backend/db/migrations/rollback_148_telephony_unique_guards.sql` — DROP только объектов с именами `uq_…` (исторические констрейнты `phone_number_settings_phone_number_key`/inline-UNIQUE mig 098 не трогать).
+
+**files-forbidden:** миграции ≤144; `backend/src/routes/phoneSettings.js` (код — в T6).
+
+**Ожидаемый результат:** на копии prod 148 — no-op; повторные прогоны 147/148 — no-op; на дрейфнувшей среде дубли разрешаются по правилам спеки §3.5.
+
+**Проверка:** migration-DB **TC-C-40, TC-C-41, TC-C-42, TC-C-43, TC-C-44, TC-C-45, TC-C-46, TC-C-47, TC-C-48** (исполняются в T13). **⚑ Миграции — прогнать на деплое.**
+
+**Зависимости:** нет. **Параллельность:** wave 1 (∥ T1, T3–T7).
+
+**Статус:** done ✅
+
+---
+
+### ONBTEL-T3: Чеклист — onboardingChecklistService + `GET /api/onboarding/checklist` (P0, M)
+
+**Цель:** Часть A backend: data-driven каталог пунктов, derived-статус, write-once `completed_at`, эндпоинт только для tenant_admin. Новых миграций НЕТ (`companies.settings` JSONB существует с mig 010).
+
+**Что сделать:**
+- `backend/src/services/onboardingChecklistService.js` (новый; прецедент `permissionCatalog.js`) — registry `[{ key:'connect_telephony', title:'Connect telephony', description:'Get a business phone number to make and receive calls and texts in Albusto.', cta:{label:'Set up', path:'/settings/integrations/telephony-twilio'}, isComplete }]` (нормативные строки спеки §1.3 дословно; Albusto, не Blanc); `isComplete` = `EXISTS(SELECT 1 FROM phone_number_settings WHERE company_id=$1)`; `getChecklist(companyId)` реализует машину видимости §1.2: `visible := NOT (completed_at ИЛИ allDone)`; при `allDone && completed_at IS NULL` — идемпотентный `UPDATE companies SET settings=jsonb_set(…) WHERE id=$1 AND settings#>>'{onboarding_checklist,completed_at}' IS NULL` (конкурентные GET безопасны: `rowCount:0` — no-op); ошибка записи → ответ всё равно `visible:false` (по allDone), не 500.
+- `backend/src/routes/onboarding.js` — добавить `router.get('/checklist', requireCompanyAccess, <inline-гейт>, handler)`. Mount `/api/onboarding` = `authenticate`-only — **НЕ менять**. Route-level защита строго в порядке: (1) `requireCompanyAccess` из `backend/src/middleware/keycloakAuth.js` → `req.companyFilter.company_id`; (2) inline-гейт `req.authz?.membership?.role_key === 'tenant_admin'` (dev-mode `req.user._devMode` — пропуск); **`requireRole('company_admin')` НЕЛЬЗЯ** (legacy-mapping пропускает manager). 403 `TENANT_ADMIN_ONLY` — ДО любых чтений/записей. Ошибки — контракт спеки §1.3 (401/403 `PLATFORM_SCOPE_ONLY`/`TENANT_CONTEXT_REQUIRED`/`TENANT_ADMIN_ONLY`; 500 `{ok:false, code:'INTERNAL_ERROR', error:'Failed to load onboarding checklist'}`).
+
+**files-forbidden:** `src/server.js` (mount существует); `platformCompanyService.js`; существующие routes онбординга (`POST /api/onboarding` не трогать).
+
+**Ожидаемый результат:** SQL-запросы фильтруют по `company_id` (только из `req.companyFilter.company_id`), данные изолированы между компаниями; Boston Masters при первом GET получает `completed_at` и навсегда `visible:false` (бэкфилл не нужен); мутационных endpoint'ов нет (collapse — клиент).
+
+**Проверка:** `tests/onboardingChecklist.test.js` (T11) — **TC-A-01…TC-A-16** (401/403-матрица, write-once, изоляция, data-driven каталог).
+
+**Зависимости:** нет. **Параллельность:** wave 1.
+
+**Статус:** done ✅
+
+---
+
+### ONBTEL-T4: Биллинг — `subscribe()` ветка ≤$0 + `return_path` в `POST /checkout` (P0, M)
+
+**Цель:** применение PAYG без Stripe (и любого плана с нулевой ценой) + анти-open-redirect возврат из checkout в визард. Списания — ноль нового кода (существующий конвейер `recordUsage`→`computeOverage`→`billOverage`→`overageScheduler`).
+
+**Что сделать:**
+- `backend/src/services/billingService.js` — `subscribe(companyId, planId, { successUrl, cancelUrl }?)`: новая ветка **ДО `providerConfigured()`**: `Number(plan.monthly_base_usd) <= 0` → `UPDATE billing_subscriptions SET plan_id=$2, status='active', updated_at=now() WHERE company_id=$1`; нет строки → INSERT `ON CONFLICT (company_id) DO UPDATE` теми же значениями; ответ `{activated:true}`. Stripe customer/карта/`billPlanFee`/кошелёк — НЕ трогаются; работает при полностью отсутствующем `STRIPE_SECRET_KEY`; идемпотентно (повторный subscribe — тот же UPDATE). Платные планы — существующая логика untouched + опциональные `successUrl`/`cancelUrl` из route вместо захардкоженных.
+- `backend/src/routes/billing.js` — `POST /checkout`: опциональный `return_path`; отсутствует → дефолтные URL как сейчас; иначе валидация «строка, начинается с `/`, не содержит `//` и `:`» → провал = **422** `{ok:false, code:'INVALID_RETURN_PATH', error:'return_path must be a relative path'}` (полная матрица спеки §2.4, 10 строк); валидный → `successUrl = cancelUrl = 'https://app.albusto.com' + return_path`. Существующий mount `authenticate + requirePermission('tenant.company.manage') + requireCompanyAccess` — не ослаблять; `company_id` — только `req.companyFilter.company_id` (body-значение игнорируется).
+
+**files-forbidden:** `backend/src/routes/billingWebhook.js` + raw-body mount (АКТИВАЦИЯ ПАКЕТОВ ВЕБХУКОМ — как есть); `walletService.js`; `overageScheduler`; миграции.
+
+**Ожидаемый результат:** `POST /checkout {plan_id:'payg'}` → `{ok:true, activated:true}` без Stripe и без пополнения кошелька; платный путь (карта/checkout-url) byte-identical; open-redirect невозможен.
+
+**Проверка:** `tests/billingPaygSubscribe.test.js` (T11) — **TC-B-01…TC-B-14** (payg без Stripe, идемпотентность, платный путь-регрессия, матрица return_path, 401/403, изоляция body-company_id).
+
+**Зависимости:** T1 (seed 146 нужен только для runtime/e2e; код и jest-моки независимы — писать можно параллельно). **Параллельность:** wave 1.
+
+**Статус:** done ✅
+
+---
+
+### ONBTEL-T5: Marketplace — derived-overlay `telephony-twilio` + reject install (P0, M)
+
+**Цель:** connected-состояние плитки выводится из `company_telephony` (install-строка НЕ создаётся никогда), по прецеденту google-email (SEND-DOC-001 D.3).
+
+**Что сделать:** в `backend/src/services/marketplaceService.js`:
+- `listApps` (`:208`) — для `app_key==='telephony-twilio'` заместить `installation` synthetic-overlay из `telephonyTenantService.getTelephonyState(companyId)`: `connected:true` → `{id:null, status:'connected', installed_at: state.connected_at ?? null, disconnected_at:null, provisioning_error:null, last_used_at:null, external_installation_id:null}`; `connected:false` (в т.ч. строка с NULL SID от autonomous-mode) → `installation:null`. **`subaccount_sid` наружу НЕ отдаётся ни в одном поле.** Ошибка `getTelephonyState` всплывает как у google-email (E-B20, спец-резилентности нет). DEFAULT-компания → connected (mode master) без обращения к БД.
+- `isAppConnected` (`:62`) — тот же special-case (симметрия с google-email).
+- `installApp` — в начале (рядом с `validateInstallPrerequisites`, ДО создания installation) data-driven reject: `metadata.derived_connection === true` → `MarketplaceServiceError('This app is configured from its setup page.', 'DERIVED_CONNECTION_APP', 409)` (без hardcode app_key; поведение прочих приложений, включая google-email без флага, — без изменений).
+
+**files-forbidden:** `backend/src/routes/marketplace.js` (контракт route не меняется); `telephonyTenantService.js` (reuse as-is); `MarketplaceConnectDialog` (frontend, protected); существующий google-email overlay (не ломать — регрессия TC-B-38/TC-R-01).
+
+**Ожидаемый результат:** `GET /api/marketplace/apps` отдаёт для telephony-twilio derived installation (Boston Masters сразу Connected — нулевые изменения поведения); `POST …/telephony-twilio/install` → 409 `DERIVED_CONNECTION_APP`, install-строка не создаётся.
+
+**Проверка:** `tests/marketplaceTelephonyOverlay.test.js` (T11) — **TC-B-30…TC-B-39** (4 состояния, SID не в ответе, 409, data-driven флаг, регрессия соседних приложений) + регрессия `tests/googleEmailMarketplace.test.js` (TC-R-01).
+
+**Зависимости:** T1 (строка app для runtime; jest мокает `marketplaceQueries`). **Параллельность:** wave 1 (один файл, ни с кем не пересекается).
+
+**Статус:** done ✅
+
+---
+
+### ONBTEL-T6: Изоляция inbound — C1 Reject unknown + C4 wallet-гейт (twilioWebhooks) + C2b master-sync bind (phoneSettings) (P0, M)
+
+**Цель:** company-less звонок недостижим для voicemail (fail-closed Reject + структурный лог); wallet-гейт не обходится через null; master-sync больше не отдаёт/не claim'ит master-номера чужим tenant'ам. Три фикса — одна изоляционная тема, один jest-файл.
+
+**Что сделать:**
+- `backend/src/webhooks/twilioWebhooks.js`, `handleVoiceInbound` (`:256-369`), ТОЛЬКО inbound-ветка (`else` после `isOutbound`; SIP-outbound не трогать):
+  - **C1:** резолв компании РОВНО один раз: `companyId = await telephonyTenantService.resolveCompanyByAccountSid(req.body.AccountSid)` → fallback `companyIdForNumber(To)` (канон ALB-107 сохранён; master AccountSid всегда → DEFAULT — Boston Masters байт-в-байт, Reject для них НЕВОЗМОЖЕН). Ошибка БД любого lookup'а → null этого lookup'а. `companyId === null` → warn-лог нормативной формы (одна строка: `console.warn(`[${traceId}] inbound_call.rejected`, {event:'inbound_call.rejected', reason:'unknown_number', call_sid, account_sid, to, from})`) + `200 text/xml` `<Response><Reject/></Response>` (БЕЗ `reason="busy"` — отличим от wallet-гейта); `recordMissedInbound` НЕ вызывать (нет orphan-timeline). Порядок НЕ менять: подпись → 403; нет CallSid → 400; `ingestToInbox` — ДО резолва (аудит-след).
+  - **C4:** удалить второй lookup `companyIdForNumber(To).catch(()=>null)` (`:336`); гейт `isServiceBlocked` использует `companyId` из C1 (в этой точке гарантированно non-null); поведение блокировки без изменений (`<Reject reason="busy"/>` + `recordMissedInbound`); `.catch(()=>false)` у `isServiceBlocked` сохранить (fail-open защищает легитимную маршрутизацию).
+- `backend/src/routes/phoneSettings.js` — **C2b:** GET-sync upsert (`:100-108`) биндит `company_id = telephonyTenantService.DEFAULT_COMPANY_ID` (и INSERT-значение, и `EXCLUDED` для COALESCE-claim) вместо company запросчика. Выборку `WHERE company_id=$1` и `PUT /:id … AND company_id=$4` — НЕ менять.
+
+**files-forbidden:** `callFlowRuntime`/`groupRouting`/autonomous-mode; `walletService.js`; outbound/SIP-ветка и verify-подпись в `twilioWebhooks.js`; `telephonyTenantService.js`.
+
+**Ожидаемый результат:** unknown+unknown → Reject + лог; suspended-субаккаунт с известным To → нормальный роутинг по fallback (E-C4); DB-error → Reject (fail-closed); master-номера upsert'ятся под DEFAULT — claim чужим tenant'ом невозможен (E-C14); Boston Masters — byte-identical.
+
+**Проверка:** `tests/twilioInboundIsolation.test.js` (T12) — **TC-C-01…TC-C-11** (матрица резолва/Reject, лог-форма, C4-гейт, SIP/подпись-регрессии) + **TC-C-30…TC-C-33** (C2b bind/изоляция/PUT-регрессия).
+
+**Зависимости:** нет (C2-миграция T2 независима — C2b закрывает источник новых NULL/claim'ов на уровне кода). **Параллельность:** wave 1.
+
+**Статус:** done ✅
+
+---
+
+### ONBTEL-T7: C5 — fail-closed softphone-токен + маппинг 409 в `/token` (P0, S)
+
+**Цель:** тихий фолбэк не-default компаний на master env creds исчезает; route отдаёт осмысленный 409 вместо 500.
+
+**Что сделать:**
+- `backend/src/services/voiceService.js`, `generateTokenForCompany` (`:61-77`) — точное условие: `companyId === telephonyTenantService.DEFAULT_COMPANY_ID` → env-fallback `generateToken(identity)` (Boston Masters untouched); **иначе (включая falsy companyId)** → `getSoftphoneCreds(companyId)`; креды есть → субаккаунт-токен (как сейчас); `null` → **throw `{httpStatus:409, code:'SOFTPHONE_NOT_PROVISIONED', message:'SoftPhone is not provisioned for this company — connect telephony and run softphone setup.'}`** (текст дословно из спеки §3.6).
+- `backend/src/routes/voice.js`, `GET /token` (catch, `:129`) — ветка `err.httpStatus` → `res.status(err.httpStatus).json({error: err.message, code: err.code})`; прочие → 500 как сейчас. Auto-provision в токен-роуте НЕ делать. Ветки `401 'User not authenticated'` и `200 {allowed:false}` — без изменений (срабатывают ДО минтинга).
+
+**files-forbidden:** `telephonyTenantService.js` (`getSoftphoneCreds` reuse as-is); softphone-frontend (`useTwilioDevice` — деградация существующая, проверяется TC-C-50 без правок кода).
+
+**Ожидаемый результат:** DEFAULT → env-токен byte-identical; tenant без кредов/suspended → 409 `SOFTPHONE_NOT_PROVISIONED`; фронт деградирует в «недоступен» без retry-шторма.
+
+**Проверка:** `tests/voiceTokenFailClosed.test.js` (T12) — **TC-C-20…TC-C-26**; frontend-деградация — manual **TC-C-50** (T14).
+
+**Зависимости:** нет. **Параллельность:** wave 1.
+
+**Статус:** done ✅
+
+---
+
+### Phase 2 — Frontend (T8 ∥ T9, затем T10; файлы задач не пересекаются)
+
+### ONBTEL-T8: Чеклист-фронт — onboardingApi + hook + OnboardingChecklistCard + вставка в PulsePage (P0, M)
+
+**Цель:** карточка Части A на `/pulse`: в потоке страницы, data-driven из ответа API, collapse в localStorage, fail-quiet.
+
+**Что сделать:**
+- `frontend/src/services/onboardingApi.ts` (новый) — authedFetch-обёртка `GET /api/onboarding/checklist` (канон `*Api.ts`).
+- `frontend/src/hooks/useOnboardingChecklist.ts` (новый) — React Query, `enabled: authenticated && !!company && isTenantAdmin()` (`useAuthz().isTenantAdmin()`, `hooks/useAuthz.ts:21`); `refetchOnWindowFocus` (default) закрывает возврат из визарда; ошибки — fail-quiet (без toast).
+- `frontend/src/components/onboarding/OnboardingChecklistCard.tsx` (новый) — развёрнуто: заголовок **"Get started"** (font `--blanc-font-heading`), eyebrow `.blanc-eyebrow` "Getting started", прогресс "N of M done", список `items[]` из ответа (иконка-статус size-4 `--blanc-ink-3`/`--blanc-success`, title, description, CTA `<Button>` → `navigate(item.cta.path)`); свёрнуто: компактная строка (заголовок + прогресс + chevron); collapse-кнопки aria-label "Collapse checklist"/"Expand checklist"; ключ `albusto.onb-checklist.collapsed:<companyId>` (per-company, E-A10); **dismiss не существует by construction**; border `var(--blanc-line)`, radius 16px, без теней/`<hr>`; тексты — Albusto.
+- `frontend/src/pages/PulsePage.tsx` — вставка строго между `.blanc-unified-header` и `.pulse-layout` (~строки 210–213), `flex-shrink:0` в потоке (сдвигает контент, не оверлей); рендер-гейт `isTenantAdmin() && checklist?.visible`.
+
+**files-forbidden:** `frontend/src/hooks/usePulsePage.ts` (protected — чеклист живёт своим hook'ом); `authedFetch.ts`; `useRealtimeEvents.ts` (SSE не используется).
+
+**Ожидаемый результат:** новая компания видит карточку (A1); manager/dispatcher/provider — запрос не отправляется (`enabled`-гейт, A5); после покупки номера карточка исчезает навсегда (A4); независимый скролл колонок Pulse сохранён (desktop+mobile).
+
+**Проверка:** `cd frontend && npm run build` (tsc -b) + manual-preview **TC-A-30…TC-A-37** (в T14; вьюпорты 1280×800 и 390×844).
+
+**Зависимости:** T3 (endpoint). **Параллельность:** ∥ T9 (файлы не пересекаются).
+
+**Статус:** done ✅
+
+---
+
+### ONBTEL-T9: Визард — TelephonyTwilioSettingsPage + роут в App.tsx (P0, L)
+
+**Цель:** 3-шаговый Connect-визард по канону `VapiSettingsPage`/`StripePaymentsSettingsPage`; активный шаг — derived из серверного состояния (устойчиво к refresh/перезаходу), все действия — reuse существующих API.
+
+**Что сделать:**
+- `frontend/src/pages/TelephonyTwilioSettingsPage.tsx` (новый): заголовок "Telephony — Twilio", подзаголовок "Connect your business phone: create a workspace, choose a plan, and get a number.". Деривация (спека §2.3): `done1` = `GET /api/telephony/numbers/status → state.connected`; `done2` = `GET /api/billing → subscription && plan_id !== 'trial'`; `done3` = `GET /api/telephony/numbers → length ≥ 1` (`not_connected:true` читается как 0 — НЕ ошибка); `?step=` — только подсказка, derived побеждает (E-B16); степпер: выполненные — галочка + кликабельны назад, вперёд — заблокировано.
+  - **Шаг 1 Connect:** копия по §2.3; `POST /api/telephony/numbers/connect` → best-effort `POST …/softphone/setup` (fire-and-forget, ошибки глотаются — как `PhoneNumbersPage.connectTelephony:103-117`) → refetch → шаг 2. Ошибки: 500 → inline "Could not connect telephony — try again." (retry-safe); 403 → inline "You don't have permission to manage telephony — ask your administrator." (E-B15).
+  - **Шаг 2 Plan:** PAYG-карточка ("Pay as you go", "$0/mo", буллеты "Calls $0.04 per minute" / "Texts $0.03 each" / "1 phone number" / "Usage is paid from your wallet") → `POST /api/billing/checkout {plan_id:'payg'}` → `{activated:true}` → toast "Plan activated" → шаг 3 (принудительного пополнения кошелька НЕТ); пакеты `plans.filter(p => p.id!=='trial' && p.id!=='payg')` → checkout c `return_path:'/settings/integrations/telephony-twilio?step=3&billing=success'` → `{url}` redirect | `{activated:true}` сразу; `billing=success` + `!done2` → "Confirming your payment…" + поллинг `GET /api/billing` каждые 3 с, >60 с → подсказка "Still waiting for payment confirmation…" + планы снова доступны (покрывает и отмену, E-B5/E-B6). Ошибки: 422 `PROVIDER_NOT_CONFIGURED` → inline "Billing is not enabled yet."; 404/`INVALID_RETURN_PATH` → toast текстом сервера.
+  - **Шаг 3 Number:** форма Area code / City / Contains + toggle Toll-free → `GET /api/telephony/numbers/search` → ≤15 результатов (номер, locality/region, voice/sms-бейджи, "$1.15/mo"/"$2.15/mo") → Buy `POST …/buy` → 201 → Completion. **422 `NUMBER_LIMIT` → upsell-блок обязателен:** серверный текст дословно + "Need more numbers? Switch to a package plan." + кнопка "View plans" → шаг 2 (E-B8); 409 `NUMBER_UNAVAILABLE` → toast сервера + обновление результатов; 500 → toast "Failed to buy the number"; пусто → "No numbers found — try another area code or city.".
+  - **Completion:** "Telephony is connected" / "Your number is active. Incoming calls and texts will appear in Albusto." + кнопки "Manage telephony" → `/settings/telephony`, "Back to Integrations" → `/settings/integrations`.
+- `frontend/src/App.tsx` — роут `/settings/integrations/telephony-twilio` c `ProtectedRoute permissions={['tenant.integrations.manage']}` (канон соседних страниц, `App.tsx:129-131`). Только добавление роута.
+
+**files-forbidden:** `VapiSettingsPage.tsx`/`StripePaymentsSettingsPage.tsx` (канон — mirror, не править); `authedFetch.ts`; существующие telephony-страницы (T10 владеет).
+
+**Ожидаемый результат:** полный проход Connect → PAYG/пакет → покупка номера; повторные входы идемпотентны (матрица 6 строк §2.3); чеклист Части A выполняется сам (derived).
+
+**Проверка:** `npm run build` + manual-preview **TC-B-51…TC-B-62, TC-B-66, TC-B-67, TC-B-68** (в T14; P0: TC-B-52/54/58/59).
+
+**Зависимости:** T1 (payg в `plans[]`), T4 (checkout `return_path`/payg-ветка) — для работающего e2e; UI-код можно писать параллельно backend'у. **Параллельность:** ∥ T8; App.tsx в этой фиче трогает ТОЛЬКО T9 (конфликтов нет).
+
+**Статус:** done ✅
+
+---
+
+### ONBTEL-T10: Точки входа — плитка IntegrationsPage + redirect TelephonyLayout + PhoneNumbersPage connect→визард (P1, M)
+
+**Цель:** connect-флоу существует ровно в одном месте (визард); неподключённые попадают в него отовсюду; подключённые — byte-identical.
+
+**Что сделать:**
+- `frontend/src/pages/IntegrationsPage.tsx` — ветка `app.app_key === 'telephony-twilio'` рядом с существующими (`:257-299`): `installation?.status === 'connected'` → бейдж **Connected** + кнопка **Manage** (variant outline) → `navigate('/settings/telephony')`; иначе → **Available** + **Configure** (variant default) → `navigate(metadata.setup_path)`. Generic Enable/`MarketplaceConnectDialog` для этой плитки недостижимы.
+- `frontend/src/components/telephony/TelephonyLayout.tsx` — на mount `GET /api/telephony/numbers/status`; матрица §2.5: загрузка → ничего не рендерить (без flash); `connected:true` (вкл. DEFAULT) → рендер как сейчас byte-identical; `connected:false` + `hasPermission('tenant.integrations.manage')` → `<Navigate to="/settings/integrations/telephony-twilio" replace/>`; без права → empty-state "Telephony is not connected yet — ask your administrator." (без redirect-цикла в 403); ошибка запроса → fail-open рендер children.
+- `frontend/src/pages/telephony/PhoneNumbersPage.tsx` — удалить локальный connect-обработчик (`:103-117`) и connect-кнопку (`:288`); на их месте — **"Connect in Marketplace"** → `navigate('/settings/integrations/telephony-twilio')`. Search/buy-функции страницы — НЕ трогать (остаются для подключённых).
+
+**files-forbidden:** `MarketplaceConnectDialog` (protected); существующие плитки vapi/stripe/google-email и их ветки (регрессия TC-R-02); `App.tsx` (владеет T9).
+
+**Ожидаемый результат:** матрица плитки §2.2 (4 состояния) работает; неподключённая компания из Settings → Telephony попадает в визард; Boston Masters видит Connected/Manage и прежние страницы телефонии.
+
+**Проверка:** `npm run build` + manual-preview **TC-B-50** (P0, матрица плитки, desktop+mobile), **TC-B-63** (redirect-матрица), **TC-B-64** (PhoneNumbersPage) + регрессия **TC-R-02** (в T14). Backend-контракт плитки покрыт `tests/marketplaceTelephonyOverlay.test.js` (T11).
+
+**Зависимости:** T5 (overlay-статус), T9 (роут визарда должен существовать — цели navigate). **Параллельность:** файлы не пересекаются с T8/T9, но логически после T9.
+
+**Статус:** done ✅
+
+---
+
+### Phase 3 — Tests (обязательные 5 jest-файлов спеки §9; T11 ∥ T12; допускается писать alongside соответствующих backend-задач)
+
+### ONBTEL-T11: Jest — Части A+B: onboardingChecklist + billingPaygSubscribe + marketplaceTelephonyOverlay (P0, L)
+
+**Цель:** автоматизировать все P0 частей A и B (40 кейсов в 3 обязательных файлах).
+
+**Что сделать:**
+- `tests/onboardingChecklist.test.js` (новый) — стратегия из test-cases §1: `jest.mock('../backend/src/db/connection')`, mini-express + supertest / прямой handler с req-моком `{user, authz:{membership:{role_key}}, companyFilter:{company_id}}`; 401 — через реальный `authenticate` (прецедент `tests/keycloakAuth.test.js`); кейсы **TC-A-01…TC-A-16** (401×2, 403×3 матрица ролей, dev-mode, happy, write-once ровно один guarded UPDATE, не-перезапись, изоляция company_id, E-A3/A4/A2/A8, нормативные строки каталога, 500).
+- `tests/billingPaygSubscribe.test.js` (новый) — прецедент `tests/billingUI.test.js`: mock db + `billingProvider` + `walletService`; no-Stripe = `delete process.env.STRIPE_SECRET_KEY`; кейсы **TC-B-01…TC-B-14** (payg без Stripe ДО providerConfigured, платный 422, идемпотентность, INSERT-ветка, платный путь-регрессия, дефолтные URL, ПОЛНАЯ матрица return_path 10 строк + отсутствие side effects при 422, прокидка successUrl/cancelUrl, 404, plan_id required, trial-edge, 401/403 mount, изоляция body-company_id, payg при карте на файле).
+- `tests/marketplaceTelephonyOverlay.test.js` (новый) — точный прецедент `tests/googleEmailMarketplace.test.js`: mock `marketplaceQueries` (строка app с `metadata.derived_connection:true`) + `telephonyTenantService.getTelephonyState`, гонять реальный `marketplaceService`; кейсы **TC-B-30…TC-B-39** (default/subaccount/не подключена/NULL-SID, `JSON.stringify` НЕ содержит SID, install → 409 ДО createInstallation, data-driven флаг + не-reject прочих, регрессия соседних приложений, ошибка state всплывает).
+
+**files-forbidden:** production-код (только тесты); существующие тест-файлы других фич (при пересечении с `billingUI.test.js` — расширять, не дублировать, TC-B-12).
+
+**Проверка (гейт):** `npx jest --runTestsByPath tests/onboardingChecklist.test.js tests/billingPaygSubscribe.test.js tests/marketplaceTelephonyOverlay.test.js --testPathIgnorePatterns "/node_modules/"` — зелёный; все P0 секций 1/3/4 test-cases-дока автоматизированы.
+
+**Зависимости:** T3, T4, T5 (может писаться alongside каждой — Tester-степ). **Параллельность:** ∥ T12.
+
+**Статус:** done ✅
+
+---
+
+### ONBTEL-T12: Jest — Часть C: twilioInboundIsolation + voiceTokenFailClosed (P0, M)
+
+**Цель:** автоматизировать P0 фиксов изоляции (22 кейса в 2 обязательных файлах).
+
+**Что сделать:**
+- `tests/twilioInboundIsolation.test.js` (новый) — стратегия из test-cases §7: прямой вызов `handleVoiceInbound(req,res)` с моками (`res.type/send/status` — jest.fn), `NODE_ENV=development` кроме TC-C-11; mock `telephonyTenantService` (`resolveCompanyByAccountSid`, `DEFAULT_COMPANY_ID`), `db/connection` (путь `companyIdForNumber`), `walletService.isServiceBlocked`, `groupRouting`, `callFlowRuntime`, `ingestToInbox`/`recordMissedInbound`; `jest.spyOn(console,'warn')` для нормативной лог-формы; кейсы **TC-C-01…TC-C-11** (master НЕ reject'ится — Boston Masters байт-в-байт; unknown → Reject + 6 полей лога + ingest ДО резолва + recordMissedInbound НЕ вызван; DB-error fail-closed; SID-резолв без fallback; suspended-fallback; busy-гейт + «второй lookup удалён: SQL максимум 1 раз»; fail-open isServiceBlocked; DEFAULT-гипотетика; SIP-ветка; подпись/CallSid-регрессия) + **TC-C-30…TC-C-33** (C2b: bind DEFAULT в INSERT и EXCLUDED/COALESCE, byte-identical для Boston Masters, закрытие claim NULL-строк, PUT-регрессия) — describe в этом же файле либо отдельный `tests/phoneSettingsMasterSyncBind.test.js` (на выбор, кейсы обязательны).
+- `tests/voiceTokenFailClosed.test.js` (новый) — стратегия §8: mock `telephonyTenantService` (`getSoftphoneCreds`, `DEFAULT_COMPANY_ID`), фиктивные env `TWILIO_*`; кейсы **TC-C-20…TC-C-26** (DEFAULT → env-токен; null-креды → throw 409 с дословным message, env-`generateToken` НЕ вызван; субаккаунт-токен на кредах; falsy companyId → 409; route-маппинг httpStatus 409/500; 401 и `{allowed:false}` регрессия; SQL-фильтр `status='connected'` для suspended).
+
+**files-forbidden:** production-код; существующие call-тесты (`bug-answered-call-shown-missed.test.js` и пр. — должны остаться зелёными, TC-R-01).
+
+**Проверка (гейт):** `npx jest --runTestsByPath tests/twilioInboundIsolation.test.js tests/voiceTokenFailClosed.test.js --testPathIgnorePatterns "/node_modules/"` — зелёный.
+
+**Зависимости:** T6, T7 (может писаться alongside). **Параллельность:** ∥ T11.
+
+**Статус:** done ✅
+
+---
+
+### Phase 4 — Verification (последовательно: T13 → T14)
+
+### ONBTEL-T13: Верификация автоматическая — migration-DB на копии prod, полный jest-свип, build, structural-diff (P0, M)
+
+**Цель:** гейт перед manual/Reviewer: реальные миграции против копии prod (урок LIST-PAGINATION-001 — мокнутый jest проверяет только SQL-строки), регрессии, сборка, защищённые файлы.
+
+**Что сделать (prod-код не трогается):**
+- Обновить локальную копию prod DB (pg_dump по процедуре) и в one-off контейнере (`docker compose run app …`) прогнать РЕАЛЬНЫЙ SQL: **TC-B-20…TC-B-24** (145/146 + rollbacks + payg в `GET /api/billing`), **TC-C-40…TC-C-48** (147: три вида строк, повторный прогон, негативный TC-C-42, rollback; 148: no-op на prod-копии E-C11, дрейф-сценарии дублей E-C12/E-C13, множественные NULL, rollback). Прогнать и реальные запросы чеклиста (EXISTS/jsonb_set) против копии.
+- Полный jest-свип: 5 новых файлов + именованные регрессии **TC-R-01** (`billingUI`, `googleEmailMarketplace`, `keycloakAuth`, `bug-answered-call-shown-missed`, `bug009-missed-call-status`, `bug006-stale-availability`, `contactsPulseTenantIsolation`) — все зелёные, с `--testPathIgnorePatterns "/node_modules/"`.
+- **TC-R-06:** `cd frontend && npm run build` (tsc -b) — exit 0.
+- **TC-R-07 (structural):** `git diff master -- src/server.js backend/src/routes/billingWebhook.js frontend/src/lib/authedFetch.ts frontend/src/hooks/useRealtimeEvents.ts frontend/src/hooks/usePulsePage.ts` + миграции ≤144 — **пусто**.
+
+**Проверка:** отчёт по TC-B-20…24, TC-C-40…48, TC-R-01, TC-R-06, TC-R-07 — всё P0 зелёное.
+
+**Зависимости:** T1–T12 (все). **Параллельность:** нет (гейт).
+
+**Статус:** done ✅
+
+---
+
+### ONBTEL-T14: Верификация ручная — manual-preview pass + регрессии Boston Masters (P0, M)
+
+**Цель:** пройти все manual-preview кейсы на desktop 1280×800 + mobile 390×844 и подтвердить байт-в-байт регрессии.
+
+**Что сделать (кода нет; dev-preview, свежая tenant-компания + учётки manager/dispatcher + Stripe test-mode):**
+- Часть A: **TC-A-30…TC-A-37** (карточка в потоке на обоих вьюпортах, SPA-CTA, collapse+localStorage per-company, исчезновение навсегда после покупки, `enabled`-гейт не-админа — запрос не шлётся, fail-quiet, визуальный аудит Blanc-токенов/Albusto).
+- Часть B: **TC-B-50…TC-B-68** (матрица плитки ×4, ProtectedRoute, шаги визарда: connect-идемпотентность, PAYG-активация без пополнения, Stripe-возврат до вебхука/отмена (поллинг/60с), карта на файле, состав планов без trial, поиск/покупка/Completion, NUMBER_LIMIT-upsell, NUMBER_UNAVAILABLE, матрица повторного входа ×6 + `?step=`, e2e чеклист+визард, redirect-матрица TelephonyLayout ×5, PhoneNumbersPage без локального connect, payg на BillingPage, DEFAULT-компания в визарде, обход `?step=3`, упавший softphone/setup).
+- Часть C: **TC-C-50** (desktop-only: 409 → софтфон «недоступен», без retry-шторма/крэша).
+- Регрессии: **TC-R-02** (существующие плитки + MarketplaceConnectDialog), **TC-R-03** (BillingPage checkout/topup), **TC-R-04** (search/buy подключённой компании), **TC-R-05** (Boston Masters: входящий на master-номер с группой/без, softphone-токен DEFAULT, чеклист не появляется), **TC-R-08** (`/signup`→`/onboarding` не сломан).
+- Гейт готовности: все P0 пройдены ДО approve Reviewer'а; P2/P3 допустимо отложить, но перечислить в отчёте. Деплой — только по явному подтверждению владельца.
+
+**Зависимости:** T13 (+ все FE-задачи T8–T10). **Параллельность:** нет (финальный гейт).
+
+**Статус:** done ✅
+
+---
+
+### Порядок выполнения и параллелизм (ONBTEL-001)
+
+```
+Phase 1 (wave 1 — ВСЕ 7 задач попарно disjoint по файлам, полная параллель):
+  T1 (mig 145/146 + marketplaceQueries) ∥ T2 (mig 147/148) ∥ T3 (чеклист svc+route)
+  ∥ T4 (billing subscribe+checkout) ∥ T5 (marketplace overlay) ∥ T6 (C1+C4+C2b) ∥ T7 (C5+/token)
+      логика e2e: T1 → (T4, T5 runtime); код/jest — независимы
+
+Phase 2:  T8 (чеклист-фронт) ←T3   ∥   T9 (визард+App.tsx) ←T1,T4
+          затем T10 (плитка+redirect+PhoneNumbers) ←T5,T9
+
+Phase 3:  T11 (jest A+B) ←T3,T4,T5   ∥   T12 (jest C) ←T6,T7
+          (допустимо alongside соответствующих backend-задач Tester-степом)
+
+Phase 4:  T13 (migration-DB на копии prod + jest-свип + build + structural) ← все
+          → T14 (manual-preview + Boston Masters регрессии) — финальный гейт
+```
+
+- **Критический путь:** T1/T4 → T9 → T10 → T13 → T14.
+- **Полностью параллель-safe группы:** {T1…T7} (backend, disjoint-файлы); {T8, T9}; {T11, T12}.
+- **Общих файлов между задачами НЕТ** (проверено по спискам files-allowed) — в т.ч. `App.tsx` трогает только T9, `IntegrationsPage.tsx` — только T10.
+- **Миграции к прогону на деплое:** T1 (145, 146), T2 (147, 148) — все идемпотентны, 148 на prod = no-op.
+- **Сводка размеров:** S — T1, T7; M — T2, T3, T4, T5, T6, T8, T10, T12, T13, T14; L — T9, T11. Итого 14 задач.
+
+---
+
+Ключевые решения плана (для Orchestrator): 14 задач в границах 8–14; слияния по требованию — C1+C4 (один файл `twilioWebhooks.js`) + C2b (та же изоляционная тема и тот же jest-файл) = T6; C5 + маппинг ошибок `routes/voice.js` = T7; сиды 145+146 = T1, харднинг 147+148 = T2; ни одна задача не касается защищённых файлов (`src/server.js` — 0 изменений by design архитектуры); каждый TC-ID из тест-кейс-дока закреплён за конкретной задачей; фронт верифицируется только `npm run build` + manual-preview (харнесса нет).

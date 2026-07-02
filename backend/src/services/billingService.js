@@ -137,10 +137,28 @@ async function createWalletTopup(companyId, amountUsd, { successUrl, cancelUrl }
 }
 
 /** Subscribe to a plan, paying the plan price from the card (charged immediately). */
-async function subscribe(companyId, planId) {
-    if (!providerConfigured()) { const e = new Error('Billing is not enabled yet'); e.httpStatus = 422; e.code = 'PROVIDER_NOT_CONFIGURED'; throw e; }
+async function subscribe(companyId, planId, { successUrl, cancelUrl } = {}) {
     const { rows: [plan] } = await db.query('SELECT * FROM billing_plans WHERE id = $1 AND is_active', [planId]);
     if (!plan) { const e = new Error('Plan not available'); e.httpStatus = 404; throw e; }
+    // ONBTEL-001 §2.4: any active plan priced ≤ $0 (payg, trial) activates directly —
+    // no Stripe customer/card/wallet involved; works with STRIPE_SECRET_KEY fully absent.
+    // Idempotent: a repeat subscribe re-runs the same UPDATE with the same values.
+    if (Number(plan.monthly_base_usd) <= 0) {
+        const upd = await db.query(
+            `UPDATE billing_subscriptions SET plan_id = $2, status = 'active', updated_at = now() WHERE company_id = $1`,
+            [companyId, planId]
+        );
+        if (upd.rowCount === 0) {
+            await db.query(
+                `INSERT INTO billing_subscriptions (company_id, plan_id, status)
+                 VALUES ($1, $2, 'active')
+                 ON CONFLICT (company_id) DO UPDATE SET plan_id = EXCLUDED.plan_id, status = 'active', updated_at = now()`,
+                [companyId, planId]
+            );
+        }
+        return { activated: true };
+    }
+    if (!providerConfigured()) { const e = new Error('Billing is not enabled yet'); e.httpStatus = 422; e.code = 'PROVIDER_NOT_CONFIGURED'; throw e; }
     const price = Number(plan.monthly_base_usd);
     const customerId = await ensureCustomerId(companyId, planId);
     const walletService = require('./walletService');
@@ -156,8 +174,8 @@ async function subscribe(companyId, planId) {
     }
     // No card yet → hosted Checkout for the plan price (saves the card); webhook activates.
     const out = await getProvider().createTopupCheckout(customerId, price, {
-        successUrl: 'https://app.albusto.com/settings/billing?status=success',
-        cancelUrl: 'https://app.albusto.com/settings/billing?status=cancel',
+        successUrl: successUrl || 'https://app.albusto.com/settings/billing?status=success',
+        cancelUrl: cancelUrl || 'https://app.albusto.com/settings/billing?status=cancel',
         metadata: { albusto_company_id: companyId, plan_id: planId },
     });
     return { url: out.url };

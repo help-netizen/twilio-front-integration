@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Phone, Search, Plus, Trash2, Loader2, PlugZap, MapPin, Monitor, Headphones } from 'lucide-react';
 import { telephonyApi } from '../../services/telephonyApi';
 import { authedFetch } from '../../services/apiClient';
@@ -8,6 +9,7 @@ import { A2pStepper } from '../../components/telephony/A2pStepper';
 import { toast } from 'sonner';
 
 export default function PhoneNumbersPage() {
+    const navigate = useNavigate();
     const [numbers, setNumbers] = useState<PhoneNumber[]>([]);
     const [groups, setGroups] = useState<UserGroup[]>([]);
     const [search, setSearch] = useState('');
@@ -16,7 +18,6 @@ export default function PhoneNumbersPage() {
 
     // ALB-107: tenant telephony connection + number purchasing
     const [telState, setTelState] = useState<{ connected: boolean; mode?: string; status?: string } | null>(null);
-    const [connecting, setConnecting] = useState(false);
     const [buyOpen, setBuyOpen] = useState(false);
     const [areaCode, setAreaCode] = useState('');
     const [containsQ, setContainsQ] = useState('');
@@ -100,21 +101,8 @@ export default function PhoneNumbersPage() {
     };
     useEffect(() => { loadTelState(); }, []);
 
-    const connectTelephony = async () => {
-        setConnecting(true);
-        try {
-            const r = await authedFetch('/api/telephony/numbers/connect', { method: 'POST' });
-            const j = await r.json();
-            if (!r.ok) throw new Error(j.error || 'Failed');
-            setTelState(j.state);
-            // Provision browser-softphone creds in the new subaccount (best-effort)
-            authedFetch('/api/telephony/numbers/softphone/setup', { method: 'POST' }).catch(() => {});
-            loadPhase2();
-            toast.success('Telephony connected');
-        } catch (e: any) {
-            toast.error(e.message || 'Failed to connect telephony');
-        } finally { setConnecting(false); }
-    };
+    // ONBTEL-001 §2.5: the connect flow lives in exactly one place — the
+    // marketplace wizard. The former local connectTelephony handler is gone.
 
     const searchAvailable = async () => {
         setSearchBusy(true); setFound([]);
@@ -285,8 +273,8 @@ export default function PhoneNumbersPage() {
                             Creates a dedicated, isolated phone environment for your company. After connecting you can buy local numbers (from $1.15/mo) and route calls to your team.
                         </div>
                     </div>
-                    <button onClick={connectTelephony} disabled={connecting} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 18px', background: 'var(--blanc-job, #2f63d8)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', opacity: connecting ? 0.7 : 1 }}>
-                        {connecting ? <Loader2 size={14} className="animate-spin" /> : <PlugZap size={14} />} Connect
+                    <button onClick={() => navigate('/settings/integrations/telephony-twilio')} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 18px', background: 'var(--blanc-job, #2f63d8)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                        <PlugZap size={14} /> Connect in Marketplace
                     </button>
                 </div>
             )}

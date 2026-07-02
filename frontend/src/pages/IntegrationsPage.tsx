@@ -278,6 +278,20 @@ export function IntegrationsPage() {
                                                 >
                                                     {gmailConnected ? 'Manage' : 'Connect'}
                                                 </Button>
+                                            ) : app.app_key === 'telephony-twilio' ? (
+                                                // ONBTEL-001 §2.2: derived connection state — the generic
+                                                // Enable/MarketplaceConnectDialog path is unreachable here.
+                                                <Button
+                                                    size="sm"
+                                                    variant={app.installation?.status === 'connected' ? 'outline' : 'default'}
+                                                    onClick={() => navigate(
+                                                        app.installation?.status === 'connected'
+                                                            ? '/settings/telephony'
+                                                            : String(app.metadata?.setup_path || '/settings/integrations/telephony-twilio')
+                                                    )}
+                                                >
+                                                    {app.installation?.status === 'connected' ? 'Manage' : 'Configure'}
+                                                </Button>
                                             ) : (
                                                 <>
                                                     {app.installation?.status === 'provisioning_failed' && (

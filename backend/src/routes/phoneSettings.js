@@ -9,6 +9,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db/connection');
 const { getTwilioClient } = require('../services/twilioClient');
+const telephonyTenantService = require('../services/telephonyTenantService');
 const { requirePermission } = require('../middleware/authorization');
 
 // ─── Ensure table exists (auto-migration) ────────────────────────────────────
@@ -97,7 +98,12 @@ router.get('/', requirePermission('tenant.telephony.manage'), async (req, res) =
             console.error('[PhoneSettings] Twilio API error:', twilioErr.message);
         }
 
-        // Upsert all Twilio numbers into our settings table
+        // Upsert all Twilio numbers into our settings table.
+        // C2b (ONBTEL-001): this sync lists the MASTER account, so the rows it
+        // inserts/claims are bound to the DEFAULT company (the account's actual
+        // owner) — never the requesting tenant. $1 is both the INSERT value and
+        // EXCLUDED.company_id in the COALESCE claim, so one bind closes both
+        // the listing leak and the NULL-row claim for foreign tenants.
         for (const num of twilioNumbers) {
             await db.query(`
                 INSERT INTO phone_number_settings (company_id, phone_number, friendly_name)
@@ -105,7 +111,7 @@ router.get('/', requirePermission('tenant.telephony.manage'), async (req, res) =
                 ON CONFLICT (phone_number) DO UPDATE
                 SET friendly_name = EXCLUDED.friendly_name,
                     company_id = COALESCE(phone_number_settings.company_id, EXCLUDED.company_id)
-            `, [companyId, num.phone_number, num.friendly_name]);
+            `, [telephonyTenantService.DEFAULT_COMPANY_ID, num.phone_number, num.friendly_name]);
         }
 
         // Fetch all settings

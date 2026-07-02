@@ -2967,3 +2967,253 @@ grid where all 7 item fields are edited in place and saved as one atomic batch.
   from those paths as intended without breaking group memberships (soft-delete, not hard-delete).
 - Bulk updates carry only the 7 grid fields, so `default_quantity/usage_count/last_used_at/created_by`
   are never clobbered. No schema migration required (columns exist since migration 141).
+
+---
+
+## ONBTEL-001: Онбординг новой компании → Marketplace «Telephony — Twilio» → фиксы изоляции Twilio
+
+**Статус:** Architecture · **Дата:** 2026-07-02 · **Автор:** Agent 02 (Architect)
+**Требования:** `Docs/requirements.md` §«Фича ONBTEL-001» (решения владельца — обязательны)
+**Принцип:** три части (A/B/C) расширяют существующие подсистемы: онбординг-чеклист поверх ALB-101, marketplace-приложение по канону F016/F018/SEND-DOC-001-D, тариф поверх биллинг-модели mig 101/103/107/108/109, фиксы изоляции внутри ALB-107. `src/server.js` **не меняется вообще** (ни одного нового mount).
+
+### 0. Результаты разведки кода (коррекции к входному аудиту)
+
+| Утверждение аудита | Факт в коде | Следствие |
+|---|---|---|
+| «нет UNIQUE на `phone_number_settings.phone_number`» | UNIQUE **есть**: prod-фикстура `schema_pre_096.sql:7296` (`phone_number_settings_phone_number_key`), ensure-DDL в `phoneSettings.js:19` (`TEXT NOT NULL UNIQUE`), и `buyNumber` использует `ON CONFLICT (phone_number)` (упал бы без него) | C3 = **защитная формализация**: guarded DO-блок «если unique-индекса по колонке нет → dedup → создать»; на prod — no-op |
+| «`twilio_subaccount_sid` — только non-unique index» | mig 098 создаёт колонку `TEXT UNIQUE` inline (таблица не существовала до 098 — CREATE TABLE выполнился везде); отдельный partial-index — избыточный дубль | То же: guarded-добавление, на prod — no-op |
+| — | `company_telephony` строки существуют и **с `twilio_subaccount_sid = NULL`** (upsert autonomous-mode, mig 142) | derived-connected обязан проверять `sid IS NOT NULL` (уже так в `getTelephonyState`); UNIQUE должен допускать множественные NULL (Postgres-default — ок) |
+| — | `phoneSettings.js` GET-sync (`:86-108`) листит **master**-аккаунт (`getTwilioClient()`) для ЛЮБОЙ компании и upsert'ит номера с `company_id` = компании запросившего | Смежный claim-лик master-номеров чужим tenant'ом; без его закрытия инвариант C2 не держится → включён как **C2b** (1 строка) |
+
+### 1. Существующий функционал
+
+**Расширяем (точки интеграции):**
+- `backend/src/routes/onboarding.js` — mounted `app.use('/api/onboarding', authenticate, onboardingRouter)` (`src/server.js:314`); добавляем route-level-защищённый `GET /checklist` (прецедент route-level middleware — `phoneSettings.js:79`).
+- `backend/src/services/billingService.js:140 subscribe(companyId, planId)` — уже: карта на файле → off-session charge + активация; нет карты → hosted checkout c `metadata.plan_id` → активация вебхуком. Расширяем веткой «цена ≤ 0» для PAYG. Вызывается из существующего `POST /api/billing/checkout` (`routes/billing.js:40`).
+- Биллинг-конвейер PAYG **уже существует целиком**: usage пишется (`EVENT_TO_METRIC` sms/call_minutes → `billing_usage_records`), `computeOverage` (`included_units` 0 → всё usage платно по `metered`), `billOverage` дебетует кошелёк, `overageScheduler` (6h) прогоняет `status IN ('active','past_due')`. Ноль новых механизмов — только seed-строка плана.
+- Лимит номеров **уже enforce'ится**: `telephonyTenantService.buyNumber:234-247` → `getPlanForCompany().max_phone_numbers` → 422 `NUMBER_LIMIT`.
+- `backend/src/services/marketplaceService.js` — overlay-паттерн `buildGoogleEmailInstallationOverlay` (`:43`) + special-case в `listApps` (`:208`) и `isAppConnected` (`:62`) — точный прецедент для derived-state телефонии.
+- `backend/src/db/marketplaceQueries.js:12 ensureMarketplaceSchema` — += новый seed 145.
+- `backend/src/services/telephonyTenantService.js` — `getTelephonyState` (source of truth для connected), `connectTelephony` (идемпотентен), `searchNumbers`/`buyNumber`, `ensureSoftphoneSetup`, `getSoftphoneCreds`, `resolveCompanyByAccountSid`, `DEFAULT_COMPANY_ID` — всё reuse as-is.
+- `backend/src/webhooks/twilioWebhooks.js` — `handleVoiceInbound:256-369` (C1/C4), `companyIdForNumber:9-16`.
+- `backend/src/services/voiceService.js:61-77 generateTokenForCompany` (C5; единственный вызов — `routes/voice.js:129`).
+- Frontend: `useAuthz().isTenantAdmin()` (`hooks/useAuthz.ts:21`), `PulsePage.tsx` (структура `.blanc-page-wrapper` → `.blanc-unified-header` + `.pulse-layout`), `IntegrationsPage.tsx` (per-app ветки кнопок `:257-299`), `TelephonyLayout.tsx` (обёртка всех `/settings/telephony/*`), канон страниц `VapiSettingsPage/StripePaymentsSettingsPage`.
+
+**Нельзя дублировать:**
+- Второй connect-флоу субаккаунта (только `POST /api/telephony/numbers/connect`).
+- Второй механизм тарификации/списаний (только `billing_plans` + `computeOverage`/`billOverage`/wallet; никаких «своих» счётчиков минут).
+- Второй install-lifecycle (только `/api/marketplace/*`; для telephony-twilio — вообще без install-строки, см. §3.3).
+- `walletService.assertServiceActive` / `isServiceBlocked` — единственный сервис-гейт.
+- Повторная реализация плитки/бейджей маркетплейса, `MarketplaceConnectDialog` (protected).
+
+### 2. Часть A — онбординг-чеклист на `/pulse`
+
+#### 2.1 Хранилище: `companies.settings` JSONB (mig 010) + каталог пунктов в коде — БЕЗ новой таблицы и БЕЗ новой миграции
+
+Решение и обоснование:
+- **Статус выполнения пунктов — derived, его не хранят.** Пункт телефонии = `EXISTS(SELECT 1 FROM phone_number_settings WHERE company_id = $1)` (released-номера удаляются из таблицы `releaseNumber`'ом, поэтому «≥1 активный номер» ≡ «есть строка»; у Boston Masters строки есть — сценарий A5 выполняется автоматически).
+- **Единственное персистентное поле** — `companies.settings.onboarding_checklist.completed_at` (write-once): когда все пункты derived-выполнены, сервис фиксирует момент. Нужен, чтобы **добавление новых пунктов в будущем не воскресило карточку** у давно завершивших компаний и чтобы release последнего номера не вернул чеклист («после выполнения всех пунктов не показывается никогда»). Для одного timestamp'а новая таблица — оверкилл; JSONB-колонка существует с mig 010.
+- **Каталог пунктов** — data-driven registry в новом `backend/src/services/onboardingChecklistService.js` (прецедент — `permissionCatalog.js`): массив `{ key, title, description, cta: {label, path}, isComplete(companyId) }`. Расширение = одна запись. «Данные, не хардкод» выполняется на границе API: фронт рендерит `items[]` из ответа, ничего не зная о составе.
+- Запись `completed_at` — идемпотентный `UPDATE companies SET settings = jsonb_set(...)` с guard'ом `WHERE settings#>>'{onboarding_checklist,completed_at}' IS NULL`, компания только из `req.companyFilter.company_id`.
+
+#### 2.2 Endpoint
+
+`GET /api/onboarding/checklist` — **расширение существующего** `routes/onboarding.js` (mount `/api/onboarding` уже есть → `src/server.js` не трогаем). Роутер mounted `authenticate`-only (так задумано для онбординга), поэтому защита — route-level:
+- `router.get('/checklist', requireCompanyAccess, <inline tenant_admin gate>, handler)`, `requireCompanyAccess` — из `backend/src/middleware/keycloakAuth.js`.
+- **Gate tenant_admin — inline**: `req.authz?.membership?.role_key === 'tenant_admin'` (dev-mode `req.user._devMode` — пропуск, как всюду). ВАЖНО: `requireRole('company_admin')` НЕ годится — его legacy-mapping (`keycloakAuth.js:157`) пропускает и `manager`.
+- Ответ (см. таблицу контрактов §7): `visible:false` при `completed_at` установленном ИЛИ когда все пункты выполнены (в этом же запросе `completed_at` фиксируется). Boston Masters при первом GET получает `completed_at` и навсегда `visible:false` — никакого бэкфилла не нужно.
+
+#### 2.3 Collapse-состояние: localStorage (клиент), сервер не пишем
+
+Ключ `albusto.onb-checklist.collapsed:<companyId>`. Обоснование: это UI-предпочтение одного устройства, не бизнес-данные; выполнение/скрытие — derived на сервере (источник правды не размывается); API остаётся GET-only (нет мутаций → нет 403/isolation-поверхности). Требование «между визитами/сессиями» localStorage покрывает. Полного dismiss нет by construction — endpoint'а нет.
+
+#### 2.4 Frontend-размещение
+
+- `frontend/src/components/onboarding/OnboardingChecklistCard.tsx` — карточка: заголовок + прогресс (`N of M done`) + список пунктов (иконка-статус, текст, CTA-кнопка → `navigate(item.cta.path)`), collapse в компактную строку. Дизайн: Blanc-токены, `.blanc-eyebrow`, без `<hr>`, продукт в текстах — Albusto.
+- `frontend/src/hooks/useOnboardingChecklist.ts` — React Query (`enabled: authenticated && !!company && isTenantAdmin()`), `refetchOnWindowFocus` (default) закрывает возврат из визарда.
+- **Вставка в `PulsePage.tsx`**: между `.blanc-unified-header` и `.pulse-layout` (строки ~210-213). Layout-совместимость проверена: `.blanc-page-wrapper:has(.pulse-layout)` — фикс-высотный flex-контейнер, `.pulse-layout` имеет `flex:1; min-height:0` → карточка с `flex-shrink:0` встаёт в поток, сдвигает layout вниз, независимый скролл колонок сохраняется (desktop и mobile). `usePulsePage.ts` **не трогаем** — чеклист живёт своим hook'ом.
+- Рендер-гейт на фронте: `isTenantAdmin() && checklist?.visible` (плюс серверный 403 для не-админов).
+
+### 3. Часть B — Marketplace-приложение «Telephony — Twilio»
+
+#### 3.1 Seed (mig 145) — `provisioning_mode='none'`
+
+По шаблону seed 116. Значения строки `marketplace_apps`:
+
+| Поле | Значение | Комментарий |
+|---|---|---|
+| `app_key` | `telephony-twilio` | |
+| `name` | `Telephony — Twilio` | |
+| `provider_name` | `Albusto` | внутренняя интеграция (как google-email) |
+| `category` | `telephony` | как vapi-ai |
+| `app_type` | `internal` | |
+| `requested_scopes` | `[]` | ключей к CRM-API не выдаём |
+| `provisioning_mode` | **`none`** | connect — внутренний субаккаунт-флоу `telephonyTenantService`; `push_credentials` существует для выдачи/пуша credentials приложения через `integrationsService` — телефонии не нужен ни один `api_integrations`-ключ. Ровно паттерн vapi/stripe-payments/google-email |
+| `status` | `published` | |
+| `metadata` | `{"setup_path":"/settings/integrations/telephony-twilio", "derived_connection":true, "access_summary":["Buy and manage phone numbers","Route inbound calls and SMS"]}` | `derived_connection` — новый data-driven флаг, см. 3.3 |
+
+Плюс `readMigration('145_…')` в `ensureMarketplaceSchema` (`marketplaceQueries.js`, после 132).
+
+#### 3.2 Страница-визард
+
+`frontend/src/pages/TelephonyTwilioSettingsPage.tsx`, роут `/settings/integrations/telephony-twilio` в `App.tsx` с `ProtectedRoute permissions={['tenant.integrations.manage']}` (канон соседних страниц, `App.tsx:129-131`). Три шага; **активный шаг derived из серверного состояния** (устойчиво к перезаходу/refresh, идемпотентно):
+
+| Шаг | Состояние «выполнен» | Данные | Действия (все — reuse) |
+|---|---|---|---|
+| 1. Connect | `GET /api/telephony/numbers/status → state.connected` | — | `POST /api/telephony/numbers/connect`, затем best-effort `POST /api/telephony/numbers/softphone/setup` (ровно как `PhoneNumbersPage.connectTelephony:103-117`) |
+| 2. Тариф | `GET /api/billing → subscription.plan_id !== 'trial'` | `plans[]` из того же `GET /api/billing` (payg попадёт автоматически после seed 146) | PAYG: `POST /api/billing/checkout {plan_id:'payg'}` → `{activated:true}`; Пакет: `POST /api/billing/checkout {plan_id:'starter'|'pro'|'huge', return_path:'/settings/integrations/telephony-twilio?step=3&billing=success'}` → `{url}` → redirect → возврат в визард → refetch |
+| 3. Номер | у компании ≥1 номер (`GET /api/telephony/numbers`) | — | `GET /api/telephony/numbers/search?…` + `POST /api/telephony/numbers/buy` (422 `NUMBER_LIMIT` показывается как upsell-подсказка «нужно больше номеров — выберите пакетный план») |
+
+Завершение (все 3 выполнены) → финальный экран с ссылками «Manage telephony» (`/settings/telephony`) и «Back to Integrations». Пункт чеклиста Части A выполнится сам (derived).
+
+#### 3.3 Тарифный контракт PAYG (решения владельца — обязательные значения)
+
+**Seed mig 146** — строка `billing_plans`:
+
+| Поле | Значение |
+|---|---|
+| `id` | `payg` |
+| `name` | `Pay as you go` |
+| `monthly_base_usd` | `0` |
+| `included_seats` / `per_seat_usd` | `3` / `0` (зеркало trial; seats кошельковым `billPlanFee` не тарифицируются — поле декоративное, не блокер) |
+| `metered` | `{"sms":0.03,"call_minutes":0.04,"agent_runs":0}` |
+| `included_units` | `{"sms":0,"call_minutes":0,"agent_runs":0}` |
+| `max_phone_numbers` | `1` |
+| `provider_price_id` | `NULL` (Stripe-checkout для payg не используется) |
+| `is_active` | `true` |
+
+`ON CONFLICT (id) DO UPDATE` (идемпотентно, как 107).
+
+**Применение без Stripe** — расширение `billingService.subscribe(companyId, planId, { successUrl, cancelUrl }?)`:
+1. Загрузить план (как сейчас). Если `Number(plan.monthly_base_usd) <= 0` → **ветка ДО `providerConfigured()`-проверки**: `UPDATE billing_subscriptions SET plan_id=$2, status='active', updated_at=now() WHERE company_id=$1`; если строки подписки нет (теоретически) — `INSERT … ON CONFLICT (company_id) DO UPDATE` тем же значением; Stripe/customer/карта НЕ требуются; ответ `{activated:true}`. `billPlanFee` вызывать не нужно (fee 0 → no-op), кошелёк не трогается (требование: активация PAYG не требует пополнения).
+2. **Идемпотентность:** повторный `subscribe('payg')` — тот же UPDATE тех же значений, снова `{activated:true}`; повторный проход визарда планов не плодит (PK `company_id`).
+3. Платные планы — существующая логика untouched, плюс опциональные `successUrl/cancelUrl`, приходящие из route.
+
+**`routes/billing.js POST /checkout`** — body расширяется опциональным `return_path`; валидация: строка, начинается с `/`, не содержит `//` и `:` (path-only, анти-open-redirect); успех/отмена = `https://app.albusto.com${return_path}` (дефолты — текущие захардкоженные URL). Списания по ставкам: ничего не пишем — существующие `recordUsage` → `computeOverage` (included=0) → `billOverage` → wallet-дебет по `overageScheduler` (payg-подписка в `status='active'` → уже в выборке).
+
+#### 3.4 Installation-state: **derived, install-строка НЕ создаётся никогда**
+
+По прецеденту SEND-DOC-001 D.3 (google-email):
+- `marketplaceService.listApps` — overlay для `app_key==='telephony-twilio'`: synthetic `installation = { id:null, status: state.connected ? 'connected' : null, installed_at: state.connected_at||null, …, external_installation_id: null }`, где `state = telephonyTenantService.getTelephonyState(companyId)` (subaccount-SID наружу не отдаём). Default-компания → `connected:true, mode:'master'` → плитка Boston Masters сразу Connected — «нулевые изменения поведения» выполняются. Компания с `company_telephony`-строкой без SID (autonomous-mode upsert) → `connected:false` (уже так в `getTelephonyState:59`).
+- `isAppConnected('telephony-twilio')` — тот же special-case (симметрия с google-email; гейтов на телефонию сейчас нет, но контракт честный).
+- **Ответ на «что и когда создаётся»: ничего и никогда.** Единый источник правды — `company_telephony`; и новые (через визард), и legacy-компании отображаются одинаково без ретроактивных install-строк и без двойного источника правды.
+- **Fail-safe:** `installApp` в начале (рядом с `validateInstallPrerequisites`) отклоняет приложения с `metadata.derived_connection === true` → `MarketplaceServiceError('This app is configured from its setup page.', 'DERIVED_CONNECTION_APP', 409)`. Data-driven (без hardcode app_key), заодно формализует то, что для google-email было только конвенцией фронта.
+- `IntegrationsPage.tsx` — ветка `app.app_key === 'telephony-twilio'` (рядом с существующими `:257-299`): `installation?.status === 'connected'` → кнопка **Manage** → `navigate('/settings/telephony')` (требование B.5); иначе **Configure** → `navigate(metadata.setup_path)`.
+
+#### 3.5 Redirect неподключённой компании из Settings → Telephony
+
+В `frontend/src/components/telephony/TelephonyLayout.tsx` (единая обёртка всех `/settings/telephony/*` роутов): на mount — `GET /api/telephony/numbers/status`; пока грузится — ничего не рендерить (без flash);
+- `state.connected === false` и `hasPermission('tenant.integrations.manage')` → `<Navigate to="/settings/integrations/telephony-twilio" replace />`;
+- `connected === false` без права integrations → компактный empty-state «Telephony is not connected yet — ask your administrator» (без мёртвого redirect-цикла в 403);
+- `connected === true` (включая default-компанию — у неё state всегда connected) → рендер как сейчас, byte-identical.
+Дополнительно `pages/telephony/PhoneNumbersPage.tsx`: локальная кнопка `connectTelephony` (`:288`) и сам локальный connect-обработчик заменяются на переход в визард (connect-флоу существует ровно в одном месте). Search/buy-функции страницы остаются для подключённых компаний.
+
+### 4. Часть C — фиксы изоляции (файлы + контракты, без кода)
+
+#### C1 — Reject неизвестного номера (`backend/src/webhooks/twilioWebhooks.js`, `handleVoiceInbound`)
+
+- Только в inbound-ветке (`else`, после `isOutbound` — SIP-outbound не трогаем): резолв компании **один раз**: `companyId = await telephonyTenantService.resolveCompanyByAccountSid(req.body.AccountSid)` → fallback `companyIdForNumber(To)` (канон ALB-107 «AccountSid → To» сохранён; master-AccountSid всегда даёт DEFAULT → все сценарии Boston Masters byte-identical, включая номера без строки в `phone_number_settings` — как сегодня, generic voicemail).
+- `companyId === null` (не master, не connected-субаккаунт, номер никому не принадлежит) → структурный лог + `200 text/xml` `<Response><Reject/></Response>` (default reason `rejected` — отличим от wallet-гейта `reason="busy"`). Generic voicemail для company-less звонка более не достижим.
+- **Форма лога** (одна строка, JSON-поля): `console.warn('[<traceId>] inbound_call.rejected', { event:'inbound_call.rejected', reason:'unknown_number', call_sid, account_sid, to, from })`.
+- `ingestToInbox` остаётся ДО резолва (как сейчас) — аудит-след в `webhook_inbox` сохраняем; `recordMissedInbound` для unknown НЕ вызывается (нет компании — не создаём orphan-timeline; это же причина, почему created-by-status-callback residue остаётся pre-existing поведением, не расширяем скоуп).
+- Ошибка DB при резолве → `null` → Reject (fail-closed).
+
+#### C4 — wallet-гейт до роутинга без null-обхода (тот же файл/функция)
+
+Гейт уже стоит ДО `resolveGroupForNumber`/`callFlowRuntime`; фикс = **использовать `companyId`, резолвнутый в C1** (второй lookup `companyIdForNumber(To).catch(()=>null)` в `:336` удаляется). После C1 `companyId` в этой точке гарантированно non-null → условие `blockedCompanyId && …` больше не может «проскочить» из-за null. Поведение при блокировке — без изменений (`Reject reason="busy"` + `recordMissedInbound`). Обработка ошибок `isServiceBlocked` (`.catch(()=>false)`) сохраняется — транзиентная ошибка кошелька не должна валить легитимную маршрутизацию (требование «не изменить маршрутизацию легитимных звонков»; сам резолв компании — fail-closed через C1).
+
+#### C2 — `phone_number_settings.company_id` NOT NULL + backfill (mig 147)
+
+Порядок внутри миграции (идемпотентно, паттерн mig 140 с `RAISE NOTICE` числа затронутых строк на каждом шаге):
+1. Посчитать и залогировать количество `company_id IS NULL`.
+2. Повторить правило mig 091: backfill из `user_group_numbers → user_groups.company_id` (страховка для дрейфнувших сред).
+3. **Остальные NULL → DEFAULT seed-компания `00000000-0000-0000-0000-000000000001`.** Обоснование выбора «в default», а не DELETE/park: (а) NULL-строки исторически порождались только master-account-путями — pre-091 legacy и master-sync `phoneSettings.js`; субаккаунтный `buyNumber` (098, позже 091) всегда пишет `company_id`, значит субаккаунтный номер физически не может быть NULL-orphan'ом → присвоение default'у не может отдать чужой номер Boston Masters; (б) DELETE опасен: master-номер жив на Twilio → следующий `GET /api/phone-settings` любого tenant'а re-sync'нул бы его строку уже с **чужим** `company_id` (cross-tenant claim + маршрутизация звонков чужому tenant'у); (в) поведение inbound для этих номеров не меняется (master AccountSid и так резолвится в DEFAULT после C1; wallet DEFAULT-компании не blocked: баланс 0 > floor −5).
+4. `ALTER TABLE … ALTER COLUMN company_id SET NOT NULL` (guarded от повторного применения).
+Rollback (`rollback_147`): `DROP NOT NULL`; данные backfill'а не откатываются (задокументировать в заголовке — data-миграция односторонняя).
+
+#### C2b — закрыть источник новых «бесхозных»/mis-claimed строк (`backend/src/routes/phoneSettings.js`)
+
+GET-sync (`:100-108`) всегда листит **master**-аккаунт (`getTwilioClient()`), но upsert'ит с `company_id` компании-запросчика. Контракт после фикса: sync-upsert биндит `company_id = telephonyTenantService.DEFAULT_COMPANY_ID` (номера master-аккаунта принадлежат default-компании — фактическому владельцу аккаунта). Для Boston Masters — byte-identical (их `$1` и был default); для прочих tenant'ов закрывается и лик листинга master-номеров в их настройки, и claim через `COALESCE`-ветку. Выборка `WHERE company_id=$1` и `PUT /:id … AND company_id=$4` не меняются. Без этой строки NOT NULL из C2 механически выполняется, но инвариант «номер принадлежит компании, чей (суб)аккаунт им владеет» — нет; включено в скоуп C2 осознанно (1 строка + тест).
+
+#### C3 — UNIQUE ×2 (mig 148, защитная формализация)
+
+- `phone_number_settings.phone_number`: DO-блок — если в `pg_constraint`/`pg_indexes` НЕТ unique по колонке → pre-dedup (оставить строку с `twilio_number_sid IS NOT NULL`, при равенстве — новейшую по `updated_at`; удалённые — `RAISE NOTICE` с количеством) → создать `uq_phone_number_settings_phone_number`. На prod (constraint `phone_number_settings_phone_number_key` существует) — no-op; смысл — выровнять дрейфнувшие среды и зафиксировать инвариант декларативно.
+- `company_telephony.twilio_subaccount_sid`: аналогичный DO-блок (UNIQUE, NULL-ы допускаются — Postgres-семантика, строки autonomous-mode с NULL-SID легальны). Pre-dedup: дубль SID = кросс-tenant шаринг субаккаунта → оставить строку с ранним `connected_at`, у поздней — `twilio_subaccount_sid = NULL` + `RAISE WARNING` с обоими `company_id` (fail-closed: «осиротевшая» компания увидит `TELEPHONY_NOT_CONNECTED` до ручного разбора, а не чужие номера).
+- Rollback (`rollback_148`): DROP только объектов с нашими именами `uq_…` (существующие исторические констрейнты не трогает).
+
+#### C5 — fail-closed softphone-токен
+
+- `backend/src/services/voiceService.js` `generateTokenForCompany`: **точное условие** — `companyId === telephonyTenantService.DEFAULT_COMPANY_ID` → env-fallback `generateToken(identity)` (как сейчас, Boston Masters untouched); иначе (включая falsy companyId) `getSoftphoneCreds(companyId)`; `null` → **throw `{ httpStatus: 409, code: 'SOFTPHONE_NOT_PROVISIONED', message: 'SoftPhone is not provisioned for this company — connect telephony and run softphone setup.' }`** (409 согласован с `TELEPHONY_NOT_CONNECTED`-конвенцией сервиса). Тихий фолбэк на master env creds для не-default компаний исчезает.
+- `backend/src/routes/voice.js` `GET /token`: catch дополняется веткой `err.httpStatus` → `res.status(err.httpStatus).json({ error: err.message, code: err.code })` (сейчас всё → 500). Auto-provision в токен-роуте НЕ делаем (провижининг — явное действие connect-флоу/визарда; токен-роут дергается часто и не должен ходить в Twilio). Implementer: проверить, что frontend softphone на не-200 деградирует в «недоступен» (default-компания и корректно настроенные tenant'ы не затронуты).
+
+### 5. План миграций (145…148; перепроверить фактический max непосредственно перед созданием — параллельные ветки)
+
+| # | Файл | Одна забота | Rollback |
+|---|---|---|---|
+| 145 | `145_seed_telephony_twilio_marketplace_app.sql` | seed `marketplace_apps` (ON CONFLICT DO UPDATE) + регистрация в `ensureMarketplaceSchema` | `rollback_145…`: DELETE строки app (install-строк у приложения не бывает — FK-безопасно) |
+| 146 | `146_seed_payg_billing_plan.sql` | seed `billing_plans` id='payg' | `rollback_146…`: `UPDATE … SET is_active=false` (НЕ DELETE — возможен FK из `billing_subscriptions`) |
+| 147 | `147_phone_number_settings_company_not_null.sql` | backfill (091-правило → default) + NOT NULL, счётчики RAISE NOTICE | `rollback_147…`: DROP NOT NULL (backfill не откатывается — задокументировано) |
+| 148 | `148_telephony_unique_guards.sql` | guarded dedup + UNIQUE ×2 | `rollback_148…`: DROP только своих `uq_…` |
+
+Все — идемпотентные, CommonJS-бэкенд не затрагивают. Перед деплоем — прогон **реальных** запросов миграций/чеклиста в one-off контейнере против копии prod DB (урок LIST-PAGINATION-001).
+
+### 6. Файлы
+
+**Backend — новые:**
+- `backend/src/services/onboardingChecklistService.js` — каталог пунктов + `getChecklist(companyId)` + write-once `completed_at`
+- `backend/db/migrations/145…148*.sql` + 4 rollback-файла (см. §5)
+
+**Backend — изменяемые:**
+- `backend/src/routes/onboarding.js` — + `GET /checklist` (route-level `requireCompanyAccess` + inline tenant_admin)
+- `backend/src/services/billingService.js` — `subscribe()`: ветка цены ≤0 (до `providerConfigured`), опциональные success/cancel URL
+- `backend/src/routes/billing.js` — `POST /checkout`: опциональный `return_path` (path-only валидация)
+- `backend/src/services/marketplaceService.js` — overlay `telephony-twilio` в `listApps` + special-case `isAppConnected` + reject install для `metadata.derived_connection`
+- `backend/src/db/marketplaceQueries.js` — `ensureMarketplaceSchema` += 145
+- `backend/src/webhooks/twilioWebhooks.js` — `handleVoiceInbound`: C1 (резолв AccountSid→To, Reject+лог) + C4 (гейт на резолвнутом companyId)
+- `backend/src/services/voiceService.js` — C5 fail-closed
+- `backend/src/routes/voice.js` — `/token`: маппинг `err.httpStatus` (409)
+- `backend/src/routes/phoneSettings.js` — C2b: sync-upsert биндит DEFAULT_COMPANY_ID
+
+**Frontend — новые:**
+- `frontend/src/pages/TelephonyTwilioSettingsPage.tsx` — визард (канон VapiSettingsPage)
+- `frontend/src/components/onboarding/OnboardingChecklistCard.tsx`
+- `frontend/src/hooks/useOnboardingChecklist.ts`
+- `frontend/src/services/onboardingApi.ts` — authedFetch-обёртка `GET /api/onboarding/checklist` (канон `*Api.ts`)
+
+**Frontend — изменяемые:**
+- `frontend/src/App.tsx` — роут `/settings/integrations/telephony-twilio` (`tenant.integrations.manage`)
+- `frontend/src/pages/PulsePage.tsx` — вставка карточки между header и `.pulse-layout`
+- `frontend/src/pages/IntegrationsPage.tsx` — ветка плитки `telephony-twilio` (Manage → `/settings/telephony`; Configure → setup_path)
+- `frontend/src/components/telephony/TelephonyLayout.tsx` — redirect/empty-state для `connected:false`
+- `frontend/src/pages/telephony/PhoneNumbersPage.tsx` — локальный connect → переход в визард
+
+**НЕ трогать (защищённые):** `src/server.js` (изменений НЕТ — все mounts существуют), `frontend/src/lib/authedFetch.ts`, `frontend/src/hooks/useRealtimeEvents.ts`, существующие миграции ≤144, `routes/billingWebhook.js` + raw-body mount, `platformCompanyService.bootstrapCompany` (транзакция/идемпотентность), `callFlowRuntime`/`groupRouting`/autonomous-mode (fail-open чтение), `walletService.assertServiceActive` (контракт), `telephonyTenantService.connectTelephony/buyNumber/searchNumbers` (reuse без правок), `MarketplaceConnectDialog`, существующие 5 приложений и их страницы, `usePulsePage.ts`, поведение Boston Masters byte-в-byte (master AccountSid → DEFAULT в C1; env-creds в C5; C2b для default — идентичные значения).
+
+### 7. Контракты API (новые/изменённые)
+
+| Method/Path | Middleware (mount + route) | Request | Response 200/201 | Ошибки |
+|---|---|---|---|---|
+| `GET /api/onboarding/checklist` **NEW** | mount: `authenticate`; route: `requireCompanyAccess` + inline `role_key==='tenant_admin'`; company из `req.companyFilter.company_id` | — | `{ ok:true, checklist:{ visible:boolean, completed_at:string\|null, items:[{ key:'connect_telephony', title:string, description:string, done:boolean, cta:{label:string, path:'/settings/integrations/telephony-twilio'} }] } }` | 401 без токена; 403 `TENANT_CONTEXT_REQUIRED`/`PLATFORM_SCOPE_ONLY` (requireCompanyAccess) и 403 `TENANT_ADMIN_ONLY` (не-админ); 500 `INTERNAL_ERROR` |
+| `POST /api/billing/checkout` **CHANGED** | существующий mount: `authenticate + requirePermission('tenant.company.manage') + requireCompanyAccess` | `{ plan_id:'payg'\|'starter'\|'pro'\|'huge', return_path?: string /^\/…/ }` | payg (или любой план ≤$0): `{ ok:true, activated:true }`; платный c картой: `{ ok:true, activated:true }`; платный без карты: `{ ok:true, url:string }` | 401/403 (mount); 404 план не найден/не активен; 422 `plan_id required`; 422 `PROVIDER_NOT_CONFIGURED` (только платные); 422 невалидный `return_path` |
+| `GET /api/marketplace/apps` **CHANGED (payload)** | без изменений | — | для `telephony-twilio` поле `installation` — synthetic overlay из `company_telephony` (default-компания → connected); форма объекта прежняя | как сейчас |
+| `POST /api/marketplace/apps/telephony-twilio/install` **CHANGED (поведение)** | без изменений | — | — (не используется) | **409 `DERIVED_CONNECTION_APP`** для приложений с `metadata.derived_connection` |
+| `GET /api/voice/token` **CHANGED (ошибки)** | без изменений (`authenticate + requireCompanyAccess`) | — | как сейчас `{ token, identity, expiresAt, allowed:true }` | + **409 `SOFTPHONE_NOT_PROVISIONED`** (не-default компания без softphone-кредов); 401; 500 |
+| `POST /webhooks/twilio/voice-inbound` **CHANGED (TwiML)** | подпись per-subaccount (без изменений) | Twilio form | unknown number/account → `200 text/xml <Response><Reject/></Response>` + структурный warn-лог `{event:'inbound_call.rejected', reason:'unknown_number', call_sid, account_sid, to, from}`; wallet-blocked → `<Reject reason="busy"/>` (как сейчас) | 403 invalid signature (как сейчас) |
+| Reuse без изменений | — | `GET/POST /api/telephony/numbers/status·connect·search·buy·softphone/setup`, `GET /api/billing`, `GET /api/telephony/numbers` | | |
+
+### 8. Безопасность (правила проекта)
+
+- `company_id` во всех новых/изменённых обработчиках — ТОЛЬКО `req.companyFilter?.company_id` (никогда из payload); чеклист и `subscribe` не принимают company от клиента вовсе.
+- Каждый SQL фильтрует по `company_id`: чеклист (`EXISTS … WHERE company_id=$1`, `UPDATE companies WHERE id=$1`), subscribe (`WHERE company_id=$1`), overlay (`getTelephonyState(companyId)`); webhook-путь — company по `AccountSid`→`To` (модель ALB-107, подпись — токеном субаккаунта, без изменений).
+- Кросс-tenant: чужие сущности недостижимы by construction (нет id-параметров в новых endpoint'ах); `return_path` — path-only (анти-open-redirect); subaccount SID наружу в marketplace-overlay не отдаётся.
+- Fail-closed: C1 reject при нерезолвнутой компании (включая DB-ошибку резолва), C5 — 409 вместо master-creds; fail-open сохранён только там, где защищает легитимную маршрутизацию (ошибка `isServiceBlocked`) и в autonomous-mode (protected).
+- Обязательные тесты 401/403 + изоляция: `tests/onboardingChecklist.test.js` (401; 403 для manager/dispatcher/provider и platform-only; company-scope), `tests/billingPaygSubscribe.test.js` (payg без Stripe, идемпотентность, платный путь не сломан, reject абсолютных `return_path`), `tests/twilioInboundIsolation.test.js` (C1: master AccountSid НЕ reject'ится; unknown → Reject+лог; C4: гейт на резолвнутой компании), `tests/voiceTokenFailClosed.test.js` (default → env; не-default без кредов → 409; с кредами → токен), `tests/marketplaceTelephonyOverlay.test.js` (derived connected: default/subaccount/не подключена; install → 409). Jest в worktree — с `--testPathIgnorePatterns "/node_modules/"`; фронт верифицировать `npm run build` (tsc -b).
+
+### 9. Риски / решённые вопросы (блокирующих вопросов нет)
+
+1. **C3 фактически уже выполнен на prod** (разведка §0) — миграция 148 остаётся по требованиям как guarded-формализация; Planner не должен писать безусловный `ADD CONSTRAINT` (упадёт duplicate).
+2. Решено и обосновано (переигрывается без слома архитектуры, если владелец захочет): PAYG `included_seats=3/per_seat 0` (зеркало trial; на списания не влияет); C2-orphans → DEFAULT-компания (не DELETE — анти-лик, см. C2); C2b (1 строка в `phoneSettings.js`) включён в скоуп как условие инварианта C2; collapse — localStorage.
+3. PAYG-списания — **в arrears раз в период** через существующий `overageScheduler` (как у всех планов), realtime-дебета за звонок нет; защита от ухода в минус — существующий wallet-гейт (floor −$5) на inbound (C4) и исходящих. Соответствует требованию «действует существующий wallet-гейт».
+4. Плитка telephony-twilio показывает Connected сразу после шага 1 (субаккаунт есть), даже без номера — это прямое следствие требования B.5 «состояние выводится из фактического подключения (`company_telephony`)»; полнота онбординга отслеживается чеклистом Части A (номер), не плиткой.
+5. Residue-события status-callback'ов отклонённых unknown-звонков продолжают попадать в `webhook_inbox` (pre-existing конвейер) — осознанно вне скоупа; сам звонок отклоняется до какого-либо voicemail/routing.
+

@@ -39,6 +39,9 @@ async function ensureMarketplaceSchema(client = null) {
         // MUST run AFTER 087 (which re-seeds mail-secretary's old /settings/email path)
         // so this update wins on every schema-ensure, and so google-email self-heals.
         await query(readMigration('132_seed_google_email_marketplace_app.sql'));
+        // ONBTEL-001: Telephony — Twilio tile. Derived connection (company_telephony
+        // is the source of truth) — no marketplace_installations rows are ever created.
+        await query(readMigration('145_seed_telephony_twilio_marketplace_app.sql'));
         return;
     }
 

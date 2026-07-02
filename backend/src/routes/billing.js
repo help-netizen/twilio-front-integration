@@ -39,9 +39,23 @@ router.get('/invoices', async (req, res) => {
 // POST /api/billing/checkout — subscribe to a plan (charged via the wallet/card)
 router.post('/checkout', async (req, res) => {
     try {
-        const { plan_id } = req.body || {};
+        const { plan_id, return_path } = req.body || {};
         if (!plan_id) return res.status(422).json({ ok: false, error: 'plan_id required' });
-        const out = await billingService.subscribe(companyId(req), plan_id);
+        // ONBTEL-001 §2.4: optional return_path — path-only (anti-open-redirect).
+        // Absent/undefined/null → keep the default hardcoded URLs; validated BEFORE
+        // subscribe() so a 422 here has no side effects.
+        const opts = {};
+        if (return_path !== undefined && return_path !== null) {
+            const valid = typeof return_path === 'string'
+                && return_path.startsWith('/')
+                && !return_path.includes('//')
+                && !return_path.includes(':');
+            if (!valid) {
+                return res.status(422).json({ ok: false, code: 'INVALID_RETURN_PATH', error: 'return_path must be a relative path' });
+            }
+            opts.successUrl = opts.cancelUrl = 'https://app.albusto.com' + return_path;
+        }
+        const out = await billingService.subscribe(companyId(req), plan_id, opts);
         res.json({ ok: true, ...out });
     } catch (err) {
         res.status(err.httpStatus || 500).json({ ok: false, code: err.code, error: err.message });

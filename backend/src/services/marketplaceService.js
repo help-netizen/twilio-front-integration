@@ -4,6 +4,7 @@ const emailQueries = require('../db/emailQueries');
 const integrationsService = require('./integrationsService');
 const provisioningService = require('./marketplaceProvisioningService');
 const emailMailboxService = require('./emailMailboxService');
+const telephonyTenantService = require('./telephonyTenantService');
 
 class MarketplaceServiceError extends Error {
     constructor(message, code, httpStatus = 400) {
@@ -55,6 +56,36 @@ async function buildGoogleEmailInstallationOverlay(companyId) {
     };
 }
 
+// ONBTEL-001 §2.2: the Telephony — Twilio marketplace app (seeded with
+// provisioning_mode='none', metadata.derived_connection=true and NO install row
+// EVER) derives its connected state from company_telephony via
+// telephonyTenantService. Special-cased in listApps + isAppConnected; installApp
+// rejects ANY derived_connection app before an installation row is created.
+const TELEPHONY_TWILIO_APP_KEY = 'telephony-twilio';
+
+/**
+ * Build the SYNTHETIC installation overlay for the Telephony — Twilio app from
+ * the company's real telephony state (ONBTEL-001 §2.2). No
+ * marketplace_installations row is created or read. Not connected (no
+ * company_telephony row, or an autonomous-mode row with a NULL subaccount SID)
+ * ⇒ null, so the tile shows Available/Configure. The Twilio subaccount SID is
+ * NEVER exposed in any field. getTelephonyState errors bubble up, exactly like
+ * the google-email overlay.
+ */
+async function buildTelephonyTwilioInstallationOverlay(companyId) {
+    const state = await telephonyTenantService.getTelephonyState(companyId);
+    if (!state.connected) return null;
+    return {
+        id: null,
+        status: 'connected',
+        installed_at: state.connected_at ?? null,
+        disconnected_at: null,
+        provisioning_error: null,
+        last_used_at: null,
+        external_installation_id: null,
+    };
+}
+
 /**
  * Whether the given marketplace app is connected (gate-only check) for a company.
  * True iff the app is published AND an active installation exists with status 'connected'.
@@ -64,6 +95,13 @@ async function isAppConnected(companyId, appKey) {
     // an install row — the mail-secretary gate resolves from truth.
     if (appKey === GOOGLE_EMAIL_APP_KEY) {
         return isGoogleEmailMailboxConnected(companyId);
+    }
+    // ONBTEL-001 §2.2: telephony-twilio connected-state comes from
+    // company_telephony (telephonyTenantService), never an install row — the
+    // same derived pattern as google-email above.
+    if (appKey === TELEPHONY_TWILIO_APP_KEY) {
+        const state = await telephonyTenantService.getTelephonyState(companyId);
+        return state.connected === true;
     }
     const app = await marketplaceQueries.getPublishedAppByKey(appKey);
     if (!app) return false;
@@ -210,6 +248,15 @@ async function listApps(companyId) {
         googleEmail.installation = await buildGoogleEmailInstallationOverlay(companyId);
     }
 
+    // ONBTEL-001 §2.2: same derived-overlay pattern for telephony-twilio — the
+    // installation is synthesized from company_telephony (no install row is ever
+    // created for this app; a stale row never wins). getTelephonyState errors
+    // bubble, exactly like the google-email overlay above.
+    const telephonyTwilio = apps.find(app => app.app_key === TELEPHONY_TWILIO_APP_KEY);
+    if (telephonyTwilio) {
+        telephonyTwilio.installation = await buildTelephonyTwilioInstallationOverlay(companyId);
+    }
+
     return apps;
 }
 
@@ -265,6 +312,20 @@ async function installApp(companyId, actorId, appKey, { requestId = null, req = 
         const active = await marketplaceQueries.findActiveInstallation(companyId, app.id, client);
         if (active) {
             throw new MarketplaceServiceError('App is already installed for this company.', 'APP_ALREADY_INSTALLED', 409);
+        }
+
+        // ONBTEL-001 §2.2 fail-safe: apps whose connected-state is DERIVED from
+        // their own domain (metadata.derived_connection === true, e.g.
+        // telephony-twilio) are never installed through the marketplace — their
+        // setup page owns the connect flow. Data-driven (no app_key hardcode),
+        // rejected BEFORE any installation row is created.
+        const appMetadata = toMetadataObject(app.metadata || app.app_metadata);
+        if (appMetadata.derived_connection === true) {
+            throw new MarketplaceServiceError(
+                'This app is configured from its setup page.',
+                'DERIVED_CONNECTION_APP',
+                409
+            );
         }
 
         await validateInstallPrerequisites(app, companyId);

@@ -52,6 +52,7 @@ import ActionRequiredSettingsPage from './pages/ActionRequiredSettingsPage';
 import AutomationPage from './pages/AutomationPage';
 import BillingPage from './pages/BillingPage';
 import GoogleEmailSettingsPage from './pages/GoogleEmailSettingsPage';
+import TelephonyTwilioSettingsPage from './pages/TelephonyTwilioSettingsPage';
 import DocumentTemplatesPage from './pages/DocumentTemplatesPage';
 import PriceBookPage from './pages/PriceBookPage';
 import DocumentTemplateEditorPage from './pages/DocumentTemplateEditorPage';
@@ -129,6 +130,7 @@ function App() {
               <Route path="/settings/integrations/vapi-ai" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><VapiSettingsPage /></ProtectedRoute>} />
               <Route path="/settings/integrations/stripe-payments" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><StripePaymentsSettingsPage /></ProtectedRoute>} />
               <Route path="/settings/integrations/google-email" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><GoogleEmailSettingsPage /></ProtectedRoute>} />
+              <Route path="/settings/integrations/telephony-twilio" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><TelephonyTwilioSettingsPage /></ProtectedRoute>} />
               <Route path="/settings/technicians" element={<ProtectedRoute permissions={['tenant.company.manage']}><TechnicianPhotosPage /></ProtectedRoute>} />
               <Route path="/settings/company" element={<ProtectedRoute permissions={['tenant.company.manage']}><CompanySettingsPage /></ProtectedRoute>} />
               <Route path="/settings/api-docs" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><ApiDocsPage /></ProtectedRoute>} />

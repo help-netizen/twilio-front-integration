@@ -2386,3 +2386,134 @@ Groups and Categories tabs are unchanged.
 
 ### Protected parts
 - No protected file touched. No `backend/db/` change.
+
+---
+
+## Фича ONBTEL-001: Онбординг новой компании → Marketplace-приложение «Telephony — Twilio» → фиксы изоляции Twilio
+
+**Status:** Requirements · **Priority:** P0 · **Date:** 2026-07-02 · **Owner:** Platform / Telephony / Billing
+**Тип:** одна зонтичная фича из трёх связанных частей (A/B/C). Продукт для пользователя — **Albusto** (никакого "Blanc" в UI-тексте).
+**Решения владельца зафиксированы интервью и являются ОБЯЗАТЕЛЬНЫМИ** (не пересматривать на этапах Architect/Planner).
+
+**Краткое описание:** Первый пользователь новой tenant-компании (владелец, `role_key='tenant_admin'`) после регистрации видит на `/pulse` расширяемый чеклист-онбординг с единственным пока пунктом «Подключить телефонию»; сам процесс подключения телефонии переезжает из прямого входа `/settings/telephony` в Marketplace-приложение «Telephony — Twilio» с трёхшаговым Connect-визардом (субаккаунт → тариф, включая НОВЫЙ поминутный план Pay-as-you-go → покупка номера); параллельно закрываются все 5 найденных аудитом дыр изоляции Twilio (unknown-number reject, NOT NULL/UNIQUE в схеме номеров, wallet-гейт до роутинга, fail-closed softphone token).
+
+### Проверка на дублирование (результат)
+
+Дублей нет — ONBTEL-001 **расширяет** существующие фичи, а не повторяет их:
+
+- **ALB-107 (Multi-tenant Telephony — Twilio Subaccounts)** — уже даёт connect-субаккаунт / поиск / покупку / release номеров и webhook-маршрутизацию по `AccountSid`→`To`. Часть B **переносит точку входа** в Marketplace и добавляет шаг тарифа; сами API переиспользуются. Часть C — фиксы изоляции внутри той же подсистемы. Расширение, не дубль.
+- **F016 (VAPI marketplace) / F018 (Stripe Payments marketplace) / SEND-DOC-001 Part B (Google Email marketplace)** — канон «плитка → отдельная страница настройки `/settings/integrations/<app>` → seed в `marketplace_apps` → install/disconnect через `/api/marketplace/*`». Часть B добавляет **новое** приложение по этому канону; канон не меняется.
+- **BILLING-UI / ADR-001 (платформенный биллинг)** — планы trial/starter/pro/huge, Stripe checkout, wallet (миграции 101/103/107/108/109) существуют. Часть B добавляет **новый план** «Pay-as-you-go» поверх существующей модели планов/кошелька и переиспользует существующий checkout для пакетов. Расширение, не дубль.
+- **ALB-101 / ONBOARD-FIX-001 (signup/онбординг)** — signup → `/onboarding` → `POST /api/onboarding` → `bootstrapCompany` не меняется; Часть A добавляет чеклист **после** этого флоу. Чеклиста/флага «свежая компания» сегодня не существует (проверено).
+- **F017 (call flow) и TELEPHONY-AUTONOMOUS-MODE-001** — не изменяются, попадают в защищённые части.
+- Существующих аналогов нет: в системе нет ни онбординг-чеклиста на `/pulse`, ни marketplace-приложения телефонии (сегодня 5 приложений: mail-secretary, vapi-ai, stripe-payments, call-qa-agent, lead-generator), ни поминутного плана, ни Reject для неизвестных номеров.
+
+### Часть A — Онбординг-чеклист новой tenant-компании на `/pulse`
+
+**Описание:** Большая карточка-чеклист **на всю ширину, В ПОТОКЕ страницы** `/pulse` (сдвигает контент вниз; НЕ оверлей/модалка). Пока один пункт: «Подключить телефонию» → ведёт на карточку/визард Marketplace-приложения «Telephony — Twilio». Чеклист — **данные, не хардкод** (расширяемая модель пунктов). Видна только `tenant_admin`. Живёт до выполнения всех пунктов; допускается свернуть (collapse), но полностью скрыть нельзя. Пункт телефонии считается выполненным, когда у компании есть **≥1 активный купленный номер**. Email-пункт НЕ делать.
+
+**Пользовательские сценарии:**
+1. Владелец новой компании завершает регистрацию и онбординг (`/signup` → `/onboarding` → `POST /api/onboarding` → `bootstrapCompany`) и попадает на `/pulse`: вверху страницы — полноширинная карточка-чеклист с пунктом «Подключить телефонию» (не выполнен) и переходом в Marketplace-приложение «Telephony — Twilio»; контент Pulse сдвинут вниз, ничего не перекрыто.
+2. Владелец сворачивает чеклист: карточка складывается в компактную строку (заголовок + прогресс), состояние сохраняется между визитами/сессиями; полного скрытия/dismiss нет, пока пункты не выполнены.
+3. Владелец проходит визард Части B и покупает номер: при следующем открытии `/pulse` пункт отмечен выполненным автоматически (derived-статус, не ручная галочка); когда все пункты выполнены — карточка исчезает насовсем.
+4. Сотрудник той же компании с ролью manager/dispatcher/provider открывает `/pulse` — чеклист не отображается вовсе (гейт по `tenant_admin` и на фронте через `useAuthz().isTenantAdmin()`, и на backend-эндпоинте состояния).
+5. Пользователь существующей компании с уже купленными номерами (в т.ч. Boston Masters, seed 00000000-0000-0000-0000-000000000001) открывает `/pulse` — чеклист не отображается (критерий выполнен по данным), поведение страницы не меняется.
+
+### Часть B — Marketplace-приложение «Telephony — Twilio» (Connect-визард с шагом тарифа)
+
+**Описание:** Подключение телефонии переезжает из прямого `/settings/telephony`-входа в Marketplace (Settings → Integrations): новая плитка приложения → Connect-**визард** из трёх шагов: (1) создание Twilio-субаккаунта — существующий флоу `POST /api/telephony/numbers/connect` (`company_telephony`, mig 098); (2) **шаг тарифа**: «Поминутно (Pay-as-you-go)» = **новый** billing-план ($0/мес, 0 включённых минут, списание с кошелька по ставкам владельца: $0.04/мин звонки, $0.03/SMS) ИЛИ «Пакет» = выбор существующих планов starter/pro/huge через существующий Stripe checkout — выбор **реально применяется** к биллингу компании через существующий `billingService`; (3) поиск и покупка номера — существующие search/buy API (лимит номеров по плану). Существующий раздел Settings → Telephony **остаётся** как управление уже подключённой телефонией (номера, группы, флоу). Существующие компании считаются connected — их поведение не меняется.
+
+**Пользовательские сценарии:**
+1. `tenant_admin` открывает Settings → Integrations, видит плитку «Telephony — Twilio» (Available), нажимает Connect/Configure и попадает на страницу-визард `/settings/integrations/telephony-twilio` (по канону страниц VAPI/Stripe Payments).
+2. Шаг 1 «Подключение»: создаётся Twilio-субаккаунт через существующий connect-флоу; статус отображается; повторный вход в визард после успешного подключения не создаёт второй субаккаунт (идемпотентность существующего флоу сохраняется, подкреплена UNIQUE из Части C).
+3. Шаг 2 «Тариф»: выбор «Поминутно (Pay-as-you-go)» применяет к компании новый план ($0/мес, 0 включённых минут; звонки $0.04/мин, SMS $0.03 — списываются с существующего кошелька, mig 109: мин. пополнение $10, floor −$5); выбор «Пакет» (starter $49 / pro $149 / huge $289) запускает существующий Stripe checkout и после возврата подписка активна. Выбор фиксируется в биллинге компании — это не декоративный шаг.
+4. Шаг 3 «Номер»: поиск по area code/городу/digits с фильтрами voice/sms (существующий GET search), покупка (существующий POST buy с лимитом номеров по плану), номер записывается в `phone_number_settings` компании с webhooks; визард показывает завершение; состояние приложения — Connected; пункт чеклиста Части A автоматически выполняется.
+5. Компания с уже подключённой телефонией (есть `company_telephony`, включая Boston Masters): плитка отображается как Connected (состояние **выводится из фактического подключения**, по паттерну «connected-state derived from the real mailbox» из SEND-DOC-001 D.3 — без обязательного ретроактивного install), кнопка Manage ведёт в существующий Settings → Telephony; повторный визард не навязывается. Для НЕподключённой компании прямой заход в Settings → Telephony отправляет подключаться в Marketplace-визард (connect-флоу не дублируется в двух местах).
+
+### Часть C — Фиксы изоляции Twilio (аудит проведён; чинить ВСЕ 5)
+
+**Описание:** Закрыть все пять вердиктов аудита изоляции: (1) входящий звонок на неизвестный/бесхозный номер → TwiML Reject + структурный лог (сейчас — generic voicemail без company-контекста, `backend/src/webhooks/twilioWebhooks.js:345-360`); (2) `phone_number_settings.company_id` → NOT NULL + backfill (mig 091 допускает orphan); (3) UNIQUE на `phone_number_settings.phone_number` и `company_telephony.twilio_subaccount_sid`; (4) wallet-гейт ДО роутинга звонка (сейчас обходится при null company); (5) softphone token fail-closed для не-дефолтных компаний (сейчас тихий фолбэк на master env creds, `backend/src/services/voiceService.js:61-77`).
+
+**Пользовательские сценарии (негативные/проверочные):**
+1. Входящий звонок на номер, не принадлежащий ни одной компании (company не определяется ни по `AccountSid`, ни по `To` — `companyIdForNumber`, `twilioWebhooks.js:9-16`): звонок отклоняется (Reject), в лог пишется структурная запись с CallSid/AccountSid/To и причиной; generic voicemail без company-контекста больше не исполняется.
+2. После миграции все существующие строки `phone_number_settings` с NULL `company_id` забэкфиллены (по субаккаунту/seed-правилу), колонка NOT NULL; создать «бесхозный» номер невозможно.
+3. Попытка вставить второй ряд с тем же `phone_number` (или второй `company_telephony` с тем же `twilio_subaccount_sid`) отклоняется на уровне БД; миграция предварительно выявляет и разрешает существующие дубликаты (иначе UNIQUE не встанет).
+4. Входящий звонок компании с заблокированным кошельком (баланс на/ниже floor) отклоняется **до** исполнения call flow; сценарий «company=null → гейт обойдён» невозможен (такой звонок отклонён фиксом 1 ещё раньше).
+5. Запрос softphone-токена компанией без собственных субаккаунт-кредов (любая, кроме дефолтной seed-компании) получает явную ошибку (fail-closed), а не тихий токен на master env creds; Boston Masters продолжает работать на master env как раньше.
+
+### Ограничения и нефункциональные требования
+
+**Безопасность (обязательные правила проекта, повторены):**
+- Все новые/изменяемые API: `authenticate` + `requireCompanyAccess`; `company_id` берётся ТОЛЬКО из `req.companyFilter?.company_id` (никогда из payload клиента).
+- Каждый SQL фильтрует по `company_id`; чужой id → 404.
+- Обязательные тесты: 401/403 на каждый новый эндпоинт + тесты tenant-изоляции (кросс-tenant чтение/запись невозможны).
+- Webhook-пути остаются на существующей модели ALB-107: компания по `AccountSid` (fallback `To`), подпись — токеном соответствующего субаккаунта.
+
+**Часть A:**
+- Чеклист — расширяемая data-модель пунктов (хранилище выберет архитектор: кандидаты — `companies.settings` JSONB (mig 010) или новая таблица/колонки); «выполнено» для пункта телефонии — вычисляемое условие «у компании ≥1 активный купленный номер», без ручной отметки.
+- Карточка: full-width, в потоке (сдвигает контент), не оверлей; collapse-состояние персистентно; полное скрытие до выполнения невозможно; после выполнения всех пунктов не показывается никогда.
+- Только `tenant_admin` (фронт + backend). Email-пункт — вне скоупа.
+- Дизайн: канон CLAUDE.md (Blanc-токены `--blanc-*`, без `<hr>`, `.blanc-eyebrow`), user-facing имя продукта — Albusto.
+
+**Часть B:**
+- Новое приложение по канону marketplace: seed-миграция в `marketplace_apps`, install lifecycle и per-company state в `marketplace_installations` (+`metadata` JSONB), гейтинг через `findActiveInstallation`; core marketplace не переписывается.
+- Новый план Pay-as-you-go выражается через существующую модель планов (`billing_plans` + included units mig 103 + per-plan limits/ставки mig 107/108): $0/мес, 0 включённых минут, ставки списания с кошелька $0.04/мин звонки и $0.03/SMS (дефолт владельца). Лимит номеров плана (`max_phone_numbers`) = **1** (решение владельца, интервью 2026-07-02: как trial; нужно больше номеров — апсел в пакетные планы). Аренда номеров отдельно не тарифицируется (как и в существующих планах).
+- Активация Pay-as-you-go не требует принудительного пополнения кошелька на шаге визарда; действует существующий wallet-гейт (`walletService`) при исчерпании.
+- Пакетные планы — строго существующий Stripe checkout / `billingService`; платформенный billing webhook не меняется.
+- Идемпотентность: повторные проходы визарда не плодят субаккаунты/планы/installations.
+- Существующие компании (в первую очередь Boston Masters) — нулевые изменения поведения; connected-состояние приложения выводится из фактического `company_telephony`.
+
+**Часть C:**
+- Все фиксы — fail-closed; Reject сопровождается структурным логом (CallSid, AccountSid, To, причина) для диагностики.
+- Миграции идемпотентны; backfill логирует число затронутых строк (паттерн mig 140); перед UNIQUE — детект/разрешение дубликатов.
+- Фиксы не должны изменить маршрутизацию легитимных звонков: существующий call flow (F017 `callFlowRuntime`), autonomous mode override (mig 142, чтение флага fail-open) и все текущие сценарии Boston Masters работают как прежде.
+- Fail-closed для softphone — только для не-дефолтных компаний; дефолтная seed-компания остаётся на master env creds.
+
+**Общие:**
+- Backend — CommonJS; фронт собирается `npm run build` (tsc -b, prod-сборка строже).
+- Нумерация новых миграций: фактический максимум в `backend/db/migrations` на 2026-07-02 — **144** (`144_rehome_orphan_open_tasks.sql`), новые начинаются со **145**; перепроверить максимум непосредственно перед созданием (параллельные ветки).
+- Деплой в прод — только по явному подтверждению владельца.
+
+### Потенциально вовлечённые модули/части системы (по architecture.md)
+
+**Backend:**
+- `backend/src/routes/onboarding.js` + `platformCompanyService.bootstrapCompany` (ALB-100 identity plane) — контекст создания компании/tenant_admin; менять минимально или не менять (чеклист derived).
+- Новый/расширенный эндпоинт состояния онбординг-чеклиста (роутер определит архитектор; company-scoped, tenant_admin-only).
+- `backend/src/db/marketplaceQueries.js` (`ensureMarketplaceSchema` += новая seed-миграция), `backend/src/services/marketplaceService.js`, `backend/src/routes/marketplace.js` — reuse install/disconnect/findActiveInstallation (канон F016/F018).
+- `backend/src/routes/telephonyNumbers.js` (connect/search/buy/release, softphone/setup) — reuse; возможен статус-эндпоинт для визарда.
+- `backend/src/services/telephonyTenantService.js` (`getClientForCompany`, `getSoftphoneCreds`/`ensureSoftphoneSetup`) и `backend/src/services/voiceService.js` — фикс C5.
+- `backend/src/webhooks/twilioWebhooks.js` (`handleVoiceInbound`, `companyIdForNumber`) — фиксы C1 и C4.
+- `backend/src/services/billingService.js` + `backend/src/routes/billing.js` — seed/применение плана Pay-as-you-go, применение выбора тарифа из визарда; `walletService` — reuse ставок/гейта.
+- Миграции 145+: seed marketplace-приложения; seed billing-плана PAYG; NOT NULL + backfill `phone_number_settings.company_id`; UNIQUE ×2.
+
+**Frontend:**
+- Страница Pulse (`usePulsePage.ts` + layout-компонент страницы) — новая карточка `OnboardingChecklistCard` в потоке; `frontend/src/hooks/useAuthz.ts` (`isTenantAdmin`) — reuse.
+- `frontend/src/pages/IntegrationsPage.tsx` + `frontend/src/services/marketplaceApi.ts` — плитка нового приложения.
+- Новая страница-визард `/settings/integrations/telephony-twilio` (по образцу `VapiSettingsPage.tsx` / `StripePaymentsSettingsPage.tsx`) + API-клиент; роут в `frontend/src/App.tsx`.
+- Существующие `/settings/telephony/*` (TelephonyLayout: RouteManagerOverview, PhoneNumbers, ProviderSettings, UserGroups) — остаются; для неподключённой компании — отсылка в Marketplace-визард вместо локального connect.
+
+### Затронутые интеграции
+
+- **Twilio** — Subaccounts (существующий connect), AvailablePhoneNumbers search / purchase, Voice inbound webhooks (Reject-фикс), Access Token softphone (fail-closed). Новых типов Twilio-вызовов нет — меняется гейтинг/поведение существующих.
+- **Stripe** — только существующий checkout для пакетных планов (платформенный биллинг); новых Stripe-поверхностей нет; PAYG идёт через wallet.
+- **Keycloak** — без изменений (роль `tenant_admin` уже есть).
+- **Front / Zenbooker / Google** — не затронуты.
+
+### Защищённые части кода (НЕЛЬЗЯ ломать)
+
+- `src/server.js` (только mount-only при явной необходимости), `frontend/src/lib/authedFetch.ts`, `frontend/src/hooks/useRealtimeEvents.ts`.
+- `backend/db/` — существующие миграции не трогать; изменения только новыми миграциями 145+ по явному плану.
+- **Boston Masters (seed 00000000-0000-0000-0000-000000000001):** номера на master-аккаунте, softphone на env creds, маршрутизация звонков — поведение байт-в-байт как сейчас.
+- Существующий контракт webhooks ALB-107 (определение компании по `AccountSid`→`To`, per-subaccount подпись) и исполнение call flow F017 (`callFlowRuntime`), включая TELEPHONY-AUTONOMOUS-MODE-001 (`autonomous_mode`, fail-open чтение).
+- Платформенный биллинг: `billingService` контракты, `/api/billing/webhook` (raw-body mount), Stripe checkout/portal, BillingScheduler; wallet-леджер (mig 109); `walletService.assertServiceActive` остаётся единственной точкой сервис-гейта исходящих SMS (на неё завязаны SEND-DOC-001 и ONWAY-001).
+- Marketplace core: `/api/marketplace/*` lifecycle, существующие 5 приложений и их страницы, `MarketplaceConnectDialog` (protected ещё с F016).
+- Существующие страницы Settings → Telephony (номера/группы/флоу) — остаются рабочими для подключённых компаний.
+- Идемпотентность и транзакция `platformCompanyService.bootstrapCompany`; `POST /api/onboarding` (authenticate-only — так задумано).
+
+### Out of scope
+
+- Email-пункт чеклиста и любые другие новые пункты (модель расширяемая, но сейчас ровно один пункт).
+- Изменение существующих цен/лимитов планов trial/starter/pro/huge; proration/downgrade-флоу; авто-пополнение кошелька.
+- Port-in номеров, международные номера, A2P-изменения (ALB-107 Phase 2/3 — как есть).
+- Изменение call flow/групп/softphone-функциональности (F017) сверх фиксов изоляции C.
+- Ретроактивная миграция существующих компаний на новые планы.

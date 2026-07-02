@@ -95,7 +95,10 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
 
             mockQuery.mockImplementation((sql) => {
                 if (sql.includes('phone_number_settings')) {
-                    return { rows: [{ routing_mode: 'client', client_identity: 'user_1', group_id: null }] };
+                    // ONBTEL-001 C1: a "known number" now means it resolves to a
+                    // company — company-less inbound is fail-closed rejected
+                    // (covered by tests/twilioInboundIsolation.test.js).
+                    return { rows: [{ company_id: 'company_1', routing_mode: 'client', client_identity: 'user_1', group_id: null }] };
                 }
                 return { rows: [] };
             });
@@ -120,7 +123,8 @@ describe('Bug #6 — Stale call records / voicemail routing', () => {
 
             mockQuery.mockImplementation((sql) => {
                 if (sql.includes('phone_number_settings')) {
-                    return { rows: [{ routing_mode: 'sip', client_identity: null, group_id: null }] };
+                    // ONBTEL-001 C1: see the client-mode test above.
+                    return { rows: [{ company_id: 'company_1', routing_mode: 'sip', client_identity: null, group_id: null }] };
                 }
                 return { rows: [] };
             });

@@ -16,6 +16,7 @@ import { PulseContactPanel } from '../components/contacts/PulseContactPanel';
 import { TaskFormDialog } from '../components/tasks/TaskFormDialog';
 import { createTask, type Task } from '../components/tasks/tasksApi';
 import { CreateLeadJobWizard } from '../components/conversations/CreateLeadJobWizard';
+import { OnboardingChecklistCard } from '../components/onboarding/OnboardingChecklistCard';
 import { EditLeadDialog } from '../components/leads/EditLeadDialog';
 import { ConvertToJobDialog } from '../components/leads/ConvertToJobDialog';
 import { Skeleton } from '../components/ui/skeleton';
@@ -208,6 +209,12 @@ export const PulsePage: React.FC = () => {
                     ))}
                 </div>
             </div>
+
+            {/* Onboarding checklist (ONBTEL-001 Part A) — in-flow between the header
+                and the two-column layout; flex-shrink:0 inside the card pushes the
+                columns down instead of overlaying them. Renders null unless the
+                viewer is tenant_admin AND the server says visible. */}
+            <OnboardingChecklistCard />
 
             {/* Two-column layout: sidebar card + right column of floating cards */}
             <div className="pulse-layout" data-mobile-panel={mobilePanel}>
