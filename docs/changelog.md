@@ -4,6 +4,23 @@
 
 ---
 
+## 2026-07-02 — LAYER-Z-FIX-001: reschedule/time-picker modal no longer flies off-screen behind the job card
+
+Owner (real device) reported the reschedule time-picker (`CustomTimeModal`) "layout broke — the window moved off-screen." Root cause: the OVERLAY-CANON-002 desktop card-stack ranked overlays by **open-order only, ignoring z-index**. Opened INSIDE the non-modal job card (`FloatingDetailPanel`, z-80), the modal (`DialogContent`, z-140) got the "recede" transform (scale + dim + translateX) and flew to the top-left, clipped — while the job card stayed put.
+
+- **Fix:** made `OverlayStack` **z-aware** — an overlay recedes only for layers that PAINT above it (higher z-tier, or same tier opened later). A non-modal panel (z-80) can no longer push a modal (z-140) back; it recedes UNDER it. Threads each tier's z (panel 80 / modal 140 / sheet 200 / lightbox 1000) from `Overlay`/`dialog` into `useOverlayDismiss`/`useOverlayStack`.
+- **Byte-identical for same-z stacks** (dialog-over-dialog, sheet-over-sheet), so only the panel-under-modal case changes. Reproduced in an isolated preview harness (pixel-match to the report) and verified fixed under StrictMode + prod build; adversarially reviewed (same-z equivalence, single `isTop`, cross-z direction, mobile — all verified). 4 files, frontend-only, no migration.
+
+---
+
+## 2026-07-02 — LIST-PAGINATION-001: Pulse conversation list is one properly-paginated set (calls + SMS + email)
+
+Owner: heavy lists (especially Pulse) should send the first ~50 then load more, not everything. The Pulse sidebar (`GET /api/calls/by-contact`) had infinite-scroll UI, but the BACKEND paginated only call-timelines then **bulk-merged up to 200 SMS-only rows** out-of-band (no offset, and un-scoped by company — a latent cross-tenant leak), re-sorting in JS per page → it effectively loaded everything and paged incorrectly. Email was not a source at all.
+
+- **Fix:** rebuilt `by-contact` as ONE timeline-rooted, offset-paginated (50/page) SQL query unifying **calls + SMS + email**: `last_interaction_at = GREATEST(call, sms, email)`, the 3-band sort (Action-Required → unread → recency) fully in SQL + `timeline_id` tiebreak, `COUNT(*) OVER()` total, SQL-level orphan-shadow dedup. Deleted the JS append/dedup/re-sort and the read-path timeline write; SMS ingest now guarantees a timeline. **Closes the cross-tenant SMS leak.** Email folds in for known contacts (Scope A: `from_email → contact_emails → contact → timeline`). Migration **143** = functional email index. Frontend unchanged (existing infinite-scroll). 25 jest tests; adversarially reviewed (2 regressions caught + fixed: open-task-only rows dropped, contact/orphan duplicates).
+
+---
+
 ## 2026-07-01 — PULSE-MOBILE-FULLSCREEN-001: Pulse mobile list scrolls the app scroll area (no floating container / bottom void)
 
 Owner (real device) reported the mobile list pages put the list in a floating sub-container that leaves an empty gap at the bottom (worst in the installed PWA), unlike Schedule which fills the screen. Jobs/Leads/Tasks were already converted to Schedule's model (scroll `.app-main`, no inner container) in the mobile layout pass above — **Pulse was the remaining offender**: `PulsePage` set `appMain.style.overflow = 'hidden'` and scrolled its own `.pulse-sidebar-card` → `.pulse-sidebar-scroll` inner box.
