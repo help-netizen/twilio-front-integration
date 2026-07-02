@@ -193,6 +193,18 @@
    Toggle between sidebar and content via data-mobile-panel attribute
    ══════════════════════════════════════════════════════════════════ */
 @media (max-width: 767px) {
+    /* LIST panel = the Schedule/Jobs model: content scrolls the app's single main
+       scroll area (`.app-main`), NOT an inner box. So on mobile the wrapper must
+       stop being a fixed-height `overflow:hidden` flex container (that trapped the
+       list in the inner `.pulse-sidebar-scroll` scroller → floating frame + a
+       bottom void under the PWA safe-area). We drop overflow/height caps here and
+       let the page grow; `.app-main`'s `padding-bottom: calc(60px + safe-area)`
+       then gives the bottom-nav clearance with no void. Block flow (not flex) so
+       the content's trailing padding is kept in `.app-main`'s scrollHeight
+       (a flex-column scroll child drops it — the exact inert-clearance bug the
+       canonical mobile list shell documents).
+       CONTENT panel keeps its own `.pulse-right-column` scroll (below) — the
+       timeline relies on it — so this block is written to only free the LIST. */
     .blanc-page-wrapper:has(.pulse-layout) {
         padding: 8px;
         gap: 8px;
@@ -205,20 +217,46 @@
         gap: 8px;
     }
 
+    /* ── LIST mode: single app-main scroll, flat full-bleed, no inner scroller ── */
+    .blanc-page-wrapper:has(.pulse-layout[data-mobile-panel="list"]) {
+        overflow: visible !important;
+        flex: 0 0 auto;
+        min-height: 0;
+    }
+
+    .pulse-layout[data-mobile-panel="list"] {
+        display: block;
+        overflow: visible;
+        min-height: 0;
+    }
+
     /* Sidebar: full width in list mode, hidden in content mode.
-       Strip the floating-card box so the list runs edge-to-edge on the page bg.
+       Strip the floating-card box so the list runs edge-to-edge on the page bg
+       and drop the inner scroll context so the page scrolls in `.app-main`.
        (Desktop/tablet .pulse-sidebar-card keeps its card chrome — untouched.) */
     .pulse-layout[data-mobile-panel="list"] .pulse-sidebar-card {
+        display: block;
         width: 100%;
-        flex: 1;
-        background: transparent;
+        /* !important to beat the global `.pulse-sidebar-card { background:
+           …surface-strong !important }` in design-system.css (§8 page overrides).
+           Scoped to mobile list mode only, so the desktop card is untouched. */
+        background: transparent !important;
         border: none;
         border-radius: 0;
         box-shadow: none;
+        overflow: visible;
         padding-left: 0;
         padding-right: 0;
         margin-left: 0;
         margin-right: 0;
+    }
+
+    /* No inner scroller on mobile list — the rows flow into `.app-main`, whose
+       bottom-nav padding then clears the fixed nav (no floating frame, no void). */
+    .pulse-layout[data-mobile-panel="list"] .pulse-sidebar-scroll {
+        display: block;
+        flex: none;
+        overflow: visible;
     }
 
     .pulse-layout[data-mobile-panel="content"] .pulse-sidebar-card {

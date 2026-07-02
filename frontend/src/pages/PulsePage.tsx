@@ -23,6 +23,7 @@ import { PhoneOff, Activity, Clock, CheckCircle2, AlertTriangle, ChevronLeft } f
 import { callsApi } from '../services/api';
 import { pulseApi } from '../services/pulseApi';
 import { useAuth } from '../auth/AuthProvider';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { useNavigate } from 'react-router-dom';
 import { isAnonymousPhone } from '../utils/phoneUtils';
 import { dateKeyInTZ, todayInTZ } from '../utils/companyTime';
@@ -48,6 +49,7 @@ export const PulsePage: React.FC = () => {
     const p = usePulsePage();
     const { company } = useAuth();
     const navigate = useNavigate();
+    const isMobile = useIsMobile();
     const companyTz = company?.timezone || 'America/New_York';
 
     // Mobile panel state: 'list' shows sidebar, 'content' shows detail+timeline
@@ -99,14 +101,19 @@ export const PulsePage: React.FC = () => {
         return { actionRequired, dayGroups };
     }, [displayedCalls, companyTz]);
 
-    // Disable app-main scroll so sidebar and right column scroll independently
+    // Disable app-main scroll so the sidebar and right column scroll independently.
+    // DESKTOP ONLY: the two-column layout needs each column to own its scroll. On
+    // mobile we show one panel at a time and want the LIST to scroll the app's main
+    // scroll area (like Schedule/Jobs) so `.app-main`'s bottom-nav padding applies
+    // and there's no floating inner-scroll frame / bottom void (the PWA bug).
     useEffect(() => {
+        if (isMobile) return;
         const appMain = document.querySelector('.app-main') as HTMLElement;
         if (appMain) {
             appMain.style.overflow = 'hidden';
             return () => { appMain.style.overflow = ''; };
         }
-    }, []);
+    }, [isMobile]);
 
     // Auto-switch to content panel on mobile when a contact is selected
     useEffect(() => {
