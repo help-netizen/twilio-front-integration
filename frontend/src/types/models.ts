@@ -33,10 +33,12 @@ export interface Call {
     contact?: Contact;
     call_count?: number;  // present in by-contact response
     sms_count?: number;  // present in by-contact response
-    last_interaction_at?: string;  // most recent call or SMS timestamp
-    last_interaction_type?: 'call' | 'sms_inbound' | 'sms_outbound';  // type of last interaction
+    last_interaction_at?: string;  // most recent call / SMS / email timestamp
+    // type of last interaction (LIST-PAGINATION-001: email variants added)
+    last_interaction_type?: 'call' | 'sms_inbound' | 'sms_outbound' | 'email_inbound' | 'email_outbound';
     has_unread?: boolean;  // unread indicator for Pulse sidebar
     sms_conversation_id?: string;  // sms_conversations.id for mark-read
+    email_thread_id?: number | string | null;  // email_threads.id when email-attributed
     recording?: {
         recording_sid: string;
         status: string;

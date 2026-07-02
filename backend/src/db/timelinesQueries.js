@@ -230,26 +230,79 @@ async function findOrCreateTimelineByContact(contactId, companyId = null) {
     return created.rows[0];
 }
 
-async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, search = null } = {}) {
-    const companyFilter = companyId ? `AND tl.company_id = $3` : '';
-    const params = [limit, offset];
-    if (companyId) params.push(companyId);
+/**
+ * LIST-PAGINATION-001 — the ONE timeline-rooted, SQL-ordered, offset/limit
+ * page that backs the Pulse sidebar (`GET /api/calls/by-contact`).
+ *
+ * Unifies THREE channels into a single ordered query so pagination is correct
+ * (≤ limit rows per page, no JS over-fetch/re-sort/dedup):
+ *   • calls  — latest root call on the timeline
+ *   • SMS    — latest sms_conversations row for the timeline's phone digits
+ *   • email  — Scope A: latest email_threads row whose thread has an INBOUND
+ *              email whose normalized from_email maps (via contact_emails) to
+ *              this timeline's contact. Contactless email threads are NOT
+ *              surfaced (no synthetic rows).
+ *
+ * Everything is company-scoped (mandatory, not conditional): outer
+ * `tl.company_id = $companyId`, `sms.company_id = tl.company_id`,
+ * `eml.company_id = tl.company_id`, and the lead-name search subquery carries
+ * `l.company_id`. This closes the pre-existing cross-tenant SMS leak.
+ *
+ * `total_count = COUNT(*) OVER()` over the full company-scoped unified set.
+ *
+ * SURFACING + AR: a timeline surfaces if it has ANY signal — call, SMS, email,
+ * an OPEN TASK, the legacy is_action_required flag, or unread. The AR band (sort
+ * tier 0) pins on the SAME canonical signal the frontend pins on: `open_task.id`
+ * (has an open task) AND not snoozed — NOT is_action_required, which AR-TASK-
+ * UNIFY-001 deprecated as a pin (kept here only as a surfacing signal so the old
+ * route's rows still appear). WHERE and ORDER BY therefore reference one AR
+ * definition.
+ *
+ * DEDUP: one row per person, enforced in SQL BEFORE the LIMIT (never in JS after,
+ * which would shrink a page below `limit` and break the frontend's
+ * `pageSize < limit ⇒ no more pages` logic). A contactless orphan timeline whose
+ * phone is already covered by a contact-linked timeline (primary or secondary) in
+ * the same company is excluded, so a contact with a leftover orphan on a secondary
+ * number does not appear twice.
+ *
+ * PERFORMANCE: because ORDER BY must see all rows before LIMIT, the per-timeline
+ * work runs for every company timeline. The email match is therefore hoisted
+ * into a single pre-aggregated CTE (`email_by_contact`) that resolves
+ * contact_id → latest email thread ONCE for the whole company, instead of a
+ * correlated EXISTS re-scanned per timeline row. See migration 143 for the
+ * supporting functional index and the route/spec notes for EXPLAIN reasoning.
+ *
+ * @param {object} opts
+ * @param {number} opts.limit
+ * @param {number} opts.offset
+ * @param {string} opts.companyId  MANDATORY — caller must reject a missing tenant.
+ * @param {string|null} opts.search
+ * @returns {Promise<Array>} unified rows (already ordered); each carries
+ *   total_count for the envelope.
+ */
+async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, search = null } = {}) {
+    // $1 companyId, $2 limit, $3 offset. companyId is always param $1 so the
+    // company scope is present on every code path (hard requirement).
+    const params = [companyId, limit, offset];
 
     let searchFilter = '';
-    if (search) {
-        const searchTerm = search.trim();
+    if (search && String(search).trim().length > 0) {
+        const searchTerm = String(search).trim();
         const digits = searchTerm.replace(/\D/g, '');
         const conditions = [];
         const textIdx = params.length + 1;
         params.push('%' + searchTerm + '%');
+        // contact name / lead name (company-scoped) / sms friendly_name / email subject
         conditions.push('co.full_name ILIKE $' + textIdx);
         conditions.push('latest_call.call_sid ILIKE $' + textIdx);
         conditions.push(
-            "EXISTS (SELECT 1 FROM leads l WHERE regexp_replace(l.phone, E'\\\\D', '', 'g') = regexp_replace(co.phone_e164, E'\\\\D', '', 'g') AND (l.first_name ILIKE $" + textIdx + " OR l.last_name ILIKE $" + textIdx + " OR CONCAT(l.first_name, ' ', l.last_name) ILIKE $" + textIdx + "))"
+            "EXISTS (SELECT 1 FROM leads l WHERE l.company_id = tl.company_id AND regexp_replace(l.phone, E'\\\\D', '', 'g') = regexp_replace(co.phone_e164, E'\\\\D', '', 'g') AND (l.first_name ILIKE $" + textIdx + " OR l.last_name ILIKE $" + textIdx + " OR CONCAT(l.first_name, ' ', l.last_name) ILIKE $" + textIdx + "))"
         );
         conditions.push(
-            "EXISTS (SELECT 1 FROM leads l WHERE regexp_replace(l.phone, E'\\\\D', '', 'g') = regexp_replace(tl.phone_e164, E'\\\\D', '', 'g') AND (l.first_name ILIKE $" + textIdx + " OR l.last_name ILIKE $" + textIdx + " OR CONCAT(l.first_name, ' ', l.last_name) ILIKE $" + textIdx + "))"
+            "EXISTS (SELECT 1 FROM leads l WHERE l.company_id = tl.company_id AND regexp_replace(l.phone, E'\\\\D', '', 'g') = regexp_replace(tl.phone_e164, E'\\\\D', '', 'g') AND (l.first_name ILIKE $" + textIdx + " OR l.last_name ILIKE $" + textIdx + " OR CONCAT(l.first_name, ' ', l.last_name) ILIKE $" + textIdx + "))"
         );
+        conditions.push('sms.friendly_name ILIKE $' + textIdx);
+        conditions.push('eml.subject ILIKE $' + textIdx);
         if (digits.length > 0) {
             const digitIdx = params.length + 1;
             params.push('%' + digits + '%');
@@ -262,7 +315,30 @@ async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, se
     }
 
     const result = await db.query(
-        `SELECT
+        `WITH email_by_contact AS (
+             -- Scope A pre-aggregation: for this company, resolve each contact to
+             -- its single most-recent email thread that has an INBOUND message
+             -- whose normalized from_email maps to that contact. Computed ONCE
+             -- (not per-timeline) so the ORDER-BY-before-LIMIT scan stays cheap.
+             SELECT DISTINCT ON (ce.contact_id)
+                    ce.contact_id,
+                    et.id            AS email_thread_id,
+                    et.subject       AS email_subject,
+                    et.last_message_at,
+                    et.last_message_direction,
+                    et.unread_count
+             FROM email_messages em
+             JOIN contact_emails ce
+               ON ce.email_normalized = lower(trim(em.from_email))
+             JOIN email_threads et
+               ON et.id = em.thread_id
+             WHERE em.company_id = $1
+               AND et.company_id = $1
+               AND em.direction = 'inbound'
+               AND em.from_email IS NOT NULL
+             ORDER BY ce.contact_id, et.last_message_at DESC NULLS LAST
+         )
+         SELECT
              latest_call.*,
              to_json(co) as contact,
              tl.id as tl_id,
@@ -276,6 +352,7 @@ async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, se
              tl.action_required_set_by,
              tl.snoozed_until,
              tl.owner_user_id,
+             co.has_unread as contact_has_unread,
              open_task.id as open_task_id,
              open_task.title as open_task_title,
              open_task.due_at as open_task_due_at,
@@ -284,8 +361,18 @@ async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, se
              sms.last_message_at as sms_last_message_at,
              sms.last_message_direction as sms_last_message_direction,
              sms.last_message_preview as sms_last_message_preview,
+             sms.friendly_name as sms_friendly_name,
              sms.has_unread as sms_has_unread,
-             sms.sms_conversation_id
+             sms.sms_conversation_id,
+             eml.email_thread_id,
+             eml.email_subject,
+             eml.last_message_at as email_last_message_at,
+             eml.last_message_direction as email_last_message_direction,
+             eml.unread_count as email_unread_count,
+             GREATEST(latest_call.started_at, sms.last_message_at, eml.last_message_at) AS last_interaction_at,
+             (tl.has_unread OR COALESCE(sms.has_unread, false)
+              OR COALESCE(eml.unread_count, 0) > 0 OR COALESCE(co.has_unread, false)) AS any_unread,
+             COUNT(*) OVER() AS total_count
          FROM timelines tl
          LEFT JOIN contacts co ON tl.contact_id = co.id
          LEFT JOIN LATERAL (
@@ -307,9 +394,11 @@ async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, se
          ) open_task ON true
          LEFT JOIN LATERAL (
              SELECT sc.last_message_at, sc.last_message_direction,
-                    sc.last_message_preview, sc.has_unread, sc.id as sms_conversation_id
+                    sc.last_message_preview, sc.friendly_name, sc.has_unread,
+                    sc.id as sms_conversation_id
              FROM sms_conversations sc
-             WHERE sc.customer_digits IN (
+             WHERE sc.company_id = tl.company_id
+               AND sc.customer_digits IN (
                  regexp_replace(COALESCE(tl.phone_e164, co.phone_e164), '[^0-9]', '', 'g'),
                  CASE WHEN co.secondary_phone IS NOT NULL
                       THEN regexp_replace(co.secondary_phone, '[^0-9]', '', 'g')
@@ -318,37 +407,72 @@ async function getCallsByTimeline({ limit = 20, offset = 0, companyId = null, se
              ORDER BY sc.last_message_at DESC NULLS LAST
              LIMIT 1
          ) sms ON true
-         WHERE (latest_call.id IS NOT NULL OR sms.sms_conversation_id IS NOT NULL
+         LEFT JOIN email_by_contact eml ON eml.contact_id = tl.contact_id
+         WHERE tl.company_id = $1
+           -- Surfacing predicate: a timeline appears if it has ANY signal. This
+           -- mirrors the pre-rewrite /by-contact WHERE exactly, including
+           -- open_task.id IS NOT NULL — a timeline whose ONLY signal is an open
+           -- task (dispatcher follow-up on a contact that never called/texted/
+           -- emailed; is_action_required stays false because task creation does
+           -- NOT set it, per AR-TASK-UNIFY-001) must still surface, since the AR
+           -- band below pins exactly those rows.
+           AND (latest_call.id IS NOT NULL
+                OR sms.sms_conversation_id IS NOT NULL
+                OR eml.email_thread_id IS NOT NULL
                 OR open_task.id IS NOT NULL
                 OR tl.is_action_required = true OR tl.has_unread = true)
-           ${companyFilter}
+           -- Orphan-shadow dedup (done in SQL, BEFORE the LIMIT, so the page stays
+           -- exactly <= limit — a post-LIMIT JS dedup would shrink a page below the
+           -- frontend "pageSize < limit => no more pages" threshold and break
+           -- pagination). Drops a contactless orphan timeline (contact_id IS NULL,
+           -- created by activity on a phone before that phone was linked) when a
+           -- contact-linked timeline in the SAME company already covers that phone
+           -- via its primary OR secondary number. The contact-linked row is
+           -- canonical (carries the name; its SMS lateral surfaces the same
+           -- conversation because customer_digits matches the secondary). Only
+           -- orphans with a real (non-empty) phone-digit match are dropped — the
+           -- NULLIF guards stop '' = '' from matching a digit-less orphan/contact.
+           AND NOT (
+                tl.contact_id IS NULL
+                AND EXISTS (
+                    SELECT 1 FROM timelines tl2
+                    JOIN contacts c2 ON c2.id = tl2.contact_id
+                    WHERE tl2.company_id = tl.company_id
+                      AND NULLIF(regexp_replace(tl.phone_e164, '\\D', '', 'g'), '') IS NOT NULL
+                      AND (
+                           NULLIF(regexp_replace(c2.phone_e164, '\\D', '', 'g'), '')      = regexp_replace(tl.phone_e164, '\\D', '', 'g')
+                        OR NULLIF(regexp_replace(c2.secondary_phone, '\\D', '', 'g'), '') = regexp_replace(tl.phone_e164, '\\D', '', 'g')
+                      )
+                )
+           )
            ${searchFilter}
          ORDER BY
+           -- Tier 0 = Action Required. Canonical AR signal = open_task.id (has an
+           -- open task) AND not currently snoozed. This is the SAME signal the WHERE
+           -- surfaces on (open_task.id above) and the SAME signal the frontend pins
+           -- on (PulsePage sidebar builds its "Action Required" section from
+           -- has_open_task = !!open_task_id, NOT from is_action_required — see
+           -- AR-TASK-UNIFY-001, which deprecated is_action_required as a pin signal).
+           -- is_action_required is kept only as a *surfacing* signal (row appears)
+           -- to match the old route, never as a pin — so nothing the old route
+           -- pinned is un-pinned and nothing it showed is hidden.
            CASE WHEN open_task.id IS NOT NULL
                  AND (tl.snoozed_until IS NULL OR tl.snoozed_until <= now())
                 THEN 0
-                WHEN tl.has_unread = true OR sms.has_unread = true
+                WHEN tl.has_unread = true OR COALESCE(sms.has_unread, false) = true
+                     OR COALESCE(eml.unread_count, 0) > 0 OR COALESCE(co.has_unread, false) = true
                 THEN 1
                 ELSE 2
            END ASC,
-           GREATEST(latest_call.started_at, sms.last_message_at) DESC NULLS LAST
-         LIMIT $1 OFFSET $2`,
+           CASE WHEN open_task.id IS NOT NULL
+                 AND (tl.snoozed_until IS NULL OR tl.snoozed_until <= now())
+                THEN tl.action_required_set_at END DESC NULLS LAST,
+           GREATEST(latest_call.started_at, sms.last_message_at, eml.last_message_at) DESC NULLS LAST,
+           tl.id DESC
+         LIMIT $2 OFFSET $3`,
         params
     );
     return result.rows;
-}
-
-async function getTimelinesWithCallsCount(companyId = null) {
-    const companyFilter = companyId ? `AND calls.company_id = $1` : '';
-    const params = companyId ? [companyId] : [];
-    const result = await db.query(
-        `SELECT COUNT(DISTINCT timeline_id) FROM calls
-         WHERE timeline_id IS NOT NULL
-           AND parent_call_sid IS NULL
-           ${companyFilter}`,
-        params
-    );
-    return parseInt(result.rows[0].count, 10);
 }
 
 // =============================================================================
@@ -499,8 +623,7 @@ module.exports = {
     findOrCreateTimelineByContact,
     findOrCreateAnonymousTimeline,
     ANONYMOUS_PHONE_SENTINEL,
-    getCallsByTimeline,
-    getTimelinesWithCallsCount,
+    getUnifiedTimelinePage,
     setActionRequired,
     markThreadHandled,
     snoozeThread,

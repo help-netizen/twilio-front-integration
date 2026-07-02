@@ -30,8 +30,7 @@ module.exports = {
     findOrCreateTimeline: timelinesQueries.findOrCreateTimeline,
     findOrCreateAnonymousTimeline: timelinesQueries.findOrCreateAnonymousTimeline,
     ANONYMOUS_PHONE_SENTINEL: timelinesQueries.ANONYMOUS_PHONE_SENTINEL,
-    getCallsByTimeline: timelinesQueries.getCallsByTimeline,
-    getTimelinesWithCallsCount: timelinesQueries.getTimelinesWithCallsCount,
+    getUnifiedTimelinePage: timelinesQueries.getUnifiedTimelinePage,
 
     // ── Action Required + Tasks ──────────────────────────────────────
     setActionRequired: timelinesQueries.setActionRequired,

@@ -335,6 +335,19 @@ async function handleMessageAdded(payload) {
         isInbound,
     });
 
+    // LIST-PAGINATION-001: guarantee every SMS conversation has a timeline at
+    // INGEST time (inbound AND outbound). The Pulse sidebar query is now purely
+    // read-only and no longer auto-creates timelines for SMS-only threads, so
+    // the write must happen here or SMS-only conversations would never surface.
+    // Idempotent (findOrCreateTimeline is upsert-safe); non-blocking.
+    if (conv.customer_e164 && conv.company_id) {
+        try {
+            await queries.findOrCreateTimeline(conv.customer_e164, conv.company_id);
+        } catch (e) {
+            console.warn('[ConvService] SMS timeline ensure failed for', conv.customer_e164, e.message);
+        }
+    }
+
     // Mark contact unread for inbound SMS (if contact exists — do NOT create)
     if (isInbound && conv.customer_e164) {
         try {
