@@ -53,7 +53,7 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
         >
             <div
                 style={{
-                    background: '#fff',
+                    background: 'var(--blanc-panel-surface, #fffdf9)',
                     borderRadius: isMobile ? '18px 18px 0 0' : 14,
                     width: isMobile ? '100%' : 600,
                     maxWidth: '100%',
@@ -66,7 +66,7 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
                 }}
                 onClick={e => e.stopPropagation()}
             >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid #e5e7eb', background: '#fff', flexShrink: 0 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid #e5e7eb', background: 'var(--blanc-panel-surface, #fffdf9)', flexShrink: 0 }}>
                     <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>{title}</h2>
                     <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: 4 }}><X size={18} /></button>
                 </div>
@@ -379,7 +379,7 @@ export default function UserGroupsPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
                 {loading ? <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>Loading...</div> : groups.length === 0 ? <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>No groups yet. Click "New Group" to get started.</div> : null}
                 {groups.map(g => (
-                    <div key={g.id} style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 14, overflow: 'hidden', transition: 'box-shadow 0.15s' }}
+                    <div key={g.id} style={{ background: 'var(--blanc-panel-surface, #fffdf9)', border: '1px solid #e5e7eb', borderRadius: 14, overflow: 'hidden', transition: 'box-shadow 0.15s' }}
                         onMouseEnter={e => (e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.07)')}
                         onMouseLeave={e => (e.currentTarget.style.boxShadow = 'none')}>
 
@@ -409,7 +409,7 @@ export default function UserGroupsPage() {
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                 <button onClick={(e) => { e.stopPropagation(); navigate(`/settings/telephony/user-groups/${g.id}`); }}
-                                    style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 12px', fontSize: 12, fontWeight: 500, background: '#fff', color: '#374151', border: '1px solid #e5e7eb', borderRadius: 8, cursor: 'pointer' }}>
+                                    style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 12px', fontSize: 12, fontWeight: 500, background: 'var(--blanc-panel-surface, #fffdf9)', color: '#374151', border: '1px solid #e5e7eb', borderRadius: 8, cursor: 'pointer' }}>
                                     <Eye size={13} />Details
                                 </button>
                                 <button onClick={(e) => { e.stopPropagation(); setEditGroup(g); }}

@@ -56,6 +56,15 @@
     --blanc-ink-2: #536070;
     --blanc-ink-3: #7d8796;
 
+    /* ── PALETTE-V2 (docs/specs/PALETTE-V2.md) — новые роли ──
+       Введены в W1 заранее; до W2 их никто не использует в разметке (wiring
+       кнопок/полей — часть W2). Значения уже целевые («Т2 · Приложение»):
+       accent — единственный action-цвет, accent-soft — плашки Action Required
+       и инфо-выделение, field — заливка полей ввода в filled-каноне. */
+    --blanc-accent: #7F42E1;
+    --blanc-accent-soft: #E7DBFD;
+    --blanc-field: #F0F0F0;
+
     /* ── Entity Colors ── */
     --blanc-job: #2f63d8;
     --blanc-job-soft: rgba(228, 238, 255, 0.92);

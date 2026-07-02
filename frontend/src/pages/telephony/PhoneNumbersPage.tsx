@@ -302,7 +302,7 @@ export default function PhoneNumbersPage() {
 
             {buyOpen && (
                 <div style={{ position: 'fixed', inset: 0, background: 'rgba(17,24,39,0.45)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setBuyOpen(false)}>
-                    <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 560, background: '#fff', borderRadius: 16, padding: 24, maxHeight: '85vh', overflowY: 'auto' }}>
+                    <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 560, background: 'var(--blanc-panel-surface, #fffdf9)', borderRadius: 16, padding: 24, maxHeight: '85vh', overflowY: 'auto' }}>
                         <h2 style={{ margin: '0 0 4px', fontSize: 17, fontWeight: 700 }}>Buy a phone number</h2>
                         <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--blanc-ink-2, #536070)' }}>Search available US numbers — billed to your workspace at the listed monthly price.</p>
                         <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
@@ -352,7 +352,7 @@ export default function PhoneNumbersPage() {
                                     value={n.group_id || ''}
                                     disabled={savingNumberId === n.id}
                                     onChange={e => assignGroup(n, e.target.value || null)}
-                                    style={{ minWidth: 160, padding: '6px 8px', border: '1px solid var(--blanc-line, rgba(117,106,89,0.18))', borderRadius: 8, fontSize: 12, background: '#fff', color: n.group_id ? 'var(--blanc-ink-1, #202734)' : 'var(--blanc-ink-2, #536070)' }}
+                                    style={{ minWidth: 160, padding: '6px 8px', border: '1px solid var(--blanc-line, rgba(117,106,89,0.18))', borderRadius: 8, fontSize: 12, background: 'var(--blanc-panel-surface, #fffdf9)', color: n.group_id ? 'var(--blanc-ink-1, #202734)' : 'var(--blanc-ink-2, #536070)' }}
                                 >
                                     <option value="">Unassigned</option>
                                     {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
