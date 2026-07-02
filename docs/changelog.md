@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-07-01 — Mobile layout pass: canonical list shell + Telephony sub-nav (TASKS-MOBILE-TILES-001 + TELEPHONY-MOBILE-SIDEBAR-001)
+
+Two mobile-layout fixes from one 375px audit (empirical dev-preview sweep + code root-cause). Frontend-only, no migration; desktop byte-identical (all behind `useIsMobile()`).
+
+- **TASKS-MOBILE-TILES-001** — a canonical mobile list shell (`components/layout/MobileListPage.tsx` + `.mobile-list-page*` in AppLayout.css) adopted by mobile Jobs/Leads/Tasks. **Tasks** was a centered `mx-auto max-w-4xl` list → now full-width tiles (359px, matching Jobs). **Leads** inset 20px→8px (edge-to-edge). **Scroll/clearance root-cause fixed:** the pages scrolled an inner `flex-1 overflow-y-auto` that made `.app-main`'s `padding-bottom: calc(60px + safe-area)` (fixed-nav clearance) inert — and a flex-column scroll child drops its trailing padding in Chromium/WebKit. The shell is now `display:block` scrolling `.app-main`, so the last tile clears the bottom nav (+36px, was ~8px/under-nav), a short list no longer shows a `flex:1` background void / visible "container frame," and empty states are vertically centered. Day-group sticky headers offset to the 62px bar height. Independent review APPROVED.
+- **TELEPHONY-MOBILE-SIDEBAR-001** — the Telephony section's fixed **220px left sub-nav** (`TelephonyNav`) ate content width on phones (only ~155px left). On mobile the sub-nav is now a **horizontal scrollable tab strip** at the top and `TelephonyLayout` stacks in a column, so content is full-width (375px, no horizontal overflow); active tab highlighted, tap-to-navigate intact. Desktop keeps the 220px sidebar/row unchanged. `minHeight` `100vh`→`100dvh`. (Follow-up to TELEPHONY-AUTONOMOUS-MODE-001, whose mobile fix only covered the working-hours editor.)
+
+Consolidated `npm run build` green (both together). Deferred (task-chipped): mobile tile views for Contacts/Payments (still desktop-on-mobile); telephony active-chip scroll-into-view.
+
+---
+
 ## 2026-07-01 — TELEPHONY-AUTONOMOUS-MODE-001: company-wide "Autonomous mode" + mobile hours editor
 
 Two parts on the telephony settings surface.
