@@ -40,6 +40,7 @@ module.exports = {
     assignThread: timelinesQueries.assignThread,
     createTask: timelinesQueries.createTask,
     getOpenTaskByThread: timelinesQueries.getOpenTaskByThread,
+    reassignShadowOrphanOpenTasks: timelinesQueries.reassignShadowOrphanOpenTasks,
 
     // ── Calls ────────────────────────────────────────────────────────
     upsertCall: callsQueries.upsertCall,

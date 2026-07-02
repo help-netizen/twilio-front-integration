@@ -59,6 +59,60 @@ async function findOrCreateAnonymousTimeline(companyId = null) {
     return result.rows[0];
 }
 
+/**
+ * ORPHAN-TASK-REHOME-001 — re-home OPEN tasks stranded on a contactless "shadow"
+ * orphan timeline onto the surviving contact-linked timeline.
+ *
+ * getUnifiedTimelinePage (the Pulse sidebar page) drops a contactless orphan
+ * timeline whose phone is already covered by a contact-linked timeline in the
+ * same company — the "one row per person" dedup. But an OPEN task is keyed on the
+ * orphan's timeline id (tasks.thread_id), so once that orphan row is hidden the
+ * task's Action-Required row silently disappears. Historically adoption only ever
+ * re-pointed calls.contact_id, never tasks.thread_id, so such a task was stranded.
+ *
+ * Every path that resolves a contact to its canonical timeline while a shadow
+ * orphan may still exist (the two findOrCreate* helpers, the ensure-timeline
+ * route) calls this to move the open tasks across FIRST. Matching mirrors the
+ * dedup predicate exactly: an orphan whose phone digits equal THIS contact's
+ * primary OR secondary digits (NULLIF guards stop '' matching a digit-less row).
+ *
+ * One statement; idempotent (once a task is homed onto a contact-linked timeline
+ * it no longer sits on an `o.contact_id IS NULL` orphan, so a re-run moves
+ * nothing). Non-transactional, matching the surrounding autocommit adoption code:
+ * a partial failure at worst leaves a task on the orphan, which the mig-144
+ * backfill or the next resolution retries — never data loss. `o.id <> $1` keeps
+ * an in-place-adopted orphan from being treated as its own shadow.
+ *
+ * @param {number|string} survivingTimelineId  contact-linked timeline id to keep
+ * @param {number|string} contactId            the contact being resolved
+ * @param {string}        companyId
+ * @param {{query: Function}} [client=db]       pool or a tx client
+ * @returns {Promise<number>} number of open tasks re-homed
+ */
+async function reassignShadowOrphanOpenTasks(survivingTimelineId, contactId, companyId, client = db) {
+    if (!survivingTimelineId || !contactId) return 0;
+    const res = await client.query(
+        `UPDATE tasks t
+            SET thread_id = $1, updated_at = now()
+           FROM timelines o
+           JOIN contacts c ON c.id = $2 AND c.company_id = $3
+          WHERE t.thread_id = o.id
+            AND t.status = 'open'
+            AND o.id <> $1
+            AND o.contact_id IS NULL
+            AND o.company_id = $3
+            AND NULLIF(regexp_replace(o.phone_e164, '\\D', '', 'g'), '') IN (
+                    NULLIF(regexp_replace(c.phone_e164, '\\D', '', 'g'), ''),
+                    NULLIF(regexp_replace(c.secondary_phone, '\\D', '', 'g'), '')
+                )`,
+        [survivingTimelineId, contactId, companyId]
+    );
+    if (res.rowCount > 0) {
+        console.log(`[Timeline] Re-homed ${res.rowCount} open task(s) from shadow orphan(s) onto contact timeline ${survivingTimelineId}`);
+    }
+    return res.rowCount || 0;
+}
+
 async function findOrCreateTimeline(phoneE164, companyId = null) {
     // Sentinel: route through the dedicated anonymous helper so we don't
     // accidentally try to match contacts by the literal "ANONYMOUS" string.
@@ -86,7 +140,13 @@ async function findOrCreateTimeline(phoneE164, companyId = null) {
             `SELECT * FROM timelines WHERE contact_id = $1 AND company_id = $2 LIMIT 1`,
             [contact.id, cid]
         );
-        if (tl.rows[0]) return { ...tl.rows[0], contact_id: contact.id };
+        if (tl.rows[0]) {
+            // Contact already has its canonical timeline. A shadow orphan on the
+            // contact's OTHER number can still hold an open task the sidebar dedup
+            // would hide — pull those onto the canonical row first (REHOME-001).
+            await reassignShadowOrphanOpenTasks(tl.rows[0].id, contact.id, cid);
+            return { ...tl.rows[0], contact_id: contact.id };
+        }
 
         const orphan = await db.query(
             `SELECT id FROM timelines
@@ -106,6 +166,10 @@ async function findOrCreateTimeline(phoneE164, companyId = null) {
                 `UPDATE calls SET contact_id = $1 WHERE timeline_id = $2 AND contact_id IS NULL`,
                 [contact.id, orphan.rows[0].id]
             );
+            // The adopted orphan keeps its id, so its own tasks stay valid; but a
+            // SECOND shadow orphan (the contact's other number) can still strand an
+            // open task — re-home those onto the just-adopted canonical row.
+            await reassignShadowOrphanOpenTasks(orphan.rows[0].id, contact.id, cid);
             console.log(`[Timeline] Adopted orphan timeline ${orphan.rows[0].id} for contact ${contact.id}`);
             tl = await db.query(`SELECT * FROM timelines WHERE id = $1`, [orphan.rows[0].id]);
             return { ...tl.rows[0], contact_id: contact.id };
@@ -119,6 +183,10 @@ async function findOrCreateTimeline(phoneE164, companyId = null) {
              RETURNING *`,
             [contact.id, companyId || contact.company_id || DEFAULT_COMPANY_ID]
         );
+        // Fresh canonical timeline (no linked timeline, no orphan on the incoming
+        // number) — an orphan on the contact's OTHER number may still exist, so
+        // sweep any stranded open tasks onto it.
+        await reassignShadowOrphanOpenTasks(tl.rows[0].id, contact.id, cid);
         return { ...tl.rows[0], contact_id: contact.id };
     }
 
@@ -184,7 +252,12 @@ async function findOrCreateTimelineByContact(contactId, companyId = null) {
         `SELECT * FROM timelines WHERE contact_id = $1 AND company_id = $2 LIMIT 1`,
         [contactId, cid]
     );
-    if (existing.rows[0]) return existing.rows[0];
+    if (existing.rows[0]) {
+        // Heal a shadow orphan on this contact's number(s) whose open task the
+        // Pulse dedup would hide (REHOME-001).
+        await reassignShadowOrphanOpenTasks(existing.rows[0].id, contactId, cid);
+        return existing.rows[0];
+    }
 
     // 2. No linked timeline yet — adopt an orphan timeline for the contact's
     //    phone(s), so an email-first contact reuses any call/SMS timeline.
@@ -212,6 +285,9 @@ async function findOrCreateTimelineByContact(contactId, companyId = null) {
                 `UPDATE calls SET contact_id = $1 WHERE timeline_id = $2 AND contact_id IS NULL`,
                 [contactId, orphan.rows[0].id]
             );
+            // Re-home any open task stranded on a SECOND shadow orphan (the
+            // contact's other number) onto the just-adopted canonical row.
+            await reassignShadowOrphanOpenTasks(orphan.rows[0].id, contactId, cid);
             console.log(`[Timeline] Adopted orphan timeline ${orphan.rows[0].id} for contact ${contactId}`);
             return adopted.rows[0];
         }
@@ -227,6 +303,10 @@ async function findOrCreateTimelineByContact(contactId, companyId = null) {
          RETURNING *`,
         [contactId, cid]
     );
+    // Fresh canonical timeline — sweep any shadow orphan's stranded open task
+    // (contact's phone matched no orphan above but a secondary-number orphan may
+    // exist) onto it.
+    await reassignShadowOrphanOpenTasks(created.rows[0].id, contactId, cid);
     return created.rows[0];
 }
 
@@ -625,6 +705,7 @@ module.exports = {
     findOrCreateTimeline,
     findOrCreateTimelineByContact,
     findOrCreateAnonymousTimeline,
+    reassignShadowOrphanOpenTasks,
     ANONYMOUS_PHONE_SENTINEL,
     getUnifiedTimelinePage,
     setActionRequired,

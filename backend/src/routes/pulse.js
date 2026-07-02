@@ -496,6 +496,9 @@ router.post('/ensure-timeline', async (req, res) => {
                 [contactId, companyId]
             );
             if (existing.rows[0]) {
+                // Heal a shadow orphan on this contact's number(s) whose open
+                // task the Pulse dedup would hide (ORPHAN-TASK-REHOME-001).
+                await queries.reassignShadowOrphanOpenTasks(existing.rows[0].id, contactId, companyId);
                 return res.json({
                     timelineId: existing.rows[0].id,
                     contactId,
@@ -531,6 +534,9 @@ router.post('/ensure-timeline', async (req, res) => {
                             `UPDATE timelines SET contact_id = $1, phone_e164 = NULL, updated_at = now() WHERE id = $2`,
                             [contactId, orphan.rows[0].id]
                         );
+                        // Re-home an open task stranded on a SECOND shadow orphan
+                        // (the contact's other number) onto this adopted row.
+                        await queries.reassignShadowOrphanOpenTasks(orphan.rows[0].id, contactId, companyId);
                         console.log(`[Pulse] ensure-timeline: adopted orphan timeline ${orphan.rows[0].id} for contact ${contactId}`);
                         return res.json({
                             timelineId: orphan.rows[0].id,
