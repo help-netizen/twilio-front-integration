@@ -302,7 +302,10 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
             "EXISTS (SELECT 1 FROM leads l WHERE l.company_id = tl.company_id AND regexp_replace(l.phone, E'\\\\D', '', 'g') = regexp_replace(tl.phone_e164, E'\\\\D', '', 'g') AND (l.first_name ILIKE $" + textIdx + " OR l.last_name ILIKE $" + textIdx + " OR CONCAT(l.first_name, ' ', l.last_name) ILIKE $" + textIdx + "))"
         );
         conditions.push('sms.friendly_name ILIKE $' + textIdx);
-        conditions.push('eml.subject ILIKE $' + textIdx);
+        // NB: the email CTE exposes the thread subject as `email_subject` (aliased from
+        // et.subject), so the search predicate must use eml.email_subject — `eml.subject`
+        // does not exist on the CTE and 500s the search path.
+        conditions.push('eml.email_subject ILIKE $' + textIdx);
         if (digits.length > 0) {
             const digitIdx = params.length + 1;
             params.push('%' + digits + '%');

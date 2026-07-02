@@ -178,7 +178,10 @@ describe('getUnifiedTimelinePage — SQL shape', () => {
         const [sql, params] = await run({ search: 'Acme' });
         expect(sql).toContain('l.company_id = tl.company_id');
         expect(sql).toContain('sms.friendly_name ILIKE');
-        expect(sql).toContain('eml.subject ILIKE');
+        // Must reference the CTE's aliased column `email_subject`, NOT `eml.subject`
+        // (which doesn't exist on the CTE and 500s the search path in real Postgres).
+        expect(sql).toContain('eml.email_subject ILIKE');
+        expect(sql).not.toContain('eml.subject ILIKE');
         expect(params).toContain('%Acme%');
     });
 });
