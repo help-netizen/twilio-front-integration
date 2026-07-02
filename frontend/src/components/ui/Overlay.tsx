@@ -253,6 +253,9 @@ export function Overlay({
         dragToDismiss: dragToDismiss ?? defaults.dragToDismiss,
         dragThreshold: dragThreshold ?? defaults.dragThreshold,
         stopEscPropagation: stopEscPropagation ?? defaults.stopEscPropagation,
+        // Paint z-tier → card-stack ordering. A non-modal right-drawer (panel tier, z 80)
+        // thus never ranks above a modal (z 140); it recedes under it, not vice-versa.
+        z: OVERLAY_Z[tier],
     })
 
     if (typeof document === 'undefined') return null // SSR-safe.

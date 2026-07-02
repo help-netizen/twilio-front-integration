@@ -22,7 +22,7 @@
 import type * as React from 'react'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { useOverlayStack } from '../components/ui/OverlayStack'
-import { cardStackStyle, type CardStackStyle } from '../components/ui/overlayLayout'
+import { cardStackStyle, OVERLAY_Z, type CardStackStyle } from '../components/ui/overlayLayout'
 import { useIsMobile } from './useIsMobile'
 
 const FOCUSABLE_SELECTOR =
@@ -74,6 +74,12 @@ export interface UseOverlayDismissOptions {
     dragThreshold?: number
     /** On Escape, call stopPropagation() before onClose (don't bubble to parent overlays). Default true. */
     stopEscPropagation?: boolean
+    /**
+     * Paint z-tier for card-stack ordering (from OVERLAY_Z). Default OVERLAY_Z.modal (140).
+     * A lower value (e.g. the non-modal FloatingDetailPanel's panel tier, 80) keeps this
+     * overlay from ever pushing a higher-tier modal back — it recedes under it instead.
+     */
+    z?: number
 }
 
 /** Pointer handlers wired onto the drag region when `dragToDismiss` is on. */
@@ -108,7 +114,7 @@ export interface UseOverlayDismissReturn {
     count: number
     /** True when this is the top-most open overlay (always true when lone). */
     isTop: boolean
-    /** How many overlays sit ON TOP of this one (count - 1 - depth; 0 when top). */
+    /** How many overlays PAINT above this one (higher z-tier, or same tier opened later; 0 when top). */
     layersAbove: number
     /**
      * Desktop card-stack fragments for this layer (translateX/scale/dim/transition),
@@ -131,6 +137,7 @@ export function useOverlayDismiss(options: UseOverlayDismissOptions): UseOverlay
         dragToDismiss = false,
         dragThreshold = 80,
         stopEscPropagation = true,
+        z = OVERLAY_Z.modal,
     } = options
 
     // ── Stacking awareness (OVERLAY-CANON-002) ────────────────────────────────
@@ -140,7 +147,7 @@ export function useOverlayDismiss(options: UseOverlayDismissOptions): UseOverlay
     // <OverlayStackProvider> (or when closed) `isTop` is always true → a single overlay
     // behaves byte-identically to before this change.
     const overlayId = useId()
-    const { depth, isTop, count } = useOverlayStack(overlayId, open)
+    const { depth, isTop, count, layersAbove } = useOverlayStack(overlayId, open, z)
 
     // ── Desktop card-stack (Phase 3) ──────────────────────────────────────────
     // `layersAbove` = overlays stacked on top of this one. The top layer (and the
@@ -149,7 +156,6 @@ export function useOverlayDismiss(options: UseOverlayDismissOptions): UseOverlay
     // returns empty there too. NB: useIsMobile is a hook → always called (never behind
     // a condition), so hook order is stable.
     const isMobile = useIsMobile()
-    const layersAbove = Math.max(0, count - 1 - depth)
     const stack = cardStackStyle(layersAbove, isMobile)
 
     const panelRef = useRef<HTMLDivElement>(null)

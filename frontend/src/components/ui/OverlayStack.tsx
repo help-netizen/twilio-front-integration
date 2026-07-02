@@ -22,16 +22,23 @@
 
 import * as React from 'react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { OVERLAY_Z } from './overlayLayout'
+
+/** One open overlay: its stable id + the paint z-tier it lives on (OVERLAY_Z). */
+interface StackEntry {
+    id: string
+    z: number
+}
 
 interface OverlayStackContextValue {
     /** True only for the real provider — the default (no-provider) value sets false. */
     hasProvider: boolean
-    /** Register `id` as open; no-op if already present. */
-    register: (id: string) => void
+    /** Register `id` (on paint-tier `z`) as open; no-op if already present. */
+    register: (id: string, z: number) => void
     /** Remove `id` from the open list. */
     unregister: (id: string) => void
-    /** Current open ids, in open-order (index 0 = opened first, last = top-most). */
-    stack: readonly string[]
+    /** Current open overlays, in open-order (index 0 = opened first, last = opened last). */
+    stack: readonly StackEntry[]
 }
 
 // DEFAULT value = the no-provider fallback. Its register/unregister do nothing and
@@ -50,14 +57,14 @@ export interface OverlayStackProviderProps {
 }
 
 export function OverlayStackProvider({ children }: OverlayStackProviderProps) {
-    const [stack, setStack] = useState<readonly string[]>([])
+    const [stack, setStack] = useState<readonly StackEntry[]>([])
 
-    const register = useCallback((id: string) => {
-        setStack((prev) => (prev.includes(id) ? prev : [...prev, id]))
+    const register = useCallback((id: string, z: number) => {
+        setStack((prev) => (prev.some((e) => e.id === id) ? prev : [...prev, { id, z }]))
     }, [])
 
     const unregister = useCallback((id: string) => {
-        setStack((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : prev))
+        setStack((prev) => (prev.some((e) => e.id === id) ? prev.filter((e) => e.id !== id) : prev))
     }, [])
 
     const value = useMemo<OverlayStackContextValue>(
@@ -71,10 +78,12 @@ export function OverlayStackProvider({ children }: OverlayStackProviderProps) {
 export interface OverlayStackInfo {
     /** 0-based index of this overlay in open-order (0 when closed or no provider). */
     depth: number
-    /** True when this is the top-most (last-opened) open overlay. */
+    /** True when nothing paints above this overlay (top-most by z-tier, then open-order). */
     isTop: boolean
     /** Total number of open overlays (1 in the single-overlay / no-provider case). */
     count: number
+    /** How many open overlays paint ABOVE this one (higher z-tier, or same tier opened later). */
+    layersAbove: number
 }
 
 /**
@@ -87,11 +96,11 @@ export interface OverlayStackInfo {
  * No provider, or `open === false` → `{ depth: 0, isTop: true, count: 1 }` (the
  * single-overlay sentinel — a lone overlay always reads as the top).
  */
-export function useOverlayStack(id: string, open: boolean): OverlayStackInfo {
+export function useOverlayStack(id: string, open: boolean, z: number = OVERLAY_Z.modal): OverlayStackInfo {
     const { hasProvider, register, unregister, stack } = useContext(OverlayStackContext)
 
     // Keep the latest register/unregister without retriggering the register effect on
-    // every provider state change (the effect must depend only on id/open/hasProvider).
+    // every provider state change (the effect must depend only on id/open/hasProvider/z).
     const registerRef = useRef(register)
     const unregisterRef = useRef(unregister)
     registerRef.current = register
@@ -99,22 +108,34 @@ export function useOverlayStack(id: string, open: boolean): OverlayStackInfo {
 
     useEffect(() => {
         if (!hasProvider || !open) return
-        registerRef.current(id)
+        registerRef.current(id, z)
         return () => unregisterRef.current(id)
-    }, [hasProvider, open, id])
+    }, [hasProvider, open, id, z])
 
     // No provider (or not open): a lone overlay is, by definition, the top of a stack
     // of one. Byte-identical to pre-stacking behavior.
     if (!hasProvider || !open) {
-        return { depth: 0, isTop: true, count: 1 }
+        return { depth: 0, isTop: true, count: 1, layersAbove: 0 }
     }
 
-    const idx = stack.indexOf(id)
+    const idx = stack.findIndex((e) => e.id === id)
     // Not yet registered in this render pass (registration runs in an effect AFTER the
     // first open render) → treat as the top so the very first paint behaves like a lone
-    // overlay; the next render (post-effect) reflects the true depth.
+    // overlay; the next render (post-effect) reflects the true position.
     if (idx === -1) {
-        return { depth: stack.length, isTop: true, count: stack.length + 1 }
+        return { depth: stack.length, isTop: true, count: stack.length + 1, layersAbove: 0 }
     }
-    return { depth: idx, isTop: idx === stack.length - 1, count: stack.length }
+    // Paint-order-aware layering (fixes a MODAL receding behind a lower-z NON-MODAL panel):
+    // another overlay sits ABOVE this one only if it paints on a HIGHER z-tier, or on the
+    // SAME tier but was opened later. So the non-modal FloatingDetailPanel (z 80) never
+    // pushes a modal (z 140) back — it only recedes UNDER it. For an all-same-z stack this
+    // reduces to "entries opened after me" — identical to the previous open-order logic.
+    const myZ = stack[idx].z
+    let layersAbove = 0
+    for (let i = 0; i < stack.length; i++) {
+        if (i === idx) continue
+        const e = stack[i]
+        if (e.z > myZ || (e.z === myZ && i > idx)) layersAbove++
+    }
+    return { depth: idx, isTop: layersAbove === 0, count: stack.length, layersAbove }
 }

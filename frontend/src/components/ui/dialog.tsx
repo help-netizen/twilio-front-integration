@@ -2,7 +2,7 @@ import * as React from "react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { cn } from "../../lib/utils"
 import { OverlayClose } from "./OverlayClose"
-import { cardStackStyle, type DialogSize } from "./overlayLayout"
+import { cardStackStyle, OVERLAY_Z, type DialogSize } from "./overlayLayout"
 import { useIsMobile } from "../../hooks/useIsMobile"
 import { useOverlayDismiss } from "../../hooks/useOverlayDismiss"
 import { useOverlayStack } from "./OverlayStack"
@@ -105,8 +105,10 @@ const DialogContent = React.forwardRef<
     // onInteractOutside nested-dialog guard below stays intact); this registration is
     // depth-only. When something is above THIS content on desktop, it slides left + dims.
     const dialogStackId = React.useId()
-    const { depth, count } = useOverlayStack(dialogStackId, true)
-    const layersAbove = Math.max(0, count - 1 - depth)
+    // DialogContent always paints on the modal tier (z-[140] below); pass that so the
+    // stack never ranks a lower-z non-modal panel (FloatingDetailPanel, z 80) above this
+    // modal — which made the reschedule modal recede behind the job card (LAYER-Z-FIX-001).
+    const { layersAbove } = useOverlayStack(dialogStackId, true, OVERLAY_Z.modal)
     const card = cardStackStyle(layersAbove, isMobile)
     // Compose the card-stack fragment onto the variant's BASE transform so it never
     // clobbers centering: a "dialog" is centered via translate(-50%,-50%) (a Tailwind
