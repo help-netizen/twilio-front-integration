@@ -4,6 +4,15 @@
 
 ---
 
+## 2026-07-02 — LAYER-STACK-PHANTOM-001: closed dialogs no longer push open layers off-screen
+
+Owner (real device) reported single overlays rendering dimmed + shifted toward the center (the job card sat at `translateX(-494px) scale(0.94) brightness(0.72)` while being the ONLY visible layer) and the "SoftPhone Ready" modal flying off to the left. Root cause: the custom `DialogContent` registered itself in the `OverlayStack` with a **hardcoded `open=true`** (and the mobile drag hook with `open: isMobile`) — but the wrapper's hooks run even for CLOSED dialogs (Radix unmounts only the portal'd subtree, never the wrapper), so **every closed `<Dialog>` in a page's JSX counted as an open z-140 overlay**. Measured live: 5 phantom entries at boot on /jobs, 19 with a job card open → the one visible panel computed `layersAbove=19` and got the full card-stack recede. (LAYER-Z-FIX-001 below fixed the *ordering* of real entries; the phantom *registration* is this separate bug.)
+
+- **Fix:** a `DialogOpenProbe` rendered INSIDE the portal'd content (mounted ⇔ the dialog is really open, per Radix Presence) feeds a `contentMounted` state; the OverlayStack registration and the mobile drag hook now key on it instead of `true`/`isMobile`. One file (`ui/dialog.tsx`), frontend-only, no migration.
+- **Verified live** in dev-preview (fresh page, real interactions): boot stack empty (was 5 phantoms); job card open → stack `[80]` only, panel untransformed & right-anchored; nested Reschedule modal → `[80, 140]`, the panel recedes exactly one step (−26px, the intended card-stack), the modal stays centered on top; close → back to `[80]`, panel restores; repeated open/close cycles → no accumulation. Build green (strict tsc).
+
+---
+
 ## 2026-07-02 — LAYER-Z-FIX-001: reschedule/time-picker modal no longer flies off-screen behind the job card
 
 Owner (real device) reported the reschedule time-picker (`CustomTimeModal`) "layout broke — the window moved off-screen." Root cause: the OVERLAY-CANON-002 desktop card-stack ranked overlays by **open-order only, ignoring z-index**. Opened INSIDE the non-modal job card (`FloatingDetailPanel`, z-80), the modal (`DialogContent`, z-140) got the "recede" transform (scale + dim + translateX) and flew to the top-left, clipped — while the job card stayed put.

@@ -57,10 +57,28 @@ const PANEL_WIDTH: Record<DialogSize, string> = {
 // now lives in ./overlayLayout and is applied inside <OverlayClose variant="slideover">
 // from the same `size` — single source of truth, so width and × anchor never drift.
 
+// Mounted ⇔ the dialog is actually open: Radix's Presence mounts the portal'd content
+// subtree only while open (plus the brief exit animation). The DialogContent WRAPPER
+// itself, however, stays mounted in the page tree even while closed — so the wrapper
+// cannot know "am I open" from its own lifecycle and must learn it from this probe.
+function DialogOpenProbe({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
+    React.useEffect(() => {
+        onOpenChange(true)
+        return () => onOpenChange(false)
+    }, [onOpenChange])
+    return null
+}
+
 const DialogContent = React.forwardRef<
     React.ElementRef<typeof DialogPrimitive.Content>,
     React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { size?: DialogSize; variant?: "dialog" | "panel" }
 >(({ className, children, size = "default", variant = "dialog", onInteractOutside, style, ...props }, ref) => {
+    // TRUE while the portal'd content subtree is mounted = the dialog is really open.
+    // LAYER-STACK-PHANTOM-001: this wrapper runs its hooks even for CLOSED dialogs
+    // (only the Radix portal unmounts), so any stack registration keyed on "mounted"
+    // registered every closed <Dialog> on the page as an open overlay — phantom
+    // entries that pushed the single visible layer into a deep card-stack recede.
+    const [contentMounted, setContentMounted] = React.useState(false)
     // ── Mobile → canonical bottom-sheet chrome (OVERLAY-CANON-002, Phase 2a) ──────
     // On mobile the `max-md:` classes already pin the content to the bottom, full-width,
     // rounded-top-22 + blancSlideUp — but that lacked the canon's GRAB HANDLE and
@@ -76,7 +94,9 @@ const DialogContent = React.forwardRef<
     // turned OFF here to avoid double-handling; the hook is used purely for its
     // dragHandlers + dragOffset + isDragging (offset → translateY, spring on release).
     const { dragHandlers, dragOffset, isDragging } = useOverlayDismiss({
-        open: isMobile,
+        // Gate on the REAL open state too — `open: isMobile` alone registered every
+        // closed dialog on the page in the overlay stack while on mobile.
+        open: isMobile && contentMounted,
         onClose: () => dragCloseRef.current?.click(),
         esc: false,
         closeOnBackdrop: false,
@@ -97,10 +117,12 @@ const DialogContent = React.forwardRef<
         : {}
 
     // ── Desktop card-stack (OVERLAY-CANON-002, Phase 3) ──────────────────────────
-    // Radix's <DialogContent> is mounted ONLY while the dialog is open, so we register
-    // it in the OverlayStack with a stable id and open=true for its whole mounted life.
-    // This lets a Dialog-over-Dialog (e.g. the estimate/invoice item/summary editor over
-    // its parent editor) OR a Dialog-over-FloatingDetailPanel take part in the depth math.
+    // Register this dialog in the OverlayStack while it is REALLY open (`contentMounted`
+    // from the probe inside the portal — NOT a hardcoded `true`: the wrapper's hooks run
+    // for closed dialogs too, and registering those filled the stack with phantom layers;
+    // see LAYER-STACK-PHANTOM-001 above). This lets a Dialog-over-Dialog (e.g. the
+    // estimate/invoice item/summary editor over its parent editor) OR a
+    // Dialog-over-FloatingDetailPanel take part in the depth math.
     // We DON'T route Esc/focus through useOverlayDismiss here — Radix owns those (and the
     // onInteractOutside nested-dialog guard below stays intact); this registration is
     // depth-only. When something is above THIS content on desktop, it slides left + dims.
@@ -108,7 +130,7 @@ const DialogContent = React.forwardRef<
     // DialogContent always paints on the modal tier (z-[140] below); pass that so the
     // stack never ranks a lower-z non-modal panel (FloatingDetailPanel, z 80) above this
     // modal — which made the reschedule modal recede behind the job card (LAYER-Z-FIX-001).
-    const { layersAbove } = useOverlayStack(dialogStackId, true, OVERLAY_Z.modal)
+    const { layersAbove } = useOverlayStack(dialogStackId, contentMounted, OVERLAY_Z.modal)
     const card = cardStackStyle(layersAbove, isMobile)
     // Compose the card-stack fragment onto the variant's BASE transform so it never
     // clobbers centering: a "dialog" is centered via translate(-50%,-50%) (a Tailwind
@@ -209,6 +231,9 @@ const DialogContent = React.forwardRef<
                     />
                 </div>
             )}
+            {/* Mounted only while the dialog is open (Radix Presence) — feeds the real
+                open state back to the wrapper for the OverlayStack registration above. */}
+            <DialogOpenProbe onOpenChange={setContentMounted} />
             {/* Hidden Radix close — the drag-dismiss target. Clicking it routes through
                 Radix state exactly like the visible × does. */}
             <DialogPrimitive.Close ref={dragCloseRef} className="sr-only" aria-hidden tabIndex={-1} />
