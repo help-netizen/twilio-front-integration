@@ -30,17 +30,18 @@
    ═══════════════════════════════════════════════════════════════════ */
 :root {
     /* ── Backgrounds ── */
-    --blanc-bg: #efe9df;
-    --blanc-bg-deep: #e3dacd;
+    /* PALETTE-V2 (W2): нейтральный канвас вместо кофейного крема */
+    --blanc-bg: #F6F6F6;
+    --blanc-bg-deep: #EDEDED;
 
     /* ── Surfaces (frosted glass) ── */
-    --blanc-surface: rgba(252, 249, 244, 0.84);
-    --blanc-surface-strong: #fdf8f0;
-    --blanc-surface-muted: #f4ede2;
+    --blanc-surface: rgba(255, 255, 255, 0.88);
+    --blanc-surface-strong: #FFFFFF;
+    --blanc-surface-muted: #F6F6F6;
     /* Form drawer surface: a near-white with just a whisper of warmth — whiter than
        surface-strong (which reads creamy) but softer than pure #fff. Fields share it
        and are drawn by border only, so floating labels notch the outline seamlessly. */
-    --blanc-panel-surface: #fffdf9;
+    --blanc-panel-surface: #FFFFFF;
     /* Right-side "layer" geometry — shared by create-form drawers (DialogContent
        variant="panel") AND view cards (FloatingDetailPanel) so they are ONE system:
        same width, both glued to the right edge below the app header. */
@@ -48,13 +49,15 @@
     --blanc-layer-top: 64px;
 
     /* ── Borders ── */
-    --blanc-line: rgba(117, 106, 89, 0.18);
-    --blanc-line-strong: rgba(97, 86, 71, 0.28);
+    /* PALETTE-V2 (W2): hairline — плоскость без сноса бордеров в компонентах */
+    --blanc-line: rgba(25, 25, 25, 0.08);
+    --blanc-line-strong: rgba(25, 25, 25, 0.20);
 
     /* ── Text (Ink) ── */
-    --blanc-ink-1: #202734;
-    --blanc-ink-2: #536070;
-    --blanc-ink-3: #7d8796;
+    /* PALETTE-V2 (W2): нейтральные чернила — конец конфликта температур */
+    --blanc-ink-1: #191919;
+    --blanc-ink-2: #6E6E6E;
+    --blanc-ink-3: #9A9A9A;
 
     /* ── PALETTE-V2 (docs/specs/PALETTE-V2.md) — новые роли ──
        Введены в W1 заранее; до W2 их никто не использует в разметке (wiring
@@ -75,7 +78,7 @@
 
     /* ── Semantic ── */
     --blanc-today-soft: rgba(255, 247, 231, 0.9);
-    --blanc-danger: #d44d3c;
+    --blanc-danger: #F0503F;
     --blanc-success: #1b8b63;
     --blanc-warning: #b26a1d;
     --blanc-info: #2f63d8;
@@ -162,9 +165,13 @@
     --destructive: var(--blanc-danger);
     --destructive-foreground: #ffffff;
     --border: var(--blanc-line);
-    --input: rgba(104, 95, 80, 0.28);
+    --input: rgba(25, 25, 25, 0.20);
     --input-background: #ffffff;
-    --switch-background: rgba(117, 106, 89, 0.2);
+    --switch-background: rgba(25, 25, 25, 0.16);
+    /* PALETTE-V2 (W2): primary-действие = фиолетовый акцент (было фабричное
+       #030213 из tailwind.css — здесь оверрайдим, фабричный файл не трогаем) */
+    --primary: var(--blanc-accent);
+    --primary-foreground: #ffffff;
     --ring: var(--blanc-job);
     --chart-1: var(--blanc-lead);
     --chart-2: var(--blanc-task);
@@ -238,7 +245,7 @@ table tbody tr:hover {
 
 /* Header: frosted glass */
 .app-header {
-    background: linear-gradient(135deg, rgba(255, 253, 249, 0.92), rgba(249, 244, 238, 0.88)) !important;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(246, 246, 246, 0.88)) !important;
     backdrop-filter: blur(20px);
     border-bottom-color: var(--blanc-line) !important;
 }
@@ -247,7 +254,7 @@ table tbody tr:hover {
 .app-main {
     background:
         radial-gradient(circle at top left, rgba(255, 255, 255, 0.9), transparent 28%),
-        linear-gradient(180deg, #f7f3ec 0%, var(--blanc-bg) 44%, var(--blanc-bg-deep) 100%) !important;
+        linear-gradient(180deg, #FBFBFB 0%, var(--blanc-bg) 44%, var(--blanc-bg-deep) 100%) !important;
 }
 
 /* Logo */
@@ -344,12 +351,12 @@ table tbody tr:hover {
     border: 1px solid rgba(104, 95, 80, 0.14) !important;
     background: var(--blanc-surface-strong) !important;
     color: var(--blanc-ink-2) !important;
-    box-shadow: rgba(48, 39, 28, 0.06) 0px 6px 16px !important;
+    box-shadow: rgba(25, 25, 25, 0.05) 0px 6px 16px !important;
 }
 
 /* Toolbar area — frosted glass controls bar, matches CalendarControls in Schedule */
 .blanc-page-toolbar {
-    background: linear-gradient(135deg, rgba(255, 253, 249, 0.94), rgba(249, 244, 238, 0.9));
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(246, 246, 246, 0.9));
     border: 1px solid rgba(104, 95, 80, 0.16);
     border-radius: 24px;
     backdrop-filter: blur(20px);
@@ -464,14 +471,15 @@ table tbody tr:hover {
     padding: 0 18px;
     font-size: 14px;
     font-weight: 600;
-    border-radius: 14px;
+    /* PALETTE-V2 (W2): чипы = pill, hairline-бордер */
+    border-radius: 999px;
     white-space: nowrap;
     cursor: pointer;
     transition: all 0.15s ease;
-    border: 1px solid rgba(104, 95, 80, 0.14);
+    border: 1px solid var(--blanc-line);
     background: var(--blanc-surface-strong);
     color: var(--blanc-ink-2);
-    box-shadow: rgba(48, 39, 28, 0.06) 0px 6px 16px;
+    box-shadow: rgba(25, 25, 25, 0.05) 0px 6px 16px;
 }
 
 .blanc-control-chip:hover {
@@ -484,7 +492,7 @@ table tbody tr:hover {
     background: var(--blanc-ink-1);
     color: #fff;
     border-color: transparent;
-    box-shadow: rgba(48, 39, 28, 0.12) 0px 6px 16px;
+    box-shadow: rgba(25, 25, 25, 0.10) 0px 6px 16px;
 }
 
 /* Icon-only control chip */
@@ -494,13 +502,13 @@ table tbody tr:hover {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 14px;
-    border: 1px solid rgba(104, 95, 80, 0.14);
+    border-radius: 999px;
+    border: 1px solid var(--blanc-line);
     background: var(--blanc-surface-strong);
     color: var(--blanc-ink-2);
     cursor: pointer;
     transition: opacity 0.15s ease;
-    box-shadow: rgba(48, 39, 28, 0.06) 0px 6px 16px;
+    box-shadow: rgba(25, 25, 25, 0.05) 0px 6px 16px;
 }
 
 .blanc-control-chip-icon:hover {
@@ -513,17 +521,18 @@ table tbody tr:hover {
     padding: 0 18px;
     font-size: 14px;
     font-weight: 600;
-    border-radius: 14px;
+    border-radius: 999px;
     white-space: nowrap;
     cursor: pointer;
     transition: opacity 0.15s ease;
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    background: var(--blanc-info);
+    /* PALETTE-V2 (W2): primary-чип = фиолетовый акцент (был job-синий info) */
+    background: var(--blanc-accent);
     color: #fff;
     border: none;
-    box-shadow: rgba(48, 39, 28, 0.06) 0px 6px 16px;
+    box-shadow: rgba(25, 25, 25, 0.05) 0px 6px 16px;
 }
 
 .blanc-control-chip-primary:hover {
@@ -543,7 +552,7 @@ table tbody tr:hover {
     border-radius: 14px !important;
     border: 1px solid rgba(104, 95, 80, 0.14) !important;
     background: var(--blanc-surface-strong) !important;
-    box-shadow: rgba(48, 39, 28, 0.06) 0px 6px 16px !important;
+    box-shadow: rgba(25, 25, 25, 0.05) 0px 6px 16px !important;
 }
 
 /* ── Unified header mobile ──────────────────────────────────────── */
@@ -583,7 +592,7 @@ table tbody tr:hover {
 }
 
 .blanc-page-card tbody tr {
-    border-bottom: 1px solid rgba(117, 106, 89, 0.08) !important;
+    border-bottom: 1px solid rgba(25, 25, 25, 0.06) !important;
 }
 
 .blanc-page-card tbody tr:last-child {
@@ -672,7 +681,7 @@ table tbody tr:hover {
 .blanc-page-bg {
     background:
         radial-gradient(circle at top left, rgba(255, 255, 255, 0.9), transparent 28%),
-        linear-gradient(180deg, #f7f3ec 0%, var(--blanc-bg) 44%, var(--blanc-bg-deep) 100%);
+        linear-gradient(180deg, #FBFBFB 0%, var(--blanc-bg) 44%, var(--blanc-bg-deep) 100%);
     font-family: var(--blanc-font-body);
     color: var(--blanc-ink-1);
     min-height: 100vh;
@@ -689,7 +698,7 @@ table tbody tr:hover {
 
 /* Lighter frosted glass for controls/toolbars */
 .blanc-surface-controls {
-    background: linear-gradient(135deg, rgba(255, 253, 249, 0.94), rgba(249, 244, 238, 0.9));
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(246, 246, 246, 0.9));
     border: 1px solid rgba(104, 95, 80, 0.16);
     border-radius: 24px;
     backdrop-filter: var(--blanc-glass-blur);
@@ -812,7 +821,7 @@ table tbody tr:hover {
     pointer-events: auto;
     /* Solid near-white — same surface as form drawers (no frosted glass), so all
        "layers" (forms + view panels) read as one consistent surface. */
-    background: var(--blanc-panel-surface, #fffdf9);
+    background: var(--blanc-panel-surface, #FFFFFF);
     /* Glued to the right edge → border + rounding only on the LEFT side (like the form drawer). */
     border: 1px solid var(--blanc-line);
     border-right: 0;
@@ -889,7 +898,7 @@ table tbody tr:hover {
 
 /* Warm table styles */
 .blanc-table-header {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.66), rgba(244, 237, 226, 0.42));
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.66), rgba(246, 246, 246, 0.5));
     border-bottom: 1px solid var(--blanc-line);
 }
 
@@ -899,7 +908,7 @@ table tbody tr:hover {
 }
 
 .blanc-table-row:hover {
-    background: rgba(252, 249, 244, 0.6);
+    background: rgba(25, 25, 25, 0.03);
 }
 
 .blanc-table-row-selected {

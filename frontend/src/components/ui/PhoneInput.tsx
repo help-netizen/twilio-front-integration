@@ -111,7 +111,14 @@ export function PhoneInput({
                 placeholder={label ? ' ' : placeholder}
                 required={required}
                 disabled={disabled}
-                className={cn(label && 'h-[50px] rounded-xl bg-transparent text-[15px]', className)}
+                className={cn(
+                    // Floating mode (filled canon): the FloatingLabel wrapper paints the
+                    // fill; the input stays transparent with a transparent border, value
+                    // padded below the floated label, focus = line-strong border (no ring).
+                    label &&
+                        'h-[50px] rounded-xl border-transparent bg-transparent pt-[18px] pb-[6px] text-[15px] focus-visible:border-[var(--blanc-line-strong)] focus-visible:ring-0',
+                    className,
+                )}
                 style={
                     showWarning
                         ? { borderColor: '#d97706', boxShadow: '0 0 0 2px rgba(217,119,6,0.2)' }

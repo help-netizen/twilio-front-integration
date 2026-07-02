@@ -71,8 +71,8 @@ export function AddressAutocomplete({ value: address, onChange, idPrefix = "addr
 
     const showDropdown = gateReady && (loading || status === "OK") && (loading || suggestions.length > 0);
 
-    // Floating-label street field (label lifts to the border on focus/fill).
-    const floatLabel = "pointer-events-none absolute left-3 z-10 px-1 bg-transparent font-normal text-[var(--blanc-ink-3)] transition-all duration-150 top-1/2 -translate-y-1/2 text-[15px] peer-focus:top-0 peer-focus:text-[11px] peer-focus:text-[var(--blanc-ink-2)] peer-focus:bg-[var(--blanc-panel-surface,#fffdf9)] peer-[:not(:placeholder-shown)]:top-0 peer-[:not(:placeholder-shown)]:text-[11px] peer-[:not(:placeholder-shown)]:text-[var(--blanc-ink-2)] peer-[:not(:placeholder-shown)]:bg-[var(--blanc-panel-surface,#fffdf9)]";
+    // PALETTE-V2 (W2): filled-канон — floated-лейбл живёт ВНУТРИ заливки (top 6px), без фонового патча.
+    const floatLabel = "pointer-events-none absolute left-3 z-10 px-1 bg-transparent font-normal text-[var(--blanc-ink-3)] transition-all duration-150 top-1/2 -translate-y-1/2 text-[15px] peer-focus:top-[6px] peer-focus:translate-y-0 peer-focus:text-[11px] peer-[:not(:placeholder-shown)]:top-[6px] peer-[:not(:placeholder-shown)]:translate-y-0 peer-[:not(:placeholder-shown)]:text-[11px]";
 
     return (
         <div className="space-y-3.5">
@@ -84,7 +84,7 @@ export function AddressAutocomplete({ value: address, onChange, idPrefix = "addr
             )}
             <div className="flex gap-3">
                 <div className="relative flex-1 min-w-0">
-                    <input id={`${idPrefix}-street`} value={searchValue} onChange={handleInputChange} onKeyDown={handleKeyDown} onFocus={(e) => { const input = e.target; requestAnimationFrame(() => { const len = input.value.length; input.setSelectionRange(len, len); }); if (hasSaved) setShowSaved(true); }} onBlur={() => setTimeout(() => setShowSaved(false), 200)} disabled={!ready} placeholder=" " autoComplete="off" data-lpignore="true" data-1p-ignore="true" className="peer h-[50px] w-full rounded-xl border-[1.5px] border-input bg-transparent px-3.5 text-[15px] font-medium text-[var(--blanc-ink-1)] outline-none placeholder:text-transparent transition-colors focus:border-ring disabled:cursor-not-allowed disabled:opacity-50" />
+                    <input id={`${idPrefix}-street`} value={searchValue} onChange={handleInputChange} onKeyDown={handleKeyDown} onFocus={(e) => { const input = e.target; requestAnimationFrame(() => { const len = input.value.length; input.setSelectionRange(len, len); }); if (hasSaved) setShowSaved(true); }} onBlur={() => setTimeout(() => setShowSaved(false), 200)} disabled={!ready} placeholder=" " autoComplete="off" data-lpignore="true" data-1p-ignore="true" className="peer h-[50px] w-full rounded-xl border-[1.5px] border-transparent bg-[var(--blanc-field,#F0F0F0)] px-3.5 pt-[18px] pb-[6px] text-[15px] font-medium text-[var(--blanc-ink-1)] outline-none placeholder:text-transparent transition-colors focus:border-[var(--blanc-line-strong)] disabled:cursor-not-allowed disabled:opacity-50" />
                     <label htmlFor={`${idPrefix}-street`} className={floatLabel}>{streetLabel}</label>
                     {!ready && <div className="mt-1.5 flex items-center gap-1.5"><Spinner /><span className="text-xs text-muted-foreground">Loading Google Maps…</span></div>}
                     {cyrillicWarning && <div className="absolute z-50 mt-1 w-full rounded-md border border-amber-300 bg-amber-50 shadow-md px-3 py-2 text-sm text-amber-800">⚠️ English only — please delete Cyrillic characters</div>}
@@ -102,8 +102,8 @@ export function AddressAutocomplete({ value: address, onChange, idPrefix = "addr
             <div className="grid grid-cols-[2fr_104px_1fr] gap-3">
                 <FloatingField id={`${idPrefix}-city`} label="City" value={address.city} onChange={e => handleFieldChange("city", e.target.value)} />
                 <div className="relative">
-                    <Select value={address.state} onValueChange={(val: string) => handleFieldChange("state", val)}><SelectTrigger className="h-[50px] data-[size=default]:h-[50px] rounded-xl border-[1.5px] bg-transparent px-3 text-[15px]"><SelectValue /></SelectTrigger><SelectContent>{US_STATES.map(st => <SelectItem key={st} value={st}>{st}</SelectItem>)}</SelectContent></Select>
-                    <label className="pointer-events-none absolute left-3 -top-[9px] z-10 px-1 bg-[var(--blanc-panel-surface,#fffdf9)] text-[11px] font-normal text-[var(--blanc-ink-2)]">State</label>
+                    <Select value={address.state} onValueChange={(val: string) => handleFieldChange("state", val)}><SelectTrigger className="h-[50px] data-[size=default]:h-[50px] rounded-xl border-[1.5px] border-transparent bg-[var(--blanc-field,#F0F0F0)] px-3 pt-[18px] pb-[6px] text-[15px]"><SelectValue /></SelectTrigger><SelectContent>{US_STATES.map(st => <SelectItem key={st} value={st}>{st}</SelectItem>)}</SelectContent></Select>
+                    <label className="pointer-events-none absolute left-3 top-[6px] z-10 px-1 bg-transparent text-[11px] font-normal text-[var(--blanc-ink-3)]">State</label>
                 </div>
                 <FloatingField id={`${idPrefix}-zip`} label="Zip" value={address.zip} onChange={e => handleFieldChange("zip", e.target.value)} />
             </div>
