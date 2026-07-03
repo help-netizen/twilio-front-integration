@@ -8,6 +8,7 @@
 jest.mock('../backend/src/db/connection', () => ({ query: jest.fn() }));
 jest.mock('../backend/src/db/mailAgentQueries', () => ({
     getSettings: jest.fn(),
+    ensureSettingsRow: jest.fn(),
     getEmailMessage: jest.fn(),
     hasReview: jest.fn(),
     insertReview: jest.fn().mockResolvedValue({ id: 1 }),
@@ -38,6 +39,8 @@ const MSG = {
     from_email: 'jane@customer.com',
     subject: 'Dishwasher leaking again',
     body_text: 'Hi, the dishwasher you fixed last week is leaking again. Can someone come today?',
+    // MAIL-AGENT-002: fresh mail — arrived well after activation (below).
+    internal_at: '2026-07-03T12:00:00.000Z',
 };
 
 const SETTINGS = {
@@ -46,18 +49,20 @@ const SETTINGS = {
     create_contact_for_unknown: true,
     assign_owner_user_id: null,
     exclusion_rules: '',
+    activated_at: '2026-07-01T00:00:00.000Z',
 };
 
 function armActive(settings = SETTINGS) {
-    // getActiveState: db.query → installation row; then settings.
+    // getActiveState: db.query → installation row; then the pinned settings row.
     db.query.mockResolvedValue({ rows: [{ '?column?': 1 }] });
+    q.ensureSettingsRow.mockResolvedValue({ ...settings });
     q.getSettings.mockResolvedValue({ ...settings });
     mailAgentService.invalidateCache(COMPANY);
 }
 
 beforeEach(() => {
     jest.clearAllMocks();
-    q.getEmailMessage.mockResolvedValue({ id: 42, body_text: MSG.body_text });
+    q.getEmailMessage.mockResolvedValue({ id: 42, body_text: MSG.body_text, direction: 'inbound', gmail_internal_at: MSG.internal_at });
     q.hasReview.mockResolvedValue(false);
     timelinesQueries.createTask.mockResolvedValue({ id: 777 });
 });
@@ -169,6 +174,37 @@ describe('mailAgentService.reviewInboundEmail', () => {
         expect(res.verdict).toBe('skipped_unknown_sender');
         expect(q.createEmailContact).not.toHaveBeenCalled();
         expect(timelinesQueries.createTask).not.toHaveBeenCalled();
+    });
+
+    test('MAIL-AGENT-002: email older than activation → silent historical skip, no LLM, no review row', async () => {
+        armActive();
+        const oldMsg = { ...MSG, internal_at: '2026-01-15T10:00:00.000Z' };
+        const res = await mailAgentService.reviewInboundEmail(COMPANY, oldMsg, { timelineId: 5 });
+        expect(res).toEqual({ skipped: 'historical' });
+        expect(classifyEmail).not.toHaveBeenCalled();
+        expect(q.insertReview).not.toHaveBeenCalled();
+        expect(timelinesQueries.createTask).not.toHaveBeenCalled();
+    });
+
+    test('MAIL-AGENT-002: missing email date → conservative historical skip', async () => {
+        armActive();
+        q.getEmailMessage.mockResolvedValue({ id: 42, body_text: 'x', direction: 'inbound', gmail_internal_at: null });
+        const res = await mailAgentService.reviewInboundEmail(COMPANY, { ...MSG, internal_at: null }, { timelineId: 5 });
+        expect(res).toEqual({ skipped: 'historical' });
+        expect(classifyEmail).not.toHaveBeenCalled();
+    });
+
+    test('MAIL-AGENT-002: outbound and draft pushes never reach the LLM', async () => {
+        armActive();
+        const out = await mailAgentService.reviewInboundEmail(COMPANY, { ...MSG, is_outbound: true }, { timelineId: 5 });
+        expect(out).toEqual({ skipped: 'outbound' });
+        const draft = await mailAgentService.reviewInboundEmail(COMPANY, { ...MSG, labelIds: ['DRAFT'] }, { timelineId: 5 });
+        expect(draft).toEqual({ skipped: 'draft_or_sent' });
+        q.getEmailMessage.mockResolvedValue({ id: 42, body_text: 'x', direction: 'outbound', gmail_internal_at: MSG.internal_at });
+        const rowDir = await mailAgentService.reviewInboundEmail(COMPANY, MSG, { timelineId: 5 });
+        expect(rowDir).toEqual({ skipped: 'not_inbound' });
+        expect(classifyEmail).not.toHaveBeenCalled();
+        expect(q.insertReview).not.toHaveBeenCalled();
     });
 
     test('LLM failure → verdict error, no task, never throws', async () => {

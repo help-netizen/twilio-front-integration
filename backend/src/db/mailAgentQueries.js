@@ -16,12 +16,32 @@ const DEFAULT_SETTINGS = {
 async function getSettings(companyId) {
     const { rows } = await db.query(
         `SELECT company_id, enabled, confidence_threshold, create_contact_for_unknown,
-                assign_owner_user_id, exclusion_rules, updated_at
+                assign_owner_user_id, exclusion_rules, activated_at, updated_at
          FROM mail_agent_settings WHERE company_id = $1`,
         [companyId]
     );
     if (rows[0]) return rows[0];
-    return { company_id: companyId, ...DEFAULT_SETTINGS, updated_at: null };
+    // Virtual defaults; activated_at is null until the row is pinned (see
+    // ensureSettingsRow) so the runtime gate cannot accidentally use "now".
+    return { company_id: companyId, ...DEFAULT_SETTINGS, activated_at: null, updated_at: null };
+}
+
+/**
+ * MAIL-AGENT-002: pin the settings row (and with it activated_at = NOW) the
+ * first time the agent becomes active for a company. Idempotent — an existing
+ * row is returned untouched.
+ */
+async function ensureSettingsRow(companyId) {
+    const { rows } = await db.query(
+        `INSERT INTO mail_agent_settings (company_id)
+         VALUES ($1)
+         ON CONFLICT (company_id) DO NOTHING
+         RETURNING company_id, enabled, confidence_threshold, create_contact_for_unknown,
+                   assign_owner_user_id, exclusion_rules, activated_at, updated_at`,
+        [companyId]
+    );
+    if (rows[0]) return rows[0];
+    return getSettings(companyId);
 }
 
 async function saveSettings(companyId, patch, updatedBy) {
@@ -37,6 +57,9 @@ async function saveSettings(companyId, patch, updatedBy) {
         exclusion_rules: patch.exclusion_rules !== undefined
             ? String(patch.exclusion_rules) : current.exclusion_rules,
     };
+    // MAIL-AGENT-002: flipping the agent back ON re-pins activation — mail that
+    // arrived while it was paused stays untouched (only NEW letters from here).
+    const reactivated = next.enabled && current.enabled === false;
     const { rows } = await db.query(
         `INSERT INTO mail_agent_settings
             (company_id, enabled, confidence_threshold, create_contact_for_unknown,
@@ -49,11 +72,12 @@ async function saveSettings(companyId, patch, updatedBy) {
             assign_owner_user_id = EXCLUDED.assign_owner_user_id,
             exclusion_rules = EXCLUDED.exclusion_rules,
             updated_by = EXCLUDED.updated_by,
-            updated_at = NOW()
+            updated_at = NOW(),
+            activated_at = CASE WHEN $8 THEN NOW() ELSE mail_agent_settings.activated_at END
          RETURNING company_id, enabled, confidence_threshold, create_contact_for_unknown,
-                   assign_owner_user_id, exclusion_rules, updated_at`,
+                   assign_owner_user_id, exclusion_rules, activated_at, updated_at`,
         [companyId, next.enabled, next.confidence_threshold, next.create_contact_for_unknown,
-            next.assign_owner_user_id, next.exclusion_rules, updatedBy || null]
+            next.assign_owner_user_id, next.exclusion_rules, updatedBy || null, reactivated]
     );
     return rows[0];
 }
@@ -61,7 +85,8 @@ async function saveSettings(companyId, patch, updatedBy) {
 /** Resolve the local email_messages row for a provider message (id + review-input fields). */
 async function getEmailMessage(companyId, providerMessageId) {
     const { rows } = await db.query(
-        `SELECT id, from_name, from_email, subject, body_text, contact_id, timeline_id
+        `SELECT id, from_name, from_email, subject, body_text, contact_id, timeline_id,
+                direction, gmail_internal_at
          FROM email_messages
          WHERE company_id = $1 AND provider_message_id = $2`,
         [companyId, providerMessageId]
@@ -152,6 +177,7 @@ async function createEmailContact(companyId, { fromName, fromEmail }) {
 
 module.exports = {
     getSettings,
+    ensureSettingsRow,
     saveSettings,
     getEmailMessage,
     hasReview,

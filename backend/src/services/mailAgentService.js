@@ -41,7 +41,10 @@ async function getActiveState(companyId) {
             [companyId, APP_KEY]
         );
         if (rows[0]) {
-            settings = await mailAgentQueries.getSettings(companyId);
+            // MAIL-AGENT-002: pin the settings row on first activity so
+            // activated_at marks the moment the agent went live — the runtime
+            // gate below only reviews mail that ARRIVES after this point.
+            settings = await mailAgentQueries.ensureSettingsRow(companyId);
             active = settings.enabled !== false;
         }
     } catch (e) {
@@ -97,10 +100,35 @@ async function reviewInboundEmail(companyId, msg, ctx = {}) {
         const { active, settings } = await getActiveState(companyId);
         if (!active) return { skipped: 'inactive' };
 
+        // MAIL-AGENT-002 belt-and-braces: the link pipeline already drops
+        // outbound mail and DRAFT/SENT pushes before calling us, but the agent
+        // must never depend on the caller for that — Gmail pushes fire for
+        // every mailbox event including draft saves.
+        if (msg.is_outbound === true) return { skipped: 'outbound' };
+        if (Array.isArray(msg.labelIds) && msg.labelIds.some(l => l === 'DRAFT' || l === 'SENT')) {
+            return { skipped: 'draft_or_sent' };
+        }
+
         // The email row must exist locally (upserted before linking) — it anchors
         // dedup and the decisions feed.
         const emailRow = await mailAgentQueries.getEmailMessage(companyId, msg.provider_message_id);
         if (!emailRow) return { skipped: 'no_email_row' };
+        if (emailRow.direction && emailRow.direction !== 'inbound') {
+            return { skipped: 'not_inbound' };
+        }
+
+        // MAIL-AGENT-002: only mail that ARRIVED after the agent went live.
+        // History re-walks and full resyncs funnel months-old letters through
+        // this hook — gate on the email's OWN Gmail timestamp, silently (no
+        // review row: historical mail is re-touched by every sync pass and
+        // would flood the decisions feed).
+        const emailDate = msg.internal_at ? new Date(msg.internal_at)
+            : (emailRow.gmail_internal_at ? new Date(emailRow.gmail_internal_at) : null);
+        const activatedAt = settings.activated_at ? new Date(settings.activated_at) : null;
+        if (!activatedAt || !emailDate || Number.isNaN(emailDate.getTime()) || emailDate < activatedAt) {
+            return { skipped: 'historical' };
+        }
+
         if (await mailAgentQueries.hasReview(companyId, emailRow.id)) {
             return { skipped: 'already_reviewed' };
         }
