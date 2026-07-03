@@ -306,33 +306,41 @@ export default function VapiSettingsPage() {
                         />
                     )}
 
-                    {/* Finish Setup */}
+                    {/* Finish Setup — natural-width button, aligned under the card column
+                        (empty left cell mirrors SettingsSection's label/card grid). */}
                     {activeConnection && activeResource && !activeInstallation && (
-                        <div>
-                            <Button
-                                onClick={() => installMutation.mutate()}
-                                disabled={installMutation.isPending}
-                                style={{ width: '100%' }}
-                            >
-                                {installMutation.isPending && <Loader2 size={13} className="mr-1.5 animate-spin" />}
-                                Finish Setup
-                            </Button>
-                            <div style={{ fontSize: 11, color: 'var(--blanc-ink-3)', textAlign: 'center', marginTop: 8 }}>
-                                After finishing, the VAPI AI node will be available in your Call Flow Builder.
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-[240px_1fr] md:gap-8">
+                            <div className="hidden md:block" />
+                            <div>
+                                <Button
+                                    onClick={() => installMutation.mutate()}
+                                    disabled={installMutation.isPending}
+                                >
+                                    {installMutation.isPending && <Loader2 size={13} className="mr-1.5 animate-spin" />}
+                                    Finish Setup
+                                </Button>
+                                <div style={{ fontSize: 11, color: 'var(--blanc-ink-3)', marginTop: 8 }}>
+                                    After finishing, the VAPI AI node will be available in your Call Flow Builder.
+                                </div>
                             </div>
                         </div>
                     )}
 
-                    {/* Disconnect */}
+                    {/* Disconnect — same column alignment as the section cards above. */}
                     {isFullyConnected && (
-                        <Button
-                            variant="destructive"
-                            size="sm"
-                            onClick={() => setDisconnectOpen(true)}
-                        >
-                            <Unplug size={13} className="mr-1.5" />
-                            Disconnect VAPI AI
-                        </Button>
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-[240px_1fr] md:gap-8">
+                            <div className="hidden md:block" />
+                            <div>
+                                <Button
+                                    variant="destructive"
+                                    size="sm"
+                                    onClick={() => setDisconnectOpen(true)}
+                                >
+                                    <Unplug size={13} className="mr-1.5" />
+                                    Disconnect VAPI AI
+                                </Button>
+                            </div>
+                        </div>
                     )}
                 </>
             )}

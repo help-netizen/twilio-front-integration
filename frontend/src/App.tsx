@@ -76,6 +76,7 @@ import UserGroupsPage from './pages/telephony/UserGroupsPage';
 import UserGroupDetailPage from './pages/telephony/UserGroupDetailPage';
 
 import TelephonyLayout from './components/telephony/TelephonyLayout';
+import SettingsLayout from './components/settings/SettingsLayout';
 import { EventNotification } from './components/EventNotification';
 import NotificationReminderBanner from './components/NotificationReminderBanner';
 import SSEPushBridge from './components/SSEPushBridge';
@@ -126,39 +127,46 @@ function App() {
               <Route path="/contacts/:contactId" element={<ProtectedRoute permissions={['contacts.view']}><ContactsPage /></ProtectedRoute>} />
               
               <Route path="/settings" element={<Navigate to="/settings/integrations" replace />} />
-              <Route path="/settings/integrations" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><IntegrationsPage /></ProtectedRoute>} />
-              <Route path="/settings/integrations/vapi-ai" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><VapiSettingsPage /></ProtectedRoute>} />
-              <Route path="/settings/integrations/stripe-payments" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><StripePaymentsSettingsPage /></ProtectedRoute>} />
-              <Route path="/settings/integrations/google-email" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><GoogleEmailSettingsPage /></ProtectedRoute>} />
-              <Route path="/settings/integrations/telephony-twilio" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><TelephonyTwilioSettingsPage /></ProtectedRoute>} />
-              <Route path="/settings/technicians" element={<ProtectedRoute permissions={['tenant.company.manage']}><TechnicianPhotosPage /></ProtectedRoute>} />
-              <Route path="/settings/company" element={<ProtectedRoute permissions={['tenant.company.manage']}><CompanySettingsPage /></ProtectedRoute>} />
+              <Route path="/settings/action-required" element={<Navigate to="/settings/actions-notifications" replace />} />
+              <Route path="/settings/email" element={<Navigate to="/settings/integrations/google-email" replace />} />
+
+              {/* Fullscreen settings surfaces — stay OUTSIDE SettingsLayout: API docs,
+                  the document-template editor (its list page is inside), telephony/*
+                  (own sidebar, below) and the workflow builder. */}
               <Route path="/settings/api-docs" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><ApiDocsPage /></ProtectedRoute>} />
-              
-              <Route path="/settings/lead-form" element={<ProtectedRoute permissions={['tenant.company.manage']}><LeadFormSettingsPage /></ProtectedRoute>} />
-              <Route path="/settings/quick-messages" element={<ProtectedRoute permissions={['tenant.company.manage']}><QuickMessagesPage /></ProtectedRoute>} />
+              <Route path="/settings/document-templates/:id" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><DocumentTemplateEditorPage /></ProtectedRoute>} />
+
+              {/* Settings — persistent left sub-nav (UI-AUDIT-001 W4, variant C).
+                  Pathless layout route: SettingsLayout renders the sidebar + <Outlet/>;
+                  the per-route ProtectedRoute guards are unchanged. */}
+              <Route element={<SettingsLayout />}>
+                <Route path="/settings/company" element={<ProtectedRoute permissions={['tenant.company.manage']}><CompanySettingsPage /></ProtectedRoute>} />
+                <Route path="/settings/users" element={<ProtectedRoute permissions={['tenant.users.manage']}><CompanyUsersPage /></ProtectedRoute>} />
+                <Route path="/settings/roles" element={<ProtectedRoute permissions={['tenant.roles.manage']}><RolesAccessPage /></ProtectedRoute>} />
+                <Route path="/settings/billing" element={<ProtectedRoute permissions={['tenant.company.manage']}><BillingPage /></ProtectedRoute>} />
+                <Route path="/settings/actions-notifications" element={<ProtectedRoute permissions={['tenant.company.manage']}><ActionRequiredSettingsPage /></ProtectedRoute>} />
+                <Route path="/settings/lead-form" element={<ProtectedRoute permissions={['tenant.company.manage']}><LeadFormSettingsPage /></ProtectedRoute>} />
+                <Route path="/settings/quick-messages" element={<ProtectedRoute permissions={['tenant.company.manage']}><QuickMessagesPage /></ProtectedRoute>} />
+                <Route path="/settings/price-book" element={<ProtectedRoute permissions={['price_book.manage']}><PriceBookPage /></ProtectedRoute>} />
+                <Route path="/settings/service-territories" element={<ProtectedRoute permissions={['tenant.company.manage']}><ServiceTerritoriesPage /></ProtectedRoute>} />
+                <Route path="/settings/document-templates" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><DocumentTemplatesPage /></ProtectedRoute>} />
+                <Route path="/settings/automation" element={<ProtectedRoute permissions={['tenant.company.manage']}><AutomationPage /></ProtectedRoute>} />
+                <Route path="/settings/providers" element={<ProtectedRoute permissions={['tenant.company.manage']}><ProvidersPage /></ProtectedRoute>} />
+                <Route path="/settings/technicians" element={<ProtectedRoute permissions={['tenant.company.manage']}><TechnicianPhotosPage /></ProtectedRoute>} />
+                <Route path="/settings/integrations" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><IntegrationsPage /></ProtectedRoute>} />
+                <Route path="/settings/integrations/vapi-ai" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><VapiSettingsPage /></ProtectedRoute>} />
+                <Route path="/settings/integrations/stripe-payments" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><StripePaymentsSettingsPage /></ProtectedRoute>} />
+                <Route path="/settings/integrations/google-email" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><GoogleEmailSettingsPage /></ProtectedRoute>} />
+                <Route path="/settings/integrations/telephony-twilio" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><TelephonyTwilioSettingsPage /></ProtectedRoute>} />
+                <Route path="/settings/admin" element={<ProtectedRoute platformRoles={['super_admin']}><SuperAdminPage /></ProtectedRoute>} />
+                <Route path="/settings/admin/companies/:companyId" element={<ProtectedRoute platformRoles={['super_admin']}><AdminCompanyDetailPage /></ProtectedRoute>} />
+              </Route>
               
               <Route path="/payments" element={<ProtectedRoute permissions={['payments.view']}><PaymentsPage /></ProtectedRoute>} />
               <Route path="/payments/:paymentId" element={<ProtectedRoute permissions={['payments.view']}><PaymentsPage /></ProtectedRoute>} />
               <Route path="/transactions" element={<ProtectedRoute permissions={['payments.view']}><TransactionsPage /></ProtectedRoute>} />
               
-              <Route path="/settings/providers" element={<ProtectedRoute permissions={['tenant.company.manage']}><ProvidersPage /></ProtectedRoute>} />
-              
-              <Route path="/settings/automation" element={<ProtectedRoute permissions={['tenant.company.manage']}><AutomationPage /></ProtectedRoute>} />
-              <Route path="/settings/billing" element={<ProtectedRoute permissions={['tenant.company.manage']}><BillingPage /></ProtectedRoute>} />
-              <Route path="/settings/action-required" element={<Navigate to="/settings/actions-notifications" replace />} />
-              <Route path="/settings/actions-notifications" element={<ProtectedRoute permissions={['tenant.company.manage']}><ActionRequiredSettingsPage /></ProtectedRoute>} />
-              
-              <Route path="/settings/service-territories" element={<ProtectedRoute permissions={['tenant.company.manage']}><ServiceTerritoriesPage /></ProtectedRoute>} />
-              <Route path="/settings/email" element={<Navigate to="/settings/integrations/google-email" replace />} />
-              <Route path="/settings/document-templates" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><DocumentTemplatesPage /></ProtectedRoute>} />
-              <Route path="/settings/document-templates/:id" element={<ProtectedRoute permissions={['tenant.integrations.manage']}><DocumentTemplateEditorPage /></ProtectedRoute>} />
-              <Route path="/settings/price-book" element={<ProtectedRoute permissions={['price_book.manage']}><PriceBookPage /></ProtectedRoute>} />
               <Route path="/email" element={<ProtectedRoute permissions={['messages.view_internal']}><EmailPage /></ProtectedRoute>} />
-              <Route path="/settings/users" element={<ProtectedRoute permissions={['tenant.users.manage']}><CompanyUsersPage /></ProtectedRoute>} />
-              <Route path="/settings/roles" element={<ProtectedRoute permissions={['tenant.roles.manage']}><RolesAccessPage /></ProtectedRoute>} />
-              <Route path="/settings/admin" element={<ProtectedRoute platformRoles={['super_admin']}><SuperAdminPage /></ProtectedRoute>} />
-              <Route path="/settings/admin/companies/:companyId" element={<ProtectedRoute platformRoles={['super_admin']}><AdminCompanyDetailPage /></ProtectedRoute>} />
 
               {/* Telephony — Configuration (with sidebar) */}
               <Route path="/settings/telephony" element={<ProtectedRoute permissions={['tenant.telephony.manage']}><TelephonyLayout><RouteManagerOverviewPage /></TelephonyLayout></ProtectedRoute>} />

@@ -40,11 +40,14 @@ export function SettingsPageShell({
     const navigate = useNavigate();
 
     return (
-        <div className="max-w-4xl px-6 py-8 space-y-6" style={{ color: 'var(--blanc-ink-1)' }}>
+        <div className="flex max-w-5xl flex-col gap-8 px-6 py-8" style={{ color: 'var(--blanc-ink-1)' }}>
+            {/* Back link is mobile-only: on md+ the persistent Settings sidebar
+                (SettingsLayout) makes it redundant. gap (not space-y) so the hidden
+                button leaves no phantom margin before the title on desktop. */}
             <button
                 type="button"
                 onClick={() => navigate(backTo)}
-                className="flex items-center gap-1.5 text-sm"
+                className="flex items-center gap-1.5 text-sm md:hidden"
                 style={{ color: 'var(--blanc-ink-3)' }}
             >
                 <ArrowLeft className="h-4 w-4" /> {backLabel}
