@@ -149,34 +149,8 @@
     display: none;
 }
 
-.wizard__field {
-    margin-bottom: 8px;
-}
-
-.wizard__field label {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--blanc-ink-2);
-    margin-bottom: 4px;
-    display: block;
-}
-
-.wizard__field--wide {
-    flex: 1;
-}
-
-.wizard__input--short {
-    max-width: 160px;
-}
-
-.wizard__row {
-    display: flex;
-    gap: 10px;
-}
-
-.wizard__row--align-end {
-    align-items: flex-end;
-}
+/* wizard__field / wizard__row удалены (W1-хвост): все шаги мигрированы на
+   floating-канон, этих классов в TSX больше нет. */
 
 .wizard__territory-status {
     min-height: 42px;

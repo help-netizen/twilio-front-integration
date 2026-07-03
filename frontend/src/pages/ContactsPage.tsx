@@ -111,20 +111,18 @@ export function ContactsPage() {
                     />
                 </div>
             </div>
-            <div className="blanc-page-card">
-                <div style={{ flex: 1, overflow: 'auto' }}>
-                    <ContactsList
-                        contacts={contacts}
-                        loading={loading}
-                        selectedContactId={selectedContact?.id}
-                        onSelectContact={handleSelectContact}
-                        offset={offset}
-                        hasMore={hasMore}
-                        onNextPage={handleNextPage}
-                        onPrevPage={handlePrevPage}
-                    />
-                </div>
-            </div>
+            {/* List — no page card (LAYOUT-CANON rule 7): ContactsList's root is the
+                invisible layout+scroll container; the tiles carry the surface. */}
+            <ContactsList
+                contacts={contacts}
+                loading={loading}
+                selectedContactId={selectedContact?.id}
+                onSelectContact={handleSelectContact}
+                offset={offset}
+                hasMore={hasMore}
+                onNextPage={handleNextPage}
+                onPrevPage={handlePrevPage}
+            />
             <FloatingDetailPanel open={!!selectedContact} onClose={() => { setSelectedContact(null); navigate('/contacts', { replace: true }); }} wide>
                 {selectedContact && (
                     <ContactDetailPanel
