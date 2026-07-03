@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowLeft, Loader2, CheckCircle2, MapPin, X } from 'lucide-react';
+import { Loader2, CheckCircle2, MapPin, X } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { techniciansApi, type Technician } from '../services/techniciansApi';
 import {
@@ -12,6 +11,7 @@ import { EMPTY_ADDRESS, fieldsFromStored, type AddressFields } from '../componen
 import { CompanyBaseAddress, type CompanyBase } from '../components/settings/CompanyBaseAddress';
 import { BaseAddressForm } from '../components/settings/BaseAddressForm';
 import { RecommendationSettings } from '../components/settings/RecommendationSettings';
+import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 
 function initials(name?: string | null) {
     if (!name) return '—';
@@ -34,7 +34,6 @@ function sameCoords(a?: CompanyBase | null, b?: { lat: number | null; lng: numbe
 type TechRow = Technician & { base?: TechnicianBaseLocation };
 
 export default function TechnicianPhotosPage() {
-    const navigate = useNavigate();
     const [techs, setTechs] = useState<TechRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [uploading, setUploading] = useState<string | null>(null);
@@ -140,26 +139,19 @@ export default function TechnicianPhotosPage() {
         : { color: 'var(--blanc-ink-3)', opacity: disabled ? 0.5 : 1 };
 
     return (
-        <div className="max-w-4xl px-6 py-8" style={{ color: 'var(--blanc-ink-1)' }}>
-            <button onClick={() => navigate('/settings/integrations')} className="flex items-center gap-1.5 text-sm mb-6" style={{ color: 'var(--blanc-ink-3)' }}>
-                <ArrowLeft className="h-4 w-4" /> Settings
-            </button>
-            <h2 className="text-2xl font-semibold" style={{ fontFamily: 'var(--blanc-font-heading, inherit)' }}>Providers</h2>
-            <p className="text-sm mt-1 mb-5" style={{ color: 'var(--blanc-ink-3)' }}>
-                A photo builds trust on the payment page and lifts tips. A base location lets the scheduler suggest the best arrival times.
-            </p>
+        <SettingsPageShell
+            backTo="/settings/integrations"
+            backLabel="Settings"
+            title="Providers"
+            description="A photo builds trust on the payment page and lifts tips. A base location lets the scheduler suggest the best arrival times."
+        >
+            <CompanyBaseAddress
+                title="Company base address"
+                hint="The default base for providers who match it. Also editable in Settings → Company."
+                onChange={setCompanyBase}
+            />
 
-            <div className="mb-6">
-                <CompanyBaseAddress
-                    title="Company base address"
-                    hint="The default base for providers who match it. Also editable in Settings → Company."
-                    onChange={setCompanyBase}
-                />
-            </div>
-
-            <div className="mb-6">
-                <RecommendationSettings />
-            </div>
+            <RecommendationSettings />
 
             {loading ? (
                 <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--blanc-ink-3)' }}><Loader2 className="h-4 w-4 animate-spin" /> Loading…</div>
@@ -272,6 +264,6 @@ export default function TechnicianPhotosPage() {
                     })}
                 </div>
             )}
-        </div>
+        </SettingsPageShell>
     );
 }

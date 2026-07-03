@@ -1,29 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ArrowLeft, Loader2, AlertCircle, Building2, ImageOff } from 'lucide-react';
+import { Loader2, AlertCircle, ImageOff } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { FloatingField } from '../components/ui/floating-field';
 import { CompanyBaseAddress } from '../components/settings/CompanyBaseAddress';
+import { SettingsPageShell } from '../components/settings/SettingsPageShell';
+import { SettingsSection } from '../components/settings/SettingsSection';
 import {
     companyProfileApi,
     type CompanyProfile,
     type CompanyProfilePatch,
 } from '../services/companyProfileApi';
-
-const sectionCard = { background: 'rgba(117,106,89,0.04)', borderRadius: 16, padding: '20px 22px' } as const;
-
-function Eyebrow({ children }: { children: React.ReactNode }) {
-    return (
-        <div
-            className="blanc-eyebrow"
-            style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--blanc-ink-3)' }}
-        >
-            {children}
-        </div>
-    );
-}
 
 /** Return the trimmed fields whose value changed vs. `initial` (untouched fields are skipped). */
 function diffPatch<T extends Record<string, string>>(current: T, initial: T): Partial<Record<keyof T, string>> {
@@ -79,24 +67,25 @@ function IdentitySection({ profile, onSaved }: { profile: CompanyProfile; onSave
     };
 
     return (
-        <section style={sectionCard}>
-            <Eyebrow>Identity</Eyebrow>
-            <p className="text-[13px] mt-1 mb-4" style={{ color: 'var(--blanc-ink-3)' }}>
-                Your company name appears in the customer “on the way” text and on every invoice and estimate.
-            </p>
+        <SettingsSection
+            title="Identity"
+            description="Your company name appears in the customer “on the way” text and on every invoice and estimate."
+            footer={
+                <>
+                    {!form.name.trim() && <span className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>Company name is required.</span>}
+                    <Button onClick={save} disabled={saving || !dirty}>
+                        {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Save
+                    </Button>
+                </>
+            }
+        >
             <div className="grid gap-3 sm:grid-cols-2">
                 <FloatingField label="Company name" value={form.name} onChange={set('name')} containerClassName="sm:col-span-2" />
                 <FloatingField label="Contact email" type="email" inputMode="email" value={form.contact_email} onChange={set('contact_email')} />
                 <FloatingField label="Contact phone" type="tel" inputMode="tel" value={form.contact_phone} onChange={set('contact_phone')} />
                 <FloatingField label="Billing email" type="email" inputMode="email" value={form.billing_email} onChange={set('billing_email')} containerClassName="sm:col-span-2" />
             </div>
-            <div className="mt-4 flex items-center gap-3">
-                <Button onClick={save} disabled={saving || !dirty}>
-                    {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Save
-                </Button>
-                {!form.name.trim() && <span className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>Company name is required.</span>}
-            </div>
-        </section>
+        </SettingsSection>
     );
 }
 
@@ -122,11 +111,10 @@ function LogoSection({ logoUrl, onUploaded }: { logoUrl: string | null; onUpload
     };
 
     return (
-        <section style={sectionCard}>
-            <Eyebrow>Logo</Eyebrow>
-            <p className="text-[13px] mt-1 mb-4" style={{ color: 'var(--blanc-ink-3)' }}>
-                Shown on invoices and estimates. A square or wide PNG works best, up to 5MB.
-            </p>
+        <SettingsSection
+            title="Logo"
+            description="Shown on invoices and estimates. A square or wide PNG works best, up to 5MB."
+        >
             <div className="flex items-center gap-4">
                 <div
                     className="h-16 w-16 rounded-xl flex items-center justify-center overflow-hidden shrink-0 border"
@@ -152,7 +140,7 @@ function LogoSection({ logoUrl, onUploaded }: { logoUrl: string | null; onUpload
                     {!logoUrl && <div className="text-xs mt-1.5" style={{ color: 'var(--blanc-ink-3)' }}>No logo yet</div>}
                 </div>
             </div>
-        </section>
+        </SettingsSection>
     );
 }
 
@@ -217,11 +205,15 @@ function PaymentSection({ profile, onSaved }: { profile: CompanyProfile; onSaved
     };
 
     return (
-        <section style={sectionCard}>
-            <Eyebrow>Payment / bank details</Eyebrow>
-            <p className="text-[13px] mt-1 mb-4" style={{ color: 'var(--blanc-ink-3)' }}>
-                These appear on invoices and estimates so customers can pay by direct bank transfer.
-            </p>
+        <SettingsSection
+            title="Payment / bank details"
+            description="These appear on invoices and estimates so customers can pay by direct bank transfer."
+            footer={
+                <Button onClick={save} disabled={saving || !dirty}>
+                    {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Save
+                </Button>
+            }
+        >
             <div className="grid gap-3 sm:grid-cols-2">
                 <FloatingField label="Bank name" value={form.bank_name} onChange={set('bank_name')} />
                 <FloatingField label="Account name" value={form.account_name} onChange={set('account_name')} />
@@ -230,12 +222,7 @@ function PaymentSection({ profile, onSaved }: { profile: CompanyProfile; onSaved
                 <FloatingField label="SWIFT / BIC (optional)" value={form.swift} onChange={set('swift')} containerClassName="sm:col-span-2" />
                 <FloatingField label="Payment instructions" textarea rows={3} value={form.instructions} onChange={set('instructions')} containerClassName="sm:col-span-2" />
             </div>
-            <div className="mt-4">
-                <Button onClick={save} disabled={saving || !dirty}>
-                    {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Save
-                </Button>
-            </div>
-        </section>
+        </SettingsSection>
     );
 }
 
@@ -247,7 +234,6 @@ function PaymentSection({ profile, onSaved }: { profile: CompanyProfile; onSaved
  * surface on the customer "on the way" SMS and on invoices/estimates.
  */
 export default function CompanySettingsPage() {
-    const navigate = useNavigate();
     const qc = useQueryClient();
 
     const { data: profile, isLoading, isError, error } = useQuery({
@@ -259,41 +245,32 @@ export default function CompanySettingsPage() {
     const refetch = () => qc.invalidateQueries({ queryKey: ['company-profile'] });
 
     return (
-        <div className="max-w-4xl px-6 py-8" style={{ color: 'var(--blanc-ink-1)' }}>
-            <button onClick={() => navigate('/settings/integrations')} className="flex items-center gap-1.5 text-sm mb-6" style={{ color: 'var(--blanc-ink-3)' }}>
-                <ArrowLeft className="h-4 w-4" /> Settings
-            </button>
-
-            <div className="flex items-center gap-3 mb-1">
-                <div className="flex items-center justify-center h-11 w-11 rounded-xl shrink-0" style={{ background: 'rgba(117,106,89,0.08)' }}>
-                    <Building2 className="h-5 w-5" style={{ color: 'var(--blanc-ink-2)' }} />
-                </div>
-                <h2 className="text-2xl font-semibold" style={{ fontFamily: 'var(--blanc-font-heading, inherit)' }}>Company profile</h2>
-            </div>
-            <p className="text-sm mt-1 mb-6" style={{ color: 'var(--blanc-ink-3)' }}>
-                Your business identity — used on invoices, estimates, and customer messages.
-            </p>
-
+        <SettingsPageShell
+            backTo="/settings/integrations"
+            backLabel="Settings"
+            title="Company profile"
+            description="Your business identity — used on invoices, estimates, and customer messages."
+        >
             {isLoading ? (
                 <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--blanc-ink-3)' }}>
                     <Loader2 className="h-4 w-4 animate-spin" /> Loading…
                 </div>
             ) : isError || !profile ? (
-                <div style={sectionCard}>
+                <SettingsSection>
                     <p className="text-sm flex items-start gap-2" style={{ color: 'var(--blanc-warning)' }}>
                         <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
                         {(error as Error | undefined)?.message || 'Could not load the company profile.'}
                     </p>
                     <Button variant="outline" size="sm" className="mt-3" onClick={refetch}>Try again</Button>
-                </div>
+                </SettingsSection>
             ) : (
-                <div className="space-y-6">
+                <>
                     <IdentitySection profile={profile} onSaved={applySaved} />
                     <LogoSection logoUrl={profile.logo_url} onUploaded={refetch} />
                     <CompanyBaseAddress title="Company address" />
                     <PaymentSection profile={profile} onSaved={applySaved} />
-                </div>
+                </>
             )}
-        </div>
+        </SettingsPageShell>
     );
 }

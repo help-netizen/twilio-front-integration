@@ -1,22 +1,15 @@
-import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { ArrowLeft, CheckCircle2, AlertCircle, Loader2, CreditCard, Unplug, ExternalLink, RefreshCw } from 'lucide-react';
+import { CheckCircle2, AlertCircle, Loader2, Unplug, ExternalLink, RefreshCw } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import {
     Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '../components/ui/dialog';
+import { SettingsPageShell } from '../components/settings/SettingsPageShell';
+import { SettingsSection } from '../components/settings/SettingsSection';
 import { stripePaymentsApi, type StripePaymentsStatus, type StripeReadiness } from '../services/stripePaymentsApi';
-
-const sectionCard = { background: 'rgba(117,106,89,0.04)', borderRadius: 16, padding: '20px 22px', marginBottom: 16 } as const;
-
-const eyebrow = (text: string) => (
-    <div className="blanc-eyebrow mb-2" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--blanc-ink-3)' }}>
-        {text}
-    </div>
-);
 
 const STATUS_NEUTRAL = 'bg-[rgba(117,106,89,0.06)] text-[var(--blanc-ink-3)]';
 const STATUS_WARNING = 'bg-[rgba(178,106,29,0.12)] text-[var(--blanc-warning)]';
@@ -48,7 +41,6 @@ function ReadinessRow({ ok, label, warn }: { ok: boolean; label: string; warn?: 
 }
 
 export default function StripePaymentsSettingsPage() {
-    const navigate = useNavigate();
     const qc = useQueryClient();
     const [disconnectOpen, setDisconnectOpen] = useState(false);
 
@@ -84,54 +76,41 @@ export default function StripePaymentsSettingsPage() {
     const acct = status?.account;
 
     return (
-        <div className="max-w-4xl px-6 py-8" style={{ color: 'var(--blanc-ink-1)' }}>
-            <Button variant="ghost" onClick={() => navigate('/settings/integrations')} className="mb-6 h-auto px-0 hover:bg-transparent">
-                <ArrowLeft className="h-4 w-4" /> Integrations
-            </Button>
-
-            <div className="flex items-start justify-between mb-8">
-                <div className="flex items-center gap-3">
-                    <div className="flex items-center justify-center h-11 w-11 rounded-xl" style={{ background: '#635bff' }}>
-                        <CreditCard className="h-5 w-5 text-white" />
-                    </div>
-                    <div>
-                        <h2 className="text-2xl font-semibold" style={{ fontFamily: 'var(--blanc-font-heading, inherit)' }}>Stripe Payments</h2>
-                        <p className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Accept customer payments by Stripe</p>
-                    </div>
-                </div>
-                <div className="flex items-center gap-2">
+        <SettingsPageShell
+            backTo="/settings/integrations"
+            backLabel="Integrations"
+            title="Stripe Payments"
+            description="Accept customer payments by Stripe"
+            actions={
+                <>
                     {status?.livemode === false && connected && <Badge variant="outline">Test mode</Badge>}
                     <StatusBadge readiness={readiness} />
-                </div>
-            </div>
-
+                </>
+            }
+        >
             {isLoading ? (
                 <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--blanc-ink-3)' }}>
                     <Loader2 className="h-4 w-4 animate-spin" /> Loading…
                 </div>
             ) : status?.configured === false ? (
-                <div style={sectionCard}>
+                <SettingsSection>
                     <p className="text-sm" style={{ color: 'var(--blanc-ink-2)' }}>
                         Stripe is not configured on this environment yet. Once the platform Stripe keys are set, you can connect your account here.
                     </p>
-                </div>
+                </SettingsSection>
             ) : (
                 <>
-                    {/* Setup checklist */}
-                    <div style={sectionCard}>
-                        {eyebrow('Setup checklist')}
+                    <SettingsSection title="Setup checklist">
                         {(status?.checklist ?? []).map(item => (
                             <div key={item.key} className="flex items-center justify-between py-1.5">
                                 <ReadinessRow ok={item.done} label={item.label} />
                                 {item.deferred && <span className="text-xs" style={{ color: 'var(--blanc-ink-3)' }}>Coming soon</span>}
                             </div>
                         ))}
-                    </div>
+                    </SettingsSection>
 
-                    {/* Account readiness */}
                     {connected && acct && (
-                        <div style={sectionCard}>
-                            {eyebrow('Account readiness')}
+                        <SettingsSection title="Account readiness">
                             <ReadinessRow ok={acct.details_submitted} label="Business details submitted" />
                             <ReadinessRow ok={acct.charges_enabled} label="Card payments enabled" warn={!acct.charges_enabled} />
                             <ReadinessRow ok={acct.payouts_enabled} label="Payouts enabled" warn={!acct.payouts_enabled} />
@@ -141,11 +120,11 @@ export default function StripePaymentsSettingsPage() {
                                     Stripe needs more information to keep payments active.
                                 </p>
                             )}
-                        </div>
+                        </SettingsSection>
                     )}
 
                     {/* Actions */}
-                    <div className="flex flex-wrap items-center gap-2.5 mt-6">
+                    <div className="flex flex-wrap items-center gap-2.5">
                         {!connected && (
                             <Button onClick={() => connectMut.mutate()} disabled={connectMut.isPending}>
                                 {connectMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Connect Stripe
@@ -191,6 +170,6 @@ export default function StripePaymentsSettingsPage() {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
-        </div>
+        </SettingsPageShell>
     );
 }

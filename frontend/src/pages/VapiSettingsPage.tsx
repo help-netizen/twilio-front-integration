@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ArrowLeft, CheckCircle2, AlertCircle, Loader2, Eye, EyeOff, Bot, Unplug } from 'lucide-react';
+import { CheckCircle2, AlertCircle, Loader2, Eye, EyeOff, Unplug } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import {
@@ -16,18 +16,11 @@ import {
 import { FloatingField } from '../components/ui/floating-field';
 import { FloatingSelect } from '../components/ui/floating-select';
 import { SelectItem } from '../components/ui/select';
+import { SettingsPageShell } from '../components/settings/SettingsPageShell';
+import { SettingsSection } from '../components/settings/SettingsSection';
 import { vapiApi, type VapiConnection, type VapiResource } from '../services/vapiApi';
 import { fetchMarketplaceApps, installMarketplaceApp, disconnectMarketplaceInstallation } from '../services/marketplaceApi';
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const label = (text: string) => (
-    <div className="blanc-eyebrow mb-1.5" style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--blanc-ink-3)' }}>
-        {text}
-    </div>
-);
-
-const sectionCard = { background: 'rgba(117,106,89,0.04)', borderRadius: 16, padding: '20px 22px', marginBottom: 16 } as const;
 const VAPI_DISPLAY_NAME = 'VAPI AI';
 
 // ─── Section: API Connection ──────────────────────────────────────────────────
@@ -58,8 +51,7 @@ function ConnectionSection({
 
     if (connection && connection.status === 'active') {
         return (
-            <div style={sectionCard}>
-                {label('API Connection')}
+            <SettingsSection title="API Connection">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <CheckCircle2 size={16} style={{ color: 'var(--blanc-success)', flexShrink: 0 }} />
                     <div>
@@ -72,13 +64,24 @@ function ConnectionSection({
                         </div>
                     </div>
                 </div>
-            </div>
+            </SettingsSection>
         );
     }
 
     return (
-        <div style={sectionCard}>
-            {label('API Connection')}
+        <SettingsSection
+            title="API Connection"
+            footer={
+                <Button
+                    onClick={() => mutation.mutate()}
+                    disabled={!apiKey.trim() || mutation.isPending}
+                    size="sm"
+                >
+                    {mutation.isPending && <Loader2 size={13} className="mr-1.5 animate-spin" />}
+                    Verify & Connect
+                </Button>
+            }
+        >
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <div>
                     <div style={{ position: 'relative' }}>
@@ -118,18 +121,8 @@ function ConnectionSection({
                         <SelectItem value="dev">Development</SelectItem>
                     </FloatingSelect>
                 </div>
-
-                <Button
-                    onClick={() => mutation.mutate()}
-                    disabled={!apiKey.trim() || mutation.isPending}
-                    size="sm"
-                    style={{ alignSelf: 'flex-start' }}
-                >
-                    {mutation.isPending && <Loader2 size={13} className="mr-1.5 animate-spin" />}
-                    Verify & Connect
-                </Button>
             </div>
-        </div>
+        </SettingsSection>
     );
 }
 
@@ -162,8 +155,7 @@ function ResourceSection({
 
     if (resource) {
         return (
-            <div style={sectionCard}>
-                {label('SIP Resource')}
+            <SettingsSection title="SIP Resource">
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     <div>
                         <div style={{ fontSize: 11, color: 'var(--blanc-ink-3)', marginBottom: 3 }}>SIP URI</div>
@@ -180,13 +172,24 @@ function ResourceSection({
                         </div>
                     )}
                 </div>
-            </div>
+            </SettingsSection>
         );
     }
 
     return (
-        <div style={sectionCard}>
-            {label('SIP Resource')}
+        <SettingsSection
+            title="SIP Resource"
+            footer={
+                <Button
+                    onClick={() => mutation.mutate()}
+                    disabled={!sipUri.trim() || mutation.isPending}
+                    size="sm"
+                >
+                    {mutation.isPending && <Loader2 size={13} className="mr-1.5 animate-spin" />}
+                    Save SIP Resource
+                </Button>
+            }
+        >
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <FloatingField
                     label="SIP URI"
@@ -206,17 +209,8 @@ function ResourceSection({
                         {error}
                     </div>
                 )}
-                <Button
-                    onClick={() => mutation.mutate()}
-                    disabled={!sipUri.trim() || mutation.isPending}
-                    size="sm"
-                    style={{ alignSelf: 'flex-start' }}
-                >
-                    {mutation.isPending && <Loader2 size={13} className="mr-1.5 animate-spin" />}
-                    Save SIP Resource
-                </Button>
             </div>
-        </div>
+        </SettingsSection>
     );
 }
 
@@ -280,87 +274,67 @@ export default function VapiSettingsPage() {
         onError: () => toast.error('Failed to disconnect VAPI AI'),
     });
 
-    if (isLoading) {
-        return (
-            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 300 }}>
-                <Loader2 size={20} style={{ color: 'var(--blanc-ink-3)' }} className="animate-spin" />
-            </div>
-        );
-    }
-
     return (
-        <div style={{ maxWidth: 860, padding: '32px 24px' }}>
-            {/* Header */}
-            <button
-                onClick={() => navigate('/settings/integrations')}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--blanc-ink-3)', fontSize: 13, marginBottom: 24, padding: 0 }}
-            >
-                <ArrowLeft size={14} />
-                Back to Integrations
-            </button>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 28 }}>
-                <div style={{ width: 44, height: 44, borderRadius: 12, background: 'rgba(124,58,237,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <Bot size={22} style={{ color: '#7c3aed' }} />
+        <SettingsPageShell
+            backTo="/settings/integrations"
+            backLabel="Back to Integrations"
+            title="VAPI AI"
+            description="Route inbound calls to an AI voice agent"
+            actions={isFullyConnected ? (
+                <Badge className="bg-[rgba(27,139,99,0.12)] text-[var(--blanc-success)]" style={{ border: 'none', fontSize: 12 }}>
+                    Connected
+                </Badge>
+            ) : undefined}
+        >
+            {isLoading ? (
+                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 300 }}>
+                    <Loader2 size={20} style={{ color: 'var(--blanc-ink-3)' }} className="animate-spin" />
                 </div>
-                <div>
-                    <h1 style={{ fontSize: 22, fontWeight: 700, fontFamily: 'Manrope, sans-serif', color: 'var(--blanc-ink-1)', margin: 0 }}>
-                        VAPI AI
-                    </h1>
-                    <div style={{ fontSize: 13, color: 'var(--blanc-ink-3)', marginTop: 2 }}>
-                        Route inbound calls to an AI voice agent
-                    </div>
-                </div>
-                {isFullyConnected && (
-                    <Badge className="ml-auto bg-[rgba(27,139,99,0.12)] text-[var(--blanc-success)]" style={{ border: 'none', fontSize: 12 }}>
-                        Connected
-                    </Badge>
-                )}
-            </div>
+            ) : (
+                <>
+                    {/* Setup / View sections */}
+                    <ConnectionSection
+                        connection={activeConnection}
+                        onConnected={setLocalConnection}
+                    />
 
-            {/* Setup / View sections */}
-            <ConnectionSection
-                connection={activeConnection}
-                onConnected={setLocalConnection}
-            />
+                    {activeConnection && (
+                        <ResourceSection
+                            connectionId={activeConnection.id}
+                            resource={activeResource}
+                            onSaved={setLocalResource}
+                        />
+                    )}
 
-            {activeConnection && (
-                <ResourceSection
-                    connectionId={activeConnection.id}
-                    resource={activeResource}
-                    onSaved={setLocalResource}
-                />
-            )}
+                    {/* Finish Setup */}
+                    {activeConnection && activeResource && !activeInstallation && (
+                        <div>
+                            <Button
+                                onClick={() => installMutation.mutate()}
+                                disabled={installMutation.isPending}
+                                style={{ width: '100%' }}
+                            >
+                                {installMutation.isPending && <Loader2 size={13} className="mr-1.5 animate-spin" />}
+                                Finish Setup
+                            </Button>
+                            <div style={{ fontSize: 11, color: 'var(--blanc-ink-3)', textAlign: 'center', marginTop: 8 }}>
+                                After finishing, the VAPI AI node will be available in your Call Flow Builder.
+                            </div>
+                        </div>
+                    )}
 
-            {/* Finish Setup */}
-            {activeConnection && activeResource && !activeInstallation && (
-                <div style={{ marginTop: 8 }}>
-                    <Button
-                        onClick={() => installMutation.mutate()}
-                        disabled={installMutation.isPending}
-                        style={{ width: '100%' }}
-                    >
-                        {installMutation.isPending && <Loader2 size={13} className="mr-1.5 animate-spin" />}
-                        Finish Setup
-                    </Button>
-                    <div style={{ fontSize: 11, color: 'var(--blanc-ink-3)', textAlign: 'center', marginTop: 8 }}>
-                        After finishing, the VAPI AI node will be available in your Call Flow Builder.
-                    </div>
-                </div>
-            )}
-
-            {/* Disconnect */}
-            {isFullyConnected && (
-                <div style={{ marginTop: 24 }}>
-                    <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => setDisconnectOpen(true)}
-                    >
-                        <Unplug size={13} className="mr-1.5" />
-                        Disconnect VAPI AI
-                    </Button>
-                </div>
+                    {/* Disconnect */}
+                    {isFullyConnected && (
+                        <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => setDisconnectOpen(true)}
+                        >
+                            <Unplug size={13} className="mr-1.5" />
+                            Disconnect VAPI AI
+                        </Button>
+                    )}
+                </>
             )}
 
             {/* Disconnect confirm */}
@@ -385,6 +359,6 @@ export default function VapiSettingsPage() {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
-        </div>
+        </SettingsPageShell>
     );
 }

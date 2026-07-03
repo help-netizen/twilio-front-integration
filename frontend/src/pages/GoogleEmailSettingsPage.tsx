@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowLeft, Mail, RefreshCw, Unplug, ExternalLink, CheckCircle2, AlertTriangle, XCircle } from 'lucide-react';
+import { Mail, RefreshCw, Unplug, ExternalLink, CheckCircle2, AlertTriangle, XCircle } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
+import { SettingsPageShell } from '../components/settings/SettingsPageShell';
+import { SettingsSection } from '../components/settings/SettingsSection';
 import { getMailboxSettings, startGoogleConnect, disconnectMailbox, triggerManualSync, type EmailMailbox } from '../services/emailApi';
 
 /**
@@ -28,7 +30,6 @@ function formatSyncTime(iso: string | null): string {
 }
 
 export default function GoogleEmailSettingsPage() {
-    const navigate = useNavigate();
     const queryClient = useQueryClient();
     const [searchParams, setSearchParams] = useSearchParams();
     const [confirmDisconnect, setConfirmDisconnect] = useState(false);
@@ -86,25 +87,16 @@ export default function GoogleEmailSettingsPage() {
     const status = mailbox ? STATUS_CONFIG[mailbox.status] || STATUS_CONFIG.disconnected : null;
 
     return (
-        <div className="p-6 max-w-4xl">
-            <button
-                onClick={() => navigate('/settings/integrations')}
-                className="inline-flex items-center gap-1.5 text-sm mb-4"
-                style={{ color: 'var(--blanc-ink-2)' }}
-            >
-                <ArrowLeft className="size-4" /> Integrations
-            </button>
-
-            <div className="blanc-eyebrow">Google Email</div>
-            <h1 className="text-2xl font-semibold mt-1" style={{ fontFamily: 'var(--blanc-font-heading)' }}>Google Email</h1>
-            <p className="mt-1 text-sm" style={{ color: 'var(--blanc-ink-2)' }}>
-                Connect one shared Gmail / Google Workspace mailbox per company to send estimates &amp; invoices and sync mail.
-            </p>
-
+        <SettingsPageShell
+            backTo="/settings/integrations"
+            backLabel="Integrations"
+            title="Google Email"
+            description="Connect one shared Gmail / Google Workspace mailbox per company to send estimates & invoices and sync mail."
+        >
             {isLoading ? (
-                <div className="mt-6 text-sm" style={{ color: 'var(--blanc-ink-2)' }}>Loading...</div>
+                <div className="text-sm" style={{ color: 'var(--blanc-ink-2)' }}>Loading...</div>
             ) : (
-                <div className="mt-6" style={{ background: 'rgba(117, 106, 89, 0.04)', borderRadius: '16px', padding: '20px' }}>
+                <SettingsSection>
                     {!mailbox ? (
                         /* ─── Not connected ─── */
                         <div className="flex flex-col items-center gap-4 py-6">
@@ -183,7 +175,7 @@ export default function GoogleEmailSettingsPage() {
                             </div>
                         </div>
                     )}
-                </div>
+                </SettingsSection>
             )}
 
             <Dialog open={confirmDisconnect} onOpenChange={setConfirmDisconnect}>
@@ -205,6 +197,6 @@ export default function GoogleEmailSettingsPage() {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
-        </div>
+        </SettingsPageShell>
     );
 }
