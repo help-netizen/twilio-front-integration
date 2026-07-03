@@ -165,8 +165,8 @@ export function TransactionsPage() {
                 </div>
             )}
 
-            {/* ── Content Card ─────────────────────────────────────────── */}
-            <div className="blanc-page-card">
+            {/* Аквариум снесён (правило 7): невидимый layout-контейнер */}
+            <div className="flex flex-1 flex-col min-h-0">
             {/* -- Left: Transactions List ---------------------------------------- */}
             <div className="flex flex-1 flex-col overflow-hidden">
 
@@ -181,24 +181,24 @@ export function TransactionsPage() {
                             No transactions found
                         </div>
                     ) : (
-                        <table className="w-full text-sm">
-                            <thead className="sticky top-0 bg-background border-b">
+                        <table className="w-full text-sm blanc-table-tiles">
+                            <thead>
                                 <tr>
-                                    <th className="text-left px-4 py-2 font-medium">ID</th>
-                                    <th className="text-left px-4 py-2 font-medium">Type</th>
-                                    <th className="text-left px-4 py-2 font-medium">Method</th>
-                                    <th className="text-right px-4 py-2 font-medium">Amount</th>
-                                    <th className="text-left px-4 py-2 font-medium">Status</th>
-                                    <th className="text-left px-4 py-2 font-medium">Invoice</th>
-                                    <th className="text-left px-4 py-2 font-medium">Date</th>
-                                    <th className="text-right px-4 py-2 font-medium w-10"></th>
+                                    <th className="text-left px-4 py-1">ID</th>
+                                    <th className="text-left px-4 py-1">Type</th>
+                                    <th className="text-left px-4 py-1">Method</th>
+                                    <th className="text-right px-4 py-1">Amount</th>
+                                    <th className="text-left px-4 py-1">Status</th>
+                                    <th className="text-left px-4 py-1">Invoice</th>
+                                    <th className="text-left px-4 py-1">Date</th>
+                                    <th className="text-right px-4 py-1 w-10"></th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {page.transactions.map(txn => (
                                     <tr
                                         key={txn.id}
-                                        className={`border-b cursor-pointer hover:bg-muted/50 transition-colors ${page.selectedTransaction?.id === txn.id ? 'bg-muted' : ''}`}
+                                        className={`cursor-pointer ${page.selectedTransaction?.id === txn.id ? 'blanc-tile-row-selected' : ''}`}
                                         onClick={() => page.selectTransaction(txn.id)}
                                     >
                                         <td className="px-4 py-2 font-mono text-xs">#{txn.id}</td>
@@ -245,7 +245,7 @@ export function TransactionsPage() {
 
                 {/* Pagination */}
                 {page.totalPages > 1 && (
-                    <div className="border-t px-4 py-2 flex items-center justify-between text-sm text-muted-foreground">
+                    <div className="px-4 py-2 flex items-center justify-between text-sm text-muted-foreground">
                         <span>{page.total} transaction{page.total !== 1 ? 's' : ''}</span>
                         <div className="flex items-center gap-1">
                             <Button

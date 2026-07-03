@@ -126,8 +126,8 @@ export function EstimatesPage() {
                 </div>
             </div>
 
-            {/* ── Content Card ─────────────────────────────────────────── */}
-            <div className="blanc-page-card">
+            {/* Аквариум снесён (правило 7): невидимый layout-контейнер */}
+            <div className="flex flex-1 flex-col min-h-0">
             {/* ── Left: Estimates List ──────────────────────────────────── */}
             <div className="flex flex-1 flex-col overflow-hidden">
 
@@ -142,22 +142,22 @@ export function EstimatesPage() {
                             No estimates found
                         </div>
                     ) : (
-                        <table className="w-full text-sm">
-                            <thead className="sticky top-0 bg-background border-b">
+                        <table className="w-full text-sm blanc-table-tiles">
+                            <thead>
                                 <tr>
-                                    <th className="text-left px-4 py-2 font-medium">#</th>
-                                    <th className="text-left px-4 py-2 font-medium">Customer</th>
-                                    <th className="text-left px-4 py-2 font-medium">Status</th>
-                                    <th className="text-right px-4 py-2 font-medium">Total</th>
-                                    <th className="text-left px-4 py-2 font-medium">Created</th>
-                                    <th className="text-right px-4 py-2 font-medium w-10"></th>
+                                    <th className="text-left px-4 py-1">#</th>
+                                    <th className="text-left px-4 py-1">Customer</th>
+                                    <th className="text-left px-4 py-1">Status</th>
+                                    <th className="text-right px-4 py-1">Total</th>
+                                    <th className="text-left px-4 py-1">Created</th>
+                                    <th className="text-right px-4 py-1 w-10"></th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {page.estimates.map(est => (
                                     <tr
                                         key={est.id}
-                                        className={`border-b cursor-pointer hover:bg-muted/50 transition-colors ${page.selectedEstimate?.id === est.id ? 'bg-muted' : ''} ${est.archived_at ? 'grayscale opacity-60' : ''}`}
+                                        className={`cursor-pointer ${page.selectedEstimate?.id === est.id ? 'blanc-tile-row-selected' : ''} ${est.archived_at ? 'grayscale opacity-60' : ''}`}
                                         onClick={() => page.selectEstimate(est.id)}
                                     >
                                         <td className="px-4 py-2 font-mono text-xs">{est.estimate_number}</td>
@@ -199,7 +199,7 @@ export function EstimatesPage() {
 
                 {/* Pagination */}
                 {page.totalPages > 1 && (
-                    <div className="border-t px-4 py-2 flex items-center justify-between text-sm text-muted-foreground">
+                    <div className="px-4 py-2 flex items-center justify-between text-sm text-muted-foreground">
                         <span>{page.total} estimate{page.total !== 1 ? 's' : ''}</span>
                         <div className="flex items-center gap-1">
                             <Button

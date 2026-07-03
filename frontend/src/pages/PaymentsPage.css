@@ -13,7 +13,6 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    border-right: 1px solid #e5e7eb;
     min-width: 0;
 }
 
@@ -344,25 +343,24 @@
     overflow: auto;
 }
 
+/* Ряды-тайлы (LAYOUT-CANON правило 7) — синхронно с .blanc-table-tiles ядра */
 .payments-table {
     width: 100%;
-    border-collapse: collapse;
+    border-collapse: separate;
+    border-spacing: 0 8px;
     font-size: 13px;
 }
 
 .payments-table th {
-    position: sticky;
-    top: 0;
-    z-index: 2;
-    background: #f9fafb;
-    padding: 8px 12px;
+    background: transparent;
+    padding: 0 12px 2px;
     text-align: left;
     font-size: 11px;
-    font-weight: 700;
-    color: #6b7280;
+    font-weight: 600;
+    color: var(--blanc-ink-3);
     text-transform: uppercase;
-    letter-spacing: 0.04em;
-    border-bottom: 1px solid #e5e7eb;
+    letter-spacing: 0.14em;
+    border: none;
     white-space: nowrap;
     user-select: none;
 }
@@ -372,7 +370,7 @@
 }
 
 .payments-table th.sortable:hover {
-    color: #2563eb;
+    color: var(--blanc-ink-1);
 }
 
 .payments-table th .sort-arrow {
@@ -384,30 +382,39 @@
 
 .payments-table th.sorted .sort-arrow {
     opacity: 1;
-    color: #2563eb;
+    color: var(--blanc-accent);
 }
 
 .payments-table td {
     padding: 8px 12px;
-    border-bottom: 1px solid #f3f4f6;
-    color: #111827;
+    background: var(--blanc-panel-surface);
+    color: var(--blanc-ink-1);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: 160px;
 }
 
+.payments-table tbody td:first-child {
+    border-top-left-radius: 12px;
+    border-bottom-left-radius: 12px;
+}
+
+.payments-table tbody td:last-child {
+    border-top-right-radius: 12px;
+    border-bottom-right-radius: 12px;
+}
+
 .payments-table tbody tr {
     cursor: pointer;
-    transition: background 0.1s;
 }
 
-.payments-table tbody tr:hover {
-    background: #f9fafb;
+.payments-table tbody tr:hover td {
+    background: #FAFAFA;
 }
 
-.payments-table tbody tr.selected {
-    background: #eff6ff;
+.payments-table tbody tr.selected td {
+    background: rgba(127, 66, 225, 0.07);
 }
 
 .payments-table td.amount-cell {

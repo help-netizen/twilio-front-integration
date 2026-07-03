@@ -204,8 +204,8 @@ export default function PaymentsPage() {
                 </div>
             )}
 
-            {/* ── Content Card ───────────────────────────────────────── */}
-            <div className="blanc-page-card">
+            {/* Аквариум снесён (правило 7): невидимый layout-контейнер */}
+            <div className="flex flex-1 flex-col min-h-0">
                 <div className="payments-list-panel">
                 {/* Error */}
                 {pm.error && <div className="payments-error">⚠️ {pm.error}</div>}
