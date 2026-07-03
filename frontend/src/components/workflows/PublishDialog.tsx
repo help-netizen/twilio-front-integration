@@ -72,7 +72,7 @@ export default function PublishDialog({
                             onChange={(e) => setChangeNote(e.target.value)}
                             placeholder="Describe what changed in this version..."
                             rows={3}
-                            className="w-full rounded-xl border border-[var(--blanc-line)] bg-[var(--blanc-bg)] px-3 py-2.5 text-sm text-[var(--blanc-ink-1)] placeholder:text-[var(--blanc-ink-3)] focus:outline-none focus:ring-2 focus:ring-[var(--blanc-ink-3)] resize-none"
+                            className="w-full rounded-xl border border-transparent bg-[var(--blanc-field)] px-3 py-2.5 text-sm text-[var(--blanc-ink-1)] placeholder:text-[var(--blanc-ink-3)] transition-colors focus:outline-none focus:border-[var(--blanc-line-strong)] resize-none"
                         />
                     </div>
 

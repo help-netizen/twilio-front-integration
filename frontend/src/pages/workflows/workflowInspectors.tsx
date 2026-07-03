@@ -190,8 +190,8 @@ function IconPicker({ value, onChange }: { value: string; onChange: (v: string) 
                     gap: 8,
                     padding: '6px 10px',
                     borderRadius: 8,
-                    border: '1px solid var(--blanc-line)',
-                    background: '#fff',
+                    border: '1px solid transparent',
+                    background: 'var(--blanc-field)',
                     cursor: 'pointer',
                     textAlign: 'left',
                     fontSize: 13,
@@ -222,7 +222,7 @@ function IconPicker({ value, onChange }: { value: string; onChange: (v: string) 
                     left: 0,
                     right: 0,
                     zIndex: 1000,
-                    background: '#fff',
+                    background: 'var(--blanc-panel-surface)',
                     border: '1px solid var(--blanc-line)',
                     borderRadius: 10,
                     boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
@@ -236,14 +236,12 @@ function IconPicker({ value, onChange }: { value: string; onChange: (v: string) 
                             placeholder="Search…"
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
+                            className="border border-transparent bg-[var(--blanc-field)] text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-line-strong)]"
                             style={{
                                 width: '100%',
                                 fontSize: 12,
                                 padding: '5px 8px',
                                 borderRadius: 6,
-                                border: '1px solid var(--blanc-line)',
-                                outline: 'none',
-                                background: 'rgba(117,106,89,0.04)',
                                 boxSizing: 'border-box',
                             }}
                         />
@@ -274,13 +272,13 @@ function IconPicker({ value, onChange }: { value: string; onChange: (v: string) 
                                         width: '100%',
                                         aspectRatio: '1',
                                         borderRadius: 6,
-                                        border: selected ? '1.5px solid var(--blanc-job, #2f63d8)' : '1.5px solid transparent',
-                                        background: selected ? 'rgba(47,99,216,0.08)' : 'transparent',
+                                        border: selected ? '1.5px solid var(--blanc-accent)' : '1.5px solid transparent',
+                                        background: selected ? 'var(--blanc-accent-soft)' : 'transparent',
                                         cursor: 'pointer',
                                         padding: 4,
                                     }}
                                 >
-                                    <Icon size={16} color={selected ? 'var(--blanc-job, #2f63d8)' : 'var(--blanc-ink-2)'} />
+                                    <Icon size={16} color={selected ? 'var(--blanc-accent)' : 'var(--blanc-ink-2)'} />
                                 </button>
                             );
                         })}
@@ -398,7 +396,7 @@ export function FlowPropertiesPanel({
                     style={{
                         fontSize: 10,
                         lineHeight: 1.5,
-                        background: 'rgba(117,106,89,0.04)',
+                        background: 'rgba(25,25,25,0.04)',
                         borderRadius: 8,
                         padding: 12,
                         overflow: 'auto',
@@ -452,14 +450,12 @@ export function StateInspector({
                     type="text"
                     value={d.label}
                     onChange={(e) => onUpdateNode(node.id, { label: e.target.value, statusName: e.target.value })}
+                    className="border border-transparent bg-[var(--blanc-field)] text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-line-strong)]"
                     style={{
                         width: '100%',
                         fontSize: 13,
                         padding: '6px 10px',
                         borderRadius: 8,
-                        border: '1px solid var(--blanc-line)',
-                        background: '#fff',
-                        outline: 'none',
                     }}
                 />
             </div>
@@ -475,7 +471,7 @@ export function StateInspector({
                         fontFamily: 'monospace',
                         padding: '6px 10px',
                         borderRadius: 8,
-                        background: 'rgba(117,106,89,0.04)',
+                        background: 'rgba(25,25,25,0.04)',
                         color: 'var(--blanc-ink-2)',
                     }}
                 >
@@ -493,7 +489,7 @@ export function StateInspector({
                             if (!d.isInitial) onSetInitial(node.id);
                         }}
                         disabled={d.isInitial}
-                        style={{ accentColor: 'var(--blanc-job, #2f63d8)' }}
+                        style={{ accentColor: 'var(--blanc-accent)' }}
                     />
                     <span style={{ fontSize: 13, color: 'var(--blanc-ink-2)' }}>
                         Starting status
@@ -573,14 +569,12 @@ export function TransitionInspector({
                     type="text"
                     value={ed.label || ''}
                     onChange={(e) => onUpdateEdge(edge.id, { label: e.target.value })}
+                    className="border border-transparent bg-[var(--blanc-field)] text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-line-strong)]"
                     style={{
                         width: '100%',
                         fontSize: 13,
                         padding: '6px 10px',
                         borderRadius: 8,
-                        border: '1px solid var(--blanc-line)',
-                        background: '#fff',
-                        outline: 'none',
                     }}
                 />
             </div>
@@ -596,7 +590,7 @@ export function TransitionInspector({
                         fontFamily: 'monospace',
                         padding: '6px 10px',
                         borderRadius: 8,
-                        background: 'rgba(117,106,89,0.04)',
+                        background: 'rgba(25,25,25,0.04)',
                         color: 'var(--blanc-ink-2)',
                     }}
                 >
@@ -610,7 +604,7 @@ export function TransitionInspector({
                     type="checkbox"
                     checked={ed.isAction || false}
                     onChange={(e) => onUpdateEdge(edge.id, { isAction: e.target.checked })}
-                    style={{ accentColor: 'var(--blanc-job, #2f63d8)' }}
+                    style={{ accentColor: 'var(--blanc-accent)' }}
                 />
                 <span style={{ fontSize: 13, color: 'var(--blanc-ink-2)' }}>
                     Action Button
@@ -641,14 +635,12 @@ export function TransitionInspector({
                             order: e.target.value === '' ? null : Number(e.target.value),
                         })
                     }
+                    className="border border-transparent bg-[var(--blanc-field)] text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-line-strong)]"
                     style={{
                         width: '100%',
                         fontSize: 13,
                         padding: '6px 10px',
                         borderRadius: 8,
-                        border: '1px solid var(--blanc-line)',
-                        background: '#fff',
-                        outline: 'none',
                     }}
                 />
             </div>
@@ -659,7 +651,7 @@ export function TransitionInspector({
                     type="checkbox"
                     checked={ed.confirm || false}
                     onChange={(e) => onUpdateEdge(edge.id, { confirm: e.target.checked })}
-                    style={{ accentColor: 'var(--blanc-job, #2f63d8)' }}
+                    style={{ accentColor: 'var(--blanc-accent)' }}
                 />
                 <span style={{ fontSize: 13, color: 'var(--blanc-ink-2)' }}>
                     Require Confirmation
@@ -676,14 +668,12 @@ export function TransitionInspector({
                         value={ed.confirmText || ''}
                         onChange={(e) => onUpdateEdge(edge.id, { confirmText: e.target.value })}
                         rows={2}
+                        className="border border-transparent bg-[var(--blanc-field)] text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-line-strong)]"
                         style={{
                             width: '100%',
                             fontSize: 13,
                             padding: '6px 10px',
                             borderRadius: 8,
-                            border: '1px solid var(--blanc-line)',
-                            background: '#fff',
-                            outline: 'none',
                             resize: 'vertical',
                         }}
                     />
@@ -699,14 +689,12 @@ export function TransitionInspector({
                     type="text"
                     value={ed.roles || ''}
                     onChange={(e) => onUpdateEdge(edge.id, { roles: e.target.value })}
+                    className="border border-transparent bg-[var(--blanc-field)] text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-line-strong)]"
                     style={{
                         width: '100%',
                         fontSize: 13,
                         padding: '6px 10px',
                         borderRadius: 8,
-                        border: '1px solid var(--blanc-line)',
-                        background: '#fff',
-                        outline: 'none',
                     }}
                 />
             </div>
@@ -721,14 +709,12 @@ export function TransitionInspector({
                     value={ed.hotkey || ''}
                     onChange={(e) => onUpdateEdge(edge.id, { hotkey: e.target.value })}
                     placeholder="e.g. ctrl+d"
+                    className="border border-transparent bg-[var(--blanc-field)] text-[var(--blanc-ink-1)] outline-none transition-colors focus:border-[var(--blanc-line-strong)]"
                     style={{
                         width: '100%',
                         fontSize: 13,
                         padding: '6px 10px',
                         borderRadius: 8,
-                        border: '1px solid var(--blanc-line)',
-                        background: '#fff',
-                        outline: 'none',
                     }}
                 />
             </div>
