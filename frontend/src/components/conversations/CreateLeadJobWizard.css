@@ -68,7 +68,7 @@
 }
 
 .wizard__call-btn--disabled {
-    background: rgba(117, 106, 89, 0.15);
+    background: rgba(25, 25, 25, 0.09);
     color: var(--blanc-ink-3);
     cursor: not-allowed;
 }
@@ -122,7 +122,7 @@
 }
 
 .wizard__step-pill--clickable:hover {
-    background: rgba(117, 106, 89, 0.08);
+    background: rgba(25, 25, 25, 0.05);
 }
 
 .wizard__step-pill--done.wizard__step-pill--clickable:hover {
@@ -194,9 +194,9 @@
     padding: 9px 12px;
     font-size: 15px;
     font-weight: 500;
-    border: 1.5px solid rgba(104, 95, 80, 0.28);
+    border: 1.5px solid transparent;
     border-radius: 10px;
-    background: #fff;
+    background: var(--blanc-field);
     color: var(--blanc-ink-1);
     box-shadow: none;
     transition: border-color 0.15s, box-shadow 0.15s;
@@ -221,8 +221,8 @@
 .wizard__body [data-slot="select-trigger"] {
     min-height: 42px !important;
     border-radius: 10px !important;
-    border: 1.5px solid rgba(104, 95, 80, 0.28) !important;
-    background: #fff !important;
+    border: 1.5px solid transparent !important;
+    background: var(--blanc-field) !important;
     font-size: 15px !important;
     font-weight: 500 !important;
     padding: 9px 12px !important;
@@ -238,11 +238,11 @@
     display: block;
     width: 100%;
     padding: 9px 12px;
-    border: 1.5px solid rgba(104, 95, 80, 0.28);
+    border: 1.5px solid transparent;
     border-radius: 10px;
     font-size: 15px;
     font-weight: 500;
-    background: #fff;
+    background: var(--blanc-field);
     color: var(--blanc-ink-1);
     outline: none;
     transition: border-color 0.15s;
@@ -261,7 +261,7 @@
     margin-top: 6px;
     padding-right: 4px;
     scrollbar-width: thin;
-    scrollbar-color: rgba(104, 95, 80, 0.2) transparent;
+    scrollbar-color: var(--blanc-line-strong) transparent;
 }
 
 .wizard__day {
@@ -286,7 +286,7 @@
 .wizard__slot {
     padding: 8px 6px;
     border-radius: 10px;
-    border: 1.5px solid var(--blanc-line, rgba(104, 95, 80, 0.14));
+    border: 1.5px solid var(--blanc-line, rgba(25, 25, 25, 0.08));
     font-size: 12px;
     font-weight: 500;
     cursor: pointer;
@@ -424,7 +424,7 @@
     justify-content: space-between;
     gap: 12px;
     padding: 8px 20px;
-    background: rgba(117, 106, 89, 0.04);
+    background: rgba(25, 25, 25, 0.03);
     border-radius: 10px;
     margin: 6px 20px;
 }

@@ -369,7 +369,7 @@
     position: absolute;
     top: 8px;
     left: 8px;
-    background: var(--blanc-surface-strong, #fffdf9);
+    background: var(--blanc-surface-strong, #FFFFFF);
     opacity: 0.85;
     backdrop-filter: blur(4px);
     border-radius: 6px;
@@ -382,7 +382,7 @@
     position: absolute;
     bottom: 8px;
     left: 8px;
-    background: var(--blanc-surface-strong, #fffdf9);
+    background: var(--blanc-surface-strong, #FFFFFF);
     opacity: 0.92;
     backdrop-filter: blur(4px);
     border-radius: 6px;
@@ -469,7 +469,7 @@
     min-height: 0;
     overflow: hidden;
     border-radius: 16px;
-    background: rgba(117, 106, 89, 0.04);
+    background: rgba(25, 25, 25, 0.03);
     padding: 12px 10px 10px;
 }
 .ctm-recs__header {
@@ -500,9 +500,9 @@
 .ctm-rec-card {
     position: relative;
     text-align: left;
-    border: 1px solid var(--blanc-line, rgba(117, 106, 89, 0.18));
+    border: 1px solid var(--blanc-line, rgba(25, 25, 25, 0.08));
     border-radius: 12px;
-    background: var(--blanc-panel-surface, #fffdf9);
+    background: var(--blanc-panel-surface, #FFFFFF);
     padding: 9px 11px 9px 18px;
     cursor: pointer;
     transition: border-color 0.12s, background 0.12s;
@@ -515,7 +515,7 @@
     bottom: 9px;
     width: 5px;
     border-radius: 999px;
-    background: var(--blanc-line, rgba(117, 106, 89, 0.18));
+    background: var(--blanc-line, rgba(25, 25, 25, 0.08));
     overflow: hidden;
 }
 .ctm-rec-card__temp-fill {
@@ -526,11 +526,11 @@
     border-radius: 999px;
 }
 .ctm-rec-card:hover {
-    border-color: color-mix(in srgb, var(--blanc-job, #2f63d8) 40%, var(--blanc-line, rgba(117, 106, 89, 0.3)));
+    border-color: color-mix(in srgb, var(--blanc-job, #2f63d8) 40%, var(--blanc-line, rgba(25, 25, 25, 0.20)));
 }
 .ctm-rec-card--active {
     border-color: var(--blanc-job, #2f63d8);
-    background: color-mix(in srgb, var(--blanc-job, #2f63d8) 6%, var(--blanc-panel-surface, #fffdf9));
+    background: color-mix(in srgb, var(--blanc-job, #2f63d8) 6%, var(--blanc-panel-surface, #FFFFFF));
 }
 .ctm-rec-card__top {
     display: flex;

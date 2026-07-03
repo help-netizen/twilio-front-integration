@@ -83,7 +83,7 @@
 .pulse-card {
     position: relative;
     background: var(--blanc-surface-strong);
-    border: 1px solid var(--blanc-line, rgba(104, 95, 80, 0.14));
+    border: 1px solid var(--blanc-line, rgba(25, 25, 25, 0.08));
     border-radius: var(--blanc-radius-xl);
     box-shadow: var(--blanc-shadow-main);
     overflow: hidden;
@@ -129,13 +129,13 @@
     width: 42px;
     height: 42px;
     border-radius: 14px;
-    border: 1px solid rgba(104, 95, 80, 0.14);
+    border: 1px solid var(--blanc-line);
     background: var(--blanc-surface-strong);
     color: var(--blanc-ink-1);
     cursor: pointer;
     transition: opacity 0.15s ease;
     flex-shrink: 0;
-    box-shadow: rgba(48, 39, 28, 0.06) 0px 6px 16px;
+    box-shadow: rgba(25, 25, 25, 0.06) 0px 6px 16px;
 }
 
 .pulse-back-btn:hover {

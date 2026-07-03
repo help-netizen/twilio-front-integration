@@ -172,7 +172,8 @@
        #030213 из tailwind.css — здесь оверрайдим, фабричный файл не трогаем) */
     --primary: var(--blanc-accent);
     --primary-foreground: #ffffff;
-    --ring: var(--blanc-job);
+    /* PALETTE-V2 (W2): фокус-кольцо = акцент (было job-синее в фиолетовом мире) */
+    --ring: var(--blanc-accent);
     --chart-1: var(--blanc-lead);
     --chart-2: var(--blanc-task);
     --chart-3: var(--blanc-job);
