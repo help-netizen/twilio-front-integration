@@ -208,7 +208,7 @@ export function BottomSheet({
                         style={{
                             flexShrink: 0,
                             borderTop: '1px solid var(--blanc-line, rgba(117, 106, 89, 0.18))',
-                            background: 'var(--blanc-bg, #efe9df)',
+                            background: 'var(--blanc-bg, #F1F1F0)',
                             boxShadow: '0 -12px 28px -20px rgba(63, 55, 42, 0.45)',
                             paddingLeft: 20,
                             paddingRight: 20,

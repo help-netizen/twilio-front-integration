@@ -7,11 +7,11 @@ import { toast } from 'sonner';
 import { automationApi, type AutomationRule, type Catalog, type RuleRun } from '../services/automationApi';
 import { RuleEditor } from '../components/automation/RuleEditor';
 import { FloatingDetailPanel } from '../components/ui/FloatingDetailPanel';
+import { Button } from '../components/ui/button';
+import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 
-const LINE = 'var(--blanc-line, rgba(117,106,89,0.18))';
 const INK2 = 'var(--blanc-ink-2, #536070)';
 const INK3 = 'var(--blanc-ink-3, #7d8796)';
-const PRI = 'var(--blanc-job, #2f63d8)';
 
 function humanizeDur(s?: number | null): string {
     if (!s) return '';
@@ -85,41 +85,38 @@ export default function AutomationPage() {
     };
 
     return (
-        <div style={{ padding: '28px 24px', maxWidth: 1000, margin: '0 auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 22, gap: 16, flexWrap: 'wrap' }}>
-                <div>
-                    <div className="blanc-eyebrow">Automation</div>
-                    <h1 style={{ fontSize: 24, fontWeight: 600, margin: '4px 0 4px', fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1, #202734)' }}>Rules</h1>
-                    <p style={{ fontSize: 13, color: INK3, margin: 0 }}>React to events and timers — send messages, create tasks, run agents.</p>
-                </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                    <button onClick={seed} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px', background: 'transparent', border: `1px solid ${LINE}`, borderRadius: 10, fontSize: 13, cursor: 'pointer', color: INK2, fontWeight: 500 }}><Sparkles size={14} /> Add defaults</button>
-                    <button onClick={() => setEditing({})} disabled={!catalog} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', background: PRI, color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', opacity: catalog ? 1 : 0.6 }}><Plus size={14} /> New rule</button>
-                </div>
-            </div>
-
-            {loading ? <div style={{ padding: 40, textAlign: 'center', color: INK3 }}><Loader2 className="animate-spin" /></div> : (
+        <SettingsPageShell
+            title="Automation"
+            description="React to events and timers — send messages, create tasks, run agents."
+            actions={
+                <>
+                    <Button variant="outline" onClick={seed}><Sparkles size={14} /> Add defaults</Button>
+                    <Button onClick={() => setEditing({})} disabled={!catalog}><Plus size={14} /> New rule</Button>
+                </>
+            }
+        >
+            {loading ? <div className="py-10 text-center" style={{ color: INK3 }}><Loader2 className="animate-spin" /></div> : (
                 rules.length === 0 ? (
-                    <div style={{ padding: 40, textAlign: 'center', color: INK3, border: `1px dashed ${LINE}`, borderRadius: 16 }}>
+                    <div className="rounded-2xl border border-dashed p-10 text-center" style={{ borderColor: 'var(--blanc-line)', color: INK3 }}>
                         No rules yet. Create one, or add a few sensible defaults to start.
                     </div>
                 ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <div className="flex flex-col gap-2.5">
                         {rules.map(r => (
-                            <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', border: `1px solid ${LINE}`, borderRadius: 14, background: 'var(--blanc-surface-strong, #fffdf9)' }}>
-                                <button onClick={() => toggle(r)} aria-label={r.enabled ? 'Disable rule' : 'Enable rule'} style={{ width: 40, height: 22, borderRadius: 11, border: 'none', cursor: 'pointer', background: r.enabled ? 'var(--blanc-success, #1b8b63)' : 'rgba(117,106,89,0.22)', position: 'relative', flexShrink: 0 }}>
-                                    <span style={{ position: 'absolute', top: 2, left: r.enabled ? 20 : 2, width: 18, height: 18, borderRadius: 9, background: '#fff', transition: 'left .15s' }} />
+                            <div key={r.id} className="flex items-center gap-3 rounded-xl border px-4 py-3.5" style={{ borderColor: 'var(--blanc-line)', background: 'var(--blanc-surface-strong)' }}>
+                                <button onClick={() => toggle(r)} aria-label={r.enabled ? 'Disable rule' : 'Enable rule'} className="relative h-[22px] w-10 shrink-0 cursor-pointer rounded-full" style={{ background: r.enabled ? 'var(--blanc-success)' : 'rgba(117,106,89,0.22)' }}>
+                                    <span className="absolute top-0.5 h-[18px] w-[18px] rounded-full bg-white transition-[left] duration-150" style={{ left: r.enabled ? 20 : 2 }} />
                                 </button>
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div style={{ fontWeight: 600, fontSize: 14.5, display: 'flex', alignItems: 'center', gap: 6, color: 'var(--blanc-ink-1, #202734)' }}>
+                                <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-1.5 text-[14.5px] font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>
                                         {r.name}
-                                        {r.is_system && <span style={{ fontSize: 10.5, padding: '1px 7px', borderRadius: 99, background: 'rgba(47,99,216,0.12)', color: '#234d9e' }}>system</span>}
+                                        {r.is_system && <span className="rounded-full px-[7px] py-px text-[10.5px]" style={{ background: 'rgba(47,99,216,0.12)', color: 'var(--blanc-info)' }}>system</span>}
                                     </div>
-                                    <div style={{ fontSize: 12.5, color: INK3, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ruleSentence(r)}</div>
+                                    <div className="mt-0.5 truncate text-[12.5px]" style={{ color: INK3 }}>{ruleSentence(r)}</div>
                                 </div>
-                                <button onClick={() => showRuns(r)} aria-label="Run history" style={{ border: 'none', background: 'none', cursor: 'pointer', color: INK3, display: 'flex' }}><History size={16} /></button>
-                                <button onClick={() => setEditing(r)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: PRI, fontSize: 13, fontWeight: 600 }}>Edit</button>
-                                <button onClick={() => remove(r)} aria-label="Delete rule" style={{ border: 'none', background: 'none', cursor: 'pointer', color: INK3, display: 'flex' }}><Trash2 size={15} /></button>
+                                <button onClick={() => showRuns(r)} aria-label="Run history" className="flex cursor-pointer" style={{ color: INK3 }}><History size={16} /></button>
+                                <button onClick={() => setEditing(r)} className="cursor-pointer text-[13px] font-semibold" style={{ color: 'var(--blanc-job)' }}>Edit</button>
+                                <button onClick={() => remove(r)} aria-label="Delete rule" className="flex cursor-pointer" style={{ color: INK3 }}><Trash2 size={15} /></button>
                             </div>
                         ))}
                     </div>
@@ -154,6 +151,6 @@ export default function AutomationPage() {
                     </div>
                 </FloatingDetailPanel>
             )}
-        </div>
+        </SettingsPageShell>
     );
 }

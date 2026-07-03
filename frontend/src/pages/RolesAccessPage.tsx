@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { Loader2, ShieldCheck, Lock } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { Checkbox } from '../components/ui/checkbox';
+import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { useIsMobile } from '../hooks/useIsMobile';
 import {
     getRoleMatrix,
@@ -16,17 +17,6 @@ import {
 } from '../services/rolesApi';
 
 const LOCKED_ROLE_KEY = 'tenant_admin';
-
-function Eyebrow({ children }: { children: React.ReactNode }) {
-    return (
-        <div
-            className="blanc-eyebrow"
-            style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--blanc-ink-3)' }}
-        >
-            {children}
-        </div>
-    );
-}
 
 /** A role column is locked if it's the admin role or its config is_locked. */
 function isLockedRole(role: RoleMatrixRole): boolean {
@@ -75,12 +65,17 @@ function RolesMatrix({ matrix, onMatrixChange }: { matrix: RoleMatrix; onMatrixC
                 </span>
             </p>
 
-            <div style={{ overflowX: 'auto' }}>
+            {/* ЕДИНСТВЕННОЕ исключение из «без карт» (LAYOUT-CANON правило 7): широкая
+                скроллируемая матрица = один белый контентный юнит r16. Sticky-колонка
+                красится в тот же panel-surface — var(--blanc-bg) проступала бы полосой
+                на градиентном канвасе. Горизонтального padding у юнита нет намеренно:
+                sticky left:0 липнет к краю скроллпорта, отступ дают сами ячейки. */}
+            <div style={{ overflowX: 'auto', background: 'var(--blanc-panel-surface)', borderRadius: 16, padding: '6px 0' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
                     <thead>
                         <tr>
-                            <th style={{ textAlign: 'left', padding: '8px 12px', position: 'sticky', left: 0, background: 'var(--blanc-bg)', minWidth: 240 }}>
-                                <span className="blanc-eyebrow" style={{ fontSize: 11, color: 'var(--blanc-ink-3)' }}>Permission</span>
+                            <th style={{ textAlign: 'left', padding: '8px 12px', position: 'sticky', left: 0, background: 'var(--blanc-panel-surface)', minWidth: 240 }}>
+                                <span className="blanc-eyebrow">Permission</span>
                             </th>
                             {roles.map(role => (
                                 <th key={role.role_key} style={{ padding: '8px 12px', textAlign: 'center', minWidth: 110 }}>
@@ -122,12 +117,12 @@ function GroupRows({
         <>
             <tr>
                 <td colSpan={roles.length + 1} style={{ padding: '16px 12px 6px' }}>
-                    <Eyebrow>{group.category}</Eyebrow>
+                    <div className="blanc-eyebrow">{group.category}</div>
                 </td>
             </tr>
             {group.items.map(item => (
                 <tr key={item.key} style={{ borderTop: '1px solid var(--blanc-line)' }}>
-                    <td style={{ padding: '10px 12px', position: 'sticky', left: 0, background: 'var(--blanc-bg)', color: 'var(--blanc-ink-1)' }}>
+                    <td style={{ padding: '10px 12px', position: 'sticky', left: 0, background: 'var(--blanc-panel-surface)', color: 'var(--blanc-ink-1)' }}>
                         {item.label}
                     </td>
                     {roles.map(role => {
@@ -258,7 +253,7 @@ function PeoplePanel({ matrix }: { matrix: RoleMatrix }) {
     };
 
     if (loadErr) {
-        return <p className="text-sm" style={{ color: '#b42318' }}>{loadErr}</p>;
+        return <p className="text-sm" style={{ color: 'var(--blanc-danger)' }}>{loadErr}</p>;
     }
     if (!members) {
         return <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--blanc-ink-3)' }}><Loader2 className="size-4 animate-spin" /> Loading members…</div>;
@@ -275,7 +270,7 @@ function PeoplePanel({ matrix }: { matrix: RoleMatrix }) {
             </p>
 
             <div className="mb-5" style={{ maxWidth: 360 }}>
-                <Eyebrow>Member</Eyebrow>
+                <div className="blanc-eyebrow">Member</div>
                 <select
                     value={selectedId}
                     onChange={(e) => setSelectedId(e.target.value)}
@@ -300,7 +295,7 @@ function PeoplePanel({ matrix }: { matrix: RoleMatrix }) {
                     )}
                     {matrix.catalog.map(group => (
                         <div key={group.category} className="mb-5">
-                            <Eyebrow>{group.category}</Eyebrow>
+                            <div className="blanc-eyebrow">{group.category}</div>
                             <div className="mt-2 flex flex-col">
                                 {group.items.map(item => {
                                     const roleDefault = selectedRole.permissions[item.key] ?? false;
@@ -353,27 +348,20 @@ export default function RolesAccessPage() {
 
     if (isMobile) {
         return (
-            <div className="max-w-6xl mx-auto p-6">
-                <div className="blanc-eyebrow">Access</div>
-                <h1 className="text-2xl font-semibold" style={{ fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1)' }}>Roles & Access</h1>
-                <p className="text-sm mt-4" style={{ color: 'var(--blanc-ink-2)' }}>
+            <SettingsPageShell title="Roles & Access">
+                <p className="text-sm" style={{ color: 'var(--blanc-ink-2)' }}>
                     The access grid is wide — please manage roles & access on a larger screen.
                 </p>
-            </div>
+            </SettingsPageShell>
         );
     }
 
     return (
-        <div className="max-w-6xl mx-auto p-6 space-y-6">
-            <div>
-                <div className="blanc-eyebrow">Access</div>
-                <h1 className="text-2xl font-semibold" style={{ fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1)' }}>Roles & Access</h1>
-                <p className="text-sm mt-1" style={{ color: 'var(--blanc-ink-2)' }}>
-                    Control what each role can do, and fine-tune individual people with overrides.
-                </p>
-            </div>
-
-            {err && <p className="text-sm" style={{ color: '#b42318' }}>{err}</p>}
+        <SettingsPageShell
+            title="Roles & Access"
+            description="Control what each role can do, and fine-tune individual people with overrides."
+        >
+            {err && <p className="text-sm" style={{ color: 'var(--blanc-danger)' }}>{err}</p>}
 
             {!matrix && !err && (
                 <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--blanc-ink-3)' }}>
@@ -395,6 +383,6 @@ export default function RolesAccessPage() {
                     </TabsContent>
                 </Tabs>
             )}
-        </div>
+        </SettingsPageShell>
     );
 }

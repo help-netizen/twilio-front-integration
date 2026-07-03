@@ -17,10 +17,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Checkbox } from '../components/ui/checkbox';
 import { Label } from '../components/ui/label';
 import MachineList from '../components/workflows/MachineList';
+import { SettingsPageShell } from '../components/settings/SettingsPageShell';
+import { SettingsSection } from '../components/settings/SettingsSection';
 
 const FSM_EDITOR_ENABLED = import.meta.env.VITE_FSM_EDITOR_ENABLED !== 'false'; // default true
-
-const sectionCard = { background: 'rgba(117,106,89,0.04)', borderRadius: 16, padding: '18px 18px' } as const;
 
 export default function LeadFormSettingsPage() {
     const [jobTypes, setJobTypes] = useState<JobType[]>([]);
@@ -62,109 +62,85 @@ export default function LeadFormSettingsPage() {
     const handleTagDragEnd = async (event: DragEndEvent) => { const { active, over } = event; if (!over || active.id === over.id) return; const oi = tags.findIndex(t => `tag-${t.id}` === active.id); const ni = tags.findIndex(t => `tag-${t.id}` === over.id); const reordered = arrayMove(tags, oi, ni); setTags(reordered); try { await jobsApi.reorderJobTags(reordered.map(t => t.id)); } catch { loadTags(); } };
 
     return (
-        <div className="blanc-page-wrapper" style={{ color: 'var(--blanc-ink-1)' }}>
-            {/* Header spans the content area (not a narrow centered column) */}
-            <div className="flex items-start justify-between gap-4" style={{ padding: '0 4px' }}>
-                <div>
-                    <h1
-                        className="text-2xl font-semibold"
-                        style={{ fontFamily: 'var(--blanc-font-heading, inherit)', color: 'var(--blanc-ink-1)' }}
-                    >
-                        Lead &amp; Job Settings
-                    </h1>
-                    <p className="text-sm mt-1" style={{ color: 'var(--blanc-ink-3)' }}>
-                        Configure job types, form fields, and workflows.
-                    </p>
-                </div>
-                {activeTab === 'settings' && (
-                    <Button variant="default" onClick={handleSave} disabled={saving || !dirty}>{saving ? 'Saving…' : 'Save'}</Button>
-                )}
-            </div>
-
+        <SettingsPageShell
+            title="Lead & Job Settings"
+            description="Configure job types, form fields, and workflows."
+            actions={activeTab === 'settings'
+                ? <Button variant="default" onClick={handleSave} disabled={saving || !dirty}>{saving ? 'Saving…' : 'Save'}</Button>
+                : undefined}
+        >
             {loading ? (
-                <div className="flex-1 flex items-center justify-center py-12 text-sm" style={{ color: 'var(--blanc-ink-3)' }}>
-                    Loading settings…
-                </div>
+                <div className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Loading settings…</div>
             ) : (
-            <div className="flex-1 min-h-0 overflow-y-auto" style={{ padding: '4px 4px 24px' }}>
-                <div style={{ maxWidth: 900 }}>
-                    <Tabs defaultValue="settings" value={activeTab} onValueChange={setActiveTab} className="w-full">
-                        <TabsList>
-                            <TabsTrigger value="settings">Settings</TabsTrigger>
-                            {FSM_EDITOR_ENABLED && <TabsTrigger value="workflows">Workflows</TabsTrigger>}
-                        </TabsList>
+                <Tabs defaultValue="settings" value={activeTab} onValueChange={setActiveTab} className="w-full">
+                    <TabsList>
+                        <TabsTrigger value="settings">Settings</TabsTrigger>
+                        {FSM_EDITOR_ENABLED && <TabsTrigger value="workflows">Workflows</TabsTrigger>}
+                    </TabsList>
 
-                        <TabsContent value="settings" className="flex flex-col gap-5">
-                            <section style={sectionCard}>
-                                <h2 className="blanc-eyebrow">Job Types</h2>
-                                <p className="text-[13px] mt-1 mb-4" style={{ color: 'var(--blanc-ink-3)' }}>Manage the list of available job types. Drag to reorder.</p>
-                                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleJobTypeDragEnd}>
-                                    <SortableContext items={jobTypes.map(jt => `jt-${jt.id ?? jt.name}`)} strategy={verticalListSortingStrategy}>
-                                        <div className="lfsp-list">{jobTypes.map((jt, i) => <SortableJobType key={`jt-${jt.id ?? jt.name}`} item={jt} onRemove={() => removeJobType(i)} />)}</div>
-                                    </SortableContext>
-                                </DndContext>
-                                <div className="flex gap-2 mt-3">
-                                    <Input value={newJobType} onChange={e => setNewJobType(e.target.value)} onKeyDown={e => e.key === 'Enter' && addJobType()} placeholder="New job type name" />
-                                    <Button variant="secondary" onClick={addJobType}>Add Job Type</Button>
-                                </div>
-                            </section>
+                    <TabsContent value="settings" className="mt-4 space-y-6">
+                        <SettingsSection title="Job Types" description="Manage the list of available job types. Drag to reorder.">
+                            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleJobTypeDragEnd}>
+                                <SortableContext items={jobTypes.map(jt => `jt-${jt.id ?? jt.name}`)} strategy={verticalListSortingStrategy}>
+                                    <div className="flex flex-col gap-1">{jobTypes.map((jt, i) => <SortableJobType key={`jt-${jt.id ?? jt.name}`} item={jt} onRemove={() => removeJobType(i)} />)}</div>
+                                </SortableContext>
+                            </DndContext>
+                            <div className="flex gap-2 mt-3">
+                                <Input value={newJobType} onChange={e => setNewJobType(e.target.value)} onKeyDown={e => e.key === 'Enter' && addJobType()} placeholder="New job type name" />
+                                <Button variant="secondary" onClick={addJobType}>Add Job Type</Button>
+                            </div>
+                        </SettingsSection>
 
-                            <section style={sectionCard}>
-                                <h2 className="blanc-eyebrow">Metadata Fields</h2>
-                                <p className="text-[13px] mt-1 mb-4" style={{ color: 'var(--blanc-ink-3)' }}>System fields cannot be deleted or renamed. Drag to reorder.</p>
-                                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleFieldDragEnd}>
-                                    <SortableContext items={fields.map(f => `cf-${f.id ?? f.api_name}`)} strategy={verticalListSortingStrategy}>
-                                        <div className="lfsp-list">{fields.map((f, i) => <SortableField key={`cf-${f.id ?? f.api_name}`} item={f} onRemove={() => removeField(i)} onToggleSearchable={() => { if (f.is_system) return; const u = [...fields]; u[i] = { ...u[i], is_searchable: !u[i].is_searchable }; setFields(u); setDirty(true); }} />)}</div>
-                                    </SortableContext>
-                                </DndContext>
-                                {showNewField ? (
-                                    <div className="mt-3 flex flex-col gap-3 rounded-2xl p-3.5" style={{ background: 'rgba(117,106,89,0.04)' }}>
-                                        <div className="flex gap-2 items-center">
-                                            <Input value={newFieldName} onChange={e => { const v = e.target.value.replace(/[^A-Za-z ]/g, ''); setNewFieldName(v); }} placeholder="Display Name" autoFocus />
-                                            <Select value={newFieldType} onValueChange={setNewFieldType}>
-                                                <SelectTrigger className="min-w-[150px]"><SelectValue /></SelectTrigger>
-                                                <SelectContent>{FIELD_TYPES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}</SelectContent>
-                                            </Select>
-                                        </div>
-                                        <div className="flex items-center justify-between">
-                                            <Label className="flex items-center gap-2 text-[13px] font-normal cursor-pointer" style={{ color: 'var(--blanc-ink-2)' }}>
-                                                <Checkbox checked={newFieldSearchable} onCheckedChange={v => setNewFieldSearchable(v === true)} />
-                                                Include in search
-                                            </Label>
-                                            <div className="flex gap-2">
-                                                <Button variant="secondary" onClick={addField}>Add</Button>
-                                                <Button variant="ghost" onClick={() => { setShowNewField(false); setNewFieldName(''); }}>Cancel</Button>
-                                            </div>
+                        <SettingsSection title="Metadata Fields" description="System fields cannot be deleted or renamed. Drag to reorder.">
+                            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleFieldDragEnd}>
+                                <SortableContext items={fields.map(f => `cf-${f.id ?? f.api_name}`)} strategy={verticalListSortingStrategy}>
+                                    <div className="flex flex-col gap-1">{fields.map((f, i) => <SortableField key={`cf-${f.id ?? f.api_name}`} item={f} onRemove={() => removeField(i)} onToggleSearchable={() => { if (f.is_system) return; const u = [...fields]; u[i] = { ...u[i], is_searchable: !u[i].is_searchable }; setFields(u); setDirty(true); }} />)}</div>
+                                </SortableContext>
+                            </DndContext>
+                            {showNewField ? (
+                                <div className="mt-3 flex flex-col gap-3 rounded-2xl p-3.5" style={{ background: 'rgba(117,106,89,0.04)' }}>
+                                    <div className="flex gap-2 items-center">
+                                        <Input value={newFieldName} onChange={e => { const v = e.target.value.replace(/[^A-Za-z ]/g, ''); setNewFieldName(v); }} placeholder="Display Name" autoFocus />
+                                        <Select value={newFieldType} onValueChange={setNewFieldType}>
+                                            <SelectTrigger className="min-w-[150px]"><SelectValue /></SelectTrigger>
+                                            <SelectContent>{FIELD_TYPES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}</SelectContent>
+                                        </Select>
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                        <Label className="flex items-center gap-2 text-[13px] font-normal cursor-pointer" style={{ color: 'var(--blanc-ink-2)' }}>
+                                            <Checkbox checked={newFieldSearchable} onCheckedChange={v => setNewFieldSearchable(v === true)} />
+                                            Include in search
+                                        </Label>
+                                        <div className="flex gap-2">
+                                            <Button variant="secondary" onClick={addField}>Add</Button>
+                                            <Button variant="ghost" onClick={() => { setShowNewField(false); setNewFieldName(''); }}>Cancel</Button>
                                         </div>
                                     </div>
-                                ) : <Button variant="secondary" className="mt-2" onClick={() => setShowNewField(true)}>Add Field</Button>}
-                            </section>
-
-                            <section style={sectionCard}>
-                                <h2 className="blanc-eyebrow">Job Tags</h2>
-                                <p className="text-[13px] mt-1 mb-4" style={{ color: 'var(--blanc-ink-3)' }}>Manage tags that can be assigned to jobs. Drag to reorder, click color dot to change, click name to rename.</p>
-                                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleTagDragEnd}>
-                                    <SortableContext items={tags.map(t => `tag-${t.id}`)} strategy={verticalListSortingStrategy}>
-                                        <div className="lfsp-list">{tags.map(tag => <SortableTag key={`tag-${tag.id}`} item={tag} onArchive={() => handleTagArchiveToggle(tag)} onColorChange={c => handleTagColorChange(tag.id, c)} onRename={n => handleTagRename(tag.id, n)} />)}</div>
-                                    </SortableContext>
-                                </DndContext>
-                                <div className="flex gap-2 mt-3 items-center">
-                                    <Input value={newTagName} onChange={e => setNewTagName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addTag()} placeholder="New tag name" />
-                                    <div className="flex gap-1 items-center shrink-0">{TAG_PALETTE.slice(0, 8).map(c => <button key={c} type="button" className="w-[18px] h-[18px] rounded-full transition-transform hover:scale-110" style={{ backgroundColor: c, border: c === '#FFFFFF' ? '1px solid var(--blanc-line)' : 'none', boxShadow: c === newTagColor ? '0 0 0 2px var(--blanc-surface-strong), 0 0 0 4px var(--blanc-job)' : 'none' }} onClick={() => setNewTagColor(c)} />)}</div>
-                                    <Button variant="secondary" onClick={addTag}>Add Tag</Button>
                                 </div>
-                            </section>
-                        </TabsContent>
+                            ) : <Button variant="secondary" className="mt-2" onClick={() => setShowNewField(true)}>Add Field</Button>}
+                        </SettingsSection>
 
-                        {FSM_EDITOR_ENABLED && (
-                        <TabsContent value="workflows">
-                            <MachineList />
-                        </TabsContent>
-                        )}
-                    </Tabs>
-                </div>
-            </div>
+                        <SettingsSection title="Job Tags" description="Manage tags that can be assigned to jobs. Drag to reorder, click color dot to change, click name to rename.">
+                            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleTagDragEnd}>
+                                <SortableContext items={tags.map(t => `tag-${t.id}`)} strategy={verticalListSortingStrategy}>
+                                    <div className="flex flex-col gap-1">{tags.map(tag => <SortableTag key={`tag-${tag.id}`} item={tag} onArchive={() => handleTagArchiveToggle(tag)} onColorChange={c => handleTagColorChange(tag.id, c)} onRename={n => handleTagRename(tag.id, n)} />)}</div>
+                                </SortableContext>
+                            </DndContext>
+                            <div className="flex gap-2 mt-3 items-center">
+                                <Input value={newTagName} onChange={e => setNewTagName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addTag()} placeholder="New tag name" />
+                                <div className="flex gap-1 items-center shrink-0">{TAG_PALETTE.slice(0, 8).map(c => <button key={c} type="button" className="w-[18px] h-[18px] rounded-full transition-transform hover:scale-110" style={{ backgroundColor: c, border: c === '#FFFFFF' ? '1px solid var(--blanc-line)' : 'none', boxShadow: c === newTagColor ? '0 0 0 2px var(--blanc-surface-strong), 0 0 0 4px var(--blanc-job)' : 'none' }} onClick={() => setNewTagColor(c)} />)}</div>
+                                <Button variant="secondary" onClick={addTag}>Add Tag</Button>
+                            </div>
+                        </SettingsSection>
+                    </TabsContent>
+
+                    {FSM_EDITOR_ENABLED && (
+                    <TabsContent value="workflows">
+                        <MachineList />
+                    </TabsContent>
+                    )}
+                </Tabs>
             )}
-        </div>
+        </SettingsPageShell>
     );
 }

@@ -215,7 +215,7 @@ export function OnboardingPage() {
     return (
         <div style={{
             minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: 'var(--blanc-bg, #efe9df)', fontFamily: '"IBM Plex Sans", "Segoe UI", sans-serif', padding: 16,
+            background: 'var(--blanc-bg, #F1F1F0)', fontFamily: '"IBM Plex Sans", "Segoe UI", sans-serif', padding: 16,
         }}>
             <div style={card}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>

@@ -8,6 +8,7 @@ import { Input } from '../components/ui/input';
 import { FloatingField } from '../components/ui/floating-field';
 import { FloatingSelect } from '../components/ui/floating-select';
 import { SelectItem } from '../components/ui/select';
+import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { toast } from 'sonner';
 
 // ---------------------------------------------------------------------------
@@ -347,26 +348,11 @@ const ServiceTerritoriesPage: React.FC = () => {
     const handleBackToAreas = () => { setActiveArea(null); };
 
     return (
-        <div className="max-w-5xl mx-auto p-6">
-            {/* Header */}
-            <div className="mb-6">
-                <h1 className="text-2xl font-semibold" style={{ fontFamily: 'var(--blanc-font-heading)' }}>
-                    Service Territories
-                </h1>
-                <p style={{ color: 'var(--blanc-ink-2)', fontSize: 14, marginTop: 4 }}>
-                    Manage zip codes your company services, grouped by area.
-                </p>
-            </div>
-
-            {/* Stats + actions */}
-            <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-                <div className="flex items-center gap-4">
-                    <div style={{ fontSize: 13, color: 'var(--blanc-ink-3)' }}>
-                        Total: <strong style={{ color: 'var(--blanc-ink-1)' }}>{territories.length}</strong> zip codes in <strong style={{ color: 'var(--blanc-ink-1)' }}>{uniqueAreas}</strong> areas
-                    </div>
-                    <ViewToggle view={activeArea !== null ? 'areas' : view} onChange={v => { if (v === 'areas') setActiveArea(null); setView(v); }} />
-                </div>
-                <div className="flex items-center gap-2">
+        <SettingsPageShell
+            title="Service Territories"
+            description="Manage zip codes your company services, grouped by area."
+            actions={
+                <>
                     <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
                         <Upload className="size-3.5 mr-1.5" />Import CSV
                     </Button>
@@ -376,53 +362,64 @@ const ServiceTerritoriesPage: React.FC = () => {
                     <Button size="sm" onClick={() => setAddOpen(true)}>
                         <Plus className="size-3.5 mr-1.5" />Add Zip Code
                     </Button>
+                </>
+            }
+        >
+            {/* Controls + list share one tighter rhythm than the page sections */}
+            <div className="space-y-4">
+                {/* Stats + view toggle */}
+                <div className="flex items-center gap-4 flex-wrap">
+                    <div style={{ fontSize: 13, color: 'var(--blanc-ink-3)' }}>
+                        Total: <strong style={{ color: 'var(--blanc-ink-1)' }}>{territories.length}</strong> zip codes in <strong style={{ color: 'var(--blanc-ink-1)' }}>{uniqueAreas}</strong> areas
+                    </div>
+                    <ViewToggle view={activeArea !== null ? 'areas' : view} onChange={v => { if (v === 'areas') setActiveArea(null); setView(v); }} />
                 </div>
+
+                {/* Breadcrumb when inside an area */}
+                {activeArea !== null && (
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={handleBackToAreas}
+                            className="inline-flex items-center gap-1.5"
+                            style={{ fontSize: 13, color: 'var(--blanc-ink-3)', cursor: 'pointer', border: 'none', background: 'transparent', padding: 0 }}
+                        >
+                            <ArrowLeft className="size-3.5" />All Areas
+                        </button>
+                        <span style={{ color: 'var(--blanc-ink-3)', fontSize: 13 }}>/</span>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--blanc-ink-1)' }}>{activeArea || '(No area)'}</span>
+                        <span style={{ fontSize: 12, color: 'var(--blanc-ink-3)', marginLeft: 4 }}>{areaRows.length} zip codes</span>
+                    </div>
+                )}
+
+                {/* Content */}
+                {isLoading ? (
+                    <div className="flex items-center justify-center py-16">
+                        <Loader2 className="size-6 animate-spin" style={{ color: 'var(--blanc-ink-3)' }} />
+                    </div>
+                ) : territories.length === 0 ? (
+                    <div className="text-center py-16" style={{ border: '2px dashed var(--blanc-line)', borderRadius: 16 }}>
+                        <MapPin className="size-10 mx-auto mb-3" style={{ color: 'var(--blanc-ink-3)', opacity: 0.5 }} />
+                        <div style={{ fontSize: 15, fontWeight: 500, color: 'var(--blanc-ink-2)' }}>No zip codes yet</div>
+                        <div style={{ fontSize: 13, color: 'var(--blanc-ink-3)', marginTop: 4 }}>Add zip codes manually or import from a CSV file.</div>
+                    </div>
+                ) : activeArea !== null ? (
+                    /* Area detail — filtered table */
+                    <ZipTable rows={areaRows} onRemove={zip => removeMut.mutate(zip)} removing={removeMut.isPending} />
+                ) : view === 'areas' ? (
+                    /* Area cards grid */
+                    <AreaCardsGrid territories={territories} onSelectArea={handleSelectArea} />
+                ) : (
+                    /* Flat table */
+                    <ZipTable rows={territories} onRemove={zip => removeMut.mutate(zip)} removing={removeMut.isPending} />
+                )}
             </div>
-
-            {/* Breadcrumb when inside an area */}
-            {activeArea !== null && (
-                <div className="flex items-center gap-2 mb-4">
-                    <button
-                        onClick={handleBackToAreas}
-                        className="inline-flex items-center gap-1.5"
-                        style={{ fontSize: 13, color: 'var(--blanc-ink-3)', cursor: 'pointer', border: 'none', background: 'transparent', padding: 0 }}
-                    >
-                        <ArrowLeft className="size-3.5" />All Areas
-                    </button>
-                    <span style={{ color: 'var(--blanc-ink-3)', fontSize: 13 }}>/</span>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--blanc-ink-1)' }}>{activeArea || '(No area)'}</span>
-                    <span style={{ fontSize: 12, color: 'var(--blanc-ink-3)', marginLeft: 4 }}>{areaRows.length} zip codes</span>
-                </div>
-            )}
-
-            {/* Content */}
-            {isLoading ? (
-                <div className="flex items-center justify-center py-16">
-                    <Loader2 className="size-6 animate-spin" style={{ color: 'var(--blanc-ink-3)' }} />
-                </div>
-            ) : territories.length === 0 ? (
-                <div className="text-center py-16" style={{ border: '2px dashed var(--blanc-line)', borderRadius: 16 }}>
-                    <MapPin className="size-10 mx-auto mb-3" style={{ color: 'var(--blanc-ink-3)', opacity: 0.5 }} />
-                    <div style={{ fontSize: 15, fontWeight: 500, color: 'var(--blanc-ink-2)' }}>No zip codes yet</div>
-                    <div style={{ fontSize: 13, color: 'var(--blanc-ink-3)', marginTop: 4 }}>Add zip codes manually or import from a CSV file.</div>
-                </div>
-            ) : activeArea !== null ? (
-                /* Area detail — filtered table */
-                <ZipTable rows={areaRows} onRemove={zip => removeMut.mutate(zip)} removing={removeMut.isPending} />
-            ) : view === 'areas' ? (
-                /* Area cards grid */
-                <AreaCardsGrid territories={territories} onSelectArea={handleSelectArea} />
-            ) : (
-                /* Flat table */
-                <ZipTable rows={territories} onRemove={zip => removeMut.mutate(zip)} removing={removeMut.isPending} />
-            )}
 
             {/* Add dialog — pre-fill area when inside an area */}
             <AddZipDialog open={addOpen} onOpenChange={setAddOpen} areas={areas} onAdd={addMut.mutate} isPending={addMut.isPending} defaultArea={activeArea} />
 
             {/* Import dialog */}
             <ImportDialog open={importOpen} onOpenChange={setImportOpen} onImport={importMut.mutate} isPending={importMut.isPending} />
-        </div>
+        </SettingsPageShell>
     );
 };
 

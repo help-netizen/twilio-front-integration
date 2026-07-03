@@ -3,6 +3,8 @@ import { toast } from 'sonner';
 import { authedFetch } from '../services/apiClient';
 import { MessageSquare, PhoneOff, Voicemail } from 'lucide-react';
 import { Switch } from '../components/ui/switch';
+import { SettingsPageShell } from '../components/settings/SettingsPageShell';
+import { SettingsSection } from '../components/settings/SettingsSection';
 import NotificationsSection from './NotificationsSection';
 
 // Types
@@ -141,20 +143,20 @@ export default function ActionRequiredSettingsPage() {
 
     if (isLoading) {
         return (
-            <div className="max-w-4xl p-6">
+            <SettingsPageShell title="Actions & notifications" description="Flag threads that need attention, and manage browser push alerts.">
                 <div className="animate-pulse space-y-4">
                     <div className="h-8 rounded w-64" style={{ background: 'rgba(117,106,89,0.08)' }} />
                     <div className="h-40 rounded" style={{ background: 'rgba(117,106,89,0.04)' }} />
                 </div>
-            </div>
+            </SettingsPageShell>
         );
     }
 
     if (error || !config) {
         return (
-            <div className="max-w-4xl p-6">
+            <SettingsPageShell title="Actions & notifications" description="Flag threads that need attention, and manage browser push alerts.">
                 <p style={{ color: 'var(--blanc-danger)' }}>Failed to load settings</p>
-            </div>
+            </SettingsPageShell>
         );
     }
 
@@ -169,51 +171,39 @@ export default function ActionRequiredSettingsPage() {
     };
 
     return (
-        <div className="max-w-4xl p-6">
-            <div className="blanc-eyebrow">Settings</div>
-            <h1 className="text-2xl font-semibold mt-1 mb-1" style={{ fontFamily: 'var(--blanc-font-heading, Manrope), sans-serif', color: 'var(--blanc-ink-1, #202734)' }}>Actions &amp; notifications</h1>
-            <p className="text-sm mb-7" style={{ color: 'var(--blanc-ink-3, #7d8796)' }}>
-                Flag threads that need attention, and manage browser push alerts.
-            </p>
+        <SettingsPageShell title="Actions & notifications" description="Flag threads that need attention, and manage browser push alerts.">
+            <SettingsSection
+                title="Action triggers"
+                description={'When enabled, matching events are flagged "Action Required" — optionally creating a task.'}
+            >
+                <TriggerRow
+                    icon={<MessageSquare className="size-5" />}
+                    label="Inbound SMS"
+                    description="Flag when a customer sends an SMS message"
+                    trigger={config.triggers.inbound_sms}
+                    onChange={(t) => handleTriggerChange('inbound_sms', t)}
+                />
+                <TriggerRow
+                    icon={<PhoneOff className="size-5" />}
+                    label="Missed Call"
+                    description="Flag when an inbound call is missed or unanswered"
+                    trigger={config.triggers.missed_call}
+                    onChange={(t) => handleTriggerChange('missed_call', t)}
+                />
+                <TriggerRow
+                    icon={<Voicemail className="size-5" />}
+                    label="Voicemail"
+                    description="Flag when a caller leaves a voicemail"
+                    trigger={config.triggers.voicemail}
+                    onChange={(t) => handleTriggerChange('voicemail', t)}
+                />
 
-            <div className="blanc-eyebrow mb-1">Action triggers</div>
-            <p className="text-xs mb-1" style={{ color: 'var(--blanc-ink-3, #7d8796)' }}>
-                When enabled, matching events are flagged "Action Required" — optionally creating a task.
-            </p>
+                {saveMutation.isPending && (
+                    <p className="text-xs mt-2" style={{ color: 'var(--blanc-ink-3, #7d8796)' }}>Saving…</p>
+                )}
+            </SettingsSection>
 
-            <TriggerRow
-                icon={<MessageSquare className="size-5" />}
-                label="Inbound SMS"
-                description="Flag when a customer sends an SMS message"
-                trigger={config.triggers.inbound_sms}
-                onChange={(t) => handleTriggerChange('inbound_sms', t)}
-            />
-            <TriggerRow
-                icon={<PhoneOff className="size-5" />}
-                label="Missed Call"
-                description="Flag when an inbound call is missed or unanswered"
-                trigger={config.triggers.missed_call}
-                onChange={(t) => handleTriggerChange('missed_call', t)}
-            />
-            <TriggerRow
-                icon={<Voicemail className="size-5" />}
-                label="Voicemail"
-                description="Flag when a caller leaves a voicemail"
-                trigger={config.triggers.voicemail}
-                onChange={(t) => handleTriggerChange('voicemail', t)}
-            />
-
-            {saveMutation.isPending && (
-                <p className="text-xs mt-4" style={{ color: 'var(--blanc-ink-3, #7d8796)' }}>Saving…</p>
-            )}
-
-            <div className="mt-9">
-                <div className="blanc-eyebrow mb-1">Notifications</div>
-                <p className="text-xs mb-4" style={{ color: 'var(--blanc-ink-3, #7d8796)' }}>
-                    Browser push notifications for real-time alerts.
-                </p>
-                <NotificationsSection />
-            </div>
-        </div>
+            <NotificationsSection />
+        </SettingsPageShell>
     );
 }

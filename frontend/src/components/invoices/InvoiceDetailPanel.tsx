@@ -719,7 +719,7 @@ export function InvoiceDetailPanel({
                 </aside>
             </div>
 
-            <div className="shrink-0 border-t border-[var(--blanc-line)] bg-[var(--blanc-bg,#efe9df)] px-5 py-3">
+            <div className="shrink-0 border-t border-[var(--blanc-line)] bg-[var(--blanc-bg,#F1F1F0)] px-5 py-3">
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div className="grid grid-cols-2 gap-2 md:flex">
                         <Button variant="outline" size="sm" onClick={() => window.open(`/api/invoices/${invoice.id}/pdf`, '_blank', 'noopener,noreferrer')}>

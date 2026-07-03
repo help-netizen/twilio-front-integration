@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Button } from '../components/ui/button';
+import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { Input } from '../components/ui/input';
 import { Dialog, DialogContent, DialogPanelHeader, DialogBody, DialogPanelFooter, DialogTitle, DialogDescription } from '../components/ui/dialog';
 import { FloatingField } from '../components/ui/floating-field';
@@ -41,17 +42,16 @@ export default function PriceBookPage() {
     };
 
     return (
-        <div className="p-6 max-w-5xl mx-auto">
-            <div className="flex items-start justify-between gap-3">
-                <div>
-                    <h2 className="blanc-heading blanc-heading-lg" style={{ color: 'var(--blanc-ink-1)' }}>Price Book</h2>
-                    <p className="blanc-eyebrow mb-5">Manage items, groups &amp; categories for estimates and invoices</p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
+        <SettingsPageShell
+            title="Price Book"
+            description="Manage items, groups & categories for estimates and invoices"
+            actions={
+                <>
                     <Button variant="ghost" onClick={() => setIoOpen(true)}><Upload size={16} /> Import</Button>
                     <Button variant="ghost" onClick={() => setIoOpen(true)}><Download size={16} /> Export</Button>
-                </div>
-            </div>
+                </>
+            }
+        >
             <Tabs value={tab} onValueChange={changeTab}>
                 <TabsList>
                     <TabsTrigger value="items">Items &amp; products</TabsTrigger>
@@ -63,7 +63,7 @@ export default function PriceBookPage() {
                 <TabsContent value="categories"><CategoriesTab onChanged={loadCategories} version={version} /></TabsContent>
             </Tabs>
             <ImportExportPanel open={ioOpen} onClose={() => setIoOpen(false)} onImported={refreshAll} />
-        </div>
+        </SettingsPageShell>
     );
 }
 

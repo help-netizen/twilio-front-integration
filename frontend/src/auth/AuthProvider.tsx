@@ -335,11 +335,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return (
             <div style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                height: '100vh', background: 'var(--blanc-bg, #efe9df)', color: 'var(--blanc-ink-2, #536070)',
+                height: '100vh', background: 'var(--blanc-bg, #F1F1F0)', color: 'var(--blanc-ink-2, #6E6E6E)',
                 fontFamily: '"IBM Plex Sans", system-ui, sans-serif',
             }}>
                 <div style={{ textAlign: 'center' }}>
-                    <div className="animate-spin" style={{ width: 22, height: 22, border: '2px solid var(--blanc-line, rgba(117,106,89,0.25))', borderTopColor: 'var(--blanc-ink-2, #536070)', borderRadius: '50%', margin: '0 auto 12px' }} />
+                    <div className="animate-spin" style={{ width: 22, height: 22, border: '2px solid var(--blanc-line, rgba(117,106,89,0.25))', borderTopColor: 'var(--blanc-ink-2, #6E6E6E)', borderRadius: '50%', margin: '0 auto 12px' }} />
                     <div style={{ fontSize: 14 }}>Authenticating…</div>
                 </div>
             </div>
@@ -353,11 +353,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return (
             <div style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                height: '100vh', background: 'var(--blanc-bg, #efe9df)', color: 'var(--blanc-ink-2, #536070)',
+                height: '100vh', background: 'var(--blanc-bg, #F1F1F0)', color: 'var(--blanc-ink-2, #6E6E6E)',
                 fontFamily: '"IBM Plex Sans", system-ui, sans-serif',
             }}>
                 <div style={{ textAlign: 'center' }}>
-                    <div className="animate-spin" style={{ width: 22, height: 22, border: '2px solid var(--blanc-line, rgba(117,106,89,0.25))', borderTopColor: 'var(--blanc-ink-2, #536070)', borderRadius: '50%', margin: '0 auto 12px' }} />
+                    <div className="animate-spin" style={{ width: 22, height: 22, border: '2px solid var(--blanc-line, rgba(117,106,89,0.25))', borderTopColor: 'var(--blanc-ink-2, #6E6E6E)', borderRadius: '50%', margin: '0 auto 12px' }} />
                     <div style={{ fontSize: 14 }}>Redirecting to sign in…</div>
                 </div>
             </div>

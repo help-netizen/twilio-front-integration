@@ -329,7 +329,7 @@ const DialogPanelFooter = ({ className, ...props }: React.HTMLAttributes<HTMLDiv
             "flex shrink-0 items-center justify-end gap-3 px-6 py-4 md:px-8",
             // Tinted (page-warm) bar against the white form body, plus an upward shadow,
             // so it reads as a grounded action tray with content scrolling under it.
-            "border-t border-[var(--blanc-line)] bg-[var(--blanc-bg,#efe9df)]",
+            "border-t border-[var(--blanc-line)] bg-[var(--blanc-bg,#F1F1F0)]",
             "shadow-[0_-12px_28px_-20px_rgba(63,55,42,0.45)]",
             className
         )}

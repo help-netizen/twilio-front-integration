@@ -1,14 +1,7 @@
 /* ─── Lead Form Settings — sortable rows ──────────────────────────────────────
-   Page shell, header, section cards, add-rows and the new-field form now live
-   inline on the page (Blanc tokens + ui/ components). Only the shared sortable
-   row / field-badge / tag styles used by Sortable*.tsx remain here. */
-
-/* Sortable list */
-.lfsp-list {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
+   The page skeleton is SettingsPageShell/SettingsSection (UI-AUDIT-001 W4);
+   list wrappers and forms are inline Tailwind on the page. Only the shared
+   sortable row / field-badge / tag styles used by Sortable*.tsx remain here. */
 
 .lfsp-sortable-item {
     display: flex;

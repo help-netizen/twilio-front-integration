@@ -51,7 +51,7 @@ export function ProtectedRoute({ children, roles, permissions, platformRoles }: 
         return (
             <div style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                height: '100vh', background: 'var(--blanc-bg, #efe9df)',
+                height: '100vh', background: 'var(--blanc-bg, #F1F1F0)',
                 fontFamily: '"IBM Plex Sans", system-ui, sans-serif', padding: 16,
             }}>
                 <div style={{ textAlign: 'center', maxWidth: 360 }}>
