@@ -96,9 +96,9 @@ export function SchedulePage() {
         if (schedule.loading) {
             return (
                 <div className="p-6 space-y-4" style={{
-                    background: 'var(--sched-surface)',
-                    border: '1px solid rgba(255, 255, 255, 0.55)',
-                    borderRadius: 'var(--sched-radius-xl)',
+                    background: 'var(--blanc-surface-strong)',
+                    border: '1px solid var(--sched-line)',
+                    borderRadius: 'var(--sched-radius-md)',
                 }}>
                     <Skeleton className="h-8 w-full" />
                     <Skeleton className="h-64 w-full" />
@@ -112,9 +112,9 @@ export function SchedulePage() {
                 <div
                     className="flex items-center justify-center min-h-[300px]"
                     style={{
-                        background: 'var(--sched-surface)',
-                        border: '1px solid rgba(255, 255, 255, 0.55)',
-                        borderRadius: 'var(--sched-radius-xl)',
+                        background: 'var(--blanc-surface-strong)',
+                        border: '1px solid var(--sched-line)',
+                        borderRadius: 'var(--sched-radius-md)',
                     }}
                 >
                     <div className="text-center">
@@ -149,31 +149,13 @@ export function SchedulePage() {
         <div
             className="schedule-page-root min-h-screen relative"
             style={{
-                background: 'radial-gradient(circle at top left, rgba(255, 255, 255, 0.9), transparent 28%), linear-gradient(180deg, #f7f3ec 0%, var(--sched-bg) 44%, var(--sched-bg-deep) 100%)',
+                // PALETTE-V2 (Т2): плоский нейтральный канвас — тёплый градиент и
+                // декоративные glow-круги сняты (LAYOUT-CANON п.7: декор под нож).
+                background: 'var(--sched-bg)',
                 color: 'var(--sched-ink-1)',
                 fontFamily: '"IBM Plex Sans", "Segoe UI", sans-serif',
             }}
         >
-            {/* Background glow effects */}
-            <div
-                className="fixed rounded-full pointer-events-none"
-                style={{
-                    width: '420px', height: '420px',
-                    top: '-140px', right: '-40px',
-                    background: 'rgba(47, 99, 216, 0.14)',
-                    filter: 'blur(30px)', opacity: 0.5,
-                }}
-            />
-            <div
-                className="fixed rounded-full pointer-events-none"
-                style={{
-                    width: '360px', height: '360px',
-                    bottom: '80px', left: '-60px',
-                    background: 'rgba(178, 106, 29, 0.12)',
-                    filter: 'blur(30px)', opacity: 0.5,
-                }}
-            />
-
             {/* Main workspace — tighter gutter on mobile (the 24px all-widths felt cramped on a phone) */}
             <div className="schedule-workspace relative z-[1] max-w-[1780px] mx-auto" style={{ padding: isMobile ? '14px' : '24px' }}>
                 {isMobile ? (

@@ -275,14 +275,14 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
     }, [onCreateFromSlot, pctToMinutes, refY, refM, refD, tz]);
 
     return (
+        // PALETTE-V2 + LAYOUT-CANON: сетка = один белый контентный юнит (как таблица
+        // Jobs) — опаковый белый, hairline, r16; frosted-стекло/тень/blur сняты.
         <div
             className="flex flex-col overflow-x-auto"
             style={{
-                background: 'var(--sched-surface)',
-                border: '1px solid rgba(255, 255, 255, 0.55)',
-                borderRadius: 'var(--sched-radius-xl)',
-                boxShadow: 'var(--sched-shadow-main)',
-                backdropFilter: 'blur(24px)',
+                background: 'var(--blanc-surface-strong)',
+                border: '1px solid var(--sched-line)',
+                borderRadius: 'var(--sched-radius-md)',
             }}
         >
             {/* Header: date corner + provider columns */}
@@ -290,7 +290,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                 className="sticky top-0 z-10 flex"
                 style={{
                     borderBottom: '1px solid var(--sched-line)',
-                    background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.66), rgba(244, 237, 226, 0.42))',
+                    background: 'var(--blanc-surface-strong)',
                 }}
             >
                 {/* Corner: date */}
@@ -346,7 +346,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                             className="flex items-start justify-end pr-2 pt-1"
                             style={{
                                 height: HOUR_HEIGHT,
-                                borderBottom: '1px solid rgba(118, 106, 89, 0.1)',
+                                borderBottom: '1px solid var(--sched-line)',
                                 color: 'var(--sched-ink-1)',
                                 fontSize: '14px',
                             }}
@@ -386,7 +386,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                     style={{
                                         top: (h - Math.floor(startHour)) * HOUR_HEIGHT,
                                         height: HOUR_HEIGHT,
-                                        borderBottom: '1px solid rgba(118, 106, 89, 0.1)',
+                                        borderBottom: '1px solid var(--sched-line)',
                                     }}
                                 />
                             ))}
@@ -398,7 +398,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                         className="absolute top-0 left-0 right-0 pointer-events-none z-[1]"
                                         style={{
                                             height: Math.min(nowPx, bodyHeight),
-                                            background: 'rgba(58, 48, 39, 0.06)',
+                                            background: 'rgba(25, 25, 25, 0.05)',
                                         }}
                                     />
                                     {nowPx < bodyHeight && (
@@ -470,7 +470,7 @@ export const TimelineView: React.FC<TimelineViewProps> = ({
                                                 className="text-[9px] font-semibold tabular-nums truncate px-1 rounded"
                                                 style={{
                                                     color: LEG_TONE_COLOR[routeSegmentTone(leg)],
-                                                    background: 'var(--sched-surface, rgba(255,253,249,0.9))',
+                                                    background: 'var(--blanc-surface-strong)',
                                                 }}
                                             >
                                                 ↓ {legLabel}

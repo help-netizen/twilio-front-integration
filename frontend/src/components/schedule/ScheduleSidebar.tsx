@@ -35,7 +35,8 @@ const sectionCard: React.CSSProperties = {
     padding: '16px 16px 18px',
     borderRadius: '20px',
     border: '1px solid var(--sched-line)',
-    background: 'rgba(255, 255, 255, 0.5)',
+    // PALETTE-V2: inset-блок на белой панели (полупрозрачный белый был невидим)
+    background: 'var(--blanc-surface-muted)',
 };
 
 const eyebrow: React.CSSProperties = {
@@ -78,11 +79,10 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
                 borderRadius: isStackedLayer ? 0 : undefined,
             }}
         >
-            {/* Header */}
+            {/* Header — без тёплой заливки: разделение несёт hairline (PALETTE-V2) */}
             <div
                 className="px-6 py-6 pb-5"
                 style={{
-                    background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(242, 235, 223, 0.52))',
                     borderBottom: '1px solid var(--sched-line)',
                 }}
             >
@@ -97,7 +97,7 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
                     {item.status && (
                         <span
                             className="inline-flex items-center min-h-[28px] px-2.5 rounded-full text-xs font-semibold"
-                            style={{ background: 'rgba(255, 255, 255, 0.72)', color: 'var(--sched-ink-2)' }}
+                            style={{ background: 'var(--blanc-bg-deep)', color: 'var(--sched-ink-2)' }}
                         >
                             {item.status}
                         </span>
@@ -269,8 +269,7 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
                                     key={tag}
                                     className="inline-flex items-center justify-center min-h-[34px] px-3.5 rounded-full text-[13px] font-medium"
                                     style={{
-                                        background: 'rgba(255, 255, 255, 0.72)',
-                                        border: '1px solid var(--sched-line)',
+                                        background: 'var(--blanc-bg-deep)',
                                         color: 'var(--sched-ink-2)',
                                     }}
                                 >
@@ -285,15 +284,15 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
                 <div style={sectionCard}>
                     <p style={eyebrow}>Actions</p>
                     <div className="space-y-2.5">
+                        {/* PALETTE-V2: primary = solid accent pill (был сине-градиентный кастом) */}
                         <button
                             type="button"
                             onClick={() => navigate(getDetailLink(item))}
-                            className="w-full min-h-[44px] text-sm font-bold"
+                            className="w-full min-h-[44px] text-sm font-bold transition-opacity hover:opacity-85"
                             style={{
-                                background: 'linear-gradient(180deg, #365fd8, #234aa8)',
+                                background: 'var(--blanc-accent)',
                                 color: '#fff',
-                                borderRadius: '14px',
-                                boxShadow: '0 12px 24px rgba(36, 74, 168, 0.22)',
+                                borderRadius: '999px',
                                 border: 'none',
                             }}
                         >
@@ -304,9 +303,9 @@ export const ScheduleSidebar: React.FC<ScheduleSidebarProps> = ({ item, onClose,
                             onClick={() => navigate(`/pulse?search=${encodeURIComponent(item.customer_phone || item.customer_name || '')}`)}
                             className="w-full min-h-[44px] text-sm font-bold"
                             style={{
-                                background: 'rgba(255, 255, 255, 0.74)',
-                                border: '1px solid var(--sched-line)',
-                                borderRadius: '14px',
+                                background: 'transparent',
+                                border: '1px solid var(--sched-line-strong)',
+                                borderRadius: '999px',
                                 color: 'var(--sched-ink-1)',
                             }}
                         >

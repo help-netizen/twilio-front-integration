@@ -168,7 +168,7 @@ export const DispatchSettingsDialog: React.FC<DispatchSettingsDialogProps> = ({
                                         className={`
                                             flex-1 py-2 text-xs font-medium rounded-md border-[1.5px] transition-colors
                                             ${workDays.includes(day.value)
-                                                ? 'border-[var(--blanc-ink-1)] bg-[rgba(117,106,89,0.08)] text-[var(--blanc-ink-1)]'
+                                                ? 'border-[var(--blanc-ink-1)] bg-[rgba(25,25,25,0.06)] text-[var(--blanc-ink-1)]'
                                                 : 'border-[var(--blanc-line)] bg-transparent text-[var(--blanc-ink-3)] hover:border-[var(--blanc-ink-3)]'
                                             }
                                         `}

@@ -152,14 +152,14 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
     const gridCols = `140px repeat(${colCount}, minmax(140px, 1fr))`;
 
     return (
+        // PALETTE-V2 + LAYOUT-CANON: сетка = один белый контентный юнит (как таблица
+        // Jobs) — опаковый белый, hairline, r16; frosted-стекло/тень/blur сняты.
         <div
             className="flex flex-col flex-1 overflow-x-auto"
             style={{
-                background: 'var(--sched-surface)',
-                border: '1px solid rgba(255, 255, 255, 0.55)',
-                borderRadius: 'var(--sched-radius-xl)',
-                boxShadow: 'var(--sched-shadow-main)',
-                backdropFilter: 'blur(24px)',
+                background: 'var(--blanc-surface-strong)',
+                border: '1px solid var(--sched-line)',
+                borderRadius: 'var(--sched-radius-md)',
             }}
         >
             {/* Header row: corner + provider names */}
@@ -168,7 +168,7 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
                 style={{
                     gridTemplateColumns: gridCols,
                     borderBottom: '1px solid var(--sched-line)',
-                    background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.66), rgba(244, 237, 226, 0.42))',
+                    background: 'var(--blanc-surface-strong)',
                 }}
             >
                 {/* Corner cell */}
@@ -229,7 +229,7 @@ export const TimelineWeekView: React.FC<TimelineWeekViewProps> = ({
                             gridTemplateColumns: gridCols,
                             minHeight: '80px',
                             borderBottom: '1px solid var(--sched-line)',
-                            background: isToday ? 'rgba(255, 247, 231, 0.4)' : 'transparent',
+                            background: isToday ? 'rgba(231, 219, 253, 0.18)' : 'transparent',
                         }}
                     >
                         {/* Day label */}

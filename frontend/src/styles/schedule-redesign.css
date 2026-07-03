@@ -1,4 +1,4 @@
-/* Schedule Design Refresh — Warm beige palette, frosted glass, Figma Make design tokens */
+/* Schedule Design — PALETTE-V2 (Т2): neutral canvas, white content units, hairlines */
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
 
 :root {
@@ -31,13 +31,14 @@
     --sched-task: #1b8b63;
     --sched-task-soft: rgba(228, 247, 239, 0.98);
 
-    /* Semantic */
-    --sched-today-soft: rgba(255, 247, 231, 0.9);
+    /* Semantic — PALETTE-V2: «today» highlight = лавандовое выделение (accent-soft),
+       бывший тёплый крем rgba(255,247,231,.9) на нейтральном канвасе читался грязью. */
+    --sched-today-soft: rgba(231, 219, 253, 0.4);
     --sched-danger: #d44d3c;
 
-    /* Shadows */
-    --sched-shadow-main: 0 24px 60px rgba(47, 39, 28, 0.11);
-    --sched-shadow-card: 0 14px 30px rgba(36, 31, 25, 0.11);
+    /* Shadows — PALETTE-V2: нейтральная тень (была тёплая rgba(47,39,28)/(36,31,25)) */
+    --sched-shadow-main: 0 24px 60px rgba(25, 25, 25, 0.11);
+    --sched-shadow-card: 0 14px 30px rgba(25, 25, 25, 0.11);
 
     /* Radii */
     --sched-radius-xl: 28px;

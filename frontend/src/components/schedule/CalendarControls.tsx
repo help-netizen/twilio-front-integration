@@ -10,7 +10,6 @@ import type { ViewMode, ProviderInfo } from '../../hooks/useScheduleData';
 import type { ScheduleFilters } from '../../services/scheduleApi';
 import { getProviderColor } from '../../utils/providerColors';
 import { Badge } from '../ui/badge';
-import { useIsMobile } from '../../hooks/useIsMobile';
 import { useAuthz } from '../../hooks/useAuthz';
 
 interface CalendarControlsProps {
@@ -69,22 +68,6 @@ function getDateLabel(date: Date, mode: ViewMode): string {
             return format(date, 'MMMM yyyy');
     }
 }
-
-const frostedCard: React.CSSProperties = {
-    background: 'linear-gradient(135deg, rgba(255, 253, 249, 0.94), rgba(249, 244, 238, 0.9))',
-    border: '1px solid var(--sched-line)',
-    borderRadius: '24px',
-    backdropFilter: 'blur(20px)',
-    boxShadow: '0 12px 32px rgba(48, 39, 28, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.7)',
-};
-
-const controlBtn: React.CSSProperties = {
-    background: 'var(--sched-surface-strong)',
-    border: '1px solid var(--sched-line)',
-    color: 'var(--sched-ink-1)',
-    boxShadow: '0 6px 16px rgba(48, 39, 28, 0.06)',
-    borderRadius: '14px',
-};
 
 /* ── Filter column sub-component (same pattern as LeadsFilters) ── */
 
@@ -295,7 +278,6 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
 }) => {
     const [filterDropdownOpen, setFilterDropdownOpen] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
-    const isMobile = useIsMobile();
     const { hasPermission } = useAuthz();
     const canViewSource = hasPermission('lead_source.view');
 
@@ -320,10 +302,10 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
     };
 
     return (
-        // Mobile: flat, full-width — drop the frosted tile + inner gutter so the
-        // controls sit directly on the page (no "плитка"). Desktop keeps the card.
-        <div style={isMobile ? undefined : frostedCard} className="schedule-calendar-controls relative z-[120] overflow-visible">
-            <div className={isMobile ? 'px-0 py-1' : 'px-5 py-4'}>
+        // LAYOUT-CANON п.7: контейнер невидим — frosted-карта снята, контролы живут
+        // прямо на канвасе (референс: тулбар Jobs, .blanc-control-chip*). Ритм рядов
+        // задаёт родительский gap, не карта.
+        <div className="schedule-calendar-controls relative z-[120] flex flex-col gap-3">
                 {/* Main controls row */}
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                     {/* Left: View Selector — hidden on mobile (Day-only there) */}
@@ -331,8 +313,8 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
                         <select
                             value={viewMode}
                             onChange={(e) => onViewModeChange(e.target.value as ViewMode)}
-                            className="appearance-none min-h-[42px] pl-4 pr-9 text-[14px] font-semibold cursor-pointer outline-none"
-                            style={controlBtn}
+                            className="blanc-control-chip appearance-none outline-none"
+                            style={{ paddingRight: 36 }}
                         >
                             {VIEW_OPTIONS.map((opt) => (
                                 <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -349,24 +331,21 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
                         <button
                             type="button"
                             onClick={() => onNavigateDate('prev')}
-                            className="w-[42px] h-[42px] flex items-center justify-center transition-opacity hover:opacity-70"
-                            style={controlBtn}
+                            className="blanc-control-chip-icon"
                         >
                             <ChevronLeft className="size-4" />
                         </button>
                         <button
                             type="button"
                             onClick={() => onNavigateDate('today')}
-                            className="min-h-[42px] px-3.5 text-[14px] font-semibold transition-opacity hover:opacity-70"
-                            style={controlBtn}
+                            className="blanc-control-chip"
                         >
                             Today
                         </button>
                         <button
                             type="button"
                             onClick={() => onNavigateDate('next')}
-                            className="w-[42px] h-[42px] flex items-center justify-center transition-opacity hover:opacity-70"
-                            style={controlBtn}
+                            className="blanc-control-chip-icon"
                         >
                             <ChevronRight className="size-4" />
                         </button>
@@ -374,14 +353,7 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
                             {getDateLabel(currentDate, viewMode)}
                         </span>
                         {!loading && itemCounts && itemCounts.total > 0 && (
-                            <span
-                                className="min-h-[28px] px-2.5 inline-flex items-center text-[12px] font-semibold"
-                                style={{
-                                    background: 'rgba(255, 255, 255, 0.6)',
-                                    color: 'var(--sched-ink-2)',
-                                    borderRadius: '999px',
-                                }}
-                            >
+                            <span className="text-[12px] font-semibold" style={{ color: 'var(--sched-ink-3)' }}>
                                 {itemCounts.total} item{itemCounts.total > 1 ? 's' : ''}
                             </span>
                         )}
@@ -389,10 +361,10 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
 
                     {/* Right: Search + Filters + Settings */}
                     <div className="flex items-center gap-2 w-full md:w-auto flex-wrap md:flex-nowrap">
-                        {/* Inline search */}
+                        {/* Inline search — filled-канон: заливка var(--blanc-field), без бордера */}
                         <label
-                            className="flex items-center min-h-[42px] px-3 gap-2 flex-1 md:flex-none w-full md:w-auto md:min-w-[180px]"
-                            style={controlBtn}
+                            className="flex items-center min-h-[42px] px-4 gap-2 flex-1 md:flex-none w-full md:w-auto md:min-w-[180px]"
+                            style={{ background: 'var(--blanc-field)', borderRadius: '999px' }}
                         >
                             <svg className="size-4 shrink-0" style={{ color: 'var(--sched-ink-3)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                 <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
@@ -412,19 +384,14 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
                             <button
                                 type="button"
                                 onClick={() => setFilterDropdownOpen(!filterDropdownOpen)}
-                                className="flex items-center gap-2 min-h-[42px] px-4 text-[14px] font-semibold transition-all"
-                                style={{
-                                    background: filterDropdownOpen ? 'var(--sched-ink-1)' : 'var(--sched-surface-strong)',
-                                    border: '1px solid ' + (filterDropdownOpen ? 'var(--sched-ink-1)' : 'var(--sched-line)'),
-                                    color: filterDropdownOpen ? '#fff' : 'var(--sched-ink-1)',
-                                    boxShadow: '0 6px 16px rgba(48, 39, 28, 0.06)',
-                                    borderRadius: '14px',
-                                }}
+                                className="blanc-control-chip"
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
+                                data-active={filterDropdownOpen || undefined}
                             >
                                 <SlidersHorizontal className="size-4" />
                                 Filters
                                 {activeFilterCount > 0 && (
-                                    <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[10px] bg-blue-100 text-blue-700">
+                                    <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[10px]">
                                         {activeFilterCount}
                                     </Badge>
                                 )}
@@ -435,9 +402,9 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
                                 <div
                                     className="absolute z-[130] rounded-xl overflow-hidden"
                                     style={{
-                                        background: 'var(--blanc-surface-strong, #fffdf9)',
-                                        border: '1px solid var(--blanc-line, rgba(117, 106, 89, 0.18))',
-                                        boxShadow: '0 12px 32px rgba(48, 39, 28, 0.12)',
+                                        background: 'var(--blanc-surface-strong)',
+                                        border: '1px solid var(--blanc-line)',
+                                        boxShadow: '0 12px 32px rgba(25, 25, 25, 0.12)',
                                         width: allTags.length > 0 ? 520 : 380,
                                         right: 0,
                                         top: 'calc(100% + 8px)',
@@ -480,7 +447,7 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
                                     {/* Columns */}
                                     <div
                                         style={{
-                                            borderTop: activeFilterCount > 0 ? '1px solid var(--blanc-line, rgba(117, 106, 89, 0.18))' : undefined,
+                                            borderTop: activeFilterCount > 0 ? '1px solid var(--blanc-line)' : undefined,
                                             marginTop: activeFilterCount > 0 ? 8 : 0,
                                         }}
                                     >
@@ -510,8 +477,7 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
                             <button
                                 type="button"
                                 onClick={onOpenSettings}
-                                className="w-[42px] h-[42px] flex items-center justify-center transition-opacity hover:opacity-70"
-                                style={controlBtn}
+                                className="blanc-control-chip-icon"
                                 title="Dispatch Settings"
                             >
                                 <svg className="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -523,13 +489,13 @@ export const CalendarControls: React.FC<CalendarControlsProps> = ({
                     </div>
                 </div>
 
-                {/* Provider chips — always visible below controls */}
+                {/* Provider chips — прямо на канвасе под контролами; ритм = gap родителя,
+                    без mt/pt/borderTop (LAYOUT-CANON п.2: отступы задаёт родитель) */}
                 {providers.length > 0 && (
-                    <div className="flex items-center gap-2 flex-wrap mt-3 pt-3" style={{ borderTop: isMobile ? 'none' : '1px solid rgba(117, 106, 89, 0.08)' }}>
+                    <div className="flex items-center gap-2 flex-wrap">
                         <ScheduleProviderChips providers={providers} filters={filters} onFiltersChange={onFiltersChange} />
                     </div>
                 )}
-            </div>
         </div>
     );
 };

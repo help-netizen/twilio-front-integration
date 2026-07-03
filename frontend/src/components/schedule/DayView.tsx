@@ -208,19 +208,19 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
     }
 
     return (
+        // PALETTE-V2 + LAYOUT-CANON: сетка = один белый контентный юнит (как таблица
+        // Jobs) — опаковый белый, hairline, r16; frosted-стекло/тень/blur сняты.
         <div
             className="flex flex-col flex-1 overflow-x-auto"
             style={{
-                background: 'var(--sched-surface)',
-                border: '1px solid rgba(255, 255, 255, 0.55)',
-                borderRadius: 'var(--sched-radius-xl)',
-                boxShadow: 'var(--sched-shadow-main)',
-                backdropFilter: 'blur(24px)',
+                background: 'var(--blanc-surface-strong)',
+                border: '1px solid var(--sched-line)',
+                borderRadius: 'var(--sched-radius-md)',
                 minWidth: '800px',
             }}
         >
             {/* Header */}
-            <div className="flex sticky top-0 z-10" style={{ borderBottom: '1px solid var(--sched-line)', background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.66), rgba(244, 237, 226, 0.42))' }}>
+            <div className="flex sticky top-0 z-10" style={{ borderBottom: '1px solid var(--sched-line)', background: 'var(--blanc-surface-strong)' }}>
                 <div className="flex-shrink-0 flex items-end p-3 text-[11px] font-semibold uppercase" style={{ width: '92px', borderRight: '1px solid var(--sched-line)', color: 'var(--sched-ink-3)', fontFamily: 'Manrope, sans-serif', letterSpacing: '0.14em' }}>
                     Hour
                 </div>
@@ -228,7 +228,7 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                     className="flex-1 flex flex-col justify-start gap-2 p-3"
                     style={{
                         minHeight: '104px',
-                        background: isToday ? 'linear-gradient(180deg, rgba(255, 248, 235, 0.96), rgba(255, 244, 224, 0.76))' : 'transparent',
+                        background: isToday ? 'var(--sched-today-soft)' : 'transparent',
                     }}
                 >
                     <span className="text-[11px] font-semibold uppercase tracking-widest" style={{ color: 'var(--sched-ink-3)', letterSpacing: '0.14em' }}>
@@ -246,8 +246,7 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                 <div className="flex-shrink-0 relative" style={{
                     width: '92px',
                     borderRight: '1px solid var(--sched-line)',
-                    background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.52), rgba(242, 235, 223, 0.62))',
-                    backgroundImage: `linear-gradient(180deg, rgba(255, 255, 255, 0.52), rgba(242, 235, 223, 0.62)), repeating-linear-gradient(to bottom, transparent 0 ${HOUR_HEIGHT - 1}px, var(--sched-line) ${HOUR_HEIGHT - 1}px ${HOUR_HEIGHT}px)`,
+                    backgroundImage: `repeating-linear-gradient(to bottom, transparent 0 ${HOUR_HEIGHT - 1}px, var(--sched-line) ${HOUR_HEIGHT - 1}px ${HOUR_HEIGHT}px)`,
                 }}>
                     {hourSlots.map(h => (
                         <div key={h} className="flex justify-end pr-3 pt-2 text-sm" style={{ height: `${HOUR_HEIGHT}px`, color: 'var(--sched-ink-1)' }}>
@@ -269,8 +268,8 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                     style={{
                         borderRight: '1px solid var(--sched-line)',
                         background: isToday
-                            ? `linear-gradient(180deg, rgba(255, 249, 237, 0.88), rgba(255, 249, 237, 0.58)), repeating-linear-gradient(to bottom, transparent 0 ${HOUR_HEIGHT - 1}px, var(--sched-line) ${HOUR_HEIGHT - 1}px ${HOUR_HEIGHT}px)`
-                            : `linear-gradient(180deg, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0.06)), repeating-linear-gradient(to bottom, transparent 0 ${HOUR_HEIGHT - 1}px, var(--sched-line) ${HOUR_HEIGHT - 1}px ${HOUR_HEIGHT}px)`,
+                            ? `linear-gradient(180deg, rgba(231, 219, 253, 0.28), rgba(231, 219, 253, 0.14)), repeating-linear-gradient(to bottom, transparent 0 ${HOUR_HEIGHT - 1}px, var(--sched-line) ${HOUR_HEIGHT - 1}px ${HOUR_HEIGHT}px)`
+                            : `repeating-linear-gradient(to bottom, transparent 0 ${HOUR_HEIGHT - 1}px, var(--sched-line) ${HOUR_HEIGHT - 1}px ${HOUR_HEIGHT}px)`,
                     }}
                     onDragOver={handleDragOver}
                     onDrop={handleDrop}
@@ -289,7 +288,7 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                                 className="absolute top-0 left-0 right-0 pointer-events-none z-[1]"
                                 style={{
                                     height: Math.min(pastHeight, totalHeight),
-                                    background: 'rgba(58, 48, 39, 0.06)',
+                                    background: 'rgba(25, 25, 25, 0.05)',
                                 }}
                             />
                             {pastHeight < totalHeight && (
