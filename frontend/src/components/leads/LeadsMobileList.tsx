@@ -88,10 +88,9 @@ export const LeadsMobileList: React.FC<LeadsMobileListProps> = ({
         <div className="flex flex-col gap-5 pb-6">
             {groups.map(group => (
                 <div key={group.key} className="flex flex-col gap-2">
-                    <div
-                        className="blanc-eyebrow sticky top-0 z-[1] py-1"
-                        style={{ background: 'var(--blanc-bg)' }}
-                    >
+                    {/* Заголовок дня — текст прямо на канвасе, без подложки и sticky
+                        (правило 7 / фидбек владельца: плашка на градиентном канвасе = грязь) */}
+                    <div className="blanc-eyebrow py-1">
                         {group.label}
                     </div>
                     <div className="flex flex-col gap-2.5">

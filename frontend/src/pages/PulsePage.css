@@ -65,15 +65,13 @@
     box-shadow: inset 0 0 0 1px var(--blanc-line-strong);
 }
 
-/* ── Sticky group headers (Action Required + day groups) ──
-   Plain eyebrow text on the canvas — no plaque. The sticky backing is the
-   canvas color itself, so tiles slide under it invisibly while scrolling
-   (same treatment as the canonical Jobs mobile list). */
+/* ── Group headers (Action Required + day groups) ──
+   Plain eyebrow text written DIRECTLY on the canvas — no background at all
+   (требование владельца: любая подложка читается как грязь; канвас — градиент,
+   поэтому даже «канвас-цветная» sticky-плашка проступала полосой). Не sticky:
+   заголовки скроллятся вместе со списком — чистота важнее прилипания. */
 .pulse-sidebar-group-header {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-    background: var(--blanc-bg);
+    background: none;
     padding: 8px 12px 4px;
     font-size: 11px;
     font-weight: 600;
