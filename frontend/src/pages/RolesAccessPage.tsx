@@ -183,10 +183,10 @@ function TriState({
                             border: 'none',
                             borderLeft: i === 0 ? 'none' : '1px solid var(--blanc-line)',
                             background: active
-                                ? (o.v === 'deny' ? '#fdecec' : o.v === 'allow' ? '#eaf6ee' : 'var(--blanc-surface-strong, #fffdf9)')
+                                ? (o.v === 'deny' ? 'rgba(240, 80, 63, 0.10)' : o.v === 'allow' ? 'rgba(27, 139, 99, 0.10)' : 'var(--blanc-surface-strong)')
                                 : 'transparent',
                             color: active
-                                ? (o.v === 'deny' ? '#b42318' : o.v === 'allow' ? '#27693f' : 'var(--blanc-ink-1)')
+                                ? (o.v === 'deny' ? 'var(--blanc-danger)' : o.v === 'allow' ? 'var(--blanc-success)' : 'var(--blanc-ink-1)')
                                 : 'var(--blanc-ink-3)',
                             fontWeight: active ? 600 : 400,
                         }}
@@ -311,7 +311,7 @@ function PeoplePanel({ matrix }: { matrix: RoleMatrix }) {
                                         >
                                             <div style={{ color: 'var(--blanc-ink-1)', fontSize: 14 }}>
                                                 {item.label}
-                                                <span className="ml-2" style={{ fontSize: 12, color: effective ? '#27693f' : 'var(--blanc-ink-3)' }}>
+                                                <span className="ml-2" style={{ fontSize: 12, color: effective ? 'var(--blanc-success)' : 'var(--blanc-ink-3)' }}>
                                                     {effective ? 'Allowed' : 'Not allowed'}
                                                     {state === 'inherit' ? ' (role default)' : ''}
                                                     {neutralized ? ' · mandatory, re-granted' : ''}

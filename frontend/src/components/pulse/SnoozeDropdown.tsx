@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
 import { Clock } from 'lucide-react';
 import { SNOOZE_OPTIONS, getSnoozeUntil } from './PulseContactItem';
-import { isMobileViewport, clampToViewport } from '../../hooks/useViewportSafePosition';
+import { isMobileViewport } from '../../hooks/useViewportSafePosition';
 import { BottomSheet } from '../ui/BottomSheet';
+import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
 interface SnoozeDropdownProps {
     onSnooze: (until: string) => void;
@@ -11,23 +12,7 @@ interface SnoozeDropdownProps {
 
 export function SnoozeDropdown({ onSnooze, companyTz }: SnoozeDropdownProps) {
     const [open, setOpen] = useState(false);
-    const btnRef = useRef<HTMLButtonElement>(null);
-    const dropdownRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        if (!open) return;
-        const handler = (e: MouseEvent) => {
-            const target = e.target as Node;
-            if (btnRef.current?.contains(target) || dropdownRef.current?.contains(target)) return;
-            setOpen(false);
-        };
-        document.addEventListener('mousedown', handler);
-        return () => document.removeEventListener('mousedown', handler);
-    }, [open]);
-
-    const isMobile = open && isMobileViewport();
-    const rect = btnRef.current?.getBoundingClientRect();
-    const desktopPos = rect && !isMobile ? clampToViewport(rect, 190, 220) : null;
+    const isMobile = isMobileViewport();
 
     const dropdownContent = (
         <>
@@ -62,35 +47,28 @@ export function SnoozeDropdown({ onSnooze, companyTz }: SnoozeDropdownProps) {
     );
 
     return (
-        <div className="relative">
-            <button
-                ref={btnRef}
-                onClick={() => setOpen(!open)}
-                className="inline-flex items-center gap-1.5 px-4 text-sm font-semibold transition-opacity hover:opacity-70"
-                style={{ color: 'var(--blanc-ink-1)', background: 'var(--blanc-surface-strong)', border: '1px solid rgba(104, 95, 80, 0.14)', minHeight: 42, borderRadius: 14, boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
-            >
-                <Clock className="size-4" /> Snooze
-            </button>
-            {/* mobile only — desktop dropdown unchanged */}
-            {isMobile && (
+        <>
+            {/* desktop = канонный Popover (тир z-150, dismiss из коробки — самодельный
+                fixed z-[101] + click-outside/clampToViewport снесены, W3-аудит),
+                mobile = канонный BottomSheet как и был. */}
+            <Popover open={open && !isMobile} onOpenChange={setOpen}>
+                <PopoverTrigger asChild>
+                    <button
+                        className="inline-flex items-center gap-1.5 px-4 text-sm font-semibold transition-opacity hover:opacity-70"
+                        style={{ color: 'var(--blanc-ink-1)', background: 'var(--blanc-surface-strong)', border: '1px solid rgba(104, 95, 80, 0.14)', minHeight: 42, borderRadius: 14, boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
+                    >
+                        <Clock className="size-4" /> Snooze
+                    </button>
+                </PopoverTrigger>
+                <PopoverContent align="start" sideOffset={4} className="w-auto min-w-[190px] p-0 py-1 rounded-xl">
+                    {dropdownContent}
+                </PopoverContent>
+            </Popover>
+            {open && isMobile && (
                 <BottomSheet open={open} onClose={() => setOpen(false)} title="Snooze" size="auto">
                     {dropdownContent}
                 </BottomSheet>
             )}
-            {open && !isMobile && desktopPos && (
-                <div
-                    ref={dropdownRef}
-                    className="fixed z-[101] rounded-xl shadow-lg py-1 min-w-[190px]"
-                    style={{
-                        background: 'var(--blanc-surface-strong)',
-                        border: '1px solid var(--blanc-line)',
-                        left: desktopPos.left,
-                        top: desktopPos.top,
-                    }}
-                >
-                    {dropdownContent}
-                </div>
-            )}
-        </div>
+        </>
     );
 }

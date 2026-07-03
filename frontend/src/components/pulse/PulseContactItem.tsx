@@ -2,8 +2,9 @@
  * PulseContactItem — a single contact row in the Pulse sidebar.
  * Layout: avatar/initials + interaction badge | name + time | phone | status badges
  */
-import { useState, useRef, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '../ui/dropdown-menu';
 import { callsApi } from '../../services/api';
 import { formatPhoneDisplay as formatPhoneNumber, isAnonymousPhone } from '../../utils/phoneUtils';
 import { useLeadByPhone } from '../../hooks/useLeadByPhone';
@@ -132,7 +133,6 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
     const isSnoozed = snoozedUntil && new Date(snoozedUntil) > new Date();
     const [snoozeMenuOpen, setSnoozeMenuOpen] = useState(false);
     const [menuOpen, setMenuOpen] = useState(false);
-    const menuRef = useRef<HTMLDivElement>(null);
 
     const callDirection = call.direction === 'inbound' ? 'inbound'
         : call.direction?.startsWith('outbound') ? 'outbound'
@@ -146,15 +146,6 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
         && ['no-answer', 'busy', 'failed', 'canceled', 'voicemail_left', 'voicemail_recording'].includes((call.status || '').toLowerCase());
 
     // Neutral icon container — same for all contacts, no visual noise
-
-    useEffect(() => {
-        if (!menuOpen) return;
-        const handler = (e: MouseEvent) => {
-            if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
-        };
-        document.addEventListener('mousedown', handler);
-        return () => document.removeEventListener('mousedown', handler);
-    }, [menuOpen]);
 
     return (
         <button
@@ -254,20 +245,26 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                     )}
                 </div>
 
-                {/* ⋮ menu — visible on hover or when active */}
-                <div className="shrink-0 relative" ref={menuRef}>
-                    <div
-                        role="button"
-                        tabIndex={0}
-                        onClick={(e) => { e.stopPropagation(); setMenuOpen(prev => !prev); }}
-                        onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMenuOpen(prev => !prev); } }}
-                        className={`p-1.5 rounded-lg transition-colors cursor-pointer min-w-[32px] min-h-[32px] flex items-center justify-center ${menuOpen ? 'bg-muted/80' : 'max-md:opacity-70 md:opacity-0 md:group-hover:opacity-100'} ${isActive ? '!opacity-100' : ''}`}
-                        title="More options"
-                    >
-                        <MoreVertical className="size-3.5" style={{ color: 'var(--blanc-ink-3)' }} />
-                    </div>
-                    {menuOpen && (
-                        <div className="absolute right-0 top-full mt-1 z-50 bg-card rounded-xl shadow-lg border border-border py-1 min-w-[180px]">
+                {/* ⋮ menu — visible on hover or when active. Канонный DropdownMenu: тир z-150,
+                    dismiss из коробки (самодельный absolute z-50 + click-outside снесены,
+                    W3-аудит); на мобиле — канонный BottomSheet из враппера. Toggle открытия —
+                    у Radix-триггера; stopPropagation остаётся, чтобы тайл не навигировал. */}
+                <div className="shrink-0">
+                    <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+                        <DropdownMenuTrigger asChild>
+                            <div
+                                role="button"
+                                tabIndex={0}
+                                onClick={(e) => e.stopPropagation()}
+                                onKeyDown={(e) => { if (e.key === 'Enter') e.stopPropagation(); }}
+                                className={`p-1.5 rounded-lg transition-colors cursor-pointer min-w-[32px] min-h-[32px] flex items-center justify-center ${menuOpen ? 'bg-muted/80' : 'max-md:opacity-70 md:opacity-0 md:group-hover:opacity-100'} ${isActive ? '!opacity-100' : ''}`}
+                                title="More options"
+                            >
+                                <MoreVertical className="size-3.5" style={{ color: 'var(--blanc-ink-3)' }} />
+                            </div>
+                        </DropdownMenuTrigger>
+                        {/* overflow-visible: вложенное snooze-подменю (md:right-full) выходит за рамку контента */}
+                        <DropdownMenuContent align="end" sideOffset={4} className="min-w-[180px] overflow-visible p-0 py-1 rounded-xl">
                             <div role="button" tabIndex={0}
                                 onClick={(e) => { e.stopPropagation(); setMenuOpen(false); if (tlId && onMarkUnread) onMarkUnread(tlId); }}
                                 onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setMenuOpen(false); if (tlId && onMarkUnread) onMarkUnread(tlId); } }}
@@ -311,8 +308,8 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                                     )}
                                 </div>
                             )}
-                        </div>
-                    )}
+                        </DropdownMenuContent>
+                    </DropdownMenu>
                 </div>
             </div>
         </button>

@@ -10,8 +10,9 @@ import { useAuthz } from '../../hooks/useAuthz';
 import { authedFetch } from '../../services/apiClient';
 import { formatFileSize, resolveVariables, buildMessageTargets } from './smsFormHelpers';
 import type { SmsFormProps, QuickMessage, MessageTarget } from './smsFormHelpers';
-import { isMobileViewport, clampToViewport } from '../../hooks/useViewportSafePosition';
+import { isMobileViewport } from '../../hooks/useViewportSafePosition';
 import { BottomSheet } from '../ui/BottomSheet';
+import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -23,8 +24,6 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
     const [toDropdownOpen, setToDropdownOpen] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
-    const quickBtnRef = useRef<HTMLButtonElement>(null);
-    const quickDropdownRef = useRef<HTMLDivElement>(null);
     const [quickMessages, setQuickMessages] = useState<QuickMessage[]>([]);
     const navigate = useNavigate();
     const { hasPermission } = useAuthz();
@@ -36,18 +35,6 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
 
     const fetchQuickMessages = useCallback(async () => { try { const res = await authedFetch(`${API_BASE}/api/quick-messages`); const data = await res.json(); setQuickMessages(data.messages || []); } catch (err) { console.error('Failed to load quick messages:', err); } }, []);
     useEffect(() => { fetchQuickMessages(); }, [fetchQuickMessages]);
-
-    // Close quick messages dropdown on click outside (no overlay blocking scroll)
-    useEffect(() => {
-        if (!isPresetsOpen) return;
-        const handler = (e: MouseEvent) => {
-            const target = e.target as Node;
-            if (quickDropdownRef.current?.contains(target) || quickBtnRef.current?.contains(target)) return;
-            setIsPresetsOpen(false);
-        };
-        document.addEventListener('mousedown', handler);
-        return () => document.removeEventListener('mousedown', handler);
-    }, [isPresetsOpen]);
 
     const targets = useMemo(
         () => buildMessageTargets(mainPhone, secondaryPhone, secondaryPhoneName, emails),
@@ -148,51 +135,52 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
             </div>
             <div className="flex items-center justify-between gap-2 max-md:flex-wrap">
                 <div className="flex items-center gap-2">
-                    <div className="relative">
-                        <button
-                            ref={quickBtnRef}
-                            onClick={() => setIsPresetsOpen(!isPresetsOpen)}
-                            className="flex items-center gap-1.5 px-4 text-sm font-semibold transition-opacity hover:opacity-70"
-                            style={{ color: 'var(--blanc-ink-1)', borderColor: 'rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', border: '1px solid rgba(104, 95, 80, 0.14)', borderRadius: 14, minHeight: 42, boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
-                            title="Quick Messages"
-                        >
-                            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isPresetsOpen ? 'rotate-180' : ''}`} />
-                            Quick
-                        </button>
-                        {isPresetsOpen && (() => {
-                            const quickContent = (
-                                <>
-                                    <div className="overflow-y-auto flex-1">
-                                        {quickMessages.map(qm => (
-                                            <button key={qm.id} onClick={() => handlePresetSelect(qm.content)} className="w-full text-left px-4 py-3 hover:bg-muted/50 transition-colors">
-                                                <div className="text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>{qm.title}</div>
-                                                <div className="text-xs line-clamp-1" style={{ color: 'var(--blanc-ink-3)' }}>{qm.content}</div>
-                                            </button>
-                                        ))}
-                                    </div>
-                                    <div className="border-t my-1 flex-shrink-0" style={{ borderColor: 'var(--blanc-line)' }} />
-                                    <button onClick={() => { setIsPresetsOpen(false); navigate('/settings/quick-messages'); }} className="w-full text-left px-4 py-3 hover:bg-muted/50 transition-colors flex-shrink-0">
-                                        <div className="text-sm font-medium" style={{ color: 'var(--blanc-info)' }}>+ Add New</div>
-                                    </button>
-                                </>
-                            );
-                            if (isMobileViewport()) {
-                                // mobile only — desktop dropdown unchanged
-                                return (
+                    {(() => {
+                        const isMobile = isMobileViewport();
+                        const quickContent = (
+                            <>
+                                <div className="overflow-y-auto flex-1">
+                                    {quickMessages.map(qm => (
+                                        <button key={qm.id} onClick={() => handlePresetSelect(qm.content)} className="w-full text-left px-4 py-3 hover:bg-muted/50 transition-colors">
+                                            <div className="text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>{qm.title}</div>
+                                            <div className="text-xs line-clamp-1" style={{ color: 'var(--blanc-ink-3)' }}>{qm.content}</div>
+                                        </button>
+                                    ))}
+                                </div>
+                                <div className="border-t my-1 flex-shrink-0" style={{ borderColor: 'var(--blanc-line)' }} />
+                                <button onClick={() => { setIsPresetsOpen(false); navigate('/settings/quick-messages'); }} className="w-full text-left px-4 py-3 hover:bg-muted/50 transition-colors flex-shrink-0">
+                                    <div className="text-sm font-medium" style={{ color: 'var(--blanc-info)' }}>+ Add New</div>
+                                </button>
+                            </>
+                        );
+                        return (
+                            <>
+                                {/* desktop = канонный Popover над кнопкой (тир z-150, dismiss из коробки —
+                                    самодельный fixed z-[101] + click-outside/clampToViewport снесены, W3-аудит),
+                                    mobile = канонный BottomSheet как и был. */}
+                                <Popover open={isPresetsOpen && !isMobile} onOpenChange={setIsPresetsOpen}>
+                                    <PopoverTrigger asChild>
+                                        <button
+                                            className="flex items-center gap-1.5 px-4 text-sm font-semibold transition-opacity hover:opacity-70"
+                                            style={{ color: 'var(--blanc-ink-1)', borderColor: 'rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', border: '1px solid rgba(104, 95, 80, 0.14)', borderRadius: 14, minHeight: 42, boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
+                                            title="Quick Messages"
+                                        >
+                                            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isPresetsOpen ? 'rotate-180' : ''}`} />
+                                            Quick
+                                        </button>
+                                    </PopoverTrigger>
+                                    <PopoverContent side="top" align="start" sideOffset={4} className="w-72 p-0 py-1 rounded-xl flex flex-col" style={{ maxHeight: '50vh' }}>
+                                        {quickContent}
+                                    </PopoverContent>
+                                </Popover>
+                                {isPresetsOpen && isMobile && (
                                     <BottomSheet open={isPresetsOpen} onClose={() => setIsPresetsOpen(false)} title="Quick Messages" size="auto">
                                         {quickContent}
                                     </BottomSheet>
-                                );
-                            }
-                            const btnRect = quickBtnRef.current?.getBoundingClientRect();
-                            const pos = btnRect ? clampToViewport(btnRect, 288, 320, false) : { left: 0, top: 0 };
-                            return (
-                                <div ref={quickDropdownRef} className="fixed w-72 rounded-xl shadow-lg z-[101] py-1 flex flex-col" style={{ background: 'var(--blanc-surface-strong)', border: '1px solid var(--blanc-line)', maxHeight: '50vh', left: pos.left, bottom: btnRect ? window.innerHeight - btnRect.top + 4 : 0 }}>
-                                    {quickContent}
-                                </div>
-                            );
-                        })()}
-                    </div>
+                                )}
+                            </>
+                        );
+                    })()}
                     {!isEmail && (
                         <>
                             <button onClick={() => fileInputRef.current?.click()} className="flex items-center justify-center transition-opacity hover:opacity-70" style={{ width: 42, height: 42, borderRadius: 14, border: '1px solid rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', color: 'var(--blanc-ink-2)', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }} title="Attach file"><Paperclip className="w-4 h-4" /></button>

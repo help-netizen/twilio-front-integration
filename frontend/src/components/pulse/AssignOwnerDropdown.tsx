@@ -1,29 +1,16 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { UserRound } from 'lucide-react';
 import { pulseApi } from '../../services/pulseApi';
 import { authedFetch } from '../../services/apiClient';
-import { isMobileViewport, clampToViewport } from '../../hooks/useViewportSafePosition';
+import { isMobileViewport } from '../../hooks/useViewportSafePosition';
 import { BottomSheet } from '../ui/BottomSheet';
+import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 
 export function AssignOwnerDropdown({ timelineId, onAssigned }: { timelineId: number | null; onAssigned?: () => void }) {
     const [open, setOpen] = useState(false);
     const [members, setMembers] = useState<Array<{ id: string; name: string }>>([]);
     const [loaded, setLoaded] = useState(false);
-    const btnRef = useRef<HTMLButtonElement>(null);
-    const dropdownRef = useRef<HTMLDivElement>(null);
-
-    // Close on click outside
-    useEffect(() => {
-        if (!open) return;
-        const handler = (e: MouseEvent) => {
-            const target = e.target as Node;
-            if (btnRef.current?.contains(target) || dropdownRef.current?.contains(target)) return;
-            setOpen(false);
-        };
-        document.addEventListener('mousedown', handler);
-        return () => document.removeEventListener('mousedown', handler);
-    }, [open]);
 
     useEffect(() => {
         if (!open || loaded) return;
@@ -50,9 +37,7 @@ export function AssignOwnerDropdown({ timelineId, onAssigned }: { timelineId: nu
         setOpen(false);
     };
 
-    const isMobile = open && isMobileViewport();
-    const rect = btnRef.current?.getBoundingClientRect();
-    const desktopPos = rect && !isMobile ? clampToViewport(rect, 200, 220) : null;
+    const isMobile = isMobileViewport();
 
     const listContent = (
         <>
@@ -75,35 +60,28 @@ export function AssignOwnerDropdown({ timelineId, onAssigned }: { timelineId: nu
     );
 
     return (
-        <div className="relative">
-            <button
-                ref={btnRef}
-                onClick={() => setOpen(!open)}
-                className="inline-flex items-center gap-1.5 px-4 text-sm font-semibold transition-opacity hover:opacity-70"
-                style={{ color: 'var(--blanc-info)', background: 'rgba(37, 99, 235, 0.08)', minHeight: 42, borderRadius: 14 }}
-            >
-                <UserRound className="size-4" /> Assign
-            </button>
-            {/* mobile only — desktop dropdown unchanged */}
-            {isMobile && (
+        <>
+            {/* desktop = канонный Popover (тир z-150, dismiss из коробки — самодельный
+                fixed z-[101] + click-outside/clampToViewport снесены, W3-аудит),
+                mobile = канонный BottomSheet как и был. */}
+            <Popover open={open && !isMobile} onOpenChange={setOpen}>
+                <PopoverTrigger asChild>
+                    <button
+                        className="inline-flex items-center gap-1.5 px-4 text-sm font-semibold transition-opacity hover:opacity-70"
+                        style={{ color: 'var(--blanc-info)', background: 'rgba(37, 99, 235, 0.08)', minHeight: 42, borderRadius: 14 }}
+                    >
+                        <UserRound className="size-4" /> Assign
+                    </button>
+                </PopoverTrigger>
+                <PopoverContent align="start" sideOffset={4} className="w-auto min-w-[200px] max-h-[200px] overflow-y-auto p-0 py-1 rounded-xl">
+                    {listContent}
+                </PopoverContent>
+            </Popover>
+            {open && isMobile && (
                 <BottomSheet open={open} onClose={() => setOpen(false)} title="Assign Owner" size="auto">
                     {listContent}
                 </BottomSheet>
             )}
-            {open && !isMobile && desktopPos && (
-                <div
-                    ref={dropdownRef}
-                    className="fixed z-[101] rounded-xl shadow-lg py-1 min-w-[200px] max-h-[200px] overflow-y-auto"
-                    style={{
-                        background: 'var(--blanc-surface-strong)',
-                        border: '1px solid var(--blanc-line)',
-                        left: desktopPos.left,
-                        top: desktopPos.top,
-                    }}
-                >
-                    {listContent}
-                </div>
-            )}
-        </div>
+        </>
     );
 }
