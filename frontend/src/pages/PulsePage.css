@@ -66,12 +66,14 @@
 }
 
 /* ── Group headers (Action Required + day groups) ──
-   Plain eyebrow text written DIRECTLY on the canvas — no background at all
-   (требование владельца: любая подложка читается как грязь; канвас — градиент,
-   поэтому даже «канвас-цветная» sticky-плашка проступала полосой). Не sticky:
-   заголовки скроллятся вместе со списком — чистота важнее прилипания. */
+   Sticky остаётся (владелец: «прилипание — правильно»), но фон ПРОЗРАЧНЫЙ:
+   любая заливка под текстом читается как грязь (канвас — градиент, плашка
+   проступает полосой). Текст написан прямо на канвасе. */
 .pulse-sidebar-group-header {
-    background: none;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: transparent;
     padding: 8px 12px 4px;
     font-size: 11px;
     font-weight: 600;
