@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Plus, Copy, ShieldOff, Key, Webhook, RefreshCw, Check, Settings2, Save, Trash2, Store, AlertCircle, ExternalLink } from 'lucide-react';
 import { CreateDialog, SecretDialog, RevokeDialog, RegenerateDialog } from './IntegrationDialogs';
+import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 
 function formatDate(dateStr: string | null | undefined) {
     if (!dateStr) return '';
@@ -192,12 +193,10 @@ export function IntegrationsPage() {
     const gmailConnected = mailbox?.provider === 'gmail' && mailbox.status === 'connected';
 
     return (
-        <div className="p-6 max-w-6xl mx-auto">
-            <div className="mb-8">
-                <h1 className="text-2xl font-semibold text-[var(--blanc-ink-1)]">Integrations</h1>
-                <p className="text-[var(--blanc-ink-2)] text-sm mt-1">Connect apps, manage API credentials, and configure external services</p>
-            </div>
-
+        <SettingsPageShell
+            title="Integrations"
+            description="Connect apps, manage API credentials, and configure external services"
+        >
             <Tabs defaultValue="marketplace" className="space-y-6">
                 <TabsList>
                     <TabsTrigger value="marketplace">Marketplace</TabsTrigger>
@@ -399,6 +398,6 @@ export function IntegrationsPage() {
             <SecretDialog open={secretModalOpen} onOpenChange={setSecretModalOpen} integration={newIntegration} />
             <RevokeDialog target={revokeTarget} onClose={() => setRevokeTarget(null)} onRevoke={() => revokeTarget && revokeMutation.mutate(revokeTarget.key_id)} isPending={revokeMutation.isPending} />
             <RegenerateDialog open={regenerateOpen} onOpenChange={setRegenerateOpen} onRegenerate={() => regenerateMutation.mutate()} isPending={regenerateMutation.isPending} />
-        </div>
+        </SettingsPageShell>
     );
 }

@@ -19,10 +19,11 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
-    ArrowLeft, AlertCircle, Check, CheckCircle2, ChevronRight,
-    Loader2, MapPin, Phone, Search,
+    AlertCircle, Check, CheckCircle2, ChevronRight,
+    Loader2, MapPin, Search,
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
+import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { Badge } from '../components/ui/badge';
 import { Checkbox } from '../components/ui/checkbox';
 import { FloatingField } from '../components/ui/floating-field';
@@ -343,26 +344,12 @@ export default function TelephonyTwilioSettingsPage() {
     ];
 
     return (
-        <div className="max-w-4xl px-6 py-8" style={{ color: 'var(--blanc-ink-1)' }}>
-            <Button variant="ghost" onClick={() => navigate('/settings/integrations')} className="mb-6 h-auto px-0 hover:bg-transparent">
-                <ArrowLeft className="h-4 w-4" /> Integrations
-            </Button>
-
-            {/* Header */}
-            <div className="flex items-center gap-3 mb-8">
-                <div className="flex items-center justify-center h-11 w-11 rounded-xl" style={{ background: '#f22f46', flexShrink: 0 }}>
-                    <Phone className="h-5 w-5 text-white" />
-                </div>
-                <div>
-                    <h2 className="text-2xl font-semibold" style={{ fontFamily: 'var(--blanc-font-heading, inherit)' }}>
-                        Telephony — Twilio
-                    </h2>
-                    <p className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>
-                        Connect your business phone: create a workspace, choose a plan, and get a number.
-                    </p>
-                </div>
-            </div>
-
+        <SettingsPageShell
+            backTo="/settings/integrations"
+            backLabel="Integrations"
+            title="Telephony — Twilio"
+            description="Connect your business phone: create a workspace, choose a plan, and get a number."
+        >
             {bootLoading ? (
                 <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--blanc-ink-3)' }}>
                     <Loader2 className="h-4 w-4 animate-spin" /> Loading…
@@ -596,6 +583,6 @@ export default function TelephonyTwilioSettingsPage() {
                     )}
                 </>
             )}
-        </div>
+        </SettingsPageShell>
     );
 }
