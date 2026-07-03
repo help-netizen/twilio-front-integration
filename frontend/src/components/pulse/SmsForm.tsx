@@ -77,7 +77,7 @@ export function SmsForm({ onSend, onAiFormat, disabled, lead, mainPhone, seconda
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSend(); } };
 
     return (
-        <div className="border-t p-4" style={{ borderTopColor: 'var(--blanc-line)', background: 'var(--blanc-surface-strong)' }}>
+        <div className="p-4">{/* surface owned by the parent .pulse-card (LAYOUT-CANON rule 3) */}
             {showToSelector && activeTarget && (
                 <div className="mb-2 relative">
                     <div className="flex items-center gap-2 text-xs">

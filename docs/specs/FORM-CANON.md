@@ -2,9 +2,16 @@
 
 Gold-standard reference: **`frontend/src/components/jobs/NewJobDialog.tsx`** — read it before editing.
 
-Goal: every form dialog becomes a right-side **panel drawer** with a near-white surface and
+Goal: every form dialog becomes a right-side **panel drawer** with a white surface and
 **floating-label** fields. Presentation/layout only — never change business logic, state,
 validation, props, or API calls.
+
+> **PALETTE-V2 (W2, 2026-07-02):** поля переведены на **filled-канон** — заливка
+> `var(--blanc-field)` (#F0F0F0), бордер transparent, floated-лейбл живёт ВНУТРИ заливки
+> (top ~6px, `--blanc-ink-3`), фокус = бордер `--blanc-line-strong`. Это уже зашито в
+> примитивы (`floating-field`, `floating-select`, `PhoneInput`, `input`, `textarea`,
+> `select`) — при миграции форм просто используй примитивы, ничего не докрашивая.
+> Правило 9 ниже обновлено соответственно. См. `docs/specs/PALETTE-V2.md`.
 
 ## Shared components (already built — DO NOT modify them; just import)
 - `../ui/dialog`: `DialogContent` (use `variant="panel"`), `DialogPanelHeader`, `DialogBody`,
@@ -60,7 +67,9 @@ validation, props, or API calls.
    For these, keep a concise label (`<Label>` or `.blanc-eyebrow`) beside/above the control.
 8. Remove redundant block-heading eyebrows; rely on spacing. Keep a heading only if a section
    genuinely needs a name.
-9. Never set a field background color. Fields are border-only and inherit the panel surface.
+9. Never set a field background color at call-sites. Fields are **filled** by the primitives
+   themselves (`var(--blanc-field)` fill, transparent border, label inside the fill) — do not
+   add your own backgrounds, borders or label patches on top.
 10. If the file was already migrated to `variant="panel"` with old `DialogHeader`/`DialogFooter`
     + stacked `<Label>`s, replace that structure with the canon above.
 

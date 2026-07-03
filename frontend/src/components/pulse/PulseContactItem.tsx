@@ -167,16 +167,15 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                         .catch((err) => { console.error('[Pulse] Failed to mark timeline read:', tlId, err); });
                 }
             }}
-            className={`w-full text-left px-3 py-2.5 transition-colors border-b relative group ${isActive ? 'pulse-contact-item-active' : (isMissedIncoming ? 'hover:brightness-95' : 'hover:bg-muted/40')}`}
+            className={`pulse-tile w-full text-left relative group${isActive ? ' pulse-contact-item-active' : ''}`}
             style={{
                 outline: 'none',
-                borderBottomColor: 'var(--blanc-line)',
                 ...(isMissedIncoming && !isActive ? { background: 'rgba(244, 63, 94, 0.08)' } : {}),
             }}
         >
             {/* Unread indicator */}
             {hasUnread && (
-                <div className="absolute left-0 top-0 bottom-0 w-[3px] rounded-r" style={{ backgroundColor: 'var(--blanc-info)' }} />
+                <div className="absolute left-0 top-3 bottom-3 w-[3px] rounded-full" style={{ backgroundColor: 'var(--blanc-info)' }} />
             )}
 
             <div className="flex items-start gap-2.5">

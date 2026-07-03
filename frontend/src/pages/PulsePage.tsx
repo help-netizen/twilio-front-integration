@@ -216,55 +216,53 @@ export const PulsePage: React.FC = () => {
                 viewer is tenant_admin AND the server says visible. */}
             <OnboardingChecklistCard />
 
-            {/* Two-column layout: sidebar card + right column of floating cards */}
+            {/* Two-column layout: invisible sidebar column + right column (LAYOUT-CANON rule 7) */}
             <div className="pulse-layout" data-mobile-panel={mobilePanel}>
 
-                {/* Left sidebar — sticky floating card */}
-                <div className="pulse-sidebar-card">
-                    <div className="pulse-sidebar-scroll">
-                        {p.contactsLoading ? (
-                            <div className="p-3 space-y-2">
-                                {[...Array(8)].map((_, i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}
-                            </div>
-                        ) : displayedCalls.length === 0 ? (
-                            <div className="flex-1 flex flex-col items-center justify-center py-12">
-                                <PhoneOff className="size-8 mx-auto mb-2 opacity-20" />
-                                <p className="text-sm text-muted-foreground">No contacts found</p>
-                            </div>
-                        ) : (
-                            <>
-                                {/* Action Required — pinned at the very top */}
-                                {sidebarGroups.actionRequired.length > 0 && (
-                                    <div>
-                                        <div className="pulse-sidebar-group-header pulse-sidebar-group-header-ar">
-                                            Action Required
-                                        </div>
-                                        {sidebarGroups.actionRequired.map((call, idx) => renderItem(call, idx))}
-                                    </div>
-                                )}
-                                {/* The rest — grouped by activity day, most recent first */}
-                                {sidebarGroups.dayGroups.map(group => (
-                                    <div key={group.key}>
-                                        <div className="pulse-sidebar-group-header">
-                                            {group.label}
-                                        </div>
-                                        {group.calls.map((call, idx) => renderItem(call, idx))}
-                                    </div>
-                                ))}
-                            </>
-                        )}
-                        <div ref={p.loadMoreRef} className="h-8 flex items-center justify-center">
-                            {p.isFetchingNextPage && (
-                                <div className="text-xs text-muted-foreground">Loading more...</div>
-                            )}
+                {/* Left sidebar — invisible layout+scroll container; the tiles carry the surface */}
+                <div className="pulse-sidebar">
+                    {p.contactsLoading ? (
+                        <div className="space-y-2">
+                            {[...Array(8)].map((_, i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}
                         </div>
+                    ) : displayedCalls.length === 0 ? (
+                        <div className="flex-1 flex flex-col items-center justify-center py-12">
+                            <PhoneOff className="size-8 mx-auto mb-2 opacity-20" />
+                            <p className="text-sm text-muted-foreground">No contacts found</p>
+                        </div>
+                    ) : (
+                        <>
+                            {/* Action Required — pinned at the very top */}
+                            {sidebarGroups.actionRequired.length > 0 && (
+                                <div className="pulse-sidebar-group">
+                                    <div className="pulse-sidebar-group-header pulse-sidebar-group-header-ar">
+                                        Action Required
+                                    </div>
+                                    {sidebarGroups.actionRequired.map((call, idx) => renderItem(call, idx))}
+                                </div>
+                            )}
+                            {/* The rest — grouped by activity day, most recent first */}
+                            {sidebarGroups.dayGroups.map(group => (
+                                <div key={group.key} className="pulse-sidebar-group">
+                                    <div className="pulse-sidebar-group-header">
+                                        {group.label}
+                                    </div>
+                                    {group.calls.map((call, idx) => renderItem(call, idx))}
+                                </div>
+                            ))}
+                        </>
+                    )}
+                    <div ref={p.loadMoreRef} className="h-8 flex items-center justify-center">
+                        {p.isFetchingNextPage && (
+                            <div className="text-xs text-muted-foreground">Loading more...</div>
+                        )}
                     </div>
                 </div>
 
-                {/* Right column: separate floating cards */}
+                {/* Right column: scroll container (invisible); content units carry their surfaces */}
                 <div className="pulse-right-column">
                     {!p.contactId && !p.timelineId ? (
-                        <div className="pulse-card pulse-empty-state">
+                        <div className="pulse-empty-state">
                             <Activity className="size-12 mb-4" style={{ opacity: 0.15 }} />
                             <p className="text-muted-foreground">Select a contact to view their timeline</p>
                         </div>
@@ -384,17 +382,15 @@ export const PulsePage: React.FC = () => {
                                 ) : null
                             ) : null}
 
-                            {/* Timeline card */}
-                            <div className="pulse-card">
-                                <PulseTimeline
-                                    calls={p.callDataItems}
-                                    messages={p.messages}
-                                    loading={p.timelineLoading}
-                                    timelineKey={p.timelineId || p.contactId}
-                                    financialEvents={p.financialEvents}
-                                    emailMessages={p.emailMessages}
-                                />
-                            </div>
+                            {/* Timeline — no wrapper card: items carry their own surfaces on the canvas */}
+                            <PulseTimeline
+                                calls={p.callDataItems}
+                                messages={p.messages}
+                                loading={p.timelineLoading}
+                                timelineKey={p.timelineId || p.contactId}
+                                financialEvents={p.financialEvents}
+                                emailMessages={p.emailMessages}
+                            />
 
                             {/* SMS form card — hidden for anonymous timeline (no callback target) */}
                             {p.phone && !isAnonTimeline && (

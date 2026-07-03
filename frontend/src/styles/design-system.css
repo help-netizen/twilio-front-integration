@@ -651,10 +651,6 @@ table tbody tr:hover {
    ═══════════════════════════════════════════════════════════════════ */
 
 /* ── Pulse Page ── */
-.pulse-sidebar-card {
-    background: var(--blanc-surface-strong) !important;
-}
-
 .pulse-contact-item-active {
     background: rgba(255, 247, 231, 0.7) !important;
 }

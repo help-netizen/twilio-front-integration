@@ -1,7 +1,9 @@
 /* ── Pulse Page Layout ───────────────────────────────────────────
-   Two-column layout: fixed sidebar + scrollable right column.
-   The page wrapper becomes a fixed-height container.
-   Sidebar and right column scroll independently.
+   Two-column layout: sidebar + right column, both INVISIBLE containers
+   (LAYOUT-CANON rule 7): no background / border / radius / shadow — they
+   only lay out and scroll. The white surfaces are carried by the content
+   units themselves: conversation tiles on the left, detail cards and
+   timeline items on the right, all sitting directly on the gray canvas.
    ────────────────────────────────────────────────────────────────── */
 
 /* Override page wrapper: fill remaining height, don't scroll itself */
@@ -25,35 +27,54 @@
     overflow: hidden;
 }
 
-/* ── Sidebar card ── */
-.pulse-sidebar-card {
+/* ── Sidebar — layout + scroll only (no surface) ── */
+.pulse-sidebar {
     width: 320px;
     flex-shrink: 0;
-    /* Fill available height — sidebar scrolls internally via .pulse-sidebar-scroll */
+    min-height: 0;
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
-    background: var(--blanc-surface-strong);
-    border: 1px solid rgba(255, 255, 255, 0.55);
-    border-radius: var(--blanc-radius-xl);
-    box-shadow: var(--blanc-shadow-main);
-    overflow: hidden;
+    gap: 8px;
 }
 
-.pulse-sidebar-scroll {
-    flex: 1;
-    overflow-y: auto;
+.pulse-sidebar > * {
+    flex-shrink: 0;
+}
+
+/* Day group (and the pinned Action Required section): header + tiles.
+   Rhythm comes from the parent gap — no margins on the tiles (rule 2). */
+.pulse-sidebar-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* ── Conversation tile — the only surface above the canvas ──
+   White tile, no border/shadow: light separates it on the gray canvas.
+   Hover = line-strong inset ring (no layout shift); active/selected keeps
+   .pulse-contact-item-active (design-system.css). */
+.pulse-tile {
+    background: var(--blanc-panel-surface);
+    border-radius: 14px;
+    padding: 10px 12px;
+    transition: box-shadow 0.15s ease;
+}
+
+.pulse-tile:hover {
+    box-shadow: inset 0 0 0 1px var(--blanc-line-strong);
 }
 
 /* ── Sticky group headers (Action Required + day groups) ──
-   Mirrors the Jobs mobile list: small uppercase eyebrow that sticks to the top
-   of the scroll container while rows scroll under it. The opaque --blanc-bg
-   background keeps rows from showing through. */
+   Plain eyebrow text on the canvas — no plaque. The sticky backing is the
+   canvas color itself, so tiles slide under it invisibly while scrolling
+   (same treatment as the canonical Jobs mobile list). */
 .pulse-sidebar-group-header {
     position: sticky;
     top: 0;
     z-index: 1;
     background: var(--blanc-bg);
-    padding: 6px 12px;
+    padding: 8px 12px 4px;
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
@@ -66,7 +87,7 @@
     color: var(--blanc-danger, #b91c1c);
 }
 
-/* ── Right column: scrollable stack of floating cards ── */
+/* ── Right column: scroll container only — content sits on the canvas ── */
 .pulse-right-column {
     flex: 1;
     display: flex;
@@ -79,21 +100,21 @@
     padding-bottom: 16px;
 }
 
-/* Shared floating card style for right-column blocks */
-.pulse-card {
-    position: relative;
-    background: var(--blanc-surface-strong);
-    border: 1px solid var(--blanc-line, rgba(25, 25, 25, 0.08));
-    border-radius: var(--blanc-radius-xl);
-    box-shadow: var(--blanc-shadow-main);
-    overflow: hidden;
+/* Children own their height; the column is the only scroller (rule 4) */
+.pulse-right-column > * {
     flex-shrink: 0;
 }
 
-/* Top accent stripe — sits inside card, card's own top border hidden */
-.pulse-accent-top {
-    border-top-color: transparent;
+/* Content-unit card (detail panel, AR bar, SMS form) — flat white surface,
+   separated by light on the canvas like the tiles: no border, no shadow. */
+.pulse-card {
+    position: relative;
+    background: var(--blanc-panel-surface);
+    border-radius: var(--blanc-radius-md);
+    overflow: hidden;
 }
+
+/* Top accent stripe — entity-type cue (lead / contact / new-lead wizard) */
 .pulse-accent-top::before {
     content: '';
     position: absolute;
@@ -111,12 +132,13 @@
     overflow: visible;
 }
 
-/* Empty state fills the viewport height */
+/* Empty state sits directly on the canvas — no card around it */
 .pulse-empty-state {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
+    flex: 1 0 auto;
     min-height: 400px;
     color: var(--blanc-ink-3);
 }
@@ -169,7 +191,7 @@
         gap: 12px;
     }
 
-    .pulse-sidebar-card {
+    .pulse-sidebar {
         width: 260px;
     }
 
@@ -183,7 +205,7 @@
    NARROW TABLET (≤ 899px): sidebar narrower still
    ══════════════════════════════════════════════════════════════════ */
 @media (max-width: 899px) {
-    .pulse-sidebar-card {
+    .pulse-sidebar {
         width: 220px;
     }
 }
@@ -196,10 +218,10 @@
     /* LIST panel = the Schedule/Jobs model: content scrolls the app's single main
        scroll area (`.app-main`), NOT an inner box. So on mobile the wrapper must
        stop being a fixed-height `overflow:hidden` flex container (that trapped the
-       list in the inner `.pulse-sidebar-scroll` scroller → floating frame + a
-       bottom void under the PWA safe-area). We drop overflow/height caps here and
-       let the page grow; `.app-main`'s `padding-bottom: calc(60px + safe-area)`
-       then gives the bottom-nav clearance with no void. Block flow (not flex) so
+       list in an inner scroller → floating frame + a bottom void under the PWA
+       safe-area). We drop overflow/height caps here and let the page grow;
+       `.app-main`'s `padding-bottom: calc(60px + safe-area)` then gives the
+       bottom-nav clearance with no void. Block flow (not flex) down the chain so
        the content's trailing padding is kept in `.app-main`'s scrollHeight
        (a flex-column scroll child drops it — the exact inert-clearance bug the
        canonical mobile list shell documents).
@@ -217,7 +239,7 @@
         gap: 8px;
     }
 
-    /* ── LIST mode: single app-main scroll, flat full-bleed, no inner scroller ── */
+    /* ── LIST mode: single app-main scroll, tiles full-bleed on the canvas ── */
     .blanc-page-wrapper:has(.pulse-layout[data-mobile-panel="list"]) {
         overflow: visible !important;
         flex: 0 0 auto;
@@ -230,36 +252,21 @@
         min-height: 0;
     }
 
-    /* Sidebar: full width in list mode, hidden in content mode.
-       Strip the floating-card box so the list runs edge-to-edge on the page bg
-       and drop the inner scroll context so the page scrolls in `.app-main`.
-       (Desktop/tablet .pulse-sidebar-card keeps its card chrome — untouched.) */
-    .pulse-layout[data-mobile-panel="list"] .pulse-sidebar-card {
+    /* Sidebar: full width in list mode, hidden in content mode. The container
+       is already invisible; here it just stops scrolling itself (rows flow
+       into `.app-main`) and switches to block flow — rhythm via the space-y
+       equivalent below, since gap needs flex. */
+    .pulse-layout[data-mobile-panel="list"] .pulse-sidebar {
         display: block;
         width: 100%;
-        /* !important to beat the global `.pulse-sidebar-card { background:
-           …surface-strong !important }` in design-system.css (§8 page overrides).
-           Scoped to mobile list mode only, so the desktop card is untouched. */
-        background: transparent !important;
-        border: none;
-        border-radius: 0;
-        box-shadow: none;
-        overflow: visible;
-        padding-left: 0;
-        padding-right: 0;
-        margin-left: 0;
-        margin-right: 0;
-    }
-
-    /* No inner scroller on mobile list — the rows flow into `.app-main`, whose
-       bottom-nav padding then clears the fixed nav (no floating frame, no void). */
-    .pulse-layout[data-mobile-panel="list"] .pulse-sidebar-scroll {
-        display: block;
-        flex: none;
         overflow: visible;
     }
 
-    .pulse-layout[data-mobile-panel="content"] .pulse-sidebar-card {
+    .pulse-layout[data-mobile-panel="list"] .pulse-sidebar > * + * {
+        margin-top: 8px;
+    }
+
+    .pulse-layout[data-mobile-panel="content"] .pulse-sidebar {
         display: none;
     }
 
