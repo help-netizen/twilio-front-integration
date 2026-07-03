@@ -1,11 +1,13 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, Loader2, AlarmClock } from 'lucide-react';
+import { Check, Loader2, AlarmClock, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuthz } from '../hooks/useAuthz';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { MobileListPage } from '../components/layout/MobileListPage';
 import { TaskSnoozeMenu } from '../components/tasks/TaskSnoozeMenu';
+import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
+import { FilterColumn } from '../components/jobs/jobsFilterHelpers';
 import { listTasks, completeTask, snoozeTask, parentPath, type Task, type TaskParentType } from '../components/tasks/tasksApi';
 import { isOverdue } from '../components/tasks/taskUtils';
 import { todayInTZ, dateKeyInTZ, dateInTZ, formatTimeInTZ, formatDateTimeInTZ } from '../utils/companyTime';
@@ -18,6 +20,10 @@ const PARENT_META: Record<TaskParentType, { label: string; color: string }> = {
     invoice: { label: 'Invoice', color: '#D85A30' },
     timeline: { label: 'Conversation', color: '#C2683B' },
 };
+
+// Filterable parent types (the API takes one parent_type; timeline tasks are
+// reachable via "All types" but not a dedicated filter, matching the old select).
+const FILTER_TYPES: TaskParentType[] = ['job', 'lead', 'contact', 'estimate', 'invoice'];
 
 interface Group { key: string; label: string; danger?: boolean; compactTime?: boolean; tasks: Task[]; }
 
@@ -52,6 +58,8 @@ function initials(name?: string | null): string {
     return ((p[0]?.[0] || '') + (p[1]?.[0] || '')).toUpperCase() || name[0].toUpperCase();
 }
 
+type SortKey = 'description' | 'parent_type' | 'parent_label' | 'assignee_name' | 'due_at';
+
 export function TasksPage() {
     const navigate = useNavigate();
     const isMobile = useIsMobile();
@@ -64,6 +72,9 @@ export function TasksPage() {
     const [loading, setLoading] = useState(true);
     const [status, setStatus] = useState<'open' | 'all'>('open');
     const [parentType, setParentType] = useState<TaskParentType | ''>('');
+    const [searchQuery, setSearchQuery] = useState('');
+    const [sortBy, setSortBy] = useState<SortKey>('due_at');
+    const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -90,7 +101,30 @@ export function TasksPage() {
         catch { toast.error('Failed'); }
     };
 
-    const groups = bucketTasks(tasks, tz);
+    // Client-side search + sort over the (single-fetch) list — same UX as the
+    // Jobs unified header, without a server round-trip.
+    const filteredTasks = useMemo(() => {
+        const q = searchQuery.trim().toLowerCase();
+        const filtered = !q ? tasks : tasks.filter(t =>
+            (t.description || '').toLowerCase().includes(q)
+            || (t.parent_label || '').toLowerCase().includes(q)
+            || (t.assignee_name || '').toLowerCase().includes(q));
+        const dir = sortOrder === 'asc' ? 1 : -1;
+        return [...filtered].sort((a, b) => {
+            if (sortBy === 'due_at') {
+                // No-date tasks sink to the bottom regardless of direction.
+                if (!a.due_at && !b.due_at) return 0;
+                if (!a.due_at) return 1;
+                if (!b.due_at) return -1;
+                return (a.due_at < b.due_at ? -1 : a.due_at > b.due_at ? 1 : 0) * dir;
+            }
+            const av = (a[sortBy] || '').toString().toLowerCase();
+            const bv = (b[sortBy] || '').toString().toLowerCase();
+            return (av < bv ? -1 : av > bv ? 1 : 0) * dir;
+        });
+    }, [tasks, searchQuery, sortBy, sortOrder]);
+
+    const groups = bucketTasks(filteredTasks, tz);
 
     const TimeLabel = ({ t, compact }: { t: Task; compact?: boolean }) => {
         if (!t.due_at) return null;
@@ -122,99 +156,79 @@ export function TasksPage() {
         </span>
     );
 
-    // Filter controls — shared markup for desktop header and the mobile sticky bar.
-    const controls = (
-        <div className="flex items-center gap-2">
-            <select value={parentType} onChange={e => setParentType(e.target.value as TaskParentType | '')}
-                className="text-sm outline-none"
-                style={{ border: '1px solid var(--blanc-line)', borderRadius: 10, padding: '6px 10px', background: 'transparent', color: 'var(--blanc-ink-1)' }}>
-                <option value="">All types</option>
-                <option value="job">Jobs</option>
-                <option value="lead">Leads</option>
-                <option value="contact">Contacts</option>
-                <option value="estimate">Estimates</option>
-                <option value="invoice">Invoices</option>
-            </select>
-            {/* UI-QA-001: segment control (nav canon) — white pill on field strip,
-                not a heavy black active state. */}
-            <div className="flex items-center" style={{ background: 'var(--blanc-field)', borderRadius: 999, padding: 2 }}>
-                {(['open', 'all'] as const).map(s => (
-                    <button key={s} type="button" onClick={() => setStatus(s)}
-                        className="text-sm capitalize transition-colors"
-                        style={{
-                            padding: '4px 12px', borderRadius: 999,
-                            background: status === s ? 'var(--blanc-panel-surface)' : 'transparent',
-                            color: status === s ? 'var(--blanc-ink-1)' : 'var(--blanc-ink-2)',
-                            fontWeight: status === s ? 600 : 400,
-                            boxShadow: status === s ? '0 1px 2px rgba(25,25,25,0.08)' : 'none',
-                        }}>
-                        {s}
-                    </button>
-                ))}
-            </div>
-        </div>
-    );
-
-    // A single task row — mobile = full-width tile (JobMobileCard/LeadMobileCard
-    // family: border var(--blanc-line), rounded-xl, no shadow), desktop = compact row.
-    const renderTask = (t: Task, group: Group) => {
-        const meta = PARENT_META[t.parent_type];
-        const done = t.status === 'done';
-        return isMobile ? (
-            <div key={t.id} onClick={() => navigate(parentPath(t))}
-                className="w-full rounded-xl p-3 space-y-2 cursor-pointer transition-colors"
-                style={{ border: '1px solid var(--blanc-line)', background: 'var(--blanc-surface-strong, #fffdf9)', opacity: done ? 0.6 : 1 }}>
-                <div className="flex items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-1.5" style={{ fontSize: 11, color: 'var(--blanc-ink-3)' }}>
-                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: meta.color }} />{meta.label}
-                    </span>
-                    <TimeLabel t={t} compact={group.compactTime} />
+    // ── Mobile (canonical MobileListPage shell — unchanged) ─────────────────
+    if (isMobile) {
+        const controls = (
+            <div className="flex items-center gap-2">
+                <select value={parentType} onChange={e => setParentType(e.target.value as TaskParentType | '')}
+                    className="text-sm outline-none"
+                    style={{ border: '1px solid var(--blanc-line)', borderRadius: 10, padding: '6px 10px', background: 'transparent', color: 'var(--blanc-ink-1)' }}>
+                    <option value="">All types</option>
+                    <option value="job">Jobs</option>
+                    <option value="lead">Leads</option>
+                    <option value="contact">Contacts</option>
+                    <option value="estimate">Estimates</option>
+                    <option value="invoice">Invoices</option>
+                </select>
+                <div className="flex items-center" style={{ background: 'var(--blanc-field)', borderRadius: 999, padding: 2 }}>
+                    {(['open', 'all'] as const).map(s => (
+                        <button key={s} type="button" onClick={() => setStatus(s)}
+                            className="text-sm capitalize transition-colors"
+                            style={{
+                                padding: '4px 12px', borderRadius: 999,
+                                background: status === s ? 'var(--blanc-panel-surface)' : 'transparent',
+                                color: status === s ? 'var(--blanc-ink-1)' : 'var(--blanc-ink-2)',
+                                fontWeight: status === s ? 600 : 400,
+                                boxShadow: status === s ? '0 1px 2px rgba(25,25,25,0.08)' : 'none',
+                            }}>
+                            {s}
+                        </button>
+                    ))}
                 </div>
-                <p className="text-sm" style={{ color: 'var(--blanc-ink-1)' }}>{t.description}</p>
-                <div className="flex items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-2 min-w-0" style={{ fontSize: 12, color: 'var(--blanc-ink-2)' }}>
-                        <Avatar t={t} /><span className="truncate">{t.parent_label || meta.label}</span>
-                    </span>
-                    <Actions t={t} />
-                </div>
-            </div>
-        ) : (
-            <div key={t.id} onClick={() => navigate(parentPath(t))}
-                className="flex items-center gap-3 rounded-[10px] px-3 py-2.5 cursor-pointer transition-colors hover:bg-[rgba(25,25,25,0.03)]"
-                style={{ border: '1px solid var(--blanc-line)', opacity: done ? 0.6 : 1 }}>
-                <span style={{ width: 8, height: 8, borderRadius: '50%', background: meta.color, flex: 'none' }} title={meta.label} />
-                <span className="shrink-0" style={{ fontSize: 11, color: 'var(--blanc-ink-3)', width: 60 }}>{meta.label}</span>
-                <span className="flex-1 min-w-0 truncate text-sm" style={{ color: 'var(--blanc-ink-1)' }}>
-                    {t.description}
-                    <span style={{ color: 'var(--blanc-ink-3)' }}> · {t.parent_label}</span>
-                </span>
-                <TimeLabel t={t} compact={group.compactTime} />
-                <Avatar t={t} />
-                <Actions t={t} />
             </div>
         );
-    };
 
-    // Grouped list body (due-bucket groups + .blanc-eyebrow headers). Shared by
-    // both layouts; on mobile the tiles inside are full-width.
-    const body = loading ? (
-        <div className={isMobile ? 'mobile-list-page__empty' : 'flex items-center justify-center py-16'}>
-            <Loader2 className="size-5 animate-spin" style={{ color: 'var(--blanc-ink-3)' }} />
-        </div>
-    ) : groups.length === 0 ? (
-        <div className={isMobile ? 'mobile-list-page__empty text-sm' : 'text-center py-16 text-sm'} style={{ color: 'var(--blanc-ink-3)' }}>No tasks</div>
-    ) : (
-        <div className="space-y-6">
-            {groups.map(group => (
-                <div key={group.key} className="space-y-2">
-                    <div className="blanc-eyebrow" style={group.danger ? { color: '#b42318' } : undefined}>{group.label}</div>
-                    {group.tasks.map(t => renderTask(t, group))}
+        const renderTile = (t: Task, group: Group) => {
+            const meta = PARENT_META[t.parent_type];
+            const done = t.status === 'done';
+            return (
+                <div key={t.id} onClick={() => navigate(parentPath(t))}
+                    className="w-full rounded-xl p-3 space-y-2 cursor-pointer transition-colors"
+                    style={{ border: '1px solid var(--blanc-line)', background: 'var(--blanc-surface-strong, #fffdf9)', opacity: done ? 0.6 : 1 }}>
+                    <div className="flex items-center justify-between gap-2">
+                        <span className="inline-flex items-center gap-1.5" style={{ fontSize: 11, color: 'var(--blanc-ink-3)' }}>
+                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: meta.color }} />{meta.label}
+                        </span>
+                        <TimeLabel t={t} compact={group.compactTime} />
+                    </div>
+                    <p className="text-sm" style={{ color: 'var(--blanc-ink-1)' }}>{t.description}</p>
+                    <div className="flex items-center justify-between gap-2">
+                        <span className="inline-flex items-center gap-2 min-w-0" style={{ fontSize: 12, color: 'var(--blanc-ink-2)' }}>
+                            <Avatar t={t} /><span className="truncate">{t.parent_label || meta.label}</span>
+                        </span>
+                        <Actions t={t} />
+                    </div>
                 </div>
-            ))}
-        </div>
-    );
+            );
+        };
 
-    if (isMobile) {
+        const body = loading ? (
+            <div className="mobile-list-page__empty">
+                <Loader2 className="size-5 animate-spin" style={{ color: 'var(--blanc-ink-3)' }} />
+            </div>
+        ) : groups.length === 0 ? (
+            <div className="mobile-list-page__empty text-sm" style={{ color: 'var(--blanc-ink-3)' }}>No tasks</div>
+        ) : (
+            <div className="space-y-6">
+                {groups.map(group => (
+                    <div key={group.key} className="space-y-2">
+                        <div className="blanc-eyebrow" style={group.danger ? { color: '#b42318' } : undefined}>{group.label}</div>
+                        {group.tasks.map(t => renderTile(t, group))}
+                    </div>
+                ))}
+            </div>
+        );
+
         return (
             <MobileListPage
                 stickyBar={
@@ -229,14 +243,156 @@ export function TasksPage() {
         );
     }
 
-    // Desktop — unchanged centered layout.
+    // ── Desktop — unified list canon (same shell + tile-table as Jobs) ──────
+    const COLUMNS: { key: SortKey | 'actions'; label: string; sortable?: boolean }[] = [
+        { key: 'description', label: 'Task', sortable: true },
+        { key: 'parent_type', label: 'Type', sortable: true },
+        { key: 'parent_label', label: 'Related to', sortable: true },
+        { key: 'assignee_name', label: 'Assignee', sortable: true },
+        { key: 'due_at', label: 'Due', sortable: true },
+        { key: 'actions', label: '' },
+    ];
+
+    const handleHeaderClick = (key: SortKey) => {
+        if (sortBy === key) setSortOrder(o => o === 'asc' ? 'desc' : 'asc');
+        else { setSortBy(key); setSortOrder('asc'); }
+    };
+
+    const typeFilterLabel = parentType ? PARENT_META[parentType].label : 'All types';
+    const typeColorMap = Object.fromEntries(FILTER_TYPES.map(k => [PARENT_META[k].label, PARENT_META[k].color]));
+
     return (
-        <div className="mx-auto max-w-4xl px-4 py-5 md:px-6">
-            <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
-                <h2 className="text-2xl font-semibold" style={{ color: 'var(--blanc-ink-1)' }}>Tasks</h2>
-                {controls}
+        <div className="blanc-page-wrapper">
+            <div className="blanc-unified-header">
+                <h1 className="blanc-header-title">Tasks</h1>
+
+                <div className="blanc-search-wrapper">
+                    <input
+                        type="text"
+                        placeholder="type to find anything..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="blanc-search-input"
+                    />
+                </div>
+
+                <div className="blanc-controls-group">
+                    <button
+                        type="button"
+                        className="blanc-control-chip"
+                        data-active={status === 'open' || undefined}
+                        onClick={() => setStatus(s => s === 'open' ? 'all' : 'open')}
+                    >
+                        Only Open
+                    </button>
+                    <Popover>
+                        <PopoverTrigger asChild>
+                            <button type="button" className="blanc-control-chip" data-active={parentType || undefined}>
+                                {typeFilterLabel}
+                            </button>
+                        </PopoverTrigger>
+                        <PopoverContent align="end" className="w-56 p-2">
+                            <FilterColumn
+                                title="Type"
+                                items={FILTER_TYPES.map(k => PARENT_META[k].label)}
+                                selected={parentType ? [PARENT_META[parentType].label] : []}
+                                onToggle={(label) => {
+                                    const key = FILTER_TYPES.find(k => PARENT_META[k].label === label) || '';
+                                    setParentType(prev => prev === key ? '' : key as TaskParentType | '');
+                                }}
+                                colorMap={typeColorMap}
+                            />
+                        </PopoverContent>
+                    </Popover>
+                </div>
             </div>
-            {body}
+
+            <div className="flex flex-1 flex-col min-h-0">
+                <div className="flex flex-1 flex-col overflow-hidden">
+                    {loading ? (
+                        <div className="flex-1 flex items-center justify-center h-40 text-muted-foreground">
+                            <Loader2 className="size-5 animate-spin mr-2" /> Loading tasks...
+                        </div>
+                    ) : filteredTasks.length === 0 ? (
+                        <div className="flex-1 flex items-center justify-center h-40 text-muted-foreground">
+                            No tasks found
+                        </div>
+                    ) : (
+                        <>
+                            <div className="flex-1 overflow-auto">
+                                <table className="w-full text-sm blanc-table-tiles">
+                                    <thead>
+                                        <tr className="text-left">
+                                            {COLUMNS.map(col => col.key === 'actions' ? (
+                                                <th key="actions" className="px-2 py-1 w-20" aria-label="Actions" />
+                                            ) : (
+                                                <th
+                                                    key={col.key}
+                                                    className="px-4 py-1 cursor-pointer select-none"
+                                                    onClick={() => handleHeaderClick(col.key as SortKey)}
+                                                >
+                                                    <span className="inline-flex items-center gap-1">
+                                                        {col.label}
+                                                        {sortBy === col.key
+                                                            ? (sortOrder === 'asc'
+                                                                ? <ArrowUp className="size-3.5 text-primary" />
+                                                                : <ArrowDown className="size-3.5 text-primary" />)
+                                                            : <ArrowUpDown className="size-3.5 text-muted-foreground/40" />}
+                                                    </span>
+                                                </th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {filteredTasks.map(t => {
+                                            const meta = PARENT_META[t.parent_type];
+                                            const done = t.status === 'done';
+                                            return (
+                                                <tr
+                                                    key={t.id}
+                                                    className="cursor-pointer"
+                                                    style={done ? { opacity: 0.6 } : undefined}
+                                                    onClick={() => navigate(parentPath(t))}
+                                                >
+                                                    <td className="px-4 py-2.5">
+                                                        <span className="font-medium line-clamp-2" style={{ color: 'var(--blanc-ink-1)' }}>{t.description}</span>
+                                                    </td>
+                                                    <td className="px-4 py-2.5 whitespace-nowrap">
+                                                        <span className="inline-flex items-center gap-2">
+                                                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: meta.color, flex: 'none' }} />
+                                                            {meta.label}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-4 py-2.5 max-w-[16rem]">
+                                                        <span className="truncate block" style={{ color: 'var(--blanc-ink-2)' }}>{t.parent_label || '—'}</span>
+                                                    </td>
+                                                    <td className="px-4 py-2.5 whitespace-nowrap">
+                                                        <span className="inline-flex items-center gap-2">
+                                                            <Avatar t={t} />
+                                                            <span style={{ color: 'var(--blanc-ink-2)' }}>{t.assignee_name || '—'}</span>
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-4 py-2.5 whitespace-nowrap">
+                                                        {t.due_at ? <TimeLabel t={t} /> : <span style={{ color: 'var(--blanc-ink-3)' }}>—</span>}
+                                                    </td>
+                                                    <td className="px-2 py-2.5 w-20" onClick={e => e.stopPropagation()}>
+                                                        <Actions t={t} />
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* Count line — flat on the canvas, mirrors the Jobs footer */}
+                            <div className="px-4 py-2 flex items-center justify-between text-sm text-muted-foreground">
+                                <span>{filteredTasks.length} {filteredTasks.length === 1 ? 'task' : 'tasks'}</span>
+                            </div>
+                        </>
+                    )}
+                </div>
+            </div>
         </div>
     );
 }
