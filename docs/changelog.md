@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-07-03 — MOBILE-TECH-APP-001 Phase 0: бэкенд-пререквизиты нативного приложения ЗАДЕПЛОЕНЫ В ПРОД
+
+Backend-фундамент нативного iOS-приложения для техников (репо `albusto-mobile`, вне этого репо) задеплоен на прод (Vultr, `master c8943da`). Аддитивно, provider-scoped; Boston Masters (seed `…0001`) не затронут. Приложение по дефолту смотрит в прод → живой вход + синк разблокированы. Статус приложения и дальнейшие шаги — `albusto-mobile/STATUS.md`.
+
+- **`GET /api/sync/jobs`** — provider-scoped delta-синк (ядро чтения приложения): forward-курсор `(updated_at,id)`, `changed/unassigned/tombstones`, `scope_empty`; скоуп `company_id` + `crm_users.id` через `@>`. Новый `backend/src/db/syncQueries.js` в существующем `routes/sync.js`.
+- **`POST/DELETE /api/devices`** — реестр APNs device-токенов (own-only, cross-tenant scoped, 409 `NO_CRM_USER`); `pushService.sendToUser` (APNs http2 + ES256, fail-soft без `.p8`-env). Плюс Tap-to-Pay payment-intent роут (409 `NOT_READY` до онбординга Stripe Terminal).
+- **Миграции 150** (`job_tombstones`) **+ 151** (`device_tokens`) — применены к проду (`CREATE TABLE IF NOT EXISTS`, verified). Перенумерованы с 149/150 (master уже занял 149 под PULSE-PERF `contacts_phone_digits`).
+- **Keycloak `crm-mobile`** — публичный PKCE S256 клиент (realm `crm-prod`, redirect `albusto://auth`, realm_roles + audience мапперы), создан вживую через `kcadm` (не переимпортом realm). Authorize отдаёт форму логина (200).
+- **Верификация.** jest Phase 0 **73/73**; эндпоинты 401 без токена; **синк-запрос прогнан против РЕАЛЬНЫХ прод-данных** (read-only psql — то, что мокнутый jest не ловит): у топ-провайдера 277 назначенных работ → начальный синк **113**, изоляция тенанта (провайдер в 1 компании), forward-пагинация 113→112, `scope_empty`=0, read-path вложений чист. Приложение: standalone Release-билд рендерит экран входа против прода; встроенный конфиг = прод (без dev-утечек). **НЕ проверено: визуальный клик-through ПОСЛЕ входа** (нужен пароль техника в форму — граница, бот не логинится). `⚑ Откат:` бэкап `dumps/predeploy_20260703_063013.sql`, образ `31a0ba7906b9`, `rollback_150/151`.
+
+---
+
 ## 2026-07-02 — ONBTEL-001: онбординг новой компании → Marketplace «Telephony — Twilio» → фиксы изоляции Twilio
 
 Зонтичная фича из трёх частей (полный 9-агентный оркестрационный прогон: требования → архитектура → спека → тест-кейсы → план из 14 задач → реализация → верификация). Продукт в UI — **Albusto**. `src/server.js` не менялся. Boston Masters (seed `…0001`) — поведение байт-в-байт. **НЕ задеплоено** (по подтверждению владельца).
