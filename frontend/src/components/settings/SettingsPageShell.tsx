@@ -22,6 +22,11 @@ export interface SettingsPageShellProps {
  * and the 24px section rhythm (rule 5 — spacing comes from the parent, so children
  * never carry their own margins). Surfaces belong to the sections themselves
  * (see SettingsSection).
+ *
+ * ВЫРАВНИВАНИЕ — ПО ЛЕВОМУ КРАЮ (решение владельца, 2026-07-02): колонка
+ * ограничена max-w-4xl для читаемости, но прижата к левому полю страницы.
+ * Центрирование (mx-auto) ломает восприятие при разной ширине контента
+ * секций; слой/шторка для настроек отвергнуты — это полноэкранная страница.
  */
 export function SettingsPageShell({
     backTo = '/settings',
@@ -35,7 +40,7 @@ export function SettingsPageShell({
     const navigate = useNavigate();
 
     return (
-        <div className="max-w-4xl mx-auto px-6 py-8 space-y-6" style={{ color: 'var(--blanc-ink-1)' }}>
+        <div className="max-w-4xl px-6 py-8 space-y-6" style={{ color: 'var(--blanc-ink-1)' }}>
             <button
                 type="button"
                 onClick={() => navigate(backTo)}
