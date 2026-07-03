@@ -1,7 +1,8 @@
 import { Switch } from '../ui/switch';
 import { Badge } from '../ui/badge';
 import { SlidersHorizontal } from 'lucide-react';
-import { useState, useRef, useEffect } from 'react';
+import { useState } from 'react';
+import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import type { LeadsListParams } from '../../types/lead';
 import { LEAD_STATUSES } from '../../types/lead';
 import { useFsmStates } from '../../hooks/useFsmActions';
@@ -29,23 +30,9 @@ export function LeadsFilters({
     onJobTypeFilterChange,
 }: LeadsFiltersProps) {
     const [dropdownOpen, setDropdownOpen] = useState(false);
-    const containerRef = useRef<HTMLDivElement>(null);
     const { jobTypes: dynamicJobTypes } = useLeadFormSettings();
     const { data: fsmData } = useFsmStates('lead', true);
     const statuses = fsmData?.states && fsmData.states.length > 0 ? fsmData.states : LEAD_STATUSES as unknown as string[];
-
-    // Close dropdown on outside click
-    useEffect(() => {
-        const handler = (e: MouseEvent) => {
-            if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-                setDropdownOpen(false);
-            }
-        };
-        if (dropdownOpen) {
-            document.addEventListener('mousedown', handler);
-        }
-        return () => document.removeEventListener('mousedown', handler);
-    }, [dropdownOpen]);
 
     const toggleStatus = (status: string) => {
         const current = filters.status || [];
@@ -103,62 +90,55 @@ export function LeadsFilters({
                 </label>
             </div>
 
-            {/* Filters button + dropdown */}
-            <div className="relative" ref={containerRef}>
-                <button
-                    onClick={() => setDropdownOpen(!dropdownOpen)}
-                    className="blanc-control-chip"
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                >
-                    <SlidersHorizontal className="size-3.5" />
-                    Filters
-                    {activeFilterCount > 0 && (
-                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 min-w-[18px] h-[18px] justify-center ml-0.5">
-                            {activeFilterCount}
-                        </Badge>
-                    )}
-                </button>
-
-                {/* Filter Dropdown Panel */}
-                {dropdownOpen && (() => {
-                    const isMobile = isMobileViewport();
-                    const filterContent = (
-                        <LeadsFilterBody
-                            statusFilter={filters.status || []} onToggleStatus={toggleStatus}
-                            sourceFilter={sourceFilter} onToggleSource={toggleSource}
-                            jobTypeFilter={jobTypeFilter} onToggleJobType={toggleJobType}
-                            statuses={statuses}
-                            dynamicJobTypes={dynamicJobTypes}
-                            onClearAll={clearAllFilters}
-                        />
-                    );
-
-                    // mobile only — desktop popover unchanged
-                    if (isMobile) {
-                        return (
+            {/* Filters: desktop = канонный Popover (тир z-150, dismiss из коробки —
+                самодельный absolute z-50 + click-outside снесены, W3-аудит),
+                mobile = канонный BottomSheet как и был. */}
+            {(() => {
+                const isMobile = isMobileViewport();
+                const filterContent = (
+                    <LeadsFilterBody
+                        statusFilter={filters.status || []} onToggleStatus={toggleStatus}
+                        sourceFilter={sourceFilter} onToggleSource={toggleSource}
+                        jobTypeFilter={jobTypeFilter} onToggleJobType={toggleJobType}
+                        statuses={statuses}
+                        dynamicJobTypes={dynamicJobTypes}
+                        onClearAll={clearAllFilters}
+                    />
+                );
+                return (
+                    <>
+                        <Popover open={dropdownOpen && !isMobile} onOpenChange={setDropdownOpen}>
+                            <PopoverTrigger asChild>
+                                <button
+                                    className="blanc-control-chip"
+                                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                                >
+                                    <SlidersHorizontal className="size-3.5" />
+                                    Filters
+                                    {activeFilterCount > 0 && (
+                                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 min-w-[18px] h-[18px] justify-center ml-0.5">
+                                            {activeFilterCount}
+                                        </Badge>
+                                    )}
+                                </button>
+                            </PopoverTrigger>
+                            <PopoverContent
+                                align="end"
+                                sideOffset={8}
+                                className="p-0 rounded-xl overflow-hidden"
+                                style={{ width: 500 }}
+                            >
+                                {filterContent}
+                            </PopoverContent>
+                        </Popover>
+                        {dropdownOpen && isMobile && (
                             <BottomSheet open={dropdownOpen} onClose={() => setDropdownOpen(false)} title="Filters" size="standard">
                                 {filterContent}
                             </BottomSheet>
-                        );
-                    }
-
-                    return (
-                        <div
-                            className="absolute z-50 rounded-xl overflow-hidden"
-                            style={{
-                                background: 'var(--blanc-surface-strong)',
-                                border: '1px solid var(--blanc-line)',
-                                boxShadow: 'var(--blanc-shadow-main)',
-                                width: 500,
-                                right: 0,
-                                top: 'calc(100% + 8px)',
-                            }}
-                        >
-                            {filterContent}
-                        </div>
-                    );
-                })()}
-            </div>
+                        )}
+                    </>
+                );
+            })()}
         </>
     );
 }

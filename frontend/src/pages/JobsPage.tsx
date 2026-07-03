@@ -176,7 +176,8 @@ export function JobsPage() {
                             </button>
                         </div>
                     </div>
-                    <div className="blanc-page-card">
+                    {/* Аквариум .blanc-page-card снесён (правило 7): невидимый layout-контейнер */}
+                    <div className="flex flex-1 flex-col min-h-0">
                         <div className="flex flex-1 flex-col overflow-hidden">
                             <JobsTable
                                 jobs={page.filteredJobs}

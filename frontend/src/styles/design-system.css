@@ -30,9 +30,11 @@
    ═══════════════════════════════════════════════════════════════════ */
 :root {
     /* ── Backgrounds ── */
-    /* PALETTE-V2 (W2): нейтральный канвас вместо кофейного крема */
-    --blanc-bg: #F6F6F6;
-    --blanc-bg-deep: #EDEDED;
+    /* PALETTE-V2 (W2): нейтральный канвас вместо кофейного крема.
+       Контраст-тюнинг (фидбек владельца 2026-07-03): канвас на щелчок глубже,
+       чтобы белые поверхности и шапка отделялись, а глаз не искал элементы. */
+    --blanc-bg: #F1F1F0;
+    --blanc-bg-deep: #E8E8E6;
 
     /* ── Surfaces (frosted glass) ── */
     --blanc-surface: rgba(255, 255, 255, 0.88);
@@ -244,9 +246,28 @@ table tbody tr:hover {
 
 /* Header: frosted glass */
 .app-header {
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(246, 246, 246, 0.88)) !important;
-    backdrop-filter: blur(20px);
-    border-bottom-color: var(--blanc-line) !important;
+    /* Контраст-тюнинг: непрозрачный белый вместо полупрозрачного тумана —
+       зона навигации чётко отделена от канваса hairline-границей. */
+    background: #FFFFFF !important;
+    border-bottom: 1px solid rgba(25, 25, 25, 0.10) !important;
+}
+
+/* Навигация в шапке (итерация 2 по фидбеку: чёрный pill был «слишком тяжёлым»).
+   Сегмент-контрол: мягкая подложка-стрип на белой шапке, активный = белый pill
+   с hairline (паттерн чипов Точки), неактивные — ink-2 (видимые, но тихие).
+   Скоуп строго .app-header — прочие Tabs не трогаем. */
+.app-header [role="tablist"] {
+    background: var(--blanc-field) !important;
+}
+
+.app-header [role="tab"] {
+    color: var(--blanc-ink-2);
+    font-weight: 500;
+}
+
+.app-header [role="tab"][data-state="active"] {
+    color: var(--blanc-ink-1);
+    font-weight: 600;
 }
 
 /* Main content area: warm gradient background */
@@ -724,6 +745,50 @@ table tbody tr:hover {
 
 .blanc-tile:hover {
     box-shadow: inset 0 0 0 1px var(--blanc-line-strong);
+}
+
+/* ── LAYOUT-CANON правило 7: таблица «ряды-тайлы» ──
+   Аквариум вокруг таблицы снесён: шапка = eyebrow-текст прямо на канвасе
+   (НЕ sticky — финал владельца по заголовкам групп), каждый ряд = белая
+   полоса-тайл с воздухом 8px через border-spacing (разметка <table> цела).
+   Первые потребители — Jobs и Leads; Estimates/Invoices/Payments — следом. */
+.blanc-table-tiles {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0 8px;
+}
+
+.blanc-table-tiles thead th {
+    background: transparent;
+    border: none;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--blanc-ink-3);
+}
+
+.blanc-table-tiles tbody td {
+    background: var(--blanc-panel-surface);
+}
+
+.blanc-table-tiles tbody td:first-child {
+    border-top-left-radius: 12px;
+    border-bottom-left-radius: 12px;
+}
+
+.blanc-table-tiles tbody td:last-child {
+    border-top-right-radius: 12px;
+    border-bottom-right-radius: 12px;
+}
+
+.blanc-table-tiles tbody tr:hover td {
+    background: #FAFAFA;
+}
+
+.blanc-table-tiles tbody tr.blanc-tile-row-selected td {
+    /* лавандовое выделение — как активный тайл Pulse/Contacts */
+    background: rgba(127, 66, 225, 0.07);
 }
 
 .blanc-eyebrow {

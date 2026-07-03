@@ -78,18 +78,18 @@ export function JobsTable({
 
     return (
         <>
-            {/* Table */}
+            {/* Table — ряды-тайлы на канвасе (LAYOUT-CANON правило 7, .blanc-table-tiles) */}
             <div className="flex-1 overflow-auto">
-                <table className="w-full text-sm">
-                    <thead className="sticky top-0 z-10" style={{ background: 'var(--blanc-surface-strong)', boxShadow: '0 1px 0 0 var(--blanc-line)' }}>
-                        <tr className="border-b text-left">
+                <table className="w-full text-sm blanc-table-tiles">
+                    <thead>
+                        <tr className="text-left">
                             {visibleFields.map(fk => {
                                 const col = allColumns[fk];
                                 if (!col) return null;
                                 return (
                                     <th
                                         key={fk}
-                                        className={`px-4 py-2.5 font-medium ${col.width || ''} ${col.sortKey ? 'cursor-pointer select-none hover:bg-muted/30 transition-colors' : ''}`}
+                                        className={`px-4 py-1 ${col.width || ''} ${col.sortKey ? 'cursor-pointer select-none' : ''}`}
                                         onClick={() => handleHeaderClick(col)}
                                     >
                                         <span className="inline-flex items-center gap-1">
@@ -105,14 +105,14 @@ export function JobsTable({
                                     </th>
                                 );
                             })}
-                            {onCopyJob && <th className="px-2 py-2.5 w-10" aria-label="Actions" />}
+                            {onCopyJob && <th className="px-2 py-1 w-10" aria-label="Actions" />}
                         </tr>
                     </thead>
                     <tbody>
                         {jobs.map(job => (
                             <tr
                                 key={job.id}
-                                className={`border-b hover:bg-muted/30 cursor-pointer transition-colors ${selectedJobId === job.id ? 'bg-muted/50' : ''}`}
+                                className={`cursor-pointer ${selectedJobId === job.id ? 'blanc-tile-row-selected' : ''}`}
                                 onClick={() => onSelectJob(job)}
                             >
                                 {visibleFields.map(fk => {
@@ -148,8 +148,8 @@ export function JobsTable({
                 </table>
             </div>
 
-            {/* Pagination */}
-            <div className="border-t px-4 py-2 flex items-center justify-between text-sm text-muted-foreground">
+            {/* Pagination — плоско на канвасе, без карты и границы */}
+            <div className="px-4 py-2 flex items-center justify-between text-sm text-muted-foreground">
                 <span>{totalCount > 0 ? `${offset + 1}–${offset + jobs.length} from ${totalCount} jobs` : '0 jobs'}</span>
                 <div className="flex items-center gap-1">
                     <Button variant="ghost" size="sm" disabled={offset === 0} onClick={() => onLoadJobs(Math.max(0, offset - limit))}>

@@ -37,9 +37,10 @@ export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLe
     return (
         <div className="flex-1 flex flex-col overflow-hidden">
             <div className="flex-1 overflow-auto">
-                <Table>
-                    <TableHeader className="sticky top-0 z-10" style={{ background: 'var(--blanc-surface-strong)' }}>
-                        <TableRow style={{ borderColor: 'var(--blanc-line)' }}>
+                {/* Ряды-тайлы на канвасе (LAYOUT-CANON правило 7, .blanc-table-tiles) */}
+                <Table className="blanc-table-tiles">
+                    <TableHeader>
+                        <TableRow>
                             {visibleColumns.map(c => (
                                 <TableHead
                                     key={c.id}
@@ -65,13 +66,7 @@ export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLe
                     <TableBody>{leads.map(lead => (
                         <TableRow
                             key={lead.UUID}
-                            className="cursor-pointer transition-colors"
-                            style={{
-                                borderColor: 'var(--blanc-line)',
-                                background: selectedLeadId === lead.UUID ? 'rgba(117, 106, 89, 0.06)' : undefined,
-                            }}
-                            onMouseEnter={e => { if (selectedLeadId !== lead.UUID) e.currentTarget.style.background = 'rgba(117, 106, 89, 0.03)'; }}
-                            onMouseLeave={e => { if (selectedLeadId !== lead.UUID) e.currentTarget.style.background = ''; }}
+                            className={`cursor-pointer ${selectedLeadId === lead.UUID ? 'blanc-tile-row-selected' : ''}`}
                             onClick={() => onSelectLead(lead)}
                         >
                             {visibleColumns.map(c => renderCell(c.id, lead, c.id))}
@@ -80,7 +75,7 @@ export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLe
                                     <DropdownMenuTrigger asChild>
                                         <button
                                             className="inline-flex items-center justify-center transition-opacity hover:opacity-70 max-md:min-w-[44px] max-md:min-h-[44px]"
-                                            style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid rgba(104, 95, 80, 0.1)', color: 'var(--blanc-ink-3)', background: 'transparent' }}
+                                            style={{ width: 32, height: 32, borderRadius: 10, color: 'var(--blanc-ink-3)', background: 'transparent' }}
                                         >
                                             <MoreVertical className="size-3.5" />
                                         </button>
@@ -97,8 +92,8 @@ export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLe
                     ))}</TableBody>
                 </Table>
             </div>
-            {/* Pagination */}
-            <div className="px-5 py-3.5 flex items-center justify-between" style={{ borderTop: '1px solid var(--blanc-line)' }}>
+            {/* Pagination — плоско на канвасе */}
+            <div className="px-5 py-3.5 flex items-center justify-between">
                 <span className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>
                     Showing {offset + 1} - {offset + leads.length} leads
                 </span>
@@ -107,7 +102,7 @@ export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLe
                         onClick={onPrevPage}
                         disabled={offset === 0}
                         className="inline-flex items-center px-4 text-sm font-medium transition-opacity hover:opacity-70 disabled:opacity-40 disabled:cursor-not-allowed"
-                        style={{ minHeight: 38, borderRadius: 12, border: '1px solid rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', color: 'var(--blanc-ink-2)', boxShadow: 'rgba(48, 39, 28, 0.04) 0px 4px 12px' }}
+                        style={{ minHeight: 38, borderRadius: 999, border: '1px solid var(--blanc-line)', background: 'var(--blanc-panel-surface)', color: 'var(--blanc-ink-2)' }}
                     >
                         Previous
                     </button>
@@ -115,7 +110,7 @@ export function LeadsTable({ leads, loading, selectedLeadId, columns, onSelectLe
                         onClick={onNextPage}
                         disabled={!hasMore}
                         className="inline-flex items-center px-4 text-sm font-medium transition-opacity hover:opacity-70 disabled:opacity-40 disabled:cursor-not-allowed"
-                        style={{ minHeight: 38, borderRadius: 12, border: '1px solid rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', color: 'var(--blanc-ink-2)', boxShadow: 'rgba(48, 39, 28, 0.04) 0px 4px 12px' }}
+                        style={{ minHeight: 38, borderRadius: 999, border: '1px solid var(--blanc-line)', background: 'var(--blanc-panel-surface)', color: 'var(--blanc-ink-2)' }}
                     >
                         Next
                     </button>
