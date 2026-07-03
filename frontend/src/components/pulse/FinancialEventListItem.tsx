@@ -52,7 +52,7 @@ export function FinancialEventListItem({ event }: Props) {
         <div
             className="flex items-center gap-3 px-4 py-3 rounded-xl transition-colors"
             style={{ border: '1px solid var(--blanc-line)' }}
-            onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(104,95,80,0.3)')}
+            onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(25,25,25,0.20)')}
             onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--blanc-line)')}
         >
             <EventIcon type={event.type} />

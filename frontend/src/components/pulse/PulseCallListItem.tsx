@@ -68,7 +68,7 @@ export function PulseCallListItem({ call }: { call: CallData }) {
         <div
             className="rounded-xl overflow-hidden transition-colors"
             style={{ border: '1px solid var(--blanc-line)' }}
-            onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(104,95,80,0.3)')}
+            onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(25,25,25,0.20)')}
             onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--blanc-line)')}
         >
             {/* Header row */}
@@ -104,7 +104,7 @@ export function PulseCallListItem({ call }: { call: CallData }) {
 
             {/* System Info */}
             {showSystemInfo && (
-                <div className="px-4 pb-3 space-y-1.5 text-sm" style={{ background: 'rgba(117,106,89,0.04)' }}>
+                <div className="px-4 pb-3 space-y-1.5 text-sm" style={{ background: 'rgba(25,25,25,0.03)' }}>
                     <div className="flex items-center gap-2">
                         <Clock className="size-3.5" style={{ color: 'var(--blanc-ink-3)' }} />
                         <span style={{ color: 'var(--blanc-ink-3)' }}>Duration:</span>
@@ -134,7 +134,7 @@ export function PulseCallListItem({ call }: { call: CallData }) {
                     <div className="flex items-center gap-2">
                         <Hash className="size-3.5" style={{ color: 'var(--blanc-ink-3)' }} />
                         <span style={{ color: 'var(--blanc-ink-3)' }}>SID:</span>
-                        <code className="text-xs px-1.5 py-0.5 rounded font-mono" style={{ background: 'rgba(117,106,89,0.08)', color: 'var(--blanc-ink-2)' }}>{call.callSid}</code>
+                        <code className="text-xs px-1.5 py-0.5 rounded font-mono" style={{ background: 'rgba(25,25,25,0.06)', color: 'var(--blanc-ink-2)' }}>{call.callSid}</code>
                     </div>
                     <div className="flex items-center gap-2">
                         <Navigation className="size-3.5" style={{ color: 'var(--blanc-ink-3)' }} />

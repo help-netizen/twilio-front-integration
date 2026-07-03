@@ -93,7 +93,7 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
                         <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                         <span className="text-xs text-red-500 font-medium">Live transcription</span>
                     </div>
-                    <ScrollArea className="h-48 p-3 rounded-xl" style={{ background: 'rgba(117,106,89,0.04)' }}>
+                    <ScrollArea className="h-48 p-3 rounded-xl" style={{ background: 'rgba(25,25,25,0.03)' }}>
                         <div className="space-y-1">
                             {liveLines.map((line, idx) => (
                                 <div key={idx} className="flex items-baseline gap-2 px-2 py-1 text-xs">
@@ -232,7 +232,7 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
                                                         }}
                                                         className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs transition-colors group ${hasTs ? 'cursor-pointer' : 'cursor-default'}`}
                                                         style={{
-                                                            background: (active || inRange) ? 'rgba(47,99,216,0.06)' : undefined,
+                                                            background: (active || inRange) ? 'rgba(127,66,225,0.07)' : undefined,
                                                             opacity: hasTs ? 1 : 0.7,
                                                         }}
                                                         title={hasTs ? `Jump to ${fmtAudio(sec)}` : undefined}
@@ -275,7 +275,7 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
                 {/* ── Transcription panel ── */}
                 {activeSection === 'transcription' && (
                     <div className="pt-1">
-                        <ScrollArea className="h-48 p-3 rounded-xl" style={{ background: 'rgba(117,106,89,0.04)' }}>
+                        <ScrollArea className="h-48 p-3 rounded-xl" style={{ background: 'rgba(25,25,25,0.03)' }}>
                             {isTranscribing ? (
                                 <div className="flex items-center gap-2">
                                     <Spinner />
@@ -315,7 +315,7 @@ export function PulseCallAudioPlayer({ call }: { call: CallData }) {
                                                     onClick={() => { if (audioRef.current && sec != null) { audioRef.current.currentTime = sec; setCurrentTime(sec); if (!isPlaying) { audioRef.current.play(); setIsPlaying(true); } } }}
                                                     className={`w-full flex items-baseline gap-2 px-2 py-1.5 rounded-lg text-left text-xs transition-colors ${sec != null ? 'cursor-pointer' : 'cursor-default'}`}
                                                     style={sec != null ? { color: 'var(--blanc-ink-1)' } : { color: 'var(--blanc-ink-2)' }}
-                                                    onMouseEnter={e => { if (sec != null) e.currentTarget.style.background = 'rgba(117,106,89,0.06)'; }}
+                                                    onMouseEnter={e => { if (sec != null) e.currentTarget.style.background = 'rgba(25,25,25,0.05)'; }}
                                                     onMouseLeave={e => { e.currentTarget.style.background = ''; }}
                                                 >
                                                     {sec != null && <span className="shrink-0 text-[10px] font-mono tabular-nums" style={{ color: 'var(--blanc-ink-3)' }}>{fmtAudio(sec)}</span>}

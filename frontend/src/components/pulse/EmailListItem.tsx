@@ -38,7 +38,7 @@ export function EmailListItem({ email }: EmailListItemProps) {
                 className={`relative max-w-[75%] overflow-hidden ${isOutgoing ? 'rounded-br-sm' : 'rounded-bl-sm'}`}
                 style={isOutgoing
                     ? { background: 'var(--blanc-info)', color: '#fff', borderRadius: 14 }
-                    : { background: '#ece7de', color: 'var(--blanc-ink-1)', border: '1px solid rgba(117, 106, 89, 0.14)', borderRadius: 14 }
+                    : { background: 'var(--blanc-field)', color: 'var(--blanc-ink-1)', border: '1px solid var(--blanc-line)', borderRadius: 14 }
                 }
             >
                 {/* Channel hint + inbound sender */}

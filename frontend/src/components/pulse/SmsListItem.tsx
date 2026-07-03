@@ -73,7 +73,7 @@ export function SmsListItem({ sms }: SmsListItemProps) {
                 }`}
                 style={isOutgoing
                     ? { background: 'var(--blanc-info)', color: '#fff' }
-                    : { background: '#ece7de', color: 'var(--blanc-ink-1)', border: '1px solid rgba(117, 106, 89, 0.14)' }
+                    : { background: 'var(--blanc-field)', color: 'var(--blanc-ink-1)', border: '1px solid var(--blanc-line)' }
                 }
             >
                 {/* Media Attachments */}
