@@ -39,7 +39,7 @@ export function EmailThreadList({
                         onChange={e => setInputValue(e.target.value)}
                         className="w-full text-sm pl-8 pr-3 py-1.5"
                         style={{
-                            background: 'rgba(117, 106, 89, 0.04)',
+                            background: 'rgba(25, 25, 25, 0.03)',
                             border: '1px solid var(--blanc-line)',
                             borderRadius: '8px',
                             color: 'var(--blanc-ink-1)',

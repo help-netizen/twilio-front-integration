@@ -130,7 +130,7 @@ export function JobDetailPanel({
             {/* ═══ RIGHT COLUMN (desktop only) — Notes & Financials ═══ */}
             <div
                 className="w-full md:w-1/2 flex-col overflow-y-auto hidden md:flex"
-                style={{ borderLeft: '1px solid rgba(117, 106, 89, 0.07)' }}
+                style={{ borderLeft: '1px solid var(--blanc-line)' }}
             >
                 <Tabs value={rightTab} onValueChange={v => setRightTab(v as 'notes' | 'financials')} className="flex flex-col h-full">
                     <div className="shrink-0" style={{ padding: '8px 16px 0' }}>
@@ -181,7 +181,7 @@ export function JobDetailPanel({
                             type="button"
                             disabled={cancelSubmitting}
                             onClick={() => closeCancelDialog(false)}
-                            className="px-4 py-2 text-sm rounded-lg border border-[var(--blanc-line)] hover:bg-[rgba(117,106,89,0.04)] transition-colors disabled:opacity-50"
+                            className="px-4 py-2 text-sm rounded-lg border border-[var(--blanc-line)] hover:bg-[rgba(25,25,25,0.03)] transition-colors disabled:opacity-50"
                             style={{ color: 'var(--blanc-ink-2)' }}
                         >
                             Keep Job

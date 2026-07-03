@@ -59,7 +59,7 @@
   background:none; border:0; cursor:pointer; color:var(--blanc-ink-3,#7d8796);
   padding:8px; border-radius:8px; line-height:0; display:flex;
 }
-.albusto-auth-shell .field__toggle:hover{color:var(--blanc-ink-2,#536070); background:rgba(117,106,89,.07)}
+.albusto-auth-shell .field__toggle:hover{color:var(--blanc-ink-2,#536070); background:rgba(25,25,25,.05)}
 
 .albusto-auth-shell .btn{
   width:100%; height:52px; border:0; border-radius:13px; cursor:pointer;

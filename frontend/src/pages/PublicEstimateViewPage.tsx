@@ -55,7 +55,7 @@ export default function PublicEstimateViewPage() {
     }, [token]);
 
     const cur = info?.currency || 'USD';
-    const card = { width: 560, maxWidth: '94vw', background: '#fffdf9', border: '1px solid rgba(117,106,89,0.18)', borderRadius: 24, padding: 30 } as const;
+    const card = { width: 560, maxWidth: '94vw', background: '#fffdf9', border: '1px solid var(--blanc-line)', borderRadius: 24, padding: 30 } as const;
     const wrap = { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#faf8f4', fontFamily: 'IBM Plex Sans, system-ui, sans-serif', color: '#2b2b2b', padding: 16 } as const;
     const row = { display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 14 } as const;
 
@@ -68,11 +68,11 @@ export default function PublicEstimateViewPage() {
                 <div style={{ fontSize: 13, color: '#a99e8a', fontWeight: 600 }}>{info.company_name}</div>
                 <h1 style={{ fontFamily: 'Manrope, sans-serif', fontSize: 22, margin: '6px 0 4px', lineHeight: 1.3 }}>Estimate {info.estimate_number}</h1>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 18 }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: '#8a7d68', background: 'rgba(117,106,89,0.08)', borderRadius: 999, padding: '3px 10px' }}>{statusLabel(info.status)}</span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: '#8a7d68', background: 'rgba(25,25,25,0.06)', borderRadius: 999, padding: '3px 10px' }}>{statusLabel(info.status)}</span>
                     {info.contact_name && <span style={{ fontSize: 13, color: '#a99e8a' }}>For {info.contact_name}</span>}
                 </div>
 
-                <div style={{ borderTop: '1px solid rgba(117,106,89,0.12)', paddingTop: 14 }}>
+                <div style={{ borderTop: '1px solid rgba(25,25,25,0.10)', paddingTop: 14 }}>
                     {info.items.map((it, i) => (
                         <div key={i} style={{ ...row, marginBottom: 10 }}>
                             <span style={{ color: '#3a342b' }}>
@@ -84,7 +84,7 @@ export default function PublicEstimateViewPage() {
                     ))}
                 </div>
 
-                <div style={{ borderTop: '1px solid rgba(117,106,89,0.12)', marginTop: 6, paddingTop: 14 }}>
+                <div style={{ borderTop: '1px solid rgba(25,25,25,0.10)', marginTop: 6, paddingTop: 14 }}>
                     <div style={{ ...row, color: '#6b5f4c', marginBottom: 6 }}><span>Subtotal</span><span>{money(info.subtotal, cur)}</span></div>
                     {info.discount_amount > 0 && <div style={{ ...row, color: '#6b5f4c', marginBottom: 6 }}><span>Discount</span><span>−{money(info.discount_amount, cur)}</span></div>}
                     {info.tax_amount > 0 && <div style={{ ...row, color: '#6b5f4c', marginBottom: 6 }}><span>Tax</span><span>{money(info.tax_amount, cur)}</span></div>}
@@ -97,7 +97,7 @@ export default function PublicEstimateViewPage() {
                     href={`/api/public/estimates/${token}/pdf`}
                     target="_blank"
                     rel="noreferrer"
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 22, padding: '11px 16px', borderRadius: 12, border: '1px solid rgba(117,106,89,0.25)', background: '#fff', color: '#3a342b', fontWeight: 600, textDecoration: 'none' }}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 22, padding: '11px 16px', borderRadius: 12, border: '1px solid var(--blanc-line-strong)', background: '#fff', color: '#3a342b', fontWeight: 600, textDecoration: 'none' }}
                 >
                     <Download className="h-4 w-4" /> Download PDF
                 </a>

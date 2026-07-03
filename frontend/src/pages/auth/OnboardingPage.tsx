@@ -16,11 +16,11 @@ import { formatUSPhone, toE164 } from '../../components/ui/PhoneInput';
 
 const card: React.CSSProperties = {
     width: '100%', maxWidth: 440, background: 'var(--blanc-surface-strong, #fdf8f0)',
-    borderRadius: 22, padding: '30px 32px', border: '1px solid var(--blanc-line, rgba(117,106,89,0.18))',
+    borderRadius: 22, padding: '30px 32px', border: '1px solid var(--blanc-line, var(--blanc-line))',
 };
 const inputStyle: React.CSSProperties = {
     width: '100%', height: 44, borderRadius: 10, padding: '0 14px',
-    border: '1px solid var(--blanc-line, rgba(117,106,89,0.25))', fontSize: 15, background: '#fff',
+    border: '1px solid var(--blanc-line, var(--blanc-line-strong))', fontSize: 15, background: '#fff',
     outline: 'none', color: 'var(--blanc-ink-1, #202734)', boxSizing: 'border-box',
 };
 const labelStyle: React.CSSProperties = {
@@ -71,7 +71,7 @@ function OtpCells({ value, onChange, disabled }: { value: string; onChange: (v: 
                     style={{
                         width: 46, height: 54, textAlign: 'center', fontSize: 22, fontWeight: 600,
                         fontFamily: 'Manrope, sans-serif', color: 'var(--blanc-ink-1, #202734)',
-                        border: '1px solid var(--blanc-line, rgba(117,106,89,0.25))', borderRadius: 12,
+                        border: '1px solid var(--blanc-line, var(--blanc-line-strong))', borderRadius: 12,
                         background: '#fff', outline: 'none',
                     }} />
             ))}
@@ -222,7 +222,7 @@ export function OnboardingPage() {
                     <span style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--blanc-ink-3, #7d8796)', fontWeight: 500 }}>Step {stepNo} of 3</span>
                     <span style={{ display: 'flex', gap: 6 }}>
                         {[1, 2, 3].map(n => (
-                            <span key={n} style={{ width: 7, height: 7, borderRadius: 99, background: n <= stepNo ? 'var(--blanc-job, #2f63d8)' : 'rgba(117,106,89,0.22)' }} />
+                            <span key={n} style={{ width: 7, height: 7, borderRadius: 99, background: n <= stepNo ? 'var(--blanc-job, #2f63d8)' : 'rgba(25,25,25,0.18)' }} />
                         ))}
                     </span>
                 </div>
@@ -282,7 +282,7 @@ export function OnboardingPage() {
                             {!picked && suggestions.length > 0 && (
                                 <div role="listbox" style={{
                                     position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 10, background: '#fff',
-                                    border: '1px solid var(--blanc-line, rgba(117,106,89,0.18))', borderRadius: 10, marginTop: 4, overflow: 'hidden',
+                                    border: '1px solid var(--blanc-line, var(--blanc-line))', borderRadius: 10, marginTop: 4, overflow: 'hidden',
                                 }}>
                                     {suggestions.map(sg => (
                                         <button key={sg.place_id} type="button" role="option" aria-selected={false}

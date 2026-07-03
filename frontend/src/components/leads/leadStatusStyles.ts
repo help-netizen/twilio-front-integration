@@ -1,14 +1,17 @@
 export const LEAD_REVIEW_COLOR = '#b44d3d';
 
+// UI-QA-001: pill text = full color on a 10% tint — 500-tier hues sat below AA.
+// Same hues one step deeper; Submitted = system job-blue, Contacted stays the
+// system success token. Mirrors jobs BLANC_STATUS_COLORS treatment.
 export const LEAD_STATUS_COLORS: Record<string, string> = {
     'Review': LEAD_REVIEW_COLOR,
-    'Submitted': '#3B82F6',
-    'New': '#8B5CF6',
+    'Submitted': '#2F63D8',
+    'New': '#7C3AED',
     'Contacted': '#1B8B63',
-    'Qualified': '#22C55E',
-    'Proposal Sent': '#F59E0B',
-    'Negotiation': '#F97316',
-    'Lost': '#EF4444',
+    'Qualified': '#15803D',
+    'Proposal Sent': '#B45309',
+    'Negotiation': '#C2410C',
+    'Lost': '#DC2626',
     'Converted': '#6B7280',
 };
 

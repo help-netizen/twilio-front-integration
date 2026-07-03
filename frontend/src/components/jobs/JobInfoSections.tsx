@@ -26,7 +26,7 @@ interface JobInfoSectionsProps {
 const sectionCard: React.CSSProperties = {
     padding: '16px 16px 18px',
     borderRadius: '20px',
-    border: '1px solid rgba(117, 106, 89, 0.14)',
+    border: '1px solid var(--blanc-line)',
     background: 'rgba(255, 255, 255, 0.5)',
 };
 
@@ -44,7 +44,7 @@ const infoRow: React.CSSProperties = {
     alignItems: 'center',
     gap: '10px',
     padding: '10px 0',
-    borderBottom: '1px dashed rgba(117, 106, 89, 0.16)',
+    borderBottom: '1px dashed rgba(25, 25, 25, 0.12)',
 };
 
 const infoLabel: React.CSSProperties = {
@@ -179,7 +179,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
 
                     {/* Schedule */}
                     {job.start_date && (
-                        <div style={{ paddingBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? 14 : 0, marginBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? 14 : 0, borderBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? '1px dashed rgba(117,106,89,0.16)' : undefined }}>
+                        <div style={{ paddingBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? 14 : 0, marginBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? 14 : 0, borderBottom: (job.address || job.territory || (job.assigned_techs?.length ?? 0) > 0) ? '1px dashed rgba(25,25,25,0.12)' : undefined }}>
                             <div className="flex items-center justify-between mb-2">
                                 <p style={{ ...eyebrow, marginBottom: 0 }}>Scheduled</p>
                                 {canReschedule && (
@@ -212,7 +212,7 @@ export function JobInfoSections({ job, contactInfo, onJobUpdated }: JobInfoSecti
                     )}
 
                     {/* Location — SCHED-ROUTE-001 FR-002/FR-003: clickable Maps link + inline edit */}
-                    <div style={{ paddingBottom: (job.assigned_techs?.length ?? 0) > 0 ? 14 : 0, marginBottom: (job.assigned_techs?.length ?? 0) > 0 ? 14 : 0, borderBottom: (job.assigned_techs?.length ?? 0) > 0 ? '1px dashed rgba(117,106,89,0.16)' : undefined }}>
+                    <div style={{ paddingBottom: (job.assigned_techs?.length ?? 0) > 0 ? 14 : 0, marginBottom: (job.assigned_techs?.length ?? 0) > 0 ? 14 : 0, borderBottom: (job.assigned_techs?.length ?? 0) > 0 ? '1px dashed rgba(25,25,25,0.12)' : undefined }}>
                         <div className="flex items-center gap-1.5 mb-1">
                             <p style={{ ...eyebrow, marginBottom: 0 }}>Location</p>
                             {job.territory && (

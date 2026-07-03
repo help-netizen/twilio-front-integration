@@ -159,14 +159,14 @@ function ResourceSection({
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     <div>
                         <div style={{ fontSize: 11, color: 'var(--blanc-ink-3)', marginBottom: 3 }}>SIP URI</div>
-                        <div style={{ fontSize: 13, fontFamily: 'monospace', color: 'var(--blanc-ink-1)', padding: '6px 10px', background: 'rgba(117,106,89,0.06)', borderRadius: 8 }}>
+                        <div style={{ fontSize: 13, fontFamily: 'monospace', color: 'var(--blanc-ink-1)', padding: '6px 10px', background: 'rgba(25,25,25,0.06)', borderRadius: 8 }}>
                             {resource.sip_uri}
                         </div>
                     </div>
                     {resource.server_url && (
                         <div>
                             <div style={{ fontSize: 11, color: 'var(--blanc-ink-3)', marginBottom: 3 }}>Server URL</div>
-                            <div style={{ fontSize: 13, fontFamily: 'monospace', color: 'var(--blanc-ink-1)', padding: '6px 10px', background: 'rgba(117,106,89,0.06)', borderRadius: 8, wordBreak: 'break-all' }}>
+                            <div style={{ fontSize: 13, fontFamily: 'monospace', color: 'var(--blanc-ink-1)', padding: '6px 10px', background: 'rgba(25,25,25,0.06)', borderRadius: 8, wordBreak: 'break-all' }}>
                                 {resource.server_url}
                             </div>
                         </div>

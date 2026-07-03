@@ -117,7 +117,7 @@ export function BottomSheet({
                     flexDirection: 'column',
                     overflow: 'hidden',
                     background: 'var(--blanc-surface-strong, #fdf8f0)',
-                    borderTop: '1px solid var(--blanc-line, rgba(117, 106, 89, 0.18))',
+                    borderTop: '1px solid var(--blanc-line, var(--blanc-line))',
                     borderRadius: 'var(--blanc-radius-lg, 22px) var(--blanc-radius-lg, 22px) 0 0',
                     boxShadow: '0 -12px 40px rgba(40, 33, 22, 0.22)',
                     animation: 'blancSlideUp 0.25s ease-out',
@@ -207,7 +207,7 @@ export function BottomSheet({
                     <div
                         style={{
                             flexShrink: 0,
-                            borderTop: '1px solid var(--blanc-line, rgba(117, 106, 89, 0.18))',
+                            borderTop: '1px solid var(--blanc-line, var(--blanc-line))',
                             background: 'var(--blanc-bg, #F1F1F0)',
                             boxShadow: '0 -12px 28px -20px rgba(63, 55, 42, 0.45)',
                             paddingLeft: 20,

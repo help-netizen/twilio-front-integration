@@ -148,7 +148,7 @@ export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew, 
                             {groups.map(g => (
                                 <button key={`g${g.id}`} type="button"
                                     onMouseDown={(e) => { e.preventDefault(); pickGroup(g.id); }}
-                                    className="w-full text-left px-4 py-2 text-sm flex items-center justify-between gap-3 hover:bg-[rgba(117,106,89,0.06)]">
+                                    className="w-full text-left px-4 py-2 text-sm flex items-center justify-between gap-3 hover:bg-[rgba(25,25,25,0.06)]">
                                     <div className="min-w-0">
                                         <div className="font-medium truncate" style={{ color: 'var(--blanc-ink-1)' }}>{g.name}</div>
                                         <div className="text-xs truncate" style={{ color: 'var(--blanc-ink-3)' }}>{g.item_count ?? 0} item(s) — adds all</div>
@@ -173,7 +173,7 @@ export function ItemPresetSearchCombobox({ disabled, onPickPreset, onCreateNew, 
                             onMouseDown={(e) => { e.preventDefault(); pickPreset(p); }}
                             onMouseEnter={() => setHighlighted(idx)}
                             className="w-full text-left px-4 py-2 text-sm flex items-center justify-between gap-3 transition-colors"
-                            style={{ background: highlighted === idx ? 'rgba(117,106,89,0.06)' : 'transparent' }}
+                            style={{ background: highlighted === idx ? 'rgba(25,25,25,0.06)' : 'transparent' }}
                         >
                             <div className="min-w-0">
                                 <div className="font-medium truncate" style={{ color: 'var(--blanc-ink-1)' }}>{p.name}</div>

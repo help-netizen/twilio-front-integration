@@ -39,7 +39,7 @@ const PAYG_BULLETS = [
     'Usage is paid from your wallet',
 ];
 
-const sectionCard = { background: 'rgba(117,106,89,0.04)', borderRadius: 16, padding: '20px 22px' } as const;
+const sectionCard = { background: 'rgba(25,25,25,0.03)', borderRadius: 16, padding: '20px 22px' } as const;
 
 interface TelephonyState {
     connected: boolean;
@@ -395,7 +395,7 @@ export default function TelephonyTwilioSettingsPage() {
                                                 ? { background: 'rgba(27,139,99,0.12)', color: 'var(--blanc-success)' }
                                                 : isActive
                                                     ? { background: 'var(--blanc-info, #2f63d8)', color: '#fff' }
-                                                    : { background: 'rgba(117,106,89,0.08)', color: 'var(--blanc-ink-3)' }),
+                                                    : { background: 'rgba(25,25,25,0.06)', color: 'var(--blanc-ink-3)' }),
                                         }}>
                                             {s.done ? <Check size={14} /> : s.n}
                                         </span>

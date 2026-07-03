@@ -21,7 +21,7 @@ import { BLANC_STATUS_COLORS } from './jobsFilterHelpers';
 
 const UNASSIGNED_ACCENT = 'var(--blanc-ink-3, rgba(117, 106, 89, 0.6))';
 const UNASSIGNED_BG = 'linear-gradient(180deg, rgba(248, 246, 242, 0.98), rgba(240, 237, 232, 0.94))';
-const UNASSIGNED_BORDER = 'rgba(117, 106, 89, 0.18)';
+const UNASSIGNED_BORDER = 'var(--blanc-line)';
 
 // ── Payment pill ────────────────────────────────────────────────────────────
 // Prefer the LOCAL invoice math (amount_paid + balance_due, summed across this

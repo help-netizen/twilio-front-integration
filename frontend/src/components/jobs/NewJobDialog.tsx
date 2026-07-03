@@ -323,7 +323,7 @@ export function NewJobDialog({ open, onClose, copyFrom, presetSlot }: NewJobDial
                             <button
                                 type="button"
                                 onClick={() => setTimeOpen(true)}
-                                className="w-full text-left rounded-xl px-4 h-[50px] flex items-center gap-3 transition-colors hover:bg-[rgba(117,106,89,0.04)]"
+                                className="w-full text-left rounded-xl px-4 h-[50px] flex items-center gap-3 transition-colors hover:bg-[rgba(25,25,25,0.03)]"
                                 style={{ border: '1.5px solid var(--blanc-line)' }}
                             >
                                 <Clock style={{ width: 18, height: 18, color: 'var(--blanc-ink-3)', flexShrink: 0 }} />

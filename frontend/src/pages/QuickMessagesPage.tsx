@@ -38,7 +38,7 @@ export default function QuickMessagesPage() {
                 {qm.showAddForm ? (
                     <div
                         className="flex flex-col gap-3 rounded-2xl p-4"
-                        style={{ background: 'rgba(117,106,89,0.04)' }}
+                        style={{ background: 'rgba(25,25,25,0.03)' }}
                     >
                         <Input
                             value={qm.newTitle}
@@ -82,7 +82,7 @@ export default function QuickMessagesPage() {
                 ) : qm.messages.length === 0 && !qm.showAddForm ? (
                     <div
                         className="flex flex-col items-center rounded-2xl py-12 text-center"
-                        style={{ background: 'rgba(117,106,89,0.04)', color: 'var(--blanc-ink-3)' }}
+                        style={{ background: 'rgba(25,25,25,0.03)', color: 'var(--blanc-ink-3)' }}
                     >
                         <MessageSquareText className="w-9 h-9 mb-3" style={{ color: 'var(--blanc-ink-3)' }} />
                         <div className="text-[15px] font-medium" style={{ color: 'var(--blanc-ink-2)' }}>No quick messages yet</div>

@@ -34,7 +34,7 @@ function toneStyle(tone: Tone): React.CSSProperties {
         case 'info': return { background: 'rgba(47,99,216,0.12)', color: 'var(--blanc-info)' };
         case 'danger': return { background: 'rgba(212,77,60,0.12)', color: 'var(--blanc-danger)' };
         case 'warn': return { background: 'rgba(178,106,29,0.12)', color: 'var(--blanc-warning)' };
-        default: return { background: 'rgba(117,106,89,0.10)', color: 'var(--blanc-ink-2)' };
+        default: return { background: 'rgba(25,25,25,0.08)', color: 'var(--blanc-ink-2)' };
     }
 }
 
@@ -65,7 +65,7 @@ function overageFor(plan: Plan | undefined, metric: string, used: number): numbe
 }
 
 /** KPI tile surface — section-card family (LAYOUT-CANON: surface owns its padding). */
-const KPI = 'rounded-2xl bg-[rgba(117,106,89,0.05)] px-4 py-3.5';
+const KPI = 'rounded-2xl bg-[rgba(25,25,25,0.04)] px-4 py-3.5';
 
 export default function BillingPage() {
     const [data, setData] = useState<BillingOverview | null>(null);
@@ -171,7 +171,7 @@ export default function BillingPage() {
                                 <span style={{ fontSize: 18, fontWeight: 500, color: over ? 'var(--blanc-danger)' : 'var(--blanc-ink-1)' }}>{used.toLocaleString()}</span>
                                 {cap > 0 && <span style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>/ {cap.toLocaleString()}</span>}
                             </div>
-                            <div style={{ height: 7, borderRadius: 999, background: 'rgba(117,106,89,0.12)', overflow: 'hidden', marginTop: 8 }}>
+                            <div style={{ height: 7, borderRadius: 999, background: 'rgba(25,25,25,0.10)', overflow: 'hidden', marginTop: 8 }}>
                                 <div style={{ height: '100%', width: `${Math.min(100, pct)}%`, background: usageBarColor(pct), borderRadius: 999, transition: 'width .3s' }} />
                             </div>
                             {over && (

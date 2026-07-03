@@ -11,7 +11,7 @@ import { SettingsPageShell } from '../components/settings/SettingsPageShell';
 import { SettingsSection } from '../components/settings/SettingsSection';
 import { stripePaymentsApi, type StripePaymentsStatus, type StripeReadiness } from '../services/stripePaymentsApi';
 
-const STATUS_NEUTRAL = 'bg-[rgba(117,106,89,0.06)] text-[var(--blanc-ink-3)]';
+const STATUS_NEUTRAL = 'bg-[rgba(25,25,25,0.06)] text-[var(--blanc-ink-3)]';
 const STATUS_WARNING = 'bg-[rgba(178,106,29,0.12)] text-[var(--blanc-warning)]';
 const STATUS_SUCCESS = 'bg-[rgba(27,139,99,0.12)] text-[var(--blanc-success)]';
 

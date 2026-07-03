@@ -495,20 +495,20 @@
 .payments-empty {
     text-align: center;
     padding: 64px 24px;
-    color: #9ca3af;
+    color: var(--blanc-ink-3); /* UI-QA-001: tokens instead of legacy grays */
 }
 
 .payments-empty-icon {
     width: 48px;
     height: 48px;
     margin: 0 auto 12px;
-    color: #d1d5db;
+    color: var(--blanc-line-strong);
 }
 
 .payments-empty-title {
     font-size: 15px;
     font-weight: 500;
-    color: #6b7280;
+    color: var(--blanc-ink-2);
 }
 
 .payments-empty-sub {

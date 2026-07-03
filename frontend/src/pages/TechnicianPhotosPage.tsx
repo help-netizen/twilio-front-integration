@@ -213,9 +213,9 @@ export default function TechnicianPhotosPage() {
                                 </div>
 
                                 {isEditing && (
-                                    <div className="mt-3 rounded-2xl p-3.5" style={{ background: 'rgba(117, 106, 89, 0.04)' }}>
+                                    <div className="mt-3 rounded-2xl p-3.5" style={{ background: 'rgba(25, 25, 25, 0.03)' }}>
                                         <div className="flex items-center justify-between mb-3">
-                                            <div className="inline-flex rounded-lg p-0.5" style={{ background: 'rgba(117, 106, 89, 0.08)' }}>
+                                            <div className="inline-flex rounded-lg p-0.5" style={{ background: 'rgba(25, 25, 25, 0.06)' }}>
                                                 <button type="button" onClick={() => companyBase && setBaseMode('company')} disabled={!companyBase}
                                                     className="px-3 py-1.5 text-xs rounded-md font-medium transition-colors" style={segBtn(baseMode === 'company', !companyBase)}>
                                                     Company address

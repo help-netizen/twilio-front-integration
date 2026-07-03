@@ -59,7 +59,7 @@
     /* PALETTE-V2 (W2): нейтральные чернила — конец конфликта температур */
     --blanc-ink-1: #191919;
     --blanc-ink-2: #6E6E6E;
-    --blanc-ink-3: #9A9A9A;
+    --blanc-ink-3: #8A8A8A; /* UI-QA-001: lifted from #9A9A9A — hints stayed tertiary but readable */
 
     /* ── PALETTE-V2 (docs/specs/PALETTE-V2.md) — новые роли ──
        Введены в W1 заранее; до W2 их никто не использует в разметке (wiring
@@ -79,7 +79,9 @@
     --blanc-task-soft: rgba(228, 247, 239, 0.98);
 
     /* ── Semantic ── */
-    --blanc-today-soft: rgba(255, 247, 231, 0.9);
+    /* UI-QA-001: was a warm cream wash from the old palette — today/selection
+       is the lavender accent-tint family on the neutral canvas. */
+    --blanc-today-soft: rgba(231, 219, 253, 0.4);
     --blanc-danger: #F0503F;
     --blanc-success: #1b8b63;
     --blanc-warning: #b26a1d;
@@ -218,7 +220,8 @@ h1, h2, h3 {
 /* ── Table header overrides — light eyebrow style like Schedule ── */
 table thead th,
 [data-slot="table-head"] {
-    color: var(--blanc-ink-3) !important;
+    /* UI-QA-001: headers are structural — ink-2 passes AA on canvas (ink-3 sat at 2.5–3.1) */
+    color: var(--blanc-ink-2) !important;
     font-size: 12px !important;
     font-weight: 600 !important;
     letter-spacing: 0.06em !important;
@@ -230,9 +233,10 @@ table thead tr {
     border-bottom: 1px solid var(--blanc-line) !important;
 }
 
-/* ── Table row hover — warm highlight ── */
+/* ── Table row hover — neutral highlight (UI-QA-001: was a warm #fff7e7 wash
+   left over from the old palette — dirty on the neutral canvas) ── */
 table tbody tr:hover {
-    background: rgba(255, 247, 231, 0.5) !important;
+    background: rgba(25, 25, 25, 0.03) !important;
 }
 
 /* ── Outline/secondary button overrides — light like Schedule controls ── */
@@ -510,10 +514,12 @@ table tbody tr:hover {
 
 .blanc-control-chip[data-active],
 .blanc-control-chip.active {
-    background: var(--blanc-ink-1);
-    color: #fff;
+    /* UI-QA-001: was a heavy black pill — active state joins the lavender
+       selection family (same as nav/selected rows), not a b&w contrast crank. */
+    background: var(--blanc-accent-soft);
+    color: var(--blanc-accent);
     border-color: transparent;
-    box-shadow: rgba(25, 25, 25, 0.10) 0px 6px 16px;
+    box-shadow: none;
 }
 
 /* Icon-only control chip */
@@ -622,7 +628,7 @@ table tbody tr:hover {
 
 /* Table header: eyebrow style */
 .blanc-page-card thead th {
-    color: var(--blanc-ink-3) !important;
+    color: var(--blanc-ink-2) !important; /* UI-QA-001: structural — AA */
     font-size: 11px !important;
     font-weight: 600 !important;
     text-transform: uppercase !important;
@@ -766,7 +772,7 @@ table tbody tr:hover {
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.14em;
-    color: var(--blanc-ink-3);
+    color: var(--blanc-ink-2); /* UI-QA-001: column headers are structural — AA on canvas */
 }
 
 .blanc-table-tiles tbody td {
@@ -797,7 +803,9 @@ table tbody tr:hover {
     font-weight: 600;
     letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: var(--blanc-ink-3);
+    /* UI-QA-001: eyebrows are structural labels you read (section/table/group
+       headers) — ink-2 passes AA on canvas; ink-3 stays for optional hints. */
+    color: var(--blanc-ink-2);
     margin-bottom: 8px;
 }
 
@@ -990,7 +998,7 @@ table tbody tr:hover {
 }
 
 .blanc-table-row-selected {
-    background: var(--blanc-today-soft);
+    background: rgba(127, 66, 225, 0.07); /* UI-QA-001: selection = lavender canon */
 }
 
 /* ═══════════════════════════════════════════════════════════════════

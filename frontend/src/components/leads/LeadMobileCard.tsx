@@ -51,7 +51,7 @@ export const LeadMobileCard: React.FC<LeadMobileCardProps> = ({ lead, onClick })
             `}
             style={{
                 background: 'var(--blanc-surface-strong, #fffdf9)',
-                border: '1px solid var(--blanc-line, rgba(117, 106, 89, 0.18))',
+                border: '1px solid var(--blanc-line, var(--blanc-line))',
                 borderLeft: `4px solid ${accent}`,
                 borderRadius: '18px',
                 boxShadow: 'var(--blanc-shadow-card, 0 6px 16px rgba(48, 39, 28, 0.06))',

@@ -120,7 +120,7 @@ export function ActionsBlock({ machineKey, entityId, currentState, onTransitionC
                                 type="button"
                                 disabled={applyMutation.isPending}
                                 onClick={() => handleActionClick(action)}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-[var(--blanc-line)] hover:bg-[rgba(117,106,89,0.04)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-[var(--blanc-line)] hover:bg-[rgba(25,25,25,0.03)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                 style={{ color: 'var(--blanc-ink-1)', background: 'transparent' }}
                             >
                                 {applyMutation.isPending ? (

@@ -88,23 +88,23 @@ export function UsersTable({ users, loading, filtered, fmtDate, actionLoading, o
                                     <div className="text-xs text-[var(--blanc-ink-3)] pl-[18px]">{u.email}</div>
                                 </TableCell>
                                 <TableCell className="px-4 py-2.5">
-                                    <Badge variant="outline" className="font-medium border-[var(--blanc-line)] text-[var(--blanc-ink-2)] bg-[rgba(117,106,89,0.04)]"><Icon className="size-3 mr-1.5 text-[var(--blanc-ink-3)]" />{r.label}</Badge>
+                                    <Badge variant="outline" className="font-medium border-[var(--blanc-line)] text-[var(--blanc-ink-2)] bg-[rgba(25,25,25,0.03)]"><Icon className="size-3 mr-1.5 text-[var(--blanc-ink-3)]" />{r.label}</Badge>
                                 </TableCell>
                                 <TableCell className="px-4 py-2.5">
                                     <Badge
                                         variant="outline"
                                         className={active
                                             ? 'border-[var(--blanc-line)] text-[var(--blanc-success)] bg-[rgba(27,139,99,0.1)]'
-                                            : 'border-[var(--blanc-line)] text-[var(--blanc-ink-3)] bg-[rgba(117,106,89,0.04)]'}
+                                            : 'border-[var(--blanc-line)] text-[var(--blanc-ink-3)] bg-[rgba(25,25,25,0.03)]'}
                                     >
                                         {active ? 'Active' : 'Disabled'}
                                     </Badge>
                                 </TableCell>
                                 <TableCell className="px-4 py-2.5">
                                     <div className="flex gap-1.5 flex-wrap">
-                                        {u.phone_calls_allowed && <Badge variant="outline" className="text-[10px] px-1.5 border-[var(--blanc-line)] text-[var(--blanc-ink-2)] bg-[rgba(117,106,89,0.04)]"><Phone className="size-2.5 mr-1 text-[var(--blanc-ink-3)]" />Softphone</Badge>}
-                                        {u.is_provider && <Badge variant="outline" className="text-[10px] px-1.5 border-[var(--blanc-line)] text-[var(--blanc-ink-2)] bg-[rgba(117,106,89,0.04)]"><Truck className="size-2.5 mr-1 text-[var(--blanc-ink-3)]" />Provider</Badge>}
-                                        {u.location_tracking_enabled && <Badge variant="outline" className="text-[10px] px-1.5 border-[var(--blanc-line)] text-[var(--blanc-ink-2)] bg-[rgba(117,106,89,0.04)]"><MapPin className="size-2.5 mr-1 text-[var(--blanc-ink-3)]" />Tracking</Badge>}
+                                        {u.phone_calls_allowed && <Badge variant="outline" className="text-[10px] px-1.5 border-[var(--blanc-line)] text-[var(--blanc-ink-2)] bg-[rgba(25,25,25,0.03)]"><Phone className="size-2.5 mr-1 text-[var(--blanc-ink-3)]" />Softphone</Badge>}
+                                        {u.is_provider && <Badge variant="outline" className="text-[10px] px-1.5 border-[var(--blanc-line)] text-[var(--blanc-ink-2)] bg-[rgba(25,25,25,0.03)]"><Truck className="size-2.5 mr-1 text-[var(--blanc-ink-3)]" />Provider</Badge>}
+                                        {u.location_tracking_enabled && <Badge variant="outline" className="text-[10px] px-1.5 border-[var(--blanc-line)] text-[var(--blanc-ink-2)] bg-[rgba(25,25,25,0.03)]"><MapPin className="size-2.5 mr-1 text-[var(--blanc-ink-3)]" />Tracking</Badge>}
                                     </div>
                                 </TableCell>
                                 <TableCell className="px-4 py-2.5 text-sm text-[var(--blanc-ink-2)]">{fmtDate(u.last_login_at)}</TableCell>

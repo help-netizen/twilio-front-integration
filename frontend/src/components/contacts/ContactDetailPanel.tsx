@@ -132,7 +132,7 @@ export function ContactDetailPanel({ contact, leads, loading, onAddressesChanged
                 {/* ═══ RIGHT COLUMN (desktop) ═══ */}
                 <div
                     className="w-full md:w-1/2 flex-col overflow-y-auto hidden md:flex"
-                    style={{ borderLeft: '1px solid rgba(117, 106, 89, 0.07)' }}
+                    style={{ borderLeft: '1px solid var(--blanc-line)' }}
                 >
                     <div className="p-4 space-y-5">
                         <NotesHistoryTabs entityType="contact" entityId={contact.id} />

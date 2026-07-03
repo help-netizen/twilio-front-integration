@@ -10,7 +10,7 @@ import { OpenTimelineButton } from '../softphone/OpenTimelineButton';
 const sectionCard: React.CSSProperties = {
     padding: '16px 16px 18px',
     borderRadius: '20px',
-    border: '1px solid rgba(117, 106, 89, 0.14)',
+    border: '1px solid var(--blanc-line)',
     background: 'rgba(255, 255, 255, 0.5)',
 };
 
@@ -28,7 +28,7 @@ const infoRow: React.CSSProperties = {
     alignItems: 'center',
     gap: '10px',
     padding: '10px 0',
-    borderBottom: '1px dashed rgba(117, 106, 89, 0.16)',
+    borderBottom: '1px dashed rgba(25, 25, 25, 0.12)',
 };
 
 const infoLabel: React.CSSProperties = {

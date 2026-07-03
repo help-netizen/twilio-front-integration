@@ -162,7 +162,7 @@ export function JobDetailHeader({ job, onBlancStatusChange, onCancel, onCopy }: 
                                 <DropdownMenuItem
                                     onClick={() => onBlancStatusChange(job.id, initialState!)}
                                     className="flex items-center gap-2 text-xs font-medium mx-1 mb-1 rounded-md"
-                                    style={{ background: 'rgba(117,106,89,0.06)', color: 'var(--blanc-ink-2)' }}
+                                    style={{ background: 'rgba(25,25,25,0.06)', color: 'var(--blanc-ink-2)' }}
                                 >
                                     <RotateCcw className="size-3" />
                                     Reset to {initialState}
@@ -177,7 +177,7 @@ export function JobDetailHeader({ job, onBlancStatusChange, onCancel, onCopy }: 
                     <span
                         className="inline-flex items-center px-4 text-sm font-medium"
                         style={{
-                            background: 'rgba(117,106,89,0.08)',
+                            background: 'rgba(25,25,25,0.06)',
                             color: 'var(--blanc-ink-2)',
                             border: '1px solid var(--blanc-line)',
                             minHeight: 42,

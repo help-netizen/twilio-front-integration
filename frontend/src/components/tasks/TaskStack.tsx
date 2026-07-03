@@ -90,7 +90,7 @@ export function TaskStack({ parentType, parentId, showAddButton = true, title, c
                     <div className="relative">
                         {!expanded && hasMany && (
                             <>
-                                <div className="absolute left-2.5 right-2.5" style={{ top: 7, height: 16, background: 'rgba(117,106,89,0.05)', border: '1px solid var(--blanc-line)', borderRadius: 10 }} />
+                                <div className="absolute left-2.5 right-2.5" style={{ top: 7, height: 16, background: 'rgba(25,25,25,0.04)', border: '1px solid var(--blanc-line)', borderRadius: 10 }} />
                                 <div className="absolute left-1.5 right-1.5" style={{ top: 3, height: 16, background: 'var(--blanc-surface-strong, #fffdf9)', border: '1px solid var(--blanc-line)', borderRadius: 10 }} />
                             </>
                         )}

@@ -98,7 +98,7 @@ export default function LeadFormSettingsPage() {
                                 </SortableContext>
                             </DndContext>
                             {showNewField ? (
-                                <div className="mt-3 flex flex-col gap-3 rounded-2xl p-3.5" style={{ background: 'rgba(117,106,89,0.04)' }}>
+                                <div className="mt-3 flex flex-col gap-3 rounded-2xl p-3.5" style={{ background: 'rgba(25,25,25,0.03)' }}>
                                     <div className="flex gap-2 items-center">
                                         <Input value={newFieldName} onChange={e => { const v = e.target.value.replace(/[^A-Za-z ]/g, ''); setNewFieldName(v); }} placeholder="Display Name" autoFocus />
                                         <Select value={newFieldType} onValueChange={setNewFieldType}>

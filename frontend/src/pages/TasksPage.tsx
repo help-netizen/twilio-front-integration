@@ -117,7 +117,7 @@ export function TasksPage() {
     const Avatar = ({ t }: { t: Task }) => (
         <span className="inline-flex items-center justify-center shrink-0"
             title={t.assignee_name || 'Unassigned'}
-            style={{ width: 22, height: 22, borderRadius: '50%', background: 'rgba(117,106,89,0.10)', fontSize: 10, fontWeight: 600, color: 'var(--blanc-ink-2)' }}>
+            style={{ width: 22, height: 22, borderRadius: '50%', background: 'rgba(25,25,25,0.08)', fontSize: 10, fontWeight: 600, color: 'var(--blanc-ink-2)' }}>
             {initials(t.assignee_name)}
         </span>
     );
@@ -135,11 +135,19 @@ export function TasksPage() {
                 <option value="estimate">Estimates</option>
                 <option value="invoice">Invoices</option>
             </select>
-            <div className="flex items-center rounded-[10px] overflow-hidden" style={{ border: '1px solid var(--blanc-line)' }}>
+            {/* UI-QA-001: segment control (nav canon) — white pill on field strip,
+                not a heavy black active state. */}
+            <div className="flex items-center" style={{ background: 'var(--blanc-field)', borderRadius: 999, padding: 2 }}>
                 {(['open', 'all'] as const).map(s => (
                     <button key={s} type="button" onClick={() => setStatus(s)}
                         className="text-sm capitalize transition-colors"
-                        style={{ padding: '6px 12px', background: status === s ? 'var(--blanc-ink-1)' : 'transparent', color: status === s ? '#fff' : 'var(--blanc-ink-2)' }}>
+                        style={{
+                            padding: '4px 12px', borderRadius: 999,
+                            background: status === s ? 'var(--blanc-panel-surface)' : 'transparent',
+                            color: status === s ? 'var(--blanc-ink-1)' : 'var(--blanc-ink-2)',
+                            fontWeight: status === s ? 600 : 400,
+                            boxShadow: status === s ? '0 1px 2px rgba(25,25,25,0.08)' : 'none',
+                        }}>
                         {s}
                     </button>
                 ))}
@@ -172,7 +180,7 @@ export function TasksPage() {
             </div>
         ) : (
             <div key={t.id} onClick={() => navigate(parentPath(t))}
-                className="flex items-center gap-3 rounded-[10px] px-3 py-2.5 cursor-pointer transition-colors hover:bg-[rgba(117,106,89,0.04)]"
+                className="flex items-center gap-3 rounded-[10px] px-3 py-2.5 cursor-pointer transition-colors hover:bg-[rgba(25,25,25,0.03)]"
                 style={{ border: '1px solid var(--blanc-line)', opacity: done ? 0.6 : 1 }}>
                 <span style={{ width: 8, height: 8, borderRadius: '50%', background: meta.color, flex: 'none' }} title={meta.label} />
                 <span className="shrink-0" style={{ fontSize: 11, color: 'var(--blanc-ink-3)', width: 60 }}>{meta.label}</span>

@@ -35,12 +35,12 @@ const overlay: React.CSSProperties = {
 };
 const card: React.CSSProperties = {
     width: 420, maxWidth: '100%', background: '#fffdf9',
-    border: '1px solid rgba(117,106,89,0.18)', borderRadius: 22,
+    border: '1px solid var(--blanc-line)', borderRadius: 22,
     padding: '28px 28px 24px', boxShadow: '0 20px 60px rgba(60,54,44,0.12)',
 };
 const input: React.CSSProperties = {
     width: '100%', height: 46, borderRadius: 12, padding: '0 14px',
-    border: '1px solid rgba(117,106,89,0.28)', fontSize: 20, letterSpacing: '0.5em',
+    border: '1px solid var(--blanc-line-strong)', fontSize: 20, letterSpacing: '0.5em',
     textAlign: 'center', fontVariantNumeric: 'tabular-nums', boxSizing: 'border-box',
 };
 

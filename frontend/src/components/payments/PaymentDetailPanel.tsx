@@ -19,7 +19,7 @@ import { formatPaymentDate, formatCurrency } from './paymentTypes';
 const sectionCard: React.CSSProperties = {
     padding: '16px 16px 18px',
     borderRadius: '20px',
-    border: '1px solid rgba(117, 106, 89, 0.14)',
+    border: '1px solid var(--blanc-line)',
     background: 'rgba(255, 255, 255, 0.5)',
 };
 
@@ -37,7 +37,7 @@ const infoRow: React.CSSProperties = {
     alignItems: 'center',
     gap: '10px',
     padding: '10px 0',
-    borderBottom: '1px dashed rgba(117, 106, 89, 0.16)',
+    borderBottom: '1px dashed rgba(25, 25, 25, 0.12)',
 };
 
 const infoLabel: React.CSSProperties = {
@@ -235,7 +235,7 @@ export function PaymentDetailPanel({
                                 <span
                                     key={i}
                                     className="inline-flex items-center gap-1 min-h-[34px] px-3.5 rounded-full text-[13px] font-medium"
-                                    style={{ background: 'rgba(117, 106, 89, 0.07)', border: '1px solid rgba(117, 106, 89, 0.14)', color: 'var(--blanc-ink-1)' }}
+                                    style={{ background: 'var(--blanc-line)', border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-1)' }}
                                 >
                                     {p.name}
                                 </span>

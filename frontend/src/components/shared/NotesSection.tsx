@@ -385,7 +385,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                                                     key={att.id}
                                                     className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs"
                                                     style={{
-                                                        background: 'rgba(117,106,89,0.06)',
+                                                        background: 'rgba(25,25,25,0.06)',
                                                         border: '1px solid var(--blanc-line)',
                                                         color: 'var(--blanc-ink-2)',
                                                         opacity: marked ? 0.4 : 1,
@@ -465,7 +465,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                                                 <button
                                                     type="button"
                                                     onClick={() => startEdit(note)}
-                                                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors hover:bg-[rgba(117,106,89,0.06)]"
+                                                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors hover:bg-[rgba(25,25,25,0.06)]"
                                                     style={{ color: 'var(--blanc-ink-1)' }}
                                                 >
                                                     <Pencil className="size-3.5" /> Edit
@@ -474,7 +474,7 @@ export function NotesSection({ entityType, entityId, onNoteAdded }: NotesSection
                                                     <button
                                                         type="button"
                                                         onClick={() => deleteNote(note)}
-                                                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors hover:bg-[rgba(117,106,89,0.06)]"
+                                                        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors hover:bg-[rgba(25,25,25,0.06)]"
                                                         style={{ color: '#b42318' }}
                                                     >
                                                         <Trash2 className="size-3.5" /> Delete

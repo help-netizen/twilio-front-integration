@@ -41,13 +41,13 @@ export function EmailMessageItem({ message, isLast }: EmailMessageItemProps) {
             <div
                 className="flex items-center justify-between px-4 py-3 cursor-pointer"
                 onClick={() => setExpanded(!expanded)}
-                style={{ background: expanded ? 'transparent' : 'rgba(117, 106, 89, 0.02)' }}
+                style={{ background: expanded ? 'transparent' : 'rgba(25, 25, 25, 0.02)' }}
             >
                 <div className="flex items-center gap-2 min-w-0 flex-1">
                     <div
                         className="size-7 rounded-full flex items-center justify-center shrink-0 text-xs font-medium"
                         style={{
-                            background: isOutbound ? 'rgba(117, 106, 89, 0.1)' : 'rgba(92, 106, 196, 0.12)',
+                            background: isOutbound ? 'rgba(25, 25, 25, 0.08)' : 'rgba(92, 106, 196, 0.12)',
                             color: isOutbound ? 'var(--blanc-ink-2)' : '#5C6AC4',
                         }}
                     >

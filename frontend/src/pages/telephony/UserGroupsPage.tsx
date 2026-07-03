@@ -21,11 +21,12 @@ interface UserGroupData {
     schedule: { timezone: string; hours: ScheduleDay[] };
     flow: { id: string; status: 'active'; updated_at: string; graph: unknown } | null;
 }
+// UI-QA-001: chip text reuses `dot` — deep-tier hues so 11px text passes AA on the tint.
 const STATUS_COLORS: Record<string, { bg: string; dot: string }> = {
-    available: { bg: '#d1fae5', dot: '#10b981' },
-    on_call: { bg: '#dbeafe', dot: '#3b82f6' },
-    away: { bg: '#fef3c7', dot: '#f59e0b' },
-    offline: { bg: '#f3f4f6', dot: '#9ca3af' },
+    available: { bg: '#d1fae5', dot: '#047857' },
+    on_call: { bg: '#dbeafe', dot: '#2F63D8' },
+    away: { bg: '#fef3c7', dot: '#B45309' },
+    offline: { bg: '#F0F0F0', dot: '#6E6E6E' },
 };
 
 import { authedFetch } from '../../services/apiClient';

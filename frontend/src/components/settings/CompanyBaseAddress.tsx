@@ -88,7 +88,7 @@ export function CompanyBaseAddress({
     };
 
     return (
-        <div className="rounded-2xl p-4" style={{ background: 'rgba(117, 106, 89, 0.04)' }}>
+        <div className="rounded-2xl p-4" style={{ background: 'rgba(25, 25, 25, 0.03)' }}>
             <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
                     <div className="blanc-eyebrow" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.14em', color: 'var(--blanc-ink-3)' }}>{title}</div>

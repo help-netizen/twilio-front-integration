@@ -281,7 +281,7 @@ export function InvoiceEditorDialog({
                                     </div>
                                 </Collapsible>
                             ) : (
-                                <div className="rounded-2xl border border-dashed border-[var(--blanc-line)] px-4 py-5" style={{ background: 'rgba(117,106,89,0.04)' }}>
+                                <div className="rounded-2xl border border-dashed border-[var(--blanc-line)] px-4 py-5" style={{ background: 'rgba(25,25,25,0.03)' }}>
                                     <p className="text-sm font-medium text-[var(--blanc-ink-1)]">Summary</p>
                                     <p className="mt-1 text-sm text-[var(--blanc-ink-2)]">Add scope, findings, or any context worth highlighting to the customer.</p>
                                     <Button type="button" variant="outline" size="sm" className="mt-3" onClick={openSummaryDialog}>
@@ -364,7 +364,7 @@ export function InvoiceEditorDialog({
                             </section>
 
                             {/* Totals */}
-                            <section className="space-y-3 rounded-2xl p-4" style={{ background: 'rgba(117,106,89,0.04)' }}>
+                            <section className="space-y-3 rounded-2xl p-4" style={{ background: 'rgba(25,25,25,0.03)' }}>
                                 <p className="blanc-eyebrow">Totals</p>
                                 <div className="flex justify-between text-sm">
                                     <span className="text-[var(--blanc-ink-2)]">Subtotal</span>

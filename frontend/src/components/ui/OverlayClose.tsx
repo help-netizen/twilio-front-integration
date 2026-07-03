@@ -72,7 +72,7 @@ const CORNER_CLASSES = cn(
     "text-[var(--blanc-ink-2)] transition-opacity hover:opacity-70",
     "focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
 )
-const CORNER_PILL_STYLE: React.CSSProperties = { background: "rgba(117,106,89,0.08)" }
+const CORNER_PILL_STYLE: React.CSSProperties = { background: "rgba(25,25,25,0.06)" }
 
 // Desktop hover-reveal × anchored LEFT of the panel (dialog.tsx panel button, line 130):
 // fixed, desktop-only (`md:flex hidden`), hidden until the `peer` panel (or the button

@@ -99,7 +99,7 @@ function ImportExportPanel({ open, onClose, onImported }: { open: boolean; onClo
                         <div className="space-y-3">
                             <div className="blanc-eyebrow">Import items</div>
                             <label className="flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-6 py-10 cursor-pointer text-center"
-                                style={{ borderColor: 'var(--blanc-line)', background: 'rgba(117,106,89,0.03)' }}
+                                style={{ borderColor: 'var(--blanc-line)', background: 'rgba(25,25,25,0.03)' }}
                                 onDragOver={e => e.preventDefault()}
                                 onDrop={e => { e.preventDefault(); onFile(e.dataTransfer.files?.[0]); }}>
                                 {busy ? <Loader2 className="animate-spin" style={{ color: 'var(--blanc-ink-3)' }} /> : <Upload style={{ color: 'var(--blanc-ink-3)' }} />}
@@ -359,7 +359,7 @@ function ItemsTab({ categories, version, dirtyRef }: { categories: PriceBookCate
                     <div className="overflow-x-auto">
                         <table className="w-full text-sm" style={{ minWidth: 920 }}>
                             <thead>
-                                <tr style={{ background: 'rgba(117,106,89,0.04)' }}>
+                                <tr style={{ background: 'rgba(25,25,25,0.03)' }}>
                                     {['Name', 'Description', 'Code / SKU', 'Unit', 'Unit price', 'Taxable', 'Category', ''].map((h, i) => (
                                         <th key={i} className="text-left px-3 py-2 font-medium" style={{ color: 'var(--blanc-ink-2)' }}>{h}</th>
                                     ))}
@@ -415,7 +415,7 @@ function ItemsTab({ categories, version, dirtyRef }: { categories: PriceBookCate
                             </tbody>
                         </table>
                     </div>
-                    <button type="button" onClick={addRow} className="flex w-full items-center justify-center gap-1.5 px-3 py-2.5 text-sm border-t" style={{ borderColor: 'var(--blanc-line)', color: 'var(--blanc-ink-2)', background: 'rgba(117,106,89,0.02)' }}>
+                    <button type="button" onClick={addRow} className="flex w-full items-center justify-center gap-1.5 px-3 py-2.5 text-sm border-t" style={{ borderColor: 'var(--blanc-line)', color: 'var(--blanc-ink-2)', background: 'rgba(25,25,25,0.02)' }}>
                         <Plus size={15} /> Add row
                     </button>
                 </div>
@@ -538,7 +538,7 @@ function GroupPanel({ open, group, categories, onClose, onSaved }: { open: boole
                                 {found.length > 0 && (
                                     <div className="absolute z-10 left-0 right-0 mt-1 rounded-md border shadow" style={{ borderColor: 'var(--blanc-line)', background: 'var(--blanc-panel-surface,#fffdf9)' }}>
                                         {found.slice(0, 8).map(it => (
-                                            <button key={it.id} type="button" onClick={() => addRow(it)} className="block w-full text-left px-3 py-2 text-sm hover:bg-[rgba(117,106,89,0.06)]">{it.name} <span style={{ color: 'var(--blanc-ink-3)' }}>· {money(it.default_unit_price)}</span></button>
+                                            <button key={it.id} type="button" onClick={() => addRow(it)} className="block w-full text-left px-3 py-2 text-sm hover:bg-[rgba(25,25,25,0.06)]">{it.name} <span style={{ color: 'var(--blanc-ink-3)' }}>· {money(it.default_unit_price)}</span></button>
                                         ))}
                                     </div>
                                 )}
@@ -627,7 +627,7 @@ function Table({ head, children }: { head: string[]; children: React.ReactNode }
     return (
         <div className="rounded-lg border overflow-hidden" style={{ borderColor: 'var(--blanc-line)' }}>
             <table className="w-full text-sm">
-                <thead><tr style={{ background: 'rgba(117,106,89,0.04)' }}>{head.map((h, i) => <th key={i} className="text-left px-3 py-2 font-medium" style={{ color: 'var(--blanc-ink-2)' }}>{h}</th>)}</tr></thead>
+                <thead><tr style={{ background: 'rgba(25,25,25,0.03)' }}>{head.map((h, i) => <th key={i} className="text-left px-3 py-2 font-medium" style={{ color: 'var(--blanc-ink-2)' }}>{h}</th>)}</tr></thead>
                 <tbody>{children}</tbody>
             </table>
         </div>

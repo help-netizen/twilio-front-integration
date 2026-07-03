@@ -8,10 +8,11 @@ import { getScheduleStatus } from './scheduleStatus';
 import { SettingsPageShell } from '../../components/settings/SettingsPageShell';
 import { Button } from '../../components/ui/button';
 
+// UI-QA-001: chip text reuses `dot` — deep-tier hues so 11px text passes AA on the tint.
 const STATUS_COLORS: Record<string, { bg: string; dot: string }> = {
-    available: { bg: '#d1fae5', dot: '#10b981' },
-    on_call: { bg: '#dbeafe', dot: '#3b82f6' },
-    offline: { bg: '#f3f4f6', dot: '#9ca3af' },
+    available: { bg: '#d1fae5', dot: '#047857' },
+    on_call: { bg: '#dbeafe', dot: '#2F63D8' },
+    offline: { bg: '#F0F0F0', dot: '#6E6E6E' },
 };
 
 // Section card = panel-surface tile with a hairline (CLAUDE.md list-card canon).

@@ -477,7 +477,7 @@ export function EstimateDetailPanel({ estimate: initialEstimate, events, loading
                     </section>
                 </main>
 
-                <aside className="min-h-0 space-y-5 overflow-y-auto border-t border-[var(--blanc-line)] bg-[rgba(117,106,89,0.05)] p-5 md:border-l md:border-t-0">
+                <aside className="min-h-0 space-y-5 overflow-y-auto border-t border-[var(--blanc-line)] bg-[rgba(25,25,25,0.04)] p-5 md:border-l md:border-t-0">
                     <section className="space-y-2 text-sm">
                         <p className="text-sm font-semibold">Document settings</p>
                         <label className="flex items-center justify-between cursor-pointer">

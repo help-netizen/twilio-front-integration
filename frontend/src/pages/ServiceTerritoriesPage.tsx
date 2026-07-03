@@ -152,7 +152,7 @@ function ViewToggle({ view, onChange }: { view: 'areas' | 'table'; onChange: (v:
                     className="inline-flex items-center gap-1.5 px-3 py-1.5"
                     style={{
                         fontSize: 12, fontWeight: 500, border: 'none', cursor: 'pointer',
-                        background: view === v ? 'rgba(117,106,89,0.08)' : 'transparent',
+                        background: view === v ? 'rgba(25,25,25,0.06)' : 'transparent',
                         color: view === v ? 'var(--blanc-ink-1)' : 'var(--blanc-ink-3)',
                     }}
                 >
@@ -195,10 +195,10 @@ function AreaCardsGrid({ territories, onSelectArea }: {
                     className="text-left"
                     style={{
                         padding: '16px 18px', borderRadius: 16, cursor: 'pointer',
-                        background: 'rgba(117,106,89,0.04)', border: '1px solid var(--blanc-line)',
+                        background: 'rgba(25,25,25,0.03)', border: '1px solid var(--blanc-line)',
                         transition: 'border-color 0.15s',
                     }}
-                    onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(117,106,89,0.35)')}
+                    onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(25,25,25,0.28)')}
                     onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--blanc-line)')}
                 >
                     <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--blanc-ink-1)', fontFamily: 'var(--blanc-font-heading)' }}>{area}</div>
@@ -256,7 +256,7 @@ function ZipTable({ rows, onRemove, removing }: {
             <div style={{ border: '1px solid var(--blanc-line)', borderRadius: 12, overflow: 'hidden' }}>
                 <table className="w-full" style={{ fontSize: 13 }}>
                     <thead>
-                        <tr style={{ background: 'rgba(117,106,89,0.04)' }}>
+                        <tr style={{ background: 'rgba(25,25,25,0.03)' }}>
                             {([['zip','ZIP'],['area','Area'],['city','City'],['state','State'],['county','County']] as [SortKey, string][]).map(([key, label]) => (
                                 <th
                                     key={key}
@@ -274,7 +274,7 @@ function ZipTable({ rows, onRemove, removing }: {
                         {sorted.length === 0 ? (
                             <tr><td colSpan={6} className="text-center py-8" style={{ color: 'var(--blanc-ink-3)' }}>No results</td></tr>
                         ) : sorted.map(row => (
-                            <tr key={row.zip} style={{ borderTop: '1px solid var(--blanc-line)' }} className="hover:bg-[rgba(117,106,89,0.02)]">
+                            <tr key={row.zip} style={{ borderTop: '1px solid var(--blanc-line)' }} className="hover:bg-[rgba(25,25,25,0.02)]">
                                 <td style={{ padding: '8px 14px', fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>{row.zip}</td>
                                 <td style={{ padding: '8px 14px' }}>{row.area || ''}</td>
                                 <td style={{ padding: '8px 14px', color: 'var(--blanc-ink-2)' }}>{row.city || ''}</td>
@@ -584,7 +584,7 @@ function ImportDialog({ open, onOpenChange, onImport, isPending }: {
                         />
                         {error && <div className="text-sm" style={{ color: 'var(--blanc-danger)' }}>{error}</div>}
                         {parsed && (
-                            <div className="text-sm" style={{ color: 'var(--blanc-ink-2)', padding: '10px 14px', borderRadius: 10, background: 'rgba(117,106,89,0.04)' }}>
+                            <div className="text-sm" style={{ color: 'var(--blanc-ink-2)', padding: '10px 14px', borderRadius: 10, background: 'rgba(25,25,25,0.03)' }}>
                                 Found <strong>{parsed.length}</strong> zip codes.
                                 {parsed.filter(r => r.area).length > 0 && <> In <strong>{new Set(parsed.filter(r => r.area).map(r => r.area)).size}</strong> areas.</>}
                                 <div className="mt-1" style={{ color: 'var(--blanc-warning)', fontSize: 12 }}>This will replace all existing zip codes for your company.</div>

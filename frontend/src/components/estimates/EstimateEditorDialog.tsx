@@ -293,7 +293,7 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
 
                                 {summary ? (
                                     <Collapsible open={summaryOpen} onOpenChange={setSummaryOpen}>
-                                        <div className="rounded-xl border border-[var(--blanc-line)]" style={{ background: 'rgba(117,106,89,0.04)' }}>
+                                        <div className="rounded-xl border border-[var(--blanc-line)]" style={{ background: 'rgba(25,25,25,0.03)' }}>
                                             <div className="flex items-center justify-between px-4 py-3">
                                                 <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>
                                                     <ChevronDown className={`size-4 transition-transform ${summaryOpen ? 'rotate-180' : ''}`} />
@@ -309,7 +309,7 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                         </div>
                                     </Collapsible>
                                 ) : (
-                                    <div className="rounded-xl border border-dashed border-[var(--blanc-line)] px-4 py-5" style={{ background: 'rgba(117,106,89,0.04)' }}>
+                                    <div className="rounded-xl border border-dashed border-[var(--blanc-line)] px-4 py-5" style={{ background: 'rgba(25,25,25,0.03)' }}>
                                         <p className="text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>Summary</p>
                                         <p className="mt-1 text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Add make, model, issue, findings, needs, and cause when the estimate needs client context.</p>
                                         <Button type="button" variant="outline" size="sm" className="mt-3" onClick={openSummaryDialog}>
@@ -385,7 +385,7 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                     />
                                 </section>
 
-                                <section className="space-y-3 rounded-xl border border-[var(--blanc-line)] p-4" style={{ background: 'rgba(117,106,89,0.04)' }}>
+                                <section className="space-y-3 rounded-xl border border-[var(--blanc-line)] p-4" style={{ background: 'rgba(25,25,25,0.03)' }}>
                                     <p className="blanc-eyebrow">Totals</p>
                                     <div className="flex justify-between text-sm">
                                         <span style={{ color: 'var(--blanc-ink-3)' }}>Subtotal</span>
@@ -466,7 +466,7 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                                 </section>
 
                                 <Collapsible open={termsOpen} onOpenChange={setTermsOpen}>
-                                    <div className="rounded-xl border border-[var(--blanc-line)]" style={{ background: 'rgba(117,106,89,0.04)' }}>
+                                    <div className="rounded-xl border border-[var(--blanc-line)]" style={{ background: 'rgba(25,25,25,0.03)' }}>
                                         <CollapsibleTrigger className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-medium" style={{ color: 'var(--blanc-ink-1)' }}>
                                             <ChevronDown className={`size-4 transition-transform ${termsOpen ? 'rotate-180' : ''}`} />
                                             Terms & Warranty
@@ -479,7 +479,7 @@ export function EstimateEditorDialog({ open, onOpenChange, estimate, defaultJobI
                             </main>
 
                             <aside className="space-y-5">
-                                <section className="grid gap-3 rounded-xl border border-[var(--blanc-line)] p-4" style={{ background: 'rgba(117,106,89,0.04)' }}>
+                                <section className="grid gap-3 rounded-xl border border-[var(--blanc-line)] p-4" style={{ background: 'rgba(25,25,25,0.03)' }}>
                                     <p className="blanc-eyebrow">Document settings</p>
                                     <div className="flex items-center justify-between">
                                         <span className="text-sm" style={{ color: 'var(--blanc-ink-3)' }}>Require signature</span>

@@ -44,12 +44,12 @@ export function TaskSnoozeMenu({ tz, onSnooze, iconOnly }: Props) {
             </PopoverTrigger>
             <PopoverContent align="end" className="w-56 p-1" style={{ background: 'var(--blanc-surface-strong, #fffdf9)', border: '1px solid var(--blanc-line)' }}>
                 {presets.map(p => (
-                    <button key={p.key} type="button" style={itemStyle} className="hover:bg-[rgba(117,106,89,0.06)]" onClick={() => pick(p.dueIso)}>
+                    <button key={p.key} type="button" style={itemStyle} className="hover:bg-[rgba(25,25,25,0.06)]" onClick={() => pick(p.dueIso)}>
                         {p.label}
                     </button>
                 ))}
                 {!pickDate ? (
-                    <button type="button" style={{ ...itemStyle, color: 'var(--blanc-ink-2)' }} className="hover:bg-[rgba(117,106,89,0.06)]" onClick={() => setPickDate(true)}>
+                    <button type="button" style={{ ...itemStyle, color: 'var(--blanc-ink-2)' }} className="hover:bg-[rgba(25,25,25,0.06)]" onClick={() => setPickDate(true)}>
                         <CalendarDays className="size-3.5" /> Pick a date…
                     </button>
                 ) : (

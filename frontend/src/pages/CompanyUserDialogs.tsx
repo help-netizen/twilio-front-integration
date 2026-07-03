@@ -35,7 +35,7 @@ function ZenbookerLinkField({ value, onChange }: { value: string | null; onChang
     const linkedName = roster?.find(m => m.id === value)?.name;
 
     return (
-        <div className="space-y-2 rounded-xl p-3" style={{ background: 'rgba(117, 106, 89, 0.04)' }}>
+        <div className="space-y-2 rounded-xl p-3" style={{ background: 'rgba(25, 25, 25, 0.03)' }}>
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                     <span className={`inline-block size-2 rounded-full ${linked ? 'bg-green-500' : 'bg-amber-400'}`} />
@@ -107,7 +107,7 @@ export function CreateUserDialog({ open, setOpen, createForm, setCreateForm, cre
                     <>
                         <DialogBody className="md:px-8 md:py-7">
                             <div className="mx-auto w-full max-w-[740px] space-y-6">
-                                <div className="rounded-xl p-4" style={{ background: 'rgba(117, 106, 89, 0.04)' }}>
+                                <div className="rounded-xl p-4" style={{ background: 'rgba(25, 25, 25, 0.03)' }}>
                                     <div className="blanc-eyebrow">Temporary password</div>
                                     <div className="flex items-center gap-2 mt-1"><code className="text-lg font-mono font-semibold flex-1">{tempPassword}</code><Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText(tempPassword); toast.success('Copied!'); }}><Copy className="size-4" /></Button></div>
                                     <p className="text-[12px] text-muted-foreground mt-2">Share the temporary password with the user. It will only be shown once.</p>

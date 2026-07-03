@@ -87,7 +87,7 @@ function TriggerRow({
                                     <span style={{ color: 'var(--blanc-ink-3)' }}>Priority</span>
                                     <select
                                         className="text-xs rounded px-1.5 py-0.5"
-                                        style={{ border: '1px solid var(--blanc-line)', background: 'rgba(117,106,89,0.04)', color: 'var(--blanc-ink-1)' }}
+                                        style={{ border: '1px solid var(--blanc-line)', background: 'rgba(25,25,25,0.03)', color: 'var(--blanc-ink-1)' }}
                                         value={trigger.task_priority}
                                         onChange={(e) => onChange({ ...trigger, task_priority: e.target.value })}
                                     >
@@ -100,7 +100,7 @@ function TriggerRow({
                                     <span style={{ color: 'var(--blanc-ink-3)' }}>SLA</span>
                                     <select
                                         className="text-xs rounded px-1.5 py-0.5"
-                                        style={{ border: '1px solid var(--blanc-line)', background: 'rgba(117,106,89,0.04)', color: 'var(--blanc-ink-1)' }}
+                                        style={{ border: '1px solid var(--blanc-line)', background: 'rgba(25,25,25,0.03)', color: 'var(--blanc-ink-1)' }}
                                         value={String(trigger.task_sla_minutes)}
                                         onChange={(e) => onChange({ ...trigger, task_sla_minutes: parseInt(e.target.value) })}
                                     >
@@ -145,8 +145,8 @@ export default function ActionRequiredSettingsPage() {
         return (
             <SettingsPageShell title="Actions & notifications" description="Flag threads that need attention, and manage browser push alerts.">
                 <div className="animate-pulse space-y-4">
-                    <div className="h-8 rounded w-64" style={{ background: 'rgba(117,106,89,0.08)' }} />
-                    <div className="h-40 rounded" style={{ background: 'rgba(117,106,89,0.04)' }} />
+                    <div className="h-8 rounded w-64" style={{ background: 'rgba(25,25,25,0.06)' }} />
+                    <div className="h-40 rounded" style={{ background: 'rgba(25,25,25,0.03)' }} />
                 </div>
             </SettingsPageShell>
         );

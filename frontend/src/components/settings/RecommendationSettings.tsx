@@ -103,7 +103,7 @@ export function RecommendationSettings() {
     };
 
     return (
-        <div className="rounded-2xl p-4" style={{ background: 'rgba(117, 106, 89, 0.04)' }}>
+        <div className="rounded-2xl p-4" style={{ background: 'rgba(25, 25, 25, 0.03)' }}>
             <div className="blanc-eyebrow" style={LABELS}>Recommendation settings</div>
             <p className="mt-1 text-[11px]" style={{ color: 'var(--blanc-ink-3)' }}>
                 How the scheduler suggests arrival windows and providers.
@@ -238,7 +238,7 @@ function MinutePicker({ label, helper, value, error, disabled, onChange, range }
 
     return (
         <FieldShell label={label} helper={helper} error={error}>
-            <div className="mt-1.5 inline-flex rounded-lg p-0.5" style={{ background: 'rgba(117, 106, 89, 0.08)' }}>
+            <div className="mt-1.5 inline-flex rounded-lg p-0.5" style={{ background: 'rgba(25, 25, 25, 0.06)' }}>
                 {MINUTE_PRESETS.map(p => (
                     <button
                         key={p}

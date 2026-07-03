@@ -67,7 +67,7 @@ export function AttachmentsSection({ attachments, label = 'Attachments' }: Attac
                         style={{
                             width: 56, height: 56, borderRadius: 10,
                             border: galleryIndex === i && showLargePreview ? '2px solid var(--blanc-info)' : '1px solid var(--blanc-line)',
-                            background: 'rgba(117,106,89,0.04)',
+                            background: 'rgba(25,25,25,0.03)',
                         }}
                     >
                         {att.kind === 'image' ? (

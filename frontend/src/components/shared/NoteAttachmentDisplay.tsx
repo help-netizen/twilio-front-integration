@@ -77,7 +77,7 @@ function AttachmentItem({ attachment }: { attachment: Attachment }) {
                 ) : (
                     <div
                         className="w-20 h-20 rounded-lg border flex items-center justify-center"
-                        style={{ borderColor: 'var(--blanc-line)', background: 'rgba(117,106,89,0.04)' }}
+                        style={{ borderColor: 'var(--blanc-line)', background: 'rgba(25,25,25,0.03)' }}
                     >
                         <FileText className="size-5" style={{ color: 'var(--blanc-ink-3)' }} />
                     </div>

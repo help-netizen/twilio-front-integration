@@ -208,7 +208,7 @@ export function EstimateSendDialog({ open, onOpenChange, estimateId, contactEmai
                     {emailBlocked && (
                         <div
                             className="rounded-2xl px-3 py-3 text-sm"
-                            style={{ background: 'rgba(117, 106, 89, 0.04)', color: 'var(--blanc-ink-2)' }}
+                            style={{ background: 'rgba(25, 25, 25, 0.03)', color: 'var(--blanc-ink-2)' }}
                         >
                             <p className="mb-2">Connect Google Email to send estimates by email.</p>
                             <Button type="button" variant="outline" size="sm" onClick={() => navigate(GOOGLE_EMAIL_SETUP_PATH)}>

@@ -77,7 +77,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.14em;
-    color: var(--blanc-ink-3);
+    color: var(--blanc-ink-2); /* UI-QA-001: date group labels are structural — AA on canvas */
 }
 
 /* Action Required keeps the same eyebrow shape but a warm danger tint. */

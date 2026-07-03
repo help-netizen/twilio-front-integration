@@ -129,7 +129,7 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                     </div>
                     {estimates.length === 0 && !loading ? (
                         <div className="px-4 py-8">
-                            <div className="rounded-md border border-dashed border-[var(--blanc-line)] bg-[rgba(117,106,89,0.04)] px-4 py-6 text-center">
+                            <div className="rounded-md border border-dashed border-[var(--blanc-line)] bg-[rgba(25,25,25,0.03)] px-4 py-6 text-center">
                                 <FileText className="mx-auto size-8 text-[var(--blanc-ink-3)]" />
                                 <p className="mt-3 text-sm font-medium">No estimate yet</p>
                                 <p className="mx-auto mt-1 max-w-md text-sm text-[var(--blanc-ink-2)]">
@@ -147,11 +147,11 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                                 return (
                                     <button
                                         key={e.id}
-                                        className={`group grid w-full grid-cols-[1fr_auto] items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[rgba(117,106,89,0.05)] ${archived ? 'grayscale opacity-60' : ''}`}
+                                        className={`group grid w-full grid-cols-[1fr_auto] items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[rgba(25,25,25,0.04)] ${archived ? 'grayscale opacity-60' : ''}`}
                                         onClick={() => openEstimate(e)}
                                     >
                                         <div className="flex min-w-0 items-start gap-3">
-                                            <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md bg-[rgba(117,106,89,0.05)]">
+                                            <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md bg-[rgba(25,25,25,0.04)]">
                                                 <FileText className="size-4 text-[var(--blanc-ink-3)]" />
                                             </div>
                                             <div className="min-w-0">
@@ -193,7 +193,7 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                     </div>
                     {invoices.length === 0 && !loading ? (
                         <div className="px-4 py-8">
-                            <div className="rounded-md border border-dashed border-[var(--blanc-line)] bg-[rgba(117,106,89,0.04)] px-4 py-6 text-center">
+                            <div className="rounded-md border border-dashed border-[var(--blanc-line)] bg-[rgba(25,25,25,0.03)] px-4 py-6 text-center">
                                 <Receipt className="mx-auto size-8 text-[var(--blanc-ink-3)]" />
                                 <p className="mt-3 text-sm font-medium">No invoices yet</p>
                                 <p className="mx-auto mt-1 max-w-md text-sm text-[var(--blanc-ink-2)]">
@@ -209,11 +209,11 @@ export function JobFinancialsTab({ jobId, leadSerialId }: Props) {
                             {invoices.map(i => (
                                 <button
                                     key={i.id}
-                                    className="group grid w-full grid-cols-[1fr_auto] items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[rgba(117,106,89,0.05)]"
+                                    className="group grid w-full grid-cols-[1fr_auto] items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[rgba(25,25,25,0.04)]"
                                     onClick={() => openInvoice(i)}
                                 >
                                     <div className="flex min-w-0 items-start gap-3">
-                                        <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md bg-[rgba(117,106,89,0.05)]">
+                                        <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-md bg-[rgba(25,25,25,0.04)]">
                                             <Receipt className="size-4 text-[var(--blanc-ink-3)]" />
                                         </div>
                                         <div className="min-w-0">

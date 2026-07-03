@@ -15,7 +15,7 @@ const INK1 = 'var(--blanc-ink-1, #202734)';
 const INK2 = 'var(--blanc-ink-2, #536070)';
 const INK3 = 'var(--blanc-ink-3, #7d8796)';
 const JOB = 'var(--blanc-job, #2f63d8)';
-const LINE = 'var(--blanc-line, rgba(117,106,89,0.18))';
+const LINE = 'var(--blanc-line, var(--blanc-line))';
 const WARNING = 'var(--blanc-warning, #b26a1d)';
 
 export default function RouteManagerOverviewPage() {
@@ -108,8 +108,8 @@ export default function RouteManagerOverviewPage() {
                     const Icon = c.icon;
                     return (
                         <div key={c.title} onClick={() => navigate(c.path)} style={{ background: 'var(--blanc-surface-strong, #fffdf9)', border: `1px solid ${LINE}`, borderRadius: 16, padding: 20, cursor: 'pointer', transition: 'border-color 0.15s' }}
-                            onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(117,106,89,0.34)')}
-                            onMouseLeave={e => (e.currentTarget.style.borderColor = 'rgba(117,106,89,0.18)')}>
+                            onMouseEnter={e => (e.currentTarget.style.borderColor = 'rgba(25,25,25,0.28)')}
+                            onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--blanc-line)')}>
                             <Icon size={20} style={{ color: INK3, marginBottom: 12 }} />
                             <div style={{ fontSize: 15, fontWeight: 600, color: INK1 }}>{c.title}</div>
                             <div style={{ fontSize: 12, color: INK2, marginBottom: 8 }}>{c.desc}</div>

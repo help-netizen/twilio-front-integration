@@ -104,7 +104,7 @@ export default function AutomationPage() {
                     <div className="flex flex-col gap-2.5">
                         {rules.map(r => (
                             <div key={r.id} className="flex items-center gap-3 rounded-xl border px-4 py-3.5" style={{ borderColor: 'var(--blanc-line)', background: 'var(--blanc-surface-strong)' }}>
-                                <button onClick={() => toggle(r)} aria-label={r.enabled ? 'Disable rule' : 'Enable rule'} className="relative h-[22px] w-10 shrink-0 cursor-pointer rounded-full" style={{ background: r.enabled ? 'var(--blanc-success)' : 'rgba(117,106,89,0.22)' }}>
+                                <button onClick={() => toggle(r)} aria-label={r.enabled ? 'Disable rule' : 'Enable rule'} className="relative h-[22px] w-10 shrink-0 cursor-pointer rounded-full" style={{ background: r.enabled ? 'var(--blanc-success)' : 'rgba(25,25,25,0.18)' }}>
                                     <span className="absolute top-0.5 h-[18px] w-[18px] rounded-full bg-white transition-[left] duration-150" style={{ left: r.enabled ? 20 : 2 }} />
                                 </button>
                                 <div className="min-w-0 flex-1">

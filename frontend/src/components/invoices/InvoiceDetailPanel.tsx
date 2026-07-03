@@ -574,7 +574,7 @@ export function InvoiceDetailPanel({
                     </section>
 
                     {/* Totals */}
-                    <section className="rounded-2xl p-4" style={{ background: 'rgba(117,106,89,0.04)' }}>
+                    <section className="rounded-2xl p-4" style={{ background: 'rgba(25,25,25,0.03)' }}>
                         <div className="space-y-2 text-sm">
                             <div className="flex justify-between">
                                 <span className="text-[var(--blanc-ink-2)]">Subtotal</span>
@@ -640,7 +640,7 @@ export function InvoiceDetailPanel({
                             </div>
                             {totalNum > 0 && (
                                 <div>
-                                    <div className="w-full rounded-full h-1.5" style={{ background: 'rgba(117,106,89,0.12)' }}>
+                                    <div className="w-full rounded-full h-1.5" style={{ background: 'rgba(25,25,25,0.10)' }}>
                                         <div
                                             className="bg-emerald-600 h-1.5 rounded-full transition-all"
                                             style={{ width: `${paymentProgress}%` }}
@@ -653,7 +653,7 @@ export function InvoiceDetailPanel({
                     </section>
                 </main>
 
-                <aside className="min-h-0 space-y-5 overflow-y-auto border-t border-[var(--blanc-line)] p-5 md:border-l md:border-t-0" style={{ background: 'rgba(117,106,89,0.05)' }}>
+                <aside className="min-h-0 space-y-5 overflow-y-auto border-t border-[var(--blanc-line)] p-5 md:border-l md:border-t-0" style={{ background: 'rgba(25,25,25,0.04)' }}>
                     {/* Document settings */}
                     <section className="space-y-2 text-sm">
                         <p className="blanc-eyebrow">Document settings</p>

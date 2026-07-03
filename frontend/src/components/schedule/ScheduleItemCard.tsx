@@ -14,7 +14,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 // Neutral style for unassigned items
 const UNASSIGNED_STYLE = {
     gradient: 'linear-gradient(180deg, rgba(248, 246, 242, 0.98), rgba(240, 237, 232, 0.94))',
-    border: 'rgba(117, 106, 89, 0.18)',
+    border: 'var(--blanc-line)',
     accent: 'var(--sched-ink-3)',
 };
 

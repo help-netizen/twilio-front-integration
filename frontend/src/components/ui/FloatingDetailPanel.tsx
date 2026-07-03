@@ -50,7 +50,7 @@ export function FloatingDetailPanel({ open, onClose, wide, children }: Props) {
                     aria-label="Close"
                     onClick={onClose}
                     className="md:hidden absolute top-3 right-3 z-10 inline-flex items-center justify-center h-10 w-10 rounded-xl transition-colors"
-                    style={{ background: 'rgba(117,106,89,0.08)', color: 'var(--blanc-ink-1)' }}
+                    style={{ background: 'rgba(25,25,25,0.06)', color: 'var(--blanc-ink-1)' }}
                 >
                     <X size={20} />
                 </button>

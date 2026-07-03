@@ -38,7 +38,7 @@ export function TaskCard({ task, tz, canAct, onComplete, onReopen, onSnooze, onE
                         className="shrink-0"
                         style={{
                             fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase',
-                            background: 'rgba(117,106,89,0.10)', color: 'var(--blanc-ink-2)',
+                            background: 'rgba(25,25,25,0.08)', color: 'var(--blanc-ink-2)',
                             padding: '2px 7px', borderRadius: 8,
                         }}
                     >
@@ -71,7 +71,7 @@ export function TaskCard({ task, tz, canAct, onComplete, onReopen, onSnooze, onE
                 <div className="flex items-center gap-2 min-w-0" style={{ fontSize: 12, color: 'var(--blanc-ink-2)' }}>
                     <span
                         className="inline-flex items-center justify-center shrink-0"
-                        style={{ width: 22, height: 22, borderRadius: '50%', background: 'rgba(117,106,89,0.10)', fontSize: 10, fontWeight: 600, color: 'var(--blanc-ink-2)' }}
+                        style={{ width: 22, height: 22, borderRadius: '50%', background: 'rgba(25,25,25,0.08)', fontSize: 10, fontWeight: 600, color: 'var(--blanc-ink-2)' }}
                         title={task.assignee_name || 'Unassigned'}
                     >
                         {initials(task.assignee_name)}

@@ -156,7 +156,7 @@ export function ConvertStep3({ selectedDate, setSelectedDate, timeslotsLoading, 
 export function ConvertStep4({ name, phone, email, addressFields, serviceName, serviceDescription, servicePrice, serviceDuration, selectedTimeslot, territoryResult, lead, customFields, zipArea }: StepProps) {
     const { hasPermission } = useAuthz();
     const canViewSource = hasPermission('lead_source.view');
-    const cardStyle = { background: 'rgba(117, 106, 89, 0.04)' };
+    const cardStyle = { background: 'rgba(25, 25, 25, 0.03)' };
     return (
         <div className="space-y-3 text-sm">
             <h4 className="font-semibold">Customer</h4>

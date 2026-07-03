@@ -108,7 +108,7 @@ export function JobTechnicianControl({ job, onJobUpdated }: JobTechnicianControl
                     )}
                 </CommandList>
             </Command>
-            <div className="flex items-center justify-between gap-2 border-t p-2" style={{ borderColor: 'rgba(117,106,89,0.14)' }}>
+            <div className="flex items-center justify-between gap-2 border-t p-2" style={{ borderColor: 'var(--blanc-line)' }}>
                 <span className="text-[12px] pl-1" style={{ color: 'var(--blanc-ink-3)' }}>
                     {selected.size} selected
                 </span>
@@ -127,7 +127,7 @@ export function JobTechnicianControl({ job, onJobUpdated }: JobTechnicianControl
             type="button"
             onClick={isMobile ? () => setOpen(true) : undefined}
             className="inline-flex items-center gap-1 min-h-[34px] px-3 rounded-full text-[12px] font-semibold transition-opacity hover:opacity-70"
-            style={{ border: '1px solid rgba(117,106,89,0.18)', color: 'var(--blanc-ink-2)', background: '#fff' }}
+            style={{ border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-2)', background: '#fff' }}
         >
             {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Pencil className="size-3.5" />}
             {assigned.length ? 'Change' : 'Assign'}
@@ -143,7 +143,7 @@ export function JobTechnicianControl({ job, onJobUpdated }: JobTechnicianControl
                         <span
                             key={t.id}
                             className="inline-flex items-center gap-1.5 min-h-[34px] px-3.5 rounded-full text-[13px] font-medium"
-                            style={{ background: 'rgba(117,106,89,0.07)', border: '1px solid rgba(117,106,89,0.14)', color: 'var(--blanc-ink-1)' }}
+                            style={{ background: 'rgba(25,25,25,0.05)', border: '1px solid var(--blanc-line)', color: 'var(--blanc-ink-1)' }}
                         >
                             <UserRound className="size-3.5" style={{ color: 'var(--blanc-ink-3)' }} />
                             {t.name}

@@ -66,7 +66,7 @@ export function RefundDialog({ open, onOpenChange, transaction, onRefund }: Prop
                     {/* Original info */}
                     <div
                         className="rounded-2xl p-4 space-y-1"
-                        style={{ background: 'rgba(117, 106, 89, 0.04)' }}
+                        style={{ background: 'rgba(25, 25, 25, 0.03)' }}
                     >
                         <div className="flex justify-between text-sm">
                             <span style={{ color: 'var(--blanc-ink-3)' }}>Payment</span>

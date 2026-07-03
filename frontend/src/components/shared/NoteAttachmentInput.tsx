@@ -124,7 +124,7 @@ export function NoteAttachmentInput({ entityType, entityId, onStateChange, compa
                                 key={item.key}
                                 className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs"
                                 style={{
-                                    background: isErr ? 'rgba(180,35,24,0.06)' : 'rgba(117,106,89,0.06)',
+                                    background: isErr ? 'rgba(180,35,24,0.06)' : 'rgba(25,25,25,0.06)',
                                     border: `1px solid ${isErr ? 'rgba(180,35,24,0.4)' : 'var(--blanc-line)'}`,
                                     color: 'var(--blanc-ink-2)',
                                     opacity: item.status === 'uploading' ? 0.75 : 1,

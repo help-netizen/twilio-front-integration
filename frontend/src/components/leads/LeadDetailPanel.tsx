@@ -140,7 +140,7 @@ export function LeadDetailPanel({ lead, onClose: _onClose, onEdit, onMarkLost, o
                 {/* ═══ RIGHT COLUMN (desktop) — Details & Finance ═══ */}
                 <div
                     className="w-full md:w-1/2 flex-col overflow-y-auto hidden md:flex"
-                    style={{ borderLeft: '1px solid rgba(117, 106, 89, 0.07)' }}
+                    style={{ borderLeft: '1px solid var(--blanc-line)' }}
                 >
                     <Tabs value={rightTab} onValueChange={v => setRightTab(v as 'details' | 'financials')} className="flex flex-col h-full">
                         <div className="shrink-0" style={{ padding: '8px 16px 0' }}>
@@ -254,7 +254,7 @@ function LeadHeader({ lead, contactName, statusColor, onUpdateStatus, onUpdateSo
                                 <DropdownMenuItem
                                     onClick={() => onUpdateStatus(lead.UUID, initialState!)}
                                     className="flex items-center gap-2 text-xs font-medium mx-1 mb-1 rounded-md"
-                                    style={{ background: 'rgba(117,106,89,0.06)', color: 'var(--blanc-ink-2)' }}
+                                    style={{ background: 'rgba(25,25,25,0.06)', color: 'var(--blanc-ink-2)' }}
                                 >
                                     <RotateCcw className="size-3" />
                                     Reset to {initialState}
@@ -270,7 +270,7 @@ function LeadHeader({ lead, contactName, statusColor, onUpdateStatus, onUpdateSo
                             <button
                                 type="button"
                                 className="inline-flex items-center gap-1.5 px-4 text-sm font-medium transition-colors focus:outline-none"
-                                style={{ background: 'rgba(117,106,89,0.08)', color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)', minHeight: 42, borderRadius: 14 }}
+                                style={{ background: 'rgba(25,25,25,0.06)', color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)', minHeight: 42, borderRadius: 14 }}
                             >
                                 {lead.JobSource || 'No Source'}<ChevronDown className="size-3.5" />
                             </button>
@@ -286,7 +286,7 @@ function LeadHeader({ lead, contactName, statusColor, onUpdateStatus, onUpdateSo
                 )}
 
                 {lead.SubStatus && (
-                    <span className="inline-flex items-center px-4 text-sm font-medium" style={{ background: 'rgba(117,106,89,0.08)', color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)', minHeight: 42, borderRadius: 14 }}>
+                    <span className="inline-flex items-center px-4 text-sm font-medium" style={{ background: 'rgba(25,25,25,0.06)', color: 'var(--blanc-ink-2)', border: '1px solid var(--blanc-line)', minHeight: 42, borderRadius: 14 }}>
                         {lead.SubStatus}
                     </span>
                 )}
