@@ -307,6 +307,29 @@ router.post('/timeline/:timelineId/mark-read', requirePermission('pulse.view', '
         } catch (smsErr) {
             console.warn('[mark-read] SMS conversation mark-read failed:', smsErr.message);
         }
+        // EMAIL-UNREAD-001: also clear the contact's email threads. any_unread in
+        // the unified list includes email_threads.unread_count, which until now
+        // was only cleared from the email workspace — a Pulse timeline whose last
+        // event was an email stayed "unread" forever no matter how many times the
+        // dispatcher opened it. Same contact→threads join the list CTE uses.
+        try {
+            if (tl.contact_id) {
+                const dbConn = require('../db/connection');
+                await dbConn.query(
+                    `UPDATE email_threads et SET unread_count = 0, updated_at = now()
+                     WHERE et.company_id = $2 AND et.unread_count > 0
+                       AND et.id IN (
+                         SELECT em.thread_id
+                         FROM email_messages em
+                         JOIN contact_emails ce ON ce.email_normalized = lower(trim(em.from_email))
+                         WHERE em.company_id = $2 AND em.direction = 'inbound' AND ce.contact_id = $1
+                       )`,
+                    [tl.contact_id, tl.company_id]
+                );
+            }
+        } catch (emailErr) {
+            console.warn('[mark-read] email thread mark-read failed:', emailErr.message);
+        }
         const realtimeService = require('../services/realtimeService');
         realtimeService.broadcast('timeline.read', { timelineId: parseInt(timelineId) });
         res.json({ timeline: tl });

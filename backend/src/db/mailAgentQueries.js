@@ -172,6 +172,16 @@ async function createEmailContact(companyId, { fromName, fromEmail }) {
          RETURNING id, full_name, email`,
         [companyId, fullName, firstName, lastName, email]
     );
+    // EMAIL-UNREAD-001: the canonical dual write (see contactDedupeService) —
+    // the Pulse unified list resolves contact→email threads through
+    // contact_emails, NOT contacts.email; without this row the contact's email
+    // activity is invisible in the list (no icon, no unread, no clearing).
+    await db.query(
+        `INSERT INTO contact_emails (contact_id, email, email_normalized, is_primary)
+         VALUES ($1, $2, $2, true)
+         ON CONFLICT (contact_id, email_normalized) DO NOTHING`,
+        [rows[0].id, email]
+    );
     return rows[0];
 }
 

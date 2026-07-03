@@ -12,7 +12,7 @@ import { useAuth } from '../../auth/AuthProvider';
 import type { Lead } from '../../types/lead';
 import {
     PhoneIncoming, PhoneOutgoing, ArrowLeftRight,
-    MessageSquare, MessageSquareReply, MoreVertical,
+    MessageSquare, MessageSquareReply, Mail, MailCheck, MoreVertical,
     EyeOff, Clock, CheckCircle2, AlertTriangle, Bot,
 } from 'lucide-react';
 import type { Call } from '../../types/models';
@@ -175,6 +175,11 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                     {(() => {
                         if (interactionType === 'sms_inbound') return <MessageSquareReply className="size-[18px]" style={{ color: 'var(--blanc-info)' }} />;
                         if (interactionType === 'sms_outbound') return <MessageSquare className="size-[18px]" style={{ color: 'var(--blanc-ink-2)' }} />;
+                        // EMAIL-UNREAD-001: emails get their own channel icons — the backend
+                        // has emitted email_inbound/email_outbound since LIST-PAGINATION-001,
+                        // but the list fell through to call icons for them.
+                        if (interactionType === 'email_inbound') return <Mail className="size-[18px]" style={{ color: 'var(--blanc-info)' }} />;
+                        if (interactionType === 'email_outbound') return <MailCheck className="size-[18px]" style={{ color: 'var(--blanc-ink-2)' }} />;
                         if (isAiAnsweredLatestCall) return <Bot className="size-[18px]" style={{ color: '#dc2626' }} aria-label="AI bot answered this call" />;
                         if (callDirection === 'internal') return <ArrowLeftRight className="size-[18px]" style={{ color: 'var(--blanc-ink-2)' }} />;
                         if (callDirection === 'inbound') return <PhoneIncoming className="size-[18px]" style={{ color: callColor }} />;

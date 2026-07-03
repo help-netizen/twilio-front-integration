@@ -342,6 +342,17 @@ async function linkOutboundMessage(companyId, msg) {
             return { skipped: 'no_message' };
         }
 
+        // EMAIL-UNREAD-001: an outbound reply means the mailbox owner has read
+        // the thread — clear its unread counter so the Pulse row stops showing
+        // "unread" after the dispatcher answers from the email workspace.
+        if (linked.thread_id) {
+            try {
+                await emailQueries.markThreadRead(linked.thread_id, companyId);
+            } catch (e) {
+                console.warn('[EmailTimeline] outbound markThreadRead failed:', e.message);
+            }
+        }
+
         if (alreadyLinked) {
             return { linked: true, contactId, timelineId, alreadyLinked: true };
         }
