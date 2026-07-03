@@ -75,11 +75,8 @@ export function LeadsFilters({
                 onDateToChange={(d) => onFiltersChange({ end_date: d })}
             />
 
-            {/* Only Open Toggle */}
-            <div
-                className="flex items-center gap-2.5 px-4 shrink-0"
-                style={{ minHeight: 42, borderRadius: 14, border: '1px solid rgba(104, 95, 80, 0.14)', background: 'var(--blanc-surface-strong)', boxShadow: 'rgba(48, 39, 28, 0.06) 0px 6px 16px' }}
-            >
+            {/* Only Open Toggle — единый тулбар-чип (.blanc-control-chip), не самодельный pill */}
+            <div className="blanc-control-chip flex items-center gap-2.5 shrink-0" style={{ cursor: 'default' }}>
                 <Switch
                     id="only-open"
                     checked={filters.only_open}

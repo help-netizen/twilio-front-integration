@@ -359,7 +359,8 @@ table tbody tr:hover {
     font-size: 15px !important;
     font-weight: 600 !important;
     gap: 10px !important;
-    border-radius: 16px !important;
+    /* Единая форма тулбар-контролов: pill (было r16 — разнобой со скруглениями чипов) */
+    border-radius: 999px !important;
 }
 
 /* Icon-only buttons in page header — 42px square, Albusto style */
@@ -367,9 +368,9 @@ table tbody tr:hover {
     min-height: 42px !important;
     height: 42px !important;
     width: 42px !important;
-    border-radius: 14px !important;
-    border: 1px solid rgba(104, 95, 80, 0.14) !important;
-    background: var(--blanc-surface-strong) !important;
+    border-radius: 999px !important;
+    border: 1px solid var(--blanc-line) !important;
+    background: var(--blanc-panel-surface) !important;
     color: var(--blanc-ink-2) !important;
     box-shadow: rgba(25, 25, 25, 0.05) 0px 6px 16px !important;
 }
@@ -392,26 +393,26 @@ table tbody tr:hover {
 
 /* Search input: transparent so it blends into the frosted glass background */
 .blanc-page-toolbar [data-slot="input"] {
-    background: transparent !important;
-    border: 1px solid rgba(104, 95, 80, 0.22) !important;
+    background: var(--blanc-field) !important;
+    border: 1px solid transparent !important;
     box-shadow: none !important;
-    border-radius: 14px !important;
+    border-radius: 999px !important;
     min-height: 40px !important;
     color: var(--blanc-ink-1) !important;
 }
 
 .blanc-page-toolbar [data-slot="input"]:focus {
-    box-shadow: 0 0 0 3px rgba(47, 99, 216, 0.15) !important;
-    border-color: rgba(47, 99, 216, 0.4) !important;
+    box-shadow: 0 0 0 3px rgba(127, 66, 225, 0.15) !important;
+    border-color: rgba(127, 66, 225, 0.4) !important;
 }
 
 /* Select triggers and non-primary buttons: slightly lifted */
 .blanc-page-toolbar [data-slot="select-trigger"],
 .blanc-page-toolbar [data-slot="button"]:not([class*="bg-primary"]) {
-    background: rgba(255, 255, 255, 0.55) !important;
-    border: 1px solid rgba(104, 95, 80, 0.16) !important;
-    box-shadow: 0 2px 6px rgba(48, 39, 28, 0.05) !important;
-    border-radius: 14px !important;
+    background: var(--blanc-panel-surface) !important;
+    border: 1px solid var(--blanc-line) !important;
+    box-shadow: 0 2px 6px rgba(25, 25, 25, 0.05) !important;
+    border-radius: 999px !important;
     min-height: 40px !important;
     color: var(--blanc-ink-1) !important;
 }
@@ -562,14 +563,14 @@ table tbody tr:hover {
 /* Unified header — action buttons inside controls group, scaled to match */
 .blanc-controls-group [data-slot="button"] {
     min-height: 42px !important;
-    border-radius: 14px !important;
+    border-radius: 999px !important;
     font-size: 14px !important;
     font-weight: 600 !important;
 }
 
 .blanc-controls-group [data-slot="select-trigger"] {
     min-height: 42px !important;
-    border-radius: 14px !important;
+    border-radius: 999px !important;
     border: 1px solid rgba(104, 95, 80, 0.14) !important;
     background: var(--blanc-surface-strong) !important;
     box-shadow: rgba(25, 25, 25, 0.05) 0px 6px 16px !important;
