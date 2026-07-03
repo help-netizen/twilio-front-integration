@@ -71,7 +71,7 @@ export function ContactsList({
                                 cursor: 'pointer',
                                 flexShrink: 0,
                                 ...(selectedContactId === contact.id ? {
-                                    background: 'rgba(255, 247, 231, 0.7)',
+                                    background: 'rgba(127, 66, 225, 0.07)',
                                     boxShadow: 'inset 0 0 0 1px var(--blanc-line-strong)',
                                 } : {}),
                             }}
