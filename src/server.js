@@ -251,6 +251,9 @@ app.use('/api/integrations/zenbooker', integrationsZenbookerRouter);
 // Integration settings API (§15)
 app.use('/api/admin/integrations', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess, integrationsAdminRouter);
 app.use('/api/marketplace', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess, marketplaceRouter);
+// MAIL-AGENT-001: Mail Secretary settings + activity (same gate as marketplace).
+app.use('/api/mail-agent', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess,
+    require('../backend/src/routes/mailAgent'));
 // F018 Stripe Payments settings/onboarding (the /webhook subpath is mounted earlier,
 // before express.json, so it is unaffected by this authed mount).
 app.use('/api/stripe-payments', authenticate, requirePermission('tenant.integrations.manage'), requireCompanyAccess,

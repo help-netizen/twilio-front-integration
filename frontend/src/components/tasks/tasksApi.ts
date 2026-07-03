@@ -17,6 +17,10 @@ export interface Task {
     parent_type: TaskParentType;
     parent_id: number;
     parent_label: string | null;
+    /** MAIL-AGENT-001: 'agent' tasks carry the AI triage comment in agent_output. */
+    kind?: 'user' | 'agent';
+    agent_type?: string | null;
+    agent_output?: { reason?: string; category?: string; confidence?: number } | null;
 }
 
 export interface Assignee {

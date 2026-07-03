@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, Loader2, AlarmClock, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { Check, Loader2, AlarmClock, ArrowUpDown, ArrowUp, ArrowDown, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuthz } from '../hooks/useAuthz';
 import { useIsMobile } from '../hooks/useIsMobile';
@@ -355,7 +355,27 @@ export function TasksPage() {
                                                     onClick={() => navigate(parentPath(t))}
                                                 >
                                                     <td className="px-4 py-2.5">
-                                                        <span className="font-medium line-clamp-2" style={{ color: 'var(--blanc-ink-1)' }}>{t.description}</span>
+                                                        <span className="font-medium line-clamp-2" style={{ color: 'var(--blanc-ink-1)' }}>
+                                                            {t.kind === 'agent' && (
+                                                                <span
+                                                                    className="inline-flex items-center gap-1 align-middle mr-2"
+                                                                    title={t.agent_output?.reason || 'Created by Mail Secretary'}
+                                                                    style={{
+                                                                        fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase',
+                                                                        background: 'var(--blanc-accent-soft)', color: 'var(--blanc-accent)',
+                                                                        padding: '2px 7px', borderRadius: 8, fontWeight: 600,
+                                                                    }}
+                                                                >
+                                                                    <Sparkles className="size-3" /> AI
+                                                                </span>
+                                                            )}
+                                                            {t.description}
+                                                        </span>
+                                                        {t.kind === 'agent' && t.agent_output?.reason && (
+                                                            <span className="block text-xs mt-0.5 line-clamp-1" style={{ color: 'var(--blanc-ink-2)' }}>
+                                                                {t.agent_output.reason}
+                                                            </span>
+                                                        )}
                                                     </td>
                                                     <td className="px-4 py-2.5 whitespace-nowrap">
                                                         <span className="inline-flex items-center gap-2">

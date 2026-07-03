@@ -192,6 +192,9 @@ router.get('/by-contact', async (req, res) => {
                     title: c.open_task_title,
                     due_at: c.open_task_due_at,
                     priority: c.open_task_priority,
+                    // MAIL-AGENT-001: agent tasks carry the triage comment for the AR bar.
+                    kind: c.open_task_kind || 'user',
+                    agent_output: c.open_task_agent_output || null,
                 } : null,
             };
         });

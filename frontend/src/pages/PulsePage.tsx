@@ -20,7 +20,7 @@ import { OnboardingChecklistCard } from '../components/onboarding/OnboardingChec
 import { EditLeadDialog } from '../components/leads/EditLeadDialog';
 import { ConvertToJobDialog } from '../components/leads/ConvertToJobDialog';
 import { Skeleton } from '../components/ui/skeleton';
-import { PhoneOff, Activity, Clock, CheckCircle2, AlertTriangle, ChevronLeft } from 'lucide-react';
+import { PhoneOff, Activity, Clock, CheckCircle2, AlertTriangle, ChevronLeft, Sparkles } from 'lucide-react';
 import { callsApi } from '../services/api';
 import { pulseApi } from '../services/pulseApi';
 import { useAuth } from '../auth/AuthProvider';
@@ -306,6 +306,25 @@ export const PulsePage: React.FC = () => {
                                                 </span>
                                             )}
                                         </div>
+                                        {/* MAIL-AGENT-001: agent comment — why the Mail Secretary flagged this thread */}
+                                        {conv.open_task?.kind === 'agent' && conv.open_task?.agent_output?.reason && (
+                                            <div className="flex items-start gap-2.5 px-5 pb-3">
+                                                <span
+                                                    className="inline-flex items-center gap-1 shrink-0"
+                                                    style={{
+                                                        fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase',
+                                                        background: 'var(--blanc-accent-soft)', color: 'var(--blanc-accent)',
+                                                        padding: '3px 8px', borderRadius: 8, fontWeight: 600, marginTop: 1,
+                                                    }}
+                                                >
+                                                    <Sparkles className="size-3" /> Mail Secretary
+                                                </span>
+                                                <span className="text-sm min-w-0" style={{ color: 'var(--blanc-ink-1)' }}>
+                                                    {conv.open_task.title && <span className="font-medium">{conv.open_task.title}. </span>}
+                                                    <span style={{ color: 'var(--blanc-ink-2)' }}>{conv.open_task.agent_output.reason}</span>
+                                                </span>
+                                            </div>
+                                        )}
                                         {!isSnoozed && (
                                             <div className="flex items-center gap-2.5 px-5 pb-3">
                                                 <button

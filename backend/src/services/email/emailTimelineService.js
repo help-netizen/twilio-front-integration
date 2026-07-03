@@ -86,7 +86,7 @@ function toEmailItem(row) {
  *   {linked:true, contactId, timelineId, alreadyLinked?:boolean} |
  *   {error:string}
  */
-async function linkInboundMessage(companyId, msg) {
+async function linkInboundMessage(companyId, msg, opts = {}) {
     try {
         if (!msg || !msg.provider_message_id) {
             return { skipped: 'no_message' };
@@ -105,9 +105,16 @@ async function linkInboundMessage(companyId, msg) {
         }
 
         // (b) Contact match (company-scoped + deterministic tie-break upstream).
-        //     No contact → stays inbox-only (no link, no unread, no SSE).
+        //     No contact → stays inbox-only (no link, no unread, no SSE) — but
+        //     MAIL-AGENT-001 still gets a look: the agent may decide this is a
+        //     lead worth keeping, create the contact, and re-enter this function
+        //     (skipAgent guards the recursion).
         const contact = await emailQueries.findEmailContact(msg.from_email, companyId);
         if (!contact) {
+            if (!opts.skipAgent) {
+                const mailAgentService = require('../mailAgentService');
+                await mailAgentService.reviewInboundEmail(companyId, msg, { noContact: true });
+            }
             return { skipped: 'no_contact' };
         }
         const contactId = contact.contact_id || contact.id;
@@ -162,12 +169,30 @@ async function linkInboundMessage(companyId, msg) {
             console.error('[EmailTimeline] markTimelineUnread failed:', e.message);
         }
 
+        // MAIL-AGENT-001: the Mail Secretary agent reviews every linked inbound
+        // email (exclusions → LLM triage → maybe task). While it is active it
+        // REPLACES the dumb every-email trigger below. Never throws.
+        let mailAgentActive = false;
+        if (!opts.skipAgent) {
+            const mailAgentService = require('../mailAgentService');
+            mailAgentActive = await mailAgentService.isActive(companyId);
+            if (mailAgentActive) {
+                await mailAgentService.reviewInboundEmail(companyId, msg, {
+                    contactId,
+                    timelineId,
+                    contactName: contact.full_name || null,
+                });
+            }
+        }
+
         // Action Required auto-trigger — same per-company evaluation SMS uses,
         // keyed 'inbound_email' (opt-in via company AR config; default off).
+        // Suppressed while the Mail Secretary agent decides instead.
         try {
             const { getTriggerConfig } = require('../arConfigHelper');
             const triggerCfg = await getTriggerConfig(companyId, 'inbound_email');
-            if (triggerCfg.enabled) {
+            // skipAgent = the agent orchestrates this link and creates its own task.
+            if (triggerCfg.enabled && !mailAgentActive && !opts.skipAgent) {
                 await timelinesQueries.setActionRequired(timelineId, 'new_message', 'system');
                 if (triggerCfg.create_task) {
                     const slaMs = (triggerCfg.task_sla_minutes || 10) * 60 * 1000;

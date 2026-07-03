@@ -440,6 +440,8 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
              open_task.title as open_task_title,
              open_task.due_at as open_task_due_at,
              open_task.priority as open_task_priority,
+             open_task.kind as open_task_kind,
+             open_task.agent_output as open_task_agent_output,
              COALESCE(open_task.task_count, 0) as open_task_count,
              sms.last_message_at as sms_last_message_at,
              sms.last_message_direction as sms_last_message_direction,
@@ -468,6 +470,7 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
          ) latest_call ON true
          LEFT JOIN LATERAL (
              SELECT ot.id, ot.title, ot.due_at, ot.priority,
+                    ot.kind, ot.agent_output,
                     (SELECT count(*) FROM tasks tc
                       WHERE tc.thread_id = tl.id AND tc.status = 'open') AS task_count
              FROM tasks ot
@@ -645,8 +648,12 @@ async function assignThread(timelineId, ownerUserId) {
     return tl.rows[0] || null;
 }
 
-async function createTask({ companyId, threadId, subjectType, subjectId, title, description, priority, dueAt, ownerUserId, createdBy }) {
+async function createTask({ companyId, threadId, subjectType, subjectId, title, description, priority, dueAt, ownerUserId, createdBy, kind, agentType, agentInput, agentOutput, agentStatus }) {
     const provenance = createdBy || 'user';
+    // MAIL-AGENT-001: agent callers stamp the mig-100 agent columns (kind,
+    // agent_type, agent_input/output, agent_status). User path passes none of
+    // them and keeps writing kind's DB default ('user').
+    const taskKind = kind || (provenance === 'agent' ? 'agent' : 'user');
     // AR-TASK-UNIFY-001: a timeline can now hold MANY open tasks (the v1
     // one-open-per-thread unique index was dropped in mig 139). Auto callers
     // (inbound SMS/call/email, rules, agent) still keep a SINGLE open task per
@@ -670,19 +677,33 @@ async function createTask({ companyId, threadId, subjectType, subjectId, title, 
                     priority = $4,
                     due_at = $5,
                     owner_user_id = COALESCE($6, owner_user_id),
+                    kind = $7,
+                    agent_type = COALESCE($8, agent_type),
+                    agent_input = COALESCE($9::jsonb, agent_input),
+                    agent_output = COALESCE($10::jsonb, agent_output),
+                    agent_status = COALESCE($11, agent_status),
                     updated_at = now()
                  WHERE id = $1
                  RETURNING *`,
-                [existing.rows[0].id, title, description || null, priority || 'p2', dueAt || null, ownerUserId || null]
+                [existing.rows[0].id, title, description || null, priority || 'p2', dueAt || null, ownerUserId || null,
+                    taskKind, agentType || null,
+                    agentInput ? JSON.stringify(agentInput) : null,
+                    agentOutput ? JSON.stringify(agentOutput) : null,
+                    agentStatus || null]
             );
             return upd.rows[0];
         }
     }
     const result = await db.query(
-        `INSERT INTO tasks (company_id, thread_id, subject_type, subject_id, title, description, priority, due_at, owner_user_id, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        `INSERT INTO tasks (company_id, thread_id, subject_type, subject_id, title, description, priority, due_at, owner_user_id, created_by,
+                            kind, agent_type, agent_input, agent_output, agent_status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15)
          RETURNING *`,
-        [companyId, threadId, subjectType || 'contact', subjectId || null, title, description || null, priority || 'p2', dueAt || null, ownerUserId || null, provenance]
+        [companyId, threadId, subjectType || 'contact', subjectId || null, title, description || null, priority || 'p2', dueAt || null, ownerUserId || null, provenance,
+            taskKind, agentType || null,
+            agentInput ? JSON.stringify(agentInput) : null,
+            agentOutput ? JSON.stringify(agentOutput) : null,
+            agentStatus || null]
     );
     return result.rows[0];
 }

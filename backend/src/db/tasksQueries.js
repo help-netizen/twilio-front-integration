@@ -39,6 +39,7 @@ function isValidParentType(t) {
 const SELECT_TASK = `
     SELECT t.id, t.company_id, t.title AS description, t.status, t.due_at,
            t.completed_at, t.created_at, t.owner_user_id, t.author_user_id,
+           t.kind, t.agent_type, t.agent_output,
            ow.full_name AS assignee_name, ow.email AS assignee_email,
            au.full_name AS author_name,
            CASE
@@ -72,8 +73,11 @@ const SELECT_TASK = `
 
 // Rows shown in the global cross-entity list: one of the 5 entity parents, OR a
 // USER-created timeline task (auto inbound/rules tasks stay Pulse-only).
+// MAIL-AGENT-001: 'agent' timeline tasks ARE listed — unlike the every-message
+// 'system' auto tasks they are already significance-filtered by the LLM, and the
+// owner's ask is precisely "a task in the Tasks section that opens the email".
 const HAS_ENTITY_PARENT =
-    "(t.job_id IS NOT NULL OR t.lead_id IS NOT NULL OR t.estimate_id IS NOT NULL OR t.invoice_id IS NOT NULL OR t.contact_id IS NOT NULL OR (t.thread_id IS NOT NULL AND t.created_by = 'user'))";
+    "(t.job_id IS NOT NULL OR t.lead_id IS NOT NULL OR t.estimate_id IS NOT NULL OR t.invoice_id IS NOT NULL OR t.contact_id IS NOT NULL OR (t.thread_id IS NOT NULL AND t.created_by IN ('user', 'agent')))";
 
 /** Confirm a parent row exists in this company. Returns boolean. */
 async function parentExists(companyId, parentType, parentId, client = null) {

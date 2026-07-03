@@ -1,4 +1,4 @@
-import { Check, Pencil, RotateCcw, AlarmClock } from 'lucide-react';
+import { Check, Pencil, RotateCcw, AlarmClock, Sparkles } from 'lucide-react';
 import { TaskSnoozeMenu } from './TaskSnoozeMenu';
 import { isOverdue, formatDeadline } from './taskUtils';
 import type { Task } from './tasksApi';
@@ -44,6 +44,19 @@ export function TaskCard({ task, tz, canAct, onComplete, onReopen, onSnooze, onE
                     >
                         Task
                     </span>
+                    {task.kind === 'agent' && (
+                        <span
+                            className="inline-flex items-center gap-1 shrink-0"
+                            title={task.agent_output?.reason || 'Created by Mail Secretary'}
+                            style={{
+                                fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase',
+                                background: 'var(--blanc-accent-soft)', color: 'var(--blanc-accent)',
+                                padding: '2px 7px', borderRadius: 8, fontWeight: 600,
+                            }}
+                        >
+                            <Sparkles className="size-3" /> AI
+                        </span>
+                    )}
                     <span
                         className="inline-flex items-center gap-1 truncate"
                         style={{ fontSize: 12.5, color: overdue ? '#b42318' : 'var(--blanc-ink-2)' }}
@@ -66,6 +79,11 @@ export function TaskCard({ task, tz, canAct, onComplete, onReopen, onSnooze, onE
             </div>
 
             <p className="text-sm whitespace-pre-wrap" style={{ color: 'var(--blanc-ink-1)' }}>{task.description}</p>
+
+            {/* MAIL-AGENT-001: the agent explains WHY it flagged this email. */}
+            {task.kind === 'agent' && task.agent_output?.reason && (
+                <p className="text-sm" style={{ color: 'var(--blanc-ink-2)' }}>{task.agent_output.reason}</p>
+            )}
 
             <div className="flex items-center justify-between gap-2 flex-wrap">
                 <div className="flex items-center gap-2 min-w-0" style={{ fontSize: 12, color: 'var(--blanc-ink-2)' }}>
