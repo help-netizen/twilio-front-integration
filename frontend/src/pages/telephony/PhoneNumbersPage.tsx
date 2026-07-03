@@ -7,6 +7,9 @@ import { billingApi } from '../../services/billingApi';
 import type { PhoneNumber, UserGroup } from '../../types/telephony';
 import { A2pStepper } from '../../components/telephony/A2pStepper';
 import { toast } from 'sonner';
+import { SettingsPageShell } from '../../components/settings/SettingsPageShell';
+import { Button } from '../../components/ui/button';
+import { Dialog, DialogContent, DialogPanelHeader, DialogTitle, DialogDescription, DialogBody } from '../../components/ui/dialog';
 
 export default function PhoneNumbersPage() {
     const navigate = useNavigate();
@@ -242,46 +245,43 @@ export default function PhoneNumbersPage() {
     const filtered = numbers.filter(n => !search || n.number.includes(search) || n.friendly_name.toLowerCase().includes(search.toLowerCase()) || (n.group || '').toLowerCase().includes(search.toLowerCase()));
     const atLimit = numberLimit != null && numbers.length >= numberLimit;
     return (
-        <div style={{ padding: 24 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-                <div><h1 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>Phone Numbers</h1><p style={{ fontSize: 13, color: 'var(--blanc-ink-2, #536070)', margin: '4px 0 0' }}>Manage Twilio numbers</p></div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <SettingsPageShell
+            title="Phone Numbers"
+            description="Manage Twilio numbers"
+            actions={
+                <>
                     {telState?.connected && numberLimit != null && (
-                        <span style={{ fontSize: 12, fontWeight: 500, color: atLimit ? 'var(--blanc-danger, #d44d3c)' : 'var(--blanc-ink-2, #536070)' }}>{numbers.length} / {numberLimit} numbers</span>
+                        <span style={{ fontSize: 12, fontWeight: 500, color: atLimit ? 'var(--blanc-danger)' : 'var(--blanc-ink-2)' }}>{numbers.length} / {numberLimit} numbers</span>
                     )}
                     {telState?.connected && (
-                        <button onClick={() => setBuyOpen(true)} disabled={atLimit}
-                            title={atLimit ? `Your plan includes up to ${numberLimit} numbers — upgrade to add more` : undefined}
-                            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', background: 'var(--blanc-job, #2f63d8)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: atLimit ? 'default' : 'pointer', opacity: atLimit ? 0.45 : 1 }}>
-                            <Plus size={14} /> Buy number
-                        </button>
+                        <Button onClick={() => setBuyOpen(true)} disabled={atLimit}
+                            title={atLimit ? `Your plan includes up to ${numberLimit} numbers — upgrade to add more` : undefined}>
+                            <Plus className="size-4" /> Buy number
+                        </Button>
                     )}
-                    <div style={{ position: 'relative' }}>
-                        <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--blanc-ink-3, #7d8796)' }} />
-                        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..." style={{ padding: '8px 12px 8px 32px', border: '1px solid var(--blanc-line, rgba(117,106,89,0.18))', borderRadius: 8, fontSize: 13, width: 240 }} />
-                    </div>
-                </div>
-            </div>
+                </>
+            }
+        >
             {telState && !telState.connected && (
-                <div style={{ margin: '8px 0 20px', padding: 24, border: '1px dashed var(--blanc-line, rgba(117,106,89,0.18))', borderRadius: 14, display: 'flex', alignItems: 'center', gap: 16, background: 'rgba(117,106,89,0.04)' }}>
-                    <div style={{ width: 44, height: 44, borderRadius: 22, background: 'rgba(47,99,216,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <PlugZap size={20} style={{ color: 'var(--blanc-job, #2f63d8)' }} />
+                <div style={{ padding: 24, border: '1px dashed var(--blanc-line)', borderRadius: 14, display: 'flex', alignItems: 'center', gap: 16, background: 'rgba(25,25,25,0.04)' }}>
+                    <div style={{ width: 44, height: 44, borderRadius: 22, background: 'var(--blanc-accent-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <PlugZap size={20} style={{ color: 'var(--blanc-accent)' }} />
                     </div>
                     <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 600, fontSize: 14 }}>Connect telephony</div>
-                        <div style={{ fontSize: 13, color: 'var(--blanc-ink-2, #536070)', marginTop: 2 }}>
+                        <div style={{ fontSize: 13, color: 'var(--blanc-ink-2)', marginTop: 2 }}>
                             Creates a dedicated, isolated phone environment for your company. After connecting you can buy local numbers (from $1.15/mo) and route calls to your team.
                         </div>
                     </div>
-                    <button onClick={() => navigate('/settings/integrations/telephony-twilio')} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 18px', background: 'var(--blanc-job, #2f63d8)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
-                        <PlugZap size={14} /> Connect in Marketplace
-                    </button>
+                    <Button onClick={() => navigate('/settings/integrations/telephony-twilio')}>
+                        <PlugZap className="size-4" /> Connect in Marketplace
+                    </Button>
                 </div>
             )}
 
             {telState?.connected && usage && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: 'rgba(117,106,89,0.04)', border: '1px solid var(--blanc-line, rgba(117,106,89,0.18))', borderRadius: 10, fontSize: 12.5, color: 'var(--blanc-ink-2, #536070)', margin: '0 0 14px', width: 'fit-content' }}>
-                    <span style={{ fontWeight: 700, color: 'var(--blanc-ink-1, #202734)' }}>${usage.total_usd?.toFixed?.(2) ?? usage.total_usd}</span> this month ·
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: 'rgba(25,25,25,0.04)', border: '1px solid var(--blanc-line)', borderRadius: 10, fontSize: 12.5, color: 'var(--blanc-ink-2)', width: 'fit-content' }}>
+                    <span style={{ fontWeight: 700, color: 'var(--blanc-ink-1)' }}>${usage.total_usd?.toFixed?.(2) ?? usage.total_usd}</span> this month ·
                     {' '}{usage.calls.count} calls · {usage.sms.count} SMS · {usage.numbers.count} numbers
                 </div>
             )}
@@ -301,87 +301,101 @@ export default function PhoneNumbersPage() {
             )}
 
             {buyOpen && (
-                <div style={{ position: 'fixed', inset: 0, background: 'rgba(17,24,39,0.45)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setBuyOpen(false)}>
-                    <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 560, background: 'var(--blanc-panel-surface, #fffdf9)', borderRadius: 16, padding: 24, maxHeight: '85vh', overflowY: 'auto' }}>
-                        <h2 style={{ margin: '0 0 4px', fontSize: 17, fontWeight: 700 }}>Buy a phone number</h2>
-                        <p style={{ margin: '0 0 16px', fontSize: 13, color: 'var(--blanc-ink-2, #536070)' }}>Search available US numbers — billed to your workspace at the listed monthly price.</p>
-                        <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
-                            <input value={areaCode} onChange={e => setAreaCode(e.target.value.replace(/\D/g, '').slice(0, 3))} placeholder="Area code (e.g. 617)" style={{ flex: '1 1 120px', padding: '9px 12px', border: '1px solid var(--blanc-line, rgba(117,106,89,0.18))', borderRadius: 8, fontSize: 13 }} />
-                            <input value={containsQ} onChange={e => setContainsQ(e.target.value)} placeholder="Contains digits (optional)" style={{ flex: '1 1 150px', padding: '9px 12px', border: '1px solid var(--blanc-line, rgba(117,106,89,0.18))', borderRadius: 8, fontSize: 13 }} />
-                            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--blanc-ink-1, #202734)' }}>
-                                <input type="checkbox" checked={tollFree} onChange={e => setTollFree(e.target.checked)} /> Toll-free
-                            </label>
-                            <button onClick={searchAvailable} disabled={searchBusy} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '9px 16px', background: 'var(--blanc-job, #2f63d8)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
-                                {searchBusy ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />} Search
-                            </button>
-                        </div>
-                        {found.length === 0 && !searchBusy && (
-                            <div style={{ padding: 24, textAlign: 'center', color: 'var(--blanc-ink-3, #7d8796)', fontSize: 13 }}>Enter an area code and search</div>
-                        )}
-                        {found.map(f => (
-                            <div key={f.phone_number} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 4px', borderBottom: '1px solid #f3f4f6' }}>
-                                <Phone size={14} style={{ color: 'var(--blanc-job, #2f63d8)' }} />
-                                <div style={{ flex: 1 }}>
-                                    <div style={{ fontWeight: 600, fontSize: 14 }}>{f.phone_number}</div>
-                                    <div style={{ fontSize: 12, color: 'var(--blanc-ink-2, #536070)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                                        <MapPin size={11} /> {[f.locality, f.region].filter(Boolean).join(', ') || 'US'} ·
-                                        {f.capabilities.voice ? ' Voice' : ''}{f.capabilities.sms ? ' · SMS' : ''}
-                                    </div>
+                <Dialog open onOpenChange={open => { if (!open) setBuyOpen(false); }}>
+                    <DialogContent variant="panel">
+                        <DialogPanelHeader>
+                            <DialogTitle>Buy a phone number</DialogTitle>
+                            <DialogDescription>Search available US numbers — billed to your workspace at the listed monthly price.</DialogDescription>
+                        </DialogPanelHeader>
+                        <DialogBody className="md:px-8 md:py-7">
+                            <div className="mx-auto w-full max-w-[740px] space-y-6">
+                                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                    <input value={areaCode} onChange={e => setAreaCode(e.target.value.replace(/\D/g, '').slice(0, 3))} placeholder="Area code (e.g. 617)" style={{ flex: '1 1 120px', padding: '9px 12px', border: '1px solid var(--blanc-line-strong)', borderRadius: 8, fontSize: 13 }} />
+                                    <input value={containsQ} onChange={e => setContainsQ(e.target.value)} placeholder="Contains digits (optional)" style={{ flex: '1 1 150px', padding: '9px 12px', border: '1px solid var(--blanc-line-strong)', borderRadius: 8, fontSize: 13 }} />
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--blanc-ink-1)' }}>
+                                        <input type="checkbox" checked={tollFree} onChange={e => setTollFree(e.target.checked)} /> Toll-free
+                                    </label>
+                                    <Button onClick={searchAvailable} disabled={searchBusy}>
+                                        {searchBusy ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />} Search
+                                    </Button>
                                 </div>
-                                <div style={{ fontSize: 12, color: 'var(--blanc-ink-2, #536070)' }}>${f.monthly_price_usd}/mo</div>
-                                <button onClick={() => buyNumber(f.phone_number)} disabled={buyingNum === f.phone_number} style={{ padding: '7px 14px', background: 'var(--blanc-success, #1b8b63)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>
-                                    {buyingNum === f.phone_number ? 'Buying…' : 'Buy'}
-                                </button>
+                                <div>
+                                    {found.length === 0 && !searchBusy && (
+                                        <div style={{ padding: 24, textAlign: 'center', color: 'var(--blanc-ink-3)', fontSize: 13 }}>Enter an area code and search</div>
+                                    )}
+                                    {found.map(f => (
+                                        <div key={f.phone_number} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 4px', borderBottom: '1px solid var(--blanc-line)' }}>
+                                            <Phone size={14} style={{ color: 'var(--blanc-accent)' }} />
+                                            <div style={{ flex: 1 }}>
+                                                <div style={{ fontWeight: 600, fontSize: 14 }}>{f.phone_number}</div>
+                                                <div style={{ fontSize: 12, color: 'var(--blanc-ink-2)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                                    <MapPin size={11} /> {[f.locality, f.region].filter(Boolean).join(', ') || 'US'} ·
+                                                    {f.capabilities.voice ? ' Voice' : ''}{f.capabilities.sms ? ' · SMS' : ''}
+                                                </div>
+                                            </div>
+                                            <div style={{ fontSize: 12, color: 'var(--blanc-ink-2)' }}>${f.monthly_price_usd}/mo</div>
+                                            <Button size="sm" onClick={() => buyNumber(f.phone_number)} disabled={buyingNum === f.phone_number}>
+                                                {buyingNum === f.phone_number ? 'Buying…' : 'Buy'}
+                                            </Button>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
-                        ))}
-                    </div>
-                </div>
+                        </DialogBody>
+                    </DialogContent>
+                </Dialog>
             )}
 
-            {loading ? <div style={{ padding: 40, textAlign: 'center', color: 'var(--blanc-ink-3, #7d8796)' }}>Loading...</div> : (
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                    <thead><tr style={{ borderBottom: '1px solid var(--blanc-line, rgba(117,106,89,0.18))' }}>
-                        {['Number', 'Name', 'Group', 'Routing', 'Status', 'Webhook', ''].map((h, i) => <th key={i} style={{ textAlign: 'left', padding: '8px 12px', fontSize: 11, fontWeight: 600, color: 'var(--blanc-ink-2, #536070)', textTransform: 'uppercase' }}>{h}</th>)}
-                    </tr></thead>
-                    <tbody>{filtered.map(n => (
-                        <tr key={n.id} style={{ borderBottom: '1px solid rgba(117,106,89,0.1)' }}>
-                            <td style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8 }}><Phone size={14} style={{ color: 'var(--blanc-job, #2f63d8)' }} />{n.number}</td>
-                            <td style={{ padding: '10px 12px' }}>{n.friendly_name}</td>
-                            <td style={{ padding: '10px 12px' }}>
-                                <select
-                                    value={n.group_id || ''}
-                                    disabled={savingNumberId === n.id}
-                                    onChange={e => assignGroup(n, e.target.value || null)}
-                                    style={{ minWidth: 160, padding: '6px 8px', border: '1px solid var(--blanc-line, rgba(117,106,89,0.18))', borderRadius: 8, fontSize: 12, background: 'var(--blanc-panel-surface, #fffdf9)', color: n.group_id ? 'var(--blanc-ink-1, #202734)' : 'var(--blanc-ink-2, #536070)' }}
-                                >
-                                    <option value="">Unassigned</option>
-                                    {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-                                </select>
-                            </td>
-                            <td style={{ padding: '10px 12px' }}>
-                                {routing[n.number] ? (
-                                    <button onClick={() => toggleRouting(n)} disabled={routingBusy === n.number}
-                                        title="Switch where calls ring"
-                                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 999, border: '1px solid var(--blanc-line, rgba(117,106,89,0.18))', background: 'transparent', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: routing[n.number].mode === 'client' ? 'var(--blanc-job, #2f63d8)' : 'var(--blanc-ink-2, #536070)' }}>
-                                        {routing[n.number].mode === 'client' ? <Monitor size={13} /> : <Headphones size={13} />}
-                                        {routing[n.number].mode === 'client' ? 'SoftPhone' : 'Bria (SIP)'}
+            <div className="flex flex-col gap-3">
+                <div style={{ position: 'relative', width: 240 }}>
+                    <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--blanc-ink-3)' }} />
+                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..." style={{ width: '100%', padding: '8px 12px 8px 32px', border: '1px solid var(--blanc-line)', borderRadius: 8, fontSize: 13, background: 'var(--blanc-panel-surface)', boxSizing: 'border-box' }} />
+                </div>
+                {loading ? <div style={{ padding: 40, textAlign: 'center', color: 'var(--blanc-ink-3)' }}>Loading...</div> : (
+                    <table className="blanc-table-tiles" style={{ fontSize: 13 }}>
+                        <thead><tr>
+                            {['Number', 'Name', 'Group', 'Routing', 'Status', 'Webhook', ''].map((h, i) => <th key={i} style={{ textAlign: 'left', padding: '8px 12px' }}>{h}</th>)}
+                        </tr></thead>
+                        <tbody>{filtered.map(n => (
+                            <tr key={n.id}>
+                                <td style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8 }}><Phone size={14} style={{ color: 'var(--blanc-accent)' }} />{n.number}</td>
+                                <td style={{ padding: '10px 12px' }}>{n.friendly_name}</td>
+                                <td style={{ padding: '10px 12px' }}>
+                                    <select
+                                        value={n.group_id || ''}
+                                        disabled={savingNumberId === n.id}
+                                        onChange={e => assignGroup(n, e.target.value || null)}
+                                        style={{ minWidth: 160, padding: '6px 8px', border: '1px solid var(--blanc-line)', borderRadius: 8, fontSize: 12, background: 'var(--blanc-panel-surface)', color: n.group_id ? 'var(--blanc-ink-1)' : 'var(--blanc-ink-2)' }}
+                                    >
+                                        <option value="">Unassigned</option>
+                                        {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                                    </select>
+                                </td>
+                                <td style={{ padding: '10px 12px' }}>
+                                    {routing[n.number] ? (
+                                        <button onClick={() => toggleRouting(n)} disabled={routingBusy === n.number}
+                                            title="Switch where calls ring"
+                                            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 999, border: '1px solid var(--blanc-line)', background: 'transparent', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: routing[n.number].mode === 'client' ? 'var(--blanc-accent)' : 'var(--blanc-ink-2)' }}>
+                                            {routing[n.number].mode === 'client' ? <Monitor size={13} /> : <Headphones size={13} />}
+                                            {routing[n.number].mode === 'client' ? 'SoftPhone' : 'Bria (SIP)'}
+                                        </button>
+                                    ) : <span style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>—</span>}
+                                </td>
+                                <td style={{ padding: '10px 12px' }}><span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: n.status === 'active' ? 'rgba(27,139,99,0.12)' : 'rgba(178,106,29,0.12)', color: n.status === 'active' ? 'var(--blanc-success)' : 'var(--blanc-warning)' }}>{n.status}</span></td>
+                                <td style={{ padding: '10px 12px' }}><span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: n.webhook_configured ? 'rgba(27,139,99,0.12)' : 'rgba(25,25,25,0.08)', color: n.webhook_configured ? 'var(--blanc-success)' : 'var(--blanc-ink-3)' }}>{n.webhook_configured ? 'Configured' : 'Not set'}</span></td>
+                                <td style={{ padding: '10px 12px' }}>
+                                    <button title="Release number" onClick={() => releaseNumber(n)} disabled={releasingSid === ((n as any).twilio_sid || (n as any).sid)}
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--blanc-ink-3)', padding: 4 }}
+                                        onMouseEnter={e => (e.currentTarget.style.color = 'var(--blanc-danger)')}
+                                        onMouseLeave={e => (e.currentTarget.style.color = 'var(--blanc-ink-3)')}>
+                                        <Trash2 size={14} />
                                     </button>
-                                ) : <span style={{ fontSize: 12, color: 'var(--blanc-ink-3, #7d8796)' }}>—</span>}
-                            </td>
-                            <td style={{ padding: '10px 12px' }}><span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: n.status === 'active' ? 'rgba(27,139,99,0.12)' : 'rgba(178,106,29,0.12)', color: n.status === 'active' ? 'var(--blanc-success, #1b8b63)' : 'var(--blanc-warning, #b26a1d)' }}>{n.status}</span></td>
-                            <td style={{ padding: '10px 12px' }}><span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: n.webhook_configured ? 'rgba(27,139,99,0.12)' : 'rgba(117,106,89,0.08)', color: n.webhook_configured ? 'var(--blanc-success, #1b8b63)' : 'var(--blanc-ink-3, #7d8796)' }}>{n.webhook_configured ? 'Configured' : 'Not set'}</span></td>
-                            <td style={{ padding: '10px 12px' }}>
-                                <button title="Release number" onClick={() => releaseNumber(n)} disabled={releasingSid === ((n as any).twilio_sid || (n as any).sid)}
-                                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--blanc-ink-3, #7d8796)', padding: 4 }}
-                                    onMouseEnter={e => (e.currentTarget.style.color = 'var(--blanc-danger, #d44d3c)')}
-                                    onMouseLeave={e => (e.currentTarget.style.color = 'var(--blanc-ink-3, #7d8796)')}>
-                                    <Trash2 size={14} />
-                                </button>
-                            </td>
-                        </tr>
-                    ))}</tbody>
-                </table>
-            )}
-        </div>
+                                </td>
+                            </tr>
+                        ))}</tbody>
+                    </table>
+                )}
+            </div>
+        </SettingsPageShell>
     );
 }

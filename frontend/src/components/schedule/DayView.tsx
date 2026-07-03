@@ -195,7 +195,7 @@ export const DayView: React.FC<DayViewProps> = ({ currentDate, items, settings, 
                                 </div>
                                 {legText && (
                                     <div className="schedule-mobile-leg" style={{ display: 'flex', alignItems: 'center', gap: 10, paddingLeft: 20, marginTop: -2, marginBottom: -2 }}>
-                                        <span style={{ alignSelf: 'stretch', minHeight: 16, borderLeft: '2px dotted var(--sched-line, rgba(117,106,89,0.30))', marginLeft: 4 }} />
+                                        <span style={{ alignSelf: 'stretch', minHeight: 16, borderLeft: '2px dotted var(--sched-line, rgba(25,25,25,0.20))', marginLeft: 4 }} />
                                         <span style={{ fontSize: 12, fontWeight: 500, color: legWarn ? '#b26a1d' : 'var(--sched-ink-3)' }}>{legText}</span>
                                     </div>
                                 )}

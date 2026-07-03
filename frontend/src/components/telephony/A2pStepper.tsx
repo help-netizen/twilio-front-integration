@@ -10,14 +10,16 @@
  */
 import { Loader2, Check, ShieldAlert, MessageSquareText, RefreshCw } from 'lucide-react';
 
-const LINE = 'var(--blanc-line, rgba(117,106,89,0.18))';
-const INK1 = 'var(--blanc-ink-1, #202734)';
-const INK2 = 'var(--blanc-ink-2, #536070)';
-const INK3 = 'var(--blanc-ink-3, #7d8796)';
-const JOB = 'var(--blanc-job, #2f63d8)';
-const OK = 'var(--blanc-success, #1b8b63)';
-const WARN = 'var(--blanc-warning, #b26a1d)';
-const DANGER = 'var(--blanc-danger, #d44d3c)';
+const LINE = 'var(--blanc-line)';
+const INK1 = 'var(--blanc-ink-1)';
+const INK2 = 'var(--blanc-ink-2)';
+const INK3 = 'var(--blanc-ink-3)';
+// PALETTE-V2: accent is THE action colour — steps/CTAs ride it, not job-blue.
+const ACCENT = 'var(--blanc-accent)';
+const ACCENT_SOFT = 'var(--blanc-accent-soft)';
+const OK = 'var(--blanc-success)';
+const WARN = 'var(--blanc-warning)';
+const DANGER = 'var(--blanc-danger)';
 
 export interface A2pRegistration {
     status: 'not_started' | 'brand_pending' | 'brand_failed' | 'campaign_pending' | 'campaign_failed' | 'approved';
@@ -44,10 +46,10 @@ type StepState = 'complete' | 'active' | 'pending' | 'failed' | 'locked';
 
 const STATE_BADGE: Record<StepState, { label: string; color: string; bg: string }> = {
     complete: { label: 'Done', color: OK, bg: 'rgba(27,139,99,0.12)' },
-    active: { label: 'Action needed', color: JOB, bg: 'rgba(47,99,216,0.12)' },
+    active: { label: 'Action needed', color: ACCENT, bg: ACCENT_SOFT },
     pending: { label: 'In review', color: WARN, bg: 'rgba(178,106,29,0.12)' },
     failed: { label: 'Failed', color: DANGER, bg: 'rgba(212,77,60,0.12)' },
-    locked: { label: 'Not yet', color: INK3, bg: 'rgba(117,106,89,0.08)' },
+    locked: { label: 'Not yet', color: INK3, bg: 'rgba(25,25,25,0.08)' },
 };
 
 interface A2pStepperProps {
@@ -72,8 +74,8 @@ function StepShell({ index, title, state, children }: { index: number; title: st
                     width: 28, height: 28, borderRadius: 999, flexShrink: 0,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     fontSize: 13, fontWeight: 700,
-                    background: done ? OK : state === 'locked' ? 'rgba(117,106,89,0.08)' : 'rgba(47,99,216,0.12)',
-                    color: done ? '#fff' : state === 'locked' ? INK3 : JOB,
+                    background: done ? OK : state === 'locked' ? 'rgba(25,25,25,0.08)' : ACCENT_SOFT,
+                    color: done ? '#fff' : state === 'locked' ? INK3 : ACCENT,
                 }}>{done ? <Check size={15} /> : index}</div>
                 {index < 3 && <div style={{ width: 2, flex: 1, minHeight: 14, background: LINE, marginTop: 4 }} />}
             </div>
@@ -108,15 +110,15 @@ export function A2pStepper({ reg, biz, setBiz, busy, error, onRegister, onCreate
     const showCampaign = step2 === 'active' || step2 === 'failed';
     const isPending = status === 'brand_pending' || status === 'campaign_pending';
 
-    const inputStyle: React.CSSProperties = { width: '100%', padding: '9px 12px', border: `1px solid ${LINE}`, borderRadius: 8, fontSize: 13, background: 'var(--blanc-surface-strong, #fffdf9)', color: INK1, boxSizing: 'border-box' };
-    const primaryBtn: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 16px', background: JOB, color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.7 : 1 };
+    const inputStyle: React.CSSProperties = { width: '100%', padding: '9px 12px', border: `1px solid ${LINE}`, borderRadius: 8, fontSize: 13, background: 'var(--blanc-surface-strong)', color: INK1, boxSizing: 'border-box' };
+    const primaryBtn: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 16px', background: ACCENT, color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.7 : 1 };
 
     return (
-        <div style={{ border: `1px solid ${LINE}`, borderRadius: 16, padding: '18px 20px', background: 'var(--blanc-surface-strong, #fffdf9)', marginBottom: 18 }}>
+        <div style={{ border: `1px solid ${LINE}`, borderRadius: 16, padding: '18px 20px', background: 'var(--blanc-surface-strong)' }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
                 <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 15, color: INK1 }}>
-                        <MessageSquareText size={17} style={{ color: JOB }} /> SMS compliance (A2P 10DLC)
+                        <MessageSquareText size={17} style={{ color: ACCENT }} /> SMS compliance (A2P 10DLC)
                     </div>
                     <div style={{ fontSize: 12.5, color: INK3, marginTop: 3 }}>
                         US carriers require a one-time business registration before they stop filtering your texts.

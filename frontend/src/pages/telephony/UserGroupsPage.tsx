@@ -1,10 +1,13 @@
 import { useState, useEffect } from 'react';
-import { Plus, Users, Phone, Calendar, Play, Pencil, X, Trash2, Shuffle, Eye } from 'lucide-react';
+import { Plus, Users, Phone, Calendar, Play, Pencil, Trash2, Shuffle, Eye } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useRealtimeEvents } from '../../hooks/useRealtimeEvents';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { getScheduleStatus } from './scheduleStatus';
 import { BottomSheet } from '../../components/ui/BottomSheet';
+import { Dialog, DialogContent, DialogPanelHeader, DialogTitle, DialogDescription, DialogBody, DialogPanelFooter } from '../../components/ui/dialog';
+import { Button } from '../../components/ui/button';
+import { SettingsPageShell } from '../../components/settings/SettingsPageShell';
 
 // ── Types (kept local, matches API response) ─────────────────────────────────
 interface ScheduleDay { day: string; open: string; close: string }
@@ -27,52 +30,35 @@ const STATUS_COLORS: Record<string, { bg: string; dot: string }> = {
 
 import { authedFetch } from '../../services/apiClient';
 
-// ── Modal backdrop ───────────────────────────────────────────────────────────
-// Mobile → canonical BottomSheet (grab handle + drag). Desktop → the centered
-// 600px card, unchanged. Only the presentation switches; form logic is untouched.
-// (Supersedes the earlier hand-rolled responsive modal from TELEPHONY-AUTONOMOUS-MODE-001:
-// the mobile Business Hours editor now uses the canonical sheet — same fix, via the canon.)
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+// ── Modal shell ──────────────────────────────────────────────────────────────
+// Mobile → canonical BottomSheet (grab handle + drag). Desktop → canonical
+// right-side panel layer (DialogContent variant="panel", FORM-CANON), replacing
+// the old hand-rolled centered card. Only the presentation switches; form logic
+// is untouched.
+function Modal({ title, footer, onClose, children }: { title: string; footer?: React.ReactNode; onClose: () => void; children: React.ReactNode }) {
     const isMobile = useIsMobile();
 
     if (isMobile) {
         return (
-            <BottomSheet open onClose={onClose} size="full" title={title}>
+            <BottomSheet open onClose={onClose} size="full" title={title} footer={footer} bodyClassName="space-y-6">
                 {children}
             </BottomSheet>
         );
     }
 
     return (
-        <div
-            style={{
-                position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex',
-                alignItems: isMobile ? 'flex-end' : 'center', justifyContent: 'center', zIndex: 1000,
-            }}
-            onClick={onClose}
-        >
-            <div
-                style={{
-                    background: 'var(--blanc-panel-surface, #fffdf9)',
-                    borderRadius: isMobile ? '18px 18px 0 0' : 14,
-                    width: isMobile ? '100%' : 600,
-                    maxWidth: '100%',
-                    maxHeight: isMobile ? '92dvh' : '85vh',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    overflow: 'hidden',
-                    boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
-                    animation: isMobile ? 'blancSlideUp 0.25s ease-out' : undefined,
-                }}
-                onClick={e => e.stopPropagation()}
-            >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid #e5e7eb', background: 'var(--blanc-panel-surface, #fffdf9)', flexShrink: 0 }}>
-                    <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>{title}</h2>
-                    <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: 4 }}><X size={18} /></button>
-                </div>
-                <div style={{ padding: '16px 20px', overflowY: 'auto', flex: '1 1 auto', minHeight: 0, paddingBottom: isMobile ? 'max(env(safe-area-inset-bottom), 16px)' : 16 }}>{children}</div>
-            </div>
-        </div>
+        <Dialog open onOpenChange={open => { if (!open) onClose(); }}>
+            <DialogContent variant="panel">
+                <DialogPanelHeader>
+                    <DialogTitle>{title}</DialogTitle>
+                    <DialogDescription className="sr-only">{title}</DialogDescription>
+                </DialogPanelHeader>
+                <DialogBody className="md:px-8 md:py-7">
+                    <div className="mx-auto w-full max-w-[740px] space-y-6">{children}</div>
+                </DialogBody>
+                {footer && <DialogPanelFooter>{footer}</DialogPanelFooter>}
+            </DialogContent>
+        </Dialog>
     );
 }
 
@@ -111,7 +97,9 @@ function snapTo30(time: string): string {
     return `${String(snappedHour).padStart(2, '0')}:${snappedMin === 0 ? '00' : '30'}`;
 }
 
-const sectionLabel = { fontSize: 12, fontWeight: 600 as const, color: '#6b7280', textTransform: 'uppercase' as const, letterSpacing: '0.05em', marginBottom: 10, display: 'flex', alignItems: 'center' as const, gap: 6 };
+// Section label = canonical eyebrow (.blanc-eyebrow owns font/color); only the
+// icon row layout stays inline.
+const sectionLabel = { display: 'flex', alignItems: 'center' as const, gap: 6, marginBottom: 10 };
 
 // ── Unified Group Form Modal ─────────────────────────────────────────────────
 function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClose: () => void }) {
@@ -172,24 +160,31 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
     };
 
     return (
-        <Modal title={isNew ? 'New Group' : `Edit Group — ${group.name}`} onClose={onClose}>
+        <Modal
+            title={isNew ? 'New Group' : `Edit Group — ${group.name}`}
+            onClose={onClose}
+            footer={
+                <div className="flex items-center justify-end gap-3">
+                    <Button variant="ghost" onClick={onClose}>Cancel</Button>
+                    <Button onClick={handleSave} disabled={!name.trim() || saving}>{saving ? 'Saving...' : isNew ? 'Create Group' : 'Save Changes'}</Button>
+                </div>
+            }
+        >
             {/* Group Name */}
-            <div style={{ marginBottom: 20 }}>
-                <div style={sectionLabel}><Pencil size={13} />Group Name</div>
+            <div>
+                <div className="blanc-eyebrow" style={sectionLabel}><Pencil size={13} />Group Name</div>
                 <input value={name} onChange={e => setName(e.target.value)} placeholder="Enter group name..."
-                    style={{ width: '100%', padding: '8px 12px', fontSize: 14, fontWeight: 500, border: '1px solid #d1d5db', borderRadius: 8, outline: 'none', color: '#111', boxSizing: 'border-box' }}
+                    style={{ width: '100%', padding: '8px 12px', fontSize: 14, fontWeight: 500, border: '1px solid var(--blanc-line-strong)', borderRadius: 8, outline: 'none', color: 'var(--blanc-ink-1)', boxSizing: 'border-box' }}
                     autoFocus={isNew} />
             </div>
 
-            <div style={{ height: 1, background: '#e5e7eb', margin: '0 -20px 20px' }} />
-
             {/* Members */}
-            <div style={{ marginBottom: 20 }}>
-                <div style={sectionLabel}><Users size={13} />Members ({members.length})</div>
+            <div>
+                <div className="blanc-eyebrow" style={sectionLabel}><Users size={13} />Members ({members.length})</div>
                 {members.map(id => {
                     const displayName = memberNameMap.get(id) || id;
                     return (
-                        <div key={id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f3f4f6' }}>
+                        <div key={id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--blanc-line)' }}>
                             <span style={{ fontSize: 13, fontWeight: 500 }}>{displayName}</span>
                             <button onClick={() => setMembers(m => m.filter(x => x !== id))}
                                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', padding: 4 }}>
@@ -202,7 +197,7 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
                         {availableAgents.map(a => (
                             <button key={a.id} onClick={() => { memberNameMap.set(a.id, a.name); setMembers(m => [...m, a.id]); }}
-                                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', fontSize: 12, fontWeight: 500, background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', color: '#374151' }}>
+                                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', fontSize: 12, fontWeight: 500, background: 'rgba(25,25,25,0.04)', border: '1px solid var(--blanc-line)', borderRadius: 6, cursor: 'pointer', color: 'var(--blanc-ink-1)' }}>
                                 <Plus size={12} />{a.name}
                             </button>
                         ))}
@@ -210,18 +205,16 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
                 )}
             </div>
 
-            <div style={{ height: 1, background: '#e5e7eb', margin: '0 -20px 20px' }} />
-
             {/* Numbers */}
-            <div style={{ marginBottom: 20 }}>
-                <div style={sectionLabel}><Phone size={13} />Numbers ({nums.length})</div>
+            <div>
+                <div className="blanc-eyebrow" style={sectionLabel}><Phone size={13} />Numbers ({nums.length})</div>
                 {nums.length === 0 && <div style={{ fontSize: 12, color: '#ef4444', padding: '4px 0' }}>No numbers assigned — calls won't reach this group</div>}
                 {nums.map(id => {
                     const n = _allNumbers.find((x: { id: string }) => x.id === id);
                     return (
-                        <div key={id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f3f4f6' }}>
+                        <div key={id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--blanc-line)' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                <Phone size={13} style={{ color: '#6366f1' }} />
+                                <Phone size={13} style={{ color: 'var(--blanc-accent)' }} />
                                 <span style={{ fontSize: 13, fontWeight: 500 }}>{n?.friendly_name || n?.number}</span>
                             </div>
                             <button onClick={() => setNums(m => m.filter(x => x !== id))}
@@ -235,34 +228,30 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
                         {availableNums.map(n => (
                             <button key={n.id} onClick={() => setNums(m => [...m, n.id])}
-                                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', fontSize: 12, fontWeight: 500, background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6, cursor: 'pointer', color: '#374151' }}>
-                                <Plus size={12} style={{ color: '#6366f1' }} />{n.friendly_name || n.number}
+                                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', fontSize: 12, fontWeight: 500, background: 'rgba(25,25,25,0.03)', border: '1px solid var(--blanc-line)', borderRadius: 6, cursor: 'pointer', color: 'var(--blanc-ink-1)' }}>
+                                <Plus size={12} style={{ color: 'var(--blanc-accent)' }} />{n.friendly_name || n.number}
                             </button>
                         ))}
                     </div>
                 )}
             </div>
 
-            <div style={{ height: 1, background: '#e5e7eb', margin: '0 -20px 20px' }} />
-
             {/* Ring Strategy */}
-            <div style={{ marginBottom: 20 }}>
-                <div style={sectionLabel}><Shuffle size={13} />Ring Strategy</div>
+            <div>
+                <div className="blanc-eyebrow" style={sectionLabel}><Shuffle size={13} />Ring Strategy</div>
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     {Object.entries(RING_STRATEGIES).map(([s, tip]) => (
                         <button key={s} type="button" title={tip}
-                            style={{ padding: '4px 10px', fontSize: 11, fontWeight: 600, background: '#6366f1', color: '#fff', border: 'none', borderRadius: 6, cursor: 'default' }}>
+                            style={{ padding: '4px 10px', fontSize: 11, fontWeight: 600, background: 'var(--blanc-accent)', color: '#fff', border: 'none', borderRadius: 6, cursor: 'default' }}>
                             {s}
                         </button>
                     ))}
                 </div>
             </div>
 
-            <div style={{ height: 1, background: '#e5e7eb', margin: '0 -20px 20px' }} />
-
             {/* Business Hours */}
-            <div style={{ marginBottom: 8 }}>
-                <div style={sectionLabel}><Calendar size={13} />Business Hours</div>
+            <div>
+                <div className="blanc-eyebrow" style={sectionLabel}><Calendar size={13} />Business Hours</div>
                 {hours.map((h, i) => {
                     const isOpen = h.open !== 'Closed';
                     // Mobile: stack the two time selects onto their own full-width row below the
@@ -272,38 +261,32 @@ function GroupFormModal({ group, onClose }: { group: UserGroupData | null; onClo
                         minWidth: isMobile ? 0 : 100,
                         maxWidth: isMobile ? undefined : 100,
                         height: 40, padding: '0 10px 0 8px', fontSize: 14, fontWeight: 600,
-                        background: 'rgba(9,30,66,0.04)', border: '1px solid #f6f6f6', borderRadius: 8,
-                        color: '#0c0c0d', cursor: 'pointer', appearance: 'auto' as const,
+                        background: 'var(--blanc-field)', border: '1px solid var(--blanc-line)', borderRadius: 8,
+                        color: 'var(--blanc-ink-1)', cursor: 'pointer', appearance: 'auto' as const,
                     };
                     const timeRow = isOpen ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: isMobile ? '1 1 100%' : '0 0 auto', minWidth: 0 }}>
                             <select value={snapTo30(h.open)} onChange={e => setTime(i, 'open', e.target.value)} style={timeSelectStyle}>
                                 {TIME_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                             </select>
-                            <span style={{ color: '#a3a3a3', fontSize: 14, flexShrink: 0 }}>—</span>
+                            <span style={{ color: 'var(--blanc-ink-3)', fontSize: 14, flexShrink: 0 }}>—</span>
                             <select value={snapTo30(h.close)} onChange={e => setTime(i, 'close', e.target.value)} style={timeSelectStyle}>
                                 {TIME_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                             </select>
                         </div>
                     ) : null;
                     return (
-                        <div key={h.day} style={{ display: 'flex', alignItems: 'center', flexWrap: isMobile ? 'wrap' : 'nowrap', gap: 10, padding: '8px 0', borderBottom: '1px solid #f3f4f6' }}>
-                            <span style={{ width: 36, fontSize: 13, fontWeight: 600, color: '#374151', flexShrink: 0 }}>{h.day}</span>
+                        <div key={h.day} style={{ display: 'flex', alignItems: 'center', flexWrap: isMobile ? 'wrap' : 'nowrap', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--blanc-line)' }}>
+                            <span style={{ width: 36, fontSize: 13, fontWeight: 600, color: 'var(--blanc-ink-1)', flexShrink: 0 }}>{h.day}</span>
                             <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', minWidth: 56, flexShrink: 0 }}>
                                 <input type="checkbox" checked={isOpen} onChange={() => toggleDay(i)}
-                                    style={{ width: 18, height: 18, accentColor: '#6366f1' }} />
-                                <span style={{ fontSize: 11, color: isOpen ? '#22c55e' : '#9ca3af', fontWeight: 600 }}>{isOpen ? 'Open' : 'Off'}</span>
+                                    style={{ width: 18, height: 18, accentColor: 'var(--blanc-accent)' }} />
+                                <span style={{ fontSize: 11, color: isOpen ? '#22c55e' : 'var(--blanc-ink-3)', fontWeight: 600 }}>{isOpen ? 'Open' : 'Off'}</span>
                             </label>
                             {timeRow}
                         </div>
                     );
                 })}
-            </div>
-
-            {/* Footer */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20, paddingTop: 16, borderTop: '1px solid #e5e7eb' }}>
-                <button onClick={onClose} style={{ padding: '8px 16px', fontSize: 13, background: '#f3f4f6', color: '#374151', border: '1px solid #e5e7eb', borderRadius: 8, cursor: 'pointer' }}>Cancel</button>
-                <button onClick={handleSave} disabled={!name.trim() || saving} style={{ padding: '8px 16px', fontSize: 13, fontWeight: 600, background: name.trim() && !saving ? '#6366f1' : '#d1d5db', color: '#fff', border: 'none', borderRadius: 8, cursor: name.trim() && !saving ? 'pointer' : 'default' }}>{saving ? 'Saving...' : isNew ? 'Create Group' : 'Save Changes'}</button>
             </div>
         </Modal>
     );
@@ -365,33 +348,29 @@ export default function UserGroupsPage() {
     });
 
     return (
-        <div style={{ padding: 24 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-                <div>
-                    <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>User Groups</h1>
-                    <p style={{ fontSize: 13, color: '#6b7280', margin: '4px 0 0' }}>Agent groups with numbers, schedules & call flows</p>
-                </div>
-                <button onClick={() => setEditGroup('new')} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', fontSize: 13, fontWeight: 600, background: '#6366f1', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer' }}>
-                    <Plus size={15} />New Group
-                </button>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-                {loading ? <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>Loading...</div> : groups.length === 0 ? <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>No groups yet. Click "New Group" to get started.</div> : null}
+        <SettingsPageShell
+            title="User Groups"
+            description="Agent groups with numbers, schedules & call flows"
+            actions={
+                <Button onClick={() => setEditGroup('new')}>
+                    <Plus className="size-4" />New Group
+                </Button>
+            }
+        >
+            <div className="flex flex-col gap-5">
+                {loading ? <div style={{ padding: 40, textAlign: 'center', color: 'var(--blanc-ink-3)' }}>Loading...</div> : groups.length === 0 ? <div style={{ padding: 40, textAlign: 'center', color: 'var(--blanc-ink-3)' }}>No groups yet. Click "New Group" to get started.</div> : null}
                 {groups.map(g => (
-                    <div key={g.id} style={{ background: 'var(--blanc-panel-surface, #fffdf9)', border: '1px solid #e5e7eb', borderRadius: 14, overflow: 'hidden', transition: 'box-shadow 0.15s' }}
-                        onMouseEnter={e => (e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.07)')}
-                        onMouseLeave={e => (e.currentTarget.style.boxShadow = 'none')}>
+                    <div key={g.id} style={{ background: 'var(--blanc-panel-surface)', border: '1px solid var(--blanc-line)', borderRadius: 16, overflow: 'hidden' }}>
 
                         {/* Header */}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid #f3f4f6' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid var(--blanc-line)' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                                 <div style={{ width: 40, height: 40, borderRadius: 10, background: '#fef3c7', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                     <Users size={18} style={{ color: '#f59e0b' }} />
                                 </div>
                                 <div>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                                        <div style={{ fontSize: 16, fontWeight: 700, color: '#111' }}>{g.name}</div>
+                                        <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--blanc-ink-1)' }}>{g.name}</div>
                                         {(() => {
                                             const reachable = g.members.some(m => m.status === 'available');
                                             return (
@@ -403,33 +382,30 @@ export default function UserGroupsPage() {
                                     </div>
                                     {(() => {
                                         const status = getScheduleStatus(g.schedule);
-                                        return <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{status.label}</div>;
+                                        return <div style={{ fontSize: 12, color: 'var(--blanc-ink-2)', marginTop: 2 }}>{status.label}</div>;
                                     })()}
                                 </div>
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                <button onClick={(e) => { e.stopPropagation(); navigate(`/settings/telephony/user-groups/${g.id}`); }}
-                                    style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 12px', fontSize: 12, fontWeight: 500, background: 'var(--blanc-panel-surface, #fffdf9)', color: '#374151', border: '1px solid #e5e7eb', borderRadius: 8, cursor: 'pointer' }}>
-                                    <Eye size={13} />Details
-                                </button>
-                                <button onClick={(e) => { e.stopPropagation(); setEditGroup(g); }}
-                                    style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 12px', fontSize: 12, fontWeight: 500, background: '#f3f4f6', color: '#374151', border: '1px solid #e5e7eb', borderRadius: 8, cursor: 'pointer' }}>
-                                    <Pencil size={13} />Edit
-                                </button>
-                                <button onClick={(e) => { e.stopPropagation(); navigate(`/settings/telephony/user-groups/${g.id}/flow`); }}
-                                    style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 14px', fontSize: 13, fontWeight: 600, background: '#6366f1', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer' }}>
-                                    <Play size={13} />Flow Builder
-                                </button>
+                                <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); navigate(`/settings/telephony/user-groups/${g.id}`); }}>
+                                    <Eye />Details
+                                </Button>
+                                <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); setEditGroup(g); }}>
+                                    <Pencil />Edit
+                                </Button>
+                                <Button size="sm" onClick={(e) => { e.stopPropagation(); navigate(`/settings/telephony/user-groups/${g.id}/flow`); }}>
+                                    <Play />Flow Builder
+                                </Button>
                             </div>
                         </div>
 
                         {/* Body */}
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0 }}>
                             {/* Left: Members + Numbers stacked */}
-                            <div style={{ borderRight: '1px solid #f3f4f6' }}>
+                            <div style={{ borderRight: '1px solid var(--blanc-line)' }}>
                                 {/* Members */}
-                                <div style={{ padding: '16px 20px', borderBottom: '1px solid #f3f4f6' }}>
-                                    <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--blanc-line)' }}>
+                                    <div className="blanc-eyebrow" style={sectionLabel}>
                                         <Users size={13} />Members ({g.members.length})
                                     </div>
                                     {g.members.map(m => {
@@ -437,7 +413,7 @@ export default function UserGroupsPage() {
                                         return (
                                             <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
                                                 <div style={{ width: 8, height: 8, borderRadius: '50%', background: sc.dot, flexShrink: 0 }} />
-                                                <span style={{ fontSize: 13, fontWeight: 500, color: '#111', flex: 1 }}>{m.name}</span>
+                                                <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--blanc-ink-1)', flex: 1 }}>{m.name}</span>
                                                 <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 8, background: sc.bg, color: sc.dot, fontWeight: 600 }}>{m.status.replace('_', ' ')}</span>
                                             </div>
                                         );
@@ -446,16 +422,16 @@ export default function UserGroupsPage() {
 
                                 {/* Numbers */}
                                 <div style={{ padding: '16px 20px' }}>
-                                    <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <div className="blanc-eyebrow" style={sectionLabel}>
                                         <Phone size={13} />Numbers ({g.numbers.length})
-                                        <span style={{ fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 4, background: '#ede9fe', color: '#6366f1', textTransform: 'none', letterSpacing: 0 }}>{g.strategy}</span>
+                                        <span style={{ fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 4, background: 'var(--blanc-accent-soft)', color: 'var(--blanc-accent)', textTransform: 'none', letterSpacing: 0 }}>{g.strategy}</span>
                                     </div>
                                     {g.numbers.length === 0 && <div style={{ fontSize: 12, color: '#ef4444' }}>No numbers — calls won't reach this group</div>}
                                     {g.numbers.map(n => (
                                         <div key={n.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0' }}>
-                                            <Phone size={13} style={{ color: '#6366f1', flexShrink: 0 }} />
-                                            <span style={{ fontSize: 13, fontWeight: 500, color: '#111', flex: 1 }}>{n.number}</span>
-                                            <span style={{ fontSize: 12, color: '#9ca3af' }}>{n.friendly_name}</span>
+                                            <Phone size={13} style={{ color: 'var(--blanc-accent)', flexShrink: 0 }} />
+                                            <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--blanc-ink-1)', flex: 1 }}>{n.number}</span>
+                                            <span style={{ fontSize: 12, color: 'var(--blanc-ink-3)' }}>{n.friendly_name}</span>
                                         </div>
                                     ))}
                                 </div>
@@ -464,20 +440,20 @@ export default function UserGroupsPage() {
                             {/* Right: Schedule */}
                             <div style={{ padding: '16px 20px' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-                                    <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <div className="blanc-eyebrow" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                         <Calendar size={13} />Business Hours
                                     </div>
-                                    <span style={{ fontSize: 12, color: '#6b7280', fontWeight: 500 }}>{g.schedule.timezone.replace('_', ' ')}</span>
+                                    <span style={{ fontSize: 12, color: 'var(--blanc-ink-2)', fontWeight: 500 }}>{g.schedule.timezone.replace('_', ' ')}</span>
                                 </div>
                                 {g.schedule.hours.map(h => {
                                     const isOpen = h.open !== 'Closed';
                                     return (
-                                        <div key={h.day} style={{ display: 'flex', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #f3f4f6' }}>
-                                            <span style={{ width: 36, fontSize: 13, fontWeight: 600, color: '#374151' }}>{h.day}</span>
-                                            <div style={{ width: 6, height: 6, borderRadius: '50%', background: isOpen ? '#22c55e' : '#e5e7eb', marginRight: 8, flexShrink: 0 }} />
+                                        <div key={h.day} style={{ display: 'flex', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid var(--blanc-line)' }}>
+                                            <span style={{ width: 36, fontSize: 13, fontWeight: 600, color: 'var(--blanc-ink-1)' }}>{h.day}</span>
+                                            <div style={{ width: 6, height: 6, borderRadius: '50%', background: isOpen ? '#22c55e' : 'var(--blanc-line-strong)', marginRight: 8, flexShrink: 0 }} />
                                             {isOpen
-                                                ? <span style={{ fontSize: 13, color: '#374151' }}>{h.open} – {h.close}</span>
-                                                : <span style={{ fontSize: 13, color: '#9ca3af' }}>Closed</span>
+                                                ? <span style={{ fontSize: 13, color: 'var(--blanc-ink-1)' }}>{h.open} – {h.close}</span>
+                                                : <span style={{ fontSize: 13, color: 'var(--blanc-ink-3)' }}>Closed</span>
                                             }
                                         </div>
                                     );
@@ -495,6 +471,6 @@ export default function UserGroupsPage() {
                     onClose={() => { setEditGroup(null); fetchGroups(); }}
                 />
             )}
-        </div>
+        </SettingsPageShell>
     );
 }
