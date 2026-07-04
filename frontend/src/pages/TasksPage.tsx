@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, Loader2, AlarmClock, ArrowUpDown, ArrowUp, ArrowDown, Sparkles } from 'lucide-react';
+import { Check, Loader2, AlarmClock, ArrowUpDown, ArrowUp, ArrowDown, Sparkles, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuthz } from '../hooks/useAuthz';
 import { useIsMobile } from '../hooks/useIsMobile';
@@ -18,12 +18,12 @@ const PARENT_META: Record<TaskParentType, { label: string; color: string }> = {
     contact: { label: 'Contact', color: '#1D9E75' },
     estimate: { label: 'Estimate', color: '#EF9F27' },
     invoice: { label: 'Invoice', color: '#D85A30' },
-    timeline: { label: 'Conversation', color: '#C2683B' },
+    timeline: { label: 'Pulse', color: '#C2683B' },
 };
 
-// Filterable parent types (the API takes one parent_type; timeline tasks are
-// reachable via "All types" but not a dedicated filter, matching the old select).
-const FILTER_TYPES: TaskParentType[] = ['job', 'lead', 'contact', 'estimate', 'invoice'];
+// Filterable parent types. 'timeline' = a task on a Pulse conversation; labeled
+// "Pulse" (PARENT_META) so the filter matches the nav section name.
+const FILTER_TYPES: TaskParentType[] = ['job', 'lead', 'contact', 'estimate', 'invoice', 'timeline'];
 
 interface Group { key: string; label: string; danger?: boolean; compactTime?: boolean; tasks: Task[]; }
 
@@ -169,6 +169,7 @@ export function TasksPage() {
                     <option value="contact">Contacts</option>
                     <option value="estimate">Estimates</option>
                     <option value="invoice">Invoices</option>
+                    <option value="timeline">Pulse</option>
                 </select>
                 <div className="flex items-center" style={{ background: 'var(--blanc-field)', borderRadius: 999, padding: 2 }}>
                     {(['open', 'all'] as const).map(s => (
@@ -232,8 +233,30 @@ export function TasksPage() {
         return (
             <MobileListPage
                 stickyBar={
-                    <div className="flex items-center justify-between gap-3">
-                        <div className="blanc-eyebrow" style={{ marginBottom: 0 }}>Tasks</div>
+                    <div className="space-y-2.5">
+                        {/* TASKS-SEARCH-001: mobile search — same client-side filter as
+                            desktop (filteredTasks already drives the mobile groups). */}
+                        <div className="flex items-center gap-3">
+                            <div className="blanc-eyebrow shrink-0" style={{ marginBottom: 0 }}>Tasks</div>
+                            <label className="flex items-center min-h-[40px] px-3 gap-2 flex-1 min-w-0"
+                                style={{ background: 'var(--blanc-field)', borderRadius: 999 }}>
+                                <Search className="size-4 shrink-0" style={{ color: 'var(--blanc-ink-3)' }} />
+                                <input
+                                    type="text"
+                                    placeholder="Search..."
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    className="w-full bg-transparent border-0 text-[14px] outline-none placeholder:text-gray-400"
+                                    style={{ color: 'var(--blanc-ink-1)' }}
+                                />
+                                {searchQuery && (
+                                    <button type="button" onClick={() => setSearchQuery('')} aria-label="Clear search"
+                                        className="shrink-0" style={{ color: 'var(--blanc-ink-3)' }}>
+                                        <X className="size-4" />
+                                    </button>
+                                )}
+                            </label>
+                        </div>
                         {controls}
                     </div>
                 }
