@@ -3277,8 +3277,11 @@ construction; jest asserts it.
 
 **Migration 155 — `155_backfill_outbound_email_links.sql` (FR-5 historical parity; mig 144/154
 pattern: one idempotent `DO $$` block, `RAISE NOTICE` row-counts per step, rollback file).** Live
-linking exists (send path + Gmail push), but the poll reconciler `ingestPolledForCompany` is exported
-and **never scheduled** — pre-push history and push-missed sends sit unlinked (`contact_id IS NULL`).
+linking exists (send path + Gmail push). **[CORRECTED 2026-07-04: the poll reconciler IS scheduled —
+`src/server.js` runtime shell (`runTimelineLinkPoll`, EMAIL-TIMELINE-001 TASK-ET-4, 5-min tick, ungated)
+drains unlinked inbound AND outbound; the original 'never scheduled' claim was a grep-scope artifact
+(backend/src only). Verified in prod logs. The backfill below remains necessary for the historical tail
+the LIMIT-bounded drain never reached.]** Pre-backfill history sat unlinked (`contact_id IS NULL`).
 Steps, mirroring `linkOutboundMessage` semantics exactly:
 1. **Match set:** unlinked genuinely-sent outbound rows (`direction='outbound' AND contact_id IS NULL
    AND on_timeline = false AND message_id_header IS NOT NULL AND message_id_header <> ''` — the
