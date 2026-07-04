@@ -3217,3 +3217,133 @@ GET-sync (`:100-108`) всегда листит **master**-аккаунт (`getT
 4. Плитка telephony-twilio показывает Connected сразу после шага 1 (субаккаунт есть), даже без номера — это прямое следствие требования B.5 «состояние выводится из фактического подключения (`company_telephony`)»; полнота онбординга отслеживается чеклистом Части A (номер), не плиткой.
 5. Residue-события status-callback'ов отклонённых unknown-звонков продолжают попадать в `webhook_inbox` (pre-existing конвейер) — осознанно вне скоупа; сам звонок отклоняется до какого-либо voicemail/routing.
 
+---
+
+## EMAIL-OUTBOUND-001 — outbound leg in the unified-list email CTE (architecture)
+
+**Decision: two-leg `UNION ALL` inside `email_by_contact`, one `DISTINCT ON` on top.** The inbound
+leg keeps its predicates **byte-identical** (text-match `contact_emails.email_normalized =
+lower(trim(em.from_email))`, `em.direction = 'inbound'`, `em.from_email IS NOT NULL` — the mig 143
+functional index and the d56db8f search fix depend on exactly this text). The new outbound leg reads
+ONLY the persisted mig-129 link — `em.direction = 'outbound' AND em.contact_id IS NOT NULL AND
+em.on_timeline = true` — never `to_recipients_json` (per-row JSONB expansion in the hot query is
+banned). Alternatives rejected: a single persisted-link source for BOTH directions silently changes
+inbound coverage (history was never back-linked; binding constraint says inbound stays as-is); an
+OR-extended single leg (`text-match OR contact_id`) denies the planner both index paths. `UNION ALL`
+gives each leg its own exact index. Everything OUTSIDE the CTE is untouched: join
+(`eml.contact_id = tl.contact_id`), surfacing predicate (`eml.email_thread_id IS NOT NULL`), search
+alias (`eml.email_subject`), `GREATEST` ordering, AR/unread tiers, orphan-shadow dedup, `total_count`.
+
+**CTE shape (both legs `company_id = $1` on `em` AND `et` — AC-5):**
+```sql
+email_by_contact AS (
+    SELECT DISTINCT ON (contact_id)
+           contact_id, email_thread_id, email_subject,
+           last_message_at, last_message_direction, unread_count
+    FROM (
+        SELECT ce.contact_id, et.id AS email_thread_id, et.subject AS email_subject,
+               et.last_message_at, et.last_message_direction, et.unread_count
+        FROM email_messages em
+        JOIN contact_emails ce ON ce.email_normalized = lower(trim(em.from_email))
+        JOIN email_threads et ON et.id = em.thread_id
+        WHERE em.company_id = $1 AND et.company_id = $1
+          AND em.direction = 'inbound' AND em.from_email IS NOT NULL
+        UNION ALL
+        SELECT em.contact_id, et.id, et.subject,
+               et.last_message_at, et.last_message_direction, et.unread_count
+        FROM email_messages em
+        JOIN email_threads et ON et.id = em.thread_id
+        WHERE em.company_id = $1 AND et.company_id = $1
+          AND em.direction = 'outbound' AND em.contact_id IS NOT NULL
+          AND em.on_timeline = true
+    ) legs
+    ORDER BY contact_id, last_message_at DESC NULLS LAST, email_thread_id DESC
+)
+```
+Newest thread across both directions wins (a mixed thread emits identical tuples from both legs —
+`DISTINCT ON` dedup is harmless; thread-level `last_message_at`/`last_message_direction`/`unread_count`
+come from `email_threads` either way). `email_thread_id DESC` is a NEW deterministic tie-break — it
+only fixes previously plan-dependent ordering of equal-timestamp threads (reviewer note, not a
+semantic change). Frozen output shape: same six columns/aliases out of the CTE.
+
+**Unread invariant (FR-3/D2) — verified, not assumed.** `email_threads.unread_count` is written only
+by `upsertThread` (`backend/src/db/emailQueries.js:250`, `unread_count = EXCLUDED.unread_count`) with
+a value counted from Gmail `UNREAD` labels in `backend/src/services/emailSyncService.js:131-132` —
+own sent mail never carries `UNREAD`, so it grows only from inbound; outbound linking actively CLEARS
+it (`backend/src/services/email/emailTimelineService.js:348-354` → `markThreadRead`,
+`emailQueries.js:262-271`); Pulse mark-read clears it (`backend/src/routes/calls.js:317-321`). This
+change only READS `et.unread_count` → outbound-first rows surface with `any_unread = false` by
+construction; jest asserts it.
+
+**Migration 155 — `155_backfill_outbound_email_links.sql` (FR-5 historical parity; mig 144/154
+pattern: one idempotent `DO $$` block, `RAISE NOTICE` row-counts per step, rollback file).** Live
+linking exists (send path + Gmail push), but the poll reconciler `ingestPolledForCompany` is exported
+and **never scheduled** — pre-push history and push-missed sends sit unlinked (`contact_id IS NULL`).
+Steps, mirroring `linkOutboundMessage` semantics exactly:
+1. **Match set:** unlinked genuinely-sent outbound rows (`direction='outbound' AND contact_id IS NULL
+   AND on_timeline = false AND message_id_header IS NOT NULL AND message_id_header <> ''` — the
+   draft-safe discriminator canonized in `listUnlinkedOutboundForTimeline`, `emailQueries.js:525-530`);
+   recipients via `jsonb_array_elements(em.to_recipients_json) WITH ORDINALITY` (one-time expansion is
+   fine in a migration); contact match mirrors `findEmailContact` (`emailQueries.js:424-438`):
+   company-scoped `c.company_id = em.company_id`, `lower(c.email) = addr OR ce.email_normalized = addr`,
+   tie-break `c.updated_at DESC NULLS LAST, c.id ASC`; first matching recipient wins
+   (`DISTINCT ON (em.id) ORDER BY em.id, ord, …`).
+2. **Timeline find-or-create — full SQL mirror of `findOrCreateTimelineByContact`
+   (`timelinesQueries.js:246-311`), NOT a bare INSERT:** (a) reuse the existing contact-linked
+   timeline; (b) else ADOPT the newest phone-digit-matching orphan (`UPDATE timelines SET contact_id,
+   phone_e164 = NULL` + re-point `calls.contact_id`) — a bare INSERT would fork the person across two
+   timelines and the orphan-shadow dedup would then hide their call history (the exact
+   ORPHAN-TASK-REHOME-001 bug class); (c) else `INSERT (contact_id, company_id) … ON CONFLICT
+   (contact_id) WHERE contact_id IS NOT NULL DO NOTHING` (arbiter = mig 029 partial unique).
+   *Why create timelines at all (vs "lazy"):* there is no lazy creation on any read path — the list
+   roots on `timelines`, so link-without-timeline fails FR-5 for precisely the target case
+   (Gmail-direct send to an email-only lead); only a FUTURE send would heal it.
+3. **Stamp links** (`contact_id`, `timeline_id`, `on_timeline = true`) — mirror of
+   `linkMessageToContact`.
+4. **Re-run the mig-144 open-task re-home sweep verbatim** — step 2 can newly shadow orphans; the
+   project invariant since ORPHAN-TASK-REHOME-001 is that every canonical-timeline-creating path
+   sweeps (the JS helper does at `timelinesQueries.js:306-309`). Idempotent by construction.
+`rollback_155…`: documented one-way (backfilled links are indistinguishable from runtime links; undo
+= PITR — same posture as `rollback_144`). Re-run safety: step 1 selects `contact_id IS NULL`, so a
+second apply matches nothing.
+
+**Index decision: NO new index by default (PULSE-PERF-001: no speculative indexes).** Leg 1 keeps mig
+143 (`(company_id, lower(trim(from_email)))`). Leg 2 is served by the mig 129 partial index
+(`(company_id, contact_id, gmail_internal_at) WHERE contact_id IS NOT NULL`) — its partial condition
+plus `company_id` prefix contain the leg's driving predicate; `direction`/`on_timeline` are residual
+filters over the (small) linked set. Escape hatch ONLY if the EXPLAIN gate fails: mig 156 partial
+index `ON email_messages (company_id, contact_id, thread_id) WHERE direction = 'outbound' AND
+contact_id IS NOT NULL AND on_timeline = true` — predicate copied verbatim from the leg.
+
+**EXPLAIN verification plan (AC-6 gate, blocking).** The local dev DB is NOT prod-like for email
+(5 `email_messages` rows — measured); run against a fresh prod `pg_dump` restore or read-only on prod
+from the app container (PULSE-PERF-001 methodology). Procedure: `EXPLAIN (ANALYZE, BUFFERS)` of the
+EXACT `getUnifiedTimelinePage` SQL (real params: Boston Masters company UUID, limit 50/offset 0; once
+plain, once with a search term), before AND after; acceptance = `email_by_contact` evaluated ONCE (no
+per-timeline re-scan), no per-row Seq Scan over `email_messages`, latency ≈ the 0.3s baseline; plus
+timing the real function via a node one-liner in the app container. Mig 155 itself is EXPLAIN-exempt
+(one-time), but its per-step counts must be recorded from the prod-copy dry run.
+
+**Files.** `backend/src/db/timelinesQueries.js` — the CTE + the function-header "Scope A/INBOUND"
+comment (lines ~321-324, 349-353) now describing both legs (ONLY behavioral change point);
+`backend/db/migrations/155_backfill_outbound_email_links.sql` + `rollback_155_…`;
+`tests/listPaginationByContact.test.js` — extended, every existing assertion untouched (they pin the
+inbound leg + aliases), new assertions for `UNION ALL`, the three outbound predicates, both legs'
+`$1` scoping, and `any_unread = false` on outbound-first; real-DB scenario run vs prod copy
+(outbound-only / inbound+outbound mix / two-threads-newest-wins / no-match / draft / cross-tenant)
+documented in the PR — mocked jest validates SQL text only (LIST-PAGINATION-001 lesson). Optional
+gated: `156_*` index. **No route/frontend changes** (`GET /api/calls/by-contact` mount + middleware
+as-is; icons shipped in d455c52).
+
+**Protected (untouched):** `emailTimelineService` (senders/linkers/DRAFT guard/`markThreadRead`),
+`emailQueries`, `buildTimeline` + timeline-detail projection, `/email` workspace + push pipeline,
+migrations ≤ 154, `src/server.js`, `authedFetch.ts`, `useRealtimeEvents.ts`, unread model.
+
+**Risks / flags.** (1) `ingestPolledForCompany` stays unwired — after mig 155 a Gmail-push outage
+would again accumulate unlinked outbound rows with nothing draining them; wiring the poller is a
+small separate owner decision, out of scope here. (2) The `DISTINCT ON` tie-break addition — safe,
+called out for review. (3) Backfill corner: two matched contacts sharing one orphan timeline →
+deterministic one-orphan-one-contact assignment via double `DISTINCT ON` (JS resolves the same case
+by iteration order today). (4) Deploy only with explicit owner consent (standing rule); re-verify
+max migration number immediately before creating 155 (parallel branches).
+

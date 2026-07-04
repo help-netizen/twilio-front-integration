@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-07-03 — EMAIL-OUTBOUND-001: исходящие-первые email-треды видимы в Pulse (orchestrate-пайплайн)
+
+Диспетчер пишет клиенту первым (email-only лид) — тред теперь всплывает в юнифайд-листе Pulse с иконкой исходящего письма (MailCheck), сортируется по времени отправки, НЕ помечается непрочитанным. Ранее CTE списка цеплялся только за входящие (`from_email`), и такие треды были невидимы. Полный прогон через skill `/orchestrate` (агенты 01–08, auto-run): артефакты в `Docs/requirements.md`, `Docs/architecture.md`, `Docs/specs/EMAIL-OUTBOUND-001.md`, `Docs/test-cases/EMAIL-OUTBOUND-001.md`, `Docs/tasks.md`.
+
+- **`timelinesQueries.getUnifiedTimelinePage`** — CTE `email_by_contact` = двухплечевой `UNION ALL`: плечо 1 (входящие, текст-матч через `contact_emails`) байт-в-байт как раньше (индекс mig 143 сохранён); плечо 2 (исходящие) читает ТОЛЬКО персистентную линковку mig 129 (`contact_id`/`on_timeline`), без `to_recipients_json` в горячем запросе; `DISTINCT ON (contact_id)` с новым детерминирующим tie-break `email_thread_id DESC`. Скоупинг `$1` в обоих плечах.
+- **Миграция 155** — идемпотентный logged-бэкфилл исторических исходящих (contact_id IS NULL): TO-only матчинг получателей (`jsonb WITH ORDINALITY`, first-match-wins, зеркало `findEmailContact`), драфт-гард по `message_id_header`, find-or-create таймлайна (reuse → усыновление орфана с перенацеливанием звонков → INSERT с partial-index арбитром `ON CONFLICT (contact_id) WHERE contact_id IS NOT NULL`), финальный re-home задач по образцу mig 144; `unread_count` не трогает; NOTICE-счётчики; повторный прогон = нули.
+- **Тесты** — jest 34/34 (`listPaginationByContact`, +9 новых SQL-shape кейсов, замороженные ассерты нетронуты); интеграционный харнесс `scripts/verify-email-outbound-001.js` — 24/24 PASS на реальной БД (S1–S8 + 9 edge + SEC01/02 кросс-тенант) с саботаж-контролем; EXPLAIN-гейт: оба плеча на своих индексах (mig 143 / mig 129), спекулятивный индекс mig 156 не понадобился.
+- **Reviewer (агент 08)**: T1–T4 APPROVED (независимо воспроизвёл jest/харнесс/EXPLAIN). Прод-половины перф-гейта (P01/P02/P04 на прод-копии) — в окно деплоя.
+- Флаг вне скоупа: poll-реконсайлер `ingestPolledForCompany` экспортирован, но нигде не запланирован — при падении Gmail-push нелинкованные письма копятся без дренажа (решение за владельцем).
+
+
 ## 2026-07-03 — MOBILE-TECH-APP-001 Phase 0: бэкенд-пререквизиты нативного приложения ЗАДЕПЛОЕНЫ В ПРОД
 
 Backend-фундамент нативного iOS-приложения для техников (репо `albusto-mobile`, вне этого репо) задеплоен на прод (Vultr, `master c8943da`). Аддитивно, provider-scoped; Boston Masters (seed `…0001`) не затронут. Приложение по дефолту смотрит в прод → живой вход + синк разблокированы. Статус приложения и дальнейшие шаги — `albusto-mobile/STATUS.md`.

@@ -39,6 +39,17 @@ describe('getUnifiedTimelinePage — SQL shape', () => {
         return db.query.mock.calls[0]; // [sql, params]
     }
 
+    // EMAIL-OUTBOUND-001: slice the emitted SQL down to the email_by_contact CTE
+    // (from the WITH intro to the first top-level select column), so CTE-shape
+    // assertions cannot accidentally match tokens from the outer query.
+    function cteSlice(sql) {
+        const start = sql.indexOf('WITH email_by_contact AS');
+        const end = sql.indexOf('latest_call.*');
+        expect(start).toBeGreaterThan(-1);
+        expect(end).toBeGreaterThan(start);
+        return sql.slice(start, end);
+    }
+
     it('company scope is mandatory: outer WHERE + param $1 = companyId', async () => {
         const [sql, params] = await run();
         expect(sql).toContain('tl.company_id = $1');
@@ -183,6 +194,96 @@ describe('getUnifiedTimelinePage — SQL shape', () => {
         expect(sql).toContain('eml.email_subject ILIKE');
         expect(sql).not.toContain('eml.subject ILIKE');
         expect(params).toContain('%Acme%');
+    });
+
+    // ─── EMAIL-OUTBOUND-001 — direction-agnostic email CTE (TC-EO-U02…U07) ──────
+    // The email_by_contact CTE is now a two-leg UNION ALL: leg 1 (inbound) stays
+    // byte-identical to the pre-change CTE (its predicates are pinned by the
+    // existing tests above, untouched — TC-EO-U01); leg 2 (outbound) reads ONLY
+    // the persisted mig-129 link. The cases below pin the NEW shape.
+
+    it('email CTE is a two-leg UNION ALL; outbound leg carries the three exact persisted-link predicates (TC-EO-U02)', async () => {
+        const [sql] = await run();
+        const cte = cteSlice(sql);
+        expect(cte).toContain('UNION ALL');
+        // Outbound leg reads ONLY the persisted mig-129 link — exact predicate text.
+        expect(cte).toContain("em.direction = 'outbound'");
+        expect(cte).toContain('em.contact_id IS NOT NULL');
+        expect(cte).toContain('em.on_timeline = true');
+        // Thread-level fields come from email_threads (et), joined by thread_id.
+        expect(cte).toContain('JOIN email_threads et ON et.id = em.thread_id');
+    });
+
+    it('$1 company scope on BOTH tables in BOTH legs of the email CTE (TC-EO-U03)', async () => {
+        const [sql, params] = await run();
+        // Strip -- line comments so the occurrence counts hit real SQL, not prose.
+        const cte = cteSlice(sql).replace(/--[^\n]*/g, '');
+        expect((cte.match(/em\.company_id = \$1/g) || []).length).toBeGreaterThanOrEqual(2);
+        expect((cte.match(/et\.company_id = \$1/g) || []).length).toBeGreaterThanOrEqual(2);
+        expect(params[0]).toBe(COMPANY_A);
+        // companyId must NEVER be interpolated into the SQL text.
+        expect(sql).not.toContain(COMPANY_A);
+    });
+
+    it('hot query never references recipient JSON — plain and search variants (TC-EO-U04)', async () => {
+        const [plainSql] = await run();
+        db.query.mockReset();
+        const [searchSql] = await run({ search: 'x' });
+        for (const sql of [plainSql, searchSql]) {
+            expect(sql).not.toContain('to_recipients_json');
+            expect(sql).not.toContain('jsonb_array_elements');
+        }
+    });
+
+    it('email CTE dedups DISTINCT ON (contact_id) with deterministic email_thread_id DESC tie-break (TC-EO-U05)', async () => {
+        const [sql] = await run();
+        const cte = cteSlice(sql);
+        // Bare aliases: dedup + ordering run over the union subquery (legs), so
+        // no ce./et. prefixes.
+        expect(cte).toContain('SELECT DISTINCT ON (contact_id)');
+        expect(cte).not.toContain('DISTINCT ON (ce.contact_id)');
+        // The email_thread_id DESC tie-break is mandatory — it is the NEW
+        // deterministic equal-timestamp rule (absence = plan-dependent ordering).
+        expect(cte).toContain(
+            'ORDER BY contact_id, last_message_at DESC NULLS LAST, email_thread_id DESC'
+        );
+    });
+
+    it('email CTE output shape frozen: exactly six aliases; outer consumers unchanged (TC-EO-U06)', async () => {
+        const [sql] = await run();
+        const cte = cteSlice(sql).replace(/--[^\n]*/g, '');
+        // Leg 1 sets the canonical aliases…
+        expect(cte).toContain('et.id AS email_thread_id');
+        expect(cte).toContain('et.subject AS email_subject');
+        // …and the wrapper re-projects EXACTLY the six columns (no seventh).
+        expect(cte).toMatch(
+            /SELECT DISTINCT ON \(contact_id\)\s+contact_id,\s+email_thread_id,\s+email_subject,\s+last_message_at,\s+last_message_direction,\s+unread_count\s+FROM \(/
+        );
+        // Outside the CTE nothing moved: join, surfacing predicate, outer aliases.
+        expect(sql).toContain('LEFT JOIN email_by_contact eml ON eml.contact_id = tl.contact_id');
+        expect(sql).toContain('eml.email_thread_id IS NOT NULL');
+        expect(sql).toContain('eml.last_message_at as email_last_message_at');
+        expect(sql).toContain('eml.last_message_direction as email_last_message_direction');
+        expect(sql).toContain('eml.unread_count as email_unread_count');
+    });
+
+    it('search variant keeps eml.email_subject and the rewritten CTE shape (TC-EO-U07)', async () => {
+        const [sql, params] = await run({ search: 'Acme' });
+        expect(sql).toContain('eml.email_subject ILIKE');
+        expect(sql).not.toContain('eml.subject ILIKE');
+        expect(params).toContain('%Acme%');
+        // Same builder path — the U02/U03/U05 CTE shape holds identically here.
+        const cte = cteSlice(sql);
+        expect(cte).toContain('UNION ALL');
+        expect(cte).toContain("em.direction = 'outbound'");
+        expect(cte).toContain('em.contact_id IS NOT NULL');
+        expect(cte).toContain('em.on_timeline = true');
+        expect(cte).toContain(
+            'ORDER BY contact_id, last_message_at DESC NULLS LAST, email_thread_id DESC'
+        );
+        const code = cte.replace(/--[^\n]*/g, '');
+        expect((code.match(/em\.company_id = \$1/g) || []).length).toBeGreaterThanOrEqual(2);
+        expect((code.match(/et\.company_id = \$1/g) || []).length).toBeGreaterThanOrEqual(2);
     });
 });
 
@@ -422,5 +523,79 @@ describe('GET /api/calls/by-contact — route', () => {
     it('403 without pulse.view / reports.calls.view', async () => {
         const res = await request(callsApp({ permissions: [] }), 'GET', '/api/calls/by-contact');
         expect(res.status).toBe(403);
+    });
+
+    // ─── EMAIL-OUTBOUND-001 — outbound-first rows through the route (TC-EO-U08…U10) ──
+    // Leg 2 of the rewritten CTE surfaces outbound-first threads; the route is
+    // UNTOUCHED, so these pin the existing mapping over the new row shape. The
+    // pre-existing `outbound-email attribution → type email_outbound` test above
+    // stays as-is; U08 adds the unread/AR halves.
+
+    it('outbound-first email row → email_outbound, not unread, not AR (TC-EO-U08)', async () => {
+        const r = row(6, {
+            id: null, call_sid: null, started_at: null,
+            email_thread_id: 42, email_subject: 'Intro',
+            email_last_message_at: '2026-07-03T13:00:00Z',
+            email_last_message_direction: 'outbound',
+            email_unread_count: 0, any_unread: false, open_task_id: null,
+        });
+        mockGetUnifiedTimelinePage.mockResolvedValue([r]);
+        const res = await request(callsApp(), 'GET', '/api/calls/by-contact');
+        const conv = res.body.conversations[0];
+        expect(conv.last_interaction_type).toBe('email_outbound');
+        expect(conv.last_interaction_at).toBe('2026-07-03T13:00:00Z');
+        expect(conv.email_thread_id).toBe(42);
+        // Sending an email marks nothing unread (unread_count=0 → any_unread=false)…
+        expect(conv.has_unread).toBe(false);
+        // …and creates no task, so the row is NOT Action-Required-pinned.
+        expect(conv.has_open_task).toBe(false);
+    });
+
+    it('frozen envelope + per-row keys for an email-outbound row (TC-EO-U09)', async () => {
+        const r = row(6, {
+            id: null, call_sid: null, started_at: null,
+            email_thread_id: 42, email_subject: 'Intro',
+            email_last_message_at: '2026-07-03T13:00:00Z',
+            email_last_message_direction: 'outbound',
+            email_unread_count: 0, any_unread: false, open_task_id: null,
+        });
+        mockGetUnifiedTimelinePage.mockResolvedValue([r]);
+        const res = await request(callsApp(), 'GET', '/api/calls/by-contact?limit=50&offset=0');
+        expect(Object.keys(res.body).sort()).toEqual(
+            ['conversations', 'leads_map', 'limit', 'offset', 'total'].sort()
+        );
+        const conv = res.body.conversations[0];
+        // Every frozen field the frontend keys off is present…
+        for (const key of [
+            'last_interaction_at', 'last_interaction_type', 'last_interaction_phone',
+            'email_thread_id', 'has_unread', 'tl_has_unread', 'sms_has_unread',
+            'sms_conversation_id', 'timeline_id', 'tl_phone', 'is_action_required',
+            'action_required_reason', 'action_required_set_at', 'snoozed_until',
+            'owner_user_id', 'has_open_task', 'open_task_count', 'open_task',
+        ]) {
+            expect(conv).toHaveProperty(key);
+        }
+        // …and NOTHING was added/removed/renamed vs the pre-change route shape
+        // (formatCall spread + contact + the mapped fields; price/price_unit are
+        // undefined on this fixture and JSON-dropped, exactly as before).
+        expect(Object.keys(conv).sort()).toEqual([
+            'action_required_reason', 'action_required_set_at', 'answered_at',
+            'answered_by', 'call_sid', 'contact', 'created_at', 'direction',
+            'duration_sec', 'email_thread_id', 'ended_at', 'from_number',
+            'has_open_task', 'has_unread', 'id', 'is_action_required', 'is_final',
+            'last_interaction_at', 'last_interaction_phone', 'last_interaction_type',
+            'open_task', 'open_task_count', 'owner_user_id', 'parent_call_sid',
+            'sms_conversation_id', 'sms_has_unread', 'snoozed_until', 'started_at',
+            'status', 'timeline_id', 'tl_has_unread', 'tl_phone', 'to_number',
+            'updated_at',
+        ]);
+    });
+
+    it('query failure keeps the existing 500 contract (TC-EO-U10)', async () => {
+        mockGetUnifiedTimelinePage.mockRejectedValue(new Error('boom'));
+        const res = await request(callsApp(), 'GET', '/api/calls/by-contact');
+        expect(res.status).toBe(500);
+        // Unchanged message, no stack leak, no new code path.
+        expect(res.body).toEqual({ error: 'Failed to fetch calls by contact' });
     });
 });

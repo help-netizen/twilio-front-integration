@@ -1,0 +1,18 @@
+-- Rollback 155 (EMAIL-OUTBOUND-001 backfill).
+--
+-- 155 was a one-time DATA backfill: it stamped contact_id / timeline_id /
+-- on_timeline on historical outbound email rows, adopted or created contact
+-- timelines, and re-homed stranded open tasks (mig-144 sweep). The stamped
+-- links are byte-identical to the links the live outbound path
+-- (emailTimelineService.linkOutboundMessage) writes at ingest time, so
+-- backfilled rows cannot be distinguished from organically linked ones —
+-- clearing links wholesale would sever live-path links too. Timelines it
+-- adopted or created may since have accumulated calls/SMS/tasks/notes, and the
+-- pre-155 orphan/link/task state was not recorded anywhere.
+--
+-- This rollback is therefore a documented no-op (same posture as rollback_144
+-- and rollback_154): it deliberately touches no rows and does not attempt to
+-- clear the backfilled links. Re-applying migration 155 is safe and idempotent
+-- (second run: all NOTICE counts are 0). A genuine undo requires a
+-- point-in-time restore of the database from before 155 ran.
+SELECT 1;

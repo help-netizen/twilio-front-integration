@@ -2517,3 +2517,83 @@ Groups and Categories tabs are unchanged.
 - Port-in номеров, международные номера, A2P-изменения (ALB-107 Phase 2/3 — как есть).
 - Изменение call flow/групп/softphone-функциональности (F017) сверх фиксов изоляции C.
 - Ретроактивная миграция существующих компаний на новые планы.
+
+---
+
+## EMAIL-OUTBOUND-001: outbound-first email threads surface in the Pulse unified list
+
+**Status:** Requirements · **Priority:** P1 · **Date:** 2026-07-03 · **Owner:** Pulse / Email
+**Type:** behavior change, backend-only (one SQL surfacing change + tests; NO new UI — icons already shipped in EMAIL-UNREAD-001, commit d455c52). Owner decisions D1–D4 fixed by interview, binding.
+
+### Duplication check (result)
+
+Not a duplicate — this closes a visibility gap between three shipped features:
+
+- **EMAIL-TIMELINE-001 / EMAIL-UNREAD-001** already ingest and link outbound email (CRM composer `sendForContact`, email-workspace composer, and Gmail-direct sends recipient-matched by `linkOutboundMessage`): `email_messages.contact_id / timeline_id / on_timeline=true` (mig 129) are written, the contact's **timeline detail** shows the outbound bubble, and the list icons `email_inbound`/`email_outbound` (Mail / MailCheck) are live in `PulseContactItem`.
+- **LIST-PAGINATION-001** built the unified list query (`getUnifiedTimelinePage`), whose `email_by_contact` CTE resolves contact→email-thread **only via INBOUND messages** (`JOIN contact_emails ON email_normalized = lower(trim(em.from_email)) … AND em.direction='inbound'`).
+- Net effect (the bug): a thread the dispatcher **initiated** that has no reply yet is fully linked in the data and visible in the timeline detail, but the contact's row **never appears in the unified list**. Only the list CTE is blind; nothing else needs building.
+
+### Description
+
+When a dispatcher writes the FIRST email to a contact (email-only leads/clients are common) and there is no reply yet, the contact must still appear in the Pulse unified by-contact list: ordered by the thread's last message time like any other channel event, showing the outbound-email icon (MailCheck), and NOT marked unread (the dispatcher wrote it). Fix = make the `email_by_contact` resolution direction-agnostic so a contact's latest email thread is found whether its messages are inbound-matched or outbound-linked. The list's surfacing predicate already includes `eml.email_thread_id IS NOT NULL`, so a correct CTE automatically surfaces the row — no route/response-shape change.
+
+### User scenarios
+
+1. **Email-only lead outreach (CRM composer).** A lead has an email address but no phone activity. The dispatcher opens the contact and sends the first email from the Pulse composer (or the email workspace). On the next list fetch the contact appears in the unified list, positioned by the email's time, with the MailCheck (outbound) icon, and is NOT unread and NOT in the Action-Required band.
+2. **Dispatcher writes from Gmail directly.** The dispatcher sends the first email to a known contact from the shared Gmail mailbox itself (no CRM involved). The send is push-ingested and recipient-matched (`linkOutboundMessage`), and the contact surfaces in the unified list exactly as in scenario 1 — no CRM action required. A saved/edited Gmail DRAFT never surfaces anything (existing guard).
+3. **Reply arrives → inbound-latest.** The contact later replies. The same row re-orders by the reply time, flips to the Mail (inbound) icon, and becomes unread (thread `unread_count` > 0 → unread tier), exactly like an inbound-first thread; Pulse mark-read clears it (EMAIL-UNREAD-001 route).
+4. **Mixed-channel contact.** A contact with existing calls/SMS receives a first-touch outbound email that is now their latest interaction: their existing row re-orders by the email time (`last_interaction_at` = greatest of call/SMS/email) and shows the outbound-email icon. No duplicate row appears.
+5. **Two threads, one row.** A contact has an older inbound-matched thread and a newer dispatcher-initiated thread: the list shows ONE row for the contact reflecting the most recent thread (by `last_message_at` across BOTH directions). An outbound email whose recipients match no contact surfaces nothing (stays workspace-only; no contact auto-create).
+
+### Functional requirements
+
+- **FR-1.** `email_by_contact` in `getUnifiedTimelinePage` (`backend/src/db/timelinesQueries.js`) resolves a contact's single most-recent email thread across **both** inbound-matched and outbound-linked messages, keeping the DISTINCT-one-thread-per-contact semantics and the exposed columns (`email_thread_id`, `email_subject`, `last_message_at`, `last_message_direction`, `unread_count`) unchanged in shape.
+- **FR-2.** An outbound-only thread surfaces its contact's row via the existing predicate (`eml.email_thread_id IS NOT NULL`), ordered by the standard `GREATEST(call, SMS, email)` recency, in the normal (non-AR, non-unread) tier.
+- **FR-3.** Unread semantics unchanged: outbound-first rows have `any_unread = false` (thread `unread_count` grows only on inbound; `linkOutboundMessage` even clears it on outbound). Must be asserted by test, not assumed.
+- **FR-4.** All three send paths surface: Pulse composer (`emailTimelineService.sendForContact`), email-workspace composer, Gmail-direct (push → `linkOutboundMessage`). No changes to those services — they already link; the list just reads.
+- **FR-5.** **Historical parity:** outbound-first threads sent BEFORE this fix must surface too (D1 parity with inbound, which text-matches all history). If the CTE reads the persisted link (mig 129 columns) rather than re-matching recipient text, an idempotent backfill migration must link historical outbound messages (recipient-match per `linkOutboundMessage` rules, company-scoped, logged row-count — mig 140/144/154 pattern).
+- **FR-6.** Subject search keeps working and now also matches outbound-first threads (search predicate already reads `eml.email_subject` — alias must not change, see LIST-PAGINATION-001 search fix d56db8f).
+
+### Acceptance criteria
+
+- **AC-1.** Contact with zero calls/SMS/inbound email + one outbound email → appears in the unified list with `email_last_message_direction='outbound'` (→ MailCheck icon), correct recency position, `any_unread=false`, not pinned to AR.
+- **AC-2.** Same outcome when the first email is sent from Gmail directly (ingested via push); DRAFT-labeled messages never surface a row.
+- **AC-3.** After an inbound reply, the row shows inbound direction + unread, and re-orders by the reply time; Pulse mark-read clears it. Existing inbound-first behavior is byte-for-byte unchanged (regression suite).
+- **AC-4.** One row per contact with multiple threads (newest thread wins across directions); page size, `total_count`, offset pagination, AR band pinning, and orphan-shadow dedup invariants all hold.
+- **AC-5.** Tenancy: an outbound-first thread surfaces ONLY in the sending company's list; every new/changed predicate carries `company_id = $1` scoping (both `email_messages` and `email_threads`, as today).
+- **AC-6.** Performance: `EXPLAIN (ANALYZE, BUFFERS)` of the real `getUnifiedTimelinePage` against a prod-sized DB copy shows no plan regression — no per-row Seq Scan over `email_messages`, page latency comparable to the current ~0.3s baseline (PULSE-PERF-001 discipline). Any new predicate is exactly index-backed (new migration if needed).
+
+### Constraints / non-functional
+
+- **PERFORMANCE IS CRITICAL — this is THE hot Pulse query** (PULSE-PERF-001 history: 8.4s→0.3s). Mandatory methodology: time the real function in the app container + `EXPLAIN ANALYZE` on a prod copy BEFORE deploy; index expression must be an exact copy of the predicate. Existing supports: mig 143 functional index `email_messages (company_id, (lower(trim(from_email))))` (inbound leg — keep using it) and mig 129 partial index `email_messages (company_id, contact_id, gmail_internal_at) WHERE contact_id IS NOT NULL` (outbound-linked leg candidate).
+- **Recipient text-matching in the hot query is effectively ruled out by data shape:** outbound recipients live in `email_messages.to_recipients_json` (JSONB array, mig 079) — per-row JSON expansion in the list query is not acceptable. The performant source for the outbound leg is the persisted link (mig 129 `contact_id`/`on_timeline`); the Architect picks the exact predicate, but AC-6 gates it.
+- **Mocked jest is not enough** (LIST-PAGINATION-001 lesson: mocks validate the SQL string only) — run the REAL query against a prod-DB copy before deploy; cover: outbound-only thread, inbound+outbound mix, two-threads-newest-wins, no-match, draft, cross-tenant.
+- `company_id` scoping is mandatory on every leg of the CTE (security rule; the SMS cross-tenant leak closed in LIST-PAGINATION-001 is the cautionary precedent).
+- Response shape of `getUnifiedTimelinePage` rows must not change (frontend `PulseContactItem` mapping of `email_last_message_direction` → Mail/MailCheck shipped in d455c52 keys off existing fields).
+- Unread rules must not change: `unread_count` increments only on inbound; no code path may mark unread on send. D2 is a verification requirement, not a change.
+- Pagination invariants (LIST-PAGINATION-001): dedup/surfacing decided in SQL BEFORE `LIMIT`; a page is never shrunk post-query; `total_count` window count stays consistent.
+- New migrations start at **155** (current max = 154 `154_backfill_contact_emails.sql`); re-verify the max immediately before creating (parallel branches). Any backfill: idempotent + logs affected row count + rollback file. Backend is CommonJS.
+- Deploy to prod only with explicit owner consent (standing rule).
+
+### Involved modules
+
+- **Backend:** `backend/src/db/timelinesQueries.js` — `getUnifiedTimelinePage`, the `email_by_contact` CTE (the ONLY behavioral change point). Optional migration 155+ (index for the outbound leg and/or historical-link backfill) strictly as EXPLAIN/FR-5 dictate.
+- **Tests:** backend jest for the query builder + tenancy/unread assertions; real-query verification vs prod-copy (documented in the PR).
+- **Frontend:** none (icons + unread rendering already shipped; behavior verified, not modified).
+
+### Integrations
+
+- **Google / Gmail** — no API-surface change (ingest, push, linking all exist). **Twilio / Front / Zenbooker / Stripe** — untouched.
+
+### Protected parts (must not break)
+
+- `emailTimelineService` semantics: `linkOutboundMessage` (recipient match, DRAFT guard, idempotent re-link, SSE-only/no-unread), `sendForContact`, `markThreadRead`-on-outbound (EMAIL-UNREAD-001).
+- The contact **timeline detail** projection (`GET /api/pulse/timeline/:contactId`, `buildTimeline`) — already correct for outbound email; zero changes.
+- EMAIL-001 standalone `/email` workspace: inbox, threads, composer, sync/scheduler, Pub/Sub push pipeline.
+- Unified-list invariants in `getUnifiedTimelinePage`: AR band pinning (open_task tier), unread tier, `GREATEST` ordering, orphan-shadow dedup (SQL before LIMIT), search predicate incl. the `eml.email_subject` alias, SMS lateral company scoping, `total_count` envelope.
+- Existing migrations (079, 129, 130, 143, 154) and the mig 143 index; `src/server.js`, `authedFetch.ts`, `useRealtimeEvents.ts`.
+- Unread model: inbound-only unread growth; Pulse mark-read route behavior (timeline+contact+SMS+email clearing) from EMAIL-UNREAD-001.
+
+### Out of scope
+
+- Any new UI (icons/labels shipped in d455c52); email workspace changes; contact auto-creation from unknown recipients; CC/BCC matching changes; unread-model changes; surfacing outbound email on **orphan** (contactless) timelines — outbound links are contact-rooted by definition.

@@ -4608,3 +4608,137 @@ Phase 2:    T5 → M13   (DEFERRED)
 
 ---
 
+## EMAIL-OUTBOUND-001 — tasks (2026-07-03)
+
+> **STATUS: planned** — task breakdown by Planner (05). Not started.
+>
+> Outbound-first email-треды всплывают в unified by-contact списке Pulse. **Backend-only, ровно две точки изменения:** (1) CTE `email_by_contact` в `getUnifiedTimelinePage` (`backend/src/db/timelinesQueries.js`, строка ~401) становится direction-agnostic двухногим `UNION ALL` — inbound-нога байт-в-байт как сегодня, outbound-нога читает ТОЛЬКО persisted mig-129 линк; (2) миграция 155 — бэкфилл исторических outbound-линков (timeline find-or-create с orphan adoption + mig-144 sweep). НИКАКИХ изменений routes / response-shape / frontend / unread-модели.
+> Требования: `Docs/requirements.md` §EMAIL-OUTBOUND-001 (FR-1…FR-6, AC-1…AC-6, D1–D4 binding) · Архитектура: `Docs/architecture.md` §EMAIL-OUTBOUND-001 (хвост файла) · Спека (source of truth): `Docs/specs/EMAIL-OUTBOUND-001.md` (CTE-контракт rules 1–6, S1–S8, edge 1–9, mig-155 contract) · Тест-кейсы: `Docs/test-cases/EMAIL-OUTBOUND-001.md` (39 кейсов: U01–U10, I01–I22, P01–P04, SEC01–SEC03).
+
+### Сквозные ограничения (действуют для КАЖДОЙ задачи ниже)
+
+- **Только backend/db, и только файлы, перечисленные в задачах этого плана.** `src/server.js` НЕ трогается вообще (mount `/api/calls` существует: `authenticate, requireCompanyAccess`, src/server.js:118). Защищённые файлы (запрещены везде): `src/server.js`, `frontend/src/lib/authedFetch.ts`, `frontend/src/hooks/useRealtimeEvents.ts`, `backend/src/services/email/emailTimelineService.js` (senders / `linkOutboundMessage` / DRAFT-guard / `markThreadRead`), `backend/src/db/emailQueries.js`, `buildTimeline` + `GET /api/pulse/timeline/:contactId`, `/email` workspace + push-pipeline, `backend/src/routes/calls.js` (читающий route — ноль правок), миграции ≤ 154 (включая индекс mig 143), unread-модель (inbound-only рост; mark-read очистка).
+- **API-контракт заморожен:** `GET /api/calls/by-contact` — тот же envelope `{conversations, leads_map, total, limit, offset}`, те же per-row поля и SQL-алиасы (spec §API contract). Ни одного нового / удалённого / переименованного поля.
+- **Tenancy:** companyId — только из `req.companyFilter.company_id` (уже так; тесты пинят — U01/SEC03); обе ноги CTE несут `company_id = $1` на `em` И `et`; матчинг миграции — `c.company_id = em.company_id`. Данные изолированы между компаниями (SEC01/SEC02 обязательны на реальной БД — прецедент SMS-лика LIST-PAGINATION-001).
+- **Существующие assertions в `tests/listPaginationByContact.test.js` — замороженный контракт: расширять, НЕ редактировать** (TC-EO-U01: любое изменение старого assertion = FAIL).
+- **Номер миграции 155 свободен на 2026-07-03 (max на диске = `154_backfill_contact_emails.sql`) — перепроверить фактический max НЕПОСРЕДСТВЕННО перед созданием файлов и перенумеровать при занятости** (параллельные ветки делят дерево).
+- Jest в worktree: `npx jest --runTestsByPath tests/<file> --testPathIgnorePatterns "/node_modules/"`.
+- **Мокнутый jest проверяет только SQL-строку (урок LIST-PAGINATION-001)** → реальные DB-прогоны (T3) и блокирующий перф-гейт (T4) обязательны до деплоя.
+- Деплой в прод — только по явному согласию владельца; prod-copy / prod-container половины T4 — в согласованном окне деплоя.
+
+---
+
+### EMAIL-OUTBOUND-001-T1: CTE rewrite `email_by_contact` + jest-расширения (P0, M)
+
+**Цель:** direction-agnostic CTE по нормативному SQL спеки (§CTE contract, rules 1–6): inbound-нога байт-идентична текущей, outbound-нога — только persisted-линк, `DISTINCT ON (contact_id)` с детерминированным tie-break; jest пинит новую форму SQL и route-маппинг.
+
+**Файлы (можно менять):**
+- `backend/src/db/timelinesQueries.js` — ТОЛЬКО CTE `email_by_contact` (строка ~401) + function-header комментарий («Scope A … INBOUND», строки ~321–324 и ~349–353 → описать обе ноги; rule 6).
+- `tests/listPaginationByContact.test.js` — только ДОБАВЛЕНИЕ новых assertions/кейсов в существующие describe-блоки.
+
+**Что сделать:**
+- Заменить CTE на двухногий `UNION ALL` из спеки ДОСЛОВНО. Нога 1 (inbound) — предикаты байт-в-байт: `ce.email_normalized = lower(trim(em.from_email))`, `em.direction = 'inbound'`, `em.from_email IS NOT NULL`, `em.company_id = $1 AND et.company_id = $1` (от этого текста зависят индекс mig 143 и search-фикс d56db8f). Нога 2 (outbound) — `em.direction = 'outbound' AND em.contact_id IS NOT NULL AND em.on_timeline = true`, `$1`-scope на обеих таблицах, НИКАКОГО `to_recipients_json`/`jsonb_array_elements` где-либо в hot query. Обёртка: `SELECT DISTINCT ON (contact_id) … ORDER BY contact_id, last_message_at DESC NULLS LAST, email_thread_id DESC` (tie-break `email_thread_id DESC` — НОВЫЙ и намеренный; пометить в комменте как non-semantic ordering fix для ревью). Выход CTE — ровно 6 колонок/алиасов (`contact_id, email_thread_id, email_subject, last_message_at, last_message_direction, unread_count`). ВСЁ вне CTE не трогать: join `eml.contact_id = tl.contact_id`, surfacing `eml.email_thread_id IS NOT NULL`, search-алиас `eml.email_subject`, `GREATEST`-ordering, AR/unread tiers, orphan-shadow dedup, `total_count`.
+- Jest: новые кейсы **U02–U10** по тест-кейсам (SQL-slice CTE: `UNION ALL` + 3 outbound-предиката; `$1`-scope ≥ 2 вхождений на `em.company_id` и `et.company_id`; негатив на JSONB в обоих вариантах запроса; `DISTINCT ON` + полный ORDER BY с tie-break; 6 алиасов CTE + внешние алиасы; search-вариант `eml.email_subject ILIKE`; route-маппинг outbound-first строки → `email_outbound` / `has_unread=false` / `has_open_task=false`; замороженный envelope + per-row ключи; 500-контракт `{error:'Failed to fetch calls by contact'}`) + перепрогон SEC03-регрессий (401/403/источник companyId).
+
+**files-forbidden:** всё из сквозного списка; в `timelinesQueries.js` — ничего, кроме CTE + header-коммента (`findOrCreateTimelineByContact` НЕ трогать — T2 зеркалит его в чистом SQL, не правит).
+
+**Ожидаемый результат:** outbound-first тред всплывает в списке (нога 2 → `eml.email_thread_id IS NOT NULL`); inbound-покрытие не изменилось ни на байт; один тред на контакт детерминированно (новейший, при равенстве — больший id); `any_unread=false` для outbound-first by construction; SQL-запросы фильтруют по company_id, данные изолированы между компаниями.
+
+**Проверка (acceptance):** **TC-EO-U01…U10 + TC-EO-SEC03** — весь файл зелёный: `npx jest --runTestsByPath tests/listPaginationByContact.test.js --testPathIgnorePatterns "/node_modules/"`; U01 = git diff файла тестов содержит только добавления (ни один существующий assertion не изменён/удалён).
+
+**Зависимости:** нет. **Параллельность:** wave 1 — ∥ T2 (разные файлы, ноль пересечений; можно отдавать двум разным агентам одновременно).
+
+**Статус:** done — APPROVED (jest 34/34, U01–U10+SEC03; reviewer reproduced)
+
+---
+
+### EMAIL-OUTBOUND-001-T2: Миграция 155 backfill outbound-линков + rollback (P0, L)
+
+**Цель:** исторические outbound-письма (pre-fix: `contact_id IS NULL, on_timeline=false`, genuinely sent) залинкованы так же, как это делает live-путь — D1-паритет, включая СОЗДАНИЕ timeline для email-only контактов (список корнится на `timelines`; линк без timeline не всплывает — FR-5).
+
+**Файлы (создать):**
+- `backend/db/migrations/155_backfill_outbound_email_links.sql`
+- `backend/db/migrations/rollback_155_backfill_outbound_email_links.sql`
+
+**Что сделать (контракт спеки §Migration 155; паттерн mig 144/154: один идемпотентный `DO $$`-блок, `RAISE NOTICE` count на КАЖДОМ шаге, чистый SQL — backend CommonJS не участвует, safe на пустых данных):**
+- **Шаг 1 — match set + recipient→contact:** кандидаты `direction='outbound' AND contact_id IS NULL AND on_timeline = false AND message_id_header IS NOT NULL AND message_id_header <> ''` (draft-safe дискриминатор из `listUnlinkedOutboundForTimeline`, `backend/src/db/emailQueries.js:516-536` — процитировать дословно; он же даёт идемпотентность re-run'а). Получатели: `jsonb_array_elements(em.to_recipients_json) WITH ORDINALITY` (одноразовая экспансия допустима ТОЛЬКО в миграции), адрес = `lower(trim(elem->>'email'))`, NULL/empty пропускать; **TO only** — CC/BCC никогда (зеркало `extractRecipientEmails`). Контакт — зеркало `findEmailContact` (`emailQueries.js:424-438`): `c.company_id = em.company_id`, `(lower(c.email) = addr OR ce.email_normalized = addr)` через `LEFT JOIN contact_emails`, tie-break `c.updated_at DESC NULLS LAST, c.id ASC`. Один контакт на письмо, первый МАТЧАЩИЙСЯ получатель: `DISTINCT ON (em.id) ORDER BY em.id, ord ASC, c.updated_at DESC NULLS LAST, c.id ASC`.
+- **Шаг 2 — timeline find-or-create = ПОЛНОЕ SQL-зеркало `findOrCreateTimelineByContact` (`timelinesQueries.js:237-311`), НЕ голый INSERT:** (a) reuse существующего contact-linked timeline; (b) иначе ADOPT новейшего phone-digit-matching orphan (`contact_id IS NULL`, digits primary/secondary, `ORDER BY updated_at DESC NULLS LAST`): `UPDATE timelines SET contact_id, phone_e164 = NULL, updated_at = now()` **плюс re-point `UPDATE calls SET contact_id = C WHERE timeline_id = orphan AND contact_id IS NULL`** — голый INSERT здесь = fork человека на два timeline + orphan-shadow dedup скроет историю звонков (класс бага ORPHAN-TASK-REHOME-001); corner «два контакта на один orphan» — детерминированный double `DISTINCT ON` (по orphan и по контакту, стабильный ORDER BY), проигравший уходит в (c); (c) `INSERT INTO timelines (contact_id, company_id) … ON CONFLICT (contact_id) WHERE contact_id IS NOT NULL DO NOTHING` + re-select. Оба дельта-пина обязательны: `WHERE contact_id IS NOT NULL` в арбитре (иначе Postgres не выведет partial unique mig 029) и НИКАКОГО `DO UPDATE SET updated_at` (нетронутые строки не бампать).
+- **Шаг 3 — stamp links** (зеркало `linkMessageToContact`): `UPDATE email_messages SET contact_id, timeline_id, on_timeline = true, updated_at = now()` для matched set. НЕ зеркалить из live-пути: `markThreadRead` (unread НЕ трогаем — D2/FR-3) и SSE-publish (чистый SQL).
+- **Шаг 4 — mig-144 open-task re-home sweep ДОСЛОВНО** (`DO $$` UPDATE из `144_rehome_orphan_open_tasks.sql`: `DISTINCT ON (o.id)`, идиома `'[^0-9]'`, open-task предикат) — шаг 2 может ново-затенить orphans; инвариант проекта с ORPHAN-TASK-REHOME-001.
+- **Observability:** `RAISE NOTICE` counts: messages linked N / orphans adopted K / timelines created M / open tasks re-homed T.
+- **Rollback-файл:** документированный one-way (backfill-линки неотличимы от runtime-линков; undo = PITR — поза rollback_144); НЕ пытаться NULL-ить линки — никакого `UPDATE email_messages` в rollback.
+- Сдача задачи: локальный `psql -f` на dev-БД (схема ≥ 154) проходит без ошибок; на пустых данных все NOTICE = 0; второй прогон — все нули.
+
+**files-forbidden:** миграции ≤ 154 и их rollback'и; `emailQueries.js` / `emailTimelineService.js` / `timelinesQueries.js` (semantics зеркалим в SQL, код НЕ правим); `migrate.js` / `apply_migrations.js`.
+
+**Ожидаемый результат:** все genuinely-sent исторические outbound-письма с матчащимся TO-получателем залинкованы (`contact_id / timeline_id / on_timeline=true`); email-only контакты получили timeline (reuse > adopt > create); drafts (`message_id_header` NULL/`''`) и не-матчащиеся получатели не тронуты; `unread_count` нигде не изменён; повторный прогон — no-op; межтенантный линк невозможен.
+
+**Проверка (acceptance):** миграционные половины **TC-EO-I06…I15 + TC-EO-SEC02** (исполняются скриптом T3: секции s6–s8, mig-rerun, mig-to-only, mig-recipient-pick, mig-adopt, mig-orphan-contention, mig-arbiter, mig-empty, sec-mig-tenant); статическая половина I14/I15 (grep: арбитр verbatim в 155, нет `DO UPDATE SET updated_at` в create-шаге, нет `UPDATE email_messages` в rollback) — проверяется сразу при сдаче. **⚑ Миграция — прогнать на деплое; prod-copy dry-run counts — задача T4 (P04).**
+
+**Зависимости:** нет. **Параллельность:** wave 1 — ∥ T1 (разные файлы; можно другому агенту одновременно).
+
+**Статус:** done — APPROVED (mig 155 applied+idempotent locally; seeded smoke 18/18)
+
+---
+
+### EMAIL-OUTBOUND-001-T3: Интеграционный verify-скрипт против реальной БД + прогон (P0, L)
+
+**Цель:** поведенческая верификация на реальном Postgres (мокнутый jest = только SQL-текст — урок LIST-PAGINATION-001): компактный самосеющий/самочистящийся node-скрипт, PASS/FAIL по каждому кейсу I01–I22.
+
+**Файлы (создать):**
+- `scripts/verify-email-outbound-001.js` (house-стиль `scripts/test-dedup.js`)
+
+**Что сделать:**
+- Харнес по тест-кейсам §Shared fixtures: реальный `db/connection` через `DATABASE_URL` (default `postgresql://localhost/twilio_calls`); компании A=`…000a`, B=`…000b`; секции выбираются CLI-аргументом (без аргумента — все); каждая секция сеет → assert'ит → чистит (companies cascade), re-run чистый; печать `PASS/FAIL TC-EO-Ixx` + ненулевой exit code при любом FAIL.
+- Route-half: смонтировать РЕАЛЬНЫЙ `backend/src/routes/calls.js` в express со stub-auth middleware (`req.user` / `req.authz` с `pulse.view` / `req.companyFilter = {company_id}`), БД НЕ мокать. Writer-halves (s2/s6/s7) — реальный `emailTimelineService.linkOutboundMessage` (Gmail API не зовётся: вход — уже нормализованный объект). Mig-секции — `psql -f backend/db/migrations/155_backfill_outbound_email_links.sql` с захватом NOTICE-вывода; mark-read (s3) — реальные `POST /api/calls/timeline/:id/mark-read` и `/contact/:id/mark-read`.
+- Секции → кейсы: s1…s8 (I01–I08), mig-rerun (I09), mig-to-only (I10), mig-recipient-pick (I11), mig-adopt (I12), mig-orphan-contention (I13), mig-arbiter (I14, + static grep), mig-empty (I15, + rollback-файл прогоняется и грепается), edge-contact-delete (I16), edge-null-ts (I17), edge-fanout (I18), search (I19), edge-no-email (I20), pagination (I21), edge-orphan (I22), **плюс sec-cross-tenant (SEC01) и sec-mig-tenant (SEC02)** — пишутся здесь, формальный acceptance у них в T4.
+- Прогнать ВЕСЬ скрипт на локальной dev-БД (схема ≥ 154 до mig-секций); per-case вывод — в отчёт задачи/PR.
+
+**files-forbidden:** всё из сквозного списка; `tests/*` (jest — территория T1); скрипт ходит ТОЛЬКО в `DATABASE_URL` (никаких прод-кредов).
+
+**Ожидаемый результат:** один воспроизводимый прогон покрывает S1–S8 + edge 1–9 + всю миграцию (happy / idempotent / TO-only / adoption / contention / arbiter / empty) на реальной БД; повторный запуск чистый; тот же скрипт без правок запускается на prod-copy (T4/деплой) простым переключением `DATABASE_URL`.
+
+**Проверка (acceptance):** **TC-EO-I01…I22 — все PASS** на локальной БД; секции sec-* существуют и проходят локально (их формальный gate — T4). Вывод прогона приложен к задаче.
+
+**Зависимости:** T1 + T2. **Параллельность:** wave 2 — ∥ T4 (EXPLAIN-половина).
+
+**Статус:** done — APPROVED (verify script 24/24 PASS + sabotage control; reviewer reproduced)
+
+---
+
+### EMAIL-OUTBOUND-001-T4: Перф-гейт AC-6 (блокирующий) + tenant-isolation прогоны (P0, M)
+
+**Цель:** методология PULSE-PERF-001: план и латентность нового SQL не деградируют (~0.3s класс /pulse сохранён); изоляция подтверждена на реальной БД (прецедент SMS-лика LIST-PAGINATION-001).
+
+**Файлы:** новых НЕТ by default (psql-сессия + node one-liner; планы/тайминги/counts — в PR/отчёт). **Условно:** `backend/db/migrations/156_*.sql` — ТОЛЬКО при провале гейта на ноге 2; предикат ДОСЛОВНО из ноги: `CREATE INDEX … ON email_messages (company_id, contact_id, thread_id) WHERE direction = 'outbound' AND contact_id IS NOT NULL AND on_timeline = true`. При зелёном P01 файла 156 в ветке существовать НЕ ДОЛЖНО (спекулятивный индекс = FAIL P03).
+
+**Что сделать:**
+- **P01:** `EXPLAIN (ANALYZE, BUFFERS)` ТОЧНОГО SQL из `getUnifiedTimelinePage` (реальные параметры: Boston Masters company UUID, limit 50 / offset 0) — 4 прогона {before, after} × {plain, search}. Сейчас — на локальной БД для plan-shape (acceptance: `email_by_contact` вычисляется ОДИН раз, нет per-row Seq Scan по `email_messages`, нога 1 = mig 143 `idx_email_messages_from_normalized`, нога 2 = mig 129 partial `idx_email_messages_contact_timeline`; `direction`/`on_timeline` как residual-фильтры допустимы). **Блокирующая половина — на fresh prod `pg_dump` restore** (локальная dev-БД дисквалифицирована спекой: ~5 строк `email_messages`) — в согласованном окне деплоя.
+- **P02:** node one-liner, таймящий РЕАЛЬНУЮ функцию `getUnifiedTimelinePage` (N=5, plain + search, before/after); прод-контейнерная половина — deploy-gated (только с явного согласия владельца). Цель: after ≈ before, ~0.3s класс, без multi-second патологии.
+- **P04:** dry-run mig 155 на prod-copy: первый прогон — per-step counts (linked N / adopted K / created M / re-homed T) в PR; второй прогон — все нули (prod-scale идемпотентность); без lock-storm на `timelines`/`email_messages`.
+- **SEC01/SEC02:** прогнать секции `sec-cross-tenant` и `sec-mig-tenant` скрипта T3 на реальной БД (локально сейчас; повторить на prod-copy перед деплоем). Любой межтенантный лик = release-блокер.
+
+**files-forbidden:** всё из сквозного списка; НИКАКИХ попутных правок SQL по итогам EXPLAIN — любые изменения запроса возвращаются в контракт T1, индекс — только через условный 156.
+
+**Ожидаемый результат:** зафиксированное свидетельство (4 плана, тайминги N=5, NOTICE-counts, sec-прогоны), что фича не меняет класс латентности /pulse и не открывает межтенантный доступ; решение по mig 156 принято по данным гейта, не спекулятивно.
+
+**Проверка (acceptance):** **TC-EO-P01, TC-EO-P02** (прод-половины — в согласованном окне деплоя; результаты в PR), **TC-EO-P03** (условный: либо гейт зелёный и 156 отсутствует, либо 156 создан verbatim-предикатом и гейт перепройден), **TC-EO-P04**, **TC-EO-SEC01, TC-EO-SEC02**.
+
+**Зависимости:** T1 + T2 (жёсткие). SEC-половина потребляет скрипт T3 → эти две секции запускаются после T3; EXPLAIN/тайминг-половина от T3 не зависит. **Параллельность:** wave 2 — ∥ T3.
+
+**Статус:** done — APPROVED conditional (local EXPLAIN gate green: leg2=idx_129, no mig 156; P01/P02/P04 prod halves run in the deploy window)
+
+---
+
+### Порядок выполнения и параллелизм (EMAIL-OUTBOUND-001)
+
+```
+wave 1:  T1 (CTE + jest)   ∥   T2 (mig 155 + rollback)     ← разные агенты OK: ноль общих файлов
+wave 2:  T3 (verify-скрипт, I01–I22)   ∥   T4 (перф P01–P04 + SEC01/02)   ← обе строго после T1+T2
+         · SEC-половина T4 запускает секции sec-* скрипта T3 → фактически после T3
+         · prod-copy / prod-container половины T4 (P01-гейт, P02-тайминг, P04-counts, sec-повтор)
+           — deploy-gated: только с явного согласия владельца
+```
+
+---
+

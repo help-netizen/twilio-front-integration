@@ -325,3 +325,41 @@ If tests fail during implementation:
 - [ ] Step 8: changelog.md updated
 - [ ] Step 9: Project Spec Updater done, project-spec.md updated
 - [ ] Step 10: Final report generated
+
+---
+
+## Amendments — 2026-07-03 (validated on the EMAIL-OUTBOUND-001 run)
+
+These refinements were proven on a full pipeline run and are now part of the process:
+
+1. **Parallel waves in Step 6.** The Planner SHOULD mark tasks with disjoint file
+   sets as one parallel wave; the orchestrator runs their Implementer agents
+   concurrently (T1 ∥ T2 halved wall-clock time with zero conflicts). Tasks
+   sharing files stay sequential.
+2. **Compact agent returns; artifacts go to files.** Every agent writes its
+   artifact directly to Docs/* and returns only a short structured summary
+   (IDs, counts, deviations). Never paste whole documents back — the
+   orchestrator's context is the scarcest resource in a long run.
+3. **Orchestrator may execute verification gates.** Running EXPLAIN plans,
+   timing probes, and re-running test suites is "validating correctness"
+   (Allowed), not implementation. Performance gates on hot queries benefit
+   from the orchestrator's accumulated context; code changes remain delegated.
+4. **Reviewer must reproduce, not read.** The Reviewer re-runs the reported
+   verification (jest, harness, EXPLAIN) independently and adds its own
+   sabotage control before issuing verdicts. "Reports say it passed" is not
+   evidence.
+5. **Verification harnesses need a negative control.** A self-seeding
+   verify-script must demonstrate it FAILS when the feature is sabotaged
+   (stash the change → expect FAIL → restore). Prevents vacuous-pass suites.
+6. **Carry verified technical context INTO agent briefings.** The orchestrator
+   passes code-verified facts (exact predicates, index names, guard idioms,
+   migration numbering) into each agent's prompt. Agents verify against code
+   rather than re-discovering from scratch — and they catch briefing errors
+   (the ON CONFLICT partial-index arbiter was caught exactly this way).
+7. **Small-data EXPLAIN caveat.** On a near-empty dev table the planner
+   legitimately seq-scans; prove plan SHAPE with `SET enable_seqscan = off`
+   (indexes usable) and defer the volume gate to a prod copy in the deploy
+   window. A dev-DB seq-scan is not automatically a failed gate.
+8. **Filesystem note.** `Docs/` and `docs/` are the same directory on this
+   macOS checkout (case-insensitive FS) — don't treat the two spellings as
+   divergent paths, and never create a sibling that differs only by case.

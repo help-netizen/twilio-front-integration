@@ -318,10 +318,21 @@ async function findOrCreateTimelineByContact(contactId, companyId = null) {
  * (≤ limit rows per page, no JS over-fetch/re-sort/dedup):
  *   • calls  — latest root call on the timeline
  *   • SMS    — latest sms_conversations row for the timeline's phone digits
- *   • email  — Scope A: latest email_threads row whose thread has an INBOUND
- *              email whose normalized from_email maps (via contact_emails) to
- *              this timeline's contact. Contactless email threads are NOT
- *              surfaced (no synthetic rows).
+ *   • email  — EMAIL-OUTBOUND-001: latest email_threads row per contact,
+ *              direction-agnostic via a two-leg UNION ALL:
+ *                leg 1 (inbound)  — threads with an INBOUND message whose
+ *                normalized from_email maps (via contact_emails) to this
+ *                timeline's contact; a text re-match over ALL history,
+ *                byte-identical to the original Scope A predicates (the
+ *                mig 143 index and the d56db8f search fix pin that text);
+ *                leg 2 (outbound) — threads with an OUTBOUND message already
+ *                linked to the contact through the persisted mig-129 columns
+ *                (em.contact_id + em.on_timeline, stamped by the send paths
+ *                and backfilled by mig 155). Outbound reads the persisted
+ *                link ONLY — pre-link history was never text-matched, and
+ *                per-row recipient-JSON expansion is banned from this hot
+ *                query.
+ *              Contactless email threads are NOT surfaced (no synthetic rows).
  *
  * Everything is company-scoped (mandatory, not conditional): outer
  * `tl.company_id = $companyId`, `sms.company_id = tl.company_id`,
@@ -349,8 +360,10 @@ async function findOrCreateTimelineByContact(contactId, companyId = null) {
  * work runs for every company timeline. The email match is therefore hoisted
  * into a single pre-aggregated CTE (`email_by_contact`) that resolves
  * contact_id → latest email thread ONCE for the whole company, instead of a
- * correlated EXISTS re-scanned per timeline row. See migration 143 for the
- * supporting functional index and the route/spec notes for EXPLAIN reasoning.
+ * correlated EXISTS re-scanned per timeline row. Leg 1 is served by the
+ * mig 143 functional index (company_id, lower(trim(from_email))); leg 2 by
+ * the mig 129 partial index on the persisted link. See the route/spec notes
+ * for EXPLAIN reasoning.
  *
  * @param {object} opts
  * @param {number} opts.limit
@@ -399,27 +412,51 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
 
     const result = await db.query(
         `WITH email_by_contact AS (
-             -- Scope A pre-aggregation: for this company, resolve each contact to
-             -- its single most-recent email thread that has an INBOUND message
-             -- whose normalized from_email maps to that contact. Computed ONCE
-             -- (not per-timeline) so the ORDER-BY-before-LIMIT scan stays cheap.
-             SELECT DISTINCT ON (ce.contact_id)
-                    ce.contact_id,
-                    et.id            AS email_thread_id,
-                    et.subject       AS email_subject,
-                    et.last_message_at,
-                    et.last_message_direction,
-                    et.unread_count
-             FROM email_messages em
-             JOIN contact_emails ce
-               ON ce.email_normalized = lower(trim(em.from_email))
-             JOIN email_threads et
-               ON et.id = em.thread_id
-             WHERE em.company_id = $1
-               AND et.company_id = $1
-               AND em.direction = 'inbound'
-               AND em.from_email IS NOT NULL
-             ORDER BY ce.contact_id, et.last_message_at DESC NULLS LAST
+             -- EMAIL-OUTBOUND-001: direction-agnostic pre-aggregation. For this
+             -- company, resolve each contact to its single most-recent email
+             -- thread across TWO legs, computed ONCE (not per-timeline) so the
+             -- ORDER-BY-before-LIMIT scan stays cheap.
+             --   Leg 1 (inbound): text re-match over ALL history — threads with
+             --   an INBOUND message whose normalized from_email maps (via
+             --   contact_emails) to the contact. Predicates byte-identical to
+             --   the original Scope A CTE: the mig 143 functional index and the
+             --   d56db8f search fix depend on exactly this text.
+             --   Leg 2 (outbound): persisted-link read — threads with an
+             --   OUTBOUND message the send paths (or the mig 155 backfill)
+             --   already linked to the contact via the mig-129 columns.
+             --   Historical outbound was never text-matched, so the persisted
+             --   link is the only correct source; expanding recipient JSON per
+             --   row is banned from this hot query.
+             SELECT DISTINCT ON (contact_id)
+                    contact_id,
+                    email_thread_id,
+                    email_subject,
+                    last_message_at,
+                    last_message_direction,
+                    unread_count
+             FROM (
+                 SELECT ce.contact_id, et.id AS email_thread_id, et.subject AS email_subject,
+                        et.last_message_at, et.last_message_direction, et.unread_count
+                 FROM email_messages em
+                 JOIN contact_emails ce ON ce.email_normalized = lower(trim(em.from_email))
+                 JOIN email_threads et ON et.id = em.thread_id
+                 WHERE em.company_id = $1 AND et.company_id = $1
+                   AND em.direction = 'inbound' AND em.from_email IS NOT NULL
+                 UNION ALL
+                 SELECT em.contact_id, et.id, et.subject,
+                        et.last_message_at, et.last_message_direction, et.unread_count
+                 FROM email_messages em
+                 JOIN email_threads et ON et.id = em.thread_id
+                 WHERE em.company_id = $1 AND et.company_id = $1
+                   AND em.direction = 'outbound' AND em.contact_id IS NOT NULL
+                   AND em.on_timeline = true
+             ) legs
+             -- A mixed thread emits identical tuples from both legs; DISTINCT ON
+             -- collapses them. The email_thread_id DESC tie-break is NEW and
+             -- deliberate: it makes equal-timestamp thread selection
+             -- deterministic (previously plan-dependent). Non-semantic ordering
+             -- fix, not a behavior change.
+             ORDER BY contact_id, last_message_at DESC NULLS LAST, email_thread_id DESC
          )
          SELECT
              latest_call.*,
