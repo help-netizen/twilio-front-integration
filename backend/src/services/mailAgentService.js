@@ -12,6 +12,7 @@
 
 const db = require('../db/connection');
 const mailAgentQueries = require('../db/mailAgentQueries');
+const emailQueries = require('../db/emailQueries');
 const timelinesQueries = require('../db/timelinesQueries');
 const realtimeService = require('./realtimeService');
 const { parseRules, matchEmail } = require('./mailAgentRules');
@@ -186,9 +187,17 @@ async function reviewInboundEmail(companyId, msg, ctx = {}) {
                 await mailAgentQueries.insertReview({ ...base, verdict: 'skipped_unknown_sender' });
                 return { verdict: 'skipped_unknown_sender' };
             }
-            await mailAgentQueries.createEmailContact(companyId, {
-                fromName: msg.from_name, fromEmail: msg.from_email,
-            });
+            // MAIL-AGENT-003: find-or-create, never blind-create. ctx.noContact can
+            // be stale (backfills/sweeps computed it from stored rows), and two
+            // first-time emails from one new sender can race — a repeated create
+            // forks the person across contacts/timelines (95 dup contacts on prod,
+            // 2026-07-04). findEmailContact is the same resolver the link path uses.
+            const existing = await emailQueries.findEmailContact(msg.from_email, companyId);
+            if (!existing) {
+                await mailAgentQueries.createEmailContact(companyId, {
+                    fromName: msg.from_name, fromEmail: msg.from_email,
+                });
+            }
             // Re-run the canonical link path (lazy require — circular module edge).
             // It finds the fresh contact, links the message, fires unread + SSE;
             // skipAgent prevents recursion back into this function.

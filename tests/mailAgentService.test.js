@@ -19,6 +19,7 @@ jest.mock('../backend/src/db/timelinesQueries', () => ({
     createTask: jest.fn(),
     setActionRequired: jest.fn().mockResolvedValue({}),
 }));
+jest.mock('../backend/src/db/emailQueries', () => ({ findEmailContact: jest.fn() }));
 jest.mock('../backend/src/services/realtimeService', () => ({ broadcast: jest.fn() }));
 jest.mock('../backend/src/services/mailAgentClassifier', () => ({ classifyEmail: jest.fn() }));
 jest.mock('../backend/src/services/email/emailTimelineService', () => ({
@@ -27,6 +28,7 @@ jest.mock('../backend/src/services/email/emailTimelineService', () => ({
 
 const db = require('../backend/src/db/connection');
 const q = require('../backend/src/db/mailAgentQueries');
+const emailQueries = require('../backend/src/db/emailQueries');
 const timelinesQueries = require('../backend/src/db/timelinesQueries');
 const { classifyEmail } = require('../backend/src/services/mailAgentClassifier');
 const { linkInboundMessage } = require('../backend/src/services/email/emailTimelineService');
@@ -64,6 +66,7 @@ beforeEach(() => {
     jest.clearAllMocks();
     q.getEmailMessage.mockResolvedValue({ id: 42, body_text: MSG.body_text, direction: 'inbound', gmail_internal_at: MSG.internal_at });
     q.hasReview.mockResolvedValue(false);
+    emailQueries.findEmailContact.mockResolvedValue(null); // MAIL-AGENT-003: default = truly unknown sender
     timelinesQueries.createTask.mockResolvedValue({ id: 777 });
 });
 
@@ -162,6 +165,22 @@ describe('mailAgentService.reviewInboundEmail', () => {
         expect(linkInboundMessage).toHaveBeenCalledWith(COMPANY, MSG, { skipAgent: true });
         expect(timelinesQueries.createTask).toHaveBeenCalledWith(expect.objectContaining({ threadId: 88, subjectId: 31 }));
         expect(res.verdict).toBe('task_created');
+    });
+
+    test('MAIL-AGENT-003: stale noContact ctx but contact already exists → find-or-create, no duplicate', async () => {
+        armActive();
+        classifyEmail.mockResolvedValue({
+            verdict: { needs_attention: true, category: 'potential_lead', confidence: 0.8, priority: 'p2', reason: 'r', task_title: 't' },
+            model: 'm', latency_ms: 1,
+        });
+        emailQueries.findEmailContact.mockResolvedValue({ contact_id: 31 }); // already exists
+        linkInboundMessage.mockResolvedValue({ linked: true, contactId: 31, timelineId: 88 });
+
+        const res = await mailAgentService.reviewInboundEmail(COMPANY, MSG, { noContact: true });
+        expect(q.createEmailContact).not.toHaveBeenCalled();
+        expect(linkInboundMessage).toHaveBeenCalledWith(COMPANY, MSG, { skipAgent: true });
+        expect(res.verdict).toBe('task_created');
+        expect(timelinesQueries.createTask).toHaveBeenCalledWith(expect.objectContaining({ threadId: 88 }));
     });
 
     test('unknown sender + creation disabled → skipped_unknown_sender, no contact/task', async () => {
