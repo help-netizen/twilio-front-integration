@@ -231,15 +231,20 @@ async function findOrCreateTimeline(phoneE164, companyId = null) {
  *
  * @param {string|number} contactId
  * @param {string|null} companyId
+ * @param {{query: Function}} [client=db]  pool (default) or a tx client, so a
+ *   caller inside a BEGIN/COMMIT can resolve the timeline within its transaction
+ *   (CONTACT-EMAIL-MERGE-001 FK-order recipe step 1). Additive: existing callers
+ *   omit it and keep the byte-for-byte pool behavior. Threaded through the inner
+ *   queries and the reassignShadowOrphanOpenTasks calls; logic is unchanged.
  * @returns {Promise<object|null>} the timeline row, or null if the contact does
  *   not exist within the given company.
  */
-async function findOrCreateTimelineByContact(contactId, companyId = null) {
+async function findOrCreateTimelineByContact(contactId, companyId = null, client = db) {
     const cid = companyId || DEFAULT_COMPANY_ID;
 
     // Contact must live in the current tenant (data isolation). Also pull the
     // phones up-front so we can hunt for an adoptable orphan below.
-    const contactResult = await db.query(
+    const contactResult = await client.query(
         `SELECT id, phone_e164, secondary_phone
          FROM contacts WHERE id = $1 AND company_id = $2`,
         [contactId, cid]
@@ -248,14 +253,14 @@ async function findOrCreateTimelineByContact(contactId, companyId = null) {
     if (!contact) return null;
 
     // 1. Existing timeline already linked to this contact.
-    const existing = await db.query(
+    const existing = await client.query(
         `SELECT * FROM timelines WHERE contact_id = $1 AND company_id = $2 LIMIT 1`,
         [contactId, cid]
     );
     if (existing.rows[0]) {
         // Heal a shadow orphan on this contact's number(s) whose open task the
         // Pulse dedup would hide (REHOME-001).
-        await reassignShadowOrphanOpenTasks(existing.rows[0].id, contactId, cid);
+        await reassignShadowOrphanOpenTasks(existing.rows[0].id, contactId, cid, client);
         return existing.rows[0];
     }
 
@@ -266,7 +271,7 @@ async function findOrCreateTimelineByContact(contactId, companyId = null) {
         .map(p => p.replace(/\D/g, ''));
 
     if (phonesToCheck.length > 0) {
-        const orphan = await db.query(
+        const orphan = await client.query(
             `SELECT id FROM timelines
              WHERE contact_id IS NULL
                AND company_id = $2
@@ -276,18 +281,18 @@ async function findOrCreateTimelineByContact(contactId, companyId = null) {
             [phonesToCheck, cid]
         );
         if (orphan.rows[0]) {
-            const adopted = await db.query(
+            const adopted = await client.query(
                 `UPDATE timelines SET contact_id = $1, phone_e164 = NULL, updated_at = now()
                  WHERE id = $2 RETURNING *`,
                 [contactId, orphan.rows[0].id]
             );
-            await db.query(
+            await client.query(
                 `UPDATE calls SET contact_id = $1 WHERE timeline_id = $2 AND contact_id IS NULL`,
                 [contactId, orphan.rows[0].id]
             );
             // Re-home any open task stranded on a SECOND shadow orphan (the
             // contact's other number) onto the just-adopted canonical row.
-            await reassignShadowOrphanOpenTasks(orphan.rows[0].id, contactId, cid);
+            await reassignShadowOrphanOpenTasks(orphan.rows[0].id, contactId, cid, client);
             console.log(`[Timeline] Adopted orphan timeline ${orphan.rows[0].id} for contact ${contactId}`);
             return adopted.rows[0];
         }
@@ -295,7 +300,7 @@ async function findOrCreateTimelineByContact(contactId, companyId = null) {
 
     // 3. No orphan — create a fresh contact-linked timeline. The partial-unique
     //    index on (contact_id) makes this idempotent under a race.
-    const created = await db.query(
+    const created = await client.query(
         `INSERT INTO timelines (contact_id, company_id)
          VALUES ($1, $2)
          ON CONFLICT (contact_id) WHERE contact_id IS NOT NULL
@@ -306,7 +311,7 @@ async function findOrCreateTimelineByContact(contactId, companyId = null) {
     // Fresh canonical timeline — sweep any shadow orphan's stranded open task
     // (contact's phone matched no orphan above but a secondary-number orphan may
     // exist) onto it.
-    await reassignShadowOrphanOpenTasks(created.rows[0].id, contactId, cid);
+    await reassignShadowOrphanOpenTasks(created.rows[0].id, contactId, cid, client);
     return created.rows[0];
 }
 

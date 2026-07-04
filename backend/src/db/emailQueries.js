@@ -421,10 +421,10 @@ async function listDueMailboxes(intervalMinutes = 5) {
  * never fans onto several timelines. Returns the contact row (incl. `id` as
  * contact_id) or null when no contact matches (→ message stays inbox-only).
  */
-async function findEmailContact(fromEmail, companyId) {
+async function findEmailContact(fromEmail, companyId, client = db) {
     const normalized = String(fromEmail || '').trim().toLowerCase();
     if (!normalized) return null;
-    const result = await db.query(
+    const result = await client.query(
         `SELECT c.*, c.id AS contact_id
          FROM contacts c
          LEFT JOIN contact_emails ce ON ce.contact_id = c.id
@@ -444,8 +444,8 @@ async function findEmailContact(fromEmail, companyId) {
  * inbound matching (§3d) and the outbound send path (§5, on_timeline stamp).
  * Returns the updated row or null when no such message exists for the company.
  */
-async function linkMessageToContact(providerMessageId, companyId, { contact_id, timeline_id, on_timeline = true } = {}) {
-    const result = await db.query(
+async function linkMessageToContact(providerMessageId, companyId, { contact_id, timeline_id, on_timeline = true } = {}, client = db) {
+    const result = await client.query(
         `UPDATE email_messages SET
             contact_id  = $3,
             timeline_id = $4,
@@ -456,6 +456,35 @@ async function linkMessageToContact(providerMessageId, companyId, { contact_id, 
         [companyId, providerMessageId, contact_id, timeline_id, on_timeline]
     );
     return result.rows[0] || null;
+}
+
+/**
+ * CONTACT-EMAIL-MERGE-001: every message id (provider_message_id) whose sender
+ * address matches `emailNormalized` within one company. The message-id source for
+ * `resolveAddedEmail`'s inbox-only and D2b re-point loops, feeding
+ * `linkMessageToContact` (which keys on (company_id, provider_message_id)).
+ *
+ * Matches on `lower(trim(from_email)) = emailNormalized` — served by the mig-143
+ * functional index `idx_email_messages_from_normalized (company_id, (lower(trim(from_email))))`,
+ * so NO new index. Company-scoped (never crosses tenants) and tx-aware (optional
+ * trailing `client`, pool by default) so it reads within the PATCH transaction.
+ *
+ * @param {string} emailNormalized  already lower(trim)'d address
+ * @param {string} companyId
+ * @param {{query: Function}} [client=db]
+ * @returns {Promise<string[]>} provider_message_id list (possibly empty)
+ */
+async function listMessageIdsForAddress(emailNormalized, companyId, client = db) {
+    const normalized = String(emailNormalized || '').trim().toLowerCase();
+    if (!normalized) return [];
+    const result = await client.query(
+        `SELECT provider_message_id
+         FROM email_messages
+         WHERE company_id = $1
+           AND lower(trim(from_email)) = $2`,
+        [companyId, normalized]
+    );
+    return result.rows.map(r => r.provider_message_id);
 }
 
 /**
@@ -698,6 +727,7 @@ module.exports = {
     // EMAIL-TIMELINE-001: email ↔ contact ↔ timeline link
     findEmailContact,
     linkMessageToContact,
+    listMessageIdsForAddress, // CONTACT-EMAIL-MERGE-001
     getMessageLinkState,
     listUnlinkedInboundForTimeline,
     listUnlinkedOutboundForTimeline,

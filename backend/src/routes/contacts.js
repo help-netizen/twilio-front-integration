@@ -46,6 +46,35 @@ function errorResponse(code, message, reqId) {
     };
 }
 
+// CONTACT-EMAIL-MERGE-001: normalize a PATCH `emails[]` payload into a clean,
+// de-duped list of { email, is_primary } with EXACTLY ONE primary. Rules:
+//   • email_normalized = lower(trim(email)); blank / non-email-shaped dropped.
+//   • de-duped by normalized address (first occurrence wins).
+//   • exactly one primary: the first entry flagged is_primary wins; if none is
+//     flagged, the first surviving entry becomes primary.
+// Returns [] for a non-array / all-invalid payload.
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+function normalizeEmailsPayload(raw) {
+    if (!Array.isArray(raw)) return [];
+    const seen = new Set();
+    const out = [];
+    let flaggedIdx = -1;
+    for (const entry of raw) {
+        if (!entry || typeof entry.email !== 'string') continue;
+        const email = entry.email.toLowerCase().trim();
+        if (!email || !EMAIL_SHAPE.test(email)) continue;
+        if (seen.has(email)) continue;
+        seen.add(email);
+        // first-flagged-primary wins
+        if (flaggedIdx === -1 && entry.is_primary === true) flaggedIdx = out.length;
+        out.push({ email, is_primary: false });
+    }
+    if (out.length === 0) return out;
+    const primaryIdx = flaggedIdx === -1 ? 0 : flaggedIdx;
+    out[primaryIdx].is_primary = true;
+    return out;
+}
+
 // =============================================================================
 // GET /api/contacts — List contacts
 // =============================================================================
@@ -110,6 +139,16 @@ router.get('/:id', requirePermission('contacts.view'), async (req, res) => {
         // composer's "To" dropdown can offer each one (EMAIL-TIMELINE-001 / TASK-ET-14).
         contact.contact_emails = await contactsService.getContactEmails(id, contact.email);
 
+        // CONTACT-EMAIL-MERGE-001: richer {email,is_primary}[] shape (primary-first,
+        // exactly one primary = the scalar) for the multi-email editor (T3). Purely
+        // additive — the existing contact_emails string[] above is untouched.
+        contact.emails = (contact.contact_emails || []).map((email, i) => ({
+            email,
+            is_primary: contact.email
+                ? email.toLowerCase().trim() === contact.email.toLowerCase().trim()
+                : i === 0,
+        }));
+
         // Merge contact_addresses from our DB into contact.addresses
         const contactAddressService = require('../services/contactAddressService');
         const dbAddresses = await contactAddressService.getAddressesForContact(id);
@@ -169,6 +208,18 @@ router.patch('/:id', requirePermission('contacts.edit'), async (req, res) => {
         }
 
         const db = require('../db/connection');
+
+        // CONTACT-EMAIL-MERGE-001: normalize the optional multi-email list up front
+        // (before the tx). `emails` is an array, NOT a scalar column, so it is
+        // handled OUTSIDE the allowedFields loop. Exactly one primary is enforced
+        // here (first-flagged wins; if none flagged, the first entry is primary);
+        // blanks / non-email-shaped values are dropped; addresses are lower(trim)'d
+        // and de-duped. When `emails` is omitted the whole email path is skipped
+        // (back-compatible — behavior is byte-for-byte unchanged).
+        const emailsProvided = Array.isArray(req.body.emails);
+        const submittedEmails = emailsProvided ? normalizeEmailsPayload(req.body.emails) : [];
+        const primaryEmail = submittedEmails.find(e => e.is_primary)?.email || null;
+
         const allowedFields = ['first_name', 'last_name', 'company_name', 'phone_e164', 'secondary_phone', 'secondary_phone_name', 'email', 'notes'];
         const setClauses = [];
         const params = [];
@@ -176,6 +227,10 @@ router.patch('/:id', requirePermission('contacts.edit'), async (req, res) => {
 
         for (const field of allowedFields) {
             if (req.body[field] !== undefined) {
+                // When `emails` is provided, the scalar `contacts.email` is driven by
+                // the primary of that list — skip any scalar `email` in the body so
+                // the two never diverge (Decision C.2 / FR-2).
+                if (field === 'email' && emailsProvided) continue;
                 let value = req.body[field] || null;
                 // Normalize phone fields to E.164
                 if ((field === 'phone_e164' || field === 'secondary_phone') && value) {
@@ -187,37 +242,118 @@ router.patch('/:id', requirePermission('contacts.edit'), async (req, res) => {
             }
         }
 
-        if (setClauses.length === 0) {
+        // Keep the scalar `contacts.email` in sync with the primary of `emails[]`.
+        // Only forced when the list carries a primary (a removal-only `emails:[]`
+        // leaves the scalar untouched here; the FR-8 delete loop handles rows).
+        if (emailsProvided && primaryEmail) {
+            setClauses.push(`email = $${paramIdx}`);
+            params.push(primaryEmail);
+            paramIdx++;
+        }
+
+        // `emails:[]` (e.g. a removal-only edit) is a VALID update — do not 400.
+        if (setClauses.length === 0 && !emailsProvided) {
             return res.status(400).json(errorResponse('NO_FIELDS', 'No valid fields to update', reqId));
         }
 
         // Recalculate full_name
         const firstName = req.body.first_name !== undefined ? req.body.first_name : null;
         const lastName = req.body.last_name !== undefined ? req.body.last_name : null;
-        if (firstName !== null || lastName !== null) {
-            // Need current values for the ones not being updated
-            const { rows: current } = await db.query('SELECT first_name, last_name FROM contacts WHERE id = $1', [id]);
-            if (current.length === 0) {
-                return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));
+
+        // ── ONE transaction: contact UPDATE + contact_emails upsert/removal + the
+        //    per-new-address merge are atomic (Decision A). A merge failure on any
+        //    leg rolls the contact_emails write (and the scalar edit) back too —
+        //    never a half-written state. The async legs (leads cascade, phone
+        //    orphan-merge, ZB push) run AFTER commit, outside the tx, unchanged.
+        const client = await db.pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            if (firstName !== null || lastName !== null) {
+                // Need current values for the ones not being updated.
+                const { rows: current } = await client.query('SELECT first_name, last_name FROM contacts WHERE id = $1 AND company_id = $2', [id, companyId]);
+                if (current.length === 0) {
+                    await client.query('ROLLBACK');
+                    return res.status(404).json(errorResponse('NOT_FOUND', 'Contact not found', reqId));
+                }
+                const fn = firstName !== null ? firstName : current[0].first_name;
+                const ln = lastName !== null ? lastName : current[0].last_name;
+                const fullName = [fn, ln].filter(Boolean).join(' ') || null;
+                setClauses.push(`full_name = $${paramIdx}`);
+                params.push(fullName);
+                paramIdx++;
             }
-            const fn = firstName !== null ? firstName : current[0].first_name;
-            const ln = lastName !== null ? lastName : current[0].last_name;
-            const fullName = [fn, ln].filter(Boolean).join(' ') || null;
-            setClauses.push(`full_name = $${paramIdx}`);
-            params.push(fullName);
-            paramIdx++;
+
+            if (setClauses.length > 0) {
+                setClauses.push(`updated_at = NOW()`);
+                const updateParams = [...params, id, companyId];
+                await client.query(
+                    `UPDATE contacts SET ${setClauses.join(', ')} WHERE id = $${paramIdx} AND company_id = $${paramIdx + 1}`,
+                    updateParams
+                );
+            }
+
+            // ── Multi-email persistence (inside the tx, on the tx client) ──
+            if (emailsProvided) {
+                // Current set = the scalar primary + every contact_emails row, so
+                // "newly added in THIS patch" excludes anything already recorded
+                // (idempotent re-save does no merge work — TC-CEM-U11).
+                const additional = await contactDedupeService.getAdditionalEmails(id, client);
+                const existingSet = new Set(additional.map(e => (e || '').toLowerCase().trim()));
+                if (existing.email) existingSet.add(existing.email.toLowerCase().trim());
+
+                const submittedSet = new Set(submittedEmails.map(e => e.email));
+
+                // (1) Upsert each submitted address (ON CONFLICT DO NOTHING).
+                for (const { email } of submittedEmails) {
+                    await contactDedupeService.enrichEmail(id, email, client);
+                }
+
+                // (2) Reconcile is_primary flags so exactly one row is primary and
+                //     it matches the scalar (enrichEmail only sets primary when the
+                //     contact had none — it never re-assigns an existing primary).
+                if (primaryEmail) {
+                    await client.query(
+                        `UPDATE contact_emails SET is_primary = (email_normalized = $2) WHERE contact_id = $1`,
+                        [id, primaryEmail]
+                    );
+                }
+
+                // (3) FR-8 non-destructive removal: a row dropped from the list is
+                //     deleted, but any already-linked email_messages history stays
+                //     put (no reverse-merge, no message un-link — TC-CEM-U13).
+                for (const gone of existingSet) {
+                    if (!submittedSet.has(gone)) {
+                        // Never delete the address we just kept as the scalar primary.
+                        if (primaryEmail && gone === primaryEmail) continue;
+                        await client.query(
+                            `DELETE FROM contact_emails WHERE contact_id = $1 AND email_normalized = $2`,
+                            [id, gone]
+                        );
+                    }
+                }
+
+                // (4) For each NEWLY-added address, resolve its correspondence and
+                //     fold it onto this contact's timeline (link / full-merge /
+                //     re-point / no-op) — synchronously, on the SAME tx client.
+                const contactEmailMergeService = require('../services/contactEmailMergeService');
+                for (const { email } of submittedEmails) {
+                    if (!existingSet.has(email)) {
+                        await contactEmailMergeService.resolveAddedEmail(id, email, companyId, client);
+                    }
+                }
+            }
+
+            await client.query('COMMIT');
+        } catch (txErr) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw txErr;
+        } finally {
+            client.release();
         }
 
-        setClauses.push(`updated_at = NOW()`);
-        params.push(id);
-        params.push(companyId);
-
-        await db.query(
-            `UPDATE contacts SET ${setClauses.join(', ')} WHERE id = $${paramIdx} AND company_id = $${paramIdx + 1}`,
-            params
-        );
-
-        // Cascade contact fields to linked leads
+        // Cascade contact fields to linked leads (post-commit, on the pool — an
+        // async best-effort leg, unchanged; reflects the post-merge state).
         const updated = await contactsService.getContactById(id, companyId);
         await db.query(
             `UPDATE leads

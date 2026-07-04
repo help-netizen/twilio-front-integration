@@ -468,26 +468,30 @@ async function filterByEmail(candidates, emailNorm) {
     return candidates.filter(c => matchedIds.has(String(c.id)));
 }
 
-async function getAdditionalEmails(contactId) {
-    const { rows } = await db.query(
+// CONTACT-EMAIL-MERGE-001: both helpers take an optional trailing `client`
+// (pool by default) so the PATCH /:id handler can run the email upsert inside
+// its BEGIN/COMMIT — so a later merge failure rolls the upsert back atomically.
+// Additive: existing pool-bound callers omit `client` and are unchanged.
+async function getAdditionalEmails(contactId, client = db) {
+    const { rows } = await client.query(
         'SELECT email FROM contact_emails WHERE contact_id = $1 ORDER BY is_primary DESC, created_at',
         [contactId]
     );
     return rows.map(r => r.email);
 }
 
-async function enrichEmail(contactId, emailNorm) {
+async function enrichEmail(contactId, emailNorm, client = db) {
     if (!emailNorm) return false;
 
     // Check if this email already exists for this contact
-    const { rows: existing } = await db.query(
+    const { rows: existing } = await client.query(
         'SELECT 1 FROM contact_emails WHERE contact_id = $1 AND email_normalized = $2',
         [contactId, emailNorm]
     );
     if (existing.length > 0) return false;
 
     // Also check contact.email directly
-    const { rows: contact } = await db.query(
+    const { rows: contact } = await client.query(
         'SELECT email FROM contacts WHERE id = $1',
         [contactId]
     );
@@ -497,8 +501,8 @@ async function enrichEmail(contactId, emailNorm) {
 
     // If contact has no primary email, set it
     if (contact.length > 0 && !contact[0].email) {
-        await db.query('UPDATE contacts SET email = $1 WHERE id = $2', [emailNorm, contactId]);
-        await db.query(
+        await client.query('UPDATE contacts SET email = $1 WHERE id = $2', [emailNorm, contactId]);
+        await client.query(
             `INSERT INTO contact_emails (contact_id, email, email_normalized, is_primary)
              VALUES ($1, $2, $3, true)
              ON CONFLICT (contact_id, email_normalized) DO NOTHING`,
@@ -506,7 +510,7 @@ async function enrichEmail(contactId, emailNorm) {
         );
     } else {
         // Add as additional email
-        await db.query(
+        await client.query(
             `INSERT INTO contact_emails (contact_id, email, email_normalized, is_primary)
              VALUES ($1, $2, $3, false)
              ON CONFLICT (contact_id, email_normalized) DO NOTHING`,
@@ -589,4 +593,8 @@ module.exports = {
     normalizeEmail,
     normalizeName,
     createNewContactPublic: createNewContact,
+    // CONTACT-EMAIL-MERGE-001: previously defined-but-unexported; the PATCH /:id
+    // handler needs them to persist contact_emails inside its tx. Logic unchanged.
+    getAdditionalEmails,
+    enrichEmail,
 };

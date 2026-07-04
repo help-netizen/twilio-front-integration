@@ -155,3 +155,7 @@ Email is a first-class channel of the contact timeline, on a `MailProvider` seam
 ## Tasks nav badge (TASKS-COUNT-BADGE-001)
 
 The Tasks nav item carries a live count badge of OPEN tasks visible to the current user — identical visibility to `GET /api/tasks` (managers with `tasks.manage` see the whole company; everyone else only their own). Served by `GET /api/tasks/count` (which shares `buildTaskListFilters` with `listTasks`, so count and list can never drift), refreshed on mount/route-change, a 60s poll, and a PII-free `task.changed` SSE ping (`{company_id}` only — the client refetches the server-scoped count, never computes it). Mirrors the Leads new-count badge.
+
+## Contact email merge (CONTACT-EMAIL-MERGE-001)
+
+Adding an email to a contact (multi-email list in the contact editor) merges any existing correspondence for that address into the contact — the email analogue of the phone-number merge. Inbox-only messages link onto the contact timeline; an address owned by an empty email-only auto-contact triggers a full contact merge (re-point + delete) via `contactEmailMergeService`; an address on a contact with its own data re-points only the emails. The whole PATCH is one transaction (a merge failure rolls back the email add); the merge is company-scoped and refuses cross-tenant.

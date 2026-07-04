@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-07-04 — CONTACT-EMAIL-MERGE-001: добавление имейла в контакт сливает его почтовый таймлайн (orchestrate-пайплайн)
+
+Аналог телефонного слияния для почты. Раньше добавление телефона в контакт перецепляло орфан-таймлайны и звонки (mergeOrphanTimelines), а для email такого не было — и PATCH-роут даже не писал contact_emails. Теперь при добавлении имейла в контакт его почтовая переписка сливается в таймлайн этого контакта. Полный прогон через skill /orchestrate (агенты 01–08, auto-run); артефакты в Docs/specs/CONTACT-EMAIL-MERGE-001.md, Docs/test-cases/ (34 кейса), requirements/architecture/tasks.
+
+- **Новый `contactEmailMergeService`** — `resolveAddedEmail` (4-ветвевой диспатч): inbox-only письма (contact_id NULL) линкуются на таймлайн контакта; адрес принадлежит ОТДЕЛЬНОМУ email-only авто-контакту (нет телефона/джобов/лидов/… — проверка по 14 identity-таблицам) → ПОЛНОЕ слияние (перецепка писем/задач/таймлайна) + удаление пустого контакта; принадлежит контакту СО своими данными → только перецепка писем, контакт сохраняется; уже наш → no-op. FK-порядок строгий (открытые задачи re-home с орфан-таймлайна ДО его удаления — ловушка tasks.thread_id CASCADE; контакт удаляется последним). Cross-tenant guard (survivor.company_id === dup === companyId) стреляет до любой мутации.
+- **PATCH /api/contacts/:id** — принимает emails[] (мульти-имейл), персистит через enrichEmail, держит scalar contacts.email = primary; каждый НОВЫЙ адрес прогоняется через resolveAddedEmail в ОДНОЙ транзакции (contact+emails+merge атомарны — сбой откатывает всё); FR-8 удаление имейла не деструктивно (снимает contact_emails, историю не отвязывает). Фоновые фазы (phone-merge, leads-cascade, ZB) — после commit, без изменений.
+- **Frontend** — мульти-email список в EditContactDialog (primary неудаляем, «Set as primary», «+ Add email» как «+ Secondary Phone»); типы contactsApi/contact.ts.
+- **Без миграции** (mig 025 contact_emails + 129/079 + mig-143 индекс покрывают всё). Reexport enrichEmail/getAdditionalEmails + client-параметры на findOrCreateTimelineByContact/findEmailContact/linkMessageToContact для атомарности.
+- **Проверка** — jest 29/29 + 46/46 регрессия; scripts/verify-contact-email-merge-001.js 12/12 на реальной БД: P0 full-merge (dup удалён, 0 висячих FK, задача re-home а не CASCADE-удалена), P0 cross-tenant (вкл. leads-покрытие), идемпотентность, sabotage-control. Reviewer (агент 08) воспроизвёл всё → NEEDS FIXES только по одному: leads был мисклассифицирован как без company_id (миграция 012 = динамический ALTER-цикл, разведка пропустила) → фикс применён, плечи leads company-scoped.
+
+
 ## 2026-07-04 — TASKS-COUNT-BADGE-001: счётчик открытых задач на навигации Tasks (orchestrate-пайплайн)
 
 Над пунктом «Tasks» в навигации теперь бейдж с числом ОТКРЫТЫХ задач, видимых текущему пользователю — ровно то, что он видит в /tasks с фильтром Only Open (менеджер с tasks.manage видит все задачи компании, остальные — только свои). Полный аналог бейджа Leads. Прогон через skill /orchestrate (агенты 01–08, auto-run); артефакты в Docs/specs/TASKS-COUNT-BADGE-001.md, Docs/test-cases/ (41 кейс), Docs/requirements.md, Docs/architecture.md.

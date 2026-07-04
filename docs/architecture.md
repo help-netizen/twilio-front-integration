@@ -3481,3 +3481,91 @@ Practical simplification for the PATCH row: since `emitTaskChange` is coarse and
 - **Cheapness:** `COUNT(*) FROM tasks t WHERE company_id, HAS_ENTITY_PARENT, status='open' [, owner_user_id]` is served by the existing `company_id`/`status`/`owner_user_id` access on `tasks`; no per-row scan, no new index, no migration.
 - **Protected (untouched):** `GET /api/tasks` list behavior + visibility model (the count *reuses* the extracted builder, doesn't alter list output), `HAS_ENTITY_PARENT` definition, AR-TASK-UNIFY-001 timeline coupling, `tasks.view`/`tasks.manage` gates, LEADS-NEW-BADGE-001 wiring (`leadsNewCount`/`/new-count`/its SSE types) added *alongside*, `useRealtimeEvents.ts`/`sseManager.ts` touched additively only, `pulse-unread-badge` markup shared not modified. Deploy to prod only with explicit owner consent (standing rule).
 
+## CONTACT-EMAIL-MERGE-001: adding an email to a contact merges that address's correspondence (email analogue of the phone-merge)
+
+**Status:** Architecture · **Date:** 2026-07-04 · **Owner:** Contacts / Pulse / Email
+The email counterpart of the shipped phone-merge (`timelineMergeService.mergeOrphanTimelines`, fired async from `PATCH /api/contacts/:id`). Adds a multi-email list to the contact editor, persists it to `contact_emails` (closing a real gap — `PATCH` today writes only the `contacts.email` scalar and never `contact_emails`), and — for each newly-added address — merges that address's existing correspondence onto the contact's timeline. Requirements D1–D3 binding.
+
+### Duplication check (result)
+Not a duplicate. Reuses every existing primitive; adds one new merge service (the email analogue of `timelineMergeService`) and extends the `PATCH` route + editor. **No general contact-merge service exists** (owner's prior dedup was ad-hoc SQL) — this codifies the recipe. `email_by_contact` CTE, `getUnifiedTimelinePage`, `findEmailContact`, `linkMessageToContact`, `findOrCreateTimelineByContact` are reused unchanged.
+
+### Decision A — Sync (in-request), NOT async
+The phone-merge is fire-and-forget async because it only *re-points* (no deletes). The email full-merge **DELETES a contact**, so it needs stronger consistency and a predictable post-save state (the editor reloads and must show the merged result — AC-1/AC-2). **Chosen: run the merge synchronously inside the `PATCH` handler, before the `res.json(...)`, wrapped in a single DB transaction together with the `contact_emails` writes** (contact update + emails upsert + per-address resolution atomic). Rationale: (1) the merge set is tiny (the addresses just typed, not a history scan), so Save latency stays low; (2) a reload immediately reflects link/merge (no "just-added email whose merge hasn't run" window); (3) atomicity guarantees a failure never leaves `contact_emails` written but the merge half-done, or a contact deleted with children orphaned. The existing async legs (leads cascade, Zenbooker push) stay async and outside the tx (unchanged). This diverges from the phone-merge deliberately and is documented as such; the phone path is untouched.
+
+### Decision B — Reusable contact-merge service: `backend/src/services/contactEmailMergeService.js` (NEW)
+Email analogue of `timelineMergeService.js`. All functions accept an optional `client` (the PATCH tx) and fall back to the pool, and are strictly `company_id`-scoped and idempotent.
+
+- **`resolveAddedEmail(targetContactId, emailNormalized, companyId, client)`** — the per-address entry point the route calls for each newly-added address. Resolves who currently owns `emailNormalized` within `companyId` via a `findEmailContact`-style lookup (`contacts.email OR contact_emails.email_normalized`), then dispatches:
+  - **Inbox-only (no owning contact):** `linkInboxMessages(...)` — resolve the target's timeline via `timelinesQueries.findOrCreateTimelineByContact(target, companyId, client)` (which already adopts orphans + re-homes shadow-orphan open tasks), then for every `email_messages` row whose `lower(trim(from_email)) = emailNormalized AND company_id = $` (mig-143 functional index serves this — no new index) call `emailQueries.linkMessageToContact(providerMessageId, companyId, { contact_id: target, timeline_id, on_timeline: true })`. Idempotent re-link. [D3]
+  - **Owner is a SEPARATE contact + passes the emptiness test (D2a):** `mergeContacts(survivorId=target, dupId=owner, companyId, client)` — FULL MERGE + delete (see Decision B2).
+  - **Owner is a SEPARATE contact + FAILS the emptiness test (D2b):** re-point ONLY that address's `email_messages` (+ their thread linkage via `linkMessageToContact`) onto the target's timeline; the other contact and all its non-email data stay intact (no delete). Same message loop as inbox-only, but sourced from the owner's messages for that address.
+  - **Owner IS the target (address already on this contact):** no-op (idempotent re-save).
+- **`mergeContacts(survivorId, dupId, companyId, client)`** — reusable full-merge, the codified dedup recipe. Re-points every `contact_id` child from `dupId`→`survivorId`, adopts/merges the timeline, then deletes `dupId`. **FK order is load-bearing** (Decision B3). Built generic (not email-specific) so a future manual-merge action can reuse it, but for v1 it is only reachable through `resolveAddedEmail`'s D2a branch.
+
+### Decision B2 — Emptiness test (the D2a↔D2b gate): `isContactEmailOnly(contactId, companyId, client)`
+A contact is deletable only if it is **nothing but email**. The predicate enumerates **every** table with a `contact_id` FK to `contacts(id)` (audited from migrations) so "identity/data" is never under-counted and a real contact is never destroyed. Returns `true` only when the contact has **no** `phone_e164` AND **no** `secondary_phone` AND **zero** referencing rows in ALL of:
+
+| Table (FK on-delete) | mig | Counts as identity because |
+|---|---|---|
+| `jobs` (SET NULL) | 031 | a booked job |
+| `leads` (SET NULL) | 023 | a lead |
+| `estimates` (SET NULL) | 053 | a quote |
+| `invoices` (SET NULL) | 057 | a bill |
+| `payment_transactions` (SET NULL) | 064 | money |
+| `stripe_payment_sessions` (SET NULL) | 114 | a payment session |
+| `portal_access_tokens` (CASCADE) | 066 | customer-portal identity |
+| `portal_sessions` (CASCADE) | 067 | portal identity |
+| `portal_events` (SET NULL) | 068 | portal activity |
+| `crm_account_contacts` (CASCADE) | 088 | linked to a CRM account |
+| `crm_deal_contacts` (CASCADE) | 088 | on a CRM deal |
+| `crm_activities` (SET NULL) | 088 | logged CRM activity |
+| `tasks` (contact_id SET NULL; thread_id CASCADE) | 038/089 | an independent task NOT co-located on the email timeline being merged |
+| `contact_addresses` (CASCADE) | 026 | a saved address = real identity |
+
+Excluded from the test (they ARE the email footprint being moved, so their presence must NOT block deletion): the dup's own `contact_emails` rows and its `email_messages` / its email timeline. `timelines` (SET NULL, mig 028) is likewise not a blocker — it is adopted/merged, not counted. The test is a single `SELECT EXISTS(...) OR EXISTS(...) …` over the above (each company-scoped where the table carries `company_id`), evaluated inside the tx. Erring toward "not empty" is safe: it degrades D2a→D2b (re-point only, keep the contact) — never a wrong delete.
+
+### Decision B3 — FK-order merge recipe (in `mergeContacts`, inside the tx)
+CASCADE traps mirror ORPHAN-TASK-REHOME-001. Order:
+1. **Adopt/merge the timeline FIRST** (resolve `survivorTl = findOrCreateTimelineByContact(survivor)`; find the dup's timeline `dupTl`).
+2. **Re-point OPEN tasks off `dupTl` BEFORE any timeline delete** — `UPDATE tasks SET thread_id = survivorTl WHERE thread_id = dupTl AND status='open'` (tasks.thread_id is `ON DELETE CASCADE`; skipping this silently destroys an open Action-Required task). Also `UPDATE tasks SET contact_id = survivor WHERE contact_id = dup` (contact_id is SET NULL — re-point so history follows).
+3. **Re-point `email_messages`** — `UPDATE email_messages SET contact_id=survivor, timeline_id=survivorTl, on_timeline=true WHERE contact_id=dup AND company_id=$` (email_threads has NO contact_id — threads need no re-point; linkage lives on messages).
+4. **Re-point the remaining SET-NULL children** that constitute movable history — `jobs`, `leads`, `estimates`, `invoices`, `payment_transactions`, `stripe_payment_sessions`, `portal_events`, `crm_activities` → set `contact_id=survivor` (company-scoped). (In the D2a path these are all empty by the emptiness test, so these updates move 0 rows — but `mergeContacts` is generic and does them unconditionally for reuse-safety.)
+5. **Move M2M / CASCADE children with NOT-EXISTS guards** to dodge unique collisions: `contact_emails` (`UNIQUE(contact_id, email_normalized)`), `contact_addresses`, `crm_account_contacts` (`UNIQUE(company_id, account_id, contact_id)`), `crm_deal_contacts`, `portal_access_tokens`, `portal_sessions` — `UPDATE … SET contact_id=survivor WHERE contact_id=dup AND NOT EXISTS (SELECT 1 … WHERE contact_id=survivor AND <unique-cols match>)`; rows that would collide are left on the dup and die with the CASCADE delete (they are dup-of-survivor by definition).
+6. **Delete the now-emptied dup timeline(s)**, then **DELETE the dup contact LAST** (after all children re-pointed) — its residual CASCADE children (already-moved-or-duplicate) drop cleanly. `findEmailContact(address)` afterwards returns the survivor (AC-2).
+
+### Decision C — `contact_emails` write path & PATCH email-array contract
+**Chosen shape: an `emails[]` array on the existing `PATCH /api/contacts/:id` body** (not a separate `/:id/emails` sub-resource) — one atomic Save, one tx, mirrors how `secondary_phone` rides the same PATCH.
+- Request: `emails?: Array<{ email: string; is_primary?: boolean }>` (optional; when omitted, behavior is unchanged — backward compatible). Exactly one `is_primary:true` is enforced server-side (first primary wins; if none flagged, the first entry is primary).
+- Add `'emails'` handling to `PATCH` **outside** the scalar `allowedFields` loop (it is an array, not a column). After the `contacts` row UPDATE, inside the same tx:
+  1. Normalize each: `email_normalized = lower(trim(email))`; drop blanks/invalid.
+  2. **Upsert** each via `contactDedupeService.enrichEmail`-semantics (`INSERT … ON CONFLICT (contact_id, email_normalized) DO NOTHING`); keep the scalar `contacts.email` in sync with the primary (existing consumers read it).
+  3. **FR-8 non-destructive removal (default):** rows dropped from the list have their `contact_emails` row deleted, but already-linked `email_messages` history stays on the timeline (no reverse-merge). This is the safe default; a destructive un-merge is out of scope.
+  4. For each address that is **newly added** in this PATCH (not previously in `contact_emails`), call `contactEmailMergeService.resolveAddedEmail(id, emailNormalized, companyId, client)`.
+- **Reuse, don't hand-roll:** `enrichEmail` and `getAdditionalEmails` in `contactDedupeService.js` are **defined but NOT currently exported** (module.exports lists only `resolveContact`/`searchCandidates`/normalizers/`createNewContactPublic`) — add both to the exports so the route/merge service can call them. `enrichEmail` already handles the "no primary → set primary + insert" vs "additional" split and `ON CONFLICT DO NOTHING`.
+- **GET surfaces the list:** `contactsService.getById` returns `c.*` only (scalar email). Extend the contact detail response with an `emails` array (reuse `getContactEmails(contactId, primaryEmail)` at contactsService.js:195, already returns primary-first de-duped `string[]`, or a richer `{email,is_primary}[]`) so the editor can render/populate the multi-email list. `getUnifiedTimelinePage`'s `email_by_contact` CTE already resolves via `contact_emails.email_normalized` → **no list-query change** (FR-7).
+
+### Decision D — Migration: NONE required
+mig 025 (`contact_emails` + its `UNIQUE(contact_id, email_normalized)`, `ON DELETE CASCADE`, `idx_contact_emails_normalized`), mig 079/129 (`email_messages.contact_id/timeline_id/on_timeline`), and **mig 143** (`idx_email_messages_from_normalized ON email_messages(company_id, (lower(trim(from_email))))`) already cover every lookup — including the inbox-only re-point's "messages by normalized `from_email` within a company", which mig 143 serves exactly. No new index (PULSE-PERF-001: no speculative indexes). No historical backfill needed (mig 154 already backfilled `contact_emails` from `contacts.email`; this feature merges on the add action going forward). **Next free migration number is 156** if one ever becomes necessary (re-verify max immediately before creating — parallel branches).
+
+### Idempotency, company scoping, verification
+- **Idempotent** end-to-end: `linkMessageToContact` is a no-op re-link; `enrichEmail`/`contact_emails` upsert `ON CONFLICT DO NOTHING`; a full-merge whose dup is already gone resolves to the survivor and no-ops; re-saving the same email set moves nothing.
+- **Company-scoped on every leg** — resolution, message re-point, thread linkage, contact delete all filtered by the editing contact's `company_id` (`req.companyFilter?.company_id`). No cross-tenant read/move/delete (LIST-PAGINATION-001 SMS-leak / ZB-ISO-001 precedents).
+- **Verify (LIST-PAGINATION-001 lesson):** jest mocks are insufficient — run the REAL merge against a **prod-sized DB copy** for all branches (inbox-only link, empty-auto-contact full merge + delete, has-identity re-point, no-correspondence record, multi-email, cross-tenant isolation) and `EXPLAIN` the inbox-only `from_email` lookup to confirm the mig-143 index is used. Document in the PR.
+
+### Middleware / scoping / protected
+- **Middleware chain unchanged:** `PATCH /api/contacts/:id` keeps `requirePermission('contacts.edit')` under `app.use('/api/contacts', authenticate, requireCompanyAccess, contactsRouter)`. No new route, no `server.js` edit.
+- **`company_id` source:** `req.companyFilter?.company_id`, threaded into every merge-service call and SQL leg.
+- **Protected (untouched):** the phone-merge (`mergeOrphanTimelines` + its async trigger + ORPHAN-TASK-REHOME-001 task re-home) — the email path is added ALONGSIDE, phone path byte-for-byte intact; `email_by_contact` CTE / `getUnifiedTimelinePage` (EMAIL-OUTBOUND-001, LIST-PAGINATION-001) shape/semantics; `linkMessageToContact` idempotent-relink + EMAIL-UNREAD-001 unread semantics; `findEmailContact` resolution; `contact_emails` invariants (mig 025); the leads-cascade + async ZB contact sync in `PATCH` (stay firing, outside the tx). Deploy to prod only with explicit owner consent (standing rule).
+
+### Files to change
+| File | Change |
+|---|---|
+| `backend/src/services/contactEmailMergeService.js` | **NEW.** `resolveAddedEmail`, `mergeContacts`, `isContactEmailOnly`, `linkInboxMessages` — email analogue of `timelineMergeService.js`. Sync, tx-aware (`client` param), company-scoped, idempotent. |
+| `backend/src/routes/contacts.js` | `PATCH /:id`: accept `emails[]` (outside the scalar loop); wrap contact-update + emails-upsert + per-address `resolveAddedEmail` in ONE tx BEFORE `res.json`; keep scalar `contacts.email` synced to primary; FR-8 non-destructive removal. Leads-cascade + ZB push stay async/unchanged. |
+| `backend/src/services/contactDedupeService.js` | Add `enrichEmail` and `getAdditionalEmails` to `module.exports` (currently defined-but-unexported) so route/merge reuse them. Logic unchanged. |
+| `backend/src/services/contactsService.js` | Extend contact detail (`getContactById`/`getById` consumer) to return an `emails` array (reuse `getContactEmails`) so the editor can load the list. |
+| `backend/src/db/emailQueries.js` | Add a company-scoped helper `listMessageIdsForAddress(emailNormalized, companyId, client)` (messages by `lower(trim(from_email))`, served by mig-143 index) used by the inbox-only / D2b re-point loops. `findEmailContact` / `linkMessageToContact` reused unchanged. |
+| `backend/src/db/timelinesQueries.js` | Reused: `findOrCreateTimelineByContact` (accepts the tx `client`) + `reassignShadowOrphanOpenTasks`. No shape change. |
+| `frontend/src/components/contacts/EditContactDialog.tsx` | Replace the single email `FloatingField` with a multi-email list (primary + add/remove additional, one primary, basic email validation) mirroring the secondary-phone control; submit `emails[]` in the PATCH payload. |
+| `frontend/src/services/contactsApi.ts` | Extend `updateContact` fields type with `emails?: { email: string; is_primary?: boolean }[]`; surface `emails` on the contact detail type for load. |
+| `backend/tests/` (jest) | New tests for `contactEmailMergeService` (all D1–D3 branches, idempotency, tenancy, FK/task-safety) + PATCH email-array persistence; plus documented real-DB-copy verification. |

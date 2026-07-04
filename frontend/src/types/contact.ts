@@ -26,8 +26,10 @@ export type Contact = {
     secondary_phone: string | null;
     secondary_phone_name: string | null;
     email: string | null;
-    /** Additional contact emails (EMAIL-TIMELINE-001). Optional until the backend surfaces it. */
+    /** Additional contact emails (EMAIL-TIMELINE-001). Optional until the backend surfaces it. Primary-first string[]. */
     contact_emails?: string[];
+    /** Richer email list (CONTACT-EMAIL-MERGE-001). Optional; when present, preferred over contact_emails for the editor. */
+    emails?: { email: string; is_primary?: boolean }[];
     notes: string | null;
     zenbooker_customer_id: string | null;
     zenbooker_sync_status: 'not_linked' | 'linked' | 'pending' | 'error' | null;

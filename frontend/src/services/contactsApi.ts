@@ -96,6 +96,8 @@ export async function updateContact(contactId: number, fields: {
     first_name?: string; last_name?: string; company_name?: string;
     phone_e164?: string; secondary_phone?: string; secondary_phone_name?: string;
     email?: string; notes?: string;
+    /** Multi-email list (CONTACT-EMAIL-MERGE-001). Exactly one is_primary is enforced server-side. */
+    emails?: { email: string; is_primary?: boolean }[];
 }): Promise<{ ok: true; data: { contact: Contact } }> {
     const res = await authedFetch(`${API_BASE}/${contactId}`, {
         method: 'PATCH',
