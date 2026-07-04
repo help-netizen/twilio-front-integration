@@ -133,7 +133,12 @@ async function getScheduleItems(opts) {
 
     // ── Leads ───────────────────────────────────────────────────────────────
     if (wantLead) {
-        const leadConds = [`l.company_id = $1`, `l.status NOT IN ('converted','lost','spam')`];
+        // VAPI-SLOT-ENGINE-001 T1: case-INSENSITIVE terminal-status filter (mirrors
+        // the jobs branch's LOWER(j.blanc_status) above and the held-lead occupancy
+        // sub-read in slotEngineService.buildScheduledJobs). convertLead/markLost write
+        // capitalized 'Converted'/'Lost'; a bare case-sensitive NOT IN would not exclude
+        // them, leaving a terminal lead on the Schedule. Safe: 0 rows affected today.
+        const leadConds = [`l.company_id = $1`, `LOWER(l.status) NOT IN ('converted','lost','spam')`];
 
         if (startDate) {
             idx++; leadConds.push(dayLower('l.lead_date_time', idx)); params.push(startDate);

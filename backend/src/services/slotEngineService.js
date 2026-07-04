@@ -8,12 +8,14 @@
  * SLOT_ENGINE_URL) degrades to an empty, clearly-flagged result — never a throw,
  * never a fabricated slot.
  */
+const db = require('../db/connection');
 const queries = require('../db/technicianBaseLocationQueries');
 const zenbookerClient = require('./zenbookerClient');
 const googlePlacesService = require('./googlePlacesService');
 const jobsService = require('./jobsService');
 const scheduleService = require('./scheduleService');
 const slotEngineSettingsService = require('./slotEngineSettingsService');
+const { dateInTZ } = require('../utils/companyTime');
 
 const DEFAULT_TZ = 'America/New_York';
 const DEFAULT_DURATION_MINUTES = 75;
@@ -50,6 +52,24 @@ function addDaysLocal(baseDateStr, n) {
     const base = new Date(`${baseDateStr}T00:00:00Z`);
     base.setUTCDate(base.getUTCDate() + n);
     return base.toISOString().slice(0, 10);
+}
+
+/**
+ * Combine a wall-clock date + time in company `tz` into a UTC ISO string.
+ * The inverse of localDate/localHHMM. Thin adapter over the canonical
+ * companyTime.dateInTZ — the single source of the DST offset math (itself
+ * mirrored from frontend companyTime.ts). DST-aware: an EDT date resolves
+ * UTC−4, an EST date UTC−5.
+ *
+ * @param {string} dateStr 'YYYY-MM-DD'
+ * @param {string} hhmm    'HH:MM' (24h)
+ * @param {string} tz      IANA timezone name
+ * @returns {string} ISO 8601 UTC string, e.g. '2026-07-08T14:00:00.000Z'
+ */
+function tzCombine(dateStr, hhmm, tz) {
+    const [y, mo, d] = String(dateStr).split('-').map(Number);
+    const [hh, mm] = String(hhmm).split(':').map(Number);
+    return dateInTZ(y, mo, d, hh, mm, tz).toISOString();
 }
 
 async function resolveTimezone(companyId) {
@@ -138,6 +158,42 @@ async function buildScheduledJobs(companyId, startDate, endDate, tz, excludeJobI
                 .filter(id => id && id !== 'undefined' && id !== 'null'),
         });
     }
+
+    // VAPI-SLOT-ENGINE-001 (FR-5, Decision A): append OPEN HELD LEADS as area
+    // occupancy so a caller's held window isn't re-offered near the same place.
+    // Filter mirrors the leads-in-Schedule UNION verbatim (scheduleQueries.js:136)
+    // — case-INSENSITIVE terminal-status (LOWER) so a capitalized 'Converted'/'Lost'
+    // (as written by convertLead/markLost) actually drops the hold. Company-scoped,
+    // date-windowed, coords-required (a coord-less hold can't block routing — the
+    // engine's own skip-guard would drop it anyway; accepted v1). Same occupancy
+    // shape as a job (reusing localDate/localHHMM/minutesBetween); assigned_technicians:[]
+    // = the engine treats it as an area block for ANY tech, not one tech's route.
+    const leadsSql = `
+        SELECT id, lead_date_time, lead_end_date_time, latitude, longitude, job_type
+        FROM leads
+        WHERE company_id = $1
+          AND LOWER(status) NOT IN ('converted','lost','spam')
+          AND lead_date_time IS NOT NULL
+          AND latitude IS NOT NULL AND longitude IS NOT NULL
+          AND lead_date_time >= ($2::date::timestamp AT TIME ZONE $4)
+          AND lead_date_time <  (($3::date + INTERVAL '1 day')::timestamp AT TIME ZONE $4)
+    `;
+    const { rows: heldLeads } = await db.query(leadsSql, [companyId, startDate, endDate, tz]);
+    for (const l of heldLeads) {
+        out.push({
+            id: `lead:${l.id}`,
+            date: localDate(l.lead_date_time, tz),
+            status: 'scheduled',
+            job_type: l.job_type || 'unknown',
+            window_start: localHHMM(l.lead_date_time, tz),
+            window_end: localHHMM(l.lead_end_date_time || l.lead_date_time, tz),
+            lat: Number(l.latitude),
+            lng: Number(l.longitude),
+            duration_minutes: minutesBetween(l.lead_date_time, l.lead_end_date_time) || DEFAULT_DURATION_MINUTES,
+            assigned_technicians: [],
+        });
+    }
+
     return out;
 }
 
@@ -238,6 +294,10 @@ async function getRecommendations(companyId, input = {}) {
 
 module.exports = {
     getRecommendations,
+    // VAPI-SLOT-ENGINE-001: wall-clock→ISO combine + company-tz resolve, imported
+    // by the vapi-tools recommendSlots/createLead slot-persist path (T2).
+    tzCombine,
+    resolveTimezone,
     // exported for unit tests
     _localDate: localDate,
     _localHHMM: localHHMM,

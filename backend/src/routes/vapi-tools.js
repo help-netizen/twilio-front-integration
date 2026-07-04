@@ -21,6 +21,8 @@ const https = require('https');
 const stQueries = require('../db/serviceTerritoryQueries');
 const leadsService = require('../services/leadsService');
 const scheduleService = require('../services/scheduleService');
+const marketplaceService = require('../services/marketplaceService');
+const slotEngineService = require('../services/slotEngineService');
 
 const DEFAULT_COMPANY_ID = '00000000-0000-0000-0000-000000000001';
 const AVAILABILITY_DAYS = 5;
@@ -134,6 +136,112 @@ async function handleCheckAvailability({ zip, unitType, days }) {
     }
 }
 
+// ─── Tool: recommendSlots ─────────────────────────────────────────────────────
+
+const SLOT_FALLBACK = { available: false, slots: [], fallback: true };
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/**
+ * Human-readable spoken window, e.g. "Tue Jul 8, 10:00–13:00".
+ * Built from the date + the company-local 'HH:MM' window the engine already
+ * returns (tech-agnostic), so no tz math is needed here — the engine's times are
+ * already company-local wall-clock. Falls back to a bare "date start–end" string
+ * if the date can't be parsed.
+ */
+function formatSlotLabel(date, start, end) {
+    const [y, mo, d] = String(date).split('-').map(Number);
+    if (Number.isFinite(y) && Number.isFinite(mo) && Number.isFinite(d)) {
+        // Noon UTC keeps the weekday stable regardless of the runtime tz.
+        const dow = WEEKDAYS[new Date(Date.UTC(y, mo - 1, d, 12)).getUTCDay()] || '';
+        const mon = MONTHS[mo - 1] || '';
+        return `${dow} ${mon} ${d}, ${start}–${end}`.trim();
+    }
+    return `${date}, ${start}–${end}`;
+}
+
+/**
+ * recommendSlots — offer engine-ranked concrete arrival windows to the caller.
+ * Gated on the smart-slot-engine marketplace app; calls slotEngineService
+ * DIRECTLY (not the auth'd proxy). Everything is inside one try/catch: any fault
+ * (app not connected, engine unavailable, no location, empty recs, or a throw)
+ * degrades to {available:false, slots:[], fallback:true} — never a 500, never a
+ * fabricated window, the call always continues.
+ *
+ * @param {{ zip?, lat?, lng?, address?, unitType?, durationMinutes?, excludeSlots?, daysAhead? }} args
+ */
+async function handleRecommendSlots(args = {}) {
+    try {
+        const { zip, lat, lng, address, unitType, durationMinutes, excludeSlots, daysAhead } = args;
+
+        // 1. Gate: don't touch the engine unless the app is connected.
+        const connected = await marketplaceService.isAppConnected(
+            DEFAULT_COMPANY_ID,
+            marketplaceService.SMART_SLOT_ENGINE_APP_KEY,
+        );
+        if (!connected) return { ...SLOT_FALLBACK };
+
+        // 2. Location: prefer lat+lng (both finite) → else address → else zip.
+        const hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
+        const locStr = (address && String(address).trim()) || normalizeZip(zip) || undefined;
+        const newJob = {
+            ...(hasCoords ? { lat, lng } : {}),
+            ...(locStr ? { address: locStr } : {}),
+            job_type: unitType ? `${unitType} Repair` : 'Appliance Repair',
+            duration_minutes: Number.isFinite(durationMinutes) ? durationMinutes : APPOINTMENT_DURATION_MIN,
+        };
+        // Deeper mode: extend the horizon via latest_allowed_date (company-local).
+        if (Number.isFinite(daysAhead)) {
+            const tz = await slotEngineService.resolveTimezone(DEFAULT_COMPANY_ID);
+            const today = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+            const base = new Date(`${today}T00:00:00Z`);
+            base.setUTCDate(base.getUTCDate() + daysAhead);
+            newJob.latest_allowed_date = base.toISOString().slice(0, 10);
+        }
+
+        // 3. Call the engine directly.
+        const { recommendations, engine_status } = await slotEngineService.getRecommendations(
+            DEFAULT_COMPANY_ID,
+            { new_job: newJob },
+        );
+        if (engine_status !== 'ok' || !Array.isArray(recommendations) || recommendations.length === 0) {
+            return { ...SLOT_FALLBACK };
+        }
+
+        // 4. Map recs → slots. Stable, tech-agnostic key `date|start|end` collapses
+        //    the same window from different techs to one offer and round-trips via
+        //    excludeSlots. Drop excluded keys, dedup, cap to MAX_SLOTS.
+        const exclude = new Set(Array.isArray(excludeSlots) ? excludeSlots : []);
+        const seen = new Set();
+        const slots = [];
+        for (const rec of recommendations) {
+            const start = rec?.time_frame?.start;
+            const end = rec?.time_frame?.end;
+            if (!rec?.date || !start || !end) continue;
+            const key = `${rec.date}|${start}|${end}`;
+            if (exclude.has(key) || seen.has(key)) continue;
+            seen.add(key);
+            slots.push({
+                key,
+                date: rec.date,
+                start,
+                end,
+                label: formatSlotLabel(rec.date, start, end),
+                techName: rec.technicians?.[0]?.name,
+                confidence: rec.confidence,
+            });
+            if (slots.length >= MAX_SLOTS) break;
+        }
+
+        if (slots.length === 0) return { ...SLOT_FALLBACK };
+        return { available: true, slots };
+    } catch (err) {
+        console.error('[vapi-tools] recommendSlots error:', err.message);
+        return { ...SLOT_FALLBACK };
+    }
+}
+
 // ─── Tool: createLead ─────────────────────────────────────────────────────────
 
 function buildCallSummary({ unitType, brand, unitAge, problemDescription, preferredSlot, addressValidated, escalationRequested }) {
@@ -158,6 +266,7 @@ async function handleCreateLead(args) {
         preferredSlot, addressValidated, escalationRequested,
         disqualified, disqualReason,
         callerName,
+        chosenSlot, lat, lng,
     } = args;
 
     // Disqualified leads (out-of-area / unsupported appliance) are logged for
@@ -185,6 +294,34 @@ async function handleCreateLead(args) {
         State:     state || '',
         PostalCode: normalizeZip(zip),
     };
+
+    // VAPI-SLOT-ENGINE-001 (Decision D): when the caller picked an engine-offered
+    // window, persist it as a schedule-blocking hold on the LEAD — real TIMESTAMPTZ
+    // columns (lead_date_time/lead_end_date_time), not just the Comments "Slot:"
+    // text. FIELD_MAP maps LeadDateTime/LeadEndDateTime/Latitude/Longitude → columns.
+    // Back-compat: no chosenSlot ⇒ none of these four keys are added (columns NULL).
+    // Edge 6: malformed chosenSlot ⇒ treated as absent (never block the call).
+    if (chosenSlot && /^\d{4}-\d{2}-\d{2}$/.test(String(chosenSlot.date))
+        && /^\d{1,2}:\d{2}$/.test(String(chosenSlot.start))
+        && /^\d{1,2}:\d{2}$/.test(String(chosenSlot.end))) {
+        try {
+            const tz = await slotEngineService.resolveTimezone(DEFAULT_COMPANY_ID);
+            body.LeadDateTime = slotEngineService.tzCombine(chosenSlot.date, chosenSlot.start, tz);
+            body.LeadEndDateTime = slotEngineService.tzCombine(chosenSlot.date, chosenSlot.end, tz);
+            // Edge 7: coords optional — write them only when both are finite.
+            if (Number.isFinite(lat) && Number.isFinite(lng)) {
+                body.Latitude = lat;
+                body.Longitude = lng;
+            }
+        } catch (err) {
+            // Never let a slot-compose fault block lead creation.
+            console.error('[vapi-tools] createLead slot-persist skipped:', err.message);
+            delete body.LeadDateTime;
+            delete body.LeadEndDateTime;
+            delete body.Latitude;
+            delete body.Longitude;
+        }
+    }
 
     // Attempt with 1 retry on failure
     for (let attempt = 1; attempt <= 2; attempt++) {
@@ -231,6 +368,8 @@ router.post('/', vapiSecretAuth, async (req, res) => {
                     result = await handleValidateAddress(args);
                 } else if (name === 'checkAvailability') {
                     result = await handleCheckAvailability(args);
+                } else if (name === 'recommendSlots') {
+                    result = await handleRecommendSlots(args);
                 } else if (name === 'createLead') {
                     result = await handleCreateLead(args);
                 } else {
