@@ -42,4 +42,6 @@ export interface WizardState {
     submitting: boolean;
     handleCreate: (withJob: boolean) => void;
     setStep: (s: Step) => void;
+    // Email-origin: a Zenbooker job needs a phone, so the with-job leg is offered only once a phone is entered.
+    canCreateJob: boolean;
 }

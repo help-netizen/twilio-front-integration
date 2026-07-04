@@ -77,10 +77,13 @@ export function WizardStep4(s: WizardState) {
                 <Button variant="outline" onClick={() => s.handleCreate(false)} disabled={s.submitting} className="wizard__action-btn">
                     <FileText className="w-4 mr-1.5" />{s.submitting ? 'Creating…' : 'Create Lead Only'}
                 </Button>
-                <Button onClick={() => s.handleCreate(true)} disabled={s.submitting || s.zbLoading || !s.selectedTimeslot || !s.streetAddress.trim() || !s.city.trim()} className="wizard__action-btn wizard__action-btn--primary"
-                    title={s.zbLoading ? 'Waiting for Zenbooker territory data…' : !s.streetAddress.trim() || !s.city.trim() ? 'Street address and city are required to create a job' : !s.selectedTimeslot ? 'Select a timeslot on Step 3 to create a job' : ''}>
-                    <CheckCircle2 className="w-4 mr-1.5" />{s.submitting ? 'Creating…' : s.zbLoading ? 'Waiting for territory…' : 'Create Lead & Job'}
-                </Button>
+                {/* A Zenbooker job needs a phone. Email-origin (no phone) → hide the with-job leg until a phone is entered. */}
+                {s.canCreateJob && (
+                    <Button onClick={() => s.handleCreate(true)} disabled={s.submitting || s.zbLoading || !s.selectedTimeslot || !s.streetAddress.trim() || !s.city.trim()} className="wizard__action-btn wizard__action-btn--primary"
+                        title={s.zbLoading ? 'Waiting for Zenbooker territory data…' : !s.streetAddress.trim() || !s.city.trim() ? 'Street address and city are required to create a job' : !s.selectedTimeslot ? 'Select a timeslot on Step 3 to create a job' : ''}>
+                        <CheckCircle2 className="w-4 mr-1.5" />{s.submitting ? 'Creating…' : s.zbLoading ? 'Waiting for territory…' : 'Create Lead & Job'}
+                    </Button>
+                )}
             </div>
         </div>
     );

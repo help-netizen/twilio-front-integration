@@ -23,13 +23,17 @@ import { todayInTZ, tomorrowAtInTZ } from '../../utils/companyTime';
 import './CreateLeadJobWizard.css';
 
 interface CreateLeadJobWizardProps {
-    phone: string;
+    // Optional: blank/undefined for an email-origin (phoneless) contact. When present, the wizard
+    // behaves exactly as before (phone-origin). contactId/email prefill the email-origin flow.
+    phone?: string;
+    contactId?: number;
+    email?: string;
     hasActiveCall?: boolean;
     timelineId?: number;
     onLeadCreated?: () => void;
 }
 
-export function CreateLeadJobWizard({ phone, hasActiveCall: _hasActiveCall, timelineId, onLeadCreated }: CreateLeadJobWizardProps) {
+export function CreateLeadJobWizard({ phone, contactId, email: emailProp, hasActiveCall: _hasActiveCall, timelineId, onLeadCreated }: CreateLeadJobWizardProps) {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const { company } = useAuth();
@@ -44,10 +48,10 @@ export function CreateLeadJobWizard({ phone, hasActiveCall: _hasActiveCall, time
     const zipCheck = useZipCheck(postalCode);
     const { territoryResult, territoryLoading, territoryError, zipExists, zipArea, matchedZip, zipSource, zbLoading, coords, setCoords } = zipCheck;
 
-    const [phoneNumber, setPhoneNumber] = useState(formatUSPhone(phone));
+    const [phoneNumber, setPhoneNumber] = useState(formatUSPhone(phone || ''));
     const [firstName, setFirstName] = useState('');
     const [lastName, setLastName] = useState('');
-    const [email, setEmail] = useState('');
+    const [email, setEmail] = useState(emailProp || '');
 
     const [streetAddress, setStreetAddress] = useState('');
     const [unit, setUnit] = useState('');
@@ -122,13 +126,18 @@ export function CreateLeadJobWizard({ phone, hasActiveCall: _hasActiveCall, time
                 }
             }
 
+            const phoneE164 = toE164(phoneNumber);
             const leadInput: Record<string, unknown> = {
-                FirstName: firstName || 'Unknown', LastName: lastName || '', Phone: toE164(phoneNumber),
+                FirstName: firstName || 'Unknown', LastName: lastName || '',
+                // Phone only when non-blank — email-origin leads are stored phoneless (no fabricated phone).
+                ...(phoneE164 ? { Phone: phoneE164 } : {}),
                 Email: email || undefined, Address: streetAddress || undefined, Unit: unit || undefined,
                 City: city || undefined, State: state || undefined, PostalCode: matchedZip || (/^\d/.test(postalCode) ? postalCode : undefined),
                 Latitude: finalCoords?.lat || undefined, Longitude: finalCoords?.lng || undefined,
                 JobType: jobType || undefined, Description: description || undefined,
                 Status: withJob ? 'Converted' : 'Submitted', JobSource: 'Phone Call',
+                // Link to the timeline's contact (attach = no dedup, no phone fabrication) when opened from a contact card.
+                ...(contactId ? { selected_contact_id: contactId, contact_update_mode: 'attach' } : {}),
             };
             for (const k of Object.keys(leadInput)) { if (leadInput[k] === undefined) delete leadInput[k]; }
             const leadRes = await leadsApi.createLead(leadInput as any);
@@ -167,7 +176,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall: _hasActiveCall, time
                 }
                 const result = await leadsApi.convertLead(createdUUID, {
                     zb_job_payload: zbJobPayload, service: { name: jobType || 'General Service' },
-                    customer: { name: [firstName, lastName].filter(Boolean).join(' ') || 'Unknown', phone: toE164(phoneNumber), email: email || undefined },
+                    customer: { name: [firstName, lastName].filter(Boolean).join(' ') || 'Unknown', ...(phoneNumber && { phone: toE164(phoneNumber) }), email: email || undefined },
                     address: { line1: streetAddress, line2: unit, city, state, postal_code: matchedZip || (/^\d/.test(postalCode) ? postalCode : '') },
                     ...(timelineId ? { timeline_id: timelineId } : {}),
                 });
@@ -192,6 +201,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall: _hasActiveCall, time
                 toast.success('Lead created', { description: 'Status: Submitted' });
             }
             queryClient.invalidateQueries({ queryKey: ['lead-by-phone', phone] });
+            if (contactId) queryClient.invalidateQueries({ queryKey: ['lead-by-contact', contactId] });
             onLeadCreated?.();
         } catch (err) { toast.error('Failed to create', { description: err instanceof Error ? err.message : 'Unknown error' }); }
         finally { setSubmitting(false); }
@@ -200,6 +210,9 @@ export function CreateLeadJobWizard({ phone, hasActiveCall: _hasActiveCall, time
     const canProceedStep1 = !!(postalCode.trim() && zipExists);
     const canProceedStep2 = !!(jobType.trim() && Number(duration) > 0);
     const canProceedStep3 = !!selectedTimeslot || timeslotSkipped;
+    // A Zenbooker job requires a phone. Email-origin (phoneless) → offer "Create Lead" only until a
+    // phone is typed; entering one re-enables the with-job leg. Phone-origin is always true.
+    const canCreateJob = !!toE164(phoneNumber);
 
     const ws = {
         territoryQuery, setTerritoryQuery, postalCode, setPostalCode, territoryResult, territoryLoading, territoryError, zipExists, zipArea, matchedZip, zipSource, zbLoading,
@@ -209,7 +222,7 @@ export function CreateLeadJobWizard({ phone, hasActiveCall: _hasActiveCall, time
         timeslotsLoading, timeslotsError, timeslotSkipped, setTimeslotSkipped, fetchTimeslots,
         showSkipConfirm, setShowSkipConfirm,
         streetAddress, setStreetAddress, unit, setUnit, city, setCity, state, setState,
-        coords, setCoords, submitting, handleCreate, setStep,
+        coords, setCoords, submitting, handleCreate, setStep, canCreateJob,
     };
 
     return (
@@ -217,12 +230,14 @@ export function CreateLeadJobWizard({ phone, hasActiveCall: _hasActiveCall, time
             <div className="wizard__header">
                 <div className="wizard__header-content">
                     <div className="wizard__header-left">
-                        <div className="wizard__phone-row">
-                            <Phone className="w-4" style={{ color: 'var(--blanc-ink-3)' }} />
-                            <span>{formatPhone(phone)}</span>
-                            <ClickToCallButton phone={phone} contactName={firstName ? `${firstName} ${lastName}`.trim() : undefined} />
-                            <OpenTimelineButton phone={phone} />
-                        </div>
+                        {phone && (
+                            <div className="wizard__phone-row">
+                                <Phone className="w-4" style={{ color: 'var(--blanc-ink-3)' }} />
+                                <span>{formatPhone(phone)}</span>
+                                <ClickToCallButton phone={phone} contactName={firstName ? `${firstName} ${lastName}`.trim() : undefined} />
+                                <OpenTimelineButton phone={phone} />
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>

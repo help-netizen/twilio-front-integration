@@ -156,6 +156,25 @@ router.get('/by-id/:id', requirePermission('leads.view'), async (req, res) => {
 });
 
 // =============================================================================
+// GET /api/leads/by-contact/:contactId — Find newest OPEN lead linked to a contact
+// EMAIL-LEAD-ORIGIN-001. MUST stay ABOVE /:uuid or Express matches it as a uuid.
+// =============================================================================
+router.get('/by-contact/:contactId', requirePermission('leads.view', 'pulse.view'), async (req, res) => {
+    const reqId = requestId();
+    try {
+        const contactId = Number(req.params.contactId);
+        if (!contactId || isNaN(contactId) || contactId < 1) {
+            return res.status(400).json(errorResponse('INVALID_ID', 'Numeric contact ID is required', reqId));
+        }
+
+        const lead = await leadsService.getLeadByContact(contactId, req.companyFilter?.company_id);
+        res.json(successResponse({ lead }, reqId));
+    } catch (err) {
+        handleError(err, reqId, res);
+    }
+});
+
+// =============================================================================
 // GET /api/leads/new-count — count of new/unactioned leads (nav badge).
 // MUST stay ABOVE the /:uuid route or Express matches it as uuid="new-count".
 // =============================================================================
@@ -199,7 +218,15 @@ router.post('/', requirePermission('leads.create'), async (req, res) => {
         const errors = [];
         if (!body.FirstName) errors.push('FirstName is required');
         if (!body.LastName) errors.push('LastName is required');
-        if (!body.Phone || body.Phone.length < 5) errors.push('Phone is required (min 5 chars)');
+        // EMAIL-LEAD-ORIGIN-001: a lead may be born from a phone, an email, OR a
+        // selected contact (email-origin timelines have no phone). Require at
+        // least one identity signal instead of hard-requiring Phone.
+        const hasPhone = body.Phone && String(body.Phone).length >= 5;
+        const hasEmail = !!(body.Email && String(body.Email).trim());
+        const hasContact = !!body.selected_contact_id;
+        if (!hasPhone && !hasEmail && !hasContact) {
+            errors.push('Phone, Email, or a selected contact is required');
+        }
 
         if (errors.length > 0) {
             return res.status(400).json(errorResponse('VALIDATION_ERROR', errors.join('; '), reqId));
@@ -232,7 +259,9 @@ router.post('/', requirePermission('leads.create'), async (req, res) => {
                 updates.push(`full_name = $${idx++}`); params.push(fullName);
                 updates.push(`first_name = $${idx++}`); params.push(body.FirstName || null);
                 updates.push(`last_name = $${idx++}`); params.push(body.LastName || null);
-                updates.push(`phone_e164 = $${idx++}`); params.push(toE164(body.Phone) || body.Phone);
+                // EMAIL-LEAD-ORIGIN-001: guard the phone write so a BLANK Phone
+                // never nulls an existing contact phone (email-origin submit).
+                if (body.Phone) { updates.push(`phone_e164 = $${idx++}`); params.push(toE164(body.Phone) || body.Phone); }
                 if (body.Email !== undefined) { updates.push(`email = $${idx++}`); params.push(body.Email || null); }
                 if (body.SecondPhone !== undefined) { updates.push(`secondary_phone = $${idx++}`); params.push(toE164(body.SecondPhone) || body.SecondPhone || null); }
                 if (body.SecondPhoneName !== undefined) { updates.push(`secondary_phone_name = $${idx++}`); params.push(body.SecondPhoneName || null); }

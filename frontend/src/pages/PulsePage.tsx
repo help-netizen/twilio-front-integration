@@ -358,7 +358,7 @@ export const PulsePage: React.FC = () => {
                             )}
 
                             {/* Detail card: Lead / Contact / Wizard */}
-                            {!isAnonTimeline && (p.contactId || p.timelineId) && p.phone ? (
+                            {!isAnonTimeline && (p.contactId || p.timelineId) && (p.phone || p.contact?.id) ? (
                                 p.lead ? (
                                     <div className="pulse-card pulse-accent-top" style={{ '--card-accent': 'var(--blanc-info)', height: 560 } as React.CSSProperties}>
                                         <LeadDetailPanel
@@ -393,6 +393,8 @@ export const PulsePage: React.FC = () => {
                                         </div>
                                         <CreateLeadJobWizard
                                             phone={p.phone}
+                                            contactId={p.contact?.id}
+                                            email={p.contact?.email}
                                             hasActiveCall={p.hasActiveCall}
                                             timelineId={p.timelineId || undefined}
                                             onLeadCreated={() => { p.refetchTimeline(); p.refetchContacts(); }}

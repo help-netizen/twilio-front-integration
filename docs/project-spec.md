@@ -159,3 +159,7 @@ The Tasks nav item carries a live count badge of OPEN tasks visible to the curre
 ## Contact email merge (CONTACT-EMAIL-MERGE-001)
 
 Adding an email to a contact (multi-email list in the contact editor) merges any existing correspondence for that address into the contact — the email analogue of the phone-number merge. Inbox-only messages link onto the contact timeline; an address owned by an empty email-only auto-contact triggers a full contact merge (re-point + delete) via `contactEmailMergeService`; an address on a contact with its own data re-points only the emails. The whole PATCH is one transaction (a merge failure rolls back the email add); the merge is company-scoped and refuses cross-tenant.
+
+## Email-only Pulse timelines (EMAIL-LEAD-ORIGIN-001)
+
+A contact with an email but no phone (e.g. an email-auto-created contact) is now first-class in Pulse: the detail card renders on identity (`p.phone || p.contact?.id`), not phone; `PulseContactPanel` is phone-null-safe and carries a "+ Create Lead" action; a lead can be created from such a contact (phone optional — `POST /api/leads` accepts phone|email|contact_id origin; email-origin leads are lead-only since ZB job creation needs a phone). The card detects an existing open lead via `getLeadByContact` (mirrors `getLeadByPhone`, incl. the contact-has-job filter) so it shows the lead instead of offering a duplicate. The hot unified-list query is untouched (email-origin leads surface via the email signal + Leads page).

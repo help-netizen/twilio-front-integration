@@ -12,6 +12,7 @@ import { useRealtimeEvents, type SSECallEvent, type SSEMessageAddedEvent, type S
 import { appendTranscriptDelta, finalizeTranscript } from './useLiveTranscript';
 import { authedFetch } from '../services/apiClient';
 import { useLeadByPhone } from './useLeadByPhone';
+import { useLeadByContact } from './useLeadByContact';
 import { callToCallData } from '../components/pulse/pulseHelpers';
 import { makePulseLeadActions } from './pulseLeadActions';
 import type { Call } from '../types/models';
@@ -69,13 +70,17 @@ export function usePulsePage() {
     const phone = contact?.phone_e164 || (selectedConv as any)?.tl_phone || contactCalls[0]?.from_number || contactCalls[0]?.to_number || selectedConv?.contact?.phone_e164 || selectedConv?.from_number || conversations[0]?.customer_e164 || '';
     const hasActiveCall = contactCalls.some((c: any) => ['ringing', 'in-progress', 'queued', 'initiated', 'voicemail_recording'].includes(c.status));
 
-    const { lead: fetchedLead, isLoading: leadLoading } = useLeadByPhone(phone || undefined);
+    const { lead: fetchedLeadByPhone, isLoading: leadPhoneLoading } = useLeadByPhone(phone || undefined);
+    const { lead: fetchedLeadByContact, isLoading: leadContactLoading } = useLeadByContact(contact?.id);
     const [leadOverride, setLeadOverride] = useState<Lead | null>(null);
     const [editingLead, setEditingLead] = useState<Lead | null>(null);
     const [convertingLead, setConvertingLead] = useState<Lead | null>(null);
     const [selectedTarget, setSelectedTarget] = useState<MessageTarget | undefined>(undefined);
-    const lead = leadOverride || fetchedLead;
-    React.useEffect(() => { setLeadOverride(null); setSelectedTarget(undefined); }, [phone]);
+    // Phone wins when both resolve (normal phone contact → same lead); email-origin has no by-phone result.
+    const lead = leadOverride || fetchedLeadByPhone || fetchedLeadByContact;
+    // Each query's `enabled` gate means a phone timeline never fires the contact query and vice-versa.
+    const leadLoading = leadPhoneLoading || leadContactLoading;
+    React.useEffect(() => { setLeadOverride(null); setSelectedTarget(undefined); }, [phone, contact?.id]);
 
     // Company Gmail mailbox status — drives whether email targets are selectable or a connect-CTA.
     // Read via the lightweight timeline endpoint (needs only `messages.send`) so a send-only

@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-07-04 — EMAIL-LEAD-ORIGIN-001: email-only таймлайны в Pulse — карточка контакта + лид из письма (orchestrate-пайплайн)
+
+Раньше email-only таймлайн (контакт без телефона — напр. авто-контакт из письма Google Local Services) в Pulse показывал только письмо: карточка контакта/лида была жёстко под телефонным гейтом, а лид рождался только от телефона. Теперь email-only контакт виден как полноценная карточка, и из него можно создать лид (телефон опционален). Полный прогон через /orchestrate (агенты 01–08, auto-run); артефакты в Docs/. Без миграции (схема лидов уже держит phone NULL + email + contact_id, миграции 004/023).
+
+- **Backend** — `leadsService.getLeadByContact(contactId, companyId)` (байт-в-байт клон getLeadByPhone: тот же team-agg, фильтр «контакт с джобом → null», status NOT IN Lost/Converted, индекс idx_leads_contact_id); роут `GET /api/leads/by-contact/:contactId` (leads.view|pulse.view, над /:uuid, company-scoped). POST /api/leads: валидация релаксирована до phone(≥5) ИЛИ email ИЛИ selected_contact_id (resolveContact уже умеет безтелефонность; createLead NULL-омитит phone); guard от зануления телефона существующего контакта в update_contact-режиме. Phone-origin путь байт-в-байт.
+- **Frontend** — useLeadByContact хук + leadsApi; usePulsePage резолвит `lead = override || byPhone || byContact`; гейт карточки PulsePage:361 → `(p.phone || p.contact?.id)` (email-only больше не подавляется); PulseContactPanel null-guard первичного телефона + **новая кнопка «+ Create Lead»** (шапка + пустое состояние), открывающая визард в Dialog-панели; CreateLeadJobWizard phone-опционален, email/contactId-origin, «Create Lead & Job» скрыт при отсутствии телефона (ZB-джоб требует телефон → email-origin = ТОЛЬКО лид).
+- **FR-B4 (сигнал лида в юнифайд-списке) ОТЛОЖЕН** — горячий getUnifiedTimelinePage не тронут (PULSE-PERF-001): email-origin лид и так виден через email-сигнал в сайдбаре, на странице Leads и в карточке через by-contact lookup.
+- **GAP-FIX (T5):** трёх-состояние карточки рендерит визард только при отсутствии контакта — для email-only контакта (контакт ЕСТЬ) шёл в PulseContactPanel, где кнопки создания лида не было → Part B был бы недостижим. Пойман оркестратором при само-проверке ДО верификации; закрыт кнопкой в панели.
+- **Проверка** — jest 30/30 (leadByContact + регрессия leadsNewCount/convert); scripts/verify-email-lead-origin-001.js 12/12 на реальной БД: P0 безтелефонный create (phone NULL, без фейка), P0 cross-tenant, lookup-фильтры (job/Lost/newest), phone-путь байт-в-байт, EXPLAIN idx_leads_contact_id, sabotage control. Reviewer (агент 08) воспроизвёл всё → T1–T5 APPROVED. Замечание на будущее: визард Step1→2 гейтится ZIP сервис-территории (как и для phone-origin) — «email+имя без ZIP» не доходит до submit через UI (бэкенд создаёт без ZIP).
+
+
 ## 2026-07-04 — CONTACT-EMAIL-MERGE-001: добавление имейла в контакт сливает его почтовый таймлайн (orchestrate-пайплайн)
 
 Аналог телефонного слияния для почты. Раньше добавление телефона в контакт перецепляло орфан-таймлайны и звонки (mergeOrphanTimelines), а для email такого не было — и PATCH-роут даже не писал contact_emails. Теперь при добавлении имейла в контакт его почтовая переписка сливается в таймлайн этого контакта. Полный прогон через skill /orchestrate (агенты 01–08, auto-run); артефакты в Docs/specs/CONTACT-EMAIL-MERGE-001.md, Docs/test-cases/ (34 кейса), requirements/architecture/tasks.

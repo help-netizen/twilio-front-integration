@@ -1149,6 +1149,56 @@ async function getLeadByPhone(phone, companyId = null) {
 }
 
 // =============================================================================
+// Get Lead by contact_id (newest OPEN match) — EMAIL-LEAD-ORIGIN-001
+// Byte-for-byte the shape of getLeadByPhone, keyed on l.contact_id (uses
+// idx_leads_contact_id) so a phoneless email-origin contact card can detect an
+// already-linked lead and show LeadDetailPanel instead of re-offering the wizard.
+// =============================================================================
+async function getLeadByContact(contactId, companyId = null) {
+    if (!contactId) return null;
+
+    const conditions = [
+        `l.contact_id = $1`,
+        `l.status NOT IN ('Lost', 'Converted')`,
+    ];
+    const params = [contactId];
+    if (companyId) {
+        conditions.push(`l.company_id = $2`);
+        params.push(companyId);
+    }
+
+    const sql = `
+        SELECT l.*,
+            COALESCE(
+                json_agg(json_build_object('id', lta.id, 'name', lta.user_name))
+                FILTER (WHERE lta.id IS NOT NULL), '[]'
+            ) AS team
+        FROM leads l
+        LEFT JOIN lead_team_assignments lta ON lta.lead_id = l.id
+        WHERE ${conditions.join(' AND ')}
+        GROUP BY l.id
+        ORDER BY l.id DESC
+        LIMIT 1
+    `;
+
+    const { rows } = await db.query(sql, params);
+    if (rows.length === 0) return null;
+
+    // If the lead's contact already has a job, skip the lead so PulsePage
+    // shows the contact panel instead of the stale lead card.
+    const lead = rows[0];
+    if (lead.contact_id) {
+        const { rows: jobRows } = await db.query(
+            `SELECT 1 FROM jobs WHERE contact_id = $1 LIMIT 1`,
+            [lead.contact_id]
+        );
+        if (jobRows.length > 0) return null;
+    }
+
+    return rowToLead(lead);
+}
+
+// =============================================================================
 // Get Available Lead Transitions (FSM-aware)
 // =============================================================================
 async function getLeadTransitions(companyId, currentStatus, userRoles) {
@@ -1209,6 +1259,7 @@ module.exports = {
     getLeadByUUID,
     getLeadById,
     getLeadByPhone,
+    getLeadByContact,
     getLeadsByPhones,
     createLead,
     updateLead,
