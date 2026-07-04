@@ -29,8 +29,14 @@ export function EmailListItem({ email }: EmailListItemProps) {
     const isOutgoing = email.is_outbound || email.direction === 'outbound';
     const hasSubject = !!email.subject && email.subject.trim().length > 0;
     const hasBody = !!email.body_text && email.body_text.trim().length > 0;
-    // Inbound sender label: name preferred, fall back to address.
-    const senderLabel = !isOutgoing ? (email.from_name?.trim() || email.from_email?.trim() || '') : '';
+    // Inbound sender: name preferred for the eyebrow; the raw address is shown
+    // next to it (many senders — e.g. Google Local Services relays — carry a
+    // generic display name, so the address is the identifying part).
+    const senderName = !isOutgoing ? (email.from_name?.trim() || '') : '';
+    const senderEmail = !isOutgoing ? (email.from_email?.trim() || '') : '';
+    const senderLabel = senderName || senderEmail;
+    // Only append the address when a distinct display name is what the eyebrow shows.
+    const showSenderEmail = !isOutgoing && !!senderEmail && senderName.toLowerCase() !== senderEmail.toLowerCase();
 
     return (
         <div className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
@@ -45,11 +51,20 @@ export function EmailListItem({ email }: EmailListItemProps) {
                 <div className={`flex items-center gap-1.5 px-3 pt-2 ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
                     <Mail className="w-3 h-3 shrink-0" style={{ opacity: isOutgoing ? 0.7 : 0.55 }} />
                     <span
-                        className="text-[10px] uppercase tracking-wider truncate"
+                        className="text-[10px] uppercase tracking-wider truncate shrink-0"
                         style={isOutgoing ? { color: 'rgba(255,255,255,0.65)' } : { color: 'var(--blanc-ink-3)' }}
                     >
                         {senderLabel ? `Email · ${senderLabel}` : 'Email'}
                     </span>
+                    {showSenderEmail && (
+                        <span
+                            className="text-[10px] normal-case truncate min-w-0"
+                            style={{ color: 'var(--blanc-ink-3)' }}
+                            title={senderEmail}
+                        >
+                            {senderEmail}
+                        </span>
+                    )}
                 </div>
 
                 {/* Subject — emphasized, one line */}
