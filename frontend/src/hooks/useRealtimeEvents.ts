@@ -74,6 +74,9 @@ export function useRealtimeEvents(options: UseRealtimeEventsOptions = {}) {
             // LEADS-NEW-BADGE-001: routed through onGenericEvent so the "new leads"
             // nav badge can refresh live (consumer filters by company_id).
             'lead.created', 'lead.updated',
+            // TASKS-COUNT-BADGE-001: coarse PII-free ping so the "open tasks" nav
+            // badge can refetch its server-scoped count (consumer filters by company_id).
+            'task.changed',
         ];
         for (const et of genericEventTypes) {
             ids.push(subscribe(et, (d) => onGenericEventRef.current?.(et, d)));

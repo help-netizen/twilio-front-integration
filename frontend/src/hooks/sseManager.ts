@@ -104,6 +104,10 @@ function connect() {
             // Must be listed here too — the EventSource only fires native
             // listeners for names in this array (useRealtimeEvents just routes them).
             'lead.created', 'lead.updated',
+            // TASKS-COUNT-BADGE-001: coarse ping for the "open tasks" nav badge.
+            // Must be listed here too (EventSource only fires native listeners for
+            // names in this array; useRealtimeEvents just routes them).
+            'task.changed',
         ];
 
         for (const eventType of namedEvents) {

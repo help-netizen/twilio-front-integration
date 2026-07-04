@@ -110,10 +110,19 @@ async function listEntityTasks(companyId, { parentType, parentId, includeDone = 
     return rows;
 }
 
-/** Global cross-entity list. scopeOwnerId set → only that user's tasks (own scope). */
-async function listTasks(companyId, filters = {}, client = null) {
-    requireCompanyId(companyId);
-    const query = queryFor(client, db);
+/**
+ * Shared WHERE builder for the global cross-entity task list.
+ *
+ * TASKS-COUNT-BADGE-001: extracted verbatim from `listTasks` so the list and the
+ * count consume ONE predicate source — the badge count can never drift from the
+ * list row count (AC-1..AC-3). Seed and push order are byte-identical to the
+ * former inline block, so the `$n` numbering the callers emit is unchanged.
+ * It deliberately does NOT append limit/offset — those stay caller-side in
+ * `listTasks` (the count has no pagination).
+ *
+ * Returns `{ conditions, params }`; the caller joins `conditions` with ' AND '.
+ */
+function buildTaskListFilters(companyId, filters = {}) {
     const params = [companyId];
     const conditions = ['t.company_id = $1', HAS_ENTITY_PARENT];
 
@@ -144,6 +153,15 @@ async function listTasks(companyId, filters = {}, client = null) {
         conditions.push(`t.due_at <= $${params.length}::timestamptz`);
     }
 
+    return { conditions, params };
+}
+
+/** Global cross-entity list. scopeOwnerId set → only that user's tasks (own scope). */
+async function listTasks(companyId, filters = {}, client = null) {
+    requireCompanyId(companyId);
+    const query = queryFor(client, db);
+    const { conditions, params } = buildTaskListFilters(companyId, filters);
+
     const limit = clampLimit(filters.limit, 100, 500);
     const offset = clampOffset(filters.offset);
     params.push(limit, offset);
@@ -156,6 +174,25 @@ async function listTasks(companyId, filters = {}, client = null) {
         params
     );
     return rows;
+}
+
+/**
+ * Count of the global cross-entity list under the SAME predicate as `listTasks`
+ * (TASKS-COUNT-BADGE-001). No `SELECT_TASK` join block: `HAS_ENTITY_PARENT` and
+ * every filter reference only `t.*` columns, so `COUNT(*)` runs against the bare
+ * `tasks t` — the label-hydration LEFT JOINs are irrelevant to a count and are
+ * dropped to keep it cheap. Returns a non-negative integer.
+ */
+async function countTasks(companyId, filters = {}, client = null) {
+    requireCompanyId(companyId);
+    const query = queryFor(client, db);
+    const { conditions, params } = buildTaskListFilters(companyId, filters);
+
+    const { rows } = await query(
+        `SELECT COUNT(*)::int AS count FROM tasks t WHERE ${conditions.join(' AND ')}`,
+        params
+    );
+    return rows[0]?.count || 0;
 }
 
 /** Single task with the derived parent fields. */
@@ -250,7 +287,9 @@ module.exports = {
     isValidParentType,
     parentExists,
     listEntityTasks,
+    buildTaskListFilters,
     listTasks,
+    countTasks,
     getTaskById,
     createTask,
     updateTask,

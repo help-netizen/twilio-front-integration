@@ -3350,3 +3350,134 @@ deterministic one-orphan-one-contact assignment via double `DISTINCT ON` (JS res
 by iteration order today). (4) Deploy only with explicit owner consent (standing rule); re-verify
 max migration number immediately before creating 155 (parallel branches).
 
+---
+
+## TASKS-COUNT-BADGE-001: "open tasks" counter badge in navigation
+
+**Status:** Architecture · **Type:** feature (backend read route + frontend nav badge) · **Migrations:** none · **Realtime:** additive PII-free `task.changed` event (chosen — see below). Direct clone of LEADS-NEW-BADGE-001, applied to Tasks, but the count is **RBAC-scoped per user** (managers → all company open tasks; everyone else → own), so it needs its own count route reusing the *Tasks* visibility model, not the leads one.
+
+**Load-bearing invariant (AC-1..AC-3):** the badge value MUST equal, for the same session, the row count of `GET /api/tasks?status=open`. This is guaranteed structurally by making the count a `COUNT(*)` over the **exact same WHERE the list builds** — never a hand-rewritten predicate. To make drift impossible we refactor the shared predicate out of `listTasks` into one builder both call.
+
+### Shared-predicate refactor (anti-drift — the crux)
+
+`backend/src/db/tasksQueries.js` today inlines the filter/param assembly inside `listTasks` (lines ~118-145: `conditions = ['t.company_id = $1', HAS_ENTITY_PARENT]` then pushes `scopeOwnerId`/`status`/`assignee_id`/`parent_type`/`overdue`/`due_from`/`due_to`). Extract that assembly into a private helper:
+
+```
+// builds the WHERE conditions[] + params[] shared by listTasks and
+// countTasks so the two can never diverge (TASKS-COUNT-BADGE-001 invariant).
+function buildTaskListFilters(companyId, filters = {}) {
+    const params = [companyId];
+    const conditions = ['t.company_id = $1', HAS_ENTITY_PARENT];
+    // ...identical scopeOwnerId/status/assignee_id/parent_type/overdue/due_from/due_to pushes...
+    return { conditions, params };
+}
+```
+
+`listTasks` becomes: call `buildTaskListFilters`, then append `limit/offset` to `params`, run `SELECT_TASK … WHERE conditions.join(' AND ') … ORDER BY … LIMIT/OFFSET`. Behavior byte-identical (same conditions, same order of pushes → same `$n` numbering). New sibling:
+
+```
+async function countTasks(companyId, filters = {}, client = null) {
+    requireCompanyId(companyId);
+    const { conditions, params } = buildTaskListFilters(companyId, filters);
+    const { rows } = await queryFor(client, db)(
+        `SELECT COUNT(*)::int AS count FROM tasks t WHERE ${conditions.join(' AND ')}`,
+        params
+    );
+    return rows[0]?.count || 0;
+}
+```
+
+`countTasks` needs **no** `SELECT_TASK` join block — `HAS_ENTITY_PARENT` and every filter reference only `t.*` columns, so the count runs against the bare `tasks t` (all the LEFT JOINs in `SELECT_TASK` are label-hydration only and irrelevant to a `COUNT(*)`). This keeps it cheap. Export `countTasks` alongside `listTasks`. The badge calls it with `{ status: 'open', scopeOwnerId }` — the same `filters` the route already computes for the list.
+
+### Route: `GET /api/tasks/count`
+
+New route in `backend/src/routes/tasks.js`, gated `requirePermission('tasks.view')` (same gate as `GET /`). It mirrors the list handler's visibility branch verbatim so the two resolve identity/scoping identically:
+
+```
+// ── GET /count — open-task badge count (role-scoped, mirrors GET /) ──────────
+// Mounted ABOVE PATCH/DELETE '/:id' or Express matches "count" as :id.
+router.get('/count', requirePermission('tasks.view'), async (req, res) => {
+    try {
+        const filters = { status: 'open' };
+        if (canManage(req)) {
+            if (req.query.assignee_id) filters.assignee_id = req.query.assignee_id;
+        } else {
+            filters.scopeOwnerId = actorId(req);
+        }
+        const count = await tasksQueries.countTasks(companyId(req), filters);
+        res.json({ ok: true, data: { count } });
+    } catch (err) {
+        console.error('[Tasks] GET /count failed:', err.message);
+        res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: 'Failed to count tasks' } });
+    }
+});
+```
+
+`companyId(req)` = `req.companyFilter?.company_id`; `actorId(req)` = `req.user?.crmUser?.id` (created_by-FK-crm-user-id rule — no `sub` fallback); `canManage(req)` = `_devMode || permissions.includes('tasks.manage')`. Response envelope `{ ok, data: { count } }` matches the Tasks routes and the leads badge contract.
+
+**Mount position — critical.** `routes/tasks.js` has NO `GET /:id`, but it DOES have `PATCH /:id` and `DELETE /:id` (lines 139, 174). A literal `GET /count` can't collide with those verbs, but to follow the `/new-count`-before-`/:uuid` discipline (leads.js:160) and stay safe against a future `GET /:id`, place `/count` in the **static-segment cluster near the top** — immediately after `GET /` and alongside `GET /assignees` / `GET /entity/...` (all before the `/:id` param routes). No `src/server.js` change: the router is already mounted `app.use('/api/tasks', authenticate, requireCompanyAccess, tasksRouter)`.
+
+### Realtime decision — CHOSEN: (a) one additive PII-free `task.changed` event
+
+**Recommendation: option (a), a single coarse `task.changed` event carrying only `{ company_id }`, emitted at the mutation points that change an open-visible count.** Reasoning: the badge is a live-freshness affordance; the 60s poll already satisfies the AC-4 "within 60s" floor, but option (a) buys instant update at genuinely low surface-area because the leads precedent (`emitLeadChange`) is a drop-in template and a *single* event name touches exactly two frontend lists. We deliberately mirror leads' "server scopes, client only filters by `company_id`" contract: the client receives `task.changed` and simply refetches its own properly-scoped `/api/tasks/count` (which re-applies manager-vs-owner), so the event needs **no** `owner_user_id` — a coarse company-level ping is sufficient and strictly PII-free (one UUID). Payload richer than `{ company_id }` (e.g. `owner_user_id`, `id`, `status`) would tempt client-side count math that could drift from the server predicate — the very failure mode AC-3 forbids — so we keep it coarse on purpose. Snooze/due-date-only edits do NOT emit (they don't flip `status`).
+
+**Single helper** in `backend/src/services/tasksService.js` (create the file if absent — it does not exist today; a 15-line module), matching `emitLeadChange` shape:
+
+```
+function emitTaskChange(companyId) {
+    if (!companyId) return;
+    try { require('./realtimeService').broadcast('task.changed', { company_id: companyId }); }
+    catch (err) { console.warn('[tasksService] task event broadcast failed:', err.message); }
+}
+```
+
+Best-effort — a broadcast failure never breaks the task write (leads discipline). Add `{ key: 'task.changed', label: 'Open-task count changed', sample_fields: ['company_id'] }` to `backend/src/services/eventCatalog.js` (currently only `agent_task.succeeded/failed`).
+
+**EXACT emission sites (only where an open-visible count can change):**
+
+| Site | File / handler | Emit? | Why |
+|---|---|---|---|
+| User create | `routes/tasks.js` `POST /` (after `createTask` succeeds, before `res`) | **yes** | new open task |
+| Complete / reopen | `routes/tasks.js` `PATCH /:id` | **yes, but only when `patch.status !== undefined`** | status flip changes open-count; a description/owner/due-only PATCH does not (owner reassign handled next row) |
+| Owner reassign | `routes/tasks.js` `PATCH /:id` | **yes, when `owner_user_id` changed** | moves the task between owners' scoped counts (manager count unaffected, but the client refetch is cheap and correct) |
+| Snooze / due-date only | `routes/tasks.js` `PATCH /:id` | **no** | does not flip status → open-count unchanged (requirement excludes it) |
+| Delete | `routes/tasks.js` `DELETE /:id` | **yes** | removes an open task |
+| Agent/inbound/rules timeline task | `db/timelinesQueries.js` `createTask` | **yes — ONLY when it INSERTs a NEW row with `created_by IN ('user','agent')`** | this path both INSERTs and UPSERT-updates; only a fresh insert of a *listed* provenance changes the count. `system`/`automation` provenance and the UPSERT-update branch (lines ~709-732) do NOT emit — those tasks are `HAS_ENTITY_PARENT`-excluded (Pulse-only) and updating an existing open task doesn't change the count |
+
+Practical simplification for the PATCH row: since `emitTaskChange` is coarse and idempotent from the client's side (it just triggers a refetch), the pragmatic implementation emits once per PATCH **whenever `status` OR `owner_user_id` was in the patch** (skip pure description/due edits) — one guard, no double-emit. For `timelinesQueries.createTask`, emit only inside the final INSERT branch when `provenance IN ('user','agent')`; because that module is DB-layer, `require('../services/tasksService').emitTaskChange(companyId)` best-effort (or inline `realtimeService.broadcast`), consistent with how `emitLeadChange` lives in the service layer and is called from write paths.
+
+**Frontend wiring for the event (additive, both lists — a name in only one is silently dead):**
+- `frontend/src/hooks/useRealtimeEvents.ts` `genericEventTypes` (~line 76) — append `'task.changed'`.
+- `frontend/src/hooks/sseManager.ts` `namedEvents` (~line 106) — append `'task.changed'`.
+- `AppLayout.tsx` `useRealtimeEvents.onGenericEvent` (~line 131) — extend the guard: `if (type === 'task.changed' && d?.company_id === company?.id) fetchOpenTasksCount();`.
+
+### Frontend threading (`openTasksCount`, parallel to `leadsNewCount`)
+
+- **`frontend/src/components/layout/AppLayout.tsx`:** add `const [openTasksCount, setOpenTasksCount] = useState(0)` + `fetchOpenTasksCount` (calls `authedFetch('/api/tasks/count')`, reads `json?.data?.count ?? 0`, gated on `company`) — a verbatim clone of `fetchLeadsNewCount` (lines 109-123): fetch on mount + on `location.pathname` change (`useEffect([fetchOpenTasksCount, location.pathname])`) + 60s `setInterval` poll. Pass `openTasksCount` into both `<AppNavTabs …>` (line 156) and `<BottomNavBar …>` (line 163). Extend the existing `onGenericEvent` (do NOT add a second `useRealtimeEvents` call).
+- **`frontend/src/components/layout/appLayoutNavigation.tsx`:**
+  - Add `openTasksCount: number` to `AppNavProps` (line 8) and to the `BottomNavBar` prop type (line 54); thread through both destructures.
+  - `AppNavTabs` (line 39-42): add `t.key === 'tasks'` to the `position: relative` set (the `style` ternary on line 39), and render, next to the existing pulse/leads badges: `{t.key === 'tasks' && openTasksCount > 0 && <span className="pulse-unread-badge" title={\`${openTasksCount} open tasks\`}>{openTasksCount > 9 ? '9+' : openTasksCount}</span>}`.
+  - `BottomNavBar` (lines 69-84): add the matching `t.key === 'tasks'` branch using the same absolute-position `pulse-unread-badge` span the pulse/leads mobile badges use.
+- **No CSS change** — reuses the existing `pulse-unread-badge` class (AppLayout.css); the `9+` cap and zero-hides-badge rules come free from the render guard, matching Pulse/Leads exactly.
+
+### Files to change
+
+| File | Change |
+|---|---|
+| `backend/src/db/tasksQueries.js` | Extract `buildTaskListFilters` from `listTasks`; add `countTasks`; export it. `listTasks` behavior unchanged. |
+| `backend/src/routes/tasks.js` | Add `GET /count` (gated `tasks.view`) in the static-segment cluster, above `/:id` param routes; mirror the `GET /` manager-vs-owner branch. Add `emitTaskChange` calls in `POST /`, `PATCH /:id` (status-or-owner guard), `DELETE /:id`. |
+| `backend/src/services/tasksService.js` | **New** (~15 lines): `emitTaskChange(companyId)` → PII-free `task.changed` broadcast, best-effort. |
+| `backend/src/db/timelinesQueries.js` | In `createTask`, emit `task.changed` only on the NEW-INSERT branch when `provenance IN ('user','agent')` (not the UPSERT-update branch, not `system`/`automation`). |
+| `backend/src/services/eventCatalog.js` | Add `task.changed` catalog entry. |
+| `frontend/src/components/layout/AppLayout.tsx` | `openTasksCount` state + `fetchOpenTasksCount` + mount/route/60s poll; pass to `AppNavTabs` + `BottomNavBar`; extend `onGenericEvent` for `task.changed`. |
+| `frontend/src/components/layout/appLayoutNavigation.tsx` | `openTasksCount` prop on `AppNavProps` + `BottomNavBar`; render the `tasks` badge (desktop + mobile) with the `pulse-unread-badge` span. |
+| `frontend/src/hooks/useRealtimeEvents.ts` | Append `'task.changed'` to `genericEventTypes` (additive only). |
+| `frontend/src/hooks/sseManager.ts` | Append `'task.changed'` to `namedEvents`. |
+
+### Middleware / scoping / protected
+
+- **Middleware chain:** unchanged — `GET /api/tasks/count` inherits `app.use('/api/tasks', authenticate, requireCompanyAccess, tasksRouter)` + its own `requirePermission('tasks.view')`. No `server.js` edit.
+- **`company_id` source:** `req.companyFilter?.company_id` everywhere; `countTasks`'s SQL is `WHERE t.company_id = $1 AND …` (tenancy AC-6 — same guarantee the list enforces).
+- **Cheapness:** `COUNT(*) FROM tasks t WHERE company_id, HAS_ENTITY_PARENT, status='open' [, owner_user_id]` is served by the existing `company_id`/`status`/`owner_user_id` access on `tasks`; no per-row scan, no new index, no migration.
+- **Protected (untouched):** `GET /api/tasks` list behavior + visibility model (the count *reuses* the extracted builder, doesn't alter list output), `HAS_ENTITY_PARENT` definition, AR-TASK-UNIFY-001 timeline coupling, `tasks.view`/`tasks.manage` gates, LEADS-NEW-BADGE-001 wiring (`leadsNewCount`/`/new-count`/its SSE types) added *alongside*, `useRealtimeEvents.ts`/`sseManager.ts` touched additively only, `pulse-unread-badge` markup shared not modified. Deploy to prod only with explicit owner consent (standing rule).
+

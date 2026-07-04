@@ -5,7 +5,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { PhoneIncoming, Users, Settings, Key, BookOpen, FileText, LogOut, Shield, Activity, MessageSquareText, DollarSign, Contact2, Wrench, Briefcase, Bell, CalendarDays, MapPin, FileCog, Zap, CreditCard, Building2, ListChecks, Tags } from 'lucide-react';
 import { useAuthz } from '../../hooks/useAuthz';
 
-interface AppNavProps { activeTab: string; pulseUnreadCount: number; leadsNewCount: number; hasRole: (r: string) => boolean; logout: () => void; }
+interface AppNavProps { activeTab: string; pulseUnreadCount: number; leadsNewCount: number; openTasksCount: number; hasRole: (r: string) => boolean; logout: () => void; }
 
 // Top-level workspaces, each backed by a canonical permission key (PF007).
 // Navigation is built from effective permissions — hidden UI is convenience,
@@ -25,7 +25,7 @@ function useVisibleTabs() {
     return WORKSPACE_TABS.filter(t => hasPermission(t.permission));
 }
 
-export const AppNavTabs: React.FC<AppNavProps> = ({ activeTab, pulseUnreadCount, leadsNewCount }) => {
+export const AppNavTabs: React.FC<AppNavProps> = ({ activeTab, pulseUnreadCount, leadsNewCount, openTasksCount }) => {
     const navigate = useNavigate();
     const tabs = useVisibleTabs();
     return (
@@ -36,10 +36,11 @@ export const AppNavTabs: React.FC<AppNavProps> = ({ activeTab, pulseUnreadCount,
                     {tabs.map(t => {
                         const Icon = t.icon;
                         return (
-                            <TabsTrigger key={t.key} value={t.key} className="flex items-center gap-2" onClick={() => navigate(t.path)} style={(t.key === 'pulse' || t.key === 'leads') ? { position: 'relative' } : undefined}>
+                            <TabsTrigger key={t.key} value={t.key} className="flex items-center gap-2" onClick={() => navigate(t.path)} style={(t.key === 'pulse' || t.key === 'leads' || t.key === 'tasks') ? { position: 'relative' } : undefined}>
                                 <Icon className="size-4" />{t.label}
                                 {t.key === 'pulse' && pulseUnreadCount > 0 && <span className="pulse-unread-badge" title={`${pulseUnreadCount} unread`}>{pulseUnreadCount > 9 ? '9+' : pulseUnreadCount}</span>}
                                 {t.key === 'leads' && leadsNewCount > 0 && <span className="pulse-unread-badge" title={`${leadsNewCount} new leads`}>{leadsNewCount > 9 ? '9+' : leadsNewCount}</span>}
+                                {t.key === 'tasks' && openTasksCount > 0 && <span className="pulse-unread-badge" title={`${openTasksCount} open tasks`}>{openTasksCount > 9 ? '9+' : openTasksCount}</span>}
                             </TabsTrigger>
                         );
                     })}
@@ -51,7 +52,7 @@ export const AppNavTabs: React.FC<AppNavProps> = ({ activeTab, pulseUnreadCount,
 
 // ─── Bottom Navigation Bar (mobile) ─────────────────────────────────────────
 
-export const BottomNavBar: React.FC<{ activeTab: string; pulseUnreadCount: number; leadsNewCount: number }> = ({ activeTab, pulseUnreadCount, leadsNewCount }) => {
+export const BottomNavBar: React.FC<{ activeTab: string; pulseUnreadCount: number; leadsNewCount: number; openTasksCount: number }> = ({ activeTab, pulseUnreadCount, leadsNewCount, openTasksCount }) => {
     const navigate = useNavigate();
     const tabs = useVisibleTabs();
     return (
@@ -80,6 +81,14 @@ export const BottomNavBar: React.FC<{ activeTab: string; pulseUnreadCount: numbe
                                 style={{ position: 'absolute', top: 4, right: '50%', marginRight: -16, transform: 'scale(0.85)' }}
                             >
                                 {leadsNewCount > 9 ? '9+' : leadsNewCount}
+                            </span>
+                        )}
+                        {t.key === 'tasks' && openTasksCount > 0 && (
+                            <span
+                                className="pulse-unread-badge"
+                                style={{ position: 'absolute', top: 4, right: '50%', marginRight: -16, transform: 'scale(0.85)' }}
+                            >
+                                {openTasksCount > 9 ? '9+' : openTasksCount}
                             </span>
                         )}
                     </button>

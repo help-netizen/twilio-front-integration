@@ -742,6 +742,21 @@ async function createTask({ companyId, threadId, subjectType, subjectId, title, 
             agentOutput ? JSON.stringify(agentOutput) : null,
             agentStatus || null]
     );
+    // TASKS-COUNT-BADGE-001: a fresh INSERT can add an open task that the badge
+    // counts — but ONLY when it satisfies HAS_ENTITY_PARENT's timeline clause,
+    // i.e. created_by IN ('user','agent'). system/automation timeline tasks reach
+    // THIS insert too (when no existing AUTO open task exists) and are Pulse-only /
+    // count-excluded, so the guard must be EXPLICIT here, not implied by branch.
+    // The AUTO-upsert-UPDATE branch above never emits (updating an existing open
+    // task leaves the count unchanged). Lazy require avoids a circular import;
+    // best-effort — a broadcast failure never fails the task write.
+    if (['user', 'agent'].includes(provenance)) {
+        try {
+            require('../services/tasksService').emitTaskChange(companyId);
+        } catch (err) {
+            console.warn('[timelinesQueries] task.changed emit failed:', err.message);
+        }
+    }
     return result.rows[0];
 }
 

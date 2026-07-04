@@ -4,6 +4,16 @@
 
 ---
 
+## 2026-07-04 — TASKS-COUNT-BADGE-001: счётчик открытых задач на навигации Tasks (orchestrate-пайплайн)
+
+Над пунктом «Tasks» в навигации теперь бейдж с числом ОТКРЫТЫХ задач, видимых текущему пользователю — ровно то, что он видит в /tasks с фильтром Only Open (менеджер с tasks.manage видит все задачи компании, остальные — только свои). Полный аналог бейджа Leads. Прогон через skill /orchestrate (агенты 01–08, auto-run); артефакты в Docs/specs/TASKS-COUNT-BADGE-001.md, Docs/test-cases/ (41 кейс), Docs/requirements.md, Docs/architecture.md.
+
+- **Backend** — `tasksQueries`: общий предикат вынесен в `buildTaskListFilters(companyId, filters)`, который вызывают И `listTasks`, И новый `countTasks` (COUNT(*) без SELECT_TASK-джойнов) → WHERE байт-в-байт идентичен, счётчик не разъедется со списком. Роут `GET /api/tasks/count` (tasks.view, envelope {ok,data:{count}}) смонтирован ВЫШЕ `/:id`, зеркалит ветку видимости `GET /` (manager → все; иначе scopeOwnerId).
+- **Realtime** — новый `tasksService.emitTaskChange(companyId)` шлёт PII-free событие `task.changed` с payload РОВНО `{company_id}` (клиент лишь рефетчит серверно-скоупленный счёт — не считает сам); точки эмита: POST create, PATCH (только при смене status|owner_user_id), DELETE, и INSERT-ветка `createTask` с гардом provenance IN ('user','agent') — system/automation НЕ шлют. Запись в eventCatalog.
+- **Frontend** — `AppLayout.openTasksCount` + `fetchOpenTasksCount` (mount/route-change/60s poll), клон бейджа Leads (десктоп+мобилка, pulse-unread-badge, 9+, скрыт при 0); `task.changed` зарегистрирован в ОБОИХ SSE-списках (useRealtimeEvents.genericEventTypes + sseManager.namedEvents).
+- **Проверка** — jest 60/60 (tasksCount+tasksEmit+routes/tasks; drift-guard байт-в-байт); `scripts/verify-tasks-count-001.js` — 17/17 PASS на реальной БД: load-bearing инвариант `countTasks === listTasks().length` через дельта-цепочку, кросс-тенант изоляция (P0), саботаж-контроль. Reviewer (агент 08) независимо воспроизвёл всё → T1–T4 APPROVED. Без миграции.
+
+
 ## 2026-07-03 — EMAIL-OUTBOUND-001: исходящие-первые email-треды видимы в Pulse (orchestrate-пайплайн)
 
 Диспетчер пишет клиенту первым (email-only лид) — тред теперь всплывает в юнифайд-листе Pulse с иконкой исходящего письма (MailCheck), сортируется по времени отправки, НЕ помечается непрочитанным. Ранее CTE списка цеплялся только за входящие (`from_email`), и такие треды были невидимы. Полный прогон через skill `/orchestrate` (агенты 01–08, auto-run): артефакты в `Docs/requirements.md`, `Docs/architecture.md`, `Docs/specs/EMAIL-OUTBOUND-001.md`, `Docs/test-cases/EMAIL-OUTBOUND-001.md`, `Docs/tasks.md`.

@@ -16,6 +16,7 @@ const router = express.Router();
 
 const tasksQueries = require('../db/tasksQueries');
 const userService = require('../services/userService');
+const tasksService = require('../services/tasksService');
 const { requirePermission } = require('../middleware/authorization');
 
 function companyId(req) {
@@ -60,6 +61,26 @@ router.get('/', requirePermission('tasks.view'), async (req, res) => {
     } catch (err) {
         console.error('[Tasks] GET / failed:', err.message);
         res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: 'Failed to load tasks' } });
+    }
+});
+
+// ── GET /count — open-task badge count (role-scoped; mirrors GET / verbatim) ──
+// TASKS-COUNT-BADGE-001. Static segment: mounted above the /:id param routes so
+// a future GET /:id can never swallow it. Count == GET /?status=open row count.
+router.get('/count', requirePermission('tasks.view'), async (req, res) => {
+    try {
+        const filters = { status: 'open' };
+        // Same visibility branch as GET /: managers count all; everyone else own.
+        if (canManage(req)) {
+            if (req.query.assignee_id) filters.assignee_id = req.query.assignee_id;
+        } else {
+            filters.scopeOwnerId = actorId(req);
+        }
+        const count = await tasksQueries.countTasks(companyId(req), filters);
+        res.json({ ok: true, data: { count } });
+    } catch (err) {
+        console.error('[Tasks] GET /count failed:', err.message);
+        res.status(500).json({ ok: false, error: { code: 'INTERNAL', message: 'Failed to count tasks' } });
     }
 });
 
@@ -128,6 +149,8 @@ router.post('/', requirePermission('tasks.create'), async (req, res) => {
             author_user_id: actorId(req),
             due_at: due_at || null,
         });
+        // TASKS-COUNT-BADGE-001: a new open task always changes the count. Best-effort.
+        tasksService.emitTaskChange(companyId(req));
         res.status(201).json({ ok: true, data: { task } });
     } catch (err) {
         console.error('[Tasks] POST / failed:', err.message);
@@ -163,6 +186,12 @@ router.patch('/:id', requirePermission('tasks.view'), async (req, res) => {
         }
 
         const task = await tasksQueries.updateTask(companyId(req), req.params.id, patch);
+        // TASKS-COUNT-BADGE-001: emit ONCE when a status flip (complete/reopen) or
+        // an owner reassign was in the patch — those move the open-count. A pure
+        // description/due/snooze edit does NOT change any count → stay silent (S7).
+        if ('status' in patch || 'owner_user_id' in patch) {
+            tasksService.emitTaskChange(companyId(req));
+        }
         res.json({ ok: true, data: { task } });
     } catch (err) {
         console.error('[Tasks] PATCH /:id failed:', err.message);
@@ -181,6 +210,8 @@ router.delete('/:id', requirePermission('tasks.view'), async (req, res) => {
             return res.status(403).json({ ok: false, error: { code: 'ACCESS_DENIED', message: 'Cannot delete this task' } });
         }
         await tasksQueries.deleteTask(companyId(req), req.params.id);
+        // TASKS-COUNT-BADGE-001: removing a task always changes the count. Best-effort.
+        tasksService.emitTaskChange(companyId(req));
         res.json({ ok: true });
     } catch (err) {
         console.error('[Tasks] DELETE /:id failed:', err.message);

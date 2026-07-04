@@ -122,6 +122,27 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
         return () => clearInterval(t);
     }, [company, fetchLeadsNewCount]);
 
+    // TASKS-COUNT-BADGE-001: count of open tasks visible to the current user for
+    // the Tasks nav badge. Server-scoped (manager = all company open tasks, others
+    // = own) — never computed client-side. Same freshness recipe as Leads: mount +
+    // route change + 60s poll + SSE (task.changed), the poll being the fallback for
+    // missed events / reconnects. Response shape = { ok, data:{ count } }.
+    const [openTasksCount, setOpenTasksCount] = useState(0);
+    const fetchOpenTasksCount = useCallback(async () => {
+        if (!company) return;
+        try {
+            const res = await authedFetch('/api/tasks/count');
+            const json = await res.json();
+            setOpenTasksCount(json?.data?.count ?? json?.count ?? 0);
+        } catch { }
+    }, [company]);
+    useEffect(() => { fetchOpenTasksCount(); }, [fetchOpenTasksCount, location.pathname]);
+    useEffect(() => {
+        if (!company) return;
+        const t = setInterval(() => fetchOpenTasksCount(), 60000);
+        return () => clearInterval(t);
+    }, [company, fetchOpenTasksCount]);
+
     useRealtimeEvents({
         onCallCreated: () => fetchUnreadCount(),
         onCallUpdate: () => fetchUnreadCount(),
@@ -131,6 +152,9 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
         onGenericEvent: (type, d) => {
             if ((type === 'lead.created' || type === 'lead.updated') && d?.company_id === company?.id) {
                 fetchLeadsNewCount();
+            }
+            if (type === 'task.changed' && d?.company_id === company?.id) {
+                fetchOpenTasksCount();
             }
         },
     });
@@ -153,14 +177,14 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
           <AutonomousModeProvider value={autonomous}>
             <div className={`app-layout${autonomous.autonomousMode ? ' has-autonomous-banner' : ''}`}>
                 <header className="app-header"><div className="header-content">
-                    <AppNavTabs activeTab={activeTab} pulseUnreadCount={pulseUnreadCount} leadsNewCount={leadsNewCount} hasRole={hasRole} logout={logout} />
+                    <AppNavTabs activeTab={activeTab} pulseUnreadCount={pulseUnreadCount} leadsNewCount={leadsNewCount} openTasksCount={openTasksCount} hasRole={hasRole} logout={logout} />
                     <div className="header-actions">
                         {softPhoneEnabled && voice.phoneAllowed && <SoftPhoneHeaderButton voice={voice} softPhoneOpen={softPhoneOpen} softPhoneMinimized={softPhoneMinimized} onAcceptIncoming={handleAcceptIncoming} incomingCallerName={incomingCallerName} onOpenOrRestore={() => { if (softPhoneMinimized) setSoftPhoneMinimized(false); else setSoftPhoneOpen(true); }} />}
                         {activeTab === 'calls' && <button onClick={handleRefresh} disabled={isRefreshing} className="refresh-button" title="Refresh calls from last 3 days from Twilio">{isRefreshing ? '🔄 Refreshing...' : '🔄 Refresh'}</button>}
                         <SettingsMenu activeTab={activeTab} hasRole={hasRole} logout={logout} />
                     </div>
                 </div></header>
-                <BottomNavBar activeTab={activeTab} pulseUnreadCount={pulseUnreadCount} leadsNewCount={leadsNewCount} />
+                <BottomNavBar activeTab={activeTab} pulseUnreadCount={pulseUnreadCount} leadsNewCount={leadsNewCount} openTasksCount={openTasksCount} />
                 <main className="app-main">
                     {accessDeniedMessage && <div style={{ position: 'fixed', top: '72px', left: '50%', transform: 'translateX(-50%)', zIndex: 9999, background: '#dc2626', color: '#fff', padding: '12px 24px', borderRadius: '8px', fontWeight: 500, fontSize: '14px', boxShadow: '0 4px 12px rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', gap: '12px' }}><span>🚫 {accessDeniedMessage}</span><button onClick={clearAccessDenied} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '16px', padding: 0 }}>×</button></div>}
                     {children}

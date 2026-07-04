@@ -2597,3 +2597,184 @@ When a dispatcher writes the FIRST email to a contact (email-only leads/clients 
 ### Out of scope
 
 - Any new UI (icons/labels shipped in d455c52); email workspace changes; contact auto-creation from unknown recipients; CC/BCC matching changes; unread-model changes; surfacing outbound email on **orphan** (contactless) timelines — outbound links are contact-rooted by definition.
+
+---
+
+## TASKS-COUNT-BADGE-001: "open tasks" counter badge in navigation
+
+**Status:** Requirements · **Priority:** P2 · **Date:** 2026-07-03 · **Owner:** Tasks / Frontend nav
+**Type:** feature · backend (count route) + frontend (nav badge, hybrid SSE+poll). Direct clone of LEADS-NEW-BADGE-001, applied to Tasks. Owner decision (interview) binding: the badge counts **ALL OPEN tasks VISIBLE TO THE CURRENT USER** — exactly the set the user sees on `/tasks` with the "Only Open" filter. Not overdue-only, not today-only — the full open backlog visible to that user.
+
+### Duplication check (result)
+
+Not a duplicate. **LEADS-NEW-BADGE-001** is the pattern to mirror (a status-derived nav badge), but it counts *leads* by lead status and is company-wide. This feature counts *tasks* and is **RBAC-scoped per user** (managers see all company open tasks; everyone else sees only their own), so it needs its own count route reusing the Tasks visibility model, not the leads one. The Tasks section itself (**AR-TASK-UNIFY-001 / TASKS-001**) has no nav badge today — the `tasks` nav item (`appLayoutNavigation.tsx` line ~18, `ListChecks` icon, perm `tasks.view`) renders bare.
+
+### Description
+
+A count badge (number in a circle — the same `pulse-unread-badge` used by the Pulse and Leads badges) on the **Tasks** nav item = the number of **open tasks visible to the current user**, i.e. the exact row count `GET /api/tasks?status=open` returns for that user. Visibility follows the Tasks model verbatim: a user with `tasks.manage` sees every open company task; every other role sees only tasks they own (`owner_user_id = their crm_users.id`). Not read/unread — it is derived from live task state and persists until tasks are completed (or reassigned away from the user). Company-scoped. Hybrid freshness like the Leads badge: refetch on mount + on route change + a 60s poll fallback, plus (if the Architect adds task realtime events) an SSE-triggered refetch filtered by `company_id`.
+
+### User scenarios
+
+1. **Manager sees the full company backlog.** A user with `tasks.manage` (tenant_admin / manager) has the Tasks badge showing the count of ALL open tasks in the company — identical to the number of rows in their `/tasks` "Only Open" view.
+2. **Provider / dispatcher sees only their own.** A non-manager (provider, dispatcher) sees the count of only the open tasks assigned to them (`owner_user_id` = their `crm_users.id`). Another user's open tasks never contribute to their badge.
+3. **Create → increments.** A new open task is created (any path — timeline "Action Required", `/tasks` composer, in-card stack) and, for every user to whom it is visible, the Tasks badge increments to reflect it.
+4. **Complete → decrements.** A task is marked done → the badge decrements for everyone who could see it.
+5. **Reopen → increments.** A previously-completed task is reopened (status back to `open`) → the badge increments again for its visible audience.
+6. **Reassign → moves between users.** A task's owner is changed → it leaves the old owner's badge and (unless the recipient is a manager who already counted it company-wide) enters the new owner's badge. Manager badges are unaffected by reassignment (still one open company task).
+7. **Zero is silent.** When a user has no visible open tasks, the badge is not rendered at all (no "0" circle).
+8. **9+ cap.** A visible open count above 9 renders as `9+` (desktop and mobile), matching the Pulse/Leads badges exactly.
+9. **Opening Tasks does not clear it.** Navigating to `/tasks` does not zero or dismiss the badge — it is state-derived, not a read-marker; it only changes when the underlying open tasks change.
+
+### Functional requirements
+
+- **FR-1.** New backend count endpoint (e.g. `GET /api/tasks/count` or `/open-count`) gated by `requirePermission('tasks.view')`, returning the LEADS-NEW-BADGE-001 response shape `{ ok: true, data: { count } }` (matching the existing Tasks routes' `{ ok, data }` envelope and the leads badge contract).
+- **FR-2.** The count MUST be produced by the **same visibility logic as `GET /api/tasks`** with `status='open'`: reuse `tasksQueries` so the predicate is `t.company_id = $companyId` **AND `HAS_ENTITY_PARENT`** (the exact `tasksQueries.js` expression: has a `job_id/lead_id/estimate_id/invoice_id/contact_id`, OR a `thread_id` with `created_by IN ('user','agent')`) **AND `t.status='open'`** AND — for non-managers — `t.owner_user_id = actorId(req)`; managers (`canManage` / `tasks.manage`) omit the owner scope. Prefer a `COUNT(*)` variant of `listTasks` (or `listTasks(...).length`) so the two can never diverge. `actorId(req)` = `req.user.crmUser.id`, `companyId(req)` = `req.companyFilter.company_id` — as in `routes/tasks.js`.
+- **FR-3.** Frontend: thread an `openTasksCount` (naming parallel to `leadsNewCount`) through `AppLayout.tsx` → `appLayoutNavigation.tsx`; render the badge on the `tasks` nav item in **both** `AppNavTabs` (desktop) and `BottomNavBar` (mobile) using the existing `pulse-unread-badge` span with the `count > 9 ? '9+' : count` rule and a `title` like `"{n} open tasks"`; render nothing when `count === 0`.
+- **FR-4.** Freshness = the Leads badge recipe: fetch on mount, on route change, and on a 60s interval poll fallback. **Realtime is an OPEN DESIGN CHOICE for the Architect, NOT decided here:** Tasks currently emit **no** SSE events (the event catalog has only `agent_task.succeeded/failed`), so either (a) introduce minimal PII-free `task.*` events (`created` / `updated` / `completed`, carrying at most `company_id` + `owner_user_id` + `id`/`status`) and wire them additively into `useRealtimeEvents.ts` `genericEventTypes` AND `sseManager.ts` `namedEvents` (both lists, per LEADS-NEW-BADGE-001), refetching filtered by `company_id`; **or** (b) ship poll-only for v1 and defer events. The Architect decides; this requirement only mandates that whichever path is chosen, the badge is eventually consistent within the 60s poll window.
+
+### Acceptance criteria
+
+- **AC-1.** For a `tasks.manage` user, the badge value **equals** the number of rows `GET /api/tasks?status=open` returns for that user (whole-company open set). Verified by comparing the count endpoint's result to the list length for the same session.
+- **AC-2.** For a non-manager, the badge value equals `GET /api/tasks?status=open` for that user (own open set only), and a task owned by a different user never changes it.
+- **AC-3.** The badge count **never exceeds** what `/tasks` lists for the same user (the count and the list share one predicate — including `HAS_ENTITY_PARENT`, so agent-generated/shadow timeline tasks that `/tasks` hides are excluded from the count too).
+- **AC-4.** Create → badge +1; complete → badge −1; reopen → badge +1; reassign → moves between the correct owners; all reflected within the 60s poll window (immediately if SSE is chosen).
+- **AC-5.** Badge is absent at count 0; renders `9+` above 9; identical markup/behavior on desktop (`AppNavTabs`) and mobile (`BottomNavBar`).
+- **AC-6.** Tenancy: the count is scoped by `company_id = $1`; a user in company A never sees tasks from company B contribute to the badge (same guarantee the Tasks routes already enforce).
+
+### Constraints / non-functional
+
+- **The count predicate MUST equal the `/api/tasks` open-list predicate exactly** — same `tasksQueries` source, same `HAS_ENTITY_PARENT` filter, same manager-vs-owner scoping, same `status='open'`. This is the load-bearing invariant (AC-1..AC-3); implement the count as a `COUNT`/length over the existing `listTasks` filter set, never a hand-rewritten WHERE, so drift is structurally impossible.
+- **Route order:** if the endpoint is a bare segment under `/api/tasks` (e.g. `/count`, `/open-count`), it MUST be mounted **above** any `/:id` route in `routes/tasks.js` (mirror of the `/new-count`-before-`/:uuid` caveat in `leads.js:162`), or Express matches the literal as an `:id`.
+- **Permission:** `tasks.view` only (same gate as the list). No new permission, no migration — this is a read over existing task rows.
+- **SSE payload (if events are added) must be PII-free** — at most `company_id`, `owner_user_id`, `id`, `status`; the client filters by `company_id` (LEADS-NEW-BADGE-001 discipline). Any new event name goes in **both** `useRealtimeEvents.ts` and `sseManager.ts` (a name in only one is silently dead).
+- **`useRealtimeEvents.ts` may be touched only additively** (append event type(s) to the generic channel), per the LEADS-NEW-BADGE-001 precedent — no restructuring of the realtime layer.
+- Count query must stay cheap (indexed `company_id` + `status` + `owner_user_id`); it runs on every mount/route-change/poll and, if events are added, on each task event — do not introduce a per-row scan.
+- Deploy to prod only with explicit owner consent (standing rule).
+
+### Involved modules
+
+- **Backend:** `backend/src/routes/tasks.js` (new count route, above `/:id`), `backend/src/db/tasksQueries.js` (add a count/length helper over the `listTasks` filter set — or reuse `listTasks` and take `.length`), and — only if realtime is chosen — the task event emit path + `eventCatalog` (currently `agent_task.succeeded/failed` only), `realtimeService`/`sseManager.ts`.
+- **Frontend:** `AppLayout.tsx` (state `openTasksCount` + `fetchOpenTasksCount` + mount/route-change/60s-poll, mirroring `fetchLeadsNewCount`), `appLayoutNavigation.tsx` (`AppNavTabs` + `BottomNavBar` badge on the `tasks` item), `useRealtimeEvents.ts` + `sseManager.ts` (additive, only if events chosen), `AppLayout.css` (reuses existing `pulse-unread-badge`; no new class expected).
+
+### Integrations
+
+- None. **Twilio / Front / Zenbooker / Google / Stripe** — untouched. This is an internal read over the tasks table plus a nav-badge render.
+
+### Protected parts (must not break)
+
+- **`GET /api/tasks` list behavior and its visibility model** (`routes/tasks.js:41-64`, `tasksQueries.listTasks`, `HAS_ENTITY_PARENT`, `canManage`/`scopeOwnerId`) — the count reuses it and must not alter it; the AR-TASK-UNIFY-001 "open task = Action Required" timeline coupling stays intact.
+- **RBAC gates** `tasks.view` / `tasks.manage` and `actorId = req.user.crmUser.id` semantics (created_by-FK-crm-user-id rule) — the count must resolve identity the same way, no fallback to `sub`.
+- **LEADS-NEW-BADGE-001 wiring** (`leadsNewCount`, `/new-count` route, its SSE event types) — the Tasks badge is added **alongside**, threading a separate `openTasksCount`; the Leads/Pulse badges and their `pulse-unread-badge` markup must keep working unchanged.
+- **`useRealtimeEvents.ts` / `sseManager.ts`** touched additively only; the existing Pulse/Leads realtime channels must not regress.
+
+### Out of scope
+
+- Any change to the Tasks visibility rules, the `/tasks` page, task filters, or the `HAS_ENTITY_PARENT` definition.
+- Overdue-only / due-today-only counting, per-parent-type breakdowns, or a badge on any surface other than the `tasks` nav item.
+- New task realtime events are **optional** (Architect's call under FR-4) — if deferred, poll-only is acceptable for v1; introducing them is not required by this requirement.
+- Read/unread or "seen" state for tasks (the badge is state-derived, never dismissed by viewing).
+
+---
+
+## CONTACT-EMAIL-MERGE-001: adding an email to a contact merges that address's existing correspondence (email analogue of the phone-merge)
+
+**Status:** Requirements · **Priority:** P1 · **Date:** 2026-07-04 · **Owner:** Contacts / Pulse / Email
+**Type:** feature — frontend (multi-email editor) + backend (PATCH route writes `contact_emails`; new email-merge service). The email counterpart of the shipped phone-merge (`mergeOrphanTimelines`). Owner decisions D1–D3 (interview) binding.
+
+### Duplication check (result)
+
+Not a duplicate — it closes a real gap. Three shipped features around it, none of which do this:
+
+- **Phone side (the pattern to mirror):** editing a contact's `phone_e164`/`secondary_phone` fires `mergeOrphanTimelines(contactId, [phone, secondary_phone])` async from `PATCH /api/contacts/:id` (`backend/src/routes/contacts.js` ~line 232-240), which re-points orphan (contactless) timelines + their calls + open tasks onto the contact, adopting/merging/deleting orphan timelines. **There is no email equivalent.**
+- **`contact_emails` model exists (mig 025):** `(contact_id, email, email_normalized, is_primary, UNIQUE(contact_id, email_normalized), ON DELETE CASCADE)`; `contactDedupeService.enrichEmail(contactId, emailNorm)` already writes it idempotently (sets primary if the contact has none, else additional; `ON CONFLICT DO NOTHING`); `emailQueries.findEmailContact` resolves an address to a contact via `contacts.email OR contact_emails.email_normalized`; `emailQueries.linkMessageToContact(providerMessageId, companyId, {contact_id, timeline_id, on_timeline})` idempotently projects an `email_messages` row onto a contact/timeline.
+- **The list already reads `contact_emails` (EMAIL-OUTBOUND-001 / LIST-PAGINATION-001):** `getUnifiedTimelinePage`'s `email_by_contact` CTE resolves contact→email-thread via `contact_emails.email_normalized` (both inbound-matched and outbound-linked legs). So once an added address lands in `contact_emails` and its messages are linked, the contact's row surfaces automatically — no list change needed.
+- **The bug this closes:** `PATCH /api/contacts/:id` currently updates only the `contacts.email` scalar column and **never writes `contact_emails`** (pre-existing gap — the allowed-fields loop at ~line 172 sets `email` on the row and stops). So even a primary email typed in the editor is invisible to every `contact_emails`-keyed join, and no correspondence is ever merged. This feature must (a) persist emails to `contact_emails`, (b) support a multi-email list, and (c) merge each added address's existing correspondence.
+
+### Description
+
+The contact editor gains a **multi-email list** (one primary + any number of additional emails) — the exact analogue of the secondary-phone model — persisted to `contact_emails`. When an email is added to a contact (via the new editor, on create, or via any path that adds a `contact_emails` row) and that address **already has email correspondence in the same company**, that correspondence merges into THIS contact's timeline so it becomes part of the conversation and surfaces in the Pulse unified list. "Already has correspondence" resolves into three cases (owner D1–D3):
+
+- **Inbox-only (no contact at all):** `email_messages` for that address with `contact_id IS NULL` / not on any timeline → **link** them onto this contact's timeline (they surface + join the conversation). [D3]
+- **Owned by an EMAIL-ONLY auto-contact** (a contact that exists ONLY because an inbound email auto-created it — no phone, no business entities): **FULL MERGE** — re-point that contact's emails / tasks / timeline / everything onto THIS contact, then DELETE the now-empty contact. [D2a]
+- **Owned by a contact WITH its own identity/data** (has a phone OR any business entity — job/lead/estimate/invoice/payment): **do NOT delete it** — re-point ONLY the `email_messages` (and their thread linkage) for the added address onto this contact's timeline; the other contact stays intact and keeps its own identity. [D2b]
+
+If the added address has **no** correspondence anywhere, it is simply recorded in `contact_emails` (nothing to merge). Multiple emails may be added at once or over time; each is resolved independently. The merge runs on the same seam as the phone-merge (async from the PATCH route by default) and is idempotent.
+
+### User scenarios
+
+1. **Add an email that has inbox-only correspondence → linked.** A contact has a phone but the dispatcher knows their email; that address has two inbound emails sitting in the shared inbox with no contact attached (`contact_id NULL`). The dispatcher adds the email in the contact editor and Saves. The two messages are linked onto this contact's timeline (`emailQueries.linkMessageToContact`, `on_timeline=true`), the thread is attached, and the contact's row now reflects that email thread in the Pulse unified list (via the existing `email_by_contact` CTE). The email history is visible in the contact's timeline detail.
+2. **Add an email owned by an email-only auto-contact → full merge + delete.** Address `x@acme.com` earlier arrived as an inbound email that auto-created a bare contact (no name/phone, no jobs/leads/estimates/invoices/payments — it exists solely to hold that email thread). The dispatcher adds `x@acme.com` to a real contact "Jane Smith". On Save: that auto-contact's email messages, email thread, its timeline, and any open tasks are re-pointed onto Jane's timeline; the emptied auto-contact is deleted. Jane's list row and timeline now own the whole thread; the duplicate contact is gone.
+3. **Add an email owned by a contact WITH a phone/job → re-point emails only, keep the contact.** Address `bob@acme.com` belongs to contact "Bob" who also has a phone number and an open job. The dispatcher adds `bob@acme.com` to a different contact "Acme Billing". On Save: only the `email_messages` for `bob@acme.com` (and their thread link) are re-pointed onto Acme Billing's timeline; **Bob is NOT deleted** and keeps his phone, job, calls, and his own timeline. (Owner-accepted consequence: that email correspondence now lives under Acme Billing; Bob's non-email history is untouched.)
+4. **Add an email with no correspondence anywhere → just recorded.** The dispatcher adds a brand-new email that has never appeared in any message. It is written to `contact_emails` (primary if the contact had none, else additional). No merge, no timeline change, no list change beyond the address now being on file (and future inbound/outbound for it will resolve to this contact).
+5. **Multiple emails on one contact.** A contact legitimately has several addresses (personal + work). The editor lists the primary and all additional emails, allows adding several, and marks exactly one primary. Each added address independently runs its own resolution (link / full-merge / re-point / record). Re-saving with the same set is a no-op (idempotent; `UNIQUE(contact_id, email_normalized)` + `ON CONFLICT DO NOTHING`).
+6. **Editing the primary email persists to `contact_emails` (closes the pre-existing gap).** Simply changing the primary email in the editor (the case that does nothing today) now writes/updates the `contact_emails` primary row so the address is visible to all `contact_emails`-keyed joins, and triggers the same merge resolution for the new address.
+7. **Removing an email (scope decision — see FR-8 / constraints).** Deleting an address from the list removes the `contact_emails` row. Whether removal also **un-links** the previously-merged messages (reverse the merge) or **only stops future resolution** (leaves already-merged history in place) is a product/architect decision flagged below — the safe default is: remove the `contact_emails` row and leave already-linked history on the timeline (no destructive un-merge), and this scenario is a candidate to defer entirely if it complicates v1.
+
+### Functional requirements
+
+- **FR-1.** The contact editor renders a **multi-email list**: one primary email + zero-or-more additional emails, add/remove rows, exactly one primary. Follows FORM-CANON (floating-label filled fields, right-side panel) and mirrors the secondary-phone UX. Emails are validated (basic email shape) before Save.
+- **FR-2.** `PATCH /api/contacts/:id` (and the create path) **persists the full email set to `contact_emails`**, not just the `contacts.email` scalar: upsert each address (`email`, `email_normalized = lower(trim(email))`, `is_primary`) with `ON CONFLICT (contact_id, email_normalized) DO NOTHING`, keep the scalar `contacts.email` in sync with the primary (existing consumers still read it), and enforce a single `is_primary=true` row. Reuse `contactDedupeService.enrichEmail` semantics rather than hand-rolling the insert. The request contract for emails (shape of the emails payload) is an architect detail; the route must accept and durably store the list.
+- **FR-3.** After persisting, for **each newly-added** address the backend runs an **email-merge resolution** (new service, the email analogue of `timelineMergeService.mergeOrphanTimelines`) scoped to the contact's `company_id`:
+  - resolve the address to an owning contact via `email_normalized` (like `findEmailContact`) within the same company;
+  - **no owner (inbox-only):** link every `email_messages` row for that address (and its thread) onto this contact's timeline via `linkMessageToContact` (`on_timeline=true`), creating/adopting the contact's timeline with `timelinesQueries.findOrCreateTimelineByContact` (which already re-homes shadow-orphan open tasks); [D3]
+  - **owner is EMAIL-ONLY (empty):** FULL MERGE — re-point that contact's `email_messages` / email threads / tasks / timeline (+ `contact_emails`, addresses M2M with NOT-EXISTS guards) onto this contact respecting FK order (tasks → timelines → contact), then DELETE the emptied contact; [D2a]
+  - **owner HAS identity/data:** re-point ONLY the `email_messages` (+ thread link) for that address onto this contact's timeline; leave the other contact and all its non-email data intact (no delete). [D2b]
+- **FR-4.** **"Email-only / empty" predicate (the D2a↔D2b decision gate)** = the owning contact has NO `phone_e164` AND NO `secondary_phone` AND no referencing rows in the business-entity tables (`jobs`, `leads`, `estimates`, `invoices`, `payments`) AND no independent tasks — i.e. it exists only to hold email(s). The **exact** table list and predicate are an **architect decision** (must enumerate every table with a `contact_id` FK so nothing that constitutes "identity/data" is missed); FR-4 fixes the intent (delete only when the contact is truly nothing-but-email), the architect fixes the SQL.
+- **FR-5.** The merge is **idempotent**: re-running for the same address/contact produces no duplicate links, no double-move, and no error; `linkMessageToContact` is a no-op re-link, `contact_emails` upserts `ON CONFLICT DO NOTHING`, and a full-merge whose source is already gone is a clean no-op.
+- **FR-6.** The merge is **company-scoped**: it only ever resolves/moves messages, threads, contacts, and timelines within the editing contact's `company_id`. No cross-tenant resolution or deletion is possible (address collisions across companies are independent).
+- **FR-7.** Once `contact_emails` holds the address and messages are linked, the **Pulse unified list surfaces the contact's email thread with no list-code change** (the `email_by_contact` CTE already resolves via `contact_emails.email_normalized`, both directions — EMAIL-OUTBOUND-001). Timeline detail shows the merged email history.
+- **FR-8.** **Email removal (scope-flagged).** Removing an address deletes its `contact_emails` row. Whether removal also reverses a prior merge (un-links messages) is DEFERRED unless the architect/owner rules otherwise; default v1 behavior = remove the row, keep already-linked history in place (non-destructive). This FR exists to force an explicit decision, not to mandate un-merge.
+
+### Acceptance criteria
+
+- **AC-1.** Adding an email whose only footprint is inbox-only messages links those messages onto the contact's timeline (`on_timeline=true`, contact's timeline id, thread attached); the contact then appears in the unified list positioned by the thread's last-message time with the correct email icon, and the thread shows in timeline detail. Re-saving is a no-op.
+- **AC-2.** Adding an email owned by an email-only auto-contact re-homes all of its email messages/threads/tasks/timeline onto the target contact and DELETES the auto-contact (`findEmailContact` for that address afterwards returns the target contact; the old contact id no longer exists; no orphaned `email_messages` / `contact_emails` / open tasks remain).
+- **AC-3.** Adding an email owned by a contact that has a phone or any business entity re-points ONLY that address's email messages onto the target's timeline and **leaves the other contact intact** (its phone, calls, jobs/leads/estimates/invoices/payments, and its own timeline all still present; it is NOT deleted).
+- **AC-4.** Adding an email with no correspondence writes exactly one `contact_emails` row (primary if the contact had none, else additional), performs no timeline/list change, and subsequent inbound/outbound for that address resolves to this contact.
+- **AC-5.** Editing ONLY the primary email (no other change) now writes/updates the `contact_emails` primary row (regression against the current gap) and runs resolution for the new address; the scalar `contacts.email` stays in sync.
+- **AC-6.** Tenancy: an address that also exists in another company is never touched; no message, thread, contact, or timeline outside the editing contact's `company_id` is read, moved, or deleted. Verified against a two-company fixture.
+- **AC-7.** Idempotency / integrity: running the merge twice yields identical state; FK order is respected (no CASCADE destroys an open task — ORPHAN-TASK-REHOME-001 discipline); a full-merge deletes the source contact only after all its data is re-pointed.
+- **AC-8.** The real query/merge is verified against a **prod-sized DB copy**, not just mocked jest (LIST-PAGINATION-001 lesson): cover inbox-only, empty-auto-contact full merge, has-identity re-point, no-correspondence, multi-email, cross-tenant isolation.
+
+### Constraints / non-functional
+
+- **Must write `contact_emails`.** The load-bearing fix: emails added via the new UI (including the primary) MUST land in `contact_emails` (`email_normalized = lower(trim(email))`), or the `email_by_contact` CTE and `findEmailContact` never see them and nothing merges or surfaces. Keep the scalar `contacts.email` in sync with the primary for existing consumers.
+- **Async vs synchronous merge — ARCHITECT DECISION (flagged).** The phone-merge runs **async, non-blocking** after the PATCH responds (fire-and-forget with a caught, logged error). Mirroring that keeps Save latency low and is the default. BUT a delete-and-re-point merge has stronger consistency needs than the phone-merge's re-point-only; the architect must decide async (like phones) vs synchronous-in-request (or a transaction) — weighing Save latency vs the window where the UI shows a just-added email whose merge hasn't completed. Whichever is chosen: idempotent, and a failure must not corrupt state or lose the `contact_emails` write.
+- **Idempotent** end to end (re-save, push redelivery, double-fire): `linkMessageToContact` no-op re-link, `contact_emails` `ON CONFLICT DO NOTHING`, full-merge no-op when the source is already merged/gone.
+- **Company scoping is mandatory on every leg** — resolution, message re-point, thread re-point, contact delete — all filtered by the editing contact's `company_id`. **No cross-tenant merge or delete.** (The SMS cross-tenant leak closed in LIST-PAGINATION-001 and the ZB-ISO-001 leak are the cautionary precedents.)
+- **Deletion only when truly empty (D2).** A contact is deleted ONLY when it is email-only per the FR-4 predicate; any phone or business entity makes it re-point-only. The emptiness predicate must enumerate every `contact_id`-referencing table (architect) so "identity/data" is never under-counted and a real contact is never destroyed.
+- **FK order / no silent task loss.** Re-point open tasks off a to-be-deleted timeline/contact BEFORE deleting (tasks.thread_id is `ON DELETE CASCADE` — the exact trap fixed in ORPHAN-TASK-REHOME-001); order = tasks → timelines → contact; M2M rows (`contact_emails`, addresses) moved with NOT-EXISTS guards to avoid unique-constraint collisions.
+- **No general contact-merge service exists** — the full-merge path must be built (the owner's prior dedup was ad-hoc SQL). Build it as a reusable, tested service (email analogue of `timelineMergeService`), not inline route SQL.
+- **Reuse existing primitives**, don't re-implement: `contactDedupeService.enrichEmail` (write `contact_emails`), `emailQueries.findEmailContact` (resolve owner), `emailQueries.linkMessageToContact` (project message onto contact/timeline), `timelinesQueries.findOrCreateTimelineByContact` (+ its `reassignShadowOrphanOpenTasks`).
+- **The list needs no change** — `email_by_contact` already resolves via `contact_emails.email_normalized` (EMAIL-OUTBOUND-001). Do not touch `getUnifiedTimelinePage` unless a new index is required; if so, follow PULSE-PERF-001 (EXPLAIN on prod copy, index expression = exact predicate copy).
+- **Mocked jest is not enough** (LIST-PAGINATION-001) — run the REAL merge against a prod-DB copy before deploy.
+- **Migrations (if any) start at 156** — current max is `155_backfill_outbound_email_links.sql` (EMAIL-OUTBOUND-001 already claimed 155); re-verify the max immediately before creating (parallel branches). Any backfill: idempotent + logs affected row count + rollback file. Backend is CommonJS. Note: this feature may need **no** new migration (mig 025 `contact_emails` + mig 079/129 `email_messages` columns suffice) — add one only for a required index or a one-time historical resolution backfill.
+- **Email removal semantics (FR-8)** must be explicitly decided (default: non-destructive) before implementation; do not ship a silent destructive un-merge.
+- Deploy to prod only with explicit owner consent (standing rule).
+
+### Involved modules
+
+- **Backend:** `backend/src/routes/contacts.js` — `PATCH /:id` (persist `contact_emails`; trigger email-merge) and the create path; a **new email-merge service** (`backend/src/services/` — analogue of `timelineMergeService.js`); `backend/src/services/contactDedupeService.js` (`enrichEmail`, `getAdditionalEmails` — reuse/extend); `backend/src/db/emailQueries.js` (`findEmailContact`, `linkMessageToContact`, and likely a new company-scoped "list messages for address" helper); `backend/src/db/timelinesQueries.js` (`findOrCreateTimelineByContact`, `reassignShadowOrphanOpenTasks`).
+- **Frontend:** the contact editor panel (multi-email list UI, mirroring the secondary-phone control) + its contacts API client for the emails payload.
+- **Tests:** backend jest for the merge service (all D1–D3 branches, idempotency, tenancy, FK/task-safety) + real-query verification vs a prod-DB copy (documented in the PR).
+
+### Integrations
+
+- **Google / Gmail** — reuses the existing ingest/link seam (`linkMessageToContact`); no Gmail API-surface change. **Twilio / Front / Zenbooker / Stripe** — untouched (contact-email edits do not push to ZB email; the existing ZB contact sync on PATCH is unchanged).
+
+### Protected parts (must not break)
+
+- **Phone-merge** (`timelineMergeService.mergeOrphanTimelines`, its async trigger in `PATCH /:id`, ORPHAN-TASK-REHOME-001 task re-home) — the email path is added ALONGSIDE it; the phone path must keep working byte-for-byte.
+- **`email_by_contact` CTE / `getUnifiedTimelinePage`** (EMAIL-OUTBOUND-001, LIST-PAGINATION-001) — do not change its shape/semantics; it should surface merged threads automatically.
+- **`emailQueries.linkMessageToContact`** idempotent-re-link + DRAFT/unread semantics (EMAIL-UNREAD-001), and `findEmailContact` resolution — reused unchanged.
+- **`contact_emails` invariants** (mig 025): `UNIQUE(contact_id, email_normalized)`, `ON DELETE CASCADE`, single primary; and the scalar `contacts.email` consumers.
+- **Contact→leads cascade** in `PATCH /:id` (updates linked `leads` fields) and the async ZB contact sync — must keep firing; the new email logic is additive.
+- Existing migrations (025, 079, 129, 130, 143, 154, 155) and their indexes.
+- Tenancy guarantees (ONBOARD-FIX-001 / ZB-ISO-001): all reads/writes scoped by `company_id`; the merge introduces no cross-tenant path.
+
+### Out of scope
+
+- Any change to the unified-list query shape or the Pulse timeline-detail projection (they already surface `contact_emails`-linked threads).
+- Auto-creating contacts from unknown email recipients (existing behavior stays); CC/BCC-based merge (resolution is on the added address only); phone-side behavior.
+- A general-purpose "merge two arbitrary contacts" UI (this feature merges only via the email-add action, per D2's constrained rules); manual conflict-resolution UI.
+- Destructive email removal / reverse-merge (FR-8) unless explicitly chosen; changes to the unread model or ZB email push.

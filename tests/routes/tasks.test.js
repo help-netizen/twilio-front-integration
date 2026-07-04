@@ -83,6 +83,98 @@ describe('GET / — visibility scope', () => {
     });
 });
 
+describe('GET /count — open-task badge (TASKS-COUNT-BADGE-001)', () => {
+    test('happy path → { ok, data: { count } } (TC-5)', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ count: 7 }] });
+        const res = await request(makeApp()).get('/api/tasks/count');
+        expect(res.status).toBe(200);
+        expect(res.body).toEqual({ ok: true, data: { count: 7 } });
+    });
+
+    test('without tasks.view → 403, no query (TC-6)', async () => {
+        const res = await request(makeApp({ permissions: ['jobs.view'] })).get('/api/tasks/count');
+        expect(res.status).toBe(403);
+        expect(mockQuery).not.toHaveBeenCalled();
+    });
+
+    test('manager: no owner scoping; filters forced status=open (TC-8)', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ count: 3 }] });
+        const res = await request(makeApp()).get('/api/tasks/count');
+        expect(res.status).toBe(200);
+        const [sql, params] = mockQuery.mock.calls[0];
+        expect(sql).toMatch(/SELECT COUNT\(\*\)::int AS count FROM tasks t WHERE/);
+        expect(sql).not.toMatch(/t\.owner_user_id = \$/);
+        expect(sql).toMatch(/t\.status = \$/);
+        expect(params).toContain('open');
+    });
+
+    test('provider (no manage): scopeOwnerId = crmUser.id, never sub (TC-8)', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ count: 2 }] });
+        const res = await request(makeApp({ permissions: ['tasks.view', 'tasks.create'] })).get('/api/tasks/count');
+        expect(res.status).toBe(200);
+        const [sql, params] = mockQuery.mock.calls[0];
+        expect(sql).toMatch(/t\.owner_user_id = \$2/);
+        expect(params[1]).toBe(ME);       // crmUser.id
+        expect(params).not.toContain('kc'); // never the Keycloak sub
+    });
+
+    test('count reuses the list predicate — same conditions/$n as GET / (TC-9 mock)', async () => {
+        // Provider scope: GET / list and GET /count must build the same owner+status predicate.
+        mockQuery.mockResolvedValueOnce({ rows: [] });
+        await request(makeApp({ permissions: ['tasks.view', 'tasks.create'] })).get('/api/tasks?status=open');
+        const listSql = mockQuery.mock.calls[0][0];
+        mockQuery.mockClear();
+        mockQuery.mockResolvedValueOnce({ rows: [{ count: 0 }] });
+        await request(makeApp({ permissions: ['tasks.view', 'tasks.create'] })).get('/api/tasks/count');
+        const countSql = mockQuery.mock.calls[0][0];
+        for (const frag of ['t.company_id = $1', 't.owner_user_id = $2', 't.status = $3']) {
+            expect(listSql).toContain(frag);
+            expect(countSql).toContain(frag);
+        }
+    });
+
+    test('excludes auto timeline tasks via HAS_ENTITY_PARENT (TC-11 mock)', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ count: 0 }] });
+        await request(makeApp()).get('/api/tasks/count');
+        const sql = mockQuery.mock.calls[0][0];
+        expect(sql).toMatch(/t\.created_by IN \('user', 'agent'\)/);
+    });
+
+    test('route order: /count resolves to the count handler, not :id=count (TC-23)', async () => {
+        // If /:id caught it, getTaskById would run first (SELECT_TASK with LEFT JOINs).
+        mockQuery.mockResolvedValueOnce({ rows: [{ count: 4 }] });
+        const res = await request(makeApp()).get('/api/tasks/count');
+        expect(res.status).toBe(200);
+        expect(res.body.data.count).toBe(4);
+        expect(mockQuery.mock.calls[0][0]).toMatch(/SELECT COUNT\(\*\)/);
+        expect(mockQuery.mock.calls[0][0]).not.toMatch(/LEFT JOIN/);
+    });
+
+    test('manager may pass ?assignee_id (parity with list); non-manager ignores it (TC-24)', async () => {
+        mockQuery.mockResolvedValueOnce({ rows: [{ count: 1 }] });
+        await request(makeApp()).get('/api/tasks/count?assignee_id=U2');
+        let [sql, params] = mockQuery.mock.calls[0];
+        // filters seed status='open' first ($2), then assignee_id owner cond ($3).
+        expect(sql).toMatch(/t\.owner_user_id = \$3/);
+        expect(params[2]).toBe('U2');
+
+        mockQuery.mockClear();
+        mockQuery.mockResolvedValueOnce({ rows: [{ count: 0 }] });
+        await request(makeApp({ permissions: ['tasks.view', 'tasks.create'] })).get('/api/tasks/count?assignee_id=U2');
+        [sql, params] = mockQuery.mock.calls[0];
+        // Non-manager: assignee_id is ignored; owner scope pins to ME, not U2.
+        expect(params).not.toContain('U2');
+        expect(params[1]).toBe(ME);
+    });
+
+    test('DB error → 500 house envelope', async () => {
+        mockQuery.mockRejectedValueOnce(new Error('boom'));
+        const res = await request(makeApp()).get('/api/tasks/count');
+        expect(res.status).toBe(500);
+        expect(res.body).toEqual({ ok: false, error: { code: 'INTERNAL', message: 'Failed to count tasks' } });
+    });
+});
+
 describe('GET /assignees', () => {
     test('403 without tasks.create/manage', async () => {
         const res = await request(makeApp({ permissions: ['tasks.view'] })).get('/api/tasks/assignees');

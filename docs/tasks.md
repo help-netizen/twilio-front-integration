@@ -4742,3 +4742,138 @@ wave 2:  T3 (verify-скрипт, I01–I22)   ∥   T4 (перф P01–P04 + SE
 
 ---
 
+## Фича TASKS-COUNT-BADGE-001: «open tasks» счётчик-бейдж в навигации
+
+RBAC-скоуп-клон LEADS-NEW-BADGE-001, применённый к Tasks. Источник истины: `docs/specs/TASKS-COUNT-BADGE-001.md`; архитектура: `docs/architecture.md` §TASKS-COUNT-BADGE-001; тест-кейсы: `docs/test-cases/TASKS-COUNT-BADGE-001.md` (TC-1…TC-41, S1–S10). **Миграций НЕТ, новых прав НЕТ.** Несущий инвариант (AC-1..AC-3): бейдж == числу строк `GET /api/tasks?status=open` для той же сессии — гарантируется **структурно** (общий предикат `buildTaskListFilters`, а не дисциплиной).
+
+**Сквозные files-forbidden (для ВСЕХ задач фичи):**
+- `backend/src/server.js` — core middleware; роутер уже смонтирован `app.use('/api/tasks', authenticate, requireCompanyAccess, tasksRouter)`, правка не нужна.
+- `frontend/src/lib/authedFetch.ts` — auth-обёртка; использовать как есть, не менять.
+- любые миграции `backend/db/migrations/*` и их rollback'и — фича их НЕ создаёт (read по существующим `tasks`; обслуживается доступом `company_id`/`status`/`owner_user_id`, без нового индекса).
+- `backend/src/services/leadsService.js`, `emitLeadChange`, `/api/leads/new-count`, их SSE-типы — LEADS-NEW-BADGE-001 остаётся рабочим; Tasks-бейдж добавляется **рядом**, не переписывая leads.
+- CSS `pulse-unread-badge` (`AppLayout.css`) — переиспользуется, НЕ модифицируется (правило `9+`/скрытие-при-0 приходит из render-guard'а).
+
+**Сквозные middleware/изоляция (для задач с route/SQL):** `company_id` берётся **только** через `req.companyFilter?.company_id` (НЕ `req.companyId` — его нет); `actorId(req)` = `req.user?.crmUser?.id` (правило created_by-FK-crm-user-id — **никакого `sub`-fallback**); все count-запросы фильтруют `WHERE t.company_id = $1 AND …` → данные изолированы между компаниями; доступ к чужой компании даёт 0 строк в бейдже (AC-6, TC-10).
+
+---
+
+### TASKS-COUNT-BADGE-001-T1: Общий предикат + `countTasks` + route `GET /api/tasks/count` (P0, L)
+
+**Цель:** сделать несущий инвариант невозможным к дрейфу — извлечь единый строитель WHERE, добавить дешёвый `COUNT(*)` поверх голой `tasks t`, и отдать его RBAC-скоуп-роутом, зеркалящим `GET /` verbatim.
+
+**Файлы, которые можно менять:**
+- `backend/src/db/tasksQueries.js` — извлечь `buildTaskListFilters(companyId, filters = {})` → `{ conditions: string[], params: any[] }` из `listTasks` (сейчас inline, строки ~114-145: seed `params=[companyId]`, `conditions=['t.company_id = $1', HAS_ENTITY_PARENT]`, затем pushes `scopeOwnerId`→`t.owner_user_id = $n` / `status`→`t.status = $n` / `assignee_id`→`t.owner_user_id = $n` / `parent_type`(valid)→`t.<col> IS NOT NULL` без параметра / `overdue`→`t.status='open' AND t.due_at IS NOT NULL AND t.due_at < now()` без параметра / `due_from`→`t.due_at >= $n::timestamptz` / `due_to`→`t.due_at <= $n::timestamptz`). **НЕ** добавляет `limit`/`offset`. Рефакторнуть `listTasks` на этот строитель (после общего блока пушит `limit`/`offset`, `SELECT_TASK … WHERE conditions.join(' AND ') … ORDER BY t.due_at ASC NULLS LAST, t.created_at DESC LIMIT $… OFFSET $…`) — вывод **байт-в-байт** прежний (тот же порядок пушей → та же `$n`-нумерация). Добавить и экспортировать `countTasks(companyId, filters = {}, client = null)`: `requireCompanyId(companyId)` → `buildTaskListFilters` → `SELECT COUNT(*)::int AS count FROM tasks t WHERE ${conditions.join(' AND ')}` → `rows[0]?.count || 0`. **Без `SELECT_TASK`-джойнов** (все `LEFT JOIN` в `SELECT_TASK` — только label-гидрация, для `COUNT(*)` не нужны → дёшево).
+- `backend/src/routes/tasks.js` — добавить `router.get('/count', requirePermission('tasks.view'), …)` в **статик-сегмент кластере сверху**: сразу после `GET /` (строка 41), рядом с `GET /assignees` / `GET /entity/:parentType/:parentId`, **ВЫШЕ** `PATCH /:id` (139) и `DELETE /:id` (174). Внутри — verbatim ветка `GET /`: `filters = { status:'open' }`; `if (canManage(req)) { if (req.query.assignee_id) filters.assignee_id = req.query.assignee_id }` иначе `filters.scopeOwnerId = actorId(req)`; `count = await tasksQueries.countTasks(companyId(req), filters)`; успех → `res.json({ ok:true, data:{ count } })`; ошибка → `console.error('[Tasks] GET /count failed:', err.message)` + `res.status(500).json({ ok:false, error:{ code:'INTERNAL', message:'Failed to count tasks' } })`. (`canManage(req)` = `_devMode || permissions.includes('tasks.manage')` — уже есть, строка 27.)
+- `tests/tasksCount.test.js` (**создать**) — jest (БД мокнута): TC-2 (buildTaskListFilters — `{conditions[],params[]}`, `conditions[0]='t.company_id = $1'`, `conditions[1]=HAS_ENTITY_PARENT`, стабильная `$n` независимо от вызывающего; оба caller'а дают идентичный `conditions.join(' AND ')`+`params`), TC-3 (`countTasks` SQL матчит `/SELECT COUNT\(\*\)::int AS count FROM tasks t WHERE/`, содержит `t.company_id = $1` / `HAS_ENTITY_PARENT` / `t.status`, НЕ содержит `LEFT JOIN` / `crm_users ow` / `parent_label`; вернул 5 на `[{count:5}]`), TC-4 (`countTasks(null)` → throws `requireCompanyId`, запрос не выпущен).
+- `tests/routes/tasks.test.js` (**дополнить**, не переписывать) — TC-5 (happy `{ok:true,data:{count:7}}`), TC-6 (нет `tasks.view` → 403, `mockQuery` не вызван), TC-7 (нота: 401 обеспечивается реальным `authenticate` на маунте — как во всём файле), TC-8 (manager → filters БЕЗ `scopeOwnerId`, SQL без `t.owner_user_id = $`; provider → `scopeOwnerId = req.user.crmUser.id`, SQL `t.owner_user_id = $2` = `ME`, НИКОГДА `sub`), TC-9 (S9 mock — оба caller'а делят строитель; истинный инвариант — в T4), TC-11 (S8 mock-заглушка, полноценно в T4), TC-23 (route-order: `/count` резолвится в count-handler, не как `:id='count'`), TC-24 (manager может `?assignee_id` → SQL `t.owner_user_id = $n = U2`; у non-manager query-param игнорируется), TC-36 (регрессия: GET-list suite остаётся зелёным после извлечения — те же conditions/`$n`/ORDER BY/LIMIT-OFFSET).
+
+**Файлы, которые трогать нельзя:** всё из сквозного files-forbidden; в этой задаче дополнительно — `backend/src/services/tasksService.js`, `backend/src/services/eventCatalog.js`, `backend/src/db/timelinesQueries.js` (SSE-emit — территория T2); любые frontend-файлы (T3).
+
+**Ожидаемый результат:** `GET /api/tasks/count` отдаёт `{ ok, data:{ count } }`, скоуп-зеркало `GET /` (manager → все open компании, остальные → только свои по `owner_user_id`); SQL фильтрует по `company_id` → изоляция между компаниями (доступ к чужой → 0); `listTasks` байт-в-байт прежний; `countTasks` и `listTasks` делят один предикат-источник → count структурно не может превысить/разойтись со списком. Route смонтирован ВЫШЕ `/:id`. 401 без auth / 403 без `tasks.view` / 500 на ошибке БД.
+
+**Проверка (acceptance):** TC-2, TC-3, TC-4, TC-5, TC-6, TC-7, TC-8, TC-9, TC-11, TC-23, TC-24, TC-36. (Jest мокает БД → истинный инвариант count==list доказывается T4 на реальной БД — урок LIST-PAGINATION-001.)
+
+**Зависимости:** нет. **Параллельность:** wave 1. T2 делит `routes/tasks.js` → T2 строго ПОСЛЕ T1 (тот же файл). T3 (frontend-only) может идти ∥ с T1.
+
+**Статус:** done — APPROVED (reviewer reproduced: jest 60/60; listTasks WHERE byte-identical; shared buildTaskListFilters)
+
+---
+
+### TASKS-COUNT-BADGE-001-T2: SSE-эмит `task.changed` в точках изменения open-count (P0, M)
+
+**Цель:** мгновенная свежесть бейджа — единый coarse, PII-free `task.changed` (ТОЛЬКО `{ company_id }`), эмитится best-effort ровно там, где меняется видимый open-count; `system`/`automation` и upsert-update НЕ эмитят.
+
+**Файлы, которые можно менять:**
+- `backend/src/services/tasksService.js` (**создать**, ~15 строк) — `emitTaskChange(companyId)`: `if (!companyId) return;` → `try { require('./realtimeService').broadcast('task.changed', { company_id: companyId }); } catch (err) { console.warn('[tasksService] task event broadcast failed:', err.message); }`. Зеркалит форму `emitLeadChange` (`leadsService.js:1192`). Payload — РОВНО `{ company_id }` (без `owner_user_id`/`id`/`status`/имён/телефонов/email — richer payload соблазняет client-side count-math, что запрещает AC-3).
+- `backend/src/services/eventCatalog.js` — добавить `{ key: 'task.changed', label: 'Open-task count changed', sample_fields: ['company_id'] }` (сейчас в каталоге только agent_task.*/lead.*/job.* и т.п.).
+- `backend/src/routes/tasks.js` — вставить `tasksService.emitTaskChange(companyId(req))` best-effort: (1) `POST /` — после успеха `createTask`, перед `res` (всегда: новый open task); (2) `PATCH /:id` — **один guard**: эмит РОВНО когда `status` ИЛИ `owner_user_id` присутствовали в patch (покрывает complete/reopen/reassign S4/S5/S6; исключает pure description/due — S7; без двойного эмита когда оба присутствуют); (3) `DELETE /:id` — после успешного удаления (всегда: убыл open task).
+- `backend/src/db/timelinesQueries.js` — в `createTask` (строка 688) эмитить `require('../services/tasksService').emitTaskChange(companyId)` best-effort **ТОЛЬКО** внутри финальной INSERT-ветки (строка ~735) и **только при явном guard `provenance IN ('user','agent')`**. НЕ эмитить: из AUTO-upsert-**update** ветки (строки ~700-707 — обновление существующего open task не меняет count) и для `system`/`automation` (их таски `HAS_ENTITY_PARENT`-исключены, Pulse-only). Провенанс здесь = `provenance = createdBy || 'user'` (строка 689); guard должен быть **explicit `['user','agent'].includes(provenance)`** у самого INSERT-site (не полагаться на то, что `system`/`automation` не дошли — они как раз доходят до INSERT, когда нет существующего AUTO-open-task).
+
+**Файлы, которые трогать нельзя:** всё из сквозного files-forbidden (в частности `emitLeadChange`/`leadsService.js` — только читать как образец); `backend/src/db/tasksQueries.js` (контракт T1 — не менять предикат/COUNT); frontend-файлы (T3); `tests/*` за пределами эмит-кейсов ниже.
+
+**Ожидаемый результат:** каждая мутация, меняющая видимый open-count, шлёт ровно один PII-free `task.changed { company_id }`; description/due/snooze-only PATCH и `system`/`automation`/upsert-update — молчат; сбой broadcast'а никогда не роняет и не блокирует запись task'а (best-effort, `console.warn`); каталог событий рекламирует только `company_id`.
+
+**Проверка (acceptance):** TC-12 (payload РОВНО `{ company_id }`), TC-19 (PATCH: status→эмит, owner→эмит, due-only→нет, description-only→нет; максимум один эмит на PATCH), TC-20 (POST create эмитит один раз после create, перед res), TC-21 (DELETE эмитит один раз), TC-22 (`timelinesQueries.createTask`: fresh-insert `user`→эмит, `agent`→эмит, `system` new-insert→НЕТ, AUTO-upsert-update→НЕТ), TC-25 (eventCatalog содержит запись с `sample_fields:['company_id']` только), TC-37 (best-effort: throw broadcast'а не ломает запись — handler всё равно 200/201, ошибка проглочена+`console.warn`), TC-38 (`emitTaskChange(null)` → early return, broadcast не вызван).
+
+**Зависимости:** T1 (жёстко — делит `backend/src/routes/tasks.js`; эмиты вставляются в те же `POST`/`PATCH`/`DELETE` хендлеры). **Параллельность:** wave 1, но строго ПОСЛЕ T1 (общий файл). Может идти ∥ с T3.
+
+**Статус:** done — APPROVED (emit EXACTLY {company_id}; provenance user|agent guard; system/automation never emit)
+
+---
+
+### TASKS-COUNT-BADGE-001-T3: Frontend — `openTasksCount` бейдж на `tasks` + SSE-провод (P1, M)
+
+**Цель:** отрисовать `pulse-unread-badge` на nav-элементе `tasks` (десктоп+мобайл) с числом open-tasks; freshness по рецепту Leads (mount + route-change + 60s poll) + мгновенный refetch на `task.changed` своей компании.
+
+**Файлы, которые можно менять:**
+- `frontend/src/components/layout/AppLayout.tsx` — `const [openTasksCount, setOpenTasksCount] = useState(0)` + `fetchOpenTasksCount` — **verbatim-клон** `fetchLeadsNewCount` (строки 110-123): `authedFetch('/api/tasks/count')`, читать `json?.data?.count ?? 0`, gated на `company`; fetch на mount + на смену `location.pathname` (`useEffect([fetchOpenTasksCount, location.pathname])`) + 60s `setInterval`. Передать `openTasksCount` в `<AppNavTabs …>` (строка 156) и `<BottomNavBar …>` (строка 163). **Расширить существующий** `useRealtimeEvents.onGenericEvent` (строка 131) — НЕ добавлять второй `useRealtimeEvents`: `if (type === 'task.changed' && d?.company_id === company?.id) fetchOpenTasksCount();`.
+- `frontend/src/components/layout/appLayoutNavigation.tsx` — добавить `openTasksCount: number` в `AppNavProps` (строка 8) и в проп-тип `BottomNavBar` (строка 54); прокинуть в оба деструктура. `AppNavTabs`: добавить `t.key === 'tasks'` в набор `position: relative` (тернарник style, строка 39) и рядом с pulse/leads бейджами (строки 41-42) отрисовать `{t.key === 'tasks' && openTasksCount > 0 && <span className="pulse-unread-badge" title={\`${openTasksCount} open tasks\`}>{openTasksCount > 9 ? '9+' : openTasksCount}</span>}`. `BottomNavBar` (строки 69-84): аналогичная ветка `t.key === 'tasks'` с тем же absolute-position `pulse-unread-badge` span, что у pulse/leads-мобайл.
+- `frontend/src/hooks/useRealtimeEvents.ts` — **дописать** `'task.changed'` в массив `genericEventTypes` (строка ~69). Additive-only.
+- `frontend/src/hooks/sseManager.ts` — **дописать** `'task.changed'` в массив `namedEvents` (строка ~92). Additive-only. (Имя в ОДНОМ из списков без другого — молча мёртвое; TC-30 грепает оба.)
+
+**Файлы, которые трогать нельзя:** всё из сквозного files-forbidden — особенно `authedFetch.ts` (использовать как есть) и `AppLayout.css`/`pulse-unread-badge` (переиспользовать класс, `9+`/скрытие-при-0 приходит из render-guard'а — CSS не трогать); `leadsNewCount`/leads-ветки — не регрессировать; backend-файлы (T1/T2). `useRealtimeEvents.ts`/`sseManager.ts` — трогать **только additively** (не удалять/не переупорядочивать существующие имена; не ломать pulse/leads каналы).
+
+**Ожидаемый результат:** бейдж виден на `tasks` в `AppNavTabs` (десктоп) И `BottomNavBar` (мобайл) с идентичной pulse/leads разметкой; скрыт при 0, `9+` при >9, число при 1..9; `title="{n} open tasks"`; значение обновляется на mount / смену маршрута / каждые 60с / мгновенно по `task.changed` своей компании (чужой `company_id` игнорируется); открытие `/tasks` НЕ сбрасывает бейдж (state-derived, не read-marker); нет ошибок в консоли; `tsc -b` зелёный.
+
+**Проверка (acceptance):** TC-26 (разметка desktop+mobile), TC-27 (скрыт при 0), TC-28 (`9+` при 15), TC-29 (freshness: mount+route+60s), TC-30 (SSE-refetch фильтруется по компании; `'task.changed'` в ОБОИХ списках — грепнуть), TC-31 (открытие `/tasks` не чистит), TC-41 (`onGenericEvent` расширен, второй `useRealtimeEvents` НЕ добавлен, pulse/leads каналы не регрессировали). Build-gate: `cd frontend && tsc -b` exit 0. (FE-харнеса нет → manual + build-check.)
+
+**Зависимости:** нет жёстких на код (route `/api/tasks/count` от T1 нужен только для live-проверки в браузере, не для компиляции/типов). **Параллельность:** wave 1 — полностью ∥ T1 и T2 (только frontend-файлы, ноль пересечений с backend).
+
+**Статус:** done — APPROVED (badge desktop+mobile; task.changed in both SSE lists; frontend build green)
+
+---
+
+### TASKS-COUNT-BADGE-001-T4: Интеграционный verify-скрипт против реальной БД + прогон (P0, L)
+
+**Цель:** доказать несущий инвариант на РЕАЛЬНОМ Postgres (мокнутый jest = только SQL-текст — урок LIST-PAGINATION-001): самосеющий/самочистящийся node-скрипт, PASS/FAIL по каждому кейсу, с блокирующим кросс-тенант P0.
+
+**Файлы, которые можно менять:**
+- `scripts/verify-tasks-count-001.js` (**создать**) — house-стиль, зеркалит `scripts/verify-email-outbound-001.js`: реальный `db/connection` через `DATABASE_URL` (default `postgresql://localhost/twilio_calls`, **никогда** прод); уникальный тег `TCB1`; company A = seed `…0001`, тегированная company B для кросс-тенанта (создаётся+удаляется cleanup'ом); чистит перед каждым кейсом и в начале/конце (companies cascade); re-run чистый; печать `PASS/FAIL TC-…` + ненулевой exit при любом FAIL. Секции вызывают **реальные** `tasksQueries.countTasks`/`listTasks` (и `timelinesQueries.createTask` / `updateTask` / `deleteTask` для дельт).
+
+**Секции → кейсы:**
+- **TC-1 (S9 ИНВАРИАНТ — главный тест):** `countTasks(company,filters) === listTasks(company,filters).length` для `{status:'open', scopeOwnerId?}` на ≥4 seed-состояниях: (a) пусто, (b) manager all-open, (c) provider own-open, (d) mixed open+done+cross-parent. Равны точно в каждом.
+- **TC-9 (S2):** company A — 3 open у ME + 2 open у OTHER (все entity-parented, тегированы) → `countTasks(A,{status:'open',scopeOwnerId:ME})` = 3.
+- **TC-10 (S10/AC-6 SECURITY, кросс-тенант, P0-блокер):** company B с N open entity-parented (часть с owner=company-A-user-id) → count для company-A user (и manager, и scoped) **исключает** все строки B (`t.company_id = $1`); B даёт **0** в любой A-бейдж.
+- **TC-11 (S8):** `system`-провенанс timeline-only task (`created_by='system'`, `thread_id` set, без job/lead/estimate/invoice/contact_id, `status='open'`) → в НИ `listTasks` НИ `countTasks` (исключён `HAS_ENTITY_PARENT`); count==list держится.
+- **TC-13 (S1):** manager — open у нескольких юзеров + все типы parent → `countTasks(A,{status:'open'})` (без scopeOwnerId) == total == `listTasks().length`.
+- **TC-14…TC-18 (S3–S7 дельты):** create→+1, complete(`status:'done'`)→−1, reopen(`status:'open'`)→+1 (`completed_at` очищен), reassign(`owner_user_id` A→B)→ scoped A −1 / B +1 **manager unchanged**, due-only edit→count unchanged.
+- **TC-32 (S9 дельта-цепочка end-to-end):** create → complete → reopen → reassign, реассерт count==list ПОСЛЕ КАЖДОГО шага; дельты сходятся с TC-14..TC-17.
+- **TC-33 (граница 9 vs 10):** seed 9 → count `9`, seed 10 → count `10` (`9+` — render-concern, API отдаёт истинный int).
+- **TC-34 (ноль):** 0 видимых open (только done / только OTHER) → count 0 == `listTasks().length` 0.
+- **TC-35 (все типы parent):** по одному open на job/lead/estimate/invoice/contact + один `user` timeline task → все N посчитаны; `agent` timeline task тоже посчитан; `system` timeline task исключён (ↄ TC-11).
+- **TC-39 (реассайн на менеджера, S6-угол):** company-count менеджера M = C; реассайн task U→M → company-count M всё ещё C (уже посчитан), scoped U −1.
+- **TC-40 (дешевизна, EXPLAIN-секция):** `EXPLAIN` реального `countTasks` SQL по сеяным данным → index-доступ по `tasks` (`company_id`/`status`/`owner_user_id`), без Seq-Scan-per-row регрессии.
+
+**S8 seed-тонкость (критично):** `HAS_ENTITY_PARENT` допускает `thread_id`-таски с `created_by IN ('user','agent')`. Genuinely-excluded «system-провенанс timeline task» сеять через `created_by='system'` (или `'automation'`) с ТОЛЬКО `thread_id` — НЕ `agent` (agent by design ВКЛЮЧ�ён, MAIL-AGENT-001; его позитив — TC-35).
+
+**Что сделать:** прогнать ВЕСЬ скрипт на локальной dev-БД (схема актуальна); per-case вывод — в отчёт задачи/PR. `actorId` семантику держать = `crm_users.id` (не `sub`); `companyId` = `company_id`. Дельта/row-targeted ассерты (не абсолюты по всей странице).
+
+**Файлы, которые трогать нельзя:** всё из сквозного files-forbidden; `tests/*` (jest — территория T1/T2); `backend/src/db/tasksQueries.js` / `routes/tasks.js` / `services/*` (это верификация — НИКАКИХ попутных правок продукта по итогам EXPLAIN; если план плох — открыть вопрос, не чинить индексом молча — фича заявлена без миграции); скрипт ходит ТОЛЬКО в `DATABASE_URL` (никаких прод-кредов).
+
+**Ожидаемый результат:** один воспроизводимый прогон доказывает несущий инвариант count==list на реальных строках через ≥4 состояния + всю дельта-цепочку + кросс-тенант изоляцию (P0) + `HAS_ENTITY_PARENT`-исключение + дешевизну плана; повторный запуск чистый; тот же скрипт без правок гоняется на prod-copy простым переключением `DATABASE_URL` (перед деплоем, с согласия владельца).
+
+**Проверка (acceptance):** TC-1 (главный), TC-9, TC-10 (P0-блокер), TC-11, TC-13, TC-14, TC-15, TC-16, TC-17, TC-18, TC-32, TC-33, TC-34, TC-35, TC-39, TC-40 — все PASS локально. Кросс-тенант лик = release-блокер.
+
+**Зависимости:** T1 + T2 (жёстко — скрипт зовёт реальные `countTasks`/`listTasks` из T1 и проверяет эмит-сайты/семантику T2). **Параллельность:** wave 2 — строго после T1+T2. prod-copy половина — deploy-gated (только с явного согласия владельца).
+
+**Статус:** done — APPROVED (verify 17/17 incl. count===list invariant + cross-tenant P0 + sabotage control)
+
+---
+
+### Порядок выполнения и параллелизм (TASKS-COUNT-BADGE-001)
+
+```
+wave 1:  T1 (предикат+countTasks+route+jest)  ──┐
+         T3 (frontend бейдж+SSE-провод)          │  ← T3 ∥ T1 (frontend-only, ноль пересечений)
+              ↓ (тот же routes/tasks.js)         │
+         T2 (SSE-эмит в POST/PATCH/DELETE+DB)  ──┘  ← T2 СТРОГО после T1 (общий файл routes/tasks.js)
+
+wave 2:  T4 (verify-скрипт на реальной БД, TC-1/9/10/11/13–18/32–35/39/40)
+              ← строго после T1+T2 (зовёт реальные countTasks/listTasks + семантику эмитов)
+              · prod-copy прогон (кросс-тенант повтор) — deploy-gated: только с явного согласия владельца
+```
+
+Граф зависимостей: **T1 → T2 → T4**; **T3 ∥ (T1,T2)**; **T4 после {T1,T2}**. Единственный файловый оверлап — `routes/tasks.js` (T1 добавляет `/count`-route; T2 добавляет `emitTaskChange` в те же `POST`/`PATCH`/`DELETE`) → сериализуем T1 перед T2. T3 не делит ни одного файла с backend → полностью параллелен. Миграций нет; сквозные files-forbidden: `server.js`, `authedFetch.ts`, `backend/db/migrations/*`.
+
+---
+
