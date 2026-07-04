@@ -353,6 +353,19 @@ async function linkOutboundMessage(companyId, msg) {
             }
         }
 
+        // EMAIL-UNREAD-002: replying marks the WHOLE timeline read (timeline +
+        // contact + SMS + email flags), guarded against newer inbound events —
+        // the thread counter alone left the Pulse row lit (tl/contact flags
+        // stayed set when the reply came from the email workspace or Gmail).
+        if (!alreadyLinked) {
+            const { markReadAfterReply } = require('../replyReadService');
+            await markReadAfterReply(companyId, {
+                timelineId,
+                contactId,
+                replyAt: msg.internal_at || null,
+            });
+        }
+
         if (alreadyLinked) {
             return { linked: true, contactId, timelineId, alreadyLinked: true };
         }

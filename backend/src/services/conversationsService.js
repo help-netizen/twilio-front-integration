@@ -153,6 +153,26 @@ async function sendMessage(conversationId, { body, author = 'agent', mediaSid, f
         timestamp: twilioMsg.dateCreated || new Date().toISOString(),
     });
 
+    // EMAIL-UNREAD-002: an outbound SMS reply marks the whole timeline read
+    // (same owner rule as email replies). Resolution mirrors the inbound path:
+    // phone → contact (no create) → timeline (upsert-safe). Non-blocking.
+    if (conv.customer_e164 && conv.company_id) {
+        try {
+            const contact = await queries.findContactByPhoneOrSecondary(conv.customer_e164, conv.company_id);
+            const timeline = await queries.findOrCreateTimeline(conv.customer_e164, conv.company_id);
+            if (timeline && timeline.id) {
+                const { markReadAfterReply } = require('./replyReadService');
+                await markReadAfterReply(conv.company_id, {
+                    timelineId: timeline.id,
+                    contactId: contact ? contact.id : null,
+                    replyAt: twilioMsg.dateCreated || null,
+                });
+            }
+        } catch (e) {
+            console.warn('[ConvService] reply-read after outbound SMS failed:', e.message);
+        }
+    }
+
     // SSE push
     realtimeService.publishMessageAdded(dbMsg, conv);
     const updatedConv = await convQueries.getConversationById(conv.id);
