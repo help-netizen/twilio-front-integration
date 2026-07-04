@@ -231,6 +231,14 @@
                   }
                 }
               },
+              "lat": {
+                "type": "number",
+                "description": "Latitude of the validated service address (from validateAddress), if you have it. Pass it together with lng and chosenSlot so the hold carries geo — the scheduler then treats the held window as occupied for that area."
+              },
+              "lng": {
+                "type": "number",
+                "description": "Longitude of the validated service address (from validateAddress), if you have it. Pass it together with lat and chosenSlot so the hold carries geo."
+              },
               "addressValidated": {
                 "type": "boolean",
                 "description": "True if validateAddress returned valid for this address"
