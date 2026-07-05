@@ -297,7 +297,7 @@ export const PulsePage: React.FC = () => {
                                             )}
                                             {conv.open_task?.due_at && !isSnoozed && (
                                                 <span className="text-sm font-medium" style={{ color: 'var(--blanc-danger)' }}>
-                                                    Due {new Date(conv.open_task.due_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                                                    Due {new Date(conv.open_task.due_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: companyTz })}
                                                 </span>
                                             )}
                                             {isSnoozed && (

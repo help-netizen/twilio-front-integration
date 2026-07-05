@@ -232,7 +232,7 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                             )}
                             {openTask?.due_at && (
                                 <span className="text-[10px]" style={{ color: 'var(--blanc-danger)' }}>
-                                    Due {new Date(openTask.due_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                                    Due {new Date(openTask.due_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: companyTz })}
                                 </span>
                             )}
                         </div>
@@ -244,7 +244,7 @@ export function PulseContactItem({ call, isActive, onMarkUnread, onMarkHandled, 
                                 style={{ background: 'rgba(118,106,89,0.1)', color: 'var(--blanc-ink-2)' }}
                             >
                                 <Clock className="size-2.5" />
-                                Snoozed {new Date(snoozedUntil).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                                Snoozed {new Date(snoozedUntil).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: companyTz })}
                             </span>
                         </div>
                     )}
