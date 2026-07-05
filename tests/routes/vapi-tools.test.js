@@ -43,6 +43,9 @@ jest.mock('../../backend/src/services/slotEngineService', () => ({
 jest.mock('https', () => ({ get: jest.fn() }));
 
 const https = require('https');
+// SAFE_FALLBACK: the ONLY shape the skill layer leaks on any error/unknown-tool
+// path (imported from the source of truth so these assertions track its wording).
+const { SAFE_FALLBACK } = require('../../backend/src/services/agentSkills/resultShapes');
 const stQueries = require('../../backend/src/db/serviceTerritoryQueries');
 const leadsService = require('../../backend/src/services/leadsService');
 const scheduleService = require('../../backend/src/services/scheduleService');
@@ -178,12 +181,14 @@ describe('Group 2 — dispatcher', () => {
         }
     });
 
-    // TC-LQV2-006
-    test('unknown tool name → error in result', async () => {
+    // TC-LQV2-006 / ASK-DEG-07 (G6): unknown tool → well-formed results[] with the
+    // skill-layer SAFE_FALLBACK (never a `{ error }` leak, never a 500). The tool
+    // name is NOT echoed back to the caller.
+    test('unknown tool name → SAFE_FALLBACK in a well-formed result (no error leak)', async () => {
         const res = await auth(request(app).post('/api/vapi-tools'))
             .send(toolCall('unknownTool', {}));
         expect(res.status).toBe(200);
-        expect(resultOf(res)).toEqual({ error: 'Unknown tool: unknownTool' });
+        expect(resultOf(res)).toEqual(SAFE_FALLBACK);
         expect(res.body.results[0].toolCallId).toBe('tc1');
     });
 
@@ -237,14 +242,18 @@ describe('Group 3 — checkServiceArea', () => {
         expect(stQueries.search).not.toHaveBeenCalled();
     });
 
-    // TC-LQV2-011
-    test('DB error → error in result, HTTP still 200', async () => {
+    // TC-LQV2-011 / ASK-VAPI-22 (G6): a DB error inside the skill degrades to the
+    // skill-layer SAFE_FALLBACK — HTTP 200, graceful, and CRITICALLY the internal
+    // error message ('DB connection failed') is NEVER surfaced to the caller.
+    test('DB error → SAFE_FALLBACK, HTTP 200, no err.message leak', async () => {
         stQueries.search.mockRejectedValue(new Error('DB connection failed'));
         const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
         const res = await auth(request(app).post('/api/vapi-tools'))
             .send(toolCall('checkServiceArea', { zip: '02101' }));
         expect(res.status).toBe(200);
-        expect(resultOf(res)).toEqual({ error: 'DB connection failed' });
+        expect(resultOf(res)).toEqual(SAFE_FALLBACK);
+        // The leak (@ old vapi-tools.js:380 `result = { error: err.message }`) is gone.
+        expect(JSON.stringify(res.body)).not.toContain('DB connection failed');
         errSpy.mockRestore();
     });
 });

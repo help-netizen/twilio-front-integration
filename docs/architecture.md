@@ -3705,3 +3705,191 @@ Jest mocks the DB (LIST-PAGINATION-001 / created_by-FK lessons — a slot-persis
 | `voice-agent/assistants/lead-qualifier-v2.json` | Add the `recommendSlots` tool-def to `model.tools[]` (same `function`/`server` shape, `REPLACE_WITH_VAPI_TOOLS_SECRET`); rewrite scheduling prompt steps 6 + 9 (call `recommendSlots`, offer top 2–3, deeper on "none suit," fallback to `checkAvailability`/callback, pass structured `chosenSlot` into `createLead`). Repo JSON only — live PATCH is a separate owner-gated step. |
 
 **No migration** (max on disk = 155; `lead_date_time`/`lead_end_date_time`/`latitude`/`longitude` exist, mig 004; `FIELD_MAP` maps all four). **No frontend change, no new hold entity, no schedule-render change.** `marketplaceService`, `leadsService` (`createLead`/`convertLead`/`markLost`), `scheduleService.getAvailableSlots` (stays the fallback), the slot engine, the proxy, and `CustomTimeModal` are **reused unchanged** (except the single `buildScheduledJobs` occupancy add).
+
+---
+
+## AGENT-SKILLS-001: provider-neutral CRM skill layer + existing-customer voice skills (P1–P3) + a second (service-CRM) MCP surface
+
+**Status:** Architecture · **Date:** 2026-07-04 · **Owner:** Voice / CRM / Platform
+**Requirements:** `Docs/requirements.md` → `## AGENT-SKILLS-001` (AR-1…AR-6, FR-S1…FR-S9, AC-1…AC-13). **Skill source of truth:** `voice-agent/assistants/lead-qualifier-v3-crm-roadmap.md`.
+
+### 0. The ONE principle this design serves
+
+> **The voice agent must be swappable for any other agent, with everything still working.**
+
+Therefore **all skill logic + all verification gating lives inside the CRM, in a provider-neutral skill layer** (`backend/src/services/agentSkills/`). VAPI/Sara and MCP are **thin adapters** that translate a transport envelope to/from the layer and carry **zero** business logic. Swapping Sara for another agent = writing a new adapter (or connecting over MCP); **no CRM code changes** (AR-1, AR-2, User-story 7, AC-10).
+
+```
+   VAPI (Sara)                     any MCP-capable agent
+   x-vapi-secret                   JSON-RPC (auth'd or token-gated public) / stdio
+        │                                   │
+        ▼                                   ▼
+  Adapter A: vapi-tools.js          Adapter B: agentSkills MCP triplet
+  (thin: envelope↔skill I/O)        (thin: registry+executor+protocol over the SAME layer)
+        │                                   │
+        └───────────────┬───────────────────┘
+                        ▼
+         ┌──────────────────────────────────────────┐
+         │  backend/src/services/agentSkills/  (AR-1)│
+         │  skill registry/manifest                  │
+         │  verificationGate  (L0/L1/L2, server-side)│
+         │  9 skill modules = pure functions:        │
+         │    skill(companyId, verifiedContext, input)│
+         │  → provider-neutral, speech-safe result   │
+         └──────────────────────────────────────────┘
+                        │ calls (never re-implements)
+                        ▼
+  leadsService · contactsService · jobsService · scheduleService ·
+  estimatesService · invoicesService · eventService · zenbookerClient · marketplaceService
+```
+
+### 1. The provider-neutral skill layer (AR-1) — module layout
+
+New directory **`backend/src/services/agentSkills/`** (no route, no transport, no VAPI/MCP token knowledge inside):
+
+| File | Responsibility |
+|---|---|
+| `index.js` | Public façade: `runSkill(skillName, companyId, rawContext, input)` → resolves the skill from the registry, calls `verificationGate.assert(skill.requiredLevel, verifiedContext)`, then `skill.run(companyId, verifiedContext, input)`. **Single choke-point** every adapter goes through. Wraps the call in the graceful-degradation guard (§7). |
+| `registry.js` | The **manifest** — one entry per skill: `{ name, kind:'read'|'write', requiredLevel:'L0'|'L1'|'L2', run }`. This is the layer's own registry (provider-neutral); the MCP registry (§4) is a thin projection of it into `crmMcp*` tool-def shape. |
+| `verificationGate.js` | **The single server-side L0/L1/L2 enforcement point** (§5). `deriveLevel(companyId, identityInput)` (used by `identifyCaller`) and `assert(requiredLevel, verifiedContext)` (used by every other skill). Never reads an LLM/caller "verified" claim. |
+| `statusMap.js` | `BLANC_STATUSES` → caller-friendly phrase + a `nextAction` hint (reconciled to the ACTUAL FSM, §6.1). One place; never speak a raw code. |
+| `resultShapes.js` | Speech-safe builders + the `SAFE_FALLBACK` shape ("let me have a teammate follow up"). Guarantees no PII dump / no internal code / no stack leaks out of the layer. |
+| `identityResolver.js` | The cross-**leads+contacts+jobs** phone/name/ZIP resolver used by `identifyCaller` (leadsService alone is insufficient — see §6.2). |
+| `skills/identifyCaller.js` … `skills/getInvoiceSummary.js` | **One module per skill** (9 files), each exporting a pure `run(companyId, verifiedContext, input)` that only orchestrates the reused services and returns a `resultShapes` object. |
+
+**Skill signature (uniform, AR-1):** `async run(companyId, verifiedContext, input) → resultObject`. `verifiedContext` is server-built (§5) and carries `{ level, contactId, customerName, matchedPhone }`. A skill **never** trusts `input` for verification, company, or entity ownership; it re-checks ownership by scoping every reused-service call to `companyId` + the verified `contactId`.
+
+### 2. Verification model (AR-6, D4) — where and how L0/L1/L2 is enforced
+
+**One gate, server-side, re-checked every call.** VAPI tool calls are stateless per invocation, so verification state is **re-derived on each call from the identity inputs the adapter passes** — never carried as a trusted boolean.
+
+**Per-call contract (identical for both adapters):**
+- Every skill call carries an **identity block** in `input`: `{ phone?, name?, zip?, street?, contactId? }` (the agent re-sends what it has learned so far in the call; these are *claims*, not proof).
+- `runSkill` → `verificationGate.deriveLevel(companyId, identityBlock)` **recomputes** the level from scratch by re-running the resolver against the DB:
+  - **L0** — no match → only `identifyCaller` proceeds; it returns `matchType:'new'` and the adapter routes to the v2 new-lead flow.
+  - **L1** — a real phone match to exactly one contact (server-side lookup, not the caller's word).
+  - **L2** — a phone/identity match **AND** a server-confirmed `name` match **AND** (`zip` OR `street`) match against that contact's record. The gate compares the caller-supplied name/ZIP to the stored contact/job/lead fields; the LLM's "they told me their name is X" only matters because the server independently confirms X against the row.
+- `verificationGate.assert(skill.requiredLevel, derivedLevel)` throws a typed `verification_required` error if `derived < required`. Sensitive reads (L2: history, estimate, invoice) and **all** writes re-run this on every call (AC-8).
+- A client/LLM sending `verified:true` (or any self-asserted level) has **no effect** — the field is ignored; the gate only trusts `deriveLevel`'s DB-derived result (AC-8).
+
+Each skill **declares** its `requiredLevel` in `registry.js` (see §6 table). The gate is the *only* place levels are enforced, so both adapters and any future adapter inherit it for free.
+
+### 3. Adapter A — `vapi-tools.js` refactored to THIN (AR-2, AC-11)
+
+The current `if (name === 'checkServiceArea') …` chain (lines 341–394) collapses to a **table-driven dispatch into the skill registry**. The router keeps its exact contract:
+- `vapiSecretAuth` / `x-vapi-secret` vs `VAPI_TOOLS_SECRET` (fail-closed: 503 unconfigured, 401 mismatch) — unchanged (lines 34–46).
+- Mounted **without** `authenticate`/`requireCompanyAccess` in `src/server.js:220` — unchanged.
+- Hardwired `DEFAULT_COMPANY_ID = '…0001'` (line 27) — unchanged; passed as `companyId` on every `runSkill`.
+- The `{ message.toolCallList[] } → { results:[{toolCallId, result:JSON}] }` envelope + multi-tool loop + per-tool try/catch — unchanged in shape.
+
+**What moves:** each handler body becomes *only* `parse args → runSkill(name, DEFAULT_COMPANY_ID, ctx, args) → JSON.stringify`. Concretely the loop does:
+```
+const raw = await agentSkills.runSkill(name, DEFAULT_COMPANY_ID, { source:'vapi', call: message.call }, args);
+results.push({ toolCallId: toolCall.id, result: JSON.stringify(raw) });
+```
+`agentSkills.index` handles unknown-tool + graceful-degradation, so the adapter's catch becomes a thin backstop only.
+
+**Back-compat migration of the 5 LIVE tools (mandatory — no behavior change):** `checkServiceArea`, `validateAddress`, `checkAvailability`, `recommendSlots`, `createLead` move **verbatim** into skill modules under `agentSkills/skills/` at `requiredLevel:'L0'` (they run for anonymous callers — that is the new-lead flow). Their internals (Geocoding key fallback, `SLOT_FALLBACK` + `smart-slot-engine` gate + `formatSlotLabel`, the `createLead` `chosenSlot` slot-persist + 1-retry + disqualified-lead shape) are **relocated, not rewritten** — same functions, now behind the registry. Because they are L0, `deriveLevel` never blocks them, preserving "never block the call." After the refactor, `vapi-tools.js` holds **no** SQL, no service composition, no verification decision (AC-11); the `https`/Geocoding code moves into `skills/validateAddress.js`.
+
+### 4. Adapter B — the service-CRM MCP surface (AR-3, AC-10)
+
+**Reuse the `crmMcp*` framework, do NOT build a second one — but note the coupling.** `crmMcpToolExecutor.dispatch()` and `crmMcpProtocolService.dispatch()` are **hardwired to the sales registry/services** (executor imports `crmAccountsService`… and switch-cases `crm.*`; protocol imports the sales registry + executor). So AR-3 adds a **parallel triplet that reuses the same *machinery and contracts*** but points at the skill layer:
+
+| New file | Mirrors | Difference |
+|---|---|---|
+| `backend/src/services/agentSkillsMcpRegistry.js` | `crmMcpToolRegistry.js` | Same tool-def shape + the same `objectSchema/integerSchema/enumSchema` helpers + `normalizeTool(tool, kind)` producing `{kind, requiresConfirmation:(kind==='write'), requiredPermission}`. **Adds a per-tool `requiredLevel`** and is a projection of the skill `registry.js`. Tool names namespaced `svc.*` (e.g. `svc.identify_caller`, `svc.reschedule_appointment`) so they never collide with `crm.*`. |
+| `backend/src/services/agentSkillsMcpExecutor.js` | `crmMcpToolExecutor.js` | Reuses **`crmMcpSchemaValidator.validateArguments`** and **`crmMcpResponse`** unchanged. `buildContext(req)` reads `companyId` from **`req.companyFilter.company_id`** (never client payload) exactly like the sales executor. `requireWriteAccess` keeps the write-permission + `confirmation.confirmed`+`confirmation_id` gate. **Its `dispatch()` calls `agentSkills.runSkill(skillFor(toolName), companyId, mcpContext, args)`** — i.e. it hands off to the SAME skill layer as Adapter A. It also passes the MCP identity block through so `verificationGate` runs identically. |
+| `backend/src/services/agentSkillsMcpProtocolService.js` | `crmMcpProtocolService.js` | Same JSON-RPC handling (`initialize`/`ping`/`tools/list`/`tools/call`), same `toProtocolTool` annotations, same error-code mapping via `crmMcpResponse.mapError`. `serverInfo.name = 'albusto-service-crm-mcp'`. Points at the two new services above. |
+| `backend/src/routes/agentSkillsMcp.js` | `crmMcp.js` | Authenticated JSON-RPC route; `ensureCompanyContext` identical. Mounted `app.use('/api/agent-skills/mcp', authenticate, requireCompanyAccess, agentSkillsMcpRouter)` — same middleware chain as `/api/crm/mcp` (server.js:242). |
+| `backend/src/routes/agentSkillsMcpPublic.js` + `agentSkillsMcpPublicAuth.js` | `crmMcpPublic.js` + `crmMcpPublicAuth.js` | Token-gated public transport with **env-bound company context** and **writes disabled unless explicitly enabled**. New env: `SVC_MCP_PUBLIC_ENABLED`, `SVC_MCP_PUBLIC_TOKEN`, `SVC_MCP_PUBLIC_COMPANY_ID` (= `…0001`), `SVC_MCP_PUBLIC_WRITE_ENABLED`. Mounted `app.use('/mcp/agent-skills', agentSkillsMcpPublicRouter)`. |
+| `backend/src/cli/agentSkillsMcpStdio.js` | `crmMcpStdio.js` | Optional stdio (`SVC_MCP_STDIO_*`), same readline JSON-RPC loop. |
+
+Where the two `crmMcp*` files that are **already generic** can be shared directly, share them: **`crmMcpSchemaValidator.js` and `crmMcpResponse.js` are reused as-is** (no sales coupling). Only the registry/executor/protocol are duplicated-with-a-different-target, because those three carry the sales wiring. The public-auth is duplicated because it hardcodes the `SALES_MCP_*` env names.
+
+**Tenant/verification interplay across the two transports (D4):**
+- **VAPI:** company = hardwired `DEFAULT_COMPANY_ID`; verification = derived from the identity block the assistant re-sends (there is no session).
+- **MCP:** company = env-/context-bound (`req.companyFilter.company_id`), never client payload — same rule as the sales MCP. Verification is **still** derived server-side by the skill layer from the identity block in `arguments`; MCP write-permission + confirmation is an *additional* outer gate (the framework's), it does **not** replace L0/L1/L2. So an MCP `svc.reschedule_appointment` call must satisfy **both** the framework write-gate (permission + confirmation) **and** the skill-layer L2 gate. This is strictly stronger, which is correct for a non-voice caller.
+
+### 5. ZB write-through (AR-4) — the reschedule seam + failure handling
+
+- **Cancel — already correct, reuse as-is.** `cancelAppointment` skill → `jobsService.cancelJob(jobId)`, which already pre-checks `zb_canceled` and pushes `zenbookerClient.cancelJob` with `forceSyncOnZbError` recovery (jobsService.js:1225–1242). No change to the cancel path.
+- **Reschedule — the GAP to close.** `scheduleService.rescheduleItem` (lines 141–186) writes only the Albusto DB + an internal `job_rescheduled` push; it does **NOT** call Zenbooker, though `zenbookerClient.rescheduleJob(id, {start_date, arrival_window_minutes?})` (line 372) exists.
+  **Seam:** extend `scheduleService.rescheduleItem` — after the successful local `scheduleQueries.rescheduleJob` write and **only for `entityType==='job'` on a ZB-linked job** — push to ZB mirroring the two established disciplines already in this file/service:
+  - `cancelJob`'s **pre-check + `forceSyncOnZbError`** shape (skip if not linked; on ZB error, force-sync from ZB then surface the friendly 409) — use this because a reschedule is a state-changing write we want reconciled, **matching how the owner decided writes behave**; and
+  - `reassignItem`'s **best-effort guard** for the non-critical push hook (the `job_rescheduled` provider push stays best-effort/never-fatal, unchanged).
+  ZB target account = `getClient()` bound to `ZENBOOKER_DEFAULT_COMPANY_ID` (= `…0001` = `DEFAULT_COMPANY_ID`); `getClientForCompany` returns null for other tenants (ZB-ISO-001) — so this path is default-company-only by construction. `rescheduleJob` needs `start_date` ISO 8601; where ZB requires `address.state`, reuse the existing `ensureAddressState` discipline (ZB job-create-state note) if applicable to reschedule.
+  **Failure policy (decision needed vs. defaulted):** cancel is **blocking-with-recovery** today (throws 409 on ZB failure after force-sync). For reschedule I default to the **same blocking-with-recovery** posture (D3 says "write Albusto AND push ZB"; ZB stays master, so a silent local-only reschedule that never reaches the master is worse than a surfaced retry). The skill catches that 409 and returns a `conflict`/`SAFE_FALLBACK` shape so the *call* still continues gracefully — i.e. blocking at the service layer, graceful at the skill layer. (Open point B, §9.)
+
+### 6. Per-skill mapping table
+
+> `requiredLevel` is enforced by `verificationGate`; `blanc_status` is never returned raw — always via `statusMap`.
+
+| # | Skill (VAPI name / MCP `svc.*`) | L-level | CRM service(s) reused | R/W | ZB side-effect | Audit note ("AI Phone")? |
+|---|---|---|---|---|---|---|
+| S1 | `identifyCaller` / `svc.identify_caller` | L0→derives L1/L2 | `identityResolver` over `leadsService.getLeadByPhone`/`getLeadsByPhones` **+ contactsService + jobs** (§6.2) | R | none | no |
+| S2 | `getCustomerOverview` / `svc.get_customer_overview` | L1 | `jobsService.listJobs({contactId,onlyOpen})`, `scheduleService.getScheduleItems`; existence-only of estimate/invoice | R | none | no |
+| S3 | `getJobStatus` / `svc.get_job_status` | L1 | `jobsService.getJobById`/`listJobs`, `statusMap` (+ opt. `getJobTransitions`) | R | none | no |
+| S4 | `getAppointments` / `svc.get_appointments` | L1 | `scheduleService.getScheduleItems` + `jobsService.listJobs` | R | none | no |
+| S5 | `rescheduleAppointment` / `svc.reschedule_appointment` | **L2** | read: `scheduleService.getAvailableSlots` (or `recommendSlots`/engine); write: `scheduleService.rescheduleItem('job',…)` **+ new ZB push (AR-4)**; `jobsService.addNote`; `eventService.logEvent` | **W** | **`zenbookerClient.rescheduleJob`** (new seam, §5) | **yes** |
+| S6 | `cancelAppointment` / `svc.cancel_appointment` | **L2** (retention-gated) | `jobsService.cancelJob` (already ZB) + `jobsService.addNote(reason)`; `eventService.logEvent` | **W** | `zenbookerClient.cancelJob` (existing) | **yes (reason + retentionAttempted)** |
+| S7 | `getJobHistory` / `svc.get_job_history` | **L2** | `jobsService` notes + `eventService.getEntityHistory(companyId,'job',jobId,notes)` | R (sensitive) | none | no |
+| S8 | `getEstimateSummary` / `svc.get_estimate_summary` | **L2** | `estimatesService.listEstimates`/`getEstimate` | R (sensitive) | none | no |
+| S9 | `getInvoiceSummary` / `svc.get_invoice_summary` | **L2** | `invoicesService.listInvoices`/`getInvoice` | R (sensitive) | none | no |
+
+Write skills also emit `eventService.logEvent(companyId,'job',jobId,<'job_rescheduled'|'job_canceled'>, {…, actor:'AI Phone'}, 'system')` (AR-5) so the action lands in entity history alongside the note.
+
+#### 6.1 `status_map` reconciled to the ACTUAL FSM
+
+`jobsService.BLANC_STATUSES` (line 25) = **`['Submitted','Waiting for parts','Follow Up with Client','Visit completed','Job is Done','Rescheduled','Canceled','On the way']`** — this **differs** from the roadmap's illustrative set (no `Scheduled`/`Review`/`Enroute`/`In Progress`/`Job is Done` spelled as the roadmap had them). `statusMap.js` maps the REAL values:
+
+| `blanc_status` | Spoken phrase | next-action hint |
+|---|---|---|
+| `Submitted` | "We've got your request and are getting it scheduled." | offer reschedule if a window exists |
+| `Waiting for parts` | "We're waiting on a part to finish the repair." | set expectation |
+| `Follow Up with Client` | "Our team needs to follow up with you to move forward." | capture callback |
+| `Visit completed` | "The technician has completed the visit." | offer review / new job |
+| `Job is Done` | "The job is complete." | offer review / new job |
+| `Rescheduled` | "Your appointment has been rescheduled." | confirm the new window |
+| `On the way` | "Your technician is on the way." | give ETA ("the tech will text before arriving") |
+| `Canceled` | "That appointment is canceled." | offer to rebook |
+| *(ZB substatus)* `en-route` / `in-progress` (`zb_status`) | map to "on the way" / "working on it now" | — |
+
+There is **no** `Scheduled` state in this FSM; a booked-but-not-started job is `Submitted` with a schedule item — so "you're scheduled" is driven by the presence of a `scheduleService` window, not by a status label.
+
+#### 6.2 Identity resolution (S1) — why leadsService alone is insufficient
+
+`leadsService.getLeadByPhone` **returns `null` when the matched lead's contact already has a job** (leadsService.js:1140–1146 — deliberate, for PulsePage). That is exactly the existing-customer case S1 must catch. `identityResolver` therefore resolves in order: **(1)** phone → `getLeadsByPhones`/`getLeadByPhone`; **(2)** if null-but-digits-present, bridge phone→contact via a contacts/timeline phone match (contactsService has no native phone getter) and pull that contact's jobs; **(3)** if masked/no phone, use `name` + `zip`/`street` against contacts+jobs; **(4)** disambiguate multiple matches by last appointment date/address. Level is then `deriveLevel`'s output (phone-only ⇒ L1; name+ZIP/street confirmed ⇒ L2).
+
+### 7. Graceful degradation & error sanitization (NFR)
+
+- **Skill layer:** `agentSkills.index.runSkill` wraps every call; on ANY thrown error (service throw, ZB 409, verification fail that should be spoken softly) it logs internally and returns `resultShapes.SAFE_FALLBACK` (`{ ok:false, speak:"let me have a teammate follow up" }`) — never a stack, SQL, PII, or internal code. The call always continues (LQV2 rule); lead creation is never blocked.
+- **MCP surface:** additionally goes through `crmMcpResponse.mapError` + `sanitizeDetails` (drops `token|secret|password|oauth|sql|stack` keys, truncates strings) — reused unchanged, so the MCP transport's sanitized-error contract is inherited (AC-12).
+- Verification failures on a *sensitive* skill return a soft "I'll need to verify a couple details first" shape to the agent (not a hard 4xx to the caller).
+
+### 8. Files: new / changed / protected · Migrations
+
+**New (skill layer, AR-1):** `backend/src/services/agentSkills/{index,registry,verificationGate,statusMap,resultShapes,identityResolver}.js` + `backend/src/services/agentSkills/skills/*.js` (9 skill modules + the 5 relocated L0 tools).
+**New (MCP adapter, AR-3):** `backend/src/services/{agentSkillsMcpRegistry,agentSkillsMcpExecutor,agentSkillsMcpProtocolService,agentSkillsMcpPublicAuth}.js`; `backend/src/routes/{agentSkillsMcp,agentSkillsMcpPublic}.js`; `backend/src/cli/agentSkillsMcpStdio.js`.
+**Changed:** `backend/src/routes/vapi-tools.js` → thin adapter (AR-2). `backend/src/services/scheduleService.js` `rescheduleItem` → add ZB reschedule push (AR-4). `src/server.js` → mount `/api/agent-skills/mcp` (authenticate + requireCompanyAccess) and `/mcp/agent-skills` (public). `voice-agent/assistants/lead-qualifier-v2.json` → add skill tool-defs + rewrite routing prompt (repo only; live PATCH owner-gated, AC-13).
+**Reused unchanged (called, not modified):** `leadsService`, `contactsService`, `jobsService` (incl. `cancelJob`, `addNote`, FSM constants, `OUTBOUND_MAP`, ZB sync block), `estimatesService`, `invoicesService`, `eventService`, `scheduleService` reads, `zenbookerClient`, `marketplaceService`, and `crmMcpSchemaValidator.js` + `crmMcpResponse.js` (generic framework halves). The **CRM-SALES-MCP** stack (`/api/crm/mcp`, `/mcp/crm`, its registry/executor/protocol) is untouched — the new surface is purely additive.
+**Protected (must not break):** VAPI auth+envelope+single-tenant contract; the 5 existing VAPI tools' behavior; the sales MCP contracts; `jobsService` FSM/`OUTBOUND_MAP`/ZB sync; `scheduleService` generic availability path; `leadsService.createLead` signature; ZB-ISO-001 default-company binding; tenancy/isolation posture (`DEFAULT_COMPANY_ID` only, no cross-tenant read/write introduced).
+
+**Migrations: NONE.** Max migration on disk = **155**. P1–P3 are a read/route layer + two guarded writes over **existing** tables (`jobs.notes` jsonb, `domain_events`, schedule tables, leads/contacts/estimates/invoices). No new column, table, or index is required (phone/`contactId` lookups reuse existing indexes: `idx_leads_contact_id`, the phone regex indexes from PULSE-PERF-001, `jobs.contact_id`). If p95 identity-lookup latency proves hot in load test, a supporting expression index on a phone column is a *follow-up*, not a prerequisite.
+
+### 9. How the design keeps the 6 ARs true + risks
+
+- **AR-1 (provider-neutral layer):** all logic + gating in `agentSkills/`; skills are pure `(companyId, verifiedContext, input)` with zero transport/agent knowledge. **AR-2 (zero-logic adapters):** both adapters only translate envelopes and call `runSkill`; after refactor `vapi-tools.js` has no SQL/verification/composition (AC-11). **AR-3 (reuse MCP):** new triplet mirrors `crmMcp*` contracts and *reuses the generic validator/response*; the sales stack is untouched. **AR-4 (ZB write-through):** cancel reuses existing push; reschedule seam wired into `rescheduleItem` with `forceSyncOnZbError` discipline. **AR-5 (audit note):** every write skill calls `addNote(author='AI Phone', createdBy='AI Phone')` + `logEvent`. **AR-6 (isolation + server-side verification, P0):** single `verificationGate`, DB-derived levels, every query scoped to `DEFAULT_COMPANY_ID` + verified `contactId`; MCP company from context, never client (AC-8, AC-9).
+
+**Risks & mitigations:**
+1. **`crmMcp*` executor/protocol are sales-coupled** → do NOT try to overload them; add the parallel triplet (namespaced `svc.*`) and share only the genuinely generic validator/response. Risk of drift if the sales framework changes — mitigate by keeping the two triplets structurally identical (a future refactor could extract a generic `mcpProtocolFactory(registry, executor)`, out of scope here).
+2. **Identity false-positive → wrong-customer disclosure (P0)** → `deriveLevel` requires a *server-confirmed* second factor for L2; disambiguation is mandatory before any read beyond L1; a masked number never auto-upgrades. Cross-tenant test is an AC (AC-9).
+3. **Reschedule ZB failure semantics** → defaulted to blocking-with-recovery (mirrors cancel); the *skill* still returns a graceful shape so the call continues. Confirm with owner (Open point B).
+4. **Verification statelessness** → because state is re-derived every call, a mid-call "downgrade" (agent forgets to resend identity) simply fails the gate again — safe by default (fail-closed), never a stale-trust escalation.
+5. **`status_map` divergence** → reconciled to the real `BLANC_STATUSES` in §6.1; SpecWriter must use §6.1, not the roadmap's illustrative list.
+
+**Open boundary questions genuinely needing the owner** (carry to SpecWriter/owner; do not block architecture):
+- **A — OQ-V3-2 (cancellation policy/fee text).** Is there any fee/window wording the cancel skill must *state before writing*? Design assumes **free before the visit + capture reason, no fee stated** (owner's open-with-defaults) — needs a yes/no + exact copy.
+- **B — reschedule ZB-failure posture.** Confirm **blocking-with-recovery** (like cancel) vs. **best-effort** (local write wins, ZB reconciled async). Recommend blocking-with-recovery since ZB is master.
+- **C — OQ-V3-4 (secure-link sender).** Which number/sender texts the estimate/invoice link (SEND-DOC-001 channel)? No card by voice is settled; the *sender identity* is not.
+- **D — OQ-V3-5 (Review lead on existing-customer calls).** Confirm the default "**existing-customer service call only UPDATES the job, never spawns a Review lead**; only L0 new callers create leads."
+- **E — MCP marketplace gate.** Should the whole voice/service-skill surface be gated on a marketplace app (e.g. `telephony-twilio`) with graceful fallback, mirroring the `recommendSlots`→`smart-slot-engine` precedent? Architect leans **no gate on reads/identify** (they must always work for an inbound call) and **the existing `smart-slot-engine` gate only on the reschedule slot-offer** — confirm.

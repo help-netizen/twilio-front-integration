@@ -31,6 +31,10 @@ const noteAttachmentsRouter = require('../backend/src/routes/noteAttachments');
 const crmRouter = require('../backend/src/routes/crm');
 const crmMcpRouter = require('../backend/src/routes/crmMcp');
 const crmMcpPublicRouter = require('../backend/src/routes/crmMcpPublic');
+// AGENT-SKILLS-001 (T8): parallel service-CRM `svc.*` MCP triplet — reuses the
+// generic crmMcp validator/response, points at the provider-neutral skill layer.
+const agentSkillsMcpRouter = require('../backend/src/routes/agentSkillsMcp');
+const agentSkillsMcpPublicRouter = require('../backend/src/routes/agentSkillsMcpPublic');
 const authRouter = require('../backend/src/routes/auth');
 const requestId = require('../backend/src/middleware/requestId');
 const { authenticate, requireRole, requireCompanyAccess } = require('../backend/src/middleware/keycloakAuth');
@@ -241,6 +245,10 @@ app.use('/api/note-attachments', authenticate, requireCompanyAccess, noteAttachm
 app.use('/api/crm', authenticate, requireCompanyAccess, crmRouter);
 app.use('/api/crm/mcp', authenticate, requireCompanyAccess, crmMcpRouter);
 app.use('/mcp/crm', crmMcpPublicRouter);
+// AGENT-SKILLS-001 (T8): service-CRM `svc.*` MCP surface — authed (same chain as
+// /api/crm/mcp) + token-gated public (own env-bound gate, writes off by default).
+app.use('/api/agent-skills/mcp', authenticate, requireCompanyAccess, agentSkillsMcpRouter);
+app.use('/mcp/agent-skills', agentSkillsMcpPublicRouter);
 
 // BLANC Integrations API (secured header-based auth)
 app.use('/api/v1/integrations', integrationsLeadsRouter);
