@@ -36,6 +36,10 @@ jest.mock('../backend/src/services/jobsService', () => ({
 }));
 jest.mock('../backend/src/services/estimatesService', () => ({ listEstimates: jest.fn(async () => ({ rows: [] })) }));
 jest.mock('../backend/src/services/invoicesService', () => ({ listInvoices: jest.fn(async () => ({ rows: [] })) }));
+// AGENT-SKILLS-002 §3.2/§3.3: getCustomerOverview + getJobStatus now surface the
+// contact's OPEN leads via the NON-SUPPRESSING leadsService.getOpenLeadsByContact.
+// Default → no open lead ([]); lead-aware cases override per-test.
+jest.mock('../backend/src/services/leadsService', () => ({ getOpenLeadsByContact: jest.fn(async () => []) }));
 // scheduleService is NOT mocked as a source here — overview/appointments derive from
 // listJobs. If any skill required getScheduleItems it would be undefined and fail,
 // which is exactly what ASK-SKILL-OV-02 guards against.
@@ -44,8 +48,19 @@ jest.mock('../backend/src/services/scheduleService', () => ({ getScheduleItems: 
 const jobsService = require('../backend/src/services/jobsService');
 const estimatesService = require('../backend/src/services/estimatesService');
 const invoicesService = require('../backend/src/services/invoicesService');
+const leadsService = require('../backend/src/services/leadsService');
 const scheduleService = require('../backend/src/services/scheduleService');
 const { runSkill } = require(AGENT);
+
+// A rowToLead-shaped open lead (PascalCase fields, ISO LeadDateTime/LeadEndDateTime),
+// mirroring leadsService.rowToLead. `LeadDateTime` set → a proposed-slot window.
+function openLead(overrides = {}) {
+    return {
+        UUID: 'lead-uuid-1', ContactId: CONTACT, Status: 'Review',
+        LeadDateTime: null, LeadEndDateTime: null,
+        ...overrides,
+    };
+}
 
 // A start_date well in the future so the "next appointment" picker is deterministic.
 const FUTURE = new Date(Date.now() + 3 * 24 * 3600 * 1000);
@@ -66,6 +81,7 @@ function job(overrides = {}) {
 beforeEach(() => {
     jest.clearAllMocks();
     gate.deriveLevel.mockResolvedValue({ level: 'L1', contactId: CONTACT, customerName: 'Jane Smith', matchedPhone: '6175551212' });
+    leadsService.getOpenLeadsByContact.mockResolvedValue([]); // default: no open lead
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -114,13 +130,81 @@ describe('getCustomerOverview (L1) — ASK-SKILL-OV-*', () => {
         expect(out.lastJobStatus).not.toMatch(/Waiting for parts/);
     });
 
-    test('EMPTY-01: first-run contact (no jobs/estimates/invoices) → empty shapes, offer to book, never an error', async () => {
+    test('EMPTY-01: first-run contact (no jobs/estimates/invoices/leads) → empty shapes, offer to book, never an error', async () => {
         jobsService.listJobs.mockResolvedValue({ results: [] });
         estimatesService.listEstimates.mockResolvedValue({ rows: [] });
         invoicesService.listInvoices.mockResolvedValue({ rows: [] });
+        leadsService.getOpenLeadsByContact.mockResolvedValue([]);
         const out = await runSkill('getCustomerOverview', CO, {}, { contactId: CONTACT });
-        expect(out).toMatchObject({ ok: true, openJobsCount: 0, nextAppointment: null, hasOpenEstimate: false, hasUnpaidInvoice: false });
+        expect(out).toMatchObject({ ok: true, openJobsCount: 0, nextAppointment: null, hasOpenEstimate: false, hasUnpaidInvoice: false, hasOpenLead: false, openLeadCount: 0 });
         expect(out.speak).toMatch(/book|help/i);
+    });
+
+    // ── AGENT-SKILLS-002 §3.2 — lead-aware overview ──────────────────────────────
+    test('OV-LEAD-01: 0 jobs + 1 open lead WITH a proposed window → hasOpenLead + openLeadStatus + leadProposedWindow, booking-oriented speak', async () => {
+        jobsService.listJobs.mockResolvedValue({ results: [] });
+        leadsService.getOpenLeadsByContact.mockResolvedValue([
+            openLead({ Status: 'Review', LeadDateTime: isoAt(FUTURE, 15), LeadEndDateTime: isoAt(FUTURE, 17) }),
+        ]);
+        const out = await runSkill('getCustomerOverview', CO, {}, { contactId: CONTACT });
+        expect(out.ok).toBe(true);
+        expect(out.openJobsCount).toBe(0);
+        expect(out.hasOpenLead).toBe(true);
+        expect(out.openLeadCount).toBe(1);
+        // proposed-slot window rendered as a RANGE (never an exact minute)
+        expect(out.leadProposedWindow).toMatch(/between .* and /i);
+        // "penciled in" phrasing wins when a window exists (spec §3.2.1)
+        expect(out.openLeadStatus).toMatch(/penciled in for/i);
+        // the read was the NON-SUPPRESSING company-scoped one, scoped to the verified contact
+        expect(leadsService.getOpenLeadsByContact).toHaveBeenCalledWith(CONTACT, CO);
+        // speak routes to booking (lock in / find a time), NOT "no jobs"
+        expect(out.speak).toMatch(/lock that in|find you another time|your request/i);
+        expect(out.speak).not.toMatch(/don't see any open jobs/i);
+        // still L1-safe: no lead amount/address surfaced
+        expect(JSON.stringify(out)).not.toMatch(/\$|address|street/i);
+    });
+
+    test('OV-LEAD-02: 0 jobs + 1 open lead with NO proposed window → "we have your request in" + offer to find a time', async () => {
+        jobsService.listJobs.mockResolvedValue({ results: [] });
+        leadsService.getOpenLeadsByContact.mockResolvedValue([openLead({ Status: 'Submitted', LeadDateTime: null, LeadEndDateTime: null })]);
+        const out = await runSkill('getCustomerOverview', CO, {}, { contactId: CONTACT });
+        expect(out).toMatchObject({ ok: true, openJobsCount: 0, hasOpenLead: true, leadProposedWindow: null });
+        expect(out.openLeadStatus).toMatch(/we have your request in/i);
+        expect(out.speak).toMatch(/find you a time/i);
+    });
+
+    test('OV-LEAD-03: jobs >= 1 AND an open lead → job-centric speak, but hasOpenLead still surfaced in the object', async () => {
+        // Jobs take precedence in the SPOKEN line; the lead is still returned so the agent
+        // can offer to book on it if the caller asks (spec §3.2.3).
+        jobsService.listJobs.mockResolvedValue({ results: [job({ id: 7 })] });
+        leadsService.getOpenLeadsByContact.mockResolvedValue([openLead({ Status: 'Review', LeadDateTime: isoAt(FUTURE, 15), LeadEndDateTime: isoAt(FUTURE, 17) })]);
+        const out = await runSkill('getCustomerOverview', CO, {}, { contactId: CONTACT });
+        expect(out.openJobsCount).toBe(1);
+        expect(out.hasOpenLead).toBe(true); // lead still in the object
+        expect(out.openLeadCount).toBe(1);
+        // the single-job spoken line is job-centric (found your account / next appointment),
+        // not the lead-only "I see your request" branch
+        expect(out.speak).toMatch(/found your account|next appointment/i);
+    });
+
+    test('OV-LEAD-04: multi open lead → openLeadCount reflects all; "the" lead is the newest (list[0])', async () => {
+        jobsService.listJobs.mockResolvedValue({ results: [] });
+        leadsService.getOpenLeadsByContact.mockResolvedValue([
+            openLead({ UUID: 'newest', Status: 'Review', LeadDateTime: isoAt(FUTURE, 15), LeadEndDateTime: isoAt(FUTURE, 17) }),
+            openLead({ UUID: 'older', Status: 'Submitted', LeadDateTime: null, LeadEndDateTime: null }),
+        ]);
+        const out = await runSkill('getCustomerOverview', CO, {}, { contactId: CONTACT });
+        expect(out.openLeadCount).toBe(2);
+        expect(out.hasOpenLead).toBe(true);
+        // list[0] is "the" lead → its window drives leadProposedWindow
+        expect(out.leadProposedWindow).toMatch(/between .* and /i);
+    });
+
+    test('OV-LEAD-05: a leads-read fault degrades to no-open-lead (never throws / never blocks the L1 read)', async () => {
+        jobsService.listJobs.mockResolvedValue({ results: [] });
+        leadsService.getOpenLeadsByContact.mockRejectedValue(new Error('leads pg down'));
+        const out = await runSkill('getCustomerOverview', CO, {}, { contactId: CONTACT });
+        expect(out).toMatchObject({ ok: true, hasOpenLead: false, openLeadCount: 0, openLeadStatus: null, leadProposedWindow: null });
     });
 });
 
@@ -160,6 +244,39 @@ describe('getJobStatus (L1) — ASK-SKILL-JS-*', () => {
         const out = await runSkill('getJobStatus', CO, {}, { contactId: CONTACT });
         expect(out.ok).toBe(false);
         expect(out.speak).toMatch(/which one|jobs in progress/i);
+    });
+
+    // ── AGENT-SKILLS-002 §3.3 — getJobStatus lead awareness ──────────────────────
+    test('JS-LEAD-01: 0 open jobs + an open lead → informative ok shape (NOT a flat refusal), no fabricated jobId', async () => {
+        jobsService.listJobs.mockResolvedValue({ results: [] });
+        leadsService.getOpenLeadsByContact.mockResolvedValue([openLead({ Status: 'Review', LeadDateTime: isoAt(FUTURE, 15), LeadEndDateTime: isoAt(FUTURE, 17) })]);
+        const out = await runSkill('getJobStatus', CO, {}, { contactId: CONTACT });
+        expect(out.ok).toBe(true); // refusal-free informative shape
+        expect(out.jobId).toBeNull(); // no fabricated job id for a lead
+        expect(out.hasOpenLead).toBe(true);
+        expect(out.leadProposedWindow).toMatch(/between .* and /i);
+        // speaks the LEAD state + offers to book, instead of "nothing on file"
+        expect(out.speak).toMatch(/request/i);
+        expect(out.speak).toMatch(/lock that in|get you booked/i);
+        expect(leadsService.getOpenLeadsByContact).toHaveBeenCalledWith(CONTACT, CO);
+    });
+
+    test('JS-LEAD-02: 0 open jobs + open lead with NO window → informative shape, offers to get booked', async () => {
+        jobsService.listJobs.mockResolvedValue({ results: [] });
+        leadsService.getOpenLeadsByContact.mockResolvedValue([openLead({ Status: 'Submitted', LeadDateTime: null, LeadEndDateTime: null })]);
+        const out = await runSkill('getJobStatus', CO, {}, { contactId: CONTACT });
+        expect(out.ok).toBe(true);
+        expect(out.jobId).toBeNull();
+        expect(out.leadProposedWindow).toBeNull();
+        expect(out.speak).toMatch(/get you booked/i);
+    });
+
+    test('JS-LEAD-03: 0 open jobs AND 0 open leads → still the plain "no open job" refusal (unchanged)', async () => {
+        jobsService.listJobs.mockResolvedValue({ results: [] });
+        leadsService.getOpenLeadsByContact.mockResolvedValue([]);
+        const out = await runSkill('getJobStatus', CO, {}, { contactId: CONTACT });
+        expect(out.ok).toBe(false);
+        expect(out.speak).toMatch(/don't see an open job/i);
     });
 });
 

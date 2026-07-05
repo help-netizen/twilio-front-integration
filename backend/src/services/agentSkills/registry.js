@@ -6,16 +6,17 @@
  *
  *   { name, kind: 'read'|'write', requiredLevel: 'L0'|'L1'|'L2', run }
  *
- * 14 skills total:
- *   - 9 NEW skills (identifyCaller + 3 L1 reads + 3 L2 sensitive reads + 2 L2 writes)
+ * 15 skills total (AGENT-SKILLS-001: 14 + AGENT-SKILLS-002: +bookOnLead):
+ *   - 10 NEW skills (identifyCaller + existing-customer reads/writes + bookOnLead)
  *   - 5 RELOCATED legacy L0 tools (checkServiceArea / validateAddress /
- *     checkAvailability / recommendSlots / createLead), moved verbatim in T3.
+ *     checkAvailability / recommendSlots / createLead), moved verbatim in 001-T3.
  *
- * Level assignment (spec §2.4, architecture §6 per-skill table):
- *   L0  identifyCaller (derives L1/L2) + the 5 legacy tools (never block the call)
- *   L1  getCustomerOverview, getJobStatus, getAppointments
- *   L2  getJobHistory, getEstimateSummary, getInvoiceSummary,
- *       rescheduleAppointment (write), cancelAppointment (write)
+ * Level assignment (AGENT-SKILLS-002 §2.1 relaxed the existing-customer skills to L1):
+ *   L0  identifyCaller (derives level) + the 5 legacy tools (never block the call)
+ *   L1  getCustomerOverview, getJobStatus, getAppointments, getJobHistory,
+ *       getEstimateSummary, getInvoiceSummary, rescheduleAppointment (write),
+ *       cancelAppointment (write), bookOnLead (write)
+ *   (isolation + per-contact ownership + cancel retention stay enforced in-skill)
  *
  * LAZY `run` resolution (CRITICAL for parallel implementation): each entry's
  * `run` does `require('./skills/<name>').run(...args)` at CALL time, not at
@@ -54,11 +55,18 @@ const SKILLS = [
     { name: 'getCustomerOverview', kind: 'read', requiredLevel: 'L1', run: lazyRun('getCustomerOverview') },
     { name: 'getJobStatus', kind: 'read', requiredLevel: 'L1', run: lazyRun('getJobStatus') },
     { name: 'getAppointments', kind: 'read', requiredLevel: 'L1', run: lazyRun('getAppointments') },
-    { name: 'getJobHistory', kind: 'read', requiredLevel: 'L2', run: lazyRun('getJobHistory') },
-    { name: 'getEstimateSummary', kind: 'read', requiredLevel: 'L2', run: lazyRun('getEstimateSummary') },
-    { name: 'getInvoiceSummary', kind: 'read', requiredLevel: 'L2', run: lazyRun('getInvoiceSummary') },
-    { name: 'rescheduleAppointment', kind: 'write', requiredLevel: 'L2', run: lazyRun('rescheduleAppointment') },
-    { name: 'cancelAppointment', kind: 'write', requiredLevel: 'L2', run: lazyRun('cancelAppointment') },
+    // AGENT-SKILLS-002: relaxed L2→L1 — an identified caller (phone OR name+zip) is
+    // served without a separate name+ZIP re-confirmation ("phone-identify is enough;
+    // no sensitive info here"). Company isolation + per-contactId ownership pre-check
+    // + cancel retention + no-card-by-voice are UNCHANGED (enforced in the skills).
+    { name: 'getJobHistory', kind: 'read', requiredLevel: 'L1', run: lazyRun('getJobHistory') },
+    { name: 'getEstimateSummary', kind: 'read', requiredLevel: 'L1', run: lazyRun('getEstimateSummary') },
+    { name: 'getInvoiceSummary', kind: 'read', requiredLevel: 'L1', run: lazyRun('getInvoiceSummary') },
+    { name: 'rescheduleAppointment', kind: 'write', requiredLevel: 'L1', run: lazyRun('rescheduleAppointment') },
+    { name: 'cancelAppointment', kind: 'write', requiredLevel: 'L1', run: lazyRun('cancelAppointment') },
+    // AGENT-SKILLS-002: book a chosen slot as a schedule-blocking HOLD onto the
+    // identified contact's EXISTING open lead (update, never a dup); L1. Module in T3.
+    { name: 'bookOnLead', kind: 'write', requiredLevel: 'L1', run: lazyRun('bookOnLead') },
 
     // --- 5 RELOCATED legacy L0 tools (byte-compat; own legacy shapes) --------
     // L0 so deriveLevel never blocks them → "never block the call" preserved.

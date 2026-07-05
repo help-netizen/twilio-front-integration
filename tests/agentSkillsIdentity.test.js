@@ -119,14 +119,84 @@ describe('identityResolver.resolve — leads+contacts+jobs (Group D)', () => {
         expect(r.matchType).toBe('new'); // named contact had no matching zip/street
     });
 
-    test('ASK-SKILL-ID-04: two contacts share a phone → ambiguous, count 2, no auto-pick', async () => {
+    test('ASK-SKILL-ID-04: two contacts share a phone → take-latest (newest by created_at), NOT ambiguous (AGENT-SKILLS-002 §1)', async () => {
+        // AGENT-SKILLS-002 contract change: the PHONE path never dead-ends into an
+        // ambiguity loop. A >1 same-phone match resolves deterministically to the
+        // MOST-RECENT contact (created_at DESC). Here 777 is newer than 501 → 777 wins.
         leadsService.getLeadByPhone.mockResolvedValue(null);
+        const OLDER = { ...CONTACT_ROW, created_at: '2020-01-01T00:00:00.000Z' };
+        const NEWER = { id: 777, full_name: 'Jane Smith', first_name: 'Jane', last_name: 'Smith', created_at: '2024-06-01T00:00:00.000Z' };
         routeDb({
-            contactsByPhone: () => [CONTACT_ROW, { id: 777, full_name: 'Jane Smith', first_name: 'Jane', last_name: 'Smith' }],
+            contactsByPhone: () => [OLDER, NEWER],
             contactsFromJobs: () => [],
         });
         const r = await identityResolver.resolve(CO, { phone: '+16175551212' });
-        expect(r.matchType).toBe('ambiguous');
+        expect(r.matchType).toBe('existing'); // take-latest, never ambiguous on the phone path
+        expect(r.contactId).toBe(777); // the NEWEST contact, not the oldest
+        expect(r.ambiguousCount).toBe(0);
+    });
+
+    test('ASK-SKILL-ID-04-latest2: created_at ordering is what decides — flip which row is newest and the pick flips', async () => {
+        // Same two ids, but now 501 is the newer row → 501 must win (proves it is the
+        // timestamp, not the id order / first-seen, that drives take-latest).
+        leadsService.getLeadByPhone.mockResolvedValue(null);
+        const NEWER501 = { ...CONTACT_ROW, created_at: '2025-01-01T00:00:00.000Z' };
+        const OLDER777 = { id: 777, full_name: 'Jane Smith', first_name: 'Jane', last_name: 'Smith', created_at: '2019-01-01T00:00:00.000Z' };
+        routeDb({ contactsByPhone: () => [NEWER501, OLDER777], contactsFromJobs: () => [] });
+        const r = await identityResolver.resolve(CO, { phone: '+16175551212' });
+        expect(r.matchType).toBe('existing');
+        expect(r.contactId).toBe(501);
+    });
+
+    test('ASK-SKILL-ID-04-namezip: name+zip prefers the MATCHING same-phone contact even when it is the OLDER one (I2)', async () => {
+        // Two contacts on one phone; the caller gives name+ZIP that corroborates the
+        // OLDER contact (501) via its lead. name+address preference must pick 501,
+        // overriding the most-recent (777) fallback (spec §1.2(b) step 2 / I2).
+        leadsService.getLeadByPhone.mockResolvedValue(null);
+        const OLDER = { ...CONTACT_ROW, created_at: '2018-01-01T00:00:00.000Z' }; // 501 Jane Smith (older)
+        const NEWER = { id: 777, full_name: 'Bob Jones', first_name: 'Bob', last_name: 'Jones', created_at: '2025-06-01T00:00:00.000Z' }; // newer, different person
+        routeDb({
+            contactsByPhone: () => [OLDER, NEWER],
+            contactsFromJobs: () => [],
+            // buildContactRecord runs per-candidate for the name+addr preference. Route
+            // the ZIP collector to corroborate 02101 ONLY for contact 501 (by params).
+            // params for the leads-zip collector = [contactId, companyId].
+        });
+        // Override the db router so the ZIP collector corroborates 02101 for 501 only.
+        db.query.mockImplementation(async (sql, params) => {
+            const s = String(sql);
+            if (/SELECT postal_code, address FROM leads/i.test(s)) {
+                return { rows: Number(params[0]) === 501 ? [{ postal_code: '02101', address: '12 Walpole St' }] : [] };
+            }
+            if (/SELECT address FROM leads WHERE contact_id/i.test(s)) return { rows: [] };
+            if (/SELECT address FROM jobs\s+WHERE contact_id/i.test(s)) return { rows: [] };
+            if (/FROM contacts c\s+WHERE c\.company_id = \$2/i.test(s)) return { rows: [OLDER, NEWER] };
+            if (/FROM jobs j\s+JOIN contacts c/i.test(s)) return { rows: [] };
+            return { rows: [] };
+        });
+        const r = await identityResolver.resolve(CO, { name: 'Jane Smith', zip: '02101', phone: '+16175551212' });
+        expect(r.matchType).toBe('existing');
+        expect(r.contactId).toBe(501); // name+zip matched the older one → it wins over most-recent
+    });
+
+    test('ASK-SKILL-ID-04-namepath: name-path (no usable phone) multi-match STILL ambiguous (I5, unchanged)', async () => {
+        // The name path has no "most recent by phone-ownership" semantics, so a
+        // name+ZIP corroborating >1 distinct contact must STILL force disambiguation.
+        // No phone is supplied → Path B; both named contacts corroborate ZIP 02101.
+        const NAMED_A = { id: 501, full_name: 'Jane Smith', first_name: 'Jane', last_name: 'Smith' };
+        const NAMED_B = { id: 888, full_name: 'Jane Smith', first_name: 'Jane', last_name: 'Smith' };
+        db.query.mockImplementation(async (sql, params) => {
+            const s = String(sql);
+            // resolveByNameAndAddress: contacts by name (company_id = $1)
+            if (/FROM contacts c\s+WHERE c\.company_id = \$1/i.test(s)) return { rows: [NAMED_A, NAMED_B] };
+            // buildContactRecord ZIP collector corroborates 02101 for BOTH.
+            if (/SELECT postal_code, address FROM leads/i.test(s)) return { rows: [{ postal_code: '02101', address: '12 Walpole St' }] };
+            if (/SELECT address FROM leads WHERE contact_id/i.test(s)) return { rows: [] };
+            if (/SELECT address FROM jobs\s+WHERE contact_id/i.test(s)) return { rows: [] };
+            return { rows: [] };
+        });
+        const r = await identityResolver.resolve(CO, { name: 'Jane Smith', zip: '02101' });
+        expect(r.matchType).toBe('ambiguous'); // name-path multi-match unchanged
         expect(r.ambiguousCount).toBe(2);
         expect(r.contactId).toBeNull();
     });

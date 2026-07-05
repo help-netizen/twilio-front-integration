@@ -10,7 +10,10 @@
  *   - cancel retention discipline: never on first ask; reason required; strict retentionAttempted===true (G5 / ASK-WRITE-10/11/14),
  *   - cancel happy path → cancelJob + reason-bearing 'AI Phone' note + job_canceled event, no-fee copy (ASK-WRITE-12/13/16),
  *   - already-canceled → no duplicate cancelJob (ASK-WRITE-15),
- *   - genuine-L1 caller is blocked by the gate (self-asserted verified:true ignored, AC-8).
+ *   - AGENT-SKILLS-002: reschedule/cancel relaxed L2→L1 — an L1 (phone-identified) caller
+ *     now reschedules/cancels their OWN job (ASK-WRITE-L1/L1b), while an L0/unresolved
+ *     caller self-asserting verified:true is still refused (AC-8 core preserved). Ownership
+ *     + retention discipline unchanged at L1.
  *
  * The `rescheduleItem` ZB seam itself is proven separately in
  * `tests/scheduleServiceRescheduleZb.test.js`; here `scheduleService` is mocked so
@@ -109,12 +112,47 @@ describe('rescheduleAppointment (L2 write) — G4 / AR-4 / AR-5', () => {
         expect(out.ok).toBe(false);
     });
 
-    test('AC-8: genuine L1 caller → needsVerification, rescheduleItem NEVER called (self-asserted verified:true ignored)', async () => {
-        gate.deriveLevel.mockResolvedValue({ level: 'L1', contactId: CONTACT, customerName: 'Jane', matchedPhone: '6175551212' });
+    test('AC-8: an L0 (unresolved) caller self-asserting verified:true → needsVerification, rescheduleItem NEVER called (claim ignored)', async () => {
+        // AGENT-SKILLS-002 relaxed reschedule L2→L1, so an L1 caller now PASSES (see
+        // ASK-WRITE-L1 below). The AC-8 core (a client verified:true / level:L2 has NO
+        // effect) is re-expressed at the boundary that DIDN'T move: an L0/unresolved
+        // caller is STILL refused — the gate re-derives L0 from the DB, never the claim.
+        gate.deriveLevel.mockResolvedValue({ level: 'L0', contactId: null, customerName: null });
         jobsService.getJobById.mockResolvedValue(L2JOB);
         const out = await runSkill('rescheduleAppointment', CO, {}, { verified: true, level: 'L2', jobId: 7, newPreferredSlot: SLOT });
         expect(out).toMatchObject({ ok: false, needsVerification: true });
         expect(scheduleService.rescheduleItem).not.toHaveBeenCalled();
+        expect(jobsService.getJobById).not.toHaveBeenCalled(); // gate refused before the skill ran
+    });
+
+    test('ASK-WRITE-L1: an L1 (phone-identified) caller now reschedules their OWN job (L2→L1 relaxation), ownership + write happen', async () => {
+        // The relaxation makes reschedule reachable at L1. A phone-only identity (no L2
+        // second factor: zips empty) now clears the gate; the skill's own ownership
+        // pre-check passes (the job is the verified contact's) → the real write path runs.
+        gate.deriveLevel.mockResolvedValue({ level: 'L1', contactId: CONTACT, customerName: 'Jane', matchedPhone: '6175551212' });
+        jobsService.getJobById.mockResolvedValue(L2JOB);
+        // Explicit happy-path stub — clearAllMocks() keeps a prior mockRejectedValue impl,
+        // so restore the successful reschedule for this case (order-independent).
+        scheduleService.rescheduleItem.mockResolvedValue({ entity_type: 'job', entity_id: 7, start_at: 'x', end_at: 'y', zb: { linked: true, pushed: true, skipped: null } });
+        const out = await runSkill('rescheduleAppointment', CO, {}, { jobId: 7, newPreferredSlot: SLOT });
+        expect(out).toMatchObject({ ok: true, success: true, conflict: false });
+        expect(out.needsVerification).toBeUndefined();
+        expect(scheduleService.rescheduleItem).toHaveBeenCalledWith(CO, 'job', 7, expect.any(String), expect.any(String));
+    });
+
+    test('ASK-WRITE-L1b: an L1 caller cancels their OWN job (L2→L1) with the retention discipline intact', async () => {
+        gate.deriveLevel.mockResolvedValue({ level: 'L1', contactId: CONTACT, customerName: 'Jane', matchedPhone: '6175551212' });
+        jobsService.getJobById.mockResolvedValue(L2JOB);
+        const out = await runSkill('cancelAppointment', CO, {}, { jobId: 7, reason: 'timing', retentionAttempted: true });
+        expect(out).toMatchObject({ ok: true, success: true });
+        expect(jobsService.cancelJob).toHaveBeenCalledWith(7);
+        // retention still enforced at L1: first-ask (no retention) is still refused
+        jest.clearAllMocks();
+        gate.deriveLevel.mockResolvedValue({ level: 'L1', contactId: CONTACT, customerName: 'Jane', matchedPhone: '6175551212' });
+        jobsService.getJobById.mockResolvedValue(L2JOB);
+        const firstAsk = await runSkill('cancelAppointment', CO, {}, { jobId: 7, reason: 'price', retentionAttempted: false });
+        expect(firstAsk).toMatchObject({ ok: false, retentionRequired: true });
+        expect(jobsService.cancelJob).not.toHaveBeenCalled();
     });
 });
 

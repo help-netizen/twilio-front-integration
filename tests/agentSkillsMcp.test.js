@@ -83,31 +83,62 @@ beforeEach(() => jest.clearAllMocks());
 // ════════════════════════════════════════════════════════════════════════════
 
 describe('svc.* registry — tool defs + requiredLevel projection (ASK-MCP-01/02)', () => {
-    const EXPECTED = {
+    // Tools whose MCP requiredLevel projection is UNAMBIGUOUSLY correct today:
+    // identify (L0), the three always-L1 reads, and the new book_on_lead write (L1).
+    const EXPECTED_STABLE = {
         'svc.identify_caller': { kind: 'read', requiresConfirmation: false, requiredLevel: 'L0' },
         'svc.get_customer_overview': { kind: 'read', requiresConfirmation: false, requiredLevel: 'L1' },
         'svc.get_job_status': { kind: 'read', requiresConfirmation: false, requiredLevel: 'L1' },
         'svc.get_appointments': { kind: 'read', requiresConfirmation: false, requiredLevel: 'L1' },
-        'svc.get_job_history': { kind: 'read', requiresConfirmation: false, requiredLevel: 'L2' },
-        'svc.get_estimate_summary': { kind: 'read', requiresConfirmation: false, requiredLevel: 'L2' },
-        'svc.get_invoice_summary': { kind: 'read', requiresConfirmation: false, requiredLevel: 'L2' },
-        'svc.reschedule_appointment': { kind: 'write', requiresConfirmation: true, requiredLevel: 'L2' },
-        'svc.cancel_appointment': { kind: 'write', requiresConfirmation: true, requiredLevel: 'L2' },
+        // AGENT-SKILLS-002 §3.4.5 — new write tool (book a slot as a HOLD on the open lead).
+        'svc.book_on_lead': { kind: 'write', requiresConfirmation: true, requiredLevel: 'L1' },
     };
+    // The five skills AGENT-SKILLS-002 §2.1 relaxed L2→L1 in the skill registry. The MCP
+    // registry projection SHOULD mirror that (AC-10 parity: the svc.* surface must match
+    // the VAPI/skill surface). Their INTENDED requiredLevel is L1.
+    const RELAXED_TO_L1 = ['svc.get_job_history', 'svc.get_estimate_summary', 'svc.get_invoice_summary', 'svc.reschedule_appointment', 'svc.cancel_appointment'];
 
-    test('all 9 svc.* tools present with correct kind / requiresConfirmation / requiredLevel', () => {
+    test('all 10 svc.* tools present; stable-level tools + book_on_lead have correct kind / confirmation / requiredLevel', () => {
         const tools = registry.listTools();
-        expect(tools).toHaveLength(9);
-        for (const [name, meta] of Object.entries(EXPECTED)) {
+        expect(tools).toHaveLength(10); // 9 (AGENT-SKILLS-001) + svc.book_on_lead
+        for (const [name, meta] of Object.entries(EXPECTED_STABLE)) {
             const t = tools.find((x) => x.name === name);
             expect(t).toBeDefined();
             expect(t.kind).toBe(meta.kind);
             expect(t.requiresConfirmation).toBe(meta.requiresConfirmation);
             expect(t.requiredLevel).toBe(meta.requiredLevel);
         }
+        // The five relaxed tools still exist as writes/reads with confirmation-as-expected
+        // (kind/confirmation are correct regardless of the level-annotation drift below).
+        expect(registry.getTool('svc.reschedule_appointment').kind).toBe('write');
+        expect(registry.getTool('svc.get_job_history').kind).toBe('read');
         // writes carry the service write permission; reads carry none
         expect(registry.getTool('svc.reschedule_appointment').requiredPermission).toBe(WRITE_PERM);
+        expect(registry.getTool('svc.book_on_lead').requiredPermission).toBe(WRITE_PERM);
         expect(registry.getTool('svc.get_job_status').requiredPermission).toBeNull();
+    });
+
+    // AC-10 parity: the five relaxed tools' MCP requiredLevel now matches the skill
+    // registry's L1. AGENT-SKILLS-002 corrected the MCP registry's hand-maintained
+    // requiredLevel projections from L2→L1 (agentSkillsMcpRegistry.js), closing the
+    // advertisement drift vs. the skill registry. Now a plain passing `test` (was
+    // `test.failing` while the projections still said L2). The paired ASK-MCP-01-current
+    // block (which asserted the OLD L2 drift) was REMOVED — this test covers the contract.
+    test('ASK-MCP-01: the five relaxed svc.* tools advertise requiredLevel L1 (AC-10 parity)', () => {
+        for (const name of RELAXED_TO_L1) {
+            expect(registry.getTool(name).requiredLevel).toBe('L1');
+        }
+    });
+
+    test('svc.book_on_lead maps to the bookOnLead skill and exposes chosen_slot (required) + identity/fallback fields', () => {
+        expect(registry.skillFor('svc.book_on_lead')).toBe('bookOnLead');
+        const t = registry.getTool('svc.book_on_lead');
+        const props = Object.keys(t.inputSchema.properties);
+        // identity block + the chosen slot + the no-lead fallback booking fields
+        expect(props).toEqual(expect.arrayContaining(['phone', 'name', 'zip', 'street', 'contact_id', 'chosen_slot', 'lat', 'lng', 'first_name', 'last_name', 'email']));
+        expect(t.inputSchema.required).toContain('chosen_slot');
+        // no card field ever exposed on a write tool
+        for (const bad of ['card', 'pan', 'cvv', 'card_number']) expect(props).not.toContain(bad);
     });
 
     test('no delete/bulk tools (mirror crmMcp guard)', () => {
@@ -240,7 +271,13 @@ describe('svc.* JSON-RPC protocol (ASK-MCP-13 / 14)', () => {
             .post('/api/agent-skills/mcp/jsonrpc')
             .send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
         const reschedule = res.body.result.tools.find((t) => t.name === 'svc.reschedule_appointment');
-        expect(reschedule.annotations).toMatchObject({ kind: 'write', requiresConfirmation: true, requiredLevel: 'L2', requiredPermission: WRITE_PERM });
+        // kind/confirmation/permission are correct; requiredLevel is now L1 (AGENT-SKILLS-002
+        // corrected the MCP projection to match the skill registry — see ASK-MCP-01).
+        expect(reschedule.annotations).toMatchObject({ kind: 'write', requiresConfirmation: true, requiredLevel: 'L1', requiredPermission: WRITE_PERM });
+        // The new book_on_lead write tool is present with the correct L1 + confirmation annotations.
+        const bookOnLead = res.body.result.tools.find((t) => t.name === 'svc.book_on_lead');
+        expect(bookOnLead).toBeDefined();
+        expect(bookOnLead.annotations).toMatchObject({ kind: 'write', requiresConfirmation: true, requiredLevel: 'L1', requiredPermission: WRITE_PERM });
     });
 
     test('tools/call read over JSON-RPC returns structuredContent from the skill layer', async () => {

@@ -22,15 +22,30 @@
  * ISOLATION: the job is fetched company-scoped via getJobById(jobId, companyId);
  * a foreign / cross-contact job id resolves to a safe "I can't find that one"
  * shape and falls back to the caller's OWN open job — never another customer's job.
+ *
+ * LEAD AWARENESS (AGENT-SKILLS-002 §3.3): when the contact has NO open job but DOES
+ * have an open lead (a submitted request, or an insurance-email lead with no job yet),
+ * we return an informative `ok` shape describing the LEAD state — status phrase + a
+ * proposed-slot window range — instead of a flat "no open job" refusal, so a lead-only
+ * existing customer isn't told "nothing on file." Jobs always take precedence; the lead
+ * path is only reached when `jobs.length === 0`. No `jobId` is fabricated for a lead.
+ * The open-lead read is the NON-SUPPRESSING, company-scoped `getOpenLeadsByContact` (T3).
  */
 
 'use strict';
 
 const jobsService = require('../../jobsService');
+const leadsService = require('../../leadsService');
 const { statusMap, zbSubstatusMap } = require('../statusMap');
 const resultShapes = require('../resultShapes');
 
 const TZ = 'America/New_York';
+
+// Lead statuses that read as brand-new / not-yet-actioned (AGENT-SKILLS-002 §3.2.1).
+// Small inclusion set (not a new module); the lead-side equivalent of statusMap, which
+// only covers job blanc_status. Terminal tokens (Lost/Converted) never reach here — the
+// getOpenLeadsByContact read already excludes them.
+const NEW_LEAD_STATUSES = new Set(['submitted', 'new', 'review']);
 
 /**
  * Format a job's start/end (ISO strings) into a speech-safe window RANGE, never an
@@ -82,6 +97,59 @@ function pickMostRelevantJob(jobs) {
  */
 function isBookedNotStarted(job) {
     return job && job.blanc_status === 'Submitted' && Boolean(job.start_date);
+}
+
+/**
+ * Caller-friendly phrase for an OPEN lead (AGENT-SKILLS-002 §3.2.1). NEVER reads the
+ * raw `Status` token aloud. A proposed slot window wins over a bare status; else a
+ * pre-contact status → "we have your request in"; any other non-terminal → "in progress".
+ * @param {string|null} status The lead's raw `Status` (never spoken directly).
+ * @param {string|null} proposedWindow A speech-safe window range, or null.
+ * @returns {string} A speech-safe phrase (always non-empty for an open lead).
+ */
+function leadStatusPhrase(status, proposedWindow) {
+    if (proposedWindow) return `you're penciled in for ${proposedWindow}`;
+    const token = String(status || '').trim().toLowerCase();
+    if (NEW_LEAD_STATUSES.has(token)) return 'we have your request in';
+    return 'your request is in progress';
+}
+
+/**
+ * Read the contact's OPEN leads (company-scoped, non-suppressing). Defensive: any
+ * failure → [] (degrade to "no open lead", never throw/leak). Keeps the skill at L1.
+ * @param {number} contactId Server-verified contact.
+ * @param {string} companyId Tenant scope.
+ * @returns {Promise<object[]>} rowToLead shapes, newest open first, or [].
+ */
+async function readOpenLeads(contactId, companyId) {
+    try {
+        const leads = await leadsService.getOpenLeadsByContact(contactId, companyId);
+        return Array.isArray(leads) ? leads : [];
+    } catch (_e) {
+        return [];
+    }
+}
+
+/**
+ * Build an informative (refusal-free) lead-status shape for a contact who has an open
+ * lead but no open job (AGENT-SKILLS-002 §3.3). No fabricated `jobId`; the speak reflects
+ * the lead state and offers to book. Only status phrase + window range — no lead PII.
+ * @param {object} lead The newest open lead (rowToLead shape).
+ * @returns {{ ok: true, jobId: null, hasOpenLead: true, statusLabel: string, leadProposedWindow: string|null, nextAction: string, speak: string }}
+ */
+function buildLeadOnlyResult(lead) {
+    const window = formatWindow(lead.LeadDateTime, lead.LeadEndDateTime);
+    const phrase = leadStatusPhrase(lead.Status, window);
+    const speak = window
+        ? `I don't see an open repair yet, but I have your request — ${phrase}. Want me to lock that in?`
+        : `I don't see an open repair yet, but I have your request — ${phrase}. Want me to get you booked?`;
+    return resultShapes.ok(speak, {
+        jobId: null,
+        hasOpenLead: true,
+        statusLabel: phrase,
+        leadProposedWindow: window,
+        nextAction: window ? 'offer_book_on_lead' : 'offer_find_slot',
+    });
 }
 
 /**
@@ -173,6 +241,13 @@ async function run(companyId, verifiedContext, input) {
     const jobs = jobsResult && Array.isArray(jobsResult.results) ? jobsResult.results : [];
 
     if (jobs.length === 0) {
+        // No open JOB — but a lead-only existing customer (submitted request /
+        // insurance-email lead) should hear their real state, not "nothing on file".
+        // Check the same non-suppressing open-lead read; a lead → informative ok shape.
+        const openLeads = await readOpenLeads(contactId, companyId);
+        if (openLeads.length > 0) {
+            return buildLeadOnlyResult(openLeads[0]);
+        }
         return resultShapes.refusal(
             "I don't see an open job on your account right now — is there something new I can help you book?",
         );

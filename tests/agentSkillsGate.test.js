@@ -217,11 +217,15 @@ describe('runSkill enforces the gate — assert throws → needsVerification, no
         expect(out.verificationLevel).toBe('L0');
     });
 
-    test('ASK-GATE-05 / E15: self-asserted verified:true on an L1 identity → reschedule refused, rescheduleItem NEVER called', async () => {
-        // Genuinely L1 (zips empty → no L2 second factor) despite verified:true / level:L2 in input.
-        identityResolver.resolve.mockResolvedValue(existing({ contact: { id: CONTACT, name: 'Jane Smith', zips: [], streets: [] } }));
+    test('ASK-GATE-05 / E15: self-asserted verified:true on an L0 (unresolved) identity → reschedule refused, rescheduleItem NEVER called', async () => {
+        // AGENT-SKILLS-002: rescheduleAppointment relaxed L2→L1, so an L1 caller now
+        // PASSES it (see ASK-GATE-05b below). The AC-8 core is re-expressed at the
+        // boundary that DIDN'T move: an L0/unresolved caller who self-asserts
+        // verified:true / level:L2 is STILL refused (the gate re-derives L0 from the DB,
+        // never trusts the claim). Reschedule stays L0-blocked.
+        identityResolver.resolve.mockResolvedValue(NO_MATCH);
         const out = await runSkill('rescheduleAppointment', CO, { source: 'test' }, {
-            phone: '+16175551212', verified: true, level: 'L2',
+            phone: '+15550000000', verified: true, level: 'L2',
             jobId: 7, newPreferredSlot: { date: '2026-07-10', start: '10:00', end: '12:00' },
         });
         expect(out).toMatchObject({ ok: false, needsVerification: true });
@@ -229,11 +233,52 @@ describe('runSkill enforces the gate — assert throws → needsVerification, no
         expect(jobsService.getJobById).not.toHaveBeenCalled();
     });
 
-    test('ASK-GATE-04: L1 (name ok, ZIP wrong) → getEstimateSummary (L2) refused, estimatesService NEVER called', async () => {
-        identityResolver.resolve.mockResolvedValue(existing());
-        const out = await runSkill('getEstimateSummary', CO, { source: 'test' }, {
-            phone: '+16175551212', name: 'Jane Smith', zip: '99999', estimateId: 'e-1',
+    test('ASK-GATE-05b: an L1 (phone-identified) caller now PASSES the gate for reschedule (L2→L1 relaxation), ownership then checked in-skill', async () => {
+        // The relaxation lets an L1 caller THROUGH the gate; the skill then runs its
+        // own ownership pre-check (getJobById + contact match). Here getJobById returns
+        // null (no matching owned job) → the SKILL refuses — but crucially the gate did
+        // NOT block, so getJobById WAS reached (proving L1 cleared the entry bar).
+        identityResolver.resolve.mockResolvedValue(existing({ contact: { id: CONTACT, name: 'Jane Smith', zips: [], streets: [] } }));
+        jobsService.getJobById.mockResolvedValue(null);
+        const out = await runSkill('rescheduleAppointment', CO, { source: 'test' }, {
+            phone: '+16175551212', jobId: 7, newPreferredSlot: { date: '2026-07-10', start: '10:00', end: '12:00' },
         });
+        // Not a needsVerification refusal — the gate passed; the skill's own ownership
+        // guard produced a plain refusal (no L2 step-up demanded).
+        expect(out.ok).toBe(false);
+        expect(out.needsVerification).toBeUndefined();
+        expect(jobsService.getJobById).toHaveBeenCalled(); // gate passed → skill ran its pre-check
+        expect(scheduleService.rescheduleItem).not.toHaveBeenCalled(); // ownership failed → no write
+    });
+
+    // AGENT-SKILLS-002 relaxed getEstimateSummary L2→L1 in the REGISTRY, and the body
+    // guard `isVerifiedContext` in getEstimateSummary/getJobHistory/getInvoiceSummary was
+    // relaxed from `ctx.level === 'L2'` to `(ctx.level === 'L1' || ctx.level === 'L2')`.
+    // The relaxation is now FULLY EFFECTIVE end-to-end: an L1 phone-identified caller
+    // clears the gate AND the body guard, reaching estimatesService (spec §2.1/§2.2 + T2
+    // task note: "history/estimate/invoice отдают ok:true при L1"). This is now a plain
+    // passing `test` (was `test.failing` while the L2 body-guard bug was live).
+    test('ASK-GATE-04: L1 → getEstimateSummary PASSES the gate + body guard and reaches estimatesService', async () => {
+        identityResolver.resolve.mockResolvedValue(existing({ contact: { id: CONTACT, name: 'Jane Smith', zips: [], streets: [] } }));
+        estimatesService.getEstimate.mockResolvedValue({ id: 'e-1', contact_id: CONTACT, estimate_number: 'EST-1', status: 'sent', total: '100.00', items: [] });
+        const out = await runSkill('getEstimateSummary', CO, { source: 'test' }, {
+            phone: '+16175551212', estimateId: 'e-1',
+        });
+        expect(out.ok).toBe(true); // intended: gate + skill both pass at L1
+        expect(out.needsVerification).toBeUndefined();
+        expect(estimatesService.getEstimate).toHaveBeenCalled();
+    });
+
+    // ASK-GATE-04-current REMOVED (AGENT-SKILLS-002 reconciliation): it asserted the OLD
+    // buggy behavior — that an L1 caller was refused by the L2 body guard (needsVerification,
+    // service NOT reached). That bug is FIXED (body guard now accepts L1), so the intended
+    // contract is covered by ASK-GATE-04 above. The L0-floor case (ASK-GATE-04b) stays valid.
+
+    test('ASK-GATE-04b: an L0 (unidentified) caller is STILL refused getEstimateSummary — L1 remains the floor', async () => {
+        // The relaxation lowered the bar to L1, not to L0. An unresolved caller still
+        // gets the soft needsVerification shape; estimatesService is never reached.
+        identityResolver.resolve.mockResolvedValue(NO_MATCH);
+        const out = await runSkill('getEstimateSummary', CO, { source: 'test' }, { phone: '+15550000000', estimateId: 'e-1' });
         expect(out).toMatchObject({ ok: false, needsVerification: true });
         expect(estimatesService.getEstimate).not.toHaveBeenCalled();
         expect(estimatesService.listEstimates).not.toHaveBeenCalled();
@@ -246,25 +291,33 @@ describe('runSkill enforces the gate — assert throws → needsVerification, no
         expect(jobsService.listJobs).not.toHaveBeenCalled();
     });
 
-    test('ASK-GATE-09: stateless re-derivation — mid-call downgrade fails closed', async () => {
-        // Call 1: full identity → L2 → estimate read runs.
-        identityResolver.resolve.mockResolvedValueOnce(existing());
-        estimatesService.getEstimate.mockResolvedValue({ id: 'e-1', contact_id: CONTACT, estimate_number: 'EST-1', status: 'sent', total: '100.00', items: [] });
-        const ok = await runSkill('getEstimateSummary', CO, {}, { phone: '+16175551212', name: 'Jane Smith', zip: '02101', estimateId: 'e-1' });
-        expect(ok.ok).toBe(true);
-        expect(estimatesService.getEstimate).toHaveBeenCalledTimes(1);
-        // Call 2: agent forgot to resend name/zip → resolver returns L1-only → refused.
-        jest.clearAllMocks();
+    test('ASK-GATE-09: stateless re-derivation — mid-call downgrade fails closed (L1→L0)', async () => {
+        // Statelessness proven on an L1 read with NO L2 body-guard (getCustomerOverview,
+        // always-L1). Call 1 with a resolving phone → L1 → the read runs; Call 2 where the
+        // resolver no longer finds the contact (masked/dropped phone) → re-derives L0 →
+        // refused. The level is re-computed every call, never cached / stale-trusted.
         identityResolver.resolve.mockResolvedValueOnce(existing({ contact: { id: CONTACT, name: 'Jane Smith', zips: [], streets: [] } }));
-        const refused = await runSkill('getEstimateSummary', CO, {}, { phone: '+16175551212', estimateId: 'e-1' });
+        jobsService.listJobs.mockResolvedValue({ results: [] });
+        const ok = await runSkill('getCustomerOverview', CO, {}, { phone: '+16175551212', contactId: CONTACT });
+        expect(ok.ok).toBe(true);
+        expect(jobsService.listJobs).toHaveBeenCalledTimes(1);
+        // Call 2: the phone no longer resolves (e.g. masked) → resolver returns no match
+        // → L0 → refused. Fail-closed, not stale-trust.
+        jest.clearAllMocks();
+        identityResolver.resolve.mockResolvedValueOnce(NO_MATCH);
+        const refused = await runSkill('getCustomerOverview', CO, {}, { phone: '', contactId: CONTACT });
         expect(refused).toMatchObject({ ok: false, needsVerification: true });
-        expect(estimatesService.getEstimate).not.toHaveBeenCalled();
+        expect(jobsService.listJobs).not.toHaveBeenCalled();
     });
 
-    test('ASK-GATE-10: below-L2 caller hitting EACH L2 skill → uniform safe refusal, corresponding service NEVER called, NO disclosure', async () => {
-        // L1 context (name ok, zip wrong → stays L1).
-        identityResolver.resolve.mockResolvedValue(existing());
-        const id = { phone: '+16175551212', name: 'Jane Smith', zip: '99999' };
+    test('ASK-GATE-10: an L0 (unidentified) caller hitting EACH now-L1 skill → uniform safe refusal, service NEVER called, NO disclosure', async () => {
+        // AGENT-SKILLS-002: the five formerly-L2 skills (history/estimate/invoice/
+        // reschedule/cancel) are now L1. The uniform-refusal + no-disclosure invariant
+        // moves down to the L0 boundary: an UNIDENTIFIED caller is still refused all of
+        // them (L1 is the floor), the corresponding service is never reached, and the
+        // refusal leaks no amount/address/note text. This is the AC-8 core preserved.
+        identityResolver.resolve.mockResolvedValue(NO_MATCH);
+        const id = { phone: '+15550000000' };
 
         const hist = await runSkill('getJobHistory', CO, {}, { ...id, jobId: 7 });
         const est = await runSkill('getEstimateSummary', CO, {}, { ...id, estimateId: 'e-1' });
@@ -285,6 +338,41 @@ describe('runSkill enforces the gate — assert throws → needsVerification, no
         expect(invoicesService.listInvoices).not.toHaveBeenCalled();
         expect(scheduleService.rescheduleItem).not.toHaveBeenCalled();
         expect(jobsService.cancelJob).not.toHaveBeenCalled();
+    });
+
+    test('ASK-GATE-10b: an L1 (phone-identified) caller PASSES the gate for the two relaxed WRITES (reschedule/cancel) — reaches the ownership pre-check', async () => {
+        // The write skills carry NO L2 body-guard, so the L2→L1 relaxation is fully
+        // effective for them: an identified L1 caller clears the gate and the skill's own
+        // ownership pre-check runs (getJobById reached). Neither is a needsVerification
+        // refusal — the relaxation actually opened reschedule + cancel at L1.
+        identityResolver.resolve.mockResolvedValue(existing({ contact: { id: CONTACT, name: 'Jane Smith', zips: [], streets: [] } }));
+        const id = { phone: '+16175551212' };
+        jobsService.getJobById.mockResolvedValue(null); // ownership fails in-skill → plain refusal (NOT needsVerification)
+        const resch = await runSkill('rescheduleAppointment', CO, {}, { ...id, jobId: 7, newPreferredSlot: { date: '2026-07-10', start: '10:00', end: '12:00' } });
+        const canc = await runSkill('cancelAppointment', CO, {}, { ...id, jobId: 7, reason: 'price', retentionAttempted: true });
+        for (const out of [resch, canc]) {
+            expect(out.ok).toBe(false);
+            expect(out.needsVerification).toBeUndefined(); // gate passed at L1; refusal is the in-skill ownership guard
+        }
+        expect(jobsService.getJobById).toHaveBeenCalled(); // gate passed → both writes reached their ownership pre-check
+    });
+
+    // Spec §2.1/§2.2: an L1 caller also PASSES the three sensitive READS. The L2 body-guards
+    // in getJobHistory/getEstimateSummary/getInvoiceSummary were relaxed to accept L1
+    // (isVerifiedContext now allows `ctx.level === 'L1' || ctx.level === 'L2'`), so the reads
+    // reach their service at L1 — the relaxation is effective end-to-end. Now a plain
+    // passing `test` (was `test.failing` while the body-guard bug was live).
+    test('ASK-GATE-10c: L1 → the three sensitive reads reach their service (relaxation effective)', async () => {
+        identityResolver.resolve.mockResolvedValue(existing({ contact: { id: CONTACT, name: 'Jane Smith', zips: [], streets: [] } }));
+        const id = { phone: '+16175551212' };
+        jobsService.getJobById.mockResolvedValue({ id: 7, contact_id: CONTACT, blanc_status: 'Submitted', notes: [] });
+        eventService.getEntityHistory.mockResolvedValue([]);
+        estimatesService.getEstimate.mockResolvedValue({ id: 'e-1', contact_id: CONTACT, estimate_number: 'EST-1', status: 'sent', total: '10.00', items: [] });
+        invoicesService.getInvoice.mockResolvedValue({ id: 'i-1', contact_id: CONTACT, invoice_number: 'INV-1', status: 'sent', total: '10.00', amount_paid: '0', balance_due: '10.00' });
+        const hist = await runSkill('getJobHistory', CO, {}, { ...id, jobId: 7 });
+        const est = await runSkill('getEstimateSummary', CO, {}, { ...id, estimateId: 'e-1' });
+        const inv = await runSkill('getInvoiceSummary', CO, {}, { ...id, invoiceId: 'i-1' });
+        for (const out of [hist, est, inv]) expect(out.needsVerification).toBeUndefined();
     });
 
     test('ASK-GATE-11: L1 reads that ARE unlocked still run (no over-blocking)', async () => {

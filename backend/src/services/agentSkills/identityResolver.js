@@ -176,7 +176,7 @@ async function buildContactRecord(companyId, base) {
  */
 async function bridgePhoneToContacts(companyId, last10) {
     const { rows } = await db.query(
-        `SELECT c.id, c.full_name, c.first_name, c.last_name
+        `SELECT c.id, c.full_name, c.first_name, c.last_name, c.created_at
          FROM contacts c
          WHERE c.company_id = $2
            AND (
@@ -188,6 +188,7 @@ async function bridgePhoneToContacts(companyId, last10) {
     return rows.map((r) => ({
         id: r.id,
         name: displayName({ first: r.first_name, last: r.last_name, full: r.full_name }),
+        createdAt: r.created_at != null ? r.created_at : null,
     }));
 }
 
@@ -201,7 +202,7 @@ async function bridgePhoneToContacts(companyId, last10) {
  */
 async function contactsFromJobsByPhone(companyId, last10) {
     const { rows } = await db.query(
-        `SELECT DISTINCT c.id, c.full_name, c.first_name, c.last_name
+        `SELECT DISTINCT c.id, c.full_name, c.first_name, c.last_name, c.created_at
          FROM jobs j
          JOIN contacts c ON c.id = j.contact_id AND c.company_id = j.company_id
          WHERE j.company_id = $2
@@ -212,18 +213,45 @@ async function contactsFromJobsByPhone(companyId, last10) {
     return rows.map((r) => ({
         id: r.id,
         name: displayName({ first: r.first_name, last: r.last_name, full: r.full_name }),
+        createdAt: r.created_at != null ? r.created_at : null,
     }));
 }
 
 /**
+ * Numeric epoch for a `created_at` value (Date | ISO string | null), for ranking.
+ * A null/absent/unparseable timestamp → -Infinity so it sorts as OLDEST
+ * (least-preferred by take-latest — §1.2(a): a null created_at sorts oldest).
+ * @param {Date|string|null|undefined} createdAt
+ * @returns {number}
+ */
+function createdAtEpoch(createdAt) {
+    if (createdAt == null) return -Infinity;
+    const t = new Date(createdAt).getTime();
+    return Number.isNaN(t) ? -Infinity : t;
+}
+
+/**
  * De-duplicate contact candidates by id, preserving the first-seen display name.
- * @param {{ id: number, name: string|null }[]} candidates
- * @returns {{ id: number, name: string|null }[]}
+ * When the SAME id appears from multiple sources (lead-getter / by-contact /
+ * by-job), keep the MAX non-null `created_at` seen for that id so the take-latest
+ * ranking (§1.2) uses the real contact-sourced timestamp even if a lead-getter
+ * echo (createdAt:null) was seen first for the same id.
+ * @param {{ id: number, name: string|null, createdAt?: Date|string|null }[]} candidates
+ * @returns {{ id: number, name: string|null, createdAt: Date|string|null }[]}
  */
 function dedupeById(candidates) {
     const byId = new Map();
     for (const c of candidates) {
-        if (c && c.id != null && !byId.has(c.id)) byId.set(c.id, c);
+        if (!c || c.id == null) continue;
+        const existing = byId.get(c.id);
+        if (!existing) {
+            byId.set(c.id, { ...c, createdAt: c.createdAt != null ? c.createdAt : null });
+            continue;
+        }
+        // Keep first-seen name/id; upgrade createdAt to the greater non-null one.
+        if (createdAtEpoch(c.createdAt) > createdAtEpoch(existing.createdAt)) {
+            existing.createdAt = c.createdAt;
+        }
     }
     return [...byId.values()];
 }
@@ -251,7 +279,9 @@ async function resolveByPhone(companyId, last10) {
         lead = null; // fail-closed on this signal; the bridge below still runs.
     }
     if (lead && lead.ContactId) {
-        candidates.push({ id: lead.ContactId, name: displayName({ first: lead.FirstName, last: lead.LastName, full: lead.ContactName }) });
+        // `getLeadByPhone` returns a rowToLead with NO created_at → tag null so this
+        // lead-only echo sorts OLDEST and never beats a real contact row in ranking.
+        candidates.push({ id: lead.ContactId, name: displayName({ first: lead.FirstName, last: lead.LastName, full: lead.ContactName }), createdAt: null });
     }
 
     // (2) Bridge phone → contact directly + phone → contact-via-jobs. This is what
@@ -310,6 +340,83 @@ async function resolveByNameAndAddress(companyId, { name, zip, street }) {
 }
 
 /**
+ * Does this candidate's stored record corroborate the claimed name AND (zip OR
+ * street), using the SAME normalization the gate/L2 path uses? Used only for the
+ * take-latest name+address preference on the phone path (§1.2(b) step 2). The
+ * record is built lazily by the caller and passed in to bound cost.
+ * @param {{ id: number, name: string|null }} candidate
+ * @param {{ id: number, name: string|null, zips: string[], streets: string[] }} record buildContactRecord output
+ * @param {{ name?: string, zip?: string, street?: string }} claims
+ * @returns {boolean}
+ */
+function recordMatchesNameAndAddress(candidate, record, { name, zip, street }) {
+    const nameNorm = normalizeText(name);
+    const zipNorm = normalizeZip(zip);
+    const streetNorm = normalizeText(street);
+    // Name must be supplied AND at least one address factor (guaranteed by caller).
+    if (!nameNorm || (!zipNorm && !streetNorm)) return false;
+    // Name match: the candidate's display name equals the claimed name (same
+    // whitespace-collapsed, lower-cased comparison used everywhere else).
+    const candName = normalizeText(candidate && candidate.name);
+    if (!candName || candName !== nameNorm) return false;
+    const zipOk = !!zipNorm && record.zips.includes(zipNorm);
+    const streetOk = !!streetNorm && record.streets.some((s) => s.includes(streetNorm) || streetNorm.includes(s));
+    return zipOk || streetOk;
+}
+
+/**
+ * Pick the most-recent candidate by `created_at` DESC, with a `id DESC` tiebreak
+ * (a monotonic proxy for "most recently created") so the result is ALWAYS
+ * deterministic and never throws (§1.2(b) step 3). Assumes >= 1 candidate.
+ * @param {{ id: number, name: string|null, createdAt?: Date|string|null }[]} candidates
+ * @returns {{ id: number, name: string|null, createdAt: Date|string|null }}
+ */
+function pickMostRecent(candidates) {
+    return candidates.reduce((best, c) => {
+        const bt = createdAtEpoch(best.createdAt);
+        const ct = createdAtEpoch(c.createdAt);
+        if (ct > bt) return c;
+        if (ct === bt && Number(c.id) > Number(best.id)) return c;
+        return best;
+    });
+}
+
+/**
+ * Phone-path deterministic take-latest resolution over >1 distinct same-phone
+ * candidate (§1.2(b)). The claim-pin has ALREADY been applied by the caller.
+ *   1. Name+address preference: if `name` AND (`zip` OR `street`) were supplied,
+ *      lazily build each candidate's record and keep those matching name+(zip|
+ *      street). Exactly one match → that one. Several → rank the matching subset.
+ *   2. Most-recent fallback: greatest `created_at` (id DESC tiebreak).
+ * Never returns ambiguous — the phone path always resolves to a single contact.
+ * @param {string} companyId
+ * @param {{ id: number, name: string|null, createdAt?: Date|string|null }[]} candidates >1
+ * @param {{ name?: string, zip?: string, street?: string }} claims
+ * @returns {Promise<{ id: number, name: string|null, createdAt: Date|string|null }>}
+ */
+async function takeLatestOnPhonePath(companyId, candidates, { name, zip, street }) {
+    const nameNorm = normalizeText(name);
+    const hasAddr = !!normalizeZip(zip) || !!normalizeText(street);
+
+    // (1) Name+address preference — only worth the record-builds when both a name
+    //     and an address factor were supplied (lazy; bounds cost per §1.2(b)).
+    if (nameNorm && hasAddr) {
+        const matched = [];
+        for (const c of candidates) {
+            // eslint-disable-next-line no-await-in-loop
+            const rec = await buildContactRecord(companyId, c);
+            if (recordMatchesNameAndAddress(c, rec, { name, zip, street })) matched.push(c);
+        }
+        if (matched.length === 1) return matched[0];
+        if (matched.length > 1) return pickMostRecent(matched); // rank the matching subset
+        // matched.length === 0 → fall through to most-recent over ALL candidates.
+    }
+
+    // (2) Most-recent fallback (created_at DESC, id DESC).
+    return pickMostRecent(candidates);
+}
+
+/**
  * Resolve the caller's identity across leads + contacts + jobs, company-scoped.
  *
  * @param {string} companyId Tenant scope (hardwired DEFAULT_COMPANY_ID on voice/
@@ -337,8 +444,12 @@ async function resolve(companyId, claims = {}) {
 
         // ---- Path A: a usable phone was supplied → phone resolution (§3.1–3.2).
         let candidates = [];
+        let fromPhonePath = false;
         if (last10) {
             candidates = await resolveByPhone(companyId, last10);
+            // The phone path OWNS its candidate set even if it found nothing — a
+            // usable phone that matched >1 must take-latest, never fall to Path B.
+            fromPhonePath = candidates.length > 0;
         }
 
         // ---- Path B: masked / no usable phone, OR phone matched nothing → try
@@ -346,6 +457,7 @@ async function resolve(companyId, claims = {}) {
         //      it simply has no phone match and falls through to this weaker path.
         if (candidates.length === 0) {
             candidates = await resolveByNameAndAddress(companyId, { name, zip, street });
+            // (fromPhonePath stays false — this is the name path.)
         }
 
         // ---- No candidate anywhere → new caller (L0 / new-lead flow).
@@ -356,6 +468,7 @@ async function resolve(companyId, claims = {}) {
         // ---- Disambiguate. If a contactId claim was supplied and it matches one
         //      of the resolved candidates, prefer that single one (spec §2.2: a
         //      supplied contactId "must correspond to that same resolved contact").
+        //      This runs FIRST, before the phone-path take-latest ranking.
         if (candidates.length > 1) {
             const claimedId = claims.contactId != null ? Number(claims.contactId) : null;
             if (claimedId != null && !Number.isNaN(claimedId)) {
@@ -364,18 +477,27 @@ async function resolve(companyId, claims = {}) {
             }
         }
 
-        // ---- Still >1 distinct contact → AMBIGUOUS. Never silently pick one; the
-        //      gate keeps this at L0-with-marker so identifyCaller forces
-        //      disambiguation (spec §2.2 / E3). No contact record disclosed.
+        // ---- Still >1 distinct contact → resolve by ORIGIN (AGENT-SKILLS-002 §1).
         if (candidates.length > 1) {
-            return {
-                matchType: 'ambiguous',
-                contactId: null,
-                customerName: null,
-                matchedPhone: last10 || null,
-                ambiguousCount: candidates.length,
-                contact: null,
-            };
+            if (fromPhonePath) {
+                // PHONE PATH — take-latest: name+addr preference, else most-recent
+                //   by created_at (id DESC tiebreak). NEVER dead-ends to ambiguous;
+                //   the phone path always resolves to a single contact (§1.2/§1.3).
+                const picked = await takeLatestOnPhonePath(companyId, candidates, { name, zip, street });
+                candidates = [picked];
+            } else {
+                // NAME PATH (no usable phone) — still AMBIGUOUS. A name-only
+                //   multi-match has no "most recent by phone-ownership" semantics,
+                //   so force disambiguation (§1.3 / I5). No contact record disclosed.
+                return {
+                    matchType: 'ambiguous',
+                    contactId: null,
+                    customerName: null,
+                    matchedPhone: last10 || null,
+                    ambiguousCount: candidates.length,
+                    contact: null,
+                };
+            }
         }
 
         // ---- Exactly one contact → EXISTING. Build the confirmation record the

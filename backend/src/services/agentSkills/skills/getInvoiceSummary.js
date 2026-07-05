@@ -37,7 +37,7 @@ const resultShapes = require('../resultShapes');
  * @returns {boolean}
  */
 function isVerifiedContact(ctx) {
-    return Boolean(ctx && ctx.level === 'L2' && ctx.contactId != null && ctx.contactId !== '');
+    return Boolean(ctx && (ctx.level === 'L1' || ctx.level === 'L2') && ctx.contactId != null && ctx.contactId !== '');
 }
 
 /** Coerce a money-ish column to a finite Number (defaults 0). NUMERIC comes back as a string from pg. */

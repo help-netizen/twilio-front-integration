@@ -29,7 +29,7 @@
  */
 
 // Service-CRM write permission key (distinct from the sales `sales.crm.write`).
-// A write tool additionally requires the skill-layer L2 gate — strictly stronger
+// A write tool additionally requires the skill-layer L1 gate — strictly stronger
 // than the framework write-gate alone (spec §8.2).
 const SERVICE_WRITE_PERMISSION = 'service.crm.write';
 
@@ -51,7 +51,7 @@ function identityBlockProperties() {
 
 // --- READ tools (7) ---------------------------------------------------------
 // identify_caller is L0 (it DERIVES L1/L2); overview/job_status/appointments are
-// L1; job_history/estimate_summary/invoice_summary are L2 (sensitive reads).
+// L1; job_history/estimate_summary/invoice_summary are L1 (AGENT-SKILLS-002 relaxed; sensitive reads).
 const READ_TOOLS = [
     {
         name: 'svc.identify_caller',
@@ -100,9 +100,9 @@ const READ_TOOLS = [
     {
         name: 'svc.get_job_history',
         skill: 'getJobHistory',
-        requiredLevel: 'L2',
+        requiredLevel: 'L1',
         description:
-            "Summarized, speech-friendly timeline for a job (\"what did the tech say last time?\"). Internal/technician-private notes are redacted. Requires L2 verification.",
+            "Summarized, speech-friendly timeline for a job (\"what did the tech say last time?\"). Internal/technician-private notes are redacted. Requires an identified caller (L1).",
         inputSchema: objectSchema({
             ...identityBlockProperties(),
             contact_id: stringSchema(),
@@ -112,9 +112,9 @@ const READ_TOOLS = [
     {
         name: 'svc.get_estimate_summary',
         skill: 'getEstimateSummary',
-        requiredLevel: 'L2',
+        requiredLevel: 'L1',
         description:
-            'Spoken summary of an estimate (number, status, total, item count) plus a text-a-link offer — never line items. Requires L2 verification.',
+            'Spoken summary of an estimate (number, status, total, item count) plus a text-a-link offer — never line items. Requires an identified caller (L1).',
         inputSchema: objectSchema({
             ...identityBlockProperties(),
             contact_id: stringSchema(),
@@ -125,9 +125,9 @@ const READ_TOOLS = [
     {
         name: 'svc.get_invoice_summary',
         skill: 'getInvoiceSummary',
-        requiredLevel: 'L2',
+        requiredLevel: 'L1',
         description:
-            'State an invoice balance and status; payment is handed to a secure link or a human — never collected by voice. Requires L2 verification.',
+            'State an invoice balance and status; payment is handed to a secure link or a human — never collected by voice. Requires an identified caller (L1).',
         inputSchema: objectSchema({
             ...identityBlockProperties(),
             contact_id: stringSchema(),
@@ -136,16 +136,18 @@ const READ_TOOLS = [
     },
 ];
 
-// --- WRITE tools (2) --------------------------------------------------------
-// Both are L2 AND require the framework write-gate (permission + confirmation).
-// The MCP call must satisfy BOTH — strictly stronger than either alone.
+// --- WRITE tools (3) --------------------------------------------------------
+// Every write requires the framework write-gate (permission + confirmation) AND
+// the skill-layer verification level below — the MCP call must satisfy BOTH,
+// strictly stronger than either alone. (reschedule/cancel carry their own
+// requiredLevel; book_on_lead is L1 per AGENT-SKILLS-002 §3.4.5.)
 const WRITE_TOOLS = [
     {
         name: 'svc.reschedule_appointment',
         skill: 'rescheduleAppointment',
-        requiredLevel: 'L2',
+        requiredLevel: 'L1',
         description:
-            'Move a verified customer\'s appointment to a previously offered-and-confirmed window; writes Albusto and pushes Zenbooker. Requires L2 verification plus write confirmation.',
+            'Move a verified customer\'s appointment to a previously offered-and-confirmed window; writes Albusto and pushes Zenbooker. Requires an identified caller (L1) plus write confirmation.',
         inputSchema: objectSchema({
             ...identityBlockProperties(),
             contact_id: stringSchema(),
@@ -156,9 +158,9 @@ const WRITE_TOOLS = [
     {
         name: 'svc.cancel_appointment',
         skill: 'cancelAppointment',
-        requiredLevel: 'L2',
+        requiredLevel: 'L1',
         description:
-            'Cancel a verified customer\'s appointment after exactly one genuine retention attempt. A non-empty reason and retention_attempted:true are required. Requires L2 verification plus write confirmation.',
+            'Cancel a verified customer\'s appointment after exactly one genuine retention attempt. A non-empty reason and retention_attempted:true are required. Requires an identified caller (L1) plus write confirmation.',
         inputSchema: objectSchema({
             ...identityBlockProperties(),
             contact_id: stringSchema(),
@@ -166,6 +168,39 @@ const WRITE_TOOLS = [
             reason: stringSchema(),
             retention_attempted: booleanSchema(),
         }, ['contact_id', 'job_id', 'reason', 'retention_attempted']),
+    },
+    {
+        // AGENT-SKILLS-002 §3.4.5 — book a caller-confirmed slot as a
+        // schedule-blocking HOLD on the identified contact's EXISTING open lead
+        // (UPDATE, never a duplicate; falls back to createLead only when the
+        // contact has no open lead). L1 per the relaxation; NO jobId in this flow
+        // (a lead, not a job). Keeps the svc.* surface at parity with the VAPI
+        // bookOnLead tool-def (AC-10 equivalence). `chosen_slot` reuses the same
+        // {date,start,end} nested shape as reschedule's new_preferred_slot.
+        name: 'svc.book_on_lead',
+        skill: 'bookOnLead',
+        requiredLevel: 'L1',
+        description:
+            'Book a caller-confirmed window as a hold on the identified customer\'s existing open request (lead) — UPDATE, never a duplicate; creates a fresh request only if none is open. Requires L1 verification plus write confirmation.',
+        inputSchema: objectSchema({
+            ...identityBlockProperties(),
+            // The window the caller confirmed, taken from a slot recommendSlots offered.
+            chosen_slot: newPreferredSlotSchema(),
+            // Optional geo of the validated service address; written to the hold only
+            // when BOTH are finite (both-or-nothing), mirroring createLead.
+            lat: { type: 'number' },
+            lng: { type: 'number' },
+            // Fallback-create fields — consumed ONLY when the contact has no open lead
+            // (forwarded verbatim to the createLead skill).
+            first_name: stringSchema(),
+            last_name: stringSchema(),
+            email: stringSchema(),
+            apt: stringSchema(),
+            city: stringSchema(),
+            state: stringSchema(),
+            unit_type: stringSchema(),
+            problem_description: stringSchema(),
+        }, ['chosen_slot']),
     },
 ];
 

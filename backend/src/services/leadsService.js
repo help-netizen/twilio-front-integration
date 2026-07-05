@@ -1199,6 +1199,51 @@ async function getLeadByContact(contactId, companyId = null) {
 }
 
 // =============================================================================
+// Get OPEN leads by contact_id — NON-SUPPRESSING (AGENT-SKILLS-002 §3.1-A)
+// Company-scoped, ALL open leads for the contact, newest-first. Unlike
+// getLeadByContact (@1157) this does NOT hide the lead when the contact also has
+// a job — that suppression is exactly the "contact with both a lead and a job"
+// case the voice agent must SURFACE (lead-aware overview + bookOnLead). Used by
+// getCustomerOverview (surfacing) and bookOnLead (find-the-lead-to-update).
+//
+// "Open" = the shipped terminal set (Lost / Converted) excluded, matched
+// case-insensitively (getLeadByContact/getLeadsByPhone use the exact-case tokens;
+// we compare UPPER(status) so a lower/mixed-case row can never look "open" by
+// accident). Ordered newest proposed-slot first (lead_date_time DESC NULLS LAST),
+// id DESC as a stable tiebreak → caller takes [0] as "the" open lead.
+// =============================================================================
+async function getOpenLeadsByContact(contactId, companyId = null) {
+    if (!contactId) return [];
+
+    const conditions = [
+        `l.contact_id = $1`,
+        `UPPER(l.status) NOT IN ('LOST', 'CONVERTED')`,
+    ];
+    const params = [contactId];
+    if (companyId) {
+        conditions.push(`l.company_id = $2`);
+        params.push(companyId);
+    }
+
+    const sql = `
+        SELECT l.*, c.full_name AS contact_name,
+            COALESCE(
+                json_agg(json_build_object('id', lta.id, 'name', lta.user_name))
+                FILTER (WHERE lta.id IS NOT NULL), '[]'
+            ) AS team
+        FROM leads l
+        LEFT JOIN lead_team_assignments lta ON lta.lead_id = l.id
+        LEFT JOIN contacts c ON c.id = l.contact_id
+        WHERE ${conditions.join(' AND ')}
+        GROUP BY l.id, c.full_name
+        ORDER BY l.lead_date_time DESC NULLS LAST, l.id DESC
+    `;
+
+    const { rows } = await db.query(sql, params);
+    return rows.map(rowToLead);
+}
+
+// =============================================================================
 // Get Available Lead Transitions (FSM-aware)
 // =============================================================================
 async function getLeadTransitions(companyId, currentStatus, userRoles) {
@@ -1260,6 +1305,7 @@ module.exports = {
     getLeadById,
     getLeadByPhone,
     getLeadByContact,
+    getOpenLeadsByContact,
     getLeadsByPhones,
     createLead,
     updateLead,
