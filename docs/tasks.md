@@ -5764,3 +5764,214 @@ wave 4 (GATE):
 - **T7 строго после {T1..T5}** (real-DB зовёт все слои + оба адаптера). jest-расширения ∥ real-DB харнессу (house-lesson: мокнутый jest не доказывает P0 — обязателен реальный UPDATE-vs-create прогон против копии прод-БД). T6 не в code-path → не блокирует T7.
 
 **Параллелизм-резюме:** fan-out есть на **волне 0** (T1∥T2) и **волне 2** (T4∥T5). Строгие сериализации: T1→T3 (single-contact резолв нужен для L1-bookOnLead); T3→{T4,T5} (skill + read-хелпер); {T1..T5}→T7 (real-DB зовёт всё). **Миграций НЕТ** (`contacts.created_at` — schema.sql; `leads.lead_date_time/lead_end_date_time/latitude/longitude` — migration 004; max=155; всё поверх существующих колонок/индексов). **Product-code правки:** `identityResolver.js`(T1), `registry.js`(T2 поле + T3 строка), новый `bookOnLead.js`+`getOpenLeadsByContact`(T3), `getCustomerOverview.js`/`getJobStatus.js`(T4), `agentSkillsMcpRegistry.js`(T5); **repo-config:** `lead-qualifier-v2.json`(T6); **тесты/gate:** verify-002 + jest(T7). **Реюз без правки:** `updateLead`/`createLead`-skill/`tzCombine`/`resolveTimezone`/`getJobById`/`verificationGate`/`index.runSkill`/`vapi-tools.js`(generic-dispatch)/`agentSkillsMcpExecutor`. **P0 сохраняются:** company-isolation, ownership-pre-check (per-`contactId`), cancel-retention, no-card-by-voice — релаксация меняет ТОЛЬКО входной L-бар. **FLAGGED (owner, spec §6):** estimate/invoice на L1 (двухстрочный revert к L2); shared-phone take-latest tradeoff (обслуживается most-recent contact). **Деплой в прод + live VAPI PATCH — только с явного «да» владельца (standing rule).**
+
+## Фича MAIL-MUTE-001: исключение отправителя в Mail Secretary также глушит EMAIL-сигнал этого отправителя в ленте Pulse (только email-канал; звонки/SMS не затронуты)
+
+**Источники (binding):** `Docs/specs/MAIL-MUTE-001.md` (source of truth, S1–S13, AC-1…AC-12, DECISION-B, OQ-MM-2/3/4) · `Docs/architecture.md` §MAIL-MUTE-001 (decision (a) — migration-free param-passing; DECISION-B — from-only; C-2 — matcher-reuse; FR-10 fail-open) · `Docs/test-cases/MAIL-MUTE-001.md` (41 кейс TC-MM-*, S1–S13; **три P0 real-DB gate + 1 P0 perf-gate**). **Backend-only. Миграций НЕТ, нового endpoint НЕТ, нового user-facing списка/поля/типа ввода НЕТ** (существующий `mail_agent_settings.exclusion_rules` — единственный source of truth; реверс = «выпало из следующего набора запроса»). Зависит от **MAIL-AGENT-001** (mig 152 — `exclusion_rules`, `mailAgentRules` DSL, `matchEmail`, `getActiveState` 60s cache), **EMAIL-TIMELINE-001 / CONTACT-EMAIL-MERGE-001 / EMAIL-LEAD-ORIGIN-001** (email как first-class Pulse-гражданин, `email_by_contact` CTE), **LIST-PAGINATION-001** (`getUnifiedTimelinePage`). Следует прецедентам **PULSE-PERF-001** (не вносить Seq Scan / per-row regex в hot-list — EXPLAIN на prod-copy), **ONBOARD-FIX-001 / ZB-ISO-001** (company-scoping), **MAIL-AGENT-001** («никогда не throw'ить из email-link pipeline»).
+
+**Латест-миграция в репо = 155** (проверено: `backend/db/migrations/` max = 155; `rollback_155_backfill_outbound_email_links.sql`). **156 остаётся неиспользованной** этой фичей. Любой тест-ассерт «миграция не добавлена» целится в 155 как max (AC-12).
+
+**Сквозные files-forbidden (для ВСЕХ задач фичи):**
+- `src/server.js` (root, core middleware) — **НЕ трогать**. Route `/api/calls` уже смонтирован `authenticate, requireCompanyAccess`; `GET /by-contact` держит собственный gate `callsRead = requirePermission('reports.calls.view','pulse.view')` (`backend/src/routes/calls.js:8`). Нового mount / edit `server.js` НЕТ.
+- `backend/db/migrations/*` — **миграций не создаём** (decision (a); хранилище готово — `exclusion_rules` = mig 152). Next free = 156, но фича его не использует.
+- `frontend/src/lib/authedFetch.ts` / `apiClient.ts`, `frontend/src/hooks/useRealtimeEvents.ts` / `sseManager.ts` — **SSE-изменений НЕТ** и нового frontend НЕТ (mute-guard возвращается ДО любого broadcast; подавлённые строки просто не эмитят unread/thread-события; Pulse подхватывает меньший набор строк на следующем неизменном fetch). Response-shape `GET /by-contact` byte-for-byte (тот же envelope, `COUNT(*) OVER()` total, `any_unread` — просто меньше строк).
+- `backend/src/services/mailAgentRules.js` — **НЕ менять** (exports `{parseRules, matchEmail}` :167; token-shape `{negate, field, kind:'contains'|'regex', value|regex}`, `value` уже `.toLowerCase()` :99; `matchEmail` :153 ANDs токены строки). **Матчер не форкать** (C-2) — обе новые функции читают этот shape и делегируют в `matchEmail`.
+- **CALL / SMS вклад в `getUnifiedTimelinePage`** — `latest_call`, `sms` lateral, `open_task`, `is_action_required`, `tl.has_unread`, `co.has_unread`, orphan-shadow dedup, `COUNT(*) OVER()`, `LIMIT/OFFSET` — **byte-for-byte неприкосновенны** (только 5 email-термов гейтятся; protected).
+- **MAIL-AGENT-001 exclusion-семантика** — DSL, `matchEmail`, сегодняшний `skipped_excluded` task-gating — **не переопределять** (mute реюзит их, никогда не редефайнит). `reviewInboundEmail` / `dryRun` / `isActive` тела — не трогать.
+- Историч. email-данные (`email_messages` / `email_threads` / link-строки) — **никакого delete/mutate** (FR-9; detail-view остаётся достижимым напрямую).
+- Тесты вне явно перечисленных в каждой задаче.
+
+**Несущий контекст (проверено чтением кода — критично для реализации):**
+1. **`mailAgentService.js` анкеры подтверждены:** `require('./mailAgentRules')` даёт `{parseRules, matchEmail}` (:18); `activeCache = new Map()` (:26) + `getActiveState(companyId)` (:29) — 60s TTL, возвращает `{active, settings}`; `safeParseRules(text)` (:69); `buildRuleInput(msg)` (:80) собирает `from` surface как `"${from_name} <${from_email}>"` + `subject`/`body`; `invalidateCache(companyId)` (:65) уже дёргается на `PUT /settings`. **`module.exports` (:312) = `{ isActive, reviewInboundEmail, dryRun, invalidateCache }`** — РАСШИРИТЬ (не заменить) двумя новыми функциями. **NFR-2:** обе новые функции читают тот же кэш → НИ одного лишнего `mail_agent_settings`-read на письмо.
+2. **`mailAgentRules.matchEmail(parsed, email)` ANDs токены внутри строки** (:160) и ORs строки; token `{negate, field, kind, value|regex}`, `value` уже lower-cased (:99). `fromOnlyRules(parsed)` = оставить `rules[i]` где `tokens.every(t => t.field === 'from')` — same-line негация (`-from:`) остаётся частью строки и честно инвертируется `matchEmail`'ом (DECISION-B: mixed-строка `from:X subject:Y` выпадает целиком, т.к. не every-token-from).
+3. **`linkInboundMessage(companyId, msg, opts={})` (`email/emailTimelineService.js:89`)** — guard-порядок: `no_message` (:92) → `outbound` (:100) → `draft_or_sent` (:104) → **[СЮДА новый guard]** → `findEmailContact` (:112) → no-contact agent-путь `if (!opts.skipAgent)` (:114, единственный вход в `create_contact_for_unknown` → `createEmailContact`). Header-комментарий документированных skip'ов (:85) = `{skipped:'outbound'|'draft_or_sent'|'no_contact'|'no_message'}`. Новый `muted_sender` join'ится в этот комментарий. **Guard гейтится на `!opts.skipAgent`** — иначе agent-овая рекурсивная re-link (skipAgent=true) двойным-эвалом mute (S7/TC-MM-U17).
+4. **`getUnifiedTimelinePage({ limit=50, offset=0, companyId, search=null })` (`db/timelinesQueries.js:381`)** — params-идиома `params.length + 1` (:391 textIdx, :408 digitIdx) — динамична, поэтому `mutedEmails`(`$4`)+`mutedDomains`(`$5`) добавляются в `params` **ДО** роста search-параметров (search сдвигается на `$6+` сам). **5 email-термов для гейта:** :499 `GREATEST(latest_call.started_at, sms.last_message_at, eml.last_message_at)` (SELECT `last_interaction_at`); :500–501 `any_unread` OR-цепь (email-терм `eml.unread_count`); :549 surfacing-предикат `OR eml.email_thread_id IS NOT NULL`; :591 ORDER-BY unread-tier `eml.unread_count`; :598 ORDER-BY `GREATEST(...)`. Postgres запрещает ссылаться на SELECT-alias в WHERE/ORDER-BY → `email_muted` вычислить ЛИБО раз через оборачивание в subselect/CTE (минус финальный ORDER/LIMIT), ЛИБО инлайнить дешёвое выражение на каждом из 5 сайтов — что даёт чистый EXPLAIN, выбирается на реализации. Re-export `queries.getUnifiedTimelinePage` (`db/queries.js:33` + `:788`) правки НЕ требует (params текут через object-arg).
+5. **`GET /by-contact` (`routes/calls.js:106`)** — `companyId = req.companyFilter?.company_id` (:110, НЕ `req.companyId` — его нет; 401 на отсутствии tenant существующий); query-вызов сейчас `queries.getUnifiedTimelinePage({ limit, offset, companyId, search })` (:122). Middleware/gate/envelope не меняются; строки просто могут быть меньше.
+6. **`email_muted` SQL-выражение** (проверяет ОБА адресных surface контакта — `contacts.email` И любой `contact_emails.email_normalized`; §Multiple-email rule — контакт с ЛЮБЫМ muted-адресом глушит свой email-вклад; EXISTS по PK-индексу `contact_emails(contact_id)` — no scan, no regex):
+   ```
+   (
+     lower(co.email) = ANY($4)
+     OR split_part(lower(co.email), '@', 2) = ANY($5)
+     OR EXISTS (
+          SELECT 1 FROM contact_emails ce2
+          WHERE ce2.contact_id = tl.contact_id
+            AND ( ce2.email_normalized = ANY($4)
+               OR split_part(ce2.email_normalized, '@', 2) = ANY($5) )
+        )
+   )
+   ```
+
+---
+
+### MAIL-MUTE-001-T1: `mailAgentService` — `isSenderMuted` + `getMutedSenderSet` + внутренний `fromOnlyRules` (P0, M)
+
+**Цель:** заложить фундамент mute-вердикта в сервисе Mail Secretary — две новые экспортируемые функции поверх уже существующих примитивов, БЕЗ форка матчера и БЕЗ лишнего DB-read (реюз 60s `activeCache`). Обе **fail-open** (любой throw → «не muted» / пустой набор). Это единственная точка, где решается «from-only» — обе seam (ingestion-skip и list-suppression) деривят из одного company-набора через один кэш (NFR-4).
+
+**Файлы, которые можно менять:**
+- `backend/src/services/mailAgentService.js`:
+  - **`fromOnlyRules(parsed)`** (внутренний, не экспортируемый) — вернуть подмножество строк, где `tokens.every(t => t.field === 'from')`. Mixed-строка (`from:X subject:Y`) и subject/body/any-строки выпадают. Единый источник from-only решения для обеих функций.
+  - **`isSenderMuted(companyId, msg) → Promise<boolean>`** (экспорт) — читать `getActiveState(companyId)` (кэш); при `!active` → **немедленно `false`** (C-4, никакого matcher-run). Иначе `parsed = safeParseRules(settings.exclusion_rules)`, `fromOnly = fromOnlyRules(parsed)`, вернуть `matchEmail({ rules: fromOnly }, buildRuleInput(msg)).excluded`. `from` surface = `buildRuleInput` (`"${from_name} <${from_email}>"`) — byte-identical task-пути. Полный DSL from-only (regex `/…/i`, quoted, same-line негация) honored, т.к. делегирует в `matchEmail` (C-2). **Fail-open:** любой throw → `false` (FR-10).
+  - **`getMutedSenderSet(companyId) → Promise<{ emails: string[], domains: string[] }>`** (экспорт) — тот же кэш; при `!active` или любом parse-error → **`{ emails:[], domains:[] }`** (C-4 / fail-open). Взять `fromOnlyRules(parsed)`, извлечь **литеральные, НЕ-негированные** `from:` `contains`-токены (`kind==='contains' && !negate`): токен-value с `@` и `.` после него → полный адрес → `emails` (lower-cased); value начинающийся с `@` ИЛИ голый `host.tld` (без local-part, но с точкой) → голый домен (`@` снят) → `domains` (lower-cased); голое слово без `@` и без `.` → **никуда** (в SQL не суппрессит, TC-MM-U11d). **НЕ проецируются** (OQ-MM-4): `kind:'regex'` токены и негированные токены — они глушат новый inbound через `isSenderMuted`, но НЕ ретро-прячут существующий тред из списка.
+  - **`module.exports` (:312)** — РАСШИРИТЬ до `{ isActive, reviewInboundEmail, dryRun, invalidateCache, isSenderMuted, getMutedSenderSet }` (append, не заменять — иначе регрессия MAIL-AGENT-001).
+- `tests/mailMuteSender.test.js` (**создать**; ИЛИ расширить `tests/mailAgentService.test.js` — оба допустимы, helper-кейсы держать вместе), jest, `jest.mock('../backend/src/db/connection')`, `matchEmail` НЕ мокать (реюз реального матчера — C-2). В worktree: `--testPathIgnorePatterns "/node_modules/"`.
+
+**Файлы, которые трогать нельзя:** всё из сквозного files-forbidden — особенно `mailAgentRules.js` (матчер не форкать), тела `reviewInboundEmail`/`dryRun`/`isActive`/`getActiveState`/`buildRuleInput`/`safeParseRules` (только read/reuse); `emailTimelineService.js` (T2); `timelinesQueries.js` (T3); `routes/calls.js` (T4); frontend; миграции.
+
+**Ожидаемый результат:** `isSenderMuted` возвращает `true` ⇒ отправитель from-muted для этой компании (иначе false, включая inactive / нет from-only-строки / error); `getMutedSenderSet` возвращает крошечный per-company `{emails, domains}` только из литеральных не-негированных from-only токенов (regex/негация не проецируются). Обе fail-open (throw → false / пустой набор), читают 60s-кэш (0 лишних DB-read на письмо, NFR-2), НЕ форкают матчер (C-2). Оба экспорта на месте; `reviewInboundEmail`/`invalidateCache` по-прежнему экспортированы (no export-regression). Company-scoping: обе принимают `companyId` и читают только settings этой компании.
+
+**Проверка (acceptance):** TC-MM-U01 (from-only exact-address→true, matchEmail зван с from-only-строкой + byte-identical from-surface), U02 (from-only domain `from:relyhome.com`/`@relyhome.com`→true для любого `*@relyhome.com`), U03 (subject/body/any/**mixed**→false, from-only-фильтр их дропает — ядро DECISION-B), U04 (same-line `-from:` негация-rescue honored verbatim), U05 (inactive/не-connected→false немедленно, matcher не зван), U06 (regex from-only→true на link-time), U07 (`getMutedSenderSet` проецирует литералы в emails-vs-domains, исключает subject/body/mixed), U08 (inactive→`{emails:[],domains:[]}`), U09 (негированный токен не проецируется), U10 (regex-токен не проецируется в SQL-набор), U11 (domain-vs-exact дискриминация на shape токена, a/b/c/d), U12 (`fromOnlyRules` держит только every-token-from строки), U20 (`isSenderMuted` fail-open→false), U21 (`getMutedSenderSet` fail-open→`{emails:[],domains:[]}`), U22 (оба экспорта присутствуют, старые не потеряны). Jest зелёный.
+
+**Зависимости:** нет (первый, foundational). **Параллельность:** **wave 1** — файлово ∥ с T3 (разные файлы: `mailAgentService.js`/`tests/` vs `timelinesQueries.js`; ноль пересечений, ноль контрактной зависимости T1↔T3). T2 и T4 — потребители T1-экспортов → wave 2.
+
+**Статус:** done
+
+---
+
+### MAIL-MUTE-001-T2: `emailTimelineService.linkInboundMessage` — `{skipped:'muted_sender'}` ранний return (P0, S)
+
+**Цель:** закрыть ingestion-seam — from-muted входящее письмо больше НЕ линкуется в тред контакта: без link-строки, без unread-флипа, без bump'а Pulse, без SSE, без авто-создания контакта. Ранний return **после** outbound/draft-guard'ов и **до** `findEmailContact`, гейтед на `!opts.skipAgent`. Это load-bearing гарантия «muted first-time sender никогда не материализует контакт» — return строго раньше и no-contact agent-пути (l.114), и `skipped_excluded`.
+
+**Файлы, которые можно менять:**
+- `backend/src/services/email/emailTimelineService.js` — в `linkInboundMessage` (:89) вставить блок **после** `draft_or_sent` guard (:104) и **до** `findEmailContact` (:112):
+  - гейт `if (!opts.skipAgent) { … }` (skipAgent-рекурсия agent'а НЕ должна двойным-эвалом mute — S7/TC-MM-U17);
+  - `if (await require('../mailAgentService').isSenderMuted(companyId, msg)) return { skipped: 'muted_sender' };` (import через require во избежание цикла модулей, как в существующем коде; вызов ждётся in-request).
+  - Обновить header-комментарий документированных skip'ов (:85) → добавить `'muted_sender'` в перечисление.
+  - `isSenderMuted` уже fail-open (T1) → если он бросит (не должен), это не сломает pipeline; но НЕ оборачивать сам вызов в дополнительный throw — «никогда не throw'ить из pipeline» держится через fail-open T1.
+- `tests/emailTimelineInbound.test.js` (**расширить**), jest, `jest.mock('../db/connection')` + spy/`jest.mock` на `mailAgentService`. В worktree: `--testPathIgnorePatterns "/node_modules/"`.
+
+**Файлы, которые трогать нельзя:** всё из сквозного files-forbidden; `mailAgentService.js` (контракт T1 — только import+вызов `isSenderMuted`, НЕ доправлять); `findEmailContact`/`linkMessageToContact`/`markContactUnread`/`markTimelineUnread` семантика; outbound/draft/no-contact ветки (не менять — только вставить guard РЯДОМ, строго между :104 и :112); `timelinesQueries.js` (T3); `routes/calls.js` (T4); frontend.
+
+**Ожидаемый результат:** muted входящее → `linkInboundMessage` немедленно возвращает `{skipped:'muted_sender'}`; `findEmailContact` (и следом `findOrCreateTimelineByContact`, `markContactUnread`, `markTimelineUnread`, любой SSE-broadcast) НЕ зван; no-contact agent-путь (`reviewInboundEmail(…,{noContact:true})` → `createEmailContact`) недостижим → muted first-time sender не создаёт контакт/timeline (FR-3). Guard срабатывает ПОСЛЕ outbound(:100)/draft(:104) (outbound/draft по-прежнему возвращают свой skip и НЕ зовут `isSenderMuted`) и гейтед на `!opts.skipAgent` (agent-рекурсия mute не эвалит). Not-muted → чистый pass-through в сегодняшний link-путь (links/unread/bump как раньше). Redelivery muted-письма → оба раза skip, предшествует provider-message-id dedup (dedup не ослаблен). Никакой throw не выходит из pipeline (fail-open T1 + guard не бросает).
+
+**Проверка (acceptance):** TC-MM-U15 (muted→`{skipped:'muted_sender'}` ДО contact-lookup; `findEmailContact`/timeline/unread/SSE не зван; guard после outbound/draft), U16 (not-muted→нормальный путь, «off»-контроль guard'а — защита от «mute everything» регрессии), U17 (guard гейтед на `!opts.skipAgent`; на primary-вызове `isSenderMuted` зван, на skipAgent-рекурсии — нет), U18 (muted возвращает ДО no-contact agent-пути; `reviewInboundEmail` НИКОГДА не зван — unit-половина FR-3), U19 (redelivery muted остаётся skip, предшествует dedup). Реальная link-нога (no-link/no-contact/no-dup на реальной БД) — T5/TC-MM-I06/I10. Jest зелёный.
+
+**Зависимости:** **T1 (жёстко)** — зовёт экспортированный `mailAgentService.isSenderMuted`. **Параллельность:** **wave 2**, строго ПОСЛЕ T1. Файлово ∥ с T4 (разные файлы: `emailTimelineService.js` vs `routes/calls.js`; ноль пересечений). Оба (T2,T4) ждут T1.
+
+**Статус:** done
+
+---
+
+### MAIL-MUTE-001-T3: `getUnifiedTimelinePage` — `mutedEmails`/`mutedDomains` params + per-row `email_muted` + гейт 5 email-термов (P0, M)
+
+**Цель:** закрыть list-seam — hot-list Pulse-запрос учится вычислять per-row `email_muted` и гейтить РОВНО 5 email-термов через `AND NOT email_muted`, так что email-only muted-тред выпадает из списка, а звонки/SMS ранжируют как раньше. Два новых **опциональных** параметра (default `[]`) → каждый существующий caller (LIST-PAGINATION-001) byte-for-byte не затронут (пустой набор ⇒ `email_muted` всегда false ⇒ ноль изменения поведения). **PULSE-PERF-001 discipline:** никакого Seq Scan / per-row regex; `contact_emails` EXISTS по PK-индексу `contact_id`.
+
+**Файлы, которые можно менять:**
+- `backend/src/db/timelinesQueries.js` — `getUnifiedTimelinePage` (:381):
+  - сигнатура `({ limit=50, offset=0, companyId, search=null, mutedEmails=[], mutedDomains=[] })`; добавить `mutedEmails`(`$4`)+`mutedDomains`(`$5`) в `params` ДО роста search-параметров (search сам сдвинется на `$6+` через существующую `params.length + 1` идиому :391/:408 — её НЕ трогать по смыслу).
+  - вычислить `email_muted` (§Несущий контекст п.6 — проверяет `co.email` И `contact_emails.email_normalized`, exact-in-`$4` OR domain-in-`$5`; EXISTS по `contact_emails(contact_id)`). Postgres запрещает alias в WHERE/ORDER → вычислить раз через оборачивание в subselect/CTE (минус финальный ORDER/LIMIT) **ИЛИ** инлайнить одинаковое дешёвое выражение на каждом из 5 сайтов; выбор — тот, что даёт чистый EXPLAIN (проверяется в T5).
+  - гейт **ровно 5 сайтов**: :499 GREATEST — email-терм → `CASE WHEN NOT email_muted THEN eml.last_message_at END`; :500–501 `any_unread` — email-терм → `(COALESCE(eml.unread_count,0) > 0 AND NOT email_muted)`; :549 surfacing-предикат → `OR (eml.email_thread_id IS NOT NULL AND NOT email_muted)`; :591 ORDER-BY unread-tier → `(COALESCE(eml.unread_count,0) > 0 AND NOT email_muted)`; :598 ORDER-BY GREATEST → тот же `CASE WHEN NOT email_muted THEN eml.last_message_at END` на email-терме.
+  - **Всё остальное byte-for-byte:** `latest_call`, `sms` lateral, `open_task`, `is_action_required`, `tl.has_unread`, `co.has_unread`, orphan-shadow dedup, `COUNT(*) OVER()`, `LIMIT/OFFSET`, `email_by_contact` CTE-shape — не трогать.
+- `tests/listPaginationByContact.test.js` (**расширить**) — jest, db mocked, SQL-string/param-shape (НЕ «строка подавлена» — это T5). В worktree: `--testPathIgnorePatterns "/node_modules/"`.
+
+**Файлы, которые трогать нельзя:** всё из сквозного files-forbidden — особенно CALL/SMS/task/orphan-dedup/pagination части запроса и `email_by_contact` CTE-shape; `db/queries.js` re-export (:33/:788 — правки НЕ требует, params текут через object-arg — НЕ трогать); `mailAgentService.js` (T1); `emailTimelineService.js` (T2); `routes/calls.js` (T4); frontend; миграции.
+
+**Ожидаемый результат:** `getUnifiedTimelinePage` принимает `mutedEmails`/`mutedDomains` (default `[]`); `email_muted` per-row true, когда ЛЮБОЙ адрес контакта (`contacts.email` или любой `contact_emails.email_normalized`) — exact-член `$4` ИЛИ его домен — член `$5`; 5 email-термов гейтятся `AND NOT email_muted` → email-only muted-контакт проваливает surfacing-предикат (выпадает из списка и из `COUNT(*) OVER()`, page ≤ limit — pagination integrity), phone+email-контакт теряет только email-вклад в ordering/unread (звонки/SMS ранжируют как раньше). Пустой набор (`ANY(empty)=false`) ⇒ `email_muted` всегда false ⇒ каждый существующий caller и «нечего мьютить» = сегодняшнее поведение (zero plan change). company_id-скоуп неизменен (`email_muted` эвалит только на строках уже `WHERE tl.company_id = $1`).
+
+**Проверка (acceptance):** TC-MM-U23 (default-params → сегодняшний SQL, `$4`/`$5` bind empty text[], 5 email-термов присутствуют, search сдвинут на `$6+`; DEFAULTED-путь byte-compatible — другие callers LIST-PAGINATION-001 не регрессируют). Реальная суппрессия/ranking/isolation (S2/S4/S5/S8/S12/S13) — **T5 real-DB** (мокнутый jest НЕ докажет, что 2915 выпал / звонок ранжировал phone+email выше gated-email / company B изолирована — урок LIST-PAGINATION-001/PULSE-PERF-001). Jest зелёный.
+
+**Зависимости:** нет жёстких на код (params самодостаточны; T1 не нужен для компиляции T3 — разные файлы, разные seam). **Параллельность:** **wave 1** — файлово ∥ с T1 (разные файлы; ноль пересечений). T4 (route) зовёт И T1-набор, И передаёт в T3-сигнатуру → wave 2 (нужны оба).
+
+**Статус:** done
+
+---
+
+### MAIL-MUTE-001-T4: `GET /api/calls/by-contact` — fetch `getMutedSenderSet` + прокинуть в `getUnifiedTimelinePage` (P0, S)
+
+**Цель:** соединить обе seam на Pulse-роуте — fetch'нуть per-company muted-набор из settings и прокинуть его в hot-list запрос. Единственный caller, передающий не-пустые `mutedEmails`/`mutedDomains`; все прочие callers `getUnifiedTimelinePage` дают default `[]` = сегодняшнее поведение. Middleware / gate / response-envelope не меняются — строки просто могут быть меньше.
+
+**Файлы, которые можно менять:**
+- `backend/src/routes/calls.js` — `GET /by-contact` (:106): после `companyId = req.companyFilter?.company_id` (:110) и ПЕРЕД query-вызовом (:122):
+  - `const { emails: mutedEmails, domains: mutedDomains } = await require('../services/mailAgentService').getMutedSenderSet(companyId);` (`getMutedSenderSet` уже fail-open (T1) → на ошибке вернёт `{emails:[],domains:[]}` → route не 500-ит);
+  - расширить query-вызов (:122) до `queries.getUnifiedTimelinePage({ limit, offset, companyId, search, mutedEmails, mutedDomains })`.
+  - `companyId` строго = `req.companyFilter?.company_id` (НЕ `req.companyId` — его нет; НЕ `crm_users.company_id`); существующий 401 на отсутствии tenant и gate `callsRead` (:8) — не трогать. Response-envelope byte-for-byte (тот же shape, возможно меньше строк).
+- `tests/listPaginationByContact.test.js` (**расширить**; тот же файл, что T3 — route-wiring кейсы; координировать вставку с T3-кейсами, append-only) — jest, db mocked, spy `getMutedSenderSet`/`getUnifiedTimelinePage`. В worktree: `--testPathIgnorePatterns "/node_modules/"`.
+
+**Файлы, которые трогать нельзя:** всё из сквозного files-forbidden — особенно `server.js` (mount/middleware неизменны), gate `callsRead`; `mailAgentService.js` (T1 — только import+вызов `getMutedSenderSet`, НЕ доправлять); `timelinesQueries.js` (T3 — только передать params, НЕ доправлять запрос); `db/queries.js` re-export; прочие route-хендлеры в `calls.js` (mark-read/mark-unread/transfer — не трогать); frontend.
+
+**Ожидаемый результат:** `GET /by-contact` fetch'ит `getMutedSenderSet(companyId)` с `req.companyFilter.company_id` (per-request company, изоляция) и прокидывает `mutedEmails`/`mutedDomains` в `getUnifiedTimelinePage` — muted email-only треды выпадают, phone+email ранжируют по звонкам/SMS. Middleware (`authenticate, requireCompanyAccess`), gate (`callsRead` = `reports.calls.view`/`pulse.view`), 401 на отсутствии tenant, response-envelope — неизменны (SQL-запросы фильтруют по company_id, данные изолированы между компаниями; чужой tenant → 401). Fail-open: ошибка `getMutedSenderSet` → пустой набор → список как сегодня, route НЕ 500.
+
+**Проверка (acceptance):** TC-MM-U13 (403 без `pulse.view`/`reports.calls.view`; 401 без auth — `getMutedSenderSet`/`getUnifiedTimelinePage` не зван; mute не добавляет нового gate и не ослабляет существующий), U14 (`getMutedSenderSet` зван РОВНО раз с `'A'` = `req.companyFilter.company_id`, НЕ `crm_users.company_id`; `getUnifiedTimelinePage` зван с `mutedEmails`/`mutedDomains` ПЛЮС существующие `limit/offset/companyId/search`; envelope-shape неизменен). Реальная суппрессия — T5. Jest зелёный; `cd backend && npm run build`-эквивалент (сервис стартует) без ошибок.
+
+**Зависимости:** **T1 + T3 (жёстко)** — зовёт экспортированный `getMutedSenderSet` (T1) и передаёт его результат в расширенную сигнатуру `getUnifiedTimelinePage` (T3). **Параллельность:** **wave 2**, строго ПОСЛЕ {T1, T3}. Файлово ∥ с T2 (разные файлы: `routes/calls.js` vs `emailTimelineService.js`; ноль пересечений). Делит `tests/listPaginationByContact.test.js` с T3 — append-only, координировать.
+
+**Статус:** done
+
+---
+
+### MAIL-MUTE-001-T5: интеграционный verify-скрипт против реальной БД + EXPLAIN perf-gate + прогон (P0, L)
+
+**Цель:** доказать несущие инварианты на РЕАЛЬНОМ Postgres — мокнутый jest мокает `db`, поэтому доказывает только SQL-текст/dispatch, НЕ что timeline 2915 покинул страницу, что звонок ранжировал phone+email-контакт выше его gated-email, или что company B изолирована (в точности класс бага LIST-PAGINATION-001 / PULSE-PERF-001, прошедший зелёные моки). Самосеющий/самочистящийся node-скрипт house-стиля (зеркалит `scripts/verify-contact-email-merge-001.js` / `verify-email-lead-origin-001.js`), PASS/FAIL по кейсу, с **тремя P0 real-DB gate + 1 P0 perf-gate + negative-control + sabotage**.
+
+**Файлы, которые можно менять:**
+- `scripts/verify-mail-mute-001.js` (**создать**) — реальный `backend/src/db/connection` через `DATABASE_URL` (default `postgresql://localhost/twilio_calls`, **никогда прод**); секции `s1…s13` + `explain` + `neg` (negative-control) + `sab` (sabotage) через `--section=<id>|all`; exit 0 только когда НИ один кейс не FAIL. Уникальный тег **`MM1`** на всех seed-строках (self-cleaning). Company A = seed `00000000-0000-0000-0000-000000000001` (реальные dev-строки сосуществуют → ассерты row-targeted по tagged contact/timeline id или дельта на возвращённой странице, НИКОГДА абсолютные whole-company counts); company **B** = tagged `c0000000-0000-4000-8000-0000000000d1`, создаётся+удаляется здесь (cross-tenant), через `ensureCompany`/`ON CONFLICT DO NOTHING`. Обе получают `mail_agent_settings` `enabled=true` + app connected (C-4 удовлетворён; отдельный кейс тоглит off). Cleanup при старте, ПЕРЕД каждым кейсом и в конце, FK-порядок: `email_messages → email_threads → (email link rows) → tasks → timelines → contacts → mail_agent_settings → crm_users → companies` (+ tagged calls/SMS). **`mailAgentService.invalidateCache(company)` после КАЖДОЙ settings-записи** (60s `activeCache` не отдаёт stale-вердикт между кейсами; зеркалит `PUT /settings`). Реюзнуть tiny assert-kit (`check`/`eq`/`record`, `CheckError`) verbatim из `verify-contact-email-merge-001.js`. Seed-builders (tagged MM1): `mkContactEmailOnly` (phone NULL + email + timeline + 1 inbound email_message/thread — relyhome/2915-shape), `mkContactPhoneEmail` (+`addCall`/`addSms`), `mkContactMultiEmail` (`contacts.email`=primary + `contact_emails.email_normalized`=extra), `setRules(company, rulesText)` (upsert `exclusion_rules`+`enabled`+`invalidateCache`). **Muted-набор деривится, не подаётся руками:** каждый list-кейс зовёт РЕАЛЬНЫЙ `getMutedSenderSet(company)` и прокидывает его `{emails,domains}` в `getUnifiedTimelinePage` (JS-parse и SQL-suppression верифицируются end-to-end вместе — NFR-4; отдельный ассерт сверяет литералы). Реальные (unmocked) функции: `mailAgentService.{getMutedSenderSet,isSenderMuted,invalidateCache}`, `emailTimelineService.linkInboundMessage`, `timelinesQueries.getUnifiedTimelinePage` (звезда); где нужна route-нога — смонтировать реальный `GET /api/calls/by-contact` со stub-auth (`req.companyFilter={company_id:A}` + `pulse.view`).
+
+**Секции → кейсы (все PASS локально):**
+- **s1 — TC-MM-I06 (S1/S7-link, P0):** `setRules(A,'from:relyhome.com')`; реальный `linkInboundMessage(A, msg)` для `newvendor@relyhome.com` (свежий `provider_message_id`, нет контакта) → `{skipped:'muted_sender'}`; (a) ноль новых `email_messages`/link для этого id, (b) ноль новых `contacts`/`timelines` для адреса (early-return предшествует no-contact agent-пути — FR-3), (c) ноль unread-флипов; contrast-нога `setRules(A,'')` → тот же msg для *известного* контакта линкуется/флипает как сегодня. Плюс **TC-MM-I10 (S6):** тот же muted msg дважды (push+poll) → оба skip, ноль link, ноль контакта, dedup-таблица не тронута.
+- **s2 — TC-MM-I01/I03 (S2/S5 **P0 SQL must-run** + S3 restore):** `mkContactEmailOnly(A,{name:'MM1 Rely',email:'customerservice@relyhome.com'})` (1 inbound email, нет phone/call/SMS/task/unread beyond email); `setRules(A,'from:customerservice@relyhome.com')`. (1) `set=getMutedSenderSet(A)`→assert `{emails:['customerservice@relyhome.com'],domains:[]}`; (2) `page=getUnifiedTimelinePage({limit:50,offset:0,companyId:A,search:'',mutedEmails:set.emails,mutedDomains:set.domains})`; (3) relyhome-timeline **ОТСУТСТВУЕТ** в `page.rows` и не в `COUNT(*) OVER()` total (page ≤ limit); direct `SELECT` треда возвращает retained-строки (FR-9). **I03 restore:** `setRules(A,'')`+`invalidateCache`→`set2`→`{emails:[],domains:[]}`→ relyhome **REAPPEARS** (reversibility = «выпало из набора»).
+- **s4 — TC-MM-I04 (S4 **P0 SQL must-run** channel-split):** `mkContactPhoneEmail(A,{name:'MM1 Dual',phone:'+16175559001',email:'customerservice@relyhome.com'})` с existing email-тредом; `setRules(A,'from:relyhome.com')`→`domains:['relyhome.com']`. (1) только muted-email как recent → `last_interaction_at` НЕ включает `eml.last_message_at` (gated), не в unread-tier via email; строка не ранжирует выше control-контакта с *старым* звонком (email не bump'нул); (2) `addCall(dual,now)`→re-query→`last_interaction_at` подхватывает `latest_call.started_at`, строка **surfaces/bumps to top**; (3) `addSms(dual,now+1)`→re-query→`sms.last_message_at` кормит `last_interaction_at`, строка **surfaces/bumps**. Net: muted-email не даёт ничего в ordering/unread, звонок+SMS ранжируют как сегодня (регрессия где email ещё bump'ит ИЛИ звонок/SMS больше не bump'ит = FAIL).
+- **s7 — TC-MM-I07 (S8 **P0 SECURITY must-run** cross-tenant):** company **B** (tagged, создана здесь) `mkContactEmailOnly(B,{name:'MM1 RelyB',email:'customerservice@relyhome.com'})` + settings `enabled=true` но БЕЗ exclusion-rule; company A `from:relyhome.com` muted + свой relyhome-контакт. (1) `setB=getMutedSenderSet(B)`→assert `{emails:[],domains:[]}` (B парсит СВОИ settings); (2) `pageB=getUnifiedTimelinePage({…,companyId:B,mutedEmails:setB.emails,mutedDomains:setB.domains})`→ B's relyhome-timeline **ПРИСУТСТВУЕТ** (B не наследует A-mute); (3) в том же прогоне A's страница с A-набором прячет A's relyhome. Красный = cross-tenant leak → release-блокер.
+- **s12 — TC-MM-I08 (S12 multi-email):** `mkContactMultiEmail(A,{name:'MM1 Multi',primaryEmail:'b@personal.com',extraEmail:'a@vendor.com'})`, email-сигнал на collapsed-треде, нет phone; `setRules(A,'from:vendor.com')`→`domains:['vendor.com']`. `page`→ timeline **suppressed** через EXISTS-ветку `contact_emails ce2 … split_part(ce2.email_normalized,'@',2)=ANY($5)` (хотя primary `b@personal.com` НЕ muted); симметрия (mute `from:personal.com`) suppress'ит через `lower(co.email)`-ветку (оба surface проверены — edge-case 6).
+- **s13 — (S13 mid-thread mute):** тред с muted-отправителем уже слинкован ДО mute → после mute: already-linked email_messages остаются в history (direct SELECT), тред перестаёт давать вклад в список (s2/s4-shape), новый inbound перестаёт линковаться (s1-shape).
+- **explain — TC-MM-I09 (**P0 perf-gate**, AC-11/NFR-1):** на **prod-DB copy** (local dev недобирает row-counts для репрезентативного плана). `EXPLAIN (ANALYZE, BUFFERS)` модифицированного `getUnifiedTimelinePage` с (a) не-пустым muted-набором (relyhome-литералы) и (b) пустыми массивами. Assert: (1) НЕТ нового Seq Scan на `contacts`/`contact_emails`/`email_messages`; (2) PULSE-PERF-001 phone-digit expression-индексы всё ещё драйвят план; (3) `contact_emails` EXISTS использует `contact_id`-индекс; (4) latency ≈ сегодняшние ~0.3s; (5) empty-set план (b) идентичен сегодняшнему. **Документировать в PR** (не мокнутый jest). Регресс к Seq Scan / per-row regex = FAIL.
+- **neg — negative-control:** каждый list-кейс (s2/s4/s12) повторно с `mutedEmails=[]`/`mutedDomains=[]` (feature off) → muted-строка **ПРИСУТСТВУЕТ** (доказывает, что суппрессия ВЫЗВАНА набором, не дефектом seed'а — `ANY(empty)=false`). Если neg падает — seed сломан, s2/s4/s12 vacuous.
+- **sab — TC-MM-ISAB sabotage:** (1) прогнать s2-ассерт против НАМЕРЕННО-неверного ожидания (relyhome STILL present) тем же assert-kit → harness бросает `CheckError`/пишет FAIL (доказывает, что реально инспектирует, а не печатает PASS); затем восстановить верное ожидание→green. (2) code-level: временно снять `AND NOT email_muted` с surfacing-предиката → s2 FAIL'ит (гейт реально работает). Если саботаж НЕ роняет FAIL — детектор сломан, все PASS подозрительны.
+
+**Что сделать:** прогнать ВЕСЬ скрипт на локальной dev-БД (`--section=all`); per-case вывод — в отчёт задачи/PR. EXPLAIN-секция — на prod-copy сменой `DATABASE_URL` (перед деплоем, с явного согласия владельца — standing rule). Ассерты row-targeted/дельта (не абсолюты по всей странице). `companyId` = `company_id` (не `sub`).
+
+**Файлы, которые трогать нельзя:** всё из сквозного files-forbidden; `tests/*` (jest — территория T1–T4); `mailAgentService.js` / `emailTimelineService.js` / `timelinesQueries.js` / `routes/calls.js` (это ВЕРИФИКАЦИЯ — НИКАКИХ попутных product-правок по итогам EXPLAIN; фича заявлена БЕЗ миграции — если план плох, открыть вопрос, не чинить индексом молча); скрипт ходит ТОЛЬКО в `DATABASE_URL` (никаких прод-кредов).
+
+**Ожидаемый результат:** один воспроизводимый прогон доказывает на реальных строках: link-skip + no-auto-create (s1), **email-only drop-out + restore (s2, P0)**, **channel-split ranking (s4, P0)**, **cross-tenant isolation (s7, P0)**, multi-email EXISTS-suppression (s12), retained-but-hidden mid-thread (s13), redelivery idempotency (s1), negative-control (feature off = строка present), sabotage (детектор работает), и **EXPLAIN perf-parity на prod-copy (explain, P0 — no new Seq Scan, индексы драйвят, ~0.3s)**; повторный запуск чистый. **Красный на I01/I04/I07 (три P0 SQL/security gate) ИЛИ I09 (perf-gate) блокирует релиз.**
+
+**Проверка (acceptance):** TC-MM-I06 (s1), I10 (s1), **I01 (s2, P0)**, I02 (neg), I03 (s2 restore), **I04 (s4, P0)**, I05 (s4/neg), **I07 (s7, P0)**, I08 (s12), **I09 (explain, P0 perf)**, I11 (fail-open list-path — форсированный error → все строки present, route не 500), ISAB — все PASS локально (+ explain на prod-copy). Три P0 SQL/security gate (I01 drop-out, I04 channel-split, I07 cross-tenant) + I09 perf-gate — release-блокеры.
+
+**Зависимости:** **T1 + T2 + T3 + T4 (жёстко)** — скрипт зовёт реальные `mailAgentService.{getMutedSenderSet,isSenderMuted}` (T1), `linkInboundMessage` с mute-guard (T2), `getUnifiedTimelinePage` с `email_muted` (T3), и (для route-ноги) реальный `GET /by-contact` handler (T4). **Параллельность:** **wave 3** — строго ПОСЛЕ {T1,T2,T3,T4}. prod-copy половина (EXPLAIN) — deploy-gated: только с явного согласия владельца.
+
+**Статус:** done
+
+---
+
+### MAIL-MUTE-001-T6 (ОПЦИОНАЛЬНО, P3): микро-копирайт в UI правил-исключений — пояснить расширенный эффект (P3, XS)
+
+**Цель (OPTIONAL — не требуется для фичи):** владелец решил, что список `exclusion_rules` = единственный user-facing surface, НОВОГО UI НЕТ. Эта задача — ТОЛЬКО опциональная правка помощного текста рядом с существующим полем правил, чтобы объяснить, что теперь `from:`-правило дополнительно глушит email-сигнал отправителя в Pulse (а не только подавляет задачу). **Если не делать — фича полностью функциональна; UI и так корректен.** Добавлена по требованию плана как чётко-опциональная; выполнять ТОЛЬКО с явного согласия владельца на текст.
+
+**Файлы, которые можно менять:**
+- (если делать) frontend-компонент Mail-Secretary-настроек, содержащий help-текст/подпись поля `exclusion_rules` (найти по строке существующей подсказки правил в `frontend/src/` — компонент Settings→Mail Secretary; НЕ менять логику, только строку копирайта). Никаких новых полей/списков/типов ввода.
+
+**Файлы, которые трогать нельзя:** всё из сквозного files-forbidden; любая логика/стейт компонента (только текст-строка); backend (T1–T4); `scripts/*` (T5). НЕ добавлять новый input/список/settings-поле (owner-решение).
+
+**Ожидаемый результат:** (если делать) один-два предложения помощного текста поясняют, что `from:`-исключение теперь также убирает email-отправителя из ленты Pulse (звонки/SMS не затронуты; реверсимо снятием правила). `cd frontend && npm run build` (tsc -b) exit 0. **Если пропустить — ноль влияния на приёмку фичи.**
+
+**Проверка (acceptance):** нет привязки к TC-MM (чисто копирайт); manual-review текста + build зелёный. Помечена OPTIONAL в scenario-map — не блокирует релиз, не входит в must-pass.
+
+**Зависимости:** нет (чистый текст). **Параллельность:** может идти в любой волне ∥ всему (frontend-текст, ноль пересечений). **Опциональна — по умолчанию НЕ выполняется без явного согласия владельца на копирайт.**
+
+**Статус:** optional (не начинать без явного «да» владельца на текст)
+
+---
+
+### Порядок выполнения и параллелизм (MAIL-MUTE-001)
+
+```
+wave 1 (foundation, ∥):  T1 (mailAgentService: isSenderMuted + getMutedSenderSet + fromOnlyRules)  ──┐
+                         T3 (getUnifiedTimelinePage: mutedEmails/mutedDomains + email_muted + 5 гейтов) ┘
+                             ← T1 ∥ T3: DISJOINT файлы (mailAgentService.js vs timelinesQueries.js),
+                               ноль контрактной зависимости (T4 сводит их результаты, не T3)
+
+wave 2 (consumers, ∥):   T2 (linkInboundMessage: {skipped:'muted_sender'} guard)  ──┐  ← нужен T1 (isSenderMuted)
+                         T4 (GET /by-contact: getMutedSenderSet → getUnifiedTimelinePage) ┘  ← нужен T1 (набор) И T3 (сигнатура)
+                             ← T2 ∥ T4: DISJOINT файлы (emailTimelineService.js vs routes/calls.js);
+                               оба ждут wave 1 (T2←T1; T4←{T1,T3})
+
+wave 3 (verify):         T5 (verify-mail-mute-001.js real-DB: s1/s2/s4/s7/s12/s13 + explain + neg + sab)
+                             ← строго ПОСЛЕ {T1,T2,T3,T4} (зовёт все реальные слои + route-handler)
+                             · prod-copy прогон (EXPLAIN perf-gate) — deploy-gated: только с явного согласия владельца
+
+(опционально, ∥ любой волне):  T6 (P3 микро-копирайт в help-тексте правил) — НЕ обязательна, owner-consent на текст
+```
+
+**Граф зависимостей:** **{T1 ∥ T3} → {T2 ∥ T4} → T5**; T6 ∥ всё (опционально). Точнее:
+- **wave 1 = {T1, T3} ПАРАЛЛЕЛЬНО** — DISJOINT файлы, ноль зависимости (амендмент #1: задачи с непересекающимися файлами и без dep = одна волна). T1 = сервис-хелперы; T3 = list-SQL. Их сводит T4, не они друг друга.
+- **wave 2 = {T2, T4} ПАРАЛЛЕЛЬНО** — DISJOINT файлы. **T2 после T1** (зовёт `isSenderMuted`). **T4 после {T1, T3}** (fetch'ит `getMutedSenderSet` из T1, передаёт в сигнатуру T3). T2↔T4 файлово не пересекаются (email-service vs route) → параллельны, оба ждут wave 1. Делят `tests/listPaginationByContact.test.js`? — нет: T2 правит `tests/emailTimelineInbound.test.js`, T4+T3 делят `tests/listPaginationByContact.test.js` (append-only, координировать T3/T4-вставку).
+- **wave 3 = T5** строго после {T1,T2,T3,T4} (real-DB зовёт все 4 слоя + route-handler; house-lesson: мокнутый jest не доказывает P0 SQL-suppression/isolation/perf).
+
+**Параллелизм-резюме:** две параллельные волны по 2 задачи ({T1∥T3}, затем {T2∥T4}), затем одиночный verify (T5). **Верификационная задача — T5** (собственная, real-DB + EXPLAIN perf-gate на prod-copy, после всех code-задач). **UI-задача — НЕТ обязательной** (фича реюзит существующий UI правил-исключений — единственный user-facing surface, owner-решение; добавлена лишь **опциональная P3 T6** микро-копирайта, чётко помеченная не-обязательной). **Миграций НЕТ** (max=155; 156 не используется — read/route-слой + guarded-suppression поверх существующих таблиц/индексов). **Три P0 real-DB gate** (I01 email-only drop-out, I04 channel-split ranking, I07 cross-tenant isolation) **+ P0 perf-gate I09** (EXPLAIN no-Seq-Scan / ~0.3s parity) — красный на любом блокирует релиз. Back-compat: пустой muted-набор (`ANY(empty)=false`) ⇒ ноль изменения поведения для всех прочих `getUnifiedTimelinePage`-callers и когда нечего мьютить. Fail-open везде (FR-10). Деплой в прод — только с явного «да» владельца (standing rule).

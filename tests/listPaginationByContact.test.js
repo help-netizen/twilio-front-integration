@@ -72,11 +72,15 @@ describe('getUnifiedTimelinePage — SQL shape', () => {
         expect(sql).toContain('ce.email_normalized = lower(trim(em.from_email))');
     });
 
-    it('last_interaction_at = GREATEST over all THREE channels', async () => {
+    it('last_interaction_at = GREATEST over all THREE channels (email term gated by MAIL-MUTE-001)', async () => {
         const [sql] = await run();
+        // MAIL-MUTE-001 wraps ONLY the email term in `CASE WHEN NOT em.email_muted …`
+        // so a muted email no longer bumps ordering; call/SMS terms are unchanged.
         expect(sql).toContain(
-            'GREATEST(latest_call.started_at, sms.last_message_at, eml.last_message_at)'
+            'GREATEST(latest_call.started_at, sms.last_message_at, CASE WHEN NOT em.email_muted THEN eml.last_message_at END)'
         );
+        // Call & SMS remain the first two GREATEST args, byte-for-byte.
+        expect(sql).toContain('GREATEST(latest_call.started_at, sms.last_message_at,');
     });
 
     it('any_unread rolls up timeline + sms + email + contact', async () => {
@@ -102,9 +106,11 @@ describe('getUnifiedTimelinePage — SQL shape', () => {
         expect(order).toContain('tl.action_required_set_at END DESC NULLS LAST');
         // Band 2: any-unread
         expect(order).toContain('tl.has_unread = true');
-        // Band 3: recency
+        // Band 3: recency — the ORDER-BY GREATEST mirrors the SELECT exactly, so the
+        // email term is likewise gated by MAIL-MUTE-001 (ranking must not desync from
+        // the reported last_interaction_at); call/SMS terms unchanged.
         expect(order).toContain(
-            'GREATEST(latest_call.started_at, sms.last_message_at, eml.last_message_at) DESC'
+            'GREATEST(latest_call.started_at, sms.last_message_at, CASE WHEN NOT em.email_muted THEN eml.last_message_at END) DESC'
         );
         // Deterministic final tiebreak
         expect(order.trimEnd().endsWith('tl.id DESC') || order.includes('tl.id DESC\n')).toBe(true);
@@ -287,6 +293,106 @@ describe('getUnifiedTimelinePage — SQL shape', () => {
     });
 });
 
+// ─── MAIL-MUTE-001 — mutedEmails/mutedDomains plumbing (TC-MM-U23) ─────────────
+//
+// SCOPE OF THESE CASES (be honest — LIST-PAGINATION-001 lesson): db is MOCKED, so
+// these assert only the emitted SQL STRING and the bound PARAM SHAPE — that the two
+// new params bind as $4/$5, that the `email_muted` scalar + the five gated email
+// terms are present, and that DEFAULTED calls stay byte-compatible so other
+// getUnifiedTimelinePage callers don't regress. They CANNOT prove the suppression
+// actually works (that timeline 2915 left the page, that a call still ranked a
+// phone+email contact above its gated email, or that company B was isolated) —
+// that is validated by T5's real-DB verify script (scripts/verify-mail-mute-001.js),
+// NOT by a green mocked run. A green pass here does NOT satisfy AC-2/AC-3/AC-7/AC-11.
+describe('getUnifiedTimelinePage — MAIL-MUTE-001 muted-set plumbing', () => {
+    async function run(opts = {}) {
+        db.query.mockResolvedValue({ rows: [] });
+        await timelinesQueries.getUnifiedTimelinePage({
+            limit: 50, offset: 0, companyId: COMPANY_A, ...opts,
+        });
+        return db.query.mock.calls[0]; // [sql, params]
+    }
+
+    it('TC-MM-U23: default params → mutedEmails/mutedDomains bind empty text[] at $4/$5', async () => {
+        const [sql, params] = await run(); // NO muted params (sync/other caller)
+        // $1 companyId, $2 limit, $3 offset, then the two new muted params.
+        expect(params[0]).toBe(COMPANY_A);
+        expect(params[1]).toBe(50);
+        expect(params[2]).toBe(0);
+        expect(params[3]).toEqual([]); // $4 mutedEmails
+        expect(params[4]).toEqual([]); // $5 mutedDomains
+        // …and the SQL references them positionally as $4 / $5.
+        expect(sql).toContain('lower(co.email) = ANY($4)');
+        expect(sql).toContain("split_part(lower(co.email), '@', 2) = ANY($5)");
+    });
+
+    it('TC-MM-U23: the email_muted scalar is computed once in an em LATERAL (referenceable in WHERE/ORDER BY)', async () => {
+        const [sql] = await run();
+        // A single LATERAL exposes `email_muted` by name (a SELECT-list alias is not
+        // visible in WHERE/ORDER BY in Postgres), checking BOTH co.email and the
+        // contact_emails set via a PK-indexed EXISTS on contact_id.
+        expect(sql).toContain(') AS email_muted');
+        expect(sql).toContain(') em ON true');
+        expect(sql).toContain('SELECT 1 FROM contact_emails ce2');
+        expect(sql).toContain('WHERE ce2.contact_id = tl.contact_id');
+        expect(sql).toContain('ce2.email_normalized = ANY($4)');
+        expect(sql).toContain("split_part(ce2.email_normalized, '@', 2) = ANY($5)");
+    });
+
+    it('TC-MM-U23: exactly the FIVE email terms are gated with NOT em.email_muted', async () => {
+        const [sql] = await run();
+        // Strip -- line comments so we count real SQL sites, not the prose that also
+        // mentions email_muted in explanatory comments.
+        const code = sql.replace(/--[^\n]*/g, '');
+        // (1) SELECT last_interaction_at GREATEST email term
+        // (5) ORDER BY recency GREATEST email term  → the CASE appears twice.
+        expect((code.match(/CASE WHEN NOT em\.email_muted THEN eml\.last_message_at END/g) || []).length).toBe(2);
+        // (2) SELECT any_unread email term + (4) ORDER BY unread-tier email term
+        //     → the gated unread expression appears twice.
+        expect((code.match(/COALESCE\(eml\.unread_count, 0\) > 0 AND NOT em\.email_muted/g) || []).length).toBe(2);
+        // (3) surfacing predicate email term.
+        expect(code).toContain('(eml.email_thread_id IS NOT NULL AND NOT em.email_muted)');
+    });
+
+    it('TC-MM-U23: DEFAULTED path is byte-compatible — the five email terms exist regardless of the set', async () => {
+        const [sql] = await run(); // empty set
+        // The gated terms are present even with nothing muted; ANY(ARRAY[]::text[])
+        // is false at runtime, so email_muted is always false → today's behavior.
+        expect(sql).toContain('CASE WHEN NOT em.email_muted THEN eml.last_message_at END');
+        expect(sql).toContain('(eml.email_thread_id IS NOT NULL AND NOT em.email_muted)');
+        // Call/SMS/task/dedup/pagination anchors are untouched (protected).
+        expect(sql).toContain('sms.sms_conversation_id IS NOT NULL');
+        expect(sql).toContain('COUNT(*) OVER() AS total_count');
+        expect(sql).toContain('LIMIT $2 OFFSET $3');
+        expect(sql).toContain('AND NOT (');
+    });
+
+    it('TC-MM-U23: non-empty muted params are passed through positionally to $4/$5', async () => {
+        const emails = ['customerservice@relyhome.com'];
+        const domains = ['relyhome.com'];
+        const [, params] = await run({ mutedEmails: emails, mutedDomains: domains });
+        expect(params[3]).toEqual(emails);
+        expect(params[4]).toEqual(domains);
+        // companyId must NEVER be interpolated into the SQL text (still parameterized).
+        const [sql] = db.query.mock.calls[0];
+        expect(sql).not.toContain(COMPANY_A);
+    });
+
+    it('TC-MM-U23: with a search term, muted params keep $4/$5 and search shifts to $6+', async () => {
+        const [sql, params] = await run({ search: 'Acme', mutedEmails: ['a@b.com'], mutedDomains: [] });
+        // The muted params still occupy $4/$5…
+        expect(params[3]).toEqual(['a@b.com']);
+        expect(params[4]).toEqual([]);
+        expect(sql).toContain('lower(co.email) = ANY($4)');
+        // …and the first search text param lands at $6 (the params.length + 1 idiom
+        // stays dynamic — muted binds happen BEFORE the search growth).
+        expect(params[5]).toBe('%Acme%');
+        expect(sql).toContain('co.full_name ILIKE $6');
+        // Email subject search still references the CTE alias (unchanged path).
+        expect(sql).toContain('eml.email_subject ILIKE $6');
+    });
+});
+
 // ─── Layer 2: route ───────────────────────────────────────────────────────────
 
 // Mock the query facade the route calls; leadsService kept inert.
@@ -296,6 +402,15 @@ jest.mock('../backend/src/db/queries', () => ({
 }));
 jest.mock('../backend/src/services/leadsService', () => ({
     getLeadsByPhones: jest.fn(async () => ({})),
+}));
+// MAIL-MUTE-001 (T4): the route resolves the per-company muted sender set from
+// mailAgentService before querying. Mock it at the module boundary (as with the
+// queries facade above) so the route tests can assert it is called with the
+// request's company and that its {emails,domains} are forwarded — WITHOUT pulling
+// in the real service's DB/settings reads. Default = empty set (feature-off).
+const mockGetMutedSenderSet = jest.fn(async () => ({ emails: [], domains: [] }));
+jest.mock('../backend/src/services/mailAgentService', () => ({
+    getMutedSenderSet: (...a) => mockGetMutedSenderSet(...a),
 }));
 
 function request(app, method, path) {
@@ -355,19 +470,30 @@ function row(i, over = {}) {
 }
 
 describe('GET /api/calls/by-contact — route', () => {
-    beforeEach(() => mockGetUnifiedTimelinePage.mockReset());
+    beforeEach(() => {
+        mockGetUnifiedTimelinePage.mockReset();
+        // MAIL-MUTE-001 (T4): reset to the fail-open default (empty set) each test.
+        mockGetMutedSenderSet.mockReset();
+        mockGetMutedSenderSet.mockResolvedValue({ emails: [], domains: [] });
+    });
 
     it('tenant guard: no company context → 401 and NO page query', async () => {
         const res = await request(callsApp({ company: null }), 'GET', '/api/calls/by-contact');
         expect(res.status).toBe(401);
         expect(mockGetUnifiedTimelinePage).not.toHaveBeenCalled();
+        // MAIL-MUTE-001 (T4, TC-MM-U13): the muted-set fetch is gated behind the same
+        // tenant guard — a missing company must not even resolve the muted set.
+        expect(mockGetMutedSenderSet).not.toHaveBeenCalled();
     });
 
-    it('passes limit/offset/companyId/search through to the unified query', async () => {
+    it('passes limit/offset/companyId/search + muted sets through to the unified query', async () => {
         mockGetUnifiedTimelinePage.mockResolvedValue([]);
         await request(callsApp(), 'GET', '/api/calls/by-contact?limit=50&offset=50&search=bob');
+        // MAIL-MUTE-001 (T4): the call now also carries mutedEmails/mutedDomains
+        // (empty here — nothing muted) ALONGSIDE the pre-existing four args.
         expect(mockGetUnifiedTimelinePage).toHaveBeenCalledWith({
             limit: 50, offset: 50, companyId: COMPANY_A, search: 'bob',
+            mutedEmails: [], mutedDomains: [],
         });
     });
 
@@ -523,6 +649,75 @@ describe('GET /api/calls/by-contact — route', () => {
     it('403 without pulse.view / reports.calls.view', async () => {
         const res = await request(callsApp({ permissions: [] }), 'GET', '/api/calls/by-contact');
         expect(res.status).toBe(403);
+    });
+
+    // ─── MAIL-MUTE-001 (T4) — route wires getMutedSenderSet → getUnifiedTimelinePage ──
+    // SCOPE (honest, per LIST-PAGINATION-001): mailAgentService is MOCKED, so these
+    // prove only the WIRING — that the route resolves the muted set with the request's
+    // OWN company and forwards {emails,domains} into the query as mutedEmails/mutedDomains,
+    // and that a mute-resolution failure is fail-open (empty set, no 500). They do NOT
+    // prove real suppression (timeline drop-out / channel-split / cross-tenant); that is
+    // T5's real-DB verify script (scripts/verify-mail-mute-001.js). Maps to TC-MM-U14.
+
+    it('TC-MM-U14: getMutedSenderSet is called EXACTLY once with req.companyFilter.company_id', async () => {
+        mockGetUnifiedTimelinePage.mockResolvedValue([]);
+        await request(callsApp(), 'GET', '/api/calls/by-contact');
+        expect(mockGetMutedSenderSet).toHaveBeenCalledTimes(1);
+        // Company scoping: the muted set is fetched with the request's company
+        // (req.companyFilter.company_id) — NEVER crm_users.company_id / a global.
+        expect(mockGetMutedSenderSet).toHaveBeenCalledWith(COMPANY_A);
+    });
+
+    it('TC-MM-U14: the resolved muted set is forwarded as mutedEmails/mutedDomains alongside the existing args', async () => {
+        const emails = ['customerservice@relyhome.com'];
+        const domains = ['relyhome.com'];
+        mockGetMutedSenderSet.mockResolvedValue({ emails, domains });
+        mockGetUnifiedTimelinePage.mockResolvedValue([]);
+        await request(callsApp(), 'GET', '/api/calls/by-contact?limit=25&offset=75&search=vendor');
+        // The muted set (from getMutedSenderSet's {emails,domains}) rides ALONGSIDE
+        // the pre-existing limit/offset/companyId/search — nothing dropped or renamed.
+        expect(mockGetUnifiedTimelinePage).toHaveBeenCalledWith({
+            limit: 25, offset: 75, companyId: COMPANY_A, search: 'vendor',
+            mutedEmails: emails, mutedDomains: domains,
+        });
+    });
+
+    it('TC-MM-U14: per-request company scoping — a DIFFERENT tenant resolves ITS OWN muted set', async () => {
+        const COMPANY_B = '00000000-0000-0000-0000-00000000000b';
+        mockGetUnifiedTimelinePage.mockResolvedValue([]);
+        await request(callsApp({ company: COMPANY_B }), 'GET', '/api/calls/by-contact');
+        // The muted set is keyed on the request's company, so company B's request
+        // fetches company B's set — never company A's (multi-tenant isolation).
+        expect(mockGetMutedSenderSet).toHaveBeenCalledWith(COMPANY_B);
+        expect(mockGetUnifiedTimelinePage).toHaveBeenCalledWith(
+            expect.objectContaining({ companyId: COMPANY_B })
+        );
+    });
+
+    it('TC-MM-U14: envelope shape is UNCHANGED with a non-empty muted set (rows may just be fewer)', async () => {
+        mockGetMutedSenderSet.mockResolvedValue({ emails: ['a@b.com'], domains: [] });
+        mockGetUnifiedTimelinePage.mockResolvedValue([row(1)]);
+        const res = await request(callsApp(), 'GET', '/api/calls/by-contact?limit=50&offset=0');
+        expect(res.status).toBe(200);
+        expect(Object.keys(res.body).sort()).toEqual(
+            ['conversations', 'leads_map', 'limit', 'offset', 'total'].sort()
+        );
+    });
+
+    it('TC-MM-U14: fail-open — getMutedSenderSet REJECTS → route still 200s, empty set forwarded, page still queried', async () => {
+        // Belt-and-suspenders: getMutedSenderSet is already fail-open (T1), but even a
+        // hard reject must NOT 500 the route or skip the page query. The route awaits
+        // it, so a rejection would surface here unless the muting is defended.
+        mockGetMutedSenderSet.mockRejectedValue(new Error('settings boom'));
+        mockGetUnifiedTimelinePage.mockResolvedValue([]);
+        const res = await request(callsApp(), 'GET', '/api/calls/by-contact');
+        expect(res.status).toBe(200);
+        expect(res.body.total).toBe(0);
+        // The list is still queried (feature-off), and with the fail-open empty set.
+        expect(mockGetUnifiedTimelinePage).toHaveBeenCalledTimes(1);
+        expect(mockGetUnifiedTimelinePage).toHaveBeenCalledWith(
+            expect.objectContaining({ mutedEmails: [], mutedDomains: [] })
+        );
     });
 
     // ─── EMAIL-OUTBOUND-001 — outbound-first rows through the route (TC-EO-U08…U10) ──

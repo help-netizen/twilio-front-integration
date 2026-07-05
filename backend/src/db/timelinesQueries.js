@@ -378,10 +378,16 @@ async function findOrCreateTimelineByContact(contactId, companyId = null, client
  * @returns {Promise<Array>} unified rows (already ordered); each carries
  *   total_count for the envelope.
  */
-async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, search = null } = {}) {
+async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, search = null, mutedEmails = [], mutedDomains = [] } = {}) {
     // $1 companyId, $2 limit, $3 offset. companyId is always param $1 so the
     // company scope is present on every code path (hard requirement).
-    const params = [companyId, limit, offset];
+    // MAIL-MUTE-001: $4 = mutedEmails (text[]), $5 = mutedDomains (text[]).
+    // Both default to [] so every existing caller (LIST-PAGINATION-001 sync
+    // callers, etc.) is byte-for-byte unaffected — an empty set makes
+    // `email_muted` always false (ANY(ARRAY[]::text[]) = false) → zero behavior
+    // change when nothing is muted. Bound BEFORE the search params so any search
+    // terms shift to $6+ via the existing `params.length + 1` idiom (unchanged).
+    const params = [companyId, limit, offset, mutedEmails, mutedDomains];
 
     let searchFilter = '';
     if (search && String(search).trim().length > 0) {
@@ -496,9 +502,16 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
              eml.last_message_at as email_last_message_at,
              eml.last_message_direction as email_last_message_direction,
              eml.unread_count as email_unread_count,
-             GREATEST(latest_call.started_at, sms.last_message_at, eml.last_message_at) AS last_interaction_at,
+             -- MAIL-MUTE-001: expose the per-row mute flag (computed once in the
+             -- em LATERAL below) so consumers can inspect it; also referenced by
+             -- name in the surfacing WHERE and the ORDER BY (Postgres forbids
+             -- referencing a SELECT-list alias there, hence the LATERAL).
+             em.email_muted AS email_muted,
+             -- MAIL-MUTE-001: a muted email must not bump ordering — drop its
+             -- last_message_at from the GREATEST when email_muted.
+             GREATEST(latest_call.started_at, sms.last_message_at, CASE WHEN NOT em.email_muted THEN eml.last_message_at END) AS last_interaction_at,
              (tl.has_unread OR COALESCE(sms.has_unread, false)
-              OR COALESCE(eml.unread_count, 0) > 0 OR COALESCE(co.has_unread, false)) AS any_unread,
+              OR (COALESCE(eml.unread_count, 0) > 0 AND NOT em.email_muted) OR COALESCE(co.has_unread, false)) AS any_unread,
              COUNT(*) OVER() AS total_count
          FROM timelines tl
          LEFT JOIN contacts co ON tl.contact_id = co.id
@@ -536,6 +549,30 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
              LIMIT 1
          ) sms ON true
          LEFT JOIN email_by_contact eml ON eml.contact_id = tl.contact_id
+         -- MAIL-MUTE-001: compute the per-row email_muted scalar ONCE here so it
+         -- can be referenced by name in the SELECT, the surfacing WHERE, and the
+         -- ORDER BY (a SELECT-list alias is not visible in WHERE/ORDER BY). The
+         -- muted set ($4 emails / $5 domains) was parsed from THIS company's
+         -- settings, and this only ever evaluates on rows already scoped by
+         -- tl.company_id = $1 (FR-7). email_muted is TRUE when the contact's own
+         -- co.email -- or ANY of its contact_emails.email_normalized -- is an
+         -- exact member of the muted emails set, OR its domain part is a member of
+         -- the muted domains set. Empty sets => ANY(ARRAY[]::text[]) = false =>
+         -- email_muted is always false (feature-off parity, no plan change). The
+         -- EXISTS is a PK-indexed lookup on contact_emails(contact_id) -- no regex,
+         -- no Seq Scan (PULSE-PERF-001 discipline).
+         LEFT JOIN LATERAL (
+             SELECT (
+                 lower(co.email) = ANY($4)
+                 OR split_part(lower(co.email), '@', 2) = ANY($5)
+                 OR EXISTS (
+                      SELECT 1 FROM contact_emails ce2
+                      WHERE ce2.contact_id = tl.contact_id
+                        AND ( ce2.email_normalized = ANY($4)
+                           OR split_part(ce2.email_normalized, '@', 2) = ANY($5) )
+                    )
+             ) AS email_muted
+         ) em ON true
          WHERE tl.company_id = $1
            -- Surfacing predicate: a timeline appears if it has ANY signal. This
            -- mirrors the pre-rewrite /by-contact WHERE exactly, including
@@ -546,7 +583,12 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
            -- band below pins exactly those rows.
            AND (latest_call.id IS NOT NULL
                 OR sms.sms_conversation_id IS NOT NULL
-                OR eml.email_thread_id IS NOT NULL
+                -- MAIL-MUTE-001: a muted email no longer surfaces the timeline, so
+                -- an email-ONLY muted contact (no call/SMS/task/unread) drops out
+                -- of the list entirely — and, because it fails this predicate, it
+                -- never enters the COUNT(*) OVER() window either (page stays
+                -- <= limit; pagination integrity — FR-5).
+                OR (eml.email_thread_id IS NOT NULL AND NOT em.email_muted)
                 OR open_task.id IS NOT NULL
                 OR tl.is_action_required = true OR tl.has_unread = true)
            -- Orphan-shadow dedup (done in SQL, BEFORE the LIMIT, so the page stays
@@ -588,14 +630,17 @@ async function getUnifiedTimelinePage({ limit = 50, offset = 0, companyId, searc
                  AND (tl.snoozed_until IS NULL OR tl.snoozed_until <= now())
                 THEN 0
                 WHEN tl.has_unread = true OR COALESCE(sms.has_unread, false) = true
-                     OR COALESCE(eml.unread_count, 0) > 0 OR COALESCE(co.has_unread, false) = true
+                     OR (COALESCE(eml.unread_count, 0) > 0 AND NOT em.email_muted) OR COALESCE(co.has_unread, false) = true
                 THEN 1
                 ELSE 2
            END ASC,
            CASE WHEN open_task.id IS NOT NULL
                  AND (tl.snoozed_until IS NULL OR tl.snoozed_until <= now())
                 THEN tl.action_required_set_at END DESC NULLS LAST,
-           GREATEST(latest_call.started_at, sms.last_message_at, eml.last_message_at) DESC NULLS LAST,
+           -- MAIL-MUTE-001: mirror the SELECT last_interaction_at exactly (drop a
+           -- muted email's last_message_at) -- otherwise the recency rank would
+           -- desync from the value the row reports.
+           GREATEST(latest_call.started_at, sms.last_message_at, CASE WHEN NOT em.email_muted THEN eml.last_message_at END) DESC NULLS LAST,
            tl.id DESC
          LIMIT $2 OFFSET $3`,
         params

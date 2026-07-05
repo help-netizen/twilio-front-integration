@@ -2793,6 +2793,114 @@ Not a duplicate — it makes an existing-but-invisible state usable. Adjacent sh
 - **EMAIL-TIMELINE-001 / EMAIL-OUTBOUND-001 / LIST-PAGINATION-001** already surface an email-only conversation in the Pulse unified list (via the email signal / `email_by_contact` CTE), and the contact may already exist (auto-created from an inbound email, or via CONTACT-EMAIL-MERGE-001). But the **Pulse detail card is phone-gated**: `PulsePage.tsx` (~line 361) renders the whole Lead/Contact/Wizard tri-state only when `!isAnonTimeline && (p.contactId || p.timelineId) && p.phone` — and `p.phone` is `''` for an email-only timeline, so an email-only contact shows **no card at all** (no identity, no actions, no way to create a lead). That is the PART A gap.
 - **Leads are phone-born.** `CreateLeadJobWizard` (the Pulse "New Lead" wizard) takes a mandatory `phone` prop, initializes its phone field from it, and puts `Phone: toE164(phoneNumber)` into the create payload (and hardcodes `phone` into the ZB customer payload on the with-job leg). `CreateLeadDialog` (the manual reference form) has an Email field but marks `Phone` `required` and validates on it. There is **no way to create a lead from an email without a phone**. That is the PART B gap.
 - **Schema is already ready — no storage migration needed.** `leads.phone` is NULLABLE (mig 004), `leads.email` exists (VARCHAR 200), `leads.contact_id` + `idx_leads_contact_id` exist (mig 023). A phoneless, email-origin lead is **storable today**; only the write-path validation, the create wizard, and the lookup block it.
+
+## MAIL-MUTE-001: excluding a sender in Mail Secretary also mutes that sender's EMAIL signal in the Pulse timeline (email channel only; calls/SMS unaffected)
+
+**Status:** Requirements · **Priority:** P1 · **Date:** 2026-07-05 · **Owner:** Mail Secretary / Pulse / Email
+**Type:** feature — backend-only (extend the inbound-email link path to skip Pulse contribution when a sender matches an existing Mail Secretary exclusion rule; make the Pulse unified-list SQL suppress the EMAIL contribution — surfacing, ordering, unread — for muted senders while leaving CALL and SMS contributions intact). **No new user-facing list, no new input type, no new settings field.** The *existing* Mail Secretary exclusion list is the single source of truth; this feature only widens what a match *means*.
+
+### Problem (owner, verbatim intent)
+
+Adding a sender to the Mail Secretary exclusion list today only stops **task creation**. The inbound email is **still linked** to the sender's contact timeline: it marks the timeline **unread** and **bumps it to the top** of the Pulse list. Vendor/no-reply senders (e.g. `customerservice@relyhome.com` → timeline `/pulse/timeline/2915`) therefore keep cluttering the Pulse list even though the operator has explicitly said "ignore this sender."
+
+### BINDING clarified decisions (from the customer interview — these OVERRIDE any conflicting assumption below)
+
+1. **Granularity = the exclusion DSL's `from:` rule, unchanged.** A muted sender is an exact address (`customerservice@relyhome.com`) OR a domain (`@relyhome.com` / `relyhome.com`). This is already how the `from:` rule works (case-insensitive substring match against `"from_name <from_email>"`; both exact and domain-substring already supported). **No new user input type.**
+2. **ONE unified list (critical).** There is **NO** separate "muted senders" list. The **existing** `mail_agent_settings.exclusion_rules` list is the single user-facing list. We EXTEND its meaning: a matching inbound email now ALSO does not update the Pulse timeline (no link / no unread / no bump / no email surfacing), **in addition to** today's "no task."
+3. **Channel-specific (critical).** Muting suppresses **only the EMAIL channel**. The same contact's timeline still surfaces AND bumps on inbound **CALLS** and **SMS** normally. For a phone+email contact, the email signal is suppressed in the list but call/SMS signals remain; for an email-only contact (relyhome / timeline 2915) the only signal is email → the timeline drops out of the list.
+4. **Existing threads auto-hide.** An already-linked timeline of a now-muted sender is hidden from the list automatically (by suppressing the email contribution in the *list query*), and is reversible when the sender is un-excluded. **No separate manual cleanup** ships as part of this feature; historical `email_messages`/`email_threads` rows are **retained, not deleted** (open in the detail view if navigated to directly).
+5. **Agent contact-creation stays blocked for muted senders.** A muted/excluded sender must NOT get a contact auto-created (else the timeline reappears). Already satisfied by the unified approach: the agent returns `skipped_excluded` before its create-contact-for-unknown path.
+6. **Reversible & per-company.** Removing the sender from exclusions restores normal email linking/surfacing. All evaluation and suppression are scoped by `company_id`.
+
+### Duplication check (result)
+
+**Not a duplicate — it is a deliberate cross-cut over two shipped features.** Adjacent features and why none of them cover this:
+
+- **MAIL-AGENT-001 (Mail Secretary, deployed prod 2026-07-03, mig 152)** owns the exclusion list and the DSL (`mailAgentRules`: `from:`/`subject:`/`body:`/`any`, substring or `/regex/i`, `-` negation, quotes, `#` comments). `mailAgentService.reviewInboundEmail` (`backend/src/services/mailAgentService.js` l.99–145) evaluates rules via `safeParseRules(settings.exclusion_rules)` + `matchEmail(...)` and returns `{verdict:'skipped_excluded'}` on a hit — **but that verdict ONLY gates task creation.** It does NOT change linking. This feature reuses that exact match to ALSO gate Pulse contribution.
+- **EMAIL-TIMELINE-001 / EMAIL-OUTBOUND-001 / CONTACT-EMAIL-MERGE-001 / EMAIL-LEAD-ORIGIN-001** make an email conversation a first-class Pulse citizen (`emailTimelineService.linkInboundMessage`, `email_by_contact` CTE, unread + bump). They deliberately *surface* email — none of them provides a per-sender suppression. This feature adds the missing "suppress this sender's email contribution" seam.
+- **LIST-PAGINATION-001** built the single `getUnifiedTimelinePage` query whose email contribution (surfacing predicate, `last_interaction_at`, `any_unread`) is exactly what must become suppressible-per-contact here — without touching the call/SMS contributions it also owns.
+
+There is **no existing "mute" / "suppress sender" feature**; `grep` for `MAIL-MUTE` across `docs/` returns nothing.
+
+### User stories / use cases
+
+1. **US-1 (vendor no-reply, email-only).** As an operator, when I add `customerservice@relyhome.com` (or `@relyhome.com`) to the Mail Secretary exclusion list, future emails from that sender must stop appearing in my Pulse list, and the existing relyhome timeline (2915) must drop out of the list — because its only signal is email.
+2. **US-2 (phone+email contact — keep the human channels).** As an operator, if a contact I do business with by phone/SMS *also* receives muted vendor email at their address, muting must remove only the email clutter: their timeline must still surface and bump when they **call** or **text**.
+3. **US-3 (un-exclude restores).** As an operator, when I remove a sender from the exclusion list, their emails link and surface normally again, and their previously-hidden email-only timeline reappears in the list.
+4. **US-4 (domain vs exact).** As an operator, I can mute one exact address without muting the whole domain, or mute the whole domain — using the same `from:` rule I already use to stop tasks.
+5. **US-5 (no accidental contact spawn).** As an operator, muting a previously-unknown sender must not cause a contact/timeline to be auto-created for them by the agent.
+
+### Functional requirements
+
+- **FR-1 — Reuse the existing exclusion match; no new list/field.** Muting is driven entirely by `mail_agent_settings.exclusion_rules` via the existing `mailAgentRules` `from:` semantics. No new column, no new UI list, no new input type is introduced for the *user*. (A derived, queryable representation MAY be added for the SQL path — see Constraint C-1 — but it is not user-facing.)
+- **FR-2 — Suppress inbound email→timeline link for muted senders.** In `emailTimelineService.linkInboundMessage` (`backend/src/services/email/emailTimelineService.js` l.89–235), when the sender matches an active exclusion rule for that `companyId`, add an early return of the same shape as the existing branches (e.g. `{skipped:'muted_sender'}`) **before** `findOrCreateTimelineByContact` / `markContactUnread` / `markTimelineUnread`. No link row for the email, no unread flip, no bump.
+- **FR-3 — Do not auto-create a contact for muted senders.** Ensure the agent's create-contact-for-unknown-sender path is not reached for a muted sender (already guaranteed by `skipped_excluded` preceding contact creation — verify and keep). A muted first-time sender must NOT materialize a contact/timeline.
+- **FR-4 — Suppress ONLY the EMAIL contribution in the Pulse unified list.** In `getUnifiedTimelinePage` (`backend/src/db/timelinesQueries.js`, ~l.381–580), the EMAIL contribution must be suppressed **per contact** for muted senders while CALL and SMS contributions remain: (a) drop `eml.email_thread_id IS NOT NULL` from the surfacing predicate (l.547–551) for muted contacts; (b) exclude the email term from `last_interaction_at = GREATEST(latest_call.started_at, sms.last_message_at, eml.last_message_at)` (l.499) for muted contacts; (c) exclude `COALESCE(eml.unread_count,0) > 0` from `any_unread` (l.500–501) for muted contacts. Calls (`latest_call`), SMS (`sms` lateral), open tasks, `is_action_required`, and `tl.has_unread` contributions are **untouched**.
+- **FR-5 — Channel-specific drop-out for email-only timelines.** A timeline whose ONLY signal is email from a muted sender must not satisfy the surfacing predicate → it does not appear in the list. A timeline that also has a call/SMS/open-task/`has_unread` signal remains, ranked by its non-email signals only.
+- **FR-6 — Reversible.** Removing the sender from `exclusion_rules` immediately (subject to the settings/derived-set refresh, see C-1) restores link-on-inbound and list surfacing; the historical timeline reappears because its retained email rows again contribute.
+- **FR-7 — Per-company scoping.** Exclusion evaluation and list suppression MUST be scoped by `company_id`. A mute in company A never suppresses email in company B (the Pulse query is already `WHERE tl.company_id = $1`; the muted-sender set MUST be company-scoped too).
+- **FR-8 — Idempotency / redelivery.** A redelivered or duplicate inbound email for a muted sender must remain suppressed (no link, no unread) and must not create a contact — consistent with the existing provider-message-id dedup; muting must not weaken dedup.
+- **FR-9 — Historical rows are retained, not deleted.** Suppression is a *query-time* hide, not a data mutation. Existing `email_messages`/`email_threads`/link rows for a now-muted sender are preserved and remain reachable in the detail view if opened directly; only *list* surfacing/unread/bump are suppressed.
+- **FR-10 — Fail-open on mute evaluation.** If the muted-sender check fails (parse error, missing settings, DB error), the pipeline MUST behave as today (link + surface as normal) rather than dropping or erroring the email — mirroring MAIL-AGENT-001's "never throw from the link pipeline" contract. Muting is best-effort clutter-reduction, never a delivery/data-loss risk.
+
+### Edge cases (explicit)
+
+- **Phone+email contact** → email suppressed in list; **call/SMS still surface and bump** (FR-4/FR-5). ✔
+- **Email-only contact (relyhome / 2915)** → drops out of the list entirely while muted (FR-5). ✔
+- **Un-exclude** → normal linking/surfacing restored, historical timeline reappears (FR-6). ✔
+- **Domain vs exact** → `@relyhome.com` mutes all `*@relyhome.com`; `customerservice@relyhome.com` mutes only that address (FR-1). ✔
+- **Negation / complex DSL** → a sender matched by a `from:` rule but rescued by a `-` negation on the SAME line is NOT muted (mute follows `matchEmail`'s final `excluded` verdict exactly — no divergent mute logic). ✔
+- **Multi-tenant** → mute is company-scoped; no cross-tenant suppression (FR-7). ✔
+- **Redelivery/duplicate** → stays suppressed, no contact spawned (FR-8). ✔
+- **Outbound reply to a muted sender** → out of scope for suppression; the existing outbound/`draft_or_sent` branches already govern the agent-side projection. If an operator emails a muted address, that is a human action; this feature does not force-surface or force-hide it beyond current EMAIL-OUTBOUND-001 behavior. (Flag for Architect to confirm desired outbound posture — see Open questions OQ-MM-2.)
+- **Mid-thread mute** → older emails already linked stay in history (FR-9) but stop contributing to the list once muted; new inbound stops linking (FR-2).
+
+### Non-functional requirements
+
+- **NFR-1 — No Pulse-list latency regression.** `getUnifiedTimelinePage` is the hot Pulse path (PULSE-PERF-001: it was tuned from 8.4s→0.3s with digit indexes). The muted-sender suppression MUST be added without reintroducing a Seq Scan or a per-row regex/CTE blow-up; verify with `EXPLAIN` against a prod-DB copy (methodology per PULSE-PERF-001), not mocked jest.
+- **NFR-2 — Bounded per-email overhead.** The mute check on the inbound path must reuse the already-cached settings (`mailAgentService.getActiveState` caches settings ~60s per company) rather than re-reading `mail_agent_settings` on every email.
+- **NFR-3 — Data-safe.** No destructive migration on historical email data; suppression is reversible and query-time (FR-9).
+- **NFR-4 — Consistency between the two seams.** The inbound-link suppression (JS/DSL) and the list suppression (SQL) MUST agree on "who is muted" for a given company, so a sender never links-but-hides or hides-but-links inconsistently.
+
+### Constraints & dependencies (for the Architect — DO NOT solve here)
+
+- **C-1 (the core tension — flagged as a dependency).** Exclusion rules are evaluated in **JS** (`mailAgentRules` DSL), but the Pulse surfacing is **SQL** (`getUnifiedTimelinePage`). Suppressing the email contribution in SQL based on a JS-DSL requires a **derived, queryable "muted-sender" representation** (e.g. a materialized/derived set of muted email addresses or domains per company kept in sync from `exclusion_rules`, or a per-email `muted` marker stamped at link time on the email/link row). Which representation, how it stays in sync with `exclusion_rules` edits (FR-6 reversibility), and whether it needs migration **156** (next available; latest in repo = **155**) is an **Architect decision** — do not solve in requirements. This is the single biggest design risk; call it out first.
+- **C-2 — Reuse `matchEmail`, don't fork mute logic.** The mute decision MUST be the exact `excluded` verdict from `mailAgentRules.matchEmail` (including negation/regex/quotes), so behavior can never diverge from what the operator sees the exclusion list doing for tasks.
+- **C-3 — Migration numbering.** IF a derived-set/marker needs schema, next migration = **156** (with matching `rollback_156_*.sql`); latest present = **155**.
+- **C-4 — Gate on Mail Secretary being connected.** Muting semantics only apply when the `mail-secretary` marketplace app is connected/enabled for the company (the exclusion list only exists then). When not connected, behavior is exactly today's (email links & surfaces normally).
+
+### Involved modules (per architecture.md)
+
+- **`backend/src/services/email/emailTimelineService.js`** — `linkInboundMessage` gains a `muted_sender` early return (FR-2/FR-3).
+- **`backend/src/services/mailAgentService.js`** + **`backend/src/services/mailAgentRules.js`** — source of the mute verdict (`safeParseRules` + `matchEmail`); possibly the place that maintains the derived muted-sender set (C-1).
+- **`backend/src/db/timelinesQueries.js`** — `getUnifiedTimelinePage` email-contribution suppression (FR-4/FR-5) + the mark-unread helpers must not flip unread for muted inbound.
+- **`backend/src/db/mailAgentQueries.js`** / **`mail_agent_settings`** (mig 152) — settings/`exclusion_rules` source; any derived-set persistence.
+- **`backend/db/migrations/156_*.sql`** — only if C-1's representation needs schema.
+
+### Integrations affected
+
+- **Email providers (Gmail Pub/Sub push / IMAP via the MailProvider seam)** — the inbound path that feeds `linkInboundMessage`; behavior narrows (muted senders skip linking) but the provider contract is unchanged.
+- **Twilio / telephony (calls & SMS)** — **explicitly UNAFFECTED**; this feature must leave the call and SMS contributions to the Pulse list untouched (the whole point of "channel-specific").
+- **Zenbooker / Front / Stripe / VAPI** — untouched.
+
+### Protected parts (MUST NOT break)
+
+- **The `linkInboundMessage` contract & its existing skip branches** (`no_message`/`outbound`/`draft_or_sent`/`no_contact`) and its "never break the pipeline" posture — the mute return is additive and must not throw (FR-10).
+- **MAIL-AGENT-001 exclusion semantics** — the DSL, `matchEmail`, and today's `skipped_excluded` task-gating behavior stay intact; mute reuses them, never redefines them.
+- **CALL and SMS contributions to `getUnifiedTimelinePage`** — `latest_call`, the `sms` lateral, `open_task`, `is_action_required`, `tl.has_unread`, the orphan-shadow dedup, and pagination correctness (page stays ≤ limit; PULSE-PERF-001 indexes) MUST be preserved exactly.
+- **EMAIL-OUTBOUND-001 / EMAIL-LEAD-ORIGIN-001** surfacing for **non-muted** senders — unchanged.
+- **Tenant isolation** — the muted-sender set and all suppression stay `company_id`-scoped (no cross-tenant leak).
+- **Historical email data** — no deletion/mutation (FR-9); reversibility preserved (FR-6).
+
+### Verification posture
+
+Verify against a **real prod-DB copy**, not mocked jest (LIST-PAGINATION-001 / PULSE-PERF-001 lessons): (a) mute relyhome → confirm timeline 2915 disappears from `getUnifiedTimelinePage` and reappears on un-mute; (b) for a phone+email contact, confirm a new **call/SMS** still surfaces & bumps while a new **email** does not; (c) `EXPLAIN` the modified list query for no Seq-Scan/regex regression; (d) redelivery of a muted email creates no contact and no unread.
+
+### Open questions (for Architect / SpecWriter)
+
+- **OQ-MM-1 — Derived muted-sender representation (C-1).** Materialized set synced from `exclusion_rules`, vs. a `muted` marker stamped on the email/link row at link time, vs. an inline company-scoped address/domain lookup in the SQL. Picks the sync strategy for reversibility (FR-6) and the latency budget (NFR-1). **DECISION OWNER: Architect.**
+- **OQ-MM-2 — Outbound-to-muted-sender posture.** Does an operator's outbound email to a muted address surface the timeline (today's EMAIL-OUTBOUND-001) or stay hidden? Default assumption: leave outbound behavior as-is (mute governs the INBOUND email signal only). **Confirm with Product/Architect.**
+- **OQ-MM-3 — Snooze/refresh latency on rule edits.** Acceptable staleness between editing `exclusion_rules` and the list reflecting it, given the ~60s settings cache (NFR-2). Assumption: ≤ ~60s is fine (matches task-gating today). **Confirm with Product.**
 - **No lead-by-contact_id lookup exists.** Leads are looked up ONLY by phone digits: frontend `useLeadByPhone` / `useLeadsByPhones` (enabled only when a phone is present), backend `leadsService.getLeadByPhone` / `getLeadsByPhones`, routes `GET /api/leads/by-phone/:phone` + `POST /api/leads/by-phones`. So a phoneless contact card **cannot tell whether a lead already exists** for it → it would wrongly offer "create lead" and risk duplicate leads. That is the reason B2 (lead-by-contact_id lookup) is in scope, not optional.
 
 ### Description

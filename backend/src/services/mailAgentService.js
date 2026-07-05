@@ -309,4 +309,86 @@ async function dryRun(companyId, limit = 10) {
     return results;
 }
 
-module.exports = { isActive, reviewInboundEmail, dryRun, invalidateCache };
+/**
+ * MAIL-MUTE-001 — from-only rule subset (DECISION-B).
+ * Keep only rules whose EVERY token targets `field === 'from'`. A line that
+ * mixes `from:` with subject/body/any (or a bare `any` token) is NOT a mute
+ * rule and is dropped whole. Same-line negation tokens (`-from:`) are kept
+ * verbatim — matchEmail honors them when the subset is matched.
+ * @param {{rules:Array}} parsed — output of parseRules / safeParseRules
+ * @returns {Array} the from-only rule lines
+ */
+function fromOnlyRules(parsed) {
+    const rules = (parsed && parsed.rules) || [];
+    return rules.filter(r => r.tokens.length > 0 && r.tokens.every(t => t.field === 'from'));
+}
+
+/**
+ * MAIL-MUTE-001 Contract 1 — is this inbound sender `from:`-muted for the company?
+ * Reuses the ~60s getActiveState cache (no extra mail_agent_settings read, NFR-2),
+ * filters to from-only rules, and delegates to the EXISTING matchEmail (no fork, C-2)
+ * so regex / quoted / same-line negation behave byte-identically to the task path.
+ * Fail-open: any error → false (FR-10). Inactive → false immediately (C-4).
+ * @param {string} companyId
+ * @param {object} msg — normalized inbound (from_name/from_email/subject/body_text)
+ * @returns {Promise<boolean>} true iff a from-only rule matches
+ */
+async function isSenderMuted(companyId, msg) {
+    try {
+        const { active, settings } = await getActiveState(companyId);
+        if (!active || !settings) return false;
+        const parsed = safeParseRules(settings.exclusion_rules);
+        const fromOnly = fromOnlyRules(parsed);
+        if (fromOnly.length === 0) return false;
+        return matchEmail({ rules: fromOnly }, buildRuleInput(msg)).excluded;
+    } catch (e) {
+        console.error('[MailAgent] isSenderMuted failed:', e.message);
+        return false;
+    }
+}
+
+/**
+ * MAIL-MUTE-001 Contract 2 — literal from-only sender set for the Pulse-list SQL.
+ * Projects ONLY literal, non-negated `from:` `contains` tokens (kind==='contains'
+ * && !negate) into { emails, domains }; regex and negated tokens are deliberately
+ * NOT projected (OQ-MM-4 — they mute new inbound via isSenderMuted, but do not
+ * retro-hide an existing thread from the list). Token value is already lower-cased
+ * at parse time. Fail-open: any error / inactive → { emails:[], domains:[] } (FR-10, C-4).
+ * @param {string} companyId
+ * @returns {Promise<{emails:string[], domains:string[]}>}
+ */
+async function getMutedSenderSet(companyId) {
+    try {
+        const { active, settings } = await getActiveState(companyId);
+        if (!active || !settings) return { emails: [], domains: [] };
+        const parsed = safeParseRules(settings.exclusion_rules);
+        const fromOnly = fromOnlyRules(parsed);
+        const emails = new Set();
+        const domains = new Set();
+        for (const rule of fromOnly) {
+            for (const t of rule.tokens) {
+                // Only literal, positive from: tokens can be expressed as SQL membership.
+                if (t.kind !== 'contains' || t.negate) continue;
+                const value = String(t.value || '');
+                if (!value) continue;
+                if (value.startsWith('@')) {
+                    // @host.tld → bare domain.
+                    const domain = value.slice(1);
+                    if (domain) domains.add(domain);
+                } else if (value.includes('@')) {
+                    // local@host.tld → full address.
+                    emails.add(value);
+                } else if (value.includes('.')) {
+                    // bare host.tld → domain. A word with no '@' and no '.' goes nowhere.
+                    domains.add(value);
+                }
+            }
+        }
+        return { emails: [...emails], domains: [...domains] };
+    } catch (e) {
+        console.error('[MailAgent] getMutedSenderSet failed:', e.message);
+        return { emails: [], domains: [] };
+    }
+}
+
+module.exports = { isActive, reviewInboundEmail, dryRun, invalidateCache, isSenderMuted, getMutedSenderSet };

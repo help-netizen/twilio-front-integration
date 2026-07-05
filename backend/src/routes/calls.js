@@ -116,10 +116,28 @@ router.get('/by-contact', async (req, res) => {
         const offset = parseInt(req.query.offset) || 0;
         const search = req.query.search || null;
 
+        // MAIL-MUTE-001: resolve this company's `from:`-derived muted sender set
+        // (literal emails/domains) from the ~60s-cached Mail Secretary settings, so
+        // an excluded vendor's EMAIL signal drops out of the Pulse list. This is the
+        // ONLY caller that passes non-empty muted sets; every other
+        // getUnifiedTimelinePage caller defaults to [] (byte-identical behavior).
+        // getMutedSenderSet is already fail-open (returns an empty set on error /
+        // inactive Mail Secretary); the extra try/catch here keeps the Pulse list
+        // fail-open at the ROUTE boundary too — a mute-resolution failure must never
+        // 500 or drop rows (FR-10 / S9), it just degrades to today's behavior.
+        let mutedEmails = [];
+        let mutedDomains = [];
+        try {
+            ({ emails: mutedEmails, domains: mutedDomains } =
+                await require('../services/mailAgentService').getMutedSenderSet(companyId));
+        } catch (muteErr) {
+            console.warn('[by-contact] muted-sender resolution failed (non-blocking):', muteErr.message);
+        }
+
         // ONE unified, SQL-ordered, offset/limit page across calls + SMS + email.
         // Ordering, unread rollup, dedup (one row per timeline) and `total` all
         // come from SQL — the route no longer over-fetches or re-sorts in JS.
-        const rows = await queries.getUnifiedTimelinePage({ limit, offset, companyId, search });
+        const rows = await queries.getUnifiedTimelinePage({ limit, offset, companyId, search, mutedEmails, mutedDomains });
 
         // total = COUNT(*) OVER() on the unified set (0 rows ⇒ empty page ⇒ 0).
         const total = rows.length > 0 ? parseInt(rows[0].total_count, 10) : 0;

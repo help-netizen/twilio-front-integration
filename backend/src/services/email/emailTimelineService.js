@@ -82,7 +82,7 @@ function toEmailItem(row) {
  * @param {string} companyId
  * @param {import('../mail/MailProvider').NormalizedInboundMessage} msg
  * @returns {Promise<object>} one of:
- *   {skipped:'outbound'|'draft_or_sent'|'no_contact'|'no_message'} |
+ *   {skipped:'outbound'|'draft_or_sent'|'muted_sender'|'no_contact'|'no_message'} |
  *   {linked:true, contactId, timelineId, alreadyLinked?:boolean} |
  *   {error:string}
  */
@@ -102,6 +102,29 @@ async function linkInboundMessage(companyId, msg, opts = {}) {
         }
         if (Array.isArray(msg.labelIds) && msg.labelIds.some(l => SENT_DRAFT_LABELS.has(l))) {
             return { skipped: 'draft_or_sent' };
+        }
+
+        // (a.5) Mute guard (MAIL-MUTE-001, FR-2/FR-3). A `from:`-muted sender (an
+        //     exclusion rule whose every token targets `from`) contributes NOTHING
+        //     to Pulse: bail BEFORE the contact lookup so there is no link, no
+        //     unread, no bump, no SSE — and, crucially, BEFORE the no-contact agent
+        //     branch below (l.114) so a muted first-time sender never auto-creates a
+        //     contact/timeline (S1/S7). Gated on !opts.skipAgent (same gate the agent
+        //     review uses) so the agent's own re-entry is not double-evaluated.
+        //     `isSenderMuted` is already fail-open (returns false on any error /
+        //     inactive agent); the extra try/catch keeps FR-10 airtight — a mute-check
+        //     problem must NOT early-return and must NOT throw out of the pipeline, so
+        //     the email links normally instead.
+        if (!opts.skipAgent) {
+            let muted = false;
+            try {
+                muted = await require('../mailAgentService').isSenderMuted(companyId, msg);
+            } catch (e) {
+                console.error('[EmailTimeline] isSenderMuted failed (fail-open):', e.message);
+            }
+            if (muted) {
+                return { skipped: 'muted_sender' };
+            }
         }
 
         // (b) Contact match (company-scoped + deterministic tie-break upstream).

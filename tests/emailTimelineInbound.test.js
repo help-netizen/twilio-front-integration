@@ -57,12 +57,22 @@ jest.mock('../backend/src/services/realtimeService', () => ({
 jest.mock('../backend/src/services/arConfigHelper', () => ({
     getTriggerConfig: jest.fn(async () => ({ enabled: false })),
 }));
+// MAIL-MUTE-001: the mute guard + no-contact/agent-review paths inline-require
+// mailAgentService. Mock it so isSenderMuted/reviewInboundEmail/isActive are
+// spy-able. Defaults keep today's behaviour: NOT muted, agent inactive, review
+// a no-op — so the pre-MAIL-MUTE cases in this suite are unaffected.
+jest.mock('../backend/src/services/mailAgentService', () => ({
+    isSenderMuted: jest.fn(async () => false),
+    reviewInboundEmail: jest.fn(async () => ({})),
+    isActive: jest.fn(async () => false),
+}));
 
 const emailQueries = require('../backend/src/db/emailQueries');
 const timelinesQueries = require('../backend/src/db/timelinesQueries');
 const queries = require('../backend/src/db/queries');
 const realtimeService = require('../backend/src/services/realtimeService');
 const providerRegistry = require('../backend/src/services/mail/providerRegistry');
+const mailAgentService = require('../backend/src/services/mailAgentService');
 const svc = require('../backend/src/services/email/emailTimelineService');
 
 const COMPANY_A = '00000000-0000-0000-0000-00000000000a';
@@ -320,5 +330,114 @@ describe('ingestPolledForCompany (P1)', () => {
         emailQueries.listUnlinkedInboundForTimeline.mockRejectedValue(new Error('db down'));
         const res = await svc.ingestPolledForCompany(COMPANY_A);
         expect(res).toMatchObject({ company: COMPANY_A, processed: 0, linked: 0, skipped: 0, error: 'db down' });
+    });
+});
+
+// ─── F. MAIL-MUTE-001 — muted-sender early return in linkInboundMessage ───────────
+// The {skipped:'muted_sender'} guard sits AFTER the outbound (l.100) / draft_or_sent
+// (l.103) guards and BEFORE findEmailContact (l.112), gated on !opts.skipAgent. It
+// makes a `from:`-muted inbound email contribute NOTHING to Pulse (no link, no
+// unread, no bump, no SSE) and — because it precedes the no-contact agent path —
+// prevents a muted first-time sender from auto-creating a contact/timeline.
+
+describe('linkInboundMessage — muted-sender guard (MAIL-MUTE-001, P0)', () => {
+    it('TC-MM-U15: muted sender → {skipped:muted_sender} BEFORE contact lookup; no link/unread/bump/SSE', async () => {
+        mailAgentService.isSenderMuted.mockResolvedValue(true);
+        const res = await svc.linkInboundMessage(COMPANY_A, inboundMsg());
+
+        expect(res).toEqual({ skipped: 'muted_sender' });
+        // isSenderMuted was consulted with the ingestion company + the raw msg.
+        expect(mailAgentService.isSenderMuted).toHaveBeenCalledWith(COMPANY_A, expect.objectContaining({
+            from_email: 'alice@example.com',
+        }));
+        // Guard is strictly before l.112 → no contact/timeline/unread/SSE work at all.
+        expect(emailQueries.findEmailContact).not.toHaveBeenCalled();
+        expect(timelinesQueries.findOrCreateTimelineByContact).not.toHaveBeenCalled();
+        expect(emailQueries.linkMessageToContact).not.toHaveBeenCalled();
+        expect(queries.markContactUnread).not.toHaveBeenCalled();
+        expect(timelinesQueries.markTimelineUnread).not.toHaveBeenCalled();
+        expect(realtimeService.publishMessageAdded).not.toHaveBeenCalled();
+    });
+
+    it('TC-MM-U15: outbound/draft guards fire FIRST — isSenderMuted never consulted for them', async () => {
+        // Even if the sender WOULD be muted, an outbound self-send returns its own
+        // skip and the mute check is never reached (order: outbound → draft → mute).
+        mailAgentService.isSenderMuted.mockResolvedValue(true);
+        const out = await svc.linkInboundMessage(COMPANY_A, inboundMsg({ is_outbound: true }));
+        expect(out).toEqual({ skipped: 'outbound' });
+        const draft = await svc.linkInboundMessage(COMPANY_A, inboundMsg({ labelIds: ['DRAFT'] }));
+        expect(draft).toEqual({ skipped: 'draft_or_sent' });
+        expect(mailAgentService.isSenderMuted).not.toHaveBeenCalled();
+    });
+
+    it('TC-MM-U16: NOT muted → normal path (links, flips unread, bumps) — the "off" control', async () => {
+        mailAgentService.isSenderMuted.mockResolvedValue(false);
+        wireMatchAndLink();
+        const res = await svc.linkInboundMessage(COMPANY_A, inboundMsg());
+
+        expect(res).toEqual({ linked: true, contactId: CONTACT, timelineId: TIMELINE });
+        // The guard was a pure pass-through: today's link path runs in full.
+        expect(mailAgentService.isSenderMuted).toHaveBeenCalledTimes(1);
+        expect(emailQueries.findEmailContact).toHaveBeenCalledWith('alice@example.com', COMPANY_A);
+        expect(queries.markContactUnread).toHaveBeenCalledWith(CONTACT, expect.any(Date));
+        expect(timelinesQueries.markTimelineUnread).toHaveBeenCalledWith(TIMELINE);
+    });
+
+    it('TC-MM-U17: guard is gated on !opts.skipAgent — no double-eval on the agent re-entry', async () => {
+        mailAgentService.isSenderMuted.mockResolvedValue(true); // would mute if consulted
+        wireMatchAndLink();
+        // skipAgent:true (the agent's own re-link) → mute check SKIPPED → proceeds to link.
+        const res = await svc.linkInboundMessage(COMPANY_A, inboundMsg(), { skipAgent: true });
+
+        expect(mailAgentService.isSenderMuted).not.toHaveBeenCalled();
+        expect(res).toEqual({ linked: true, contactId: CONTACT, timelineId: TIMELINE });
+        expect(emailQueries.linkMessageToContact).toHaveBeenCalled();
+    });
+
+    it('TC-MM-U18: muted returns BEFORE the no-contact agent path — reviewInboundEmail NEVER called', async () => {
+        mailAgentService.isSenderMuted.mockResolvedValue(true);
+        // Unknown sender: if the guard did NOT precede the no-contact branch, the
+        // service would call reviewInboundEmail(..., {noContact:true}) → create-contact.
+        emailQueries.findEmailContact.mockResolvedValue(null);
+        const res = await svc.linkInboundMessage(COMPANY_A, inboundMsg({ from_email: 'newvendor@relyhome.com' }));
+
+        expect(res).toEqual({ skipped: 'muted_sender' });
+        expect(emailQueries.findEmailContact).not.toHaveBeenCalled();
+        expect(mailAgentService.reviewInboundEmail).not.toHaveBeenCalled();
+    });
+
+    it('TC-MM-U18 (contrast): NOT muted + unknown sender → no-contact agent review DOES fire (existing behaviour preserved)', async () => {
+        mailAgentService.isSenderMuted.mockResolvedValue(false);
+        emailQueries.findEmailContact.mockResolvedValue(null);
+        const res = await svc.linkInboundMessage(COMPANY_A, inboundMsg({ from_email: 'nobody@unknown.com' }));
+
+        expect(res).toEqual({ skipped: 'no_contact' });
+        expect(mailAgentService.reviewInboundEmail).toHaveBeenCalledWith(
+            COMPANY_A, expect.any(Object), { noContact: true }
+        );
+    });
+
+    it('TC-MM-U19: redelivery of a muted email stays skipped and precedes provider-message-id dedup', async () => {
+        mailAgentService.isSenderMuted.mockResolvedValue(true);
+        const r1 = await svc.linkInboundMessage(COMPANY_A, inboundMsg());
+        const r2 = await svc.linkInboundMessage(COMPANY_A, inboundMsg());
+
+        expect(r1).toEqual({ skipped: 'muted_sender' });
+        expect(r2).toEqual({ skipped: 'muted_sender' });
+        // The dedup query (getMessageLinkState) is never reached — the early return
+        // precedes it — so dedup is neither weakened nor mutated for muted senders.
+        expect(emailQueries.getMessageLinkState).not.toHaveBeenCalled();
+        expect(emailQueries.linkMessageToContact).not.toHaveBeenCalled();
+    });
+
+    it('fail-open: isSenderMuted throwing does NOT early-return and does NOT throw out — email still links (FR-10)', async () => {
+        mailAgentService.isSenderMuted.mockRejectedValue(new Error('settings blew up'));
+        wireMatchAndLink();
+        const res = await svc.linkInboundMessage(COMPANY_A, inboundMsg());
+
+        // A mute-check failure must be invisible: the email links as today.
+        expect(res).toEqual({ linked: true, contactId: CONTACT, timelineId: TIMELINE });
+        expect(emailQueries.findEmailContact).toHaveBeenCalledWith('alice@example.com', COMPANY_A);
+        expect(queries.markContactUnread).toHaveBeenCalledWith(CONTACT, expect.any(Date));
     });
 });

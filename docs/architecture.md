@@ -3893,3 +3893,130 @@ There is **no** `Scheduled` state in this FSM; a booked-but-not-started job is `
 - **C — OQ-V3-4 (secure-link sender).** Which number/sender texts the estimate/invoice link (SEND-DOC-001 channel)? No card by voice is settled; the *sender identity* is not.
 - **D — OQ-V3-5 (Review lead on existing-customer calls).** Confirm the default "**existing-customer service call only UPDATES the job, never spawns a Review lead**; only L0 new callers create leads."
 - **E — MCP marketplace gate.** Should the whole voice/service-skill surface be gated on a marketplace app (e.g. `telephony-twilio`) with graceful fallback, mirroring the `recommendSlots`→`smart-slot-engine` precedent? Architect leans **no gate on reads/identify** (they must always work for an inbound call) and **the existing `smart-slot-engine` gate only on the reschedule slot-offer** — confirm.
+
+---
+
+## Архитектурное решение для фичи MAIL-MUTE-001
+
+**Feature:** excluding a sender in Mail Secretary (`from:` exclusion rule) ALSO mutes that sender's **email** contribution in Pulse — channel-specific (calls/SMS untouched), per-company, reversible. Extends what an exclusion match *means*; no new user-facing list, no new input type, no new settings field.
+
+### The central problem (OQ-MM-1 / C-1) and the decision
+
+Exclusion rules are evaluated in **JS** (`mailAgentRules` DSL) but Pulse surfacing is **SQL** (`getUnifiedTimelinePage`). Two options were evaluated:
+
+- **(a) Migration-free / param-passing** — at request time the Pulse-list route parses the `from:` mutes out of the already-~60s-cached Mail Secretary settings into `muted_emails[]` + `muted_domains[]`, passes them as query params; `getUnifiedTimelinePage` computes a per-row `email_muted` boolean and wraps the three email terms with `AND NOT email_muted`. No schema. Self-heals on rule edit (single source of truth = `exclusion_rules`).
+- **(b) Derived persisted set (migration 156)** — materialize muted emails/domains into a table kept in sync on every `exclusion_rules` save; list query joins it.
+
+**DECISION: (a) — migration-free param-passing.** Rationale for rejecting (b): (b) adds a **second source of truth** for "who is muted" plus a sync path that must fire on every settings write AND stay consistent with the JS matcher (NFR-4 risk: hides-but-links / links-but-hides drift). It buys nothing on latency — the muted set is **tiny and per-request** (a handful of `from:` rules → a short text[] literal), and array-membership on `co.email` / `contact_emails.email_normalized` is a cheap, index-independent equality/`split_part` check that adds no Seq Scan or per-row regex (PULSE-PERF-001 discipline preserved; the hot phone-digit indexes are untouched). (a) is also inherently reversible (FR-6): un-excluding a sender simply drops it from the next request's `muted_emails[]`, so the historical timeline reappears with zero cleanup. **No migration.** Latest in repo = 155; 156 remains unused by this feature.
+
+### DECISION-B (encoded): only `from:`-derived mutes affect Pulse
+
+Only SENDER/DOMAIN mutes derived from **`from:` exclusion rules** affect Pulse (both ingestion skip AND list suppression). Exclusion rules that match on **subject/body/`any`** keep TODAY's behavior (suppress the task only; the email still links & surfaces). Rationale: (1) matches the owner's sender-centric intent; (2) subject/body cannot be evaluated per-contact in the SQL list query (no email row in scope there); (3) avoids regressing users who set subject/body exclusions expecting the email to still appear. **Encoding:** the muted decision uses ONLY the subset of parsed rules whose **every token targets `field==='from'`**. Negation on that SAME from-only line is honored verbatim by the existing `matchEmail` (C-2) — a `from:` hit rescued by a `-from:` on the same line is NOT muted. A from-only line with a `/regex/i` `from:` token participates; a mixed line (`from:X subject:Y`) is excluded from the mute subset entirely (its email keeps surfacing).
+
+### Matcher-reuse plan (C-2 — do NOT fork matching)
+
+Two thin helpers are added to **`backend/src/services/mailAgentService.js`**, both reusing `safeParseRules` + the existing `mailAgentRules.matchEmail`/`parseRules` output — **no new match engine, no divergent DSL logic**:
+
+1. `isSenderMuted(companyId, msg)` → boolean. Reads the **cached** settings via `getActiveState` (NFR-2 — no extra DB read per email; also honors C-4: returns `false` when Mail Secretary is not active/connected). Filters the parsed rule set to **from-only** rules (helper `fromOnlyRules(parsed)` — keep only `rules[i]` where `tokens.every(t => t.field === 'from')`), then runs `matchEmail({rules: fromOnly}, {from: \`${msg.from_name||''} <${msg.from_email||''}>\`, subject: '', body: ''})` and returns `.excluded`. Reuses `buildRuleInput`'s `from` composition so the substring surface (name + `<email>`) is byte-identical to the task path.
+2. `getMutedSenderSet(companyId)` → `{ emails: string[], domains: string[] }`. Reads the same cached settings, takes the from-only rule subset, and extracts **literal** `from:` `contains` tokens (kind==='contains', not negated) into either `emails` (token value contains an `@` and a `.` after it → treat as an address; lower-cased) or `domains` (token value starts `@` or is a bare `host.tld` with no local-part → normalized to the bare domain, `@` stripped, lower-cased). **`/regex/` `from:` tokens and negated tokens are deliberately NOT projected into the SQL set** — the SQL path can only do exact-address/domain membership, so regex/negation mutes fall back to *link-time only* suppression (ingestion skip still applies via `isSenderMuted`; the list keeps showing them). This is an accepted, documented narrowing (see residual OQ-MM-4) that never *over*-hides. Returns `{emails:[], domains:[]}` when inactive (C-4) or on any parse error (FR-10 fail-open → nothing muted in the list).
+
+Both helpers are **fail-open**: any throw → `isSenderMuted=false` / empty set (FR-10). `mailAgentService` already `module.exports` a set — extend it with these two.
+
+### Ingestion side (FR-2 / FR-3) — early return in `linkInboundMessage`
+
+In **`backend/src/services/email/emailTimelineService.js`** `linkInboundMessage`, add a new guard **after** the `outbound` (l.100–102) and `draft_or_sent` (l.103–105) guards and **before** `emailQueries.findEmailContact` (l.112):
+
+```
+// (a.5) MAIL-MUTE-001: a from:-muted sender contributes nothing to Pulse.
+//       Placed before contact lookup AND before the no-contact agent path,
+//       so a muted sender neither links/unreads/bumps NOR auto-creates a
+//       contact (FR-3). Never throws (FR-10) — mailAgentService.isSenderMuted
+//       is fail-open and only true when Mail Secretary is active (C-4).
+if (!opts.skipAgent) {
+    const mailAgentService = require('../mailAgentService');
+    if (await mailAgentService.isSenderMuted(companyId, msg)) {
+        return { skipped: 'muted_sender' };
+    }
+}
+```
+
+- **`!opts.skipAgent` gate is required:** the agent's create-contact recursion re-enters `linkInboundMessage(..., {skipAgent:true})` (mailAgentService.js l.205) — but for a from-muted sender the agent never reaches that path (see below), so this branch is a belt-and-braces no-op on the recursive call and must not re-evaluate.
+- **Placement proof for FR-3 (no contact auto-created):** returning at (a.5) is *before* line 112–118, where the no-contact branch calls `reviewInboundEmail(..., {noContact:true})` — the ONLY agent entry that can hit `create_contact_for_unknown` → `createEmailContact`. A muted first-time sender therefore never materializes a contact/timeline. (Requirement FR-5's claim that `skipped_excluded` already blocks creation is *also* true for the full-DSL exclusion, but MAIL-MUTE's from-only early return is the load-bearing guarantee and is strictly earlier.)
+- **Idempotency/redelivery (FR-8):** the early return precedes the link/dedup entirely, so a redelivered muted email stays `{skipped:'muted_sender'}` with no link row and no unread — dedup is unweakened.
+- **CALLS/SMS untouched:** this file is the **email** link path only. `conversationsService` (SMS) and the calls ingestion are not touched anywhere in this feature.
+
+New return shape `{skipped:'muted_sender'}` is additive alongside the existing `no_message`/`outbound`/`draft_or_sent`/`no_contact` skips; the route/callers already treat any `{skipped:*}` as "no side effects."
+
+### List side (FR-4 / FR-5 / FR-7) — SQL suppression in `getUnifiedTimelinePage`
+
+**`backend/src/db/timelinesQueries.js`** `getUnifiedTimelinePage({limit, offset, companyId, search})` gains two params `mutedEmails = []`, `mutedDomains = []` (defaulted, so existing callers stay valid — LIST-PAGINATION-001's `syncQueries`/other callers pass nothing and get today's behavior). They bind as `$4` (text[]) and `$5` (text[]) appended to `params` BEFORE the `searchFilter` param growth (search params then shift to `$6+`; the existing `params.length + 1` idiom already computes indices dynamically, so only the two fixed adds are hardcoded).
+
+A single per-row CTE-free scalar expression `email_muted` is computed in the SELECT (company scope is implicit — it is only ever true for THIS company's rows because the CTE/joins are already `WHERE tl.company_id = $1`, and the muted set was parsed from THIS company's settings — FR-7):
+
+```
+(
+  -- contact's own primary email
+  lower(co.email) = ANY($4)
+  OR split_part(lower(co.email), '@', 2) = ANY($5)
+  -- any of the contact's contact_emails (already lower(trim)'d)
+  OR EXISTS (
+       SELECT 1 FROM contact_emails ce2
+       WHERE ce2.contact_id = tl.contact_id
+         AND ( ce2.email_normalized = ANY($4)
+            OR split_part(ce2.email_normalized, '@', 2) = ANY($5) )
+     )
+) AS email_muted
+```
+
+`email_muted` is `false` when `$4`/`$5` are empty (ANY(empty) = false) → **zero behavior change when nothing is muted**, and no plan change (the `EXISTS` is a cheap PK-indexed lookup on `contact_emails(contact_id)`; no regex, no Seq Scan — NFR-1). Then wrap the **three** email terms with `AND NOT email_muted`, at EXACTLY these sites (line numbers from current file):
+
+- **l.499** — `last_interaction_at = GREATEST(latest_call.started_at, sms.last_message_at, eml.last_message_at)` → the `eml.last_message_at` term becomes `CASE WHEN NOT email_muted THEN eml.last_message_at END` (so a muted email no longer bumps ordering).
+- **l.500–501** — `any_unread` OR-chain → `(COALESCE(eml.unread_count,0) > 0 AND NOT email_muted)`.
+- **l.549** — surfacing predicate `OR eml.email_thread_id IS NOT NULL` → `OR (eml.email_thread_id IS NOT NULL AND NOT email_muted)` (so an email-ONLY muted timeline drops out — FR-5).
+- **ALSO the ORDER-BY mirrors** (must match the SELECT or ranking desyncs): **l.591** `COALESCE(eml.unread_count,0) > 0` in the unread-tier `CASE` → `(COALESCE(eml.unread_count,0) > 0 AND NOT email_muted)`; **l.598** `GREATEST(latest_call.started_at, sms.last_message_at, eml.last_message_at)` → same `CASE WHEN NOT email_muted THEN eml.last_message_at END` on the email term. (`email_muted` is a SELECT-list alias; Postgres does not allow referencing a SELECT alias in WHERE/ORDER-BY, so the expression is **inlined** at each of the five sites — or hoisted into a wrapping CTE/subselect. Recommend a small wrapping `SELECT … FROM (<current query minus final ORDER/LIMIT>) q ORDER BY … LIMIT/OFFSET` so `email_muted` is computed once and referenced by name in both SELECT and ORDER-BY; the SpecWriter/Planner pins whichever keeps the EXPLAIN clean — inlining the 5 copies is also acceptable since the expression is cheap.)
+
+Everything else — `latest_call`, the `sms` lateral, `open_task`, `is_action_required`, `tl.has_unread`, `co.has_unread`, the orphan-shadow dedup, pagination (`COUNT(*) OVER()`, `LIMIT/OFFSET`) — is **byte-for-byte unchanged** (protected). A muted email-only row simply fails the surfacing predicate and never enters the window/count, so the page stays ≤ limit.
+
+### Route wiring (FR-4 entry point)
+
+The Pulse list route is **`backend/src/routes/calls.js`** `GET /api/calls/by-contact` (l.106, the ONLY caller of `getUnifiedTimelinePage` that serves the Pulse sidebar; `companyId = req.companyFilter?.company_id`, already 401s on missing tenant). Change (l.122): before the query, fetch the muted set and pass it through —
+
+```
+const { emails: mutedEmails, domains: mutedDomains } =
+    await require('../services/mailAgentService').getMutedSenderSet(companyId);
+const rows = await queries.getUnifiedTimelinePage({
+    limit, offset, companyId, search, mutedEmails, mutedDomains });
+```
+
+`getMutedSenderSet` reads the ~60s settings cache (NFR-2 / OQ-MM-3 — acceptable staleness = existing cache; no new cache), is company-scoped (FR-7), and fail-open (empty set on error → today's behavior, FR-10). `queries.getUnifiedTimelinePage` is re-exported in `backend/src/db/queries.js` (l.33) — no change there (params flow through the object arg).
+
+### Existing functionality reused (NOT duplicated)
+
+- `mailAgentRules.parseRules` / `matchEmail` — the mute verdict, **reused verbatim** (C-2). Only a from-only *filter* over its parsed output is added; the matcher is not touched.
+- `mailAgentService.getActiveState` (~60s settings cache) — reused by both new helpers (NFR-2; C-4 active-gate).
+- `emailQueries.findEmailContact` normalization (`lower(trim)`) — the SQL `email_muted` mirrors it (`lower(co.email)`, `contact_emails.email_normalized` already normalized).
+- `getUnifiedTimelinePage` email CTE (`email_by_contact`) — reused; only the three email terms are gated. SMS/call/task/orphan-dedup logic untouched (LIST-PAGINATION-001 / PULSE-PERF-001 protected).
+
+### Files to change (concrete change points)
+
+- **`backend/src/services/mailAgentService.js`** — ADD `isSenderMuted(companyId, msg)` + `getMutedSenderSet(companyId)` + internal `fromOnlyRules(parsed)` helper; export the two. Reuse `getActiveState`/`safeParseRules`/`buildRuleInput`; fail-open.
+- **`backend/src/services/email/emailTimelineService.js`** — ADD the `{skipped:'muted_sender'}` early return in `linkInboundMessage` after the draft/outbound guards, before `findEmailContact` (gated on `!opts.skipAgent`).
+- **`backend/src/db/timelinesQueries.js`** — ADD `mutedEmails`/`mutedDomains` params to `getUnifiedTimelinePage`; add the `email_muted` scalar; wrap the 5 email-term sites (SELECT l.499, l.501, l.549 + ORDER-BY l.591, l.598) with `AND NOT email_muted` (via a wrapping subselect or inlined expression).
+- **`backend/src/routes/calls.js`** — in `GET /by-contact`, fetch `getMutedSenderSet(companyId)` and pass `mutedEmails`/`mutedDomains` into `getUnifiedTimelinePage`.
+- **Tests (new):** unit for `isSenderMuted`/`getMutedSenderSet` (from-only filtering, domain vs exact, negation rescue, regex→link-only, inactive→empty, fail-open); a **real prod-DB-copy** verification for the list query (not mocked jest — LIST-PAGINATION-001/PULSE-PERF-001 lesson): mute relyhome → timeline 2915 gone; un-mute → back; phone+email contact → new call/SMS still surfaces while a new email does not.
+
+### Migration / perf gate
+
+- **Migration: NO.** Approach (a) is schema-free. (Latest = 155; 156 stays free.) No destructive change to historical email data (FR-9) — suppression is query-time only.
+- **EXPLAIN/perf gate (MANDATORY, NFR-1, PULSE-PERF-001 methodology):** run `EXPLAIN (ANALYZE, BUFFERS)` of the modified `getUnifiedTimelinePage` against a **prod-DB copy**, with a non-empty `muted_emails/domains`, and confirm: (1) no new Seq Scan on `contacts`/`contact_emails`/`email_messages`; (2) the phone-digit expression indexes still drive the plan; (3) the `contact_emails` `EXISTS` uses the `contact_id` index; (4) latency parity with today's ~0.3s. Gate the PR on this (documented in the PR, per LIST-PAGINATION-001).
+
+### Middleware / tenancy
+
+- No new API route. `GET /api/calls/by-contact` keeps its existing `authenticate, requireCompanyAccess` chain and `callsRead` permission gate (calls.js l.8–12); `company_id` via `req.companyFilter?.company_id` (already enforced, 401 on missing).
+- Tenancy (FR-7): the muted set is parsed from THIS company's `mail_agent_settings`; the SQL `email_muted` only ever evaluates on rows already `WHERE tl.company_id = $1`. No cross-tenant read or suppression. `isSenderMuted` is called with the ingestion `companyId`.
+
+### Residual open questions for the SpecWriter
+
+- **OQ-MM-4 (regex/negated `from:` in the SQL set).** `getMutedSenderSet` projects only **literal** `from:` addresses/domains into the SQL list-suppression set; `/regex/i` `from:` and negated `from:` tokens are muted at **link time** (`isSenderMuted` handles the full from-only DSL incl. regex/negation) but are **not** retro-hidden from the existing list (they'd require per-row regex in the hot query — banned). Net: new inbound from a regex-muted sender stops linking; a pre-existing linked timeline for a regex-`from:` mute keeps showing until a non-email signal ages it out. Confirm this asymmetry is acceptable for v1 (recommended — it never over-hides and keeps the hot query regex-free). If not, escalate to approach (b) for regex mutes only.
+- **OQ-MM-2 (outbound to a muted address) — RESOLVED as scoped:** mute governs the **inbound** email signal only; an operator's outbound reply keeps EMAIL-OUTBOUND-001 behavior (the `email_by_contact` Leg-2 outbound term is NOT gated by `email_muted` in this design — confirm the SpecWriter wants outbound-to-muted to remain visible; default = yes, unchanged).
+- **OQ-MM-3 — RESOLVED:** staleness after a rule edit = the existing ~60s settings cache; no new cache. (`invalidateCache` already fires on settings writes, so edits reflect on the next uncached read for BOTH the ingestion and list paths — consistent, NFR-4.)
