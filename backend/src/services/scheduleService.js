@@ -392,7 +392,10 @@ async function reassignItem(companyId, entityType, entityId, assignees = []) {
         if (assign.length || unassign.length) {
             try {
                 const zenbookerClient = require('./zenbookerClient');
-                await zenbookerClient.assignProviders(zbJobId, { assign, unassign });
+                // ZB /jobs/:id/assign requires `notify` (else 400 MISSING_PARAMETER).
+                // Match the reschedule path (routes/jobs.js): dispatcher reassignment
+                // does not notify the provider via ZB.
+                await zenbookerClient.assignProviders(zbJobId, { assign, unassign, notify: false });
             } catch (err) {
                 console.error('[Schedule] ZB assignProviders failed (non-fatal):', err.response?.data || err.message);
             }
