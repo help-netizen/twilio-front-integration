@@ -75,6 +75,63 @@ function normalizeEmailsPayload(raw) {
     return out;
 }
 
+// ── CONTACT-MERGE-001 (Decision A) — conflict round-trip helpers ─────────────
+
+// 409 envelope for CONTACT_ATTRIBUTE_CONFLICT (mirrors the leads.js
+// CONTACT_AMBIGUOUS precedent: ok:false error envelope + a data sibling).
+function conflictResponse(conflicts, reqId) {
+    return {
+        ok: false,
+        error: {
+            code: 'CONTACT_ATTRIBUTE_CONFLICT',
+            message: 'Submitted phone/email already belongs to another contact',
+            correlation_id: reqId,
+        },
+        conflict: { conflicts },
+    };
+}
+
+// Strict-echo matching of body `resolutions[]` against DETECTED conflicts:
+// a conflict is resolved only by a resolution carrying the SAME owner_contact_id
+// AND the SAME detected attribute set (echoed attributes = staleness check, S9).
+// A resolution matching NO detected conflict is ignored (idempotency, FR-10);
+// a MALFORMED resolution (unknown action / missing owner / attributes not an
+// array / bad attribute shape) is simply non-matching — never a 500 (U13).
+function matchResolutions(conflicts, rawResolutions) {
+    const resolutions = Array.isArray(rawResolutions) ? rawResolutions : [];
+    const matched = [];
+    let allResolved = true;
+    for (const conflict of conflicts) {
+        const want = new Set(
+            (conflict.attributes || []).map(a => `${a.kind}:${a.normalized}`)
+        );
+        const resolution = resolutions.find(r => {
+            if (!r || typeof r !== 'object') return false;
+            if (r.action !== 'merge' && r.action !== 'transfer') return false;
+            if (r.owner_contact_id === undefined || r.owner_contact_id === null) return false;
+            if (String(r.owner_contact_id) !== String(conflict.owner?.id)) return false;
+            if (!Array.isArray(r.attributes) || r.attributes.length === 0) return false;
+            const got = new Set();
+            for (const a of r.attributes) {
+                if (!a || (a.kind !== 'phone' && a.kind !== 'email')) return false;
+                const norm = a.kind === 'phone'
+                    ? String(a.value || '').replace(/\D/g, '')
+                    : String(a.value || '').trim().toLowerCase();
+                if (!norm) return false;
+                got.add(`${a.kind}:${norm}`);
+            }
+            if (got.size !== want.size) return false;
+            for (const key of want) {
+                if (!got.has(key)) return false;
+            }
+            return true;
+        });
+        if (resolution) matched.push({ conflict, resolution });
+        else allResolved = false;
+    }
+    return { matched, allResolved };
+}
+
 // =============================================================================
 // GET /api/contacts — List contacts
 // =============================================================================
@@ -260,14 +317,125 @@ router.patch('/:id', requirePermission('contacts.edit'), async (req, res) => {
         const firstName = req.body.first_name !== undefined ? req.body.first_name : null;
         const lastName = req.body.last_name !== undefined ? req.body.last_name : null;
 
-        // ── ONE transaction: contact UPDATE + contact_emails upsert/removal + the
-        //    per-new-address merge are atomic (Decision A). A merge failure on any
-        //    leg rolls the contact_emails write (and the scalar edit) back too —
-        //    never a half-written state. The async legs (leads cascade, phone
-        //    orphan-merge, ZB push) run AFTER commit, outside the tx, unchanged.
+        // ── CONTACT-MERGE-001 detection inputs ──────────────────────────────
+        // Added-phone candidates: every submitted phone slot, normalized exactly
+        // as the UPDATE will write it. Detection itself excludes values already
+        // on the target (S12), so an idempotent re-save never dialogs.
+        const contactEmailMergeService = require('../services/contactEmailMergeService');
+        const addedPhones = [];
+        for (const field of ['phone_e164', 'secondary_phone']) {
+            if (req.body[field] !== undefined && req.body[field]) {
+                addedPhones.push(toE164(req.body[field]) || req.body[field]);
+            }
+        }
+        // Decision E — scalar `email` WITHOUT emails[]: candidate for server-side
+        // handling (detection + contact_emails persistence) when email-shaped.
+        // `emails[]`, when present, takes precedence (scalar branch skipped).
+        const scalarRaw = (!emailsProvided && req.body.email !== undefined)
+            ? String(req.body.email || '').toLowerCase().trim()
+            : '';
+        const scalarCandidate = (scalarRaw && EMAIL_SHAPE.test(scalarRaw)) ? scalarRaw : null;
+
+        // ── ONE transaction: conflict DETECTION (before ANY write) + resolution
+        //    validation + contact UPDATE + contact_emails upsert/removal +
+        //    resolution execution + the per-new-address merge are atomic
+        //    (Decisions A/C). Round 1 with an unresolved conflict ROLLBACKs
+        //    having written NOTHING → 409 with the full dialog payload. The
+        //    async legs (leads cascade, phone orphan-merge, ZB push, the
+        //    contact_merged event) run AFTER commit, outside the tx.
         const client = await db.pool.connect();
+        let scalarNewlyAdded = false;
+        const mergedEvents = []; // contact_merged payloads, emitted post-COMMIT (review fix c)
         try {
             await client.query('BEGIN');
+
+            // Decision E: is the scalar a NEWLY-added address (not already on
+            // the contact — scalar or contact_emails)? Read-only probe.
+            if (scalarCandidate) {
+                const additional = await contactDedupeService.getAdditionalEmails(id, client);
+                const held = new Set(additional.map(e => (e || '').toLowerCase().trim()));
+                if (existing.email) held.add(existing.email.toLowerCase().trim());
+                scalarNewlyAdded = !held.has(scalarCandidate);
+            }
+
+            // (1) Detection FIRST — before ANY write (Decision C step 1). Locks
+            //     the target + every owner row FOR UPDATE (ascending id order).
+            const detectEmails = emailsProvided
+                ? submittedEmails.map(e => e.email)
+                : (scalarNewlyAdded ? [scalarCandidate] : []);
+            const detectedConflicts = await contactEmailMergeService.detectAttributeConflicts(
+                id, { phones: addedPhones, emails: detectEmails }, companyId, client
+            );
+
+            // (2) Strict-echo validation of resolutions[] (Decision C step 2).
+            //     ANY detected conflict without a matching resolution → ROLLBACK
+            //     (nothing was written) + 409 with the FULL current payload.
+            // (1.5) Pre-upsert ownership probe (CM1-T5 harness finding): the
+            //     step-3 email upsert makes the TARGET the owner of every
+            //     submitted address, so by step 5 findEmailContact resolves to
+            //     the target and resolveAddedEmail's owner==target no-op
+            //     swallows the D3 inbox-only link — stray inbox messages were
+            //     never folded onto the timeline through the route (the
+            //     service-level CEM1 harness verified the branch PRE-upsert,
+            //     masking this). Read-only, before ANY write: remember which
+            //     newly-added addresses are ownerless NOW; step 5 supplements
+            //     the (unchanged) resolveAddedEmail call with the idempotent
+            //     inbox-only link for exactly those addresses.
+            const preOwnerlessEmails = new Set();
+            {
+                const emailQueries = require('../db/emailQueries');
+                const candidates = emailsProvided
+                    ? submittedEmails.map(e => e.email)
+                    : (scalarNewlyAdded ? [scalarCandidate] : []);
+                for (const email of candidates) {
+                    const owner = await emailQueries.findEmailContact(email, companyId, client);
+                    if (!owner) preOwnerlessEmails.add(email);
+                }
+            }
+
+            const { matched, allResolved } = matchResolutions(detectedConflicts, req.body.resolutions);
+            if (!allResolved) {
+                await client.query('ROLLBACK');
+                return res.status(409).json(conflictResponse(detectedConflicts, reqId));
+            }
+            const conflictedEmails = new Set();
+            for (const c of detectedConflicts) {
+                for (const a of c.attributes) {
+                    if (a.kind === 'email') conflictedEmails.add(a.normalized);
+                }
+            }
+
+            // (2.5) Pre-release colliding owner SCALARS (CM1-T5 harness finding):
+            // `uq_contacts_email` is a GLOBAL partial unique index on
+            // contacts.email, so the step-3 target UPDATE writing a resolved
+            // address as the scalar would collide with the still-alive owner row
+            // (the merge delete / transferEmail scalar-sync only run at step 4).
+            // For each VALIDATED resolution whose owner's scalar IS one of the
+            // resolved addresses, run the transferEmail scalar-sync EARLY: point
+            // the owner's scalar at its remaining (non-conflicted)
+            // primary-or-first contact_emails row, or NULL. Semantics match
+            // transferEmail's own sync (which then no-ops); for a merge the
+            // owner is deleted this tx, so the early sync is invisible. Locked
+            // rows (detection FOR UPDATE) + same tx → rolled back with the rest.
+            for (const { conflict } of matched) {
+                const ownEmails = conflict.attributes
+                    .filter(a => a.kind === 'email')
+                    .map(a => a.normalized);
+                if (ownEmails.length === 0) continue;
+                await client.query(
+                    `UPDATE contacts c
+                        SET email = (
+                            SELECT ce.email FROM contact_emails ce
+                             WHERE ce.contact_id = c.id
+                               AND ce.email_normalized <> ALL($3)
+                             ORDER BY ce.is_primary DESC, ce.id ASC
+                             LIMIT 1),
+                            updated_at = now()
+                      WHERE c.id = $1 AND c.company_id = $2
+                        AND lower(trim(c.email)) = ANY($3)`,
+                    [conflict.owner.id, companyId, ownEmails]
+                );
+            }
 
             if (firstName !== null || lastName !== null) {
                 // Need current values for the ones not being updated.
@@ -293,13 +461,14 @@ router.patch('/:id', requirePermission('contacts.edit'), async (req, res) => {
                 );
             }
 
-            // ── Multi-email persistence (inside the tx, on the tx client) ──
+            // ── (3) Multi-email persistence (inside the tx, on the tx client) ──
+            let existingSet = null;
             if (emailsProvided) {
                 // Current set = the scalar primary + every contact_emails row, so
                 // "newly added in THIS patch" excludes anything already recorded
                 // (idempotent re-save does no merge work — TC-CEM-U11).
                 const additional = await contactDedupeService.getAdditionalEmails(id, client);
-                const existingSet = new Set(additional.map(e => (e || '').toLowerCase().trim()));
+                existingSet = new Set(additional.map(e => (e || '').toLowerCase().trim()));
                 if (existing.email) existingSet.add(existing.email.toLowerCase().trim());
 
                 const submittedSet = new Set(submittedEmails.map(e => e.email));
@@ -332,24 +501,100 @@ router.patch('/:id', requirePermission('contacts.edit'), async (req, res) => {
                         );
                     }
                 }
+            } else if (scalarNewlyAdded) {
+                // Decision E: the scalar path now ALSO persists contact_emails
+                // (the 4175/4228 hole — closed for EVERY client of the route).
+                // The scalar column itself was written by the UPDATE above.
+                await contactDedupeService.enrichEmail(id, scalarCandidate, client);
+            }
 
-                // (4) For each NEWLY-added address, resolve its correspondence and
-                //     fold it onto this contact's timeline (link / full-merge /
-                //     re-point / no-op) — synchronously, on the SAME tx client.
-                const contactEmailMergeService = require('../services/contactEmailMergeService');
-                for (const { email } of submittedEmails) {
-                    if (!existingSet.has(email)) {
-                        await contactEmailMergeService.resolveAddedEmail(id, email, companyId, client);
+            // ── (4) Execute the validated resolutions (Decision C step 4) ──
+            for (const { conflict, resolution } of matched) {
+                const ownerId = conflict.owner.id;
+                if (resolution.action === 'merge') {
+                    // Returns the contact_merged event payload — emitted only
+                    // AFTER COMMIT (review fix c: never survives a ROLLBACK).
+                    const mergedEvent = await contactEmailMergeService.mergeContacts(
+                        id, ownerId, companyId, client
+                    );
+                    if (mergedEvent) mergedEvents.push(mergedEvent);
+                } else {
+                    // FR-3 re-check at EXECUTION time — a stale-allowed transfer
+                    // throws the sentinel → ROLLBACK → fresh 409 (never half-run).
+                    await contactEmailMergeService.assertTransferAllowed(
+                        ownerId, conflict.attributes, companyId, client
+                    );
+                    for (const attr of conflict.attributes) {
+                        if (attr.kind === 'phone') {
+                            await contactEmailMergeService.transferPhone(
+                                id, ownerId, attr.normalized || attr.value, companyId, client
+                            );
+                        } else {
+                            await contactEmailMergeService.transferEmail(
+                                id, ownerId, attr.normalized || attr.value, companyId, client
+                            );
+                        }
                     }
+                }
+            }
+
+            // ── (5) For each NEWLY-added NON-conflicted address, resolve its
+            //     correspondence and fold it onto this contact's timeline
+            //     (inbox-only link / self no-op) — synchronously, on the SAME tx
+            //     client. A separate-owner surprise born INSIDE the tx throws
+            //     the ContactConflictError sentinel → caught below → fresh 409.
+            if (emailsProvided) {
+                for (const { email } of submittedEmails) {
+                    if (!existingSet.has(email) && !conflictedEmails.has(email)) {
+                        await contactEmailMergeService.resolveAddedEmail(id, email, companyId, client);
+                        // The D3 inbox-only link for a PRE-upsert-ownerless
+                        // address (see step 1.5): resolveAddedEmail above hit
+                        // its owner==target no-op (the upsert just made the
+                        // target the owner), so fold the stray inbox messages
+                        // explicitly — idempotent, same-tx, same semantics as
+                        // the service's own inbox-only branch.
+                        if (preOwnerlessEmails.has(email)) {
+                            await contactEmailMergeService.linkInboxMessages(id, email, companyId, client);
+                        }
+                    }
+                }
+            } else if (scalarNewlyAdded && !conflictedEmails.has(scalarCandidate)) {
+                await contactEmailMergeService.resolveAddedEmail(id, scalarCandidate, companyId, client);
+                if (preOwnerlessEmails.has(scalarCandidate)) {
+                    await contactEmailMergeService.linkInboxMessages(id, scalarCandidate, companyId, client);
                 }
             }
 
             await client.query('COMMIT');
         } catch (txErr) {
             await client.query('ROLLBACK').catch(() => {});
+            // A conflict born INSIDE the tx (sentinel from step 5 / the FR-3
+            // execution-time re-check) or a lock-order deadlock (40P01, review
+            // fix a belt-and-braces) → fresh 409, NEVER a 500. The payload is
+            // re-detected post-rollback on the pool (current reality, S9/S14).
+            if (txErr && (txErr.name === 'ContactConflictError' || txErr.code === '40P01')) {
+                let freshConflicts = [];
+                try {
+                    const detectEmails = emailsProvided
+                        ? submittedEmails.map(e => e.email)
+                        : (scalarCandidate ? [scalarCandidate] : []);
+                    freshConflicts = await contactEmailMergeService.detectAttributeConflicts(
+                        id, { phones: addedPhones, emails: detectEmails }, companyId
+                    );
+                } catch (redetectErr) {
+                    console.warn(`[ContactsAPI][${reqId}] fresh-409 re-detection failed (returning empty payload):`, redetectErr.message);
+                }
+                return res.status(409).json(conflictResponse(freshConflicts, reqId));
+            }
             throw txErr;
         } finally {
             client.release();
+        }
+
+        // CONTACT-MERGE-001 (review fix c): the contact_merged audit event is
+        // emitted strictly AFTER COMMIT, so it can never survive a ROLLBACK.
+        for (const mergedEvent of mergedEvents) {
+            eventService.logEvent(companyId, 'contact', id, 'contact_merged', mergedEvent);
         }
 
         // Cascade contact fields to linked leads (post-commit, on the pool — an

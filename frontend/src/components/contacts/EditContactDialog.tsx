@@ -5,7 +5,8 @@ import { Button } from '../ui/button';
 import { FloatingField } from '../ui/floating-field';
 import { PhoneInput, toE164, formatUSPhone } from '../ui/PhoneInput';
 import { toast } from 'sonner';
-import * as contactsApi from '../../services/contactsApi';
+import { useContactConflictFlow } from './useContactConflictFlow';
+import { MergeContactsDialog } from './MergeContactsDialog';
 import type { Contact } from '../../types/contact';
 
 interface EditContactDialogProps {
@@ -69,6 +70,8 @@ function sortPrimaryFirst(rows: EmailRow[]): EmailRow[] {
 
 export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: EditContactDialogProps) {
     const [loading, setLoading] = useState(false);
+    // CONTACT-MERGE-001 (CM1-T4): save → 409 conflict → MergeContactsDialog → one retry.
+    const conflictFlow = useContactConflictFlow();
     const [showSecondary, setShowSecondary] = useState(false);
     const [emails, setEmails] = useState<EmailRow[]>([{ email: '', is_primary: true }]);
     const [formData, setFormData] = useState({
@@ -151,7 +154,10 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
 
         setLoading(true);
         try {
-            await contactsApi.updateContact(contact.id, {
+            // CONTACT-MERGE-001: a 409 attribute conflict is consumed by the flow
+            // (sequential MergeContactsDialog per owner + ONE retry); every other
+            // error re-throws into today's toast below.
+            const result = await conflictFlow.save(contact.id, {
                 first_name: formData.first_name,
                 last_name: formData.last_name,
                 company_name: formData.company_name,
@@ -162,9 +168,13 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
                 emails: emailsPayload,
                 notes: formData.notes,
             });
-            toast.success('Contact updated');
-            onOpenChange(false);
-            onSuccess();
+            // FR-7 / S5: cancel aborts the whole save — the editor stays open with
+            // the entered values, no toast.
+            if (result.status === 'saved') {
+                toast.success('Contact updated');
+                onOpenChange(false);
+                onSuccess();
+            }
         } catch (err) {
             toast.error('Failed to update contact', {
                 description: err instanceof Error ? err.message : 'Unknown error',
@@ -175,6 +185,7 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
     };
 
     return (
+        <>
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent variant="panel">
                 <DialogPanelHeader>
@@ -319,5 +330,12 @@ export function EditContactDialog({ contact, open, onOpenChange, onSuccess }: Ed
                 </form>
             </DialogContent>
         </Dialog>
+        {/* CONTACT-MERGE-001: conflict confirmation, one dialog per owner (null = closed). */}
+        <MergeContactsDialog
+            conflict={conflictFlow.activeConflict}
+            onConfirm={conflictFlow.confirm}
+            onCancel={conflictFlow.cancel}
+        />
+        </>
     );
 }

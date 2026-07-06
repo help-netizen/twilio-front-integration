@@ -18,6 +18,8 @@ import { useAuthz } from '../../hooks/useAuthz';
 import * as contactsApi from '../../services/contactsApi';
 import * as jobsApi from '../../services/jobsApi';
 import { EditContactDialog } from './EditContactDialog';
+import { useContactConflictFlow } from './useContactConflictFlow';
+import { MergeContactsDialog } from './MergeContactsDialog';
 import { ClickToCallButton } from '../softphone/ClickToCallButton';
 import { OpenTimelineButton } from '../softphone/OpenTimelineButton';
 import type { Contact, ContactLead } from '../../types/contact';
@@ -48,6 +50,9 @@ export function PulseContactPanel({ contact, leads, loading, timelineId, onAddre
     const [emailError, setEmailError] = useState(false);
     const [emailSaving, setEmailSaving] = useState(false);
     const emailInputRef = useRef<HTMLInputElement>(null);
+    // CONTACT-MERGE-001 (CM1-T4, S8): inline scalar-email save through the same
+    // 409 → MergeContactsDialog → one-retry flow as EditContactDialog.
+    const conflictFlow = useContactConflictFlow();
 
     useEffect(() => { setNotes(contact.notes || ''); }, [contact.notes]);
     useEffect(() => {
@@ -79,9 +84,13 @@ export function PulseContactPanel({ contact, leads, loading, timelineId, onAddre
         if (!trimmed || !isValidEmail(trimmed)) { setEmailError(true); return; }
         setEmailSaving(true);
         try {
-            await contactsApi.updateContact(contact.id, { email: trimmed });
-            setEditingEmail(false);
-            onContactChanged?.();
+            // Decision E: payload stays scalar { email } — the server includes it in
+            // conflict detection. Cancel keeps the draft in the inline editor (S8).
+            const result = await conflictFlow.save(contact.id, { email: trimmed });
+            if (result.status === 'saved') {
+                setEditingEmail(false);
+                onContactChanged?.();
+            }
         } catch { toast.error('Failed to save email'); }
         finally { setEmailSaving(false); }
     };
@@ -277,6 +286,13 @@ export function PulseContactPanel({ contact, leads, loading, timelineId, onAddre
             </div>
 
             <EditContactDialog contact={contact} open={editOpen} onOpenChange={setEditOpen} onSuccess={() => onContactChanged?.()} />
+
+            {/* CONTACT-MERGE-001: conflict confirmation for the inline scalar-email save. */}
+            <MergeContactsDialog
+                conflict={conflictFlow.activeConflict}
+                onConfirm={conflictFlow.confirm}
+                onCancel={conflictFlow.cancel}
+            />
 
             {/* Create Lead for this contact — right-side panel (overlay canon). A phoneless
                 (email-only) contact gets the LEAD-ONLY flow; a contact WITH a phone gets the

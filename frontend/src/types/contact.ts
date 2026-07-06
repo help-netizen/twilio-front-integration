@@ -126,3 +126,67 @@ export type ContactDetailResponse = {
     };
     meta: { request_id: string; timestamp: string };
 };
+
+// ─── CONTACT-MERGE-001 — 409 CONTACT_ATTRIBUTE_CONFLICT contract ──────────────
+// Shapes are fixed by Docs/specs/CONTACT-MERGE-001.md §API contract (Decision A):
+// PATCH /api/contacts/:id detects that an added phone/email belongs to ANOTHER
+// contact, rolls back, and returns this payload; the retry echoes `resolutions`.
+
+/** One conflicting attribute as detected server-side (round-1 payload). */
+export type ContactConflictAttribute = {
+    kind: 'phone' | 'email';
+    /** The value as submitted by the editor (display form). */
+    value: string;
+    /** Server-normalized form (digits for phones, lowercased for emails). */
+    normalized: string;
+};
+
+/** A phone row inside a conflict party composition. */
+export type ContactConflictPartyPhone = {
+    value: string;
+    /** Slot label (secondary_phone_name) when present. */
+    label: string | null;
+    slot: 'primary' | 'secondary';
+};
+
+/** An email row inside a conflict party composition. */
+export type ContactConflictPartyEmail = {
+    email: string;
+    is_primary: boolean;
+};
+
+/** Full composition of one side of the dialog (owner or the contact being edited). */
+export type ContactConflictParty = {
+    id: number;
+    full_name: string | null;
+    company_name: string | null;
+    phones: ContactConflictPartyPhone[];
+    emails: ContactConflictPartyEmail[];
+};
+
+/**
+ * One dialog's worth of conflict: grouped BY OWNER — several conflicting
+ * attributes of one owner arrive as a single entry (one dialog).
+ */
+export type ContactConflict = {
+    owner: ContactConflictParty;
+    editing: ContactConflictParty;
+    attributes: ContactConflictAttribute[];
+    /** Server-computed FR-3 gate: false ⇒ the owner would be left with no phone and no email — Transfer is hidden. */
+    transfer_allowed: boolean;
+};
+
+/** The `conflict` sibling of the 409 error envelope. */
+export type ContactConflictPayload = {
+    conflicts: ContactConflict[];
+};
+
+/**
+ * The client's answer for ONE owner, echoed on the retry PATCH.
+ * `attributes` must echo the detected set (strict-echo staleness check).
+ */
+export type ContactConflictResolution = {
+    owner_contact_id: number;
+    action: 'merge' | 'transfer';
+    attributes: { kind: 'phone' | 'email'; value: string }[];
+};

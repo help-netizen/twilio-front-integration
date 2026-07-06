@@ -59,9 +59,30 @@ jest.mock('../backend/src/services/contactDedupeService', () => ({
     enrichEmail: jest.fn(async () => true),
     getAdditionalEmails: jest.fn(async () => []),
 }));
-jest.mock('../backend/src/services/contactEmailMergeService', () => ({
-    resolveAddedEmail: jest.fn(async () => {}),
-}));
+// CONTACT-MERGE-001 (CM1-T3): the route now also calls detectAttributeConflicts
+// at the top of the tx (returns [] here = the no-conflict path, which keeps
+// every pre-existing expectation of this suite byte-for-byte) and imports the
+// resolution primitives + the ContactConflictError sentinel.
+jest.mock('../backend/src/services/contactEmailMergeService', () => {
+    class ContactConflictError extends Error {
+        constructor(ownerContactId, attributes = [], message) {
+            super(message || 'conflict');
+            this.name = 'ContactConflictError';
+            this.ownerContactId = ownerContactId;
+            this.attributes = attributes;
+        }
+    }
+    return {
+        resolveAddedEmail: jest.fn(async () => {}),
+        linkInboxMessages: jest.fn(async () => 0), // step-5 D3 supplement (CM1-T5)
+        detectAttributeConflicts: jest.fn(async () => []),
+        mergeContacts: jest.fn(async () => null),
+        transferPhone: jest.fn(async () => {}),
+        transferEmail: jest.fn(async () => {}),
+        assertTransferAllowed: jest.fn(async () => {}),
+        ContactConflictError,
+    };
+});
 jest.mock('../backend/src/services/timelineMergeService', () => ({
     mergeOrphanTimelines: jest.fn(async () => {}),
 }));
@@ -117,6 +138,7 @@ beforeEach(() => {
     dedupe.enrichEmail.mockResolvedValue(true);
     dedupe.getAdditionalEmails.mockResolvedValue([]);
     mergeSvc.resolveAddedEmail.mockResolvedValue(undefined);
+    mergeSvc.detectAttributeConflicts.mockResolvedValue([]); // no-conflict path (CM1)
     // Default: the pre-tx existence guard + the post-commit reload both succeed.
     contactsService.getById.mockResolvedValue({ id: 5, company_id: COMPANY_A, email: null });
     contactsService.getContactById.mockResolvedValue({

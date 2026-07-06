@@ -2,8 +2,10 @@
  * CONTACT-EMAIL-MERGE-001 — T1 unit suite (jest, mocked db).
  *
  * Pins the DECISION TREE and the SQL CONTRACT of contactEmailMergeService:
- *   • resolveAddedEmail 4-way dispatch (inbox-only / empty-owner / non-empty
- *     owner / owner==target) — TC-CEM-U01..U04.
+ *   • resolveAddedEmail dispatch — TC-CEM-U01..U04. UPDATED for
+ *     CONTACT-MERGE-001 (TC-R-1): the two separate-owner branches (old silent
+ *     D2a auto-merge / D2b re-point) now THROW the ContactConflictError
+ *     sentinel; the inbox-only and owner==target branches are byte-for-byte.
  *   • isContactEmailOnly — TRUE only with no phone AND zero rows in all 14
  *     identity tables; enumerates exactly those tables and NOT the footprint
  *     ones; FALSE on any phone / any table row — TC-CEM-U05..U07.
@@ -78,52 +80,43 @@ describe('resolveAddedEmail — 4-way dispatch', () => {
         expect(client.calls.some(c => /DELETE FROM contacts/i.test(c.sql))).toBe(false);
     });
 
-    // TC-CEM-U02 — owner is a separate EMPTY contact → mergeContacts(target, owner).
-    it('U02: empty separate owner → mergeContacts(target=10, dup=77), threads client', async () => {
+    // TC-CEM-U02 (UPDATED — CONTACT-MERGE-001 / TC-R-1) — a separate EMPTY owner
+    // is NO LONGER silently merged+deleted (old D2a): the branch throws the
+    // ContactConflictError sentinel and acts on NOTHING.
+    it('U02: empty separate owner → throws ContactConflictError (old silent D2a auto-merge replaced), nothing acted', async () => {
         emailQueries.findEmailContact.mockResolvedValue({ id: 77 });
-        // isContactEmailOnly(77) → true: no phone + no identity rows.
-        const client = mkClient((sql) => {
-            if (/SELECT phone_e164, secondary_phone/i.test(sql)) {
-                return P({ rows: [{ phone_e164: null, secondary_phone: null }] });
-            }
-            if (/has_identity/i.test(sql)) return P({ rows: [{ has_identity: false }] });
-            if (/SELECT id, company_id FROM contacts WHERE id IN/i.test(sql)) {
-                return P({ rows: [{ id: 10, company_id: A }, { id: 77, company_id: A }] });
-            }
-            if (/contact_id = \$1 AND company_id = \$2/i.test(sql) && /FROM timelines/i.test(sql)) {
-                return P({ rows: [] });
-            }
-            return P({ rows: [], rowCount: 0 });
-        });
-        timelinesQueries.findOrCreateTimelineByContact.mockResolvedValue({ id: 'TLsurv' });
+        const client = mkClient();
 
-        await svc.resolveAddedEmail(10, 'x@cem1.test', A, client);
+        await expect(svc.resolveAddedEmail(10, 'x@cem1.test', A, client))
+            .rejects.toBeInstanceOf(svc.ContactConflictError);
 
-        // The merge path was taken: a DELETE FROM contacts for the dup ran.
-        const del = client.calls.find(c => /DELETE FROM contacts/i.test(c.sql));
-        expect(del).toBeTruthy();
-        expect(del.params).toEqual([77, A]);
-        // Plain inbox link-loop is NOT the taken branch.
+        // No merge, no delete, no link — the sentinel replaced the silent action.
+        expect(client.calls.some(c => /DELETE FROM contacts/i.test(c.sql))).toBe(false);
         expect(emailQueries.linkMessageToContact).not.toHaveBeenCalled();
+        expect(timelinesQueries.findOrCreateTimelineByContact).not.toHaveBeenCalled();
     });
 
-    // TC-CEM-U03 — owner is a separate NON-empty contact → re-point only, no delete.
-    it('U03: non-empty separate owner → re-point messages only, no merge/delete', async () => {
+    // TC-CEM-U03 (UPDATED — CONTACT-MERGE-001 / TC-R-1) — a separate NON-empty
+    // owner is NO LONGER silently re-pointed (old D2b): same sentinel; it carries
+    // the owner id + the conflicting attribute for the route's fresh 409.
+    it('U03: non-empty separate owner → throws ContactConflictError carrying owner id + attribute (old silent D2b re-point replaced)', async () => {
         emailQueries.findEmailContact.mockResolvedValue({ id: 88 });
-        timelinesQueries.findOrCreateTimelineByContact.mockResolvedValue({ id: 'TL' });
-        emailQueries.listMessageIdsForAddress.mockResolvedValue(['mb1']);
-        const client = mkClient((sql) => {
-            if (/SELECT phone_e164, secondary_phone/i.test(sql)) {
-                return P({ rows: [{ phone_e164: '+16175550000', secondary_phone: null }] }); // has phone → not empty
-            }
-            return P({ rows: [], rowCount: 0 });
-        });
+        const client = mkClient();
 
-        await svc.resolveAddedEmail(10, 'bob@cem1.test', A, client);
+        let thrown;
+        try {
+            await svc.resolveAddedEmail(10, 'bob@cem1.test', A, client);
+        } catch (err) {
+            thrown = err;
+        }
+        expect(thrown).toBeInstanceOf(svc.ContactConflictError);
+        expect(thrown.ownerContactId).toBe(88);
+        expect(thrown.attributes).toEqual([
+            { kind: 'email', value: 'bob@cem1.test', normalized: 'bob@cem1.test' },
+        ]);
 
-        expect(emailQueries.linkMessageToContact).toHaveBeenCalledWith(
-            'mb1', A, { contact_id: 10, timeline_id: 'TL', on_timeline: true }, client);
-        // No contact DELETE (owner kept).
+        // No re-point, no delete — nothing was acted silently.
+        expect(emailQueries.linkMessageToContact).not.toHaveBeenCalled();
         expect(client.calls.some(c => /DELETE FROM contacts/i.test(c.sql))).toBe(false);
     });
 

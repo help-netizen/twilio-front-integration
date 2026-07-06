@@ -6544,3 +6544,175 @@ WAVE 4 (manual release-gate):
 **Test-vehicle constraint (закодирован явно, из agent 04):** фронт **не имеет** test-runner; `jsdom`/`vitest`/`@jest-environment jsdom` **НЕ установлены**; `stripEmailQuote.ts` — TS-ESM (нельзя `require` в node-env). Поэтому вся автоматизированная коверка = **ОДИН `scripts/verify-email-quote-strip-001.js`**: Node + **dev-only `jsdom` из scratchpad через `NODE_PATH=<scratchpad>/node_modules`** (`jsdom@29.1.1` уже есть) + `global.DOMParser = new JSDOM('').window.DOMParser` + **CJS-порт** `stripEmailQuote` с **parity-ассертом** (TC-EQS-P01, читает `.ts`) + **SABOTAGE** (TC-EQS-SAB, pass-through краснит). **Backend в фиче НЕТ → backend jest НЕ нужен.** НЕ добавлять `@jest-environment jsdom` (env absent), НЕ добавлять jsdom/vitest в `package.json` (shipped-dep — AC-12 запрещает).
 
 **Миграций НЕТ** (`body_html` уже на timeline-item из EMAIL-HTML-RENDER-001; max migration не меняется — TC-EQS-B04). **Нет нового shipped-пакета** (built-in `DOMParser`; `jsdom` = dev/verify-only). **Нет нового API-route/endpoint/middleware/query/type** (чистый client-render-transform на уже company- + contact-scoped `body_html`; `authenticate`+`requireCompanyAccess` timeline-read неизменён; `company_id` via `req.companyFilter?.company_id` — TC-R-6). **P0-гейты, красный на любом блокирует релиз:** headless detect-матрица (каждый client-boundary найден+cut), over-strip guard (mid-body KEPT vs trailing/attributed stripped), near-empty (all-quote→FULL, image-only→KEPT), fail-safe (throw→input), XSS-neutrality (strip только удаляет — `on*`/`<script>` не могут появиться), sabotage negative-control (pass-through → RED), parity (порт === shipped `.ts`), **и** manual-проход 2599 (only-new render + workspace-full регрессия + all-quote-not-blank + probe/beacon + no-jank + hostile-sanitize). Back-compat: `EmailMessageItem` без пропа = full thread byte-for-byte (D2/AC-2); `sanitizeEmailHtml.ts` пустой diff (D4/AC-8); idempotent + fail-safe + near-empty никогда не blank/raw/throw. Прод-деплой — только с явного «да» владельца (standing rule).
+## Фича CONTACT-MERGE-001: confirm-dialog merge/transfer при добавлении контакту телефона/email, принадлежащего другому контакту
+
+**Источники (binding):** `Docs/specs/CONTACT-MERGE-001.md` (source of truth, S1–S16, API/service контракты) · `Docs/architecture.md` §CONTACT-MERGE-001 (Decisions A–F binding; C2 шаги 3b/3c; OQ-2/OQ-3 решены; owner decisions 1–4) · `Docs/test-cases/CONTACT-MERGE-001.md` (46 кейсов: 17 unit + 19 real-DB + 4 frontend + 6 regression; **P0-гейты: I01/I02 (FK-traps), I05 (cancel byte-identical), I08 (cross-tenant), I09 (stale echo), I13 (silent branches), I14 (mid-tx rollback), I18 (EXPLAIN perf), ISAB (sabotage)**). Частично заменяет silent-ветки D2a/D2b **CONTACT-EMAIL-MERGE-001** (всё остальное той фичи остаётся в силе — их тесты ОБНОВЛЯЮТСЯ, не удаляются, TC-R-1). **Миграций НЕТ** (Decision F; max в репо = 155, next free 156 — НЕ используется; при любой нужде re-verify max перед созданием — parallel branches). **Нового route НЕТ** — всё едет на существующем `PATCH /api/contacts/:id`. Прецеденты: `leads.js` `CONTACT_AMBIGUOUS` (409-envelope), ORPHAN-TASK-REHOME-001 (task re-home ДО timeline delete), PULSE-PERF-001 (EXPLAIN на prod-copy, никаких новых Seq Scan), LIST-PAGINATION-001 (real-DB verify обязателен — мокнутый jest не доказывает FK/rollback), амендмент #5 (sabotage: feature-stash → harness обязан FAIL'ить).
+
+**Сквозные files-forbidden (для ВСЕХ задач фичи):**
+- `src/server.js` — **НЕ трогать**. Mount `/api/contacts` уже под `authenticate, requireCompanyAccess`; `PATCH /:id` уже под `requirePermission('contacts.edit')` (`backend/src/routes/contacts.js:196`). Нового mount/route НЕТ.
+- `backend/db/migrations/*` — **миграций не создаём** (Decision F; существующие mig 012/025/027/028/079/129/143/149 + `idx_calls_timeline_id` покрывают все lookup/re-point). **Новых индексов НЕ добавлять** — если EXPLAIN (T5/I18) плох, открыть вопрос владельцу, не чинить молча.
+- `frontend/src/lib/authedFetch.ts`, `frontend/src/hooks/useRealtimeEvents.ts` — **SSE-изменений НЕТ** (Pulse подхватывает перемещения на следующем неизменном fetch).
+- `backend/src/services/timelineMergeService.js` (`mergeOrphanTimelines` + его async-триггер в PATCH) — **byte-for-byte** (orphan-phone ветка остаётся silent, S16/TC-R-2).
+- `backend/src/db/timelinesQueries.js` — `getUnifiedTimelinePage` / `email_by_contact` CTE / SMS digit-lateral — **ноль изменений запроса** (TC-CM-I15 ассертит, что master-shape функции достаточно; TC-R-3).
+- Ingestion-пути (Gmail push / `linkInboundMessage`, Mail Secretary, VAPI, lead-create-upsert) — **никаких диалогов/сентинелов** (сентинел живёт ТОЛЬКО в PATCH-вызываемых ветках `resolveAddedEmail`); `linkInboxMessages`, `findEmailContact`, `linkMessageToContact`, inbox-only D3 и owner==target ветки — семантика не меняется (FR-9/AC-8).
+- `contact_emails` инварианты mig-025 (UNIQUE(contact_id, email_normalized), single primary, CASCADE) — не нарушать (TC-R-4); leads-cascade + async ZB push — post-commit only, не трогать (TC-R-5). **ZB API на merge НЕ зовётся** (owner decision 3).
+- Тесты вне явно перечисленных в каждой задаче.
+
+**Несущий контекст (проверено чтением кода — критично для реализации):**
+1. **`contactEmailMergeService.js` (412 строк):** `isContactEmailOnly` :76 (D2a↔D2b gate); `mergeContacts(survivorId, dupId, companyId, client)` :163 — FK-рецепт B3 (tasks→timelines→contact, NOT-EXISTS M2M guards, dup deleted LAST, tenant-guard throw) — **расширять аддитивно, НЕ реордерить**; `resolveAddedEmail` :376 — dispatch: owner=null→inbox-only D3 (silent, не трогать); owner==target→no-op (не трогать); owner email-only→`mergeContacts` :400 (старый D2a — ЗАМЕНИТЬ на сентинел); owner-с-identity→re-point (старый D2b — ЗАМЕНИТЬ на сентинел). **`module.exports` :406 = `{ resolveAddedEmail, mergeContacts, isContactEmailOnly, linkInboxMessages, IDENTITY_TABLES }` — РАСШИРИТЬ (append), не заменять.**
+2. **`routes/contacts.js`:** `PATCH /:id` :196; `BEGIN` :270 (one-tx skeleton Decision A CONTACT-EMAIL-MERGE-001 — наследуется); `enrichEmail` :309; per-address `resolveAddedEmail` loop :342. `companyId` строго = `req.companyFilter?.company_id` (НЕ `req.companyId` — его нет); foreign/absent `:id` → существующий 404-guard. 409-payload зеркалит `leads.js` `CONTACT_AMBIGUOUS`: `ok:false` error-envelope + data-sibling `conflict:{conflicts:[…]}`.
+3. **Frontend:** `contactsApi.ts` — `updateContact` :95 (добавить 3-й арг `resolutions?`), `ContactsApiError` :22 (нет `details` — добавить); `PulseContactPanel.tsx` — `handleSaveEmail` :77, scalar `updateContact(contact.id, {email})` :82 (**та самая дыра 4175/4228** — payload НЕ менять, Decision E закрывает server-side); `EditContactDialog.tsx` — `handleSubmit` :122, `updateContact` :154 (шлёт `emails[]` — precedence сохраняется).
+4. **Тестовые прецеденты (house-style):** `tests/contactEmailMerge.test.js` (сервисный слой: mock `db/connection`+`emailQueries`+`timelinesQueries`, capturing client), `tests/contactsPatchEmails.test.js` (route: supertest + injected auth + capturing pooled client), `scripts/verify-contact-email-merge-001.js` (CEM1-harness: assert-kit `check`/`eq`/`record`/`CheckError` — реюзать verbatim; dangling-FK scan; секции + `--section`). Jest в worktree: `--testPathIgnorePatterns "/node_modules/"`. Frontend DoD: `cd frontend && npm run build` (tsc -b; прод-Docker строже — noUnusedLocals).
+5. **Контракт 409/resolutions зафиксирован спекой** (§API contract) — поэтому frontend (T2) может идти параллельно backend-ядру (T1), не дожидаясь кода route.
+
+---
+
+### CM1-T1: backend-ядро `contactEmailMergeService` — `detectAttributeConflicts` + `ContactConflictError` + сентинел в `resolveAddedEmail` + `transferPhone`/`transferEmail` + `mergeContacts` 3b/3c (P0, L)
+
+**Цель:** весь новый сервисный слой в ОДНОМ файле (Decisions B, C2, D): детекция конфликтов с локами и FR-3 гейтом; замена silent D2a/D2b на сентинел («no silent path left»); транзакционные transfer-примитивы; аддитивное расширение merge-рецепта под телефонный мир (calls FK-trap + slot-fill). Один файл — одна задача (параллельные правки одного файла = конфликты; прецедент MAIL-MUTE-001-T1).
+
+**Файлы, которые можно менять:**
+- `backend/src/services/contactEmailMergeService.js`:
+  - **`ContactConflictError`** — сентинел-класс (несёт owner id + attributes, достаточно для fresh-409 в route).
+  - **`detectAttributeConflicts(targetContactId, {phones:[digits], emails:[normalized]}, companyId, client)`** — added-sets исключают значения, уже стоящие на target (по digits / normalized — S12, нулевая детекция на re-save); phone-owner lookup company-scoped + `id <> target`, full-digit legs = **точное mig-149 выражение** `NULLIF(regexp_replace(…,'\D','','g'),'')` (индекс served verbatim) + `RIGHT(digits,10)` fallback-legs для legacy non-E.164, `ORDER BY updated_at DESC LIMIT 1` (take-latest на multi-owner грязи); email-owner = `findEmailContact` (реюз, не реимплементить); **`FOR UPDATE`** на target и каждой owner-строке; группировка по owner id; per-owner **`transfer_allowed`** (FR-3: инвентарь `{phone_e164, secondary_phone} ∪ {scalar email + все contact_emails}` минус **ВСЕ** конфликтующие атрибуты этого диалога ≥ 1 — ловушка U05c: per-attribute симуляция сказала бы true, должно быть false); в каждом entry — композиции `owner`/`editing` (name + ВСЕ phones `{value,label,slot}` + ВСЕ emails `{email,is_primary}`).
+  - **`resolveAddedEmail`** — две separate-owner ветки (:398–:400 старый D2a-automerge; D2b re-point) → **throw `ContactConflictError`**; inbox-only (D3) и owner==target ветки — **byte-for-byte** (FR-9).
+  - **`mergeContacts`** — вставить МЕЖДУ существующими шагами 3 и 4: **3b** re-point calls ДО удаления dup-timeline (`calls.timeline_id` без ON DELETE — FK-trap; `UPDATE calls SET timeline_id=$survivorTl, contact_id=$survivor WHERE timeline_id = ANY($dupTlIds)` + `UPDATE calls SET contact_id=$survivor WHERE contact_id=$dup AND company_id=$`); **3c** phone-slot fill (OQ-2: только FREE слоты, `phone_e164` первым, `secondary_phone_name` carry; overflow НЕ персистится → `eventService.logEvent(companyId,'contact',survivorId,'contact_merged',{merged_contact_id, merged_name, dropped_phones})` + warn-лог; **survivor scalars — name/company/notes/`zenbooker_customer_id` — НИКОГДА не перезаписываются**; ZB API не зовётся). B3-порядок и tenant-guard — не реордерить/не ослаблять.
+  - **`transferPhone(targetId, ownerId, digits, companyId, client)`** — clear matched slot; **OQ-3 promotion** (cleared=`phone_e164` && secondary есть → secondary→primary, `secondary_phone`+`secondary_phone_name` NULL); `findOrCreateTimelineByContact(target,…)` (реюз — adopts orphans + re-home задач); re-point ТОЛЬКО calls этого номера (`WHERE timeline_id=$ownerTl AND (RIGHT(digits(from_number),10)=$last10 OR RIGHT(digits(to_number),10)=$last10)` — никогда unscoped digit-sweep); **SMS-write НЕТ**; owner НЕ удаляется.
+  - **`transferEmail(targetId, ownerId, emailNormalized, companyId, client)`** — `DELETE contact_emails` owner-строки; scalar-sync (remaining primary-or-first или NULL); `linkInboxMessages(target, …)` (реюз). Target-сторона делается PATCH-блоком, не тут.
+  - FR-3 re-check helper для execution-time (стейл-transfer → сентинел; используется route в T3).
+  - **exports append:** `detectAttributeConflicts, transferPhone, transferEmail, ContactConflictError` (старые 5 экспортов не терять).
+- `tests/contactMergeConflicts.test.js` (**создать**, house-style `contactEmailMerge.test.js`) — TC-CM-U01…U10.
+- `tests/contactEmailMerge.test.js` (**обновить**, TC-R-1) — silent-ожидания D2a/D2b (TC-CEM-U02/U03) → ожидание сентинела; остальное (U01/U04, isContactEmailOnly, B3-order) green unchanged. Удаление кейсов = FAIL.
+
+**Файлы, которые трогать нельзя:** всё из сквозного списка; `routes/contacts.js` (T3); frontend (T2/T4); `emailQueries`/`timelinesQueries` (только реюз-вызовы); `scripts/*` (T5).
+
+**Ожидаемый результат:** сервис отдаёт детекцию с локами, группировкой и корректным `transfer_allowed`; ни одна separate-owner ветка не действует молча (сентинел); merge переживает dup-с-звонками без FK-ошибки и никогда не трогает survivor-скаляры; трансферы идемпотентны (повтор: 0-row UPDATE / no-row DELETE / no-op re-link), company-scoped на каждой ноге, tx-aware (trailing `client`). Все SQL-ноги фильтруют по company_id.
+
+**Проверка (acceptance):** TC-CM-U01 (детекция: mig-149 выражение, company-scope, `id<>target`, FOR UPDATE, take-latest), U02 (last-10 fallback), U03 (added-sets exclude own + Decision-E scalar в email-set), U04 (grouping 2-attrs-1-owner / 2 owners), U05 (FR-3 параметризованный, a–d, ловушка c), U06 (сентинел в D2a/D2b ветках; D3/self byte-for-byte), U07 (call-order: task re-home → email → **3b calls** → timeline delete → contact delete LAST), U08 (3c slot-fill/label/scalars-never/overflow-event), U09 (transferPhone: promotion + this-number-only filter + no SMS write + no delete), U10 (transferEmail: delete + scalar sync a/b/c + linkInboxMessages). TC-R-1 (contactEmailMerge.test.js обновлён и зелёный). Jest зелёный.
+
+**Зависимости:** нет (foundational). **Параллельность:** **wave 1** — файлово ∥ с T2 (backend service vs frontend; ноль пересечений, контракт зафиксирован спекой). T3 — потребитель T1-экспортов → wave 2.
+
+**Статус:** done — APPROVED (jest 41: детекция + FOR UPDATE + take-latest, FR-3 gate вкл. ловушку U05c, сентинел в D2a/D2b, mergeContacts 3b/3c, transfer-примитивы)
+
+---
+
+### CM1-T2: frontend контрактный слой — `contactsApi` types/resolutions + `MergeContactsDialog` + `useContactConflictFlow` (P1, M)
+
+**Цель:** весь НОВЫЙ frontend-код + типизация API-контракта (зафиксирован спекой §API contract — backend ждать не нужно): расширение `updateContact`, `ContactsApiError.details`, канонический confirm-диалог и shared state-machine hook, который потом (T4) подключат обе поверхности.
+
+**Файлы, которые можно менять:**
+- `frontend/src/services/contactsApi.ts` — `updateContact(contactId, fields, resolutions?)` (3-й опциональный арг, в body как `resolutions`); `ContactsApiError` (:22) + `details?` (несёт `conflict`-payload из 409-body); экспорт типов `ContactConflict` / `ContactConflictResolution` (shape из спеки: owner/editing композиции, `attributes:[{kind,value,normalized}]`, `transfer_allowed`; resolution `{owner_contact_id, action:'merge'|'transfer', attributes:[{kind,value}]}`). Без `any`.
+- `frontend/src/components/contacts/MergeContactsDialog.tsx` (**создать**) — **центрмодал `<Dialog><DialogContent variant="dialog">`** (confirm-класс, НЕ `variant="panel"`; mobile = авто-BottomSheet per OVERLAY-CANON-002, нулевой доп-код). Title «Merge contacts?»; **two-column grid** `grid-cols-1 sm:grid-cols-2` — Contact 1 (editing) / Contact 2 (owner): имя semibold, все phones + emails plain-rows (иконки `size-3.5` `--blanc-ink-3`), **пустых строк нет**, конфликтующие атрибуты highlighted весом + `--blanc-ink-1` vs `--blanc-ink-3` (**только Blanc-токены, hex запрещён — grep новых файлов на `#`**). Actions + one-line consequence hints (FR-2): primary `Merge contacts` («Contact 2 will be deleted; all its history moves here»); secondary `Transfer phone`/`Transfer email` ТОЛЬКО при `transfer_allowed` (иначе one-liner почему); ghost `Cancel`. Без input'ов/чекбоксов (v1). Escape/backdrop = Cancel (shared overlay logic, без hand-rolled close).
+- `frontend/src/components/contacts/useContactConflictFlow.ts` (**создать**) — state-machine: `updateContact` → на `ContactsApiError` `code==='CONTACT_ATTRIBUTE_CONFLICT'` читать `details.conflicts` → диалоги **последовательно per owner** → собрать `resolutions[]` → все подтверждены → **ОДИН** retry `updateContact(body, resolutions)`; любой Cancel → полный abort, редактор сохраняет введённое (FR-7); повторный 409 (stale) → рестарт раунда с fresh-payload. 409 НЕ показывает generic error-toast; прочие ошибки — сегодняшние тосты.
+
+**Файлы, которые трогать нельзя:** всё из сквозного списка — особенно `authedFetch.ts`; `EditContactDialog.tsx`/`PulseContactPanel.tsx` (T4 — стыковка отдельно); backend (T1/T3); `ui/dialog.tsx` и overlay-примитивы (только использовать).
+
+**Ожидаемый результат:** новые компонент+hook компилируются и типизированы контрактом спеки; `updateContact` back-compatible (2-арговые вызовы не ломаются); диалог рендерит обе композиции, гейтит Transfer по `transfer_allowed`, чист по токенам. Ничего ещё не подключено к поверхностям (это T4) — поведение приложения не изменено.
+
+**Проверка (acceptance):** TC-CM-F04 (`cd frontend && npm run build` = tsc -b, exit 0; типы consumed без `any`); статическая половина TC-CM-F01 (variant="dialog", grid, gated actions, hints, отсутствие hex — grep). Динамические F01/F02/F03 — на wave-2 exit (после T3+T4, живой 409).
+
+**Зависимости:** нет жёстких на код (контракт из спеки). **Параллельность:** **wave 1** — файлово ∥ с T1 (ноль пересечений). T4 — потребитель hook/dialog → wave 2.
+
+**Статус:** done — APPROVED (build green: contactsApi types/resolutions без any, MergeContactsDialog variant="dialog" + gated Transfer, useContactConflictFlow; токены чистые)
+
+---
+
+### CM1-T3: route-слой — `PATCH /api/contacts/:id`: детекция в tx-top + strict-echo `resolutions[]` + 409 + Decision-C порядок + Decision-E scalar (P0, L)
+
+**Цель:** превратить существующий PATCH в конфликтный round-trip (Decision A): детекция ДО любого write, валидация resolutions, 409-payload по leads.js-прецеденту, исполнение резолюций в Decision-C порядке, server-side закрытие scalar-`email` дыры (Decision E — 4175/4228 для ВСЕХ клиентов route), ловля сентинела → fresh 409. **Нового route/middleware НЕТ.**
+
+**Файлы, которые можно менять:**
+- `backend/src/routes/contacts.js` — только `PATCH /:id` (:196; хендлеры addresses/notes не трогать):
+  - в tx (`BEGIN` :270) ПЕРВЫМ шагом собрать added-sets (phones из `phone_e164`/`secondary_phone`; emails из `emails[]` **плюс Decision-E scalar**: body несёт `email` без `emails[]`, normalized непуст и не стоит на контакте) → `detectAttributeConflicts` (T1);
+  - **валидация `resolutions[]` (strict echo):** для каждого DETECTED конфликта — резолюция с тем же `owner_contact_id` И тем же attribute-set; mismatch/absence → ROLLBACK → **409** `{ok:false, error:{code:'CONTACT_ATTRIBUTE_CONFLICT', message, correlation_id}, conflict:{conflicts:[…]}}`; резолюция без матчащего конфликта — **игнор** (идемпотентность FR-10); malformed shape (unknown action / нет owner / attributes не массив) → non-matching → 409, **никогда 500**;
+  - **Decision-C порядок:** detect+lock → validate → существующий contact UPDATE + email-блок (unchanged) → исполнение резолюций (`merge`→`mergeContacts`; `transfer`→`transferPhone`/`transferEmail` per attribute, c FR-3 re-check — стейл → сентинел) → существующий `resolveAddedEmail` loop (:342) для НЕконфликтных адресов → COMMIT;
+  - **Decision E no-conflict path:** scalar-ветка дополнительно `enrichEmail(id, email, client)` (:309-паттерн) + `resolveAddedEmail(id, email, companyId, client)` in-tx; scalar-колонка пишется как сегодня; `emails[]` precedence сохранён;
+  - **catch `ContactConflictError`** (из шага-5 loop или FR-3 re-check) → ROLLBACK → fresh 409 (не 500);
+  - async-ноги (leads-cascade, `mergeOrphanTimelines`, ZB push) — только после COMMIT, на 409/ошибке НЕ стреляют. `companyId` = `req.companyFilter?.company_id`; чужой `:id` → 404; данные изолированы между компаниями на каждой SQL-ноге.
+- `tests/contactsPatchMergeConflict.test.js` (**создать**, house-style `contactsPatchEmails.test.js`: supertest + injected auth + capturing client) — TC-CM-U11…U17.
+- `tests/contactsPatchEmails.test.js` (**обновить**, TC-R-1) — ожидания, завязанные на silent D2a/D2b через route, → 409/сентинел; остальное green unchanged.
+
+**Файлы, которые трогать нельзя:** всё из сквозного списка — особенно `server.js` (mount/middleware неизменны); `contactEmailMergeService.js` (контракт T1 — только import/вызовы, НЕ доправлять; нужен фикс — вернуть в T1); `timelineMergeService.js`; frontend.
+
+**Ожидаемый результат:** round 1 без резолюций при конфликте → 409 + полный payload, **ничего не закоммичено** (детекция раньше всех write); round 2 со strict-echo → резолюции исполняются в одном tx; leftover-резолюции игнорируются (повторный retry = плоский save); malformed → 409; scalar-email теперь персистит `contact_emails` и проходит детекцию у любого клиента route; сентинел никогда не утекает 500-кой; 401/403/404 контракт неизменен.
+
+**Проверка (acceptance):** TC-CM-U11 (round 1: 409-payload, ROLLBACK-not-COMMIT, детекция раньше write — order-assert), U12 (strict echo a–d), U13 (malformed → 409 не 500), U14 (Decision-C порядок + FR-3 re-check стейла + async-ноги только после COMMIT), U15 (401/403/404-foreign-id/forged-echo-игнор/400 INVALID_ID/400 NO_FIELDS), U16 (Decision E a–d), U17 (in-tx сентинел из шага 5 → 409). TC-R-1 (contactsPatchEmails.test.js обновлён и зелёный). Jest зелёный.
+
+**Зависимости:** **T1 (жёстко)** — импортирует `detectAttributeConflicts`/`transferPhone`/`transferEmail`/`ContactConflictError` + сентинельное поведение `resolveAddedEmail`. **Параллельность:** **wave 2**, строго ПОСЛЕ T1; файлово ∥ с T4 (route vs frontend-поверхности; ноль пересечений).
+
+**Статус:** done — APPROVED (jest 90/90 по 4 сьютам фичи; sabotage-проверки U11/U12: детекция-раньше-write + strict-echo подтверждены mutation'ом)
+
+---
+
+### CM1-T4: стыковка поверхностей — `EditContactDialog` + `PulseContactPanel` через `useContactConflictFlow` (P1, S)
+
+**Цель:** подключить оба v1-редактора к conflict-flow (интеграционная стыковка — по амендменту после route-слоя для живой проверки, код зависит только от T2): `handleSubmit` и `handleSaveEmail` идут через hook, диалог рендерится, cancel сохраняет введённое.
+
+**Файлы, которые можно менять:**
+- `frontend/src/components/contacts/EditContactDialog.tsx` — `handleSubmit` (:122) через flow; на Cancel диалога панель остаётся открытой с введёнными значениями; на success — как сегодня (toast, close, onSuccess). Payload (`emails[]`) не менять.
+- `frontend/src/components/contacts/PulseContactPanel.tsx` — `handleSaveEmail` (:77) через тот же flow; **payload остаётся scalar `{email}`** (:82 — Decision E, НЕ конвертить в `emails[]`); спиннер сохраняется; на cancel draft остаётся в inline-редакторе; рендер диалога.
+
+**Файлы, которые трогать нельзя:** всё из сквозного списка; `MergeContactsDialog.tsx`/`useContactConflictFlow.ts`/`contactsApi.ts` (контракт T2 — только импорт; нужен фикс — вернуть в T2); backend (T1/T3).
+
+**Ожидаемый результат:** конфликт из любой поверхности → тот же диалог, последовательно per owner, ОДИН retry с всеми резолюциями (Network: ровно 2 PATCH — 409 + 200); Cancel на любом диалоге → ноль retry, редактор с введённым, без error-toast; 409 не показывает generic toast; non-conflict save byte-for-byte как сегодня.
+
+**Проверка (acceptance):** `cd frontend && npm run build` (tsc -b) exit 0 — код-нога, не ждёт T3. **Manual-smoke нога (на wave-2 exit, ПОСЛЕ T3 — живой 409):** TC-CM-F01 (диалог: variant/grid/highlight/gated Transfer/hints/Escape-backdrop/mobile-BottomSheet/нет hex), F02 (sequential dialogs, ONE retry, cancel aborts, stale-409 рестарт, Network tab), F03 (Pulse inline: scalar payload в Network, draft на cancel, спиннер).
+
+**Зависимости:** **T2 (жёстко, код)** — импортирует hook/dialog/типы. **T3 (мягко, только manual-smoke нога)** — живой 409 для F01–F03. **Параллельность:** **wave 2** — файлово ∥ с T3 (ноль пересечений); build-DoD не ждёт T3, manual F01–F03 закрывается на выходе wave 2.
+
+**Статус:** done — APPROVED (обе поверхности через useContactConflictFlow; scalar-payload Pulse-панели сохранён (Decision E); cancel держит введённое; build green)
+
+---
+
+### CM1-T5: verify-задача — `scripts/verify-contact-merge-001.js` real-DB harness + sabotage (амендмент #5) + EXPLAIN perf-gate (P0, L)
+
+**Цель:** доказать несущие инварианты на РЕАЛЬНОМ Postgres (LIST-PAGINATION-001 lesson: мокнутый jest доказывает SQL-текст/диспатч, НЕ что FK выдержал, task выжил, rollback byte-identical, tenant изолирован). Self-seeding/self-cleaning скрипт house-стиля (зеркалит `verify-contact-email-merge-001.js`/CEM1: assert-kit verbatim, секции, PASS/FAIL), тег **`CM1`**, оба раунда PATCH через реальный handler (supertest + stub-auth `req.companyFilter={company_id:A}` + `contacts.edit`).
+
+**Файлы, которые можно менять:**
+- `scripts/verify-contact-merge-001.js` (**создать**) — `DATABASE_URL` default `postgresql://localhost/twilio_calls`, **никогда прод**; секции `s1…s16` + `sab` + `--explain`, `--section=<id>|all`; exit 0 только без FAIL. Компании: A = seed `…0001` (ассерты delta/tagged, не абсолюты), **B** = tagged `c0000000-0000-4000-8000-0000000000f1` (создаётся+удаляется здесь). Cleanup at start / перед кейсом / в конце, FK-порядок: tasks → email_messages → email_threads → calls → sms_conversations → timelines → business entities → contact_emails → contacts → crm_users → companies. Seed-builders: `mkContact`/`mkTimeline`/`mkCall`/`mkSmsConversation`/`mkEmailThread`/`mkEmailMessage`/`mkContactEmail`/`mkLead`/`mkJob`/`seedOpenTask`. **Dangling-FK scan** (из CEM1, + `calls.contact_id`/`calls.timeline_id` — 3b) и **byte-identical snapshot** (упорядоченные row-sets 9 таблиц, hash) — обязательные утилиты. Fault-injection hook для I14 — env-guarded (`CM1_FAIL_AFTER='mergeContacts'`), никакой прод-семантики.
+
+**Секции → кейсы:**
+- **s1 — I01 (P0):** S1 full-merge AC-2 checklist: open task ЖИВ и re-homed, ZB id survivor'а kept, dup+timeline гоны, dangling-FK = 0, `contact_merged` event, no ZB API; round-1 snapshot unchanged. — **s3 — I02 (P0 FK-trap):** dup-timeline С ЗВОНКАМИ → merge коммитится без FK-ошибки (3b раньше delete). — **s4 — I03 (P0):** transfer phone: OQ-3 promotion, только `…22`-calls двинулись, owner жив, SMS flips query-time, `findOrCreateTimeline` → target, событий нет. — **s2 — I04:** transfer email: row moved, scalar synced, messages re-linked, owner intact. — **s5 — I05 (P0):** cancel → hash-identical snapshot (включая non-conflicting field-edits round-1); re-save без конфликта проходит. — **s6 — I06:** `transfer_allowed:false` end-to-end + hostile transfer-retry → fresh 409. — **s7 — I07:** multi-owner: ONE 409 grouped, ONE retry (merge A2 + transfer B2) в одном tx. — **s11 — I08 (P0 SECURITY):** 4 ноги — detection-невидимость B, forged echo игнор + B-snapshot identical, foreign `:id` → 404, `mergeContacts` tenant-guard throw / transfers 0 rows. — **s9 — I09 (P0):** stale echo: mismatch → fresh 409 + snapshot-identical; gone → ignore + plain save. — **s10 — I10:** double-submit всех трёх действий → no-op (0-row/no-row/no-op re-link, без второго события). — **s8 — I11:** scalar-email оба branch'а (буквальная репродукция 4175/4228: `contact_emails`-row обязан появиться). — **s15 — I12:** slot overflow: `dropped_phones` в событии, calls moved, SMS-caveat, warn. — **s16 — I13 (P0) + I15:** silent branches byte-for-byte (D3 / orphan `mergeOrphanTimelines` post-commit poll / ingestion не бросает сентинел) + Pulse-list после merge/transfer на **неизменном** `getUnifiedTimelinePage`. — **s14 — I14 (P0):** fault-injection после первой из двух резолюций → полный rollback, snapshot-identical, async-ноги НЕ стреляли. — **s12 — I16:** self-conflict no-op. — **s13 — I17:** owner deleted between rounds → ignore, inbox-only линк. — **sab — ISAB (P0, две ноги):** (1) wrong-expectation → `CheckError`/FAIL → restore → green; (2) **амендмент #5: `git stash` фичевого диффа (service+route) → s1/s5/s8 обязаны FAIL'ить** (нет 409 / нет `contact_emails`-row / silent D2a) → `git stash pop` → green. Harness, зелёный со stash'нутой фичей = все PASS vacuous → релиз блокирован. — **explain — I18 (P0 perf-gate, deploy-gated):** на **prod-copy restore** `EXPLAIN (ANALYZE, BUFFERS)`: detection full-digit → mig-149 index (Seq Scan на `contacts` = FAIL), last-10 leg → задокументировать факт-план, transfer call-filter → `idx_calls_timeline_id` (Seq Scan на `calls` = FAIL). Планы — в PR.
+
+**Что сделать:** прогнать `--section=all` на локальной dev-БД — все секции PASS, повторный запуск чистый; вывод per-case — в отчёт/PR. **Prod-copy нога (I18 + полный прогон suite по AC-10) — deploy-gated: ТОЛЬКО с явного согласия владельца** (standing rule; смена `DATABASE_URL` на restore, не на прод).
+
+**Файлы, которые трогать нельзя:** ВСЁ продуктовое (`contactEmailMergeService.js`, `routes/contacts.js`, frontend, `timelinesQueries.js`) — это ВЕРИФИКАЦИЯ, никаких попутных фиксов (красный кейс → баг возвращается в T1/T3, не чинится в скрипте); `tests/*` (jest — территория T1/T3); никаких новых индексов/миграций по итогам EXPLAIN (плохой план → вопрос владельцу).
+
+**Ожидаемый результат:** один воспроизводимый прогон доказывает на реальных строках все 8 P0-гейтов (I01/I02 FK-traps, I05 cancel, I08 cross-tenant, I09 stale, I13 silent branches, I14 rollback, ISAB sabotage ×2) + I18 perf-parity на prod-copy. **Красный на ЛЮБОМ P0-гейте блокирует релиз.**
+
+**Проверка (acceptance):** TC-CM-I01…I17 + ISAB — все PASS локально; I18 + прод-copy full-run — при деплое (owner consent). Jest T1/T3 остаётся зелёным (no product changes here).
+
+**Зависимости:** **T1 + T3 (жёстко)** — реальный сервис + реальный route-handler оба раунда; T2/T4 не нужны (backend-harness). **Параллельность:** **wave 3** — строго ПОСЛЕДНЯЯ (амендмент #5: verify после всех code-задач). Prod-copy нога — deploy-gated.
+
+**Статус:** done — APPROVED (real-DB harness 19/19 + ISAB×2 + собственный sabotage ревьюера на fix-2; харнесс нашёл 4 продуктовых бага, не ловимых jest-моками — все починены и перепрогнаны). **I18 volumetric EXPLAIN на prod-copy — deploy-gated, НЕ выполнен** (деплой отложен владельцем; обязателен перед деплоем)
+
+---
+
+### Порядок выполнения и параллелизм (CONTACT-MERGE-001)
+
+```
+wave 1 (foundation, ∥):  T1 (contactEmailMergeService: detect + сентинел + transfers + mergeContacts 3b/3c
+                             + tests/contactMergeConflicts.test.js + update tests/contactEmailMerge.test.js) ──┐
+                         T2 (contactsApi types/resolutions + MergeContactsDialog.tsx + useContactConflictFlow.ts) ┘
+                             ← T1 ∥ T2: DISJOINT файлы (backend-сервис vs frontend),
+                               контракт 409/resolutions зафиксирован спекой → ноль контрактного ожидания
+
+wave 2 (стыковка, ∥):    T3 (routes/contacts.js PATCH /:id: 409 round-trip + Decision C/E + сентинел-catch
+                             + tests/contactsPatchMergeConflict.test.js + update tests/contactsPatchEmails.test.js) ──┐  ← нужен T1
+                         T4 (EditContactDialog + PulseContactPanel через flow; build-DoD сразу,
+                             manual F01–F03 — на выходе wave 2, после T3) ──────────────────────────────────────────┘  ← нужен T2 (код); T3 (smoke)
+                             ← T3 ∥ T4: DISJOINT файлы (route vs frontend-поверхности)
+
+wave 3 (verify):         T5 (scripts/verify-contact-merge-001.js: s1…s16 + sab (амендмент #5 feature-stash) + --explain)
+                             ← строго ПОСЛЕ {T1,T3} (реальный сервис + route оба раунда); последняя задача фичи
+                             · I18 EXPLAIN + полный прогон на prod-copy — deploy-gated: только с явного согласия владельца
+```
+
+**Граф зависимостей:** **{T1 ∥ T2} → {T3 ∥ T4} → T5.** Точнее:
+- **wave 1 = {T1, T2} ПАРАЛЛЕЛЬНО** (амендмент #1: непересекающиеся файлы, без контрактной зависимости — контракт уже в спеке). Весь backend-сервисный код в ОДНОЙ задаче T1: все правки в одном файле `contactEmailMergeService.js` (параллельный сплит одного файла = конфликты; прецедент MAIL-MUTE-001-T1).
+- **wave 2 = {T3, T4} ПАРАЛЛЕЛЬНО** — DISJOINT файлы. T3 ← T1 (импортирует новые экспорты + сентинел). T4 ← T2 (hook/dialog/типы); manual-smoke нога T4 (F01–F03, живой 409) закрывается на выходе wave 2 после T3 — «интеграционная стыковка после route-слоя».
+- **wave 3 = T5** — verify-задача, строго последняя (амендмент #5): real-DB harness с sabotage-контролем (wrong-expectation + feature-stash); **прод-copy EXPLAIN I18 — deploy-gated** (только с явного «да» владельца).
+
+**Тестовые файлы → задачи:** `tests/contactMergeConflicts.test.js` (сервисный слой) → T1 · `tests/contactsPatchMergeConflict.test.js` (route-слой) → T3 · обновление `tests/contactEmailMerge.test.js` → T1, обновление `tests/contactsPatchEmails.test.js` → T3 (TC-R-1: silent D2a/D2b ожидания → сентинел/409; удаление кейсов = FAIL) · `scripts/verify-contact-merge-001.js` → T5. Тесты пишет Tester-агент в цикле каждой задачи.
+
+**Параллелизм-резюме:** две параллельные волны по 2 задачи ({T1∥T2}, затем {T3∥T4}), затем одиночный verify (T5). **Верификационная задача — T5** (real-DB + sabotage амендмент #5 + EXPLAIN perf-gate; prod-copy — deploy-gated). **Миграций НЕТ** (max=155, 156 не используется). **8 P0-гейтов** (I01/I02/I05/I08/I09/I13/I14/ISAB) + **I18 perf-gate** — красный на любом блокирует релиз. Back-compat: PATCH без конфликтов = byte-for-byte сегодняшний save; `updateContact` 2-арговые вызовы не ломаются; silent-ветки (D3, owner==target, orphan phones, ingestion) — нетронуты. Frontend DoD везде: `npm run build` (tsc -b). Деплой в прод — только с явного «да» владельца (standing rule).

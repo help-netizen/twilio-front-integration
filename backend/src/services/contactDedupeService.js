@@ -496,7 +496,20 @@ async function enrichEmail(contactId, emailNorm, client = db) {
         [contactId]
     );
     if (contact.length > 0 && contact[0].email && contact[0].email.toLowerCase().trim() === emailNorm) {
-        return false;
+        // CONTACT-MERGE-001 (CM1-T5 harness finding): the scalar already holds
+        // the address but the contact_emails ROW is missing — the literal
+        // 4175/4228 inconsistent state (e.g. the PATCH tx writes the scalar
+        // BEFORE calling this, so the old early-return skipped the row and
+        // contact_emails-keyed joins — the Pulse email_by_contact CTE, conflict
+        // detection, findEmailContact's ce leg — never saw the address).
+        // Persist the row; is_primary=true because the scalar IS the primary.
+        await client.query(
+            `INSERT INTO contact_emails (contact_id, email, email_normalized, is_primary)
+             VALUES ($1, $2, $3, true)
+             ON CONFLICT (contact_id, email_normalized) DO NOTHING`,
+            [contactId, emailNorm, emailNorm]
+        );
+        return true;
     }
 
     // If contact has no primary email, set it
