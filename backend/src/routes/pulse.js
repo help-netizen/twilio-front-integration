@@ -312,6 +312,8 @@ async function buildTimeline(req, res, contact, timeline) {
                     subject: row.subject,
                     // Quote-strip the STORED body for display only (storage untouched).
                     body_text: toTimelineBody(row.body_text, { snippet: row.snippet }),
+                    // RAW HTML body (un-quote-stripped, un-sanitized) — sanitized client-side.
+                    body_html: row.body_html || null,
                     sent_at: row.gmail_internal_at,
                     thread_id: row.thread_id,
                     sent_by_user_email: row.sent_by_user_email,

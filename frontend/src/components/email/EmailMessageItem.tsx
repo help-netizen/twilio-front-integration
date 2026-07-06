@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import DOMPurify from 'dompurify';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import type { EmailMessage } from '../../services/emailApi';
 import { getAttachmentDownloadUrl } from '../../services/emailApi';
 import { AttachmentsSection, type AttachmentItem } from '../shared/AttachmentsSection';
+import SafeEmailHtml from './SafeEmailHtml';
 
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp', 'image/svg+xml'];
 
@@ -24,7 +24,14 @@ function formatRecipients(recipients: { name?: string; email: string }[]): strin
 
 export function EmailMessageItem({ message, isLast }: EmailMessageItemProps) {
     const [expanded, setExpanded] = useState(isLast);
+    const [allowImages, setAllowImages] = useState(false);
     const isOutbound = message.direction === 'outbound';
+
+    // Only offer "Show images" when the HTML actually carries blockable remote
+    // images (http(s)/protocol-relative/cid), and they're still blocked.
+    const hasBlockableImages =
+        !!message.body_html &&
+        /<img[^>]+\bsrc\s*=\s*["']?\s*(https?:|\/\/|cid:)/i.test(message.body_html);
 
     // Map email attachments to universal AttachmentItem
     const visibleAttachments: AttachmentItem[] = (message.attachments || [])
@@ -85,11 +92,27 @@ export function EmailMessageItem({ message, isLast }: EmailMessageItemProps) {
 
                     {/* Body */}
                     {message.body_html ? (
-                        <div
-                            className="text-sm prose prose-sm max-w-none"
-                            style={{ color: 'var(--blanc-ink-1)' }}
-                            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(message.body_html) }}
-                        />
+                        <div className="text-sm" style={{ color: 'var(--blanc-ink-1)' }}>
+                            {hasBlockableImages && !allowImages && (
+                                <button
+                                    type="button"
+                                    onClick={() => setAllowImages(true)}
+                                    className="mb-2 rounded-md px-2.5 py-1 text-xs font-medium"
+                                    style={{
+                                        border: '1px solid var(--blanc-line)',
+                                        background: 'rgba(25, 25, 25, 0.03)',
+                                        color: 'var(--blanc-ink-2)',
+                                    }}
+                                >
+                                    Show images
+                                </button>
+                            )}
+                            <SafeEmailHtml
+                                html={message.body_html}
+                                allowImages={allowImages}
+                                messageId={message.id}
+                            />
+                        </div>
                     ) : (
                         <pre className="text-sm whitespace-pre-wrap" style={{ color: 'var(--blanc-ink-1)', fontFamily: 'inherit' }}>
                             {message.body_text || '(no content)'}

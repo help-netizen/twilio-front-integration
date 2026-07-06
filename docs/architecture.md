@@ -4020,3 +4020,87 @@ const rows = await queries.getUnifiedTimelinePage({
 - **OQ-MM-4 (regex/negated `from:` in the SQL set).** `getMutedSenderSet` projects only **literal** `from:` addresses/domains into the SQL list-suppression set; `/regex/i` `from:` and negated `from:` tokens are muted at **link time** (`isSenderMuted` handles the full from-only DSL incl. regex/negation) but are **not** retro-hidden from the existing list (they'd require per-row regex in the hot query — banned). Net: new inbound from a regex-muted sender stops linking; a pre-existing linked timeline for a regex-`from:` mute keeps showing until a non-email signal ages it out. Confirm this asymmetry is acceptable for v1 (recommended — it never over-hides and keeps the hot query regex-free). If not, escalate to approach (b) for regex mutes only.
 - **OQ-MM-2 (outbound to a muted address) — RESOLVED as scoped:** mute governs the **inbound** email signal only; an operator's outbound reply keeps EMAIL-OUTBOUND-001 behavior (the `email_by_contact` Leg-2 outbound term is NOT gated by `email_muted` in this design — confirm the SpecWriter wants outbound-to-muted to remain visible; default = yes, unchanged).
 - **OQ-MM-3 — RESOLVED:** staleness after a rule edit = the existing ~60s settings cache; no new cache. (`invalidateCache` already fires on settings writes, so edits reflect on the next uncached read for BOTH the ingestion and list paths — consistent, NFR-4.)
+
+---
+
+## Архитектурное решение для фичи EMAIL-HTML-RENDER-001 — sanitized inbound-email HTML in the Pulse timeline (2026-07-06)
+
+Render **inbound** email bodies in the Pulse timeline bubble (`EmailListItem`) as **sanitized HTML** (clickable links/buttons/formatting), behind ONE shared sanitizer reused by the `/email` workspace; **outbound** and no-HTML fall back to escape-then-linkify plain text. Read/render extension of **EMAIL-TIMELINE-001** (§ line 1955) — no OAuth/sync/send/schema change, **no migration**. Binding customer decisions D1–D6 (requirements §EMAIL-HTML-RENDER-001) are inputs, not re-litigated here.
+
+### The three architecture decisions (OQ-1/2/3) — DECIDED
+
+**OQ-3 (the big one) — CSS-containment technique = SHADOW DOM.** `SafeEmailHtml` renders a host element (`<div>`), attaches an **open shadow root** once (in a `ref` callback / `useEffect`), and sets `shadowRoot.innerHTML = DOMPurify.sanitize(html, …)`. Rationale: a marketing email ships its own `<style>` + inline styles (the 3044 Google-LSA mail is ~39 KB with buttons); a shadow root is the only mechanism that gives **true two-way style isolation** without an iframe — the email's `<style>`/class rules cannot restyle the app chrome (EC-3/FR-4/AC-3) **and** the app's global CSS cannot distort the email, preserving fidelity. No CSP/helmet/sandboxed-iframe posture change (that's explicitly out of scope) — DOMPurify remains the security control; the shadow root is purely the layout/style boundary.
+  - **Load-bearing finding that de-risks this:** the app is **Tailwind v4** (`@tailwindcss/vite` ^4.1.18) and **`@tailwindcss/typography` is NOT installed** — so the `prose prose-sm` classes on today's workspace body (`EmailMessageItem.tsx` l.89) currently produce **no styling**; the benign-email render already depends on the email's own inline styles, not `prose`. Therefore moving the workspace onto a shadow root (where an outer `prose` would not reach anyway) **loses nothing** (COMPAT-1 preserved — see workspace refactor). To keep *bare/unstyled* plain-HTML emails legible inside the shadow root, `SafeEmailHtml` injects a **minimal base stylesheet** into the shadow root (a `<style>` node with a scoped `:host`/element reset: sensible `font-family: inherit`, `color: inherit`, `line-height`, `max-width:100%` on `img`, `a{color:var(--blanc-info)}` bridged in as a literal, table/`pre` wrapping). Nothing else leaks in or out.
+  - **Containment mechanics (FR-4, D2 = inline, NO max-height, NO expand):** the **host** element carries `max-width:100%; overflow-x:auto` (the horizontal-scroll cage), and the injected base sheet sets `:host{display:block}` + `img{max-width:100%;height:auto}`. Wide (~600 px) content scrolls **inside the bubble**; no `max-height`, no collapse. Belt-and-suspenders `contain: content` on the host is optional (shadow already isolates style; `contain` only helps paint/layout perf, NFR-PERF-2).
+
+**OQ-1 — inline image handling.** DECIDED: **`data:` images = ALLOW** (self-contained, no network beacon → no privacy cost); **remote `http(s)` images = BLOCKED by default** + per-email **"Show images"** (D3, binding); **`cid:` images = HIDE/placeholder in v1** (inline-attachment references; the timeline path has **no attachment-fetch plumbing** — attachments are out of scope for the timeline bubble per EMAIL-TIMELINE-001). Rationale: `data:` on *images* carries no tracking risk (contrast: `data:` on *links* stays blocked per FR-3, an XSS vector); `cid:` cannot be resolved without attachment plumbing we're not building, so neutralize rather than emit a broken/looks-remote fetch.
+
+**OQ-2 — HTML quote-collapsing.** DECIDED: **render `body_html` RAW / full (no HTML quote-collapse) in v1.** Rationale: `body_text` is quote-stripped via `toTimelineBody`, but robust HTML quote/signature stripping is hard and error-prone, and D2 removes the height cap that made length a concern; showing the full thread is acceptable (EC-8). Consequence (documented): a trimmed text preview elsewhere vs a full quoted thread in the HTML bubble is intentional. **Flagged as future** (client- or server-side HTML quote-collapse) — see residual OQ below.
+
+### The shared `SafeEmailHtml` component (D5 / FR-2 / FR-3 / FR-10)
+
+- **Location:** `frontend/src/components/email/SafeEmailHtml.tsx` (co-located with `EmailMessageItem`, the existing email-render home; imported by the pulse bubble too). The single DOMPurify **config + hooks** live in a sibling pure module `frontend/src/lib/sanitizeEmailHtml.ts` (testable without React) exporting `sanitizeEmailHtml(html, { allowImages }): string`; the component is the shadow-root wrapper around it.
+- **Props:** `{ html: string; allowImages?: boolean; className?: string; style?: CSSProperties }`. The **"Show images" button is owned by the caller** (each bubble/message renders its own control + holds `allowImages` state), so state is per-email/per-view (FR-5, not persisted). `SafeEmailHtml` is a controlled, dumb renderer keyed on `(html, allowImages)`.
+- **Single DOMPurify config (the ONLY one in the app):**
+  - Rely on DOMPurify defaults to strip `<script>`, inline `on*` handlers, `<form>`/form controls, `<iframe>` (NFR-SEC-2).
+  - **Forced safe links** — `addHook('afterSanitizeAttributes', node)`: for every `<a>` set `target="_blank"` + `rel="noopener noreferrer"` (NFR-SEC-3, AC-2).
+  - **Block dangerous URL schemes** — keep DOMPurify's default URI policy so `javascript:` is dropped, and **explicitly block `data:` on links** (allowed only on `<img>`), e.g. via the same attribute hook nulling `href` when it matches `^\s*(javascript|data):`i (FR-3).
+  - **Remote-image neutralize hook** (the toggle mechanism) — in `afterSanitizeAttributes`, when `!allowImages` and `node` is `<img>` with an `http(s)` (or protocol-relative `//`) `src`: **move** `src`→`data-blanc-src`, and **strip** `srcset` and inline `background`/`background-image` url()s (best-effort) so nothing fetches; a `data:` `src` is left intact (OQ-1). When `allowImages` is true the hook is a no-op, so `src` survives → images load. **Toggle = re-sanitize with `allowImages:true` and re-set `shadowRoot.innerHTML`** (clean, no stale DOM). Because the neutralize happens *inside* the sanitize pass, there is never a moment where a remote `src` is live in the DOM before being stripped (no beacon race).
+  - **Fail-safe (NFR-SEC-6, AC-10):** `sanitizeEmailHtml` wraps the DOMPurify call in try/catch; on throw it returns a sentinel that makes `SafeEmailHtml` render **nothing** (host stays empty) and signals the caller to fall back to the linkify plain-text path — never raw HTML, never a crash.
+- **Memoization (NFR-PERF-1, AC-9):** the sanitize result is `useMemo`'d by `(messageId, allowImages)` (the id is passed by the caller; falls back to a hash of `html`). Sanitize runs **once per message per images-state**, not on scroll/re-render. The shadow root is attached once; only `innerHTML` is re-set when the memo key changes.
+
+### The linkify helper (D4 / FR-6 / FR-7)
+
+- **Location:** `frontend/src/lib/linkifyText.ts` — pure, no dep (satisfies "no new dependency"; the earlier `grep` found **no** existing linkify/escape helper to reuse, so this is genuinely new, not a duplicate).
+- **Contract:** `linkifyToHtml(text): string` — **escape FIRST** (`& < > " '` → entities) so the plain-text path can never inject HTML, THEN regex-wrap URLs (`https?://…`, and bare `www.`), email addresses, and phone numbers into `<a target="_blank" rel="noopener noreferrer" href="…">` (mailto:/tel: for email/phone; phone display can reuse `lib/formatPhone.ts`). Preserves `whitespace-pre-wrap` line-break semantics (operate per-line; do not collapse `\n`).
+- **Reuse:** consumed by `EmailListItem`'s fallback branch (inbound-no-HTML + ALL outbound) and available to any other plain-text-with-links surface. Its output is injected via `dangerouslySetInnerHTML` on a normal (non-shadow) `<span>`/`<p class="whitespace-pre-wrap break-words">` — safe because the input was escaped before wrapping.
+
+### Frontend render decision matrix (EmailListItem — the primary change, FR-1/7)
+
+| direction | `body_html` non-empty | render |
+|---|---|---|
+| inbound | yes | `SafeEmailHtml(body_html)` + "Show images" control (FR-1/5) |
+| inbound | no/empty | `linkifyToHtml(body_text)` (FR-6, EC-1) |
+| outbound | any | `linkifyToHtml(body_text)` (FR-7, EC-6) — sanitized-HTML never used |
+| empty body (no html AND no text) | — | render nothing for body; subject/timestamp still show (EC-7, existing `hasBody` guard) |
+
+`EmailListItem` gains a `body_html` read (new field, below), an `allowImages` `useState`, and the branch above; the existing eyebrow/subject/timestamp chrome is untouched. **On sanitizer fail-safe** the branch falls through to the linkify path (AC-10).
+
+### Backend — surface `body_html` on the timeline item (D6 / FR-8/9). NO migration.
+
+Ordered, concrete change points (column already exists — mig 079 l.90 `body_html TEXT`; `emailSyncService.extractBody` already stores it, l.191/411):
+
+1. **`backend/src/db/emailQueries.js` — `getTimelineEmailByContact` SELECT (l.594–597):** add `body_html` to the explicit column list. **This is THE load-bearing read** for the timeline bubble (see data-flow note). Company- + contact-scoped `WHERE company_id = $1 AND contact_id = $2 AND on_timeline = true` is **unchanged** (NFR-SEC-5).
+2. **`backend/src/routes/pulse.js` — timeline email mapping (l.304–318):** add `body_html: row.body_html` to the mapped item. `body_text` stays as `toTimelineBody(row.body_text, …)` (quote-stripped); `body_html` is passed **RAW** (OQ-2, FR-9).
+3. **`backend/src/services/email/emailTimelineService.js` — `toEmailItem` (l.54–74):** add `body_html: row.body_html || null` to the shape. **Consistency-only, NOT required for AC-1** — see data-flow note; keeps the SSE `message.added` payload identical to a refetch (the file's own l.44–46 invariant) so a future append-from-SSE renders the same.
+4. **`frontend/src/types/pulse.ts` — `EmailTimelineItem` (l.39–52):** add `body_html: string | null;` (additive; older clients ignore it → COMPAT-2, EC fallback to `body_text`).
+
+**Change points that are DELIBERATELY NOT touched** (verified, to prevent over-scoping):
+- The two `msg`-builds in `ingestPolledForCompany` (l.472–480 inbound, l.494–500 outbound) do **NOT** need `body_html`: those objects only drive the **linking** step; the persisted row is what reaches the timeline, and `emailQueries.linkMessageToContact` (l.447–455) already does `RETURNING *` (so `body_html` is on the row `toEmailItem(linked)` receives — change point 3 alone surfaces it there).
+- The `body_text ILIKE` free-text **search** (l.158) — untouched (FR-9, AC-7). Search stays on `body_text`.
+- `toTimelineBody`/`emailTimelineBody` quote-stripping — untouched (`body_html` bypasses it by design).
+
+**Data-flow note (why the bubble only needs #1+#2+#4):** the timeline bubble's `item.data` is built **client-side** in `PulseTimeline.tsx` (l.73–79) from `timelineData.email_messages`, which comes **only** from the REST projection (`usePulsePage.ts` l.66 → `pulseApi.getTimeline*` → `pulse.js` → `getTimelineEmailByContact`). The SSE `message.added` handler (`usePulsePage.ts` l.43–53) **refetches** the timeline, it does **not** append the `toEmailItem` payload into the bubble. So AC-1 is satisfied by #1+#2 (backend) + #4 (type) + the `EmailListItem`/`SafeEmailHtml` FE work; #3 is payload-parity hygiene.
+
+### Workspace refactor (`EmailMessageItem` → shared `SafeEmailHtml`; FR-10 / COMPAT-1)
+
+- Replace the inline `DOMPurify.sanitize(message.body_html)` block (`EmailMessageItem.tsx` l.87–92) with `<SafeEmailHtml html={message.body_html} allowImages={…} />` + a "Show images" control; keep the existing `<pre>` `body_text` fallback (l.93–97) and the attachments gallery. Net render is **unchanged for benign mail** and **strictly safer** for hostile mail (forced link `rel`/`target`, remote-image blocking now applied there too, `data:`/`javascript:` link block).
+- **Why no visual regression despite dropping `prose`:** `@tailwindcss/typography` is not installed (finding above), so `prose prose-sm` were **no-ops** today — the workspace already rendered via the email's own inline styles, which the shadow root preserves. The injected base sheet keeps bare-HTML emails at least as readable as the (currently unstyled) `prose` div. Verify in a real browser against the 3044 mail (house lesson: don't trust mocked jest for render).
+
+### Files to change (summary)
+
+- **NEW** `frontend/src/lib/sanitizeEmailHtml.ts` (the single DOMPurify config + hooks + fail-safe), `frontend/src/components/email/SafeEmailHtml.tsx` (shadow-root wrapper + base sheet + image toggle), `frontend/src/lib/linkifyText.ts` (escape-then-linkify).
+- **CHANGE (FE)** `frontend/src/components/pulse/EmailListItem.tsx` (render matrix + `allowImages`), `frontend/src/components/email/EmailMessageItem.tsx` (adopt `SafeEmailHtml`), `frontend/src/types/pulse.ts` (`body_html` on `EmailTimelineItem`).
+- **CHANGE (BE)** `backend/src/db/emailQueries.js` (SELECT l.594–597), `backend/src/routes/pulse.js` (mapping l.304–318), `backend/src/services/email/emailTimelineService.js` (`toEmailItem` l.54–74).
+- **REUSED unchanged:** DOMPurify 3.2.7 (already in `package-lock.json`), `emailSyncService.extractBody` (stores `body_html`), `lib/formatPhone.ts` (phone display in linkify), all EMAIL-TIMELINE-001 sync/OAuth/send paths.
+- **Migration: NO** (column exists; read/render + type only). **Protected files untouched:** `src/server.js`, `frontend/src/lib/authedFetch.ts`, `frontend/src/hooks/useRealtimeEvents.ts`.
+
+### Middleware / tenancy
+
+- **No new API route/endpoint.** The timeline read reuses `GET /api/pulse/timeline*` (`pulse.js`) with its existing `authenticate` + `requireCompanyAccess` chain; `company_id` via `req.companyFilter?.company_id` (already enforced in the timeline handler). `body_html` is surfaced **only** through the already company- + contact-scoped `getTimelineEmailByContact` — no new cross-tenant surface (NFR-SEC-5, P0; AC-8).
+
+### Residual open questions for the SpecWriter
+
+- **OQ-HR-A (base-sheet contents inside the shadow root).** OQ-3 mandates a *minimal* injected reset so bare-HTML emails stay legible; the SpecWriter should pin the exact rule set (font/`color: inherit`, link color bridged from `--blanc-info`, `img{max-width:100%}`, `table`/`pre` wrapping) and confirm it does not fight typical marketing-email CSS. Recommendation: keep it to ~6–8 declarations; do **not** import app Tailwind into the shadow.
+- **OQ-HR-B (HTML quote-collapse — future).** Per OQ-2 v1 renders `body_html` raw/full. If Product later wants parity with the quote-stripped text preview, decide client-side (fragile DOM heuristics) vs server-side (a new `body_html`-stripping pass). Out of scope for v1; flagged for EC-8.
+- **OQ-HR-C (DOMPurify not pinned in `package.json`).** DOMPurify 3.2.7 is resolved in `package-lock.json` (l.7773) and already imported by `EmailMessageItem`, but it is **not an explicit `dependencies` entry** in `frontend/package.json` (it's transitively/hoisted-installed). This satisfies "no NEW dependency," but a fresh `npm install` could drop it. **Recommendation:** the Implementer should add `"dompurify": "3.2.7"` (+ `@types/dompurify` if needed) as an explicit dependency in the same PR — a one-line hardening, still "no new package," that removes a latent build risk. Confirm with the SpecWriter.

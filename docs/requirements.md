@@ -3240,3 +3240,135 @@ Each skill states: inputs → outputs, **required verification level**, the **CR
 - **Reused unchanged (called by the skill layer):** `leadsService`, `contactsService`, `jobsService`, `estimatesService`, `invoicesService`, `eventService`, `scheduleService` (reads), `zenbookerClient`, `marketplaceService`, and the `crmMcp*` framework services.
 - **Repo config:** `voice-agent/assistants/lead-qualifier-v2.json` (routing/scheduling prompt + tool-defs; live push separate/owner-gated).
 
+
+---
+
+## EMAIL-HTML-RENDER-001 — Render inbound email bodies in the Pulse timeline as sanitized HTML (2026-07-06)
+
+**Status:** Requirements (Product/Agent-01). New feature (no existing coverage — dedup checked: `grep EMAIL-HTML-RENDER docs/requirements.md` = none). Extends the read/render surface of **EMAIL-TIMELINE-001** (§ above, line 1955); does **not** touch its OAuth/sync/send paths.
+
+### Problem statement
+
+Inbound emails in the Pulse timeline (`frontend/src/components/pulse/EmailListItem.tsx`) render as **plain text only** — `email.body_text` inside a `<p class="whitespace-pre-wrap">` (l.81–88, comment "Text-only — no HTML render (v1)"). Rich emails therefore collapse into a wall of text with **non-clickable links** and no formatting. The canonical example is Google Local Services lead emails (`customer-request-…@awexpress.google.com`) at `/pulse/timeline/3044`: on prod each carries ~39 KB of HTML with buttons and links, all of which the agent currently cannot click. This costs the agent time on exactly the highest-intent inbound (new leads).
+
+The HTML is **already available and already safely rendered elsewhere**: `email_messages.body_html` (TEXT) is populated for 499/500 recent inbound (Gmail sync extracts both `text/plain` and `text/html` — `emailSyncService.js` extractBody ~l.56–73; stored via `emailQueries.js` upsert ~l.295–318), and the separate `/email` workspace already renders it with `DOMPurify.sanitize(...)` in `frontend/src/components/email/EmailMessageItem.tsx` (l.87–97). This feature brings that same sanitized-HTML render into the timeline bubble, behind a shared sanitizer, for **inbound emails only**, with the security posture made explicit.
+
+### Binding decisions (from the customer interview — these OVERRIDE any conflicting assumption downstream)
+
+- **D1 — Inbound only.** Rich sanitized-HTML render applies to **INBOUND** emails only. **Outbound** emails keep their current plain-text render (see D4 fallback for their linkification).
+- **D2 — Inline, no height cap.** The sanitized HTML renders **fully inline** in the timeline bubble with **NO `max-height`** and **NO expand/collapse**. Width MUST stay contained: `overflow-x: auto` + a `max-width` + CSS scoping/containment so a wide (~600 px) marketing email cannot break the app layout or leak its styles into the app chrome.
+- **D3 — Remote images blocked by default.** Remote (`http`/`https`) images do **NOT** load on initial render (privacy / no tracking-pixel beacon). A per-email **"Show images"** control loads them on demand (Gmail-style). Handling of inline `cid:` and `data:` images is the Architect's call (see OQ-1); remote-by-default = blocked is **binding**.
+- **D4 — Plain-text fallback = linkify.** When an email has no `body_html` (the ~1/500 inbound case, and ALL outbound), render `body_text` but **linkify** URLs / email addresses / phone numbers into clickable `<a target="_blank" rel="noopener noreferrer">`. Implement with a **small in-repo regex helper** — **NO new dependency**.
+- **D5 — One shared sanitizer.** A single shared `SafeEmailHtml` helper/component with **one** DOMPurify config, reused by BOTH the timeline bubble (`EmailListItem`) and the existing workspace (`EmailMessageItem`). Config: strip `script`/`on*`/forms/`iframe` (DOMPurify defaults), **force every `<a>` to `target="_blank" rel="noopener noreferrer"`**, block `javascript:` and `data:` URLs.
+- **D6 — Backend passes `body_html`.** Add `body_html` to the timeline email item shape (the ~3 timeline SELECTs + the `EmailTimelineItem` type + the service/route mappings). **NO migration** (column already exists). Tenant scoping unchanged (all reads already company-scoped). **Keep `body_text`** (fallback + the `body_text ILIKE` search path must not break).
+
+### User stories / use cases
+
+1. **US-1 (agent, Google LSA lead).** As an agent viewing `/pulse/timeline/3044`, I see the inbound Google Local Services email rendered with its real formatting and **clickable** links/buttons, so I can open the lead action directly instead of copy-pasting a URL out of a text wall.
+2. **US-2 (agent, privacy).** As an agent opening an inbound marketing/lead email, remote images do **not** load automatically (so the sender gets no read-beacon), and I can click **"Show images"** to load them when I choose to.
+3. **US-3 (agent, plain-text inbound).** As an agent viewing an inbound email that has no HTML part, I still get a clean plain-text render whose URLs, emails, and phone numbers are clickable.
+4. **US-4 (agent, outbound).** As an agent, my own sent (outbound) emails keep rendering as plain text (with links clickable per D4), matching how I composed them.
+5. **US-5 (security / whole company).** As the business, a malicious or malformed inbound email (embedded `<script>`, `onerror=`, a login `<form>`, a `javascript:` link, a 39 KB+ blob, unclosed tags) is **sanitized before render** and can neither run script, exfiltrate, phish, nor break/re-style the Pulse app.
+6. **US-6 (agent, workspace parity).** As an agent, the `/email` workspace continues to render bodies exactly as before (or strictly safer), because it now shares the same sanitizer — no regression.
+
+### Functional requirements
+
+- **FR-1 — Sanitized inbound HTML in the timeline bubble.** For an **inbound** email with non-empty `body_html`, `EmailListItem` renders `SafeEmailHtml(body_html)` (sanitized) instead of the plain-text `<p>`. *(D1, D2, D5)*
+- **FR-2 — Shared `SafeEmailHtml` helper/component.** Introduce ONE shared frontend helper/component that wraps a SINGLE DOMPurify config and is imported by BOTH `EmailListItem` (timeline) and `EmailMessageItem` (workspace). No second/divergent DOMPurify config remains in the app. *(D5)*
+- **FR-3 — Single hardened DOMPurify config.** The shared config: relies on DOMPurify defaults to strip `script`, event handlers (`on*`), `<form>`/form controls, and `<iframe>`; **forces every `<a>` to `target="_blank"` + `rel="noopener noreferrer"`** (via a DOMPurify `afterSanitizeAttributes` hook or equivalent); **blocks `javascript:` and `data:` URLs** on links. *(D5, security)*
+- **FR-4 — Layout containment (no leak, no break).** The rendered HTML is wrapped in a scoped container with `overflow-x: auto`, a bounded `max-width`, and style-containment so wide content scrolls **inside its own bubble** and the email's `<style>`/class rules cannot restyle the app. **No `max-height`; no expand/collapse** (inline, full height). *(D2)*
+- **FR-5 — Remote images blocked by default + "Show images".** On initial render, remote (`http`/`https`) `<img>` (and any remote-fetching CSS `url(...)` where feasible) do **not** load. A per-email **"Show images"** affordance, when clicked, re-renders with remote images allowed. State is per-email/per-view (not persisted server-side in v1). *(D3)*
+- **FR-6 — Plain-text linkify fallback.** When `body_html` is absent/empty (inbound ~1/500) OR the email is **outbound**, render `body_text` through a small in-repo regex linkifier that converts URLs, email addresses, and phone numbers into `<a target="_blank" rel="noopener noreferrer">`, preserving existing line-break behavior (`whitespace-pre-wrap`). The linkifier escapes text first (no HTML injection via the plain-text path). **No new dependency.** *(D4)*
+- **FR-7 — Outbound stays plain text.** Outbound emails do NOT get the sanitized-HTML render; they use FR-6 (plain-text + linkify) regardless of whether a `body_html` exists. *(D1, D4)*
+- **FR-8 — Backend surfaces `body_html` on the timeline item.** Add `body_html` to: (a) the ~3 timeline read SELECTs in `backend/src/db/emailQueries.js` (~l.517, l.548, l.595) that today select `body_text`/`snippet`; (b) the item mappings in `backend/src/services/email/emailTimelineService.js` (l.70, l.477, l.498) and `backend/src/routes/pulse.js` (~l.314); (c) the `EmailTimelineItem` TS type in `frontend/src/types/pulse.ts` (~l.39). **No migration.** *(D6)*
+- **FR-9 — Preserve `body_text` and its uses.** `body_text` remains on the item (it is the FR-6 fallback and the outbound render source). `body_text` continues to be quote-stripped via `toTimelineBody(...)`; **`body_html` is passed RAW** (full, un-quote-stripped) to the sanitizer. The `body_text ILIKE` search path in `emailQueries.js` (~l.158) is **not** modified. *(D6, see OQ-2)*
+- **FR-10 — Workspace parity via the shared sanitizer.** `EmailMessageItem` is refactored to consume `SafeEmailHtml`, keeping its existing `body_text` `<pre>` fallback; net render is unchanged or strictly safer (forced link `rel`/`target`, remote-image blocking now also applied there). *(D5, backwards-compat)*
+
+### Non-functional requirements
+
+**Security (PRIMARY — this feature intentionally renders attacker-controlled HTML):**
+
+- **NFR-SEC-1 — Sanitize-then-render, always.** No inbound HTML is ever inserted into the DOM without passing through the shared DOMPurify config first. `dangerouslySetInnerHTML` receives ONLY `DOMPurify.sanitize(...)` output. This is the app's accepted approach (DOMPurify 3.2.7 already a dependency; no CSP/helmet, no sandboxed iframes anywhere — sanitization is the control).
+- **NFR-SEC-2 — Script/handler/form/iframe stripping.** `<script>`, inline event handlers (`on*`), `<form>`/inputs/buttons-as-submit, and `<iframe>` are removed (DOMPurify defaults); verified by test with a malicious sample.
+- **NFR-SEC-3 — Forced safe links.** Every surviving `<a>` has `target="_blank"` and `rel="noopener noreferrer"` (no reverse-tabnabbing / referrer leak); `javascript:` and `data:` link URLs are blocked.
+- **NFR-SEC-4 — No tracking beacons by default.** Remote images do not load until the agent opts in (FR-5), so merely opening the timeline does not notify the sender.
+- **NFR-SEC-5 — Multi-tenant isolation unchanged.** All timeline reads remain company-scoped exactly as today; `body_html` is surfaced only through the same already-scoped queries. No new cross-tenant surface. A cross-tenant leak here is P0.
+- **NFR-SEC-6 — Fail-safe on sanitizer error.** If sanitization throws or input is unusable, the bubble falls back to the plain-text (FR-6) render rather than rendering raw HTML or crashing the timeline.
+
+**Performance:**
+
+- **NFR-PERF-1 — Large-HTML inline in a list.** Rendering ~39 KB (allow headroom to a few hundred KB) of sanitized HTML inline inside a virtualized/long timeline must not visibly jank the list. Sanitize once per item (memoize by message id + images-shown flag), not on every re-render/scroll.
+- **NFR-PERF-2 — No layout thrash.** Because there is no height cap (D2), tall emails are allowed; the container must not force synchronous reflow of the whole timeline on toggle (Show images / expand of adjacent items).
+
+**Compatibility / reliability:**
+
+- **NFR-COMPAT-1 — Workspace unchanged-or-safer.** `/email` (`EmailMessageItem`) render output is unchanged for benign mail and strictly safer for hostile mail after adopting the shared sanitizer; no visual regression on normal emails.
+- **NFR-COMPAT-2 — Backward-compatible payload.** Adding `body_html` is additive; older cached clients ignoring the field keep working (they fall back to `body_text`). `body_text` is never removed from the payload.
+- **NFR-A11Y-1 — Links & controls accessible.** The "Show images" control is a real focusable button with a label; linkified/HTML links are keyboard-reachable.
+
+### Edge cases (explicitly in scope to handle)
+
+- **EC-1 — No `body_html` (inbound ~1/500).** Fall back to FR-6 plain-text linkify.
+- **EC-2 — Malformed / unclosed / huge HTML.** DOMPurify normalizes; container containment prevents layout break; NFR-SEC-6 fail-safe covers a hard failure.
+- **EC-3 — Emails with `<style>` / class rules.** Containment/scoping (FR-4) prevents style leakage into the app; author styles apply only within the bubble.
+- **EC-4 — Emails with `<form>` / `<script>` / `on*`.** Stripped (NFR-SEC-2).
+- **EC-5 — `data:` URI vs remote images.** Remote blocked by default (D3/FR-5); `data:`/inline `cid:` handling deferred to Architect (OQ-1) — note `data:` on **links** is blocked (FR-3), the question is only about `data:`/`cid:` on **images**.
+- **EC-6 — Outbound email.** Plain text + linkify (FR-7), never sanitized-HTML render.
+- **EC-7 — Empty body (no html AND no text).** Render nothing for the body (current bubble already guards `hasBody`); timestamp/subject still show.
+- **EC-8 — Quote-collapsing mismatch.** `body_text` is quote-stripped but `body_html` is raw/full — a long inbound email may show a trimmed text preview elsewhere yet a full quoted thread in the HTML bubble. Flagged as **OQ-2** for the Architect/SpecWriter.
+
+### In scope
+
+- Timeline inbound bubble sanitized-HTML render (FR-1); shared `SafeEmailHtml` + single DOMPurify config (FR-2/3); containment + no cap (FR-4); remote-image blocking + Show-images (FR-5); plain-text linkifier helper (FR-6/7); backend `body_html` on the timeline item + TS type (FR-8/9); workspace refactor to the shared sanitizer (FR-10).
+
+### Out of scope
+
+- Inbound-email **attachments** in the timeline bubble (still workspace-only; EMAIL-TIMELINE-001 kept attachments out of v1).
+- Any change to **outbound** rich composition (no HTML compose/WYSIWYG).
+- Changes to Gmail OAuth, sync, `users.watch`/Pub/Sub, send/reply, or the `email_*` schema (no migration).
+- Persisting the "images shown" choice server-side or per-sender allowlisting (v1 is per-view only).
+- Server-side sanitization / a CSP / sandboxed-iframe rearchitecture (DOMPurify remains the app's control; not changing that posture here).
+- Quote-collapsing of `body_html` (pending OQ-2).
+
+### Acceptance criteria
+
+- **AC-1 (FR-1/D1):** At `/pulse/timeline/3044`, an inbound Google LSA email renders with formatting and **clickable** links/buttons; an **outbound** email in the same timeline still renders as plain text.
+- **AC-2 (NFR-SEC-1/2/3):** An inbound test email containing `<script>alert(1)</script>`, an `<img onerror=...>`, a `<form>`, and a `javascript:` link renders with all of those neutralized (no alert, no form, no JS link); every rendered `<a>` has `target="_blank"` and `rel="noopener noreferrer"`.
+- **AC-3 (D2/FR-4):** A ~600 px-wide marketing email renders inline with **no** max-height and **no** expand control; it scrolls horizontally **inside its own bubble**; the app layout and chrome are unaffected and un-restyled by the email's `<style>`.
+- **AC-4 (D3/FR-5):** On first render, remote images do NOT load (no outbound image request); clicking **"Show images"** loads them.
+- **AC-5 (D4/FR-6):** An inbound email with no `body_html` renders as plain text with URLs/emails/phones turned into working `target="_blank" rel="noopener noreferrer"` links; **no new npm dependency** was added.
+- **AC-6 (D5/FR-2/FR-10):** Exactly ONE DOMPurify config exists in the frontend and is used by BOTH `EmailListItem` and `EmailMessageItem`; the `/email` workspace shows no regression on benign mail.
+- **AC-7 (D6/FR-8/FR-9):** The timeline API email item includes `body_html`; the `EmailTimelineItem` type carries it; `body_text` is still present and the `body_text ILIKE` search still works; **no DB migration** was introduced.
+- **AC-8 (NFR-SEC-5):** Timeline reads remain company-scoped; a cross-tenant fetch attempt returns nothing (isolation preserved).
+- **AC-9 (NFR-PERF-1):** Sanitization is memoized per message (not re-run on scroll/re-render); a long timeline with several large HTML emails scrolls without visible jank.
+- **AC-10 (NFR-SEC-6):** A forced sanitizer failure falls back to plain-text render; the timeline does not crash.
+
+### Involved modules
+
+- **Frontend (primary):** `frontend/src/components/pulse/EmailListItem.tsx` (main change — inbound HTML render); **new** shared `SafeEmailHtml` helper/component + `linkify` helper (location = Architect's call, e.g. `frontend/src/components/shared/` or `frontend/src/lib/`); `frontend/src/components/email/EmailMessageItem.tsx` (refactor to shared sanitizer, l.87–97); `frontend/src/types/pulse.ts` (`EmailTimelineItem` + `body_html`, ~l.39).
+- **Backend (small):** `backend/src/db/emailQueries.js` (add `body_html` to timeline SELECTs ~l.517/548/595; do NOT touch the `body_text ILIKE` at ~l.158); `backend/src/services/email/emailTimelineService.js` (l.70/477/498 mappings); `backend/src/routes/pulse.js` (~l.314 mapping).
+- **Reused unchanged:** DOMPurify 3.2.7 (already a dependency); `emailSyncService.js` extractBody (already stores `body_html`); `toTimelineBody`/`emailTimelineBody` (still quote-strips `body_text` only); all EMAIL-TIMELINE-001 send/sync/OAuth paths.
+
+### Affected integrations
+
+- **Gmail / Google (EMAIL-001 / EMAIL-TIMELINE-001):** read-only reuse — `body_html` already synced; no OAuth/sync/schema change.
+- **Twilio / Zenbooker / Front / Stripe / VAPI:** none.
+
+### Protected parts (must NOT break)
+
+- The `body_text ILIKE` timeline search (`emailQueries.js` ~l.158) — unchanged.
+- `toTimelineBody` quote-stripping of `body_text` — unchanged (`body_html` is passed raw, deliberately).
+- EMAIL-TIMELINE-001 send/receive, Gmail `users.watch`/Pub/Sub, OAuth/token refresh, and the `email_*` schema — untouched (no migration).
+- Multi-tenant company scoping on all timeline reads — unchanged (NFR-SEC-5, P0).
+- `/email` workspace render for benign mail — no regression (NFR-COMPAT-1).
+- The app's DOMPurify-as-sanitizer posture (no CSP/helmet/sandboxed-iframe introduced by this feature).
+
+### Open questions routed to the Architect / SpecWriter
+
+- **OQ-1 — Inline `cid:` / `data:` images.** Remote-by-default = blocked is binding (D3). Decide how inline `cid:` (attachment-referenced) and `data:` **image** URIs are handled: allow `data:` images through, resolve/inline `cid:` from stored attachments, or leave both broken in v1 (attachments are otherwise out of scope). `data:` on **links** stays blocked regardless.
+- **OQ-2 — HTML quote-collapsing.** `body_text` is quote-stripped (`toTimelineBody`) but `body_html` is rendered raw/full. Decide whether the HTML render should also collapse quoted history/signatures (and if so, client- or server-side), or intentionally show the full thread. Affects EC-8 and the perceived length of the inline (uncapped) bubble.
+- **OQ-3 — Sanitizer/containment location & CSS-scoping technique.** Architect to choose where `SafeEmailHtml` lives and the exact containment mechanism (CSS `contain` + scoped wrapper vs. Shadow DOM) that best prevents `<style>`/class leakage while honoring D2 (inline, no cap) and NFR-PERF.
+
+### Notes / lessons applied
+
+- Verify against a **real prod-DB copy** (the 3044 emails) and in a real browser, not only mocked Jest (LIST-PAGINATION-001 / created_by-FK lessons): confirm `body_html` flows onto the timeline item, the LSA email renders with clickable links, malicious samples are neutralized, and remote images stay blocked until opt-in — before any deploy. **Prod deploy is owner-consent-gated (standing rule).**

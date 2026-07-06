@@ -5975,3 +5975,374 @@ wave 3 (verify):         T5 (verify-mail-mute-001.js real-DB: s1/s2/s4/s7/s12/s1
 - **wave 3 = T5** строго после {T1,T2,T3,T4} (real-DB зовёт все 4 слоя + route-handler; house-lesson: мокнутый jest не доказывает P0 SQL-suppression/isolation/perf).
 
 **Параллелизм-резюме:** две параллельные волны по 2 задачи ({T1∥T3}, затем {T2∥T4}), затем одиночный verify (T5). **Верификационная задача — T5** (собственная, real-DB + EXPLAIN perf-gate на prod-copy, после всех code-задач). **UI-задача — НЕТ обязательной** (фича реюзит существующий UI правил-исключений — единственный user-facing surface, owner-решение; добавлена лишь **опциональная P3 T6** микро-копирайта, чётко помеченная не-обязательной). **Миграций НЕТ** (max=155; 156 не используется — read/route-слой + guarded-suppression поверх существующих таблиц/индексов). **Три P0 real-DB gate** (I01 email-only drop-out, I04 channel-split ranking, I07 cross-tenant isolation) **+ P0 perf-gate I09** (EXPLAIN no-Seq-Scan / ~0.3s parity) — красный на любом блокирует релиз. Back-compat: пустой muted-набор (`ANY(empty)=false`) ⇒ ноль изменения поведения для всех прочих `getUnifiedTimelinePage`-callers и когда нечего мьютить. Fail-open везде (FR-10). Деплой в прод — только с явного «да» владельца (standing rule).
+
+---
+
+## EMAIL-HTML-RENDER-001: render inbound email bodies in the Pulse timeline as sanitized, style-isolated HTML
+
+**Feature:** inbound email in the Pulse timeline bubble (`EmailListItem`) renders as **sanitized HTML** (clickable links/buttons/formatting, remote images blocked by default, true Shadow-DOM two-way style isolation), behind ONE shared sanitizer reused by the `/email` workspace; **outbound** + no-HTML inbound fall back to **escape-then-linkify** plain text. Frontend-primary + a small additive backend read/type change. **NO migration. No new endpoint. No new settings field. No new shipped npm package** (only the already-locked `dompurify` pin; a dev-only `jsdom` is verify-only, never bundled).
+**Status:** planned (ready for Implementer)
+**Related docs:**
+- Requirements: `Docs/requirements.md#EMAIL-HTML-RENDER-001` (D1–D6, FR-1…FR-10, NFR-SEC-1…6 / NFR-PERF-1/2 / NFR-A11Y-1 / NFR-COMPAT-1)
+- Architecture: `Docs/architecture.md#EMAIL-HTML-RENDER-001` (OQ-1/2/3 + OQ-HR-A/B/C)
+- Spec: `Docs/specs/EMAIL-HTML-RENDER-001.md` (S1–S12, security strip matrix, shadow base sheet, render matrix M1–M5, AC-1…AC-10)
+- Test cases: `Docs/test-cases/EMAIL-HTML-RENDER-001.md` (47: TC-EHR-H01…H21 headless, U01…U06 unit, B01…B05 build, M01…M08 manual, SAB, TC-R-1…6)
+
+**Сквозной инвариант (все задачи):**
+- **Защищённые файлы — НЕ ТРОГАТЬ:** `backend/src/server.js` (core middleware), `frontend/src/lib/authedFetch.ts` (auth wrapper), `frontend/src/hooks/useRealtimeEvents.ts` (SSE hooks).
+- **НЕТ миграции** — колонка `body_html TEXT` уже существует (mig 079); max migration после этой фичи НЕ меняется.
+- **НЕТ нового API-route/endpoint/middleware.** Таймлайн читается существующим `GET /api/pulse/timeline*` с цепочкой `authenticate` + `requireCompanyAccess` и гейтом `pulse.view`; `company_id` — через `req.companyFilter?.company_id` (**НЕ** `req.companyId` — его не существует). `body_html` всплывает **только** через уже company- + contact-scoped `getTimelineEmailByContact` (`WHERE company_id = $1 AND contact_id = $2 AND on_timeline = true` — **byte-identical к текущему**). Cross-tenant fetch → пусто; **утечка здесь = P0** (NFR-SEC-5, AC-8).
+- **Единственная санитизация — DOMPurify** (посадка приложения; CSP/helmet/sandboxed-iframe НЕ вводятся). Ровно **ОДИН** DOMPurify-конфиг во всём фронте (AC-6).
+- **body_text + `ILIKE` search НЕ трогаются** — fallback/outbound читают quote-stripped `body_text` (`toTimelineBody`); free-text search остаётся на `body_text`/`from_*`/recipients, никогда `body_html` (FR-9, AC-7).
+
+---
+
+### TASK-EHR-001: Frontend — `frontend/src/lib/sanitizeEmailHtml.ts` (NEW, единственный DOMPurify-конфиг + хук + fail-safe)
+
+**Цель:** создать чистый (без React) модуль `sanitizeEmailHtml(html, { allowImages }): string` — единственный источник app-wide DOMPurify-конфига и `afterSanitizeAttributes`-хука, с fail-safe `''`. Санитайзер-контракт (Contract 1 спеки + security strip matrix).
+
+**Файлы, которые можно менять:**
+- `frontend/src/lib/sanitizeEmailHtml.ts` (создать новый)
+
+**Файлы, которые трогать нельзя:**
+- `frontend/src/components/email/EmailMessageItem.tsx` — его adopt-of-`SafeEmailHtml` = TASK-EHR-006 (эта задача только создаёт lib, не трогает call-site)
+- всё из сквозного инварианта (защищённые файлы, middleware)
+
+**Ожидаемый результат:**
+- Экспортирует `sanitizeEmailHtml(html: string, opts?: { allowImages?: boolean }): string` (default `allowImages:false`).
+- Запускает `DOMPurify.sanitize(html, cfg)` под **единым** конфигом: DOMPurify-defaults стрипают `<script>`, inline `on*`, `<form>`+form-controls (`<input>/<select>/<textarea>/<button type=submit>`), `<iframe>`; НЕТ `ADD_TAGS`/`ADD_ATTR`, которые их вернут (NFR-SEC-2).
+- `afterSanitizeAttributes`-хук: (a) на каждом выжившем `<a>` **форсит** `target="_blank"` + `rel="noopener noreferrer"` (перезаписывает существующие `target=_self`/`rel=opener`, не просто заполняет пустое — NFR-SEC-3); (b) **nullит** `href`, матчащий `^\s*(javascript|data):`i (блок `data:`/`javascript:` на **ссылках**; `mailto:`/`tel:`/`https:`/`http:`/protocol-relative выживают); (c) при `!allowImages` и `<img>` с `http(s)`/protocol-relative `//`/`cid:` `src` → **перенос** `src`→`data-blanc-src`, стрип `srcset`, стрип inline `background`/`background-image:url()` (best-effort); `data:`-image `src` остаётся живым; при `allowImages:true` ветка (c) = no-op → `src` выживает (НО `cid:` всё равно нейтрализуется в обоих состояниях — плинтинга вложений на timeline нет).
+- **Fail-safe:** весь body в try/catch → на любой throw возвращает sentinel **`''`** (никогда не raw HTML, никогда не throw наружу). Пустой/whitespace/`undefined` вход → `''`.
+- **Global-leak guard:** хук add/remove **вокруг вызова** (или выделенный instance) — конфиг/хук **НЕ** мутируют общий DOMPurify singleton для не-email-вызовов (bare `DOMPurify.sanitize(x)` до/после НЕ получает forced target/rel).
+- Detерминизм: для `(html, allowImages)` вывод стабилен (даёт caller-side memo).
+
+**Проверка (acceptance):** TC-EHR-H01…H16 (security/images/links/failsafe, headless), TC-EHR-H16 (global-leak), TC-EHR-B03 (config-parity с CJS-портом), AC-2/AC-4/AC-10. `cd frontend && npm run build` зелёный (TASK-EHR-011 гейт).
+
+**Зависимости:** нет. **Параллельность: WAVE 1** — ∥ backend-задаче TASK-EHR-007 и pure-libs TASK-EHR-002 (DISJOINT файлы).
+
+**Статус:** done
+
+---
+
+### TASK-EHR-002: Frontend — `frontend/src/lib/linkifyText.ts` (NEW, escape-first → safe `<a>`, без зависимостей)
+
+**Цель:** создать чистый модуль `linkifyToHtml(text): string` — escape-FIRST, затем безопасное оборачивание URL/email/phone в `<a target=_blank rel="noopener noreferrer">`. Чистая `string→string`, **без новой npm-зависимости** (Contract 3 спеки).
+
+**Файлы, которые можно менять:**
+- `frontend/src/lib/linkifyText.ts` (создать новый)
+
+**Файлы, которые трогать нельзя:**
+- `frontend/src/lib/formatPhone.ts` — только **читать/реюзать** для display телефона (сигнатуру не менять)
+- всё из сквозного инварианта
+
+**Ожидаемый результат:**
+- Экспортирует `linkifyToHtml(text: string): string`.
+- **Escape FIRST** (`& < > " '` → сущности) — plain-text-путь **никогда** не может инжектить HTML (даже если `body_text` содержит `<script>`, он становится видимым текстом).
+- **Затем** regex-оборачивает: URL (`https?://…` и bare `www.` → href нормализован в `http(s)://…`), email (`mailto:`), phone (`tel:`, digits нормализованы; display может реюзать `formatPhone`) в `<a target="_blank" rel="noopener noreferrer" href=…>`. Malformed-фрагмент (`a@`) НЕ оборачивается; текст без совпадений → только escaped, ноль `<a>`.
+- Сохраняет `whitespace-pre-wrap` line-break семантику (per-line / не коллапсит `\n`).
+- Вывод предназначен для инъекции через `dangerouslySetInnerHTML` на **обычном** (non-shadow) `<p class="whitespace-pre-wrap break-words">` — безопасно, т.к. вход escaped до любого `<a>`.
+- **Никакой** новой зависимости в `frontend/package.json` из-за этого модуля.
+
+**Проверка (acceptance):** TC-EHR-H17 (escape-first no-injection, **P0**), H18 (URL/`www.`), H19 (email→`mailto:` / phone→`tel:`), H20 (`\n` preserve), H21 (no spurious `<a>`); AC-5. Build-гейт TASK-EHR-011.
+
+**Зависимости:** нет. **Параллельность: WAVE 1** — ∥ TASK-EHR-001, TASK-EHR-007 (DISJOINT файлы).
+
+**Статус:** done
+
+---
+
+### TASK-EHR-003: Frontend (deps) — `frontend/package.json`: явный пин `"dompurify": "3.2.7"`
+
+**Цель:** OQ-HR-C — добавить явный pinned `"dompurify": "3.2.7"` в `dependencies` (сейчас только в `package-lock.json` l.7773 / hoisted). Закрывает `npm ci`/fresh-install gap, где hoisted-dep может отвалиться. Всё ещё «no NEW package» (уже resolved & locked).
+
+**Файлы, которые можно менять:**
+- `frontend/package.json` (добавить одну строку `dependencies` + `@types/dompurify` **только если** `tsc -b` требует типы, не bundled в dompurify 3.x)
+
+**Файлы, которые трогать нельзя:**
+- `frontend/package-lock.json` — для dompurify НЕ меняется (уже присутствует l.7773); не регенерировать вручную
+- всё из сквозного инварианта
+
+**Ожидаемый результат:**
+- `git diff frontend/package.json` показывает **ровно** добавленную строку `"dompurify": "3.2.7"` в `dependencies` (совпадает с lockfile) и **никакой** другой новой runtime-зависимости (нет linkify-либы, нет sanitizer-либы).
+- `@types/dompurify` появляется **только если** прод-build (`tsc -b`, строже `--noEmit`) этого потребовал.
+- После добавления `cd frontend && npm install` не меняет lockfile-версию dompurify.
+
+**Проверка (acceptance):** TC-EHR-B01 (package.json diff — только dompurify pin, no new package, **P0**), AC-5/AC-6. Часть build-гейта TASK-EHR-011.
+
+**Зависимости:** нет (чистый deps-пин). **Параллельность: WAVE 1** — ∥ всему (тривиальный, DISJOINT). Логически группируется с pure-libs, но файл-disjoint от всего.
+
+**Статус:** done
+
+---
+
+### TASK-EHR-004: Backend — `body_html` в `getTimelineEmailByContact` SELECT (THE load-bearing read, NO migration)
+
+**Цель:** D6 change point #1 — добавить `body_html` в explicit column-list SELECT `getTimelineEmailByContact` (l.594–597). Это **несущий** read для timeline-бабла. Scoping (`WHERE company_id=$1 AND contact_id=$2 AND on_timeline=true`) + `ORDER BY` **не трогать**.
+
+**Файлы, которые можно менять:**
+- `backend/src/db/emailQueries.js` (только SELECT column-list в `getTimelineEmailByContact`, l.594–597)
+
+**Файлы, которые трогать нельзя:**
+- `backend/src/db/emailQueries.js` — секция search `body_text ILIKE` (~l.152–165) **НЕ ТРОГАТЬ** (FR-9, AC-7); `WHERE`/`ORDER BY` в `getTimelineEmailByContact` **byte-identical к текущему** (leak = P0)
+- всё из сквозного инварианта
+
+**Ожидаемый результат:**
+- Emitted SQL column-list **включает `body_html`** (добавлен к `…subject, body_text, snippet, gmail_internal_at, sent_by_user_email, (direction='outbound') AS is_outbound`).
+- `WHERE company_id = $1 AND contact_id = $2 AND on_timeline = true` и `ORDER BY gmail_internal_at ASC, id ASC` — **байт-в-байт как сегодня** (params `[companyId, contactId]` не меняются). SQL-запросы фильтруют по company_id — данные изолированы между компаниями; доступ к чужому contact → пусто (P0).
+- `body_text ILIKE` free-text search **не изменён** (search остаётся на `body_text`, не `body_html`).
+
+**Проверка (acceptance):** TC-EHR-U01 (SELECT gains `body_html`, WHERE unchanged, **P0** scoping — node jest), TC-EHR-U06 (`ILIKE` search unchanged, **P0**), TC-EHR-B05 (no new migration), TC-R-1/TC-R-2; AC-7/AC-8.
+
+**Зависимости:** нет. **Параллельность: WAVE 1** — backend-подгруппа {004,005,006,010} идёт ∥ frontend pure-libs {001,002,003}. Внутри backend: 004→005→010 частично последовательны по контракту (см. wave-граф), но файлы disjoint (emailQueries / pulse / emailTimelineService / types) → можно параллелить с координацией; 004 — корневой read.
+
+**Статус:** done
+
+---
+
+### TASK-EHR-005: Backend — `body_html` (RAW) в timeline email mapping `pulse.js`
+
+**Цель:** D6 change point #2 — прокинуть `body_html: row.body_html` **RAW** в mapped email-item в `pulse.js` (l.304–318), рядом с существующим `body_text: toTimelineBody(...)`. `body_html` **не** quote-stripped и **не** санитизируется на сервере (OQ-2, FR-9).
+
+**Файлы, которые можно менять:**
+- `backend/src/routes/pulse.js` (только timeline email `.map(...)`, l.304–318)
+
+**Файлы, которые трогать нельзя:**
+- `backend/src/routes/pulse.js` — прочие handlers/middleware/scoping; `req.companyFilter?.company_id` (уже enforced) не менять
+- `toTimelineBody` / `emailTimelineBody` quote-stripping — не трогать (`body_html` его обходит by design)
+- всё из сквозного инварианта
+
+**Ожидаемый результат:**
+- Mapped email-item получает `body_html: row.body_html` (RAW, un-quote-stripped, un-sanitized) **и** сохраняет `body_text: toTimelineBody(row.body_text, { snippet: row.snippet })` (quote-stripped).
+- Response-envelope — **superset** сегодняшнего (ни одного удалённого поля; COMPAT). Company-scoping через `req.companyFilter?.company_id` **не изменён**.
+
+**Проверка (acceptance):** TC-EHR-U02 (mapping `body_html` RAW + `body_text` quote-stripped, **P0** — node jest), AC-7; TC-R-1/TC-R-5.
+
+**Зависимости:** контрактно после TASK-EHR-004 (читает `row.body_html` из SELECT). **Параллельность: WAVE 1** (backend-подгруппа) — файл disjoint от 004/010, но данные зависят от 004; выполнять после/вместе с 004.
+
+**Статус:** done
+
+---
+
+### TASK-EHR-006: Backend — `body_html` в `toEmailItem` (SSE-parity hygiene, NOT required for AC-1)
+
+**Цель:** D6 change point #3 — добавить `body_html: row.body_html || null` в `emailTimelineService.toEmailItem` (l.54–74), чтобы SSE `message.added` payload остался идентичен REST-projection (инвариант l.44–46). **Parity-гигиена, НЕ требуется для AC-1** (бабл строится из REST; SSE рефетчит, а не аппендит).
+
+**Файлы, которые можно менять:**
+- `backend/src/services/email/emailTimelineService.js` (только `toEmailItem`, l.54–74)
+
+**Файлы, которые трогать нельзя:**
+- `backend/src/services/email/emailTimelineService.js` — `linkInboundMessage`/поллинг/прочее; `toTimelineBody` quote-strip `body_text` не трогать
+- две `msg`-builds в `ingestPolledForCompany` (l.472–480 / l.494–500) — **НЕ трогать** (они драйвят только linking; `linkMessageToContact` делает `RETURNING *`, так что `body_html` уже на row, которую `toEmailItem(linked)` получает)
+- всё из сквозного инварианта
+
+**Ожидаемый результат:**
+- `toEmailItem({...row, body_html:'<b>x</b>'})` → item содержит `body_html:'<b>x</b>'`; `body_html:null` → `body_html:null`.
+- Shape email-item **идентичен** REST-mapping из `pulse.js` (parity-инвариант) — future append-from-SSE рендерит тот же бабл.
+
+**Проверка (acceptance):** TC-EHR-U03 (P2 — `toEmailItem` adds `body_html`, node jest), AC-7 (parity). Явно **не** блокирует AC-1.
+
+**Зависимости:** нет (независимый файл; parity-хайджин). **Параллельность: WAVE 1** (backend-подгруппа) — файл disjoint от 004/005/010, ноль контрактной зависимости → истинно параллелен внутри backend-волны.
+
+**Статус:** done
+
+---
+
+### TASK-EHR-007: Frontend — `EmailTimelineItem` gains `body_html: string | null` (тип)
+
+**Цель:** D6 change point #4 / Contract 4 — добавить `body_html: string | null;` в интерфейс `EmailTimelineItem` (`frontend/src/types/pulse.ts`, l.39–52). Аддитивно (старые кэш-клиенты игнорят → fallback на `body_text`, COMPAT-2).
+
+**Файлы, которые можно менять:**
+- `frontend/src/types/pulse.ts` (только `EmailTimelineItem`, добавить одно поле)
+
+**Файлы, которые трогать нельзя:**
+- `frontend/src/types/pulse.ts` — прочие типы/интерфейсы не трогать
+- всё из сквозного инварианта
+
+**Ожидаемый результат:**
+- `EmailTimelineItem` имеет `body_html: string | null;` (рядом с `body_text: string | null`). Аддитивно — существующие потребители компилируются без изменений.
+- `cd frontend && npm run build` (`tsc -b`) зелёный.
+
+**Проверка (acceptance):** TC-EHR-B04 (TS build green), AC-7 (type). Разблокирует чтение `email.body_html` в TASK-EHR-008/009.
+
+**Зависимости:** нет. **Параллельность: WAVE 1** — frontend-тип; disjoint от pure-libs {001,002} и backend {004,005,006}. Логически backend-контракт, но файл фронтовый. Нужен до TASK-EHR-008 (потребляет поле).
+
+**Статус:** done
+
+---
+
+### TASK-EHR-008: Frontend — `SafeEmailHtml.tsx` (NEW, open Shadow DOM + base sheet + memo)
+
+**Цель:** Contract 2 / OQ-3 — компонент-обёртка: host `<div>` + **open** shadow root (attached **once**) + инъекция 8-декларационного base-`<style>` (once) + `shadowRoot.innerHTML = sanitizeEmailHtml(html, { allowImages })`. Controlled/dumb-рендерер, memo по `(messageId ?? hash(html), allowImages)`. «Show images» **НЕ** владеет здесь (caller держит state + кнопку).
+
+**Файлы, которые можно менять:**
+- `frontend/src/components/email/SafeEmailHtml.tsx` (создать новый)
+
+**Файлы, которые трогать нельзя:**
+- `frontend/src/lib/sanitizeEmailHtml.ts` — только импортировать (реализация = TASK-EHR-001)
+- всё из сквозного инварианта
+
+**Ожидаемый результат:**
+- Props `{ html: string; allowImages?: boolean; messageId?: string | number; className?: string; style?: CSSProperties }`.
+- Рендерит host `<div>` (с `className`/`style` + built-in `max-width:100%; overflow-x:auto` — горизонтальная scroll-клетка), attach **open** `shadowRoot` **однажды** (ref-callback / `useEffect`), инъектит base-`<style>`-node **однажды** — ровно **8 деклараций** из спеки (`:host{display:block}`, `*{box-sizing}`, наследование font/color/line-height, `a{color:var(--blanc-info)}`, `img{max-width:100%;height:auto}`, `table{max-width:100%;border-collapse}`, `pre,code{white-space:pre-wrap;word-break}`, `p{margin:0 0 .5em}`); **НЕ** импортит app Tailwind в shadow.
+- `sanitizeEmailHtml` обёрнут в `useMemo` по ключу `(messageId ?? hash(html), allowImages)`; `innerHTML` пере-устанавливается **только** при смене ключа (NFR-PERF-1 — раз на сообщение на images-state, не на scroll/re-render). Shadow attach — один раз.
+- «Show images» — контролируемо снаружи: caller ставит `allowImages:true` → re-sanitize (`allowImages:true`, no-op-ветка) + wholesale re-set `innerHTML` (нет stale DOM, нет beacon-race — remote-strip внутри sanitize-pass).
+- Sentinel: если `sanitizeEmailHtml` вернул `''`, shadow остаётся пустым (рендерит ничего) — fallback = ответственность caller (M5).
+
+**Проверка (acceptance):** TC-EHR-U05 (memo-key derivation), TC-EHR-M02 (shadow two-way isolation, manual), TC-EHR-M04 (containment/overflow, manual), TC-EHR-M05 (no-jank, manual), TC-EHR-M08 (bare-email legibility, manual); AC-3/AC-9. Build-гейт TASK-EHR-011.
+
+**Зависимости:** **после TASK-EHR-001** (импортит `sanitizeEmailHtml`). **Параллельность: WAVE 2** (единственная задача волны).
+
+**Статус:** done
+
+---
+
+### TASK-EHR-009: Frontend — `EmailListItem.tsx` render matrix M1–M5 + `allowImages`
+
+**Цель:** первичное изменение — в timeline-бабле заменить plain-text body (l.81–88, коммент *"Text-only — no HTML render (v1)."*) на матрицу M1–M5. Добавить чтение `email.body_html`, `allowImages` `useState(false)`, «Show images» `<button>` (только в M1). Chrome (eyebrow/subject/timestamp + `max-w-[75%]`-клетка) **не трогать** — свапается только **body**-регион.
+
+**Файлы, которые можно менять:**
+- `frontend/src/components/pulse/EmailListItem.tsx` (только body-регион + `allowImages` state + «Show images» кнопка)
+
+**Файлы, которые трогать нельзя:**
+- `frontend/src/components/pulse/EmailListItem.tsx` — eyebrow/subject/timestamp chrome, `max-w-[75%]`-клетка, `hasBody`-guard (M4) сохранить
+- `frontend/src/components/email/SafeEmailHtml.tsx`, `frontend/src/lib/linkifyText.ts` — только импортировать
+- всё из сквозного инварианта
+
+**Ожидаемый результат (render matrix):**
+- **M1** inbound + non-empty `body_html` → `<SafeEmailHtml html={body_html} allowImages={allowImages} messageId={id} />` + focusable «Show images» `<button>` с видимой меткой (NFR-A11Y-1; после клика может скрыться, re-collapse опционален).
+- **M2** inbound + empty/absent `body_html` → `linkifyToHtml(body_text)` через `dangerouslySetInnerHTML` на `<p class="whitespace-pre-wrap break-words">`.
+- **M3** outbound (**любой** `body_html`, даже non-empty) → `linkifyToHtml(body_text)`; sanitize **НИКОГДА** не зовётся для outbound (direction-short-circuit до любой HTML-проверки).
+- **M4** no html AND no text → body рендерит ничего (существующий `hasBody`-guard); subject/timestamp остаются.
+- **M5** inbound + `body_html` present, но `sanitizeEmailHtml`→`''` (fail-safe) → **проваливается** в `linkifyToHtml(body_text)`; таймлайн не крашится, raw HTML не рендерится.
+- «Show images» появляется **только** в M1.
+
+**Проверка (acceptance):** TC-EHR-U04 (branch-select M1–M5 — извлечь чистый helper `pickEmailRender(...)` в headless-скрипт, см. TASK-EHR-012), TC-EHR-M01 (render fidelity, manual), TC-EHR-M03 (no-beacon, manual), TC-EHR-M06 (fail-safe UI, manual); AC-1/AC-4/AC-5/AC-10; TC-R-5. Build-гейт TASK-EHR-011.
+
+**Зависимости:** **после TASK-EHR-008** (`SafeEmailHtml`), **TASK-EHR-002** (`linkifyToHtml`), **TASK-EHR-007** (`body_html` в типе) + backend read {004,005}. **Параллельность: WAVE 3** — ∥ TASK-EHR-010 (DISJOINT файлы: pulse-бабл vs workspace-item).
+
+**Статус:** done
+
+---
+
+### TASK-EHR-010: Frontend — `EmailMessageItem.tsx` adopts `SafeEmailHtml` (убрать 2-й DOMPurify-конфиг)
+
+**Цель:** FR-10 / COMPAT-1 / AC-6 — `/email` workspace переходит на общий `SafeEmailHtml`. Заменить inline `DOMPurify.sanitize(message.body_html)` (l.87–92) на `<SafeEmailHtml html={message.body_html} allowImages={…} messageId={message.id} />` + «Show images»-контрол. **Сохранить** `<pre>` `body_text`-fallback (l.93–97) + галерею вложений. Это удаляет **второй** DOMPurify-конфиг (единственный оставшийся — в `sanitizeEmailHtml.ts`).
+
+**Файлы, которые можно менять:**
+- `frontend/src/components/email/EmailMessageItem.tsx` (body-блок l.87–97 + удалить прямой `import DOMPurify` если больше не нужен + `allowImages` state + «Show images»)
+
+**Файлы, которые трогать нельзя:**
+- `frontend/src/components/email/EmailMessageItem.tsx` — `<pre>` `body_text`-fallback, галерея вложений, header/recipients — сохранить (COMPAT)
+- `frontend/src/components/email/SafeEmailHtml.tsx` — только импортировать
+- всё из сквозного инварианта
+
+**Ожидаемый результат:**
+- Body-ветка использует `<SafeEmailHtml …/>` вместо `dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(...) }}`. `prose prose-sm` (сегодня no-op — `@tailwindcss/typography` НЕ установлен) убирается без визуальной регрессии.
+- Прямой `import DOMPurify from 'dompurify'` в этом файле удалён (санитизация теперь через `SafeEmailHtml`→`sanitizeEmailHtml`).
+- `<pre>` `body_text`-fallback + галерея вложений — **не изменены**.
+- `grep -rn "DOMPurify.sanitize" frontend/src` → **только** `frontend/src/lib/sanitizeEmailHtml.ts` (l.87–92 call в `EmailMessageItem` **исчез**). Benign mail — без регрессии; hostile mail — строго безопаснее (forced link rel/target, remote-image блок, `data:`/`javascript:` link-блок теперь и в workspace).
+
+**Проверка (acceptance):** TC-EHR-B02 (ровно ОДИН DOMPurify-конфиг / grep, **P0**), TC-EHR-M07 (workspace parity, manual); AC-6; TC-R-4. Build-гейт TASK-EHR-011.
+
+**Зависимости:** **после TASK-EHR-008** (`SafeEmailHtml`). **Параллельность: WAVE 3** — ∥ TASK-EHR-009 (DISJOINT файлы).
+
+**Статус:** done
+
+---
+
+### TASK-EHR-011: Verify — `scripts/verify-email-html-render-001.js` (NEW, Node + jsdom headless matrix) + backend jest + build-гейты
+
+**Цель:** собрать автоматизированный ship-gate. Standalone Node-скрипт (house-паттерн `verify-*.js`) с **jsdom** (dev-only devDep) + frontend `dompurify`, `createDOMPurify(window)` — гоняет P0 hostile-HTML security-матрицу + linkify-матрицу + sabotage negative-control + config-parity-ассерт. Плюс backend-plumbing → существующий node-env jest. Плюс build/static-гейты.
+
+**Файлы, которые можно менять:**
+- `scripts/verify-email-html-render-001.js` (создать новый)
+- `scripts/fixtures/email-html-render/lsa-3044.html` (создать — реальный ~39 KB 3044-блоб, sanitized от реальной PII)
+- root `package.json` — добавить `jsdom` как **root `devDependency`** (dev/verify-only, **НЕ** bundled в app → не нарушает «no new *frontend*/shipped package»; **явно назвать это в PR**)
+- backend jest-тесты: `tests/emailQueriesTimeline.test.js`, `tests/pulseTimeline.test.js`, `tests/emailTimelineService.test.js`, `tests/emailSearch.test.js` (создать/дополнить)
+
+**Файлы, которые трогать нельзя:**
+- product-код фичи (001,002,004–010) — это **верификация**, никаких попутных product-правок по итогам прогона; если план плох — открыть вопрос, не чинить молча
+- `frontend/package.json` — jsdom НЕ сюда (это root dev-only; фронт-депы = TASK-EHR-003)
+- всё из сквозного инварианта
+
+**Ожидаемый результат:**
+- Скрипт: `#!/usr/bin/env node`, `'use strict'`, секции `--section=security|images|links|failsafe|linkify|sab|all`, verbatim assert-kit (`check`/`eq`/`record`/`CheckError`), exit 0 только когда ноль FAIL. DOM: `const { JSDOM } = require('jsdom'); const { window } = new JSDOM(''); const DOMPurify = require(path.join(ROOT,'frontend/node_modules/dompurify'))(window);`.
+- **Port + parity:** скрипт держит **verbatim CJS-порт** конфига `sanitizeEmailHtml` + `afterSanitizeAttributes`-хука и `linkifyToHtml`; **TC-EHR-B03** ассертит, что ported-конфиг **char-identical** экспортируемому из `frontend/src/lib/sanitizeEmailHtml.ts` (нормализованный string/структурный compare) — headless-матрица не может сертифицировать конфиг, отличный от шипнутого. *(Если Implementer вместо этого заведёт TS/ESM-loader (`tsx`/`esbuild` dev-dep) и импортит реальный `.ts` — пин THAT и дропни порт.)*
+- **Assertions структурные** (parse sanitized-output обратно в jsdom-fragment + `querySelectorAll`), не brittle-string.
+- **Sabotage (`--section=sab`):** гоняет `security`-ассерты против `html=>html` pass-through-варианта → harness **обязан** записать FAIL на H01/H02/H04/H06/H08/H10 (script выжил, `onerror` выжил, `<form>` выжил, `javascript:` href выжил, remote `src` жив, `<a>` без target/rel), затем restore → зелёно. Если pass-through НЕ краснит — детектор сломан, все PASS вакуумны.
+- **Backend jest (node-env, ноль новых депов):** TC-EHR-U01 (SELECT+WHERE), U02 (mapping RAW), U03 (toEmailItem parity), U06 (`ILIKE` unchanged). **Запускать из РЕАЛЬНОГО repo-root** (root jest `testPathIgnorePatterns` уже игнорит `/\.claude/worktrees/` — файл внутри worktree молча НЕ собирается; иначе «зелёный» прогон прогнал **ноль** новых кейсов).
+- **Build/static-гейты:** TC-EHR-B01 (`package.json` diff — только dompurify pin), B02 (grep один DOMPurify-конфиг), B04 (`cd frontend && npm run build` = `tsc -b && vite build` exit 0 — прод Docker строже, `noUnusedLocals`), B05 (нет нового файла в `backend/db/migrations/`, max migration не изменён; `node -c` чист на 3 backend-файлах).
+- **Fallback (если owner отказал даже в dev-only `jsdom`):** вся security-матрица → manual-browser (Group D / TASK-EHR-012), автоматизируются только pure-string linkify-проверки; **явно отметить в PR** как strictly-weaker fallback.
+
+**Проверка (acceptance):** зелёный прогон `--section=all` + зелёный backend jest из repo-root + все B01…B05. **Красный на security-матрице, SAB, linkify-escape-first, или backend scoping (U01) блокирует релиз.** TC-EHR-H01…H21, U01/U02/U03/U06, B01…B05, SAB.
+
+**Зависимости:** **после всех code-задач {001,002,004,005,006,007,008,009,010}** (гоняет реальный конфиг через порт+parity + backend-слои + build). **Параллельность: WAVE 4** (verify).
+
+**Статус:** done
+
+---
+
+### TASK-EHR-012: Verify (manual-browser gate) — render/shadow/beacon/layout/no-jank/workspace-parity на prod-copy
+
+**Цель:** релиз-гейт для истин, которые headless-string-проверка **не может** ассертить: shadow-DOM two-way изоляция, remote-image no-beacon до «Show images», inline-containment (no `max-height` / wide-table horizontal scroll в бабле), no-jank на длинном таймлайне ~39 KB писем, render-fidelity 3044-мейла, `/email` workspace-parity. Ручной прогон на **реальной prod-DB-копии** в реальном браузере на `/pulse/timeline/3044` + `/email`. **Прод-деплой — только с явного «да» владельца** (standing rule).
+
+**Файлы, которые можно менять:**
+- нет product-файлов (чисто верификационный ручной чек-лист; результаты — в отчёт задачи/PR)
+
+**Файлы, которые трогать нельзя:**
+- всё (это observation-only ручная проверка; никаких правок по итогам без открытия вопроса)
+
+**Ожидаемый результат (ручной чек-лист, каждый = manual TC):**
+- **TC-EHR-M01 (P0):** на `/pulse/timeline/3044` inbound Google-LSA HTML рендерится форматированным; links **и** buttons-as-links кликабельны, открываются в новой вкладке (проверить `rel="noopener noreferrer"` в shadow DOM через devtools); outbound в том же таймлайне — plain (linkified) текст рядом. Ноль console-error.
+- **TC-EHR-M02 (P0):** email `<style>` (`body{background:#000;color:#0f0}` + `.card`/`.header` class-коллизии) стилит **только** контент своего бабла (open `shadowRoot` присутствует на host); sidebar/list/другие баблы **не изменены**; email **не** искажён app-global-CSS.
+- **TC-EHR-M03 (P0):** devtools→Network→Img: **ноль** запросов к remote-хостам до клика; `data:`-image отрисовался без запроса; после «Show images» remote-картинки грузятся (wholesale re-set `innerHTML`, нет «live remote src then strip» race).
+- **TC-EHR-M04 (P0):** host `<div>` несёт `max-width:100%; overflow-x:auto`; **нет `max-height`**, **нет** expand/collapse-контрола (D2); ~600 px table скроллит **горизонтально внутри бабла**; app-layout (list-width, sidebar) не ломается, нет page-level горизонт-скролла.
+- **TC-EHR-M05 (P1):** длинный таймлайн из нескольких ~39 KB HTML-писем скроллит гладко; sanitize раз на сообщение на images-state (не на каждый scroll/re-render — подтвердить `console.count` в `sanitizeEmailHtml` во время trace / React Profiler); toggle одного не форсит sync-reflow всего таймлайна.
+- **TC-EHR-M06 (P1):** форсированный sanitize-fail на одном сообщении → бабл показывает linkified plain-text (из `body_text`); таймлайн и другие баблы не затронуты; **никакого raw HTML**; нет React-краша.
+- **TC-EHR-M07 (P1):** в `/email` benign HTML-письмо — без изменений (потеря no-op `prose` ничего не стоит; base-sheet держит bare-HTML читаемым); hostile — строго безопаснее; `<pre>`-fallback + галерея вложений работают; ноль визуальной регрессии.
+- **TC-EHR-M08 (P2):** bare `<p>Hello <a href>link</a></p>` (no author CSS) — читаем, наследует IBM Plex + `--blanc-ink-1`, link = `--blanc-info`, `img/table` capped; styled 3044 держит **свои** шрифты/цвета (author-rules выигрывают по specificity/order — base-sheet только defaults, нет `all:initial`/reset).
+
+**Проверка (acceptance):** все 8 manual-TC пройдены на prod-copy в реальном браузере. **Ship-bar = зелёная headless-матрица (TASK-EHR-011) И этот ручной проход**, зелёный на prod-copy в deploy-окне. Прод-деплой owner-consent-gated.
+
+**Зависимости:** **после TASK-EHR-009 + TASK-EHR-010** (нужен собранный UI) и практически после TASK-EHR-011 (headless-зелёный — предусловие ручного прохода). **Параллельность: WAVE 4** (release-gate; идёт с/после verify-скрипта, в deploy-окне).
+
+**Статус:** pending
+
+---
+
+### Порядок выполнения и параллелизм (EMAIL-HTML-RENDER-001)
+
+```
+WAVE 1 (foundation, всё ∥ — DISJOINT файлы):
+  frontend pure-libs:   TASK-EHR-001 (sanitizeEmailHtml.ts)  ─┐
+                        TASK-EHR-002 (linkifyText.ts)         │  (ноль dep между собой)
+                        TASK-EHR-003 (package.json dompurify pin)
+                        TASK-EHR-007 (types/pulse.ts body_html)
+  backend body_html:    TASK-EHR-004 (emailQueries SELECT) → TASK-EHR-005 (pulse.js RAW map)  [005 данные← 004]
+                        TASK-EHR-006 (toEmailItem parity)   ─┘  (файл-disjoint, истинно ∥)
+      ← две подгруппы {001,002,003,007} ∥ {004,005,006} полностью независимы по файлам.
+        Внутри backend: 004→005 контрактно (005 читает row.body_html); 006 независим.
+
+WAVE 2 (shadow wrapper):  TASK-EHR-008 (SafeEmailHtml.tsx)   ← нужен 001 (sanitizeEmailHtml)
+
+WAVE 3 (consumers, ∥ — DISJOINT файлы):
+                        TASK-EHR-009 (EmailListItem M1–M5)      ← нужны 008, 002, 007 (+ backend 004/005)
+                        TASK-EHR-010 (EmailMessageItem adopt)   ← нужен 008
+      ← 009 ∥ 010: pulse-бабл vs workspace-item, файл-disjoint.
+
+WAVE 4 (verify + release-gate):
+                        TASK-EHR-011 (verify-script + backend jest + build-гейты)  ← после ВСЕХ code-задач
+                        TASK-EHR-012 (manual-browser gate на prod-copy)            ← после 009,010 (+ 011 зелёный)
+```
+
+**Граф зависимостей:** **{001 ∥ 002 ∥ 003 ∥ 007 ∥ (004→005) ∥ 006} → 008 → {009 ∥ 010} → {011, 012}**.
+
+**Параллелизм-резюме:**
+- **WAVE 1** — максимальная ширина: frontend pure-libs {001, 002, 003, 007} полностью ∥ backend-подгруппе {004, 005, 006}; все файл-disjoint. Единственная внутренняя последовательность — 004→005 (005 читает `row.body_html` из SELECT 004); 006 (parity-хайджин) независим и **не** блокирует AC-1.
+- **WAVE 2** — единственная задача 008 (`SafeEmailHtml`) — гейт, т.к. нужен `sanitizeEmailHtml` (001) и её потребляют оба consumer-а.
+- **WAVE 3** — {009 ∥ 010} параллельны (DISJOINT: `EmailListItem.tsx` vs `EmailMessageItem.tsx`), оба ждут 008.
+- **WAVE 4** — **верификационная задача = TASK-EHR-011** (собственная: Node+jsdom headless security/linkify/sab-матрица + config-parity + backend node-jest + build/static-гейты), после всех code-задач. **Ручной release-gate = TASK-EHR-012** (shadow-изоляция / no-beacon / layout / no-jank / workspace-parity на **prod-DB-копии** в реальном браузере — то, что headless-строка не докажет; house-lesson LIST-PAGINATION-001 / created_by-FK).
+
+**Test-vehicle constraint (закодирован явно, из agent 04):** фронт **не имеет** test-runner; `jsdom`/`dompurify` **НЕ установлены**; TS-ESM-модули **нельзя** `require` в node-env root jest; root jest **исключает** `/.claude/worktrees/`. Поэтому: (1) security/linkify-матрица гоняется через **standalone `scripts/verify-email-html-render-001.js`** — `jsdom` как **dev-only root devDependency** (never bundled → не «shipped package») + frontend `dompurify` (пин TASK-EHR-003) + `createDOMPurify(window)` + **CJS-порт** конфига с **build-time parity-ассертом** (TC-EHR-B03), т.к. `.ts` нельзя `require`; (2) backend-plumbing → существующий **node-env root jest**, запуск из **реального repo-root** (не из worktree); (3) render/shadow-isolation/network-beacon/layout/no-jank/workspace-parity → **MANUAL-BROWSER** (TASK-EHR-012, deploy-окно / dev на prod-copy). **Fallback:** если dev-only `jsdom` отклонён/недоступен — вся security-матрица уходит в manual-browser, автоматизируется только pure-string linkify; отметить в PR как strictly-weaker.
+
+**Миграций НЕТ** (колонка `body_html TEXT` из mig 079; max migration не меняется — TC-EHR-B05). **Нет нового shipped-пакета** (только уже-locked `dompurify` пин; `jsdom` = dev/verify-only). **Нет нового API-route/endpoint/middleware** (реюз `GET /api/pulse/timeline*`, `authenticate`+`requireCompanyAccess`+`pulse.view`, `company_id` via `req.companyFilter?.company_id`). **P0-гейты, красный на любом блокирует релиз:** headless security-матрица (каждый hostile-payload стрипнут/нейтрализован), её sabotage negative-control (pass-through → RED), linkify escape-first (no-injection), backend company+contact scoping unchanged (S9/AC-8 — leak=P0), и manual-проход 3044 на shadow-isolation + no-beacon + no-jank (AC-1/AC-3/AC-4). Back-compat: аддитивное `body_html` (старые клиенты fallback на `body_text`); ровно ОДИН DOMPurify-конфиг после рефактора (AC-6). Прод-деплой — только с явного «да» владельца (standing rule).

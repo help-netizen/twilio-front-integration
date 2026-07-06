@@ -592,7 +592,7 @@ async function getTimelineEmailByContact(companyId, contactId, { limit } = {}) {
     }
     const result = await db.query(
         `SELECT id, thread_id, provider_thread_id, direction, from_name, from_email,
-                to_recipients_json, subject, body_text, snippet, gmail_internal_at,
+                to_recipients_json, subject, body_text, body_html, snippet, gmail_internal_at,
                 sent_by_user_email,
                 (direction = 'outbound') AS is_outbound
          FROM email_messages

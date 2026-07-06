@@ -46,6 +46,7 @@ export interface EmailTimelineItem {
     to_email: string | string[] | null; // raw to_recipients_json
     subject: string | null;
     body_text: string | null; // plain text, already quote-stripped server-side
+    body_html: string | null; // raw HTML body — sanitized client-side (SafeEmailHtml)
     sent_at: string; // gmail_internal_at (ISO8601) — timeline sort timestamp
     thread_id: string | null;
     sent_by_user_email: string | null; // outbound attribution (nullable)
