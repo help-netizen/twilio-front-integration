@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import type { CSSProperties } from 'react';
 import { sanitizeEmailHtml } from '../../lib/sanitizeEmailHtml';
+import { stripEmailQuote } from '../../lib/stripEmailQuote';
 
 /**
  * EMAIL-HTML-RENDER-001 — TASK-EHR-008 (Contract 2 / OQ-3)
@@ -75,6 +76,14 @@ export interface SafeEmailHtmlProps {
     html: string;
     /** Controlled by the caller. When true, remote images are allowed through. */
     allowImages?: boolean;
+    /**
+     * Opt-in (EMAIL-QUOTE-STRIP-001). When true, the sanitized HTML is passed
+     * through `stripEmailQuote(...)` inside the memo so quoted thread history is
+     * removed and only the new reply renders (Pulse timeline bubble, M1). When
+     * false (default) the sanitized string is returned unchanged — the `/email`
+     * workspace path stays byte-for-behavior identical to today.
+     */
+    stripQuotedHistory?: boolean;
     /** Stable per-message id; anchors the sanitize memo. Falls back to hash(html). */
     messageId?: string | number;
     /** Applied to the host `<div>` (merged with the built-in overflow cage). */
@@ -91,6 +100,7 @@ export interface SafeEmailHtmlProps {
 export default function SafeEmailHtml({
     html,
     allowImages = false,
+    stripQuotedHistory = false,
     messageId,
     className,
     style,
@@ -104,11 +114,19 @@ export default function SafeEmailHtml({
     // an unrelated re-render with the same inputs does NOT re-sanitize.
     const memoKey = messageId ?? hashString(html);
     const sanitized = useMemo(
-        () => sanitizeEmailHtml(html, { allowImages }),
+        () => {
+            const clean = sanitizeEmailHtml(html, { allowImages });
+            // Opt-in quote strip (EMAIL-QUOTE-STRIP-001): applied to the
+            // ALREADY-sanitized string, never raw html. No-op when the flag is
+            // false, so the workspace path is unchanged.
+            return stripQuotedHistory ? stripEmailQuote(clean) : clean;
+        },
         // memoKey stands in for `html`; both are derived from it. allowImages
-        // flips the image-neutralize branch, so it must be in the key.
+        // flips the image-neutralize branch; stripQuotedHistory flips the strip
+        // step — both must be in the key so it runs once per (message, images,
+        // strip-state), not per scroll/re-render.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        [memoKey, allowImages],
+        [memoKey, allowImages, stripQuotedHistory],
     );
 
     useEffect(() => {

@@ -3372,3 +3372,141 @@ The HTML is **already available and already safely rendered elsewhere**: `email_
 ### Notes / lessons applied
 
 - Verify against a **real prod-DB copy** (the 3044 emails) and in a real browser, not only mocked Jest (LIST-PAGINATION-001 / created_by-FK lessons): confirm `body_html` flows onto the timeline item, the LSA email renders with clickable links, malicious samples are neutralized, and remote images stay blocked until opt-in — before any deploy. **Prod deploy is owner-consent-gated (standing rule).**
+
+---
+
+## EMAIL-QUOTE-STRIP-001 — Strip quoted thread history from inbound HTML emails in the Pulse timeline (timeline-only) (2026-07-06)
+
+**Status:** Requirements (Product/Agent-01). Follow-up to **EMAIL-HTML-RENDER-001** (§ above, line 3246) — it **RESOLVES that feature's OQ-2** (line 3369: "whether the HTML render should also collapse quoted history"). Dedup checked: `grep EMAIL-QUOTE-STRIP docs/requirements.md` = none. Frontend-only; **NO backend, NO migration**. Extends the *render* surface only; touches none of EMAIL-TIMELINE-001's OAuth/sync/send/schema paths, and does not re-open EMAIL-HTML-RENDER-001's XSS pipeline (the strip runs **after** DOMPurify — D4).
+
+### Problem statement
+
+After EMAIL-HTML-RENDER-001 shipped (master 62260f4), inbound emails with a `body_html` now render their **full** sanitized HTML in the Pulse timeline bubble (`frontend/src/components/pulse/EmailListItem.tsx`, render-matrix branch **M1** → `SafeEmailHtml`). Real reply threads (e.g. `/pulse/timeline/2599`) carry the **entire quoted conversation history** inside `body_html`: each reply appends an `On … wrote:` attribution line plus a `<blockquote>`/`class="gmail_quote"` subtree containing every prior message. The timeline bubble therefore balloons into a wall of repeated history, burying the one thing the agent needs — the **new** reply — under the whole thread.
+
+This is an **INBOUND-HTML-ONLY** regression of parity that already exists on the other paths:
+- **Outbound** timeline bubbles render `body_text` via `linkifyToHtml` (matrix M3), and `body_text` is already quote-stripped server-side by `toTimelineBody` (`backend/src/services/email/emailTimelineBody.js`, `EMAIL-TIMELINE-001 §3c`). Outbound already shows only-new. **Not affected.**
+- **Inbound plain-text** (matrix M2) also renders quote-stripped `body_text`. **Not affected.**
+- Only **inbound + `body_html`** (M1) renders the raw full thread, because EMAIL-HTML-RENDER-001 deliberately passes `body_html` **un-quote-stripped** to the sanitizer (its FR-9) and deferred HTML quote-collapsing to OQ-2.
+
+This feature closes that gap for the timeline bubble by stripping the quoted-history subtree from the **inbound HTML** render — restoring the only-new-reply view the old plain-text path always gave. **Ground truth (given, prod-verified):** the 2599 emails mark quotes with `class="gmail_quote"` + `<blockquote>` + an "On … wrote:" attribution; none use `#appendonsend` or `.yahoo_quoted`.
+
+### Binding decisions (from the customer interview — these OVERRIDE any conflicting assumption downstream)
+
+- **D1 — STRIP ENTIRELY (no expander, no collapse).** The quoted-history subtree is **removed** from the rendered DOM. There is **NO** "Show quoted text" / expand / collapse / "…" affordance — the owner explicitly chose full removal. The timeline inbound-HTML bubble shows **only the new reply**. *(unmissable — this is the whole feature)*
+- **D2 — TIMELINE-ONLY SCOPE.** Stripping applies **ONLY** to the Pulse timeline bubble (`EmailListItem`, matrix M1). The `/email` **workspace** (`EmailMessageItem`) is the full-thread reader and MUST keep rendering the **complete** quoted history **unchanged**. The strip is therefore **opt-in per call-site** — the shared `SafeEmailHtml` must NOT strip by default. *(unmissable — do not strip in the workspace)*
+- **D3 — Detection heuristic (ORDERED; stop at first match).** Locate the quote boundary by, in order: **(1)** `.gmail_quote` (primary for 2599); **(2)** `blockquote[type="cite"]` (Apple Mail); **(3)** Outlook — `#appendonsend`, OR a `<div>` bearing a `border-top` separator that immediately follows a "From:" header block; **(4)** `.yahoo_quoted`; **(5)** the first **top-level** `<blockquote>`; **(6)** text fallback — an attribution line matching `On … wrote:` / `… wrote:`. On the matched boundary, remove that subtree AND the **immediately-preceding attribution line** ("On … wrote:") when one is present. From that boundary onward is discarded.
+- **D4 — POST-SANITIZE.** The strip transform runs **AFTER** DOMPurify `sanitizeEmailHtml(...)`, operating on already-sanitized markup/DOM. The XSS pipeline (`frontend/src/lib/sanitizeEmailHtml.ts`) is **untouched** — no config change, no new DOMPurify hook that alters sanitization. Strip removes nodes only; it never re-admits or re-parses attacker HTML back through a less-safe path.
+- **D5 — EMPTY-AFTER-STRIP FALLBACK.** If stripping would leave the bubble **empty or near-empty** (the email is essentially all quote — e.g. a bare forward with no new text), render the **FULL (unstripped) sanitized** content instead. **Never show an empty/blank bubble.** *(Mirrors `toTimelineBody`'s "whole body was a quote → fall back, never blank" rule.)* The exact "near-empty" threshold is routed to the Architect (**OQ-QS-1**).
+- **D6 — Frontend-only.** No backend change, no new query field, **no migration**. `body_html` already flows to the timeline item (EMAIL-HTML-RENDER-001 FR-8). The transform is a pure frontend helper.
+
+### User stories / use cases
+
+1. **US-1 (agent, reply thread — the core case).** As an agent viewing `/pulse/timeline/2599`, I see **only the newest inbound reply** in the email bubble — the quoted `On … wrote:` history is gone — so I can read the actual message at a glance instead of scrolling past the whole prior conversation.
+2. **US-2 (agent, deep thread).** As an agent on a long back-and-forth (multiple nested quote levels), the bubble strips **everything from the first/outermost quote boundary down**, so nested history never leaks a single level back in.
+3. **US-3 (agent, all-quote email).** As an agent opening a bare forward / an inbound email that is essentially all quoted history with no new text, I still see content (the **full** thread) rather than an empty bubble — the strip safely no-ops (D5).
+4. **US-4 (agent, no-quote email).** As an agent opening a fresh inbound email that has no quoted history, the bubble renders exactly as EMAIL-HTML-RENDER-001 already produces it — the strip finds no boundary and changes nothing.
+5. **US-5 (agent, `/email` workspace).** As an agent using the full-thread reader at `/email`, I still see the **complete** message including all quoted history — this feature does not touch the workspace (D2).
+6. **US-6 (security / whole company).** As the business, quote-stripping never weakens sanitization: the transform runs on already-sanitized DOM (D4), so a malicious inbound email is neutralized by DOMPurify exactly as before, whether or not any quote is stripped.
+
+### Functional requirements
+
+- **FR-1 — Strip quoted history from inbound-HTML timeline bubbles.** In `EmailListItem` matrix **M1** (inbound + `body_html`), the sanitized HTML has its quoted-thread subtree **removed** before/at render, so the bubble shows only the new reply. *(D1)*
+- **FR-2 — Entire removal, NO expander.** The stripped subtree is discarded outright — **no** collapse/expand/"Show quoted text" control, no placeholder, no ellipsis marker is rendered in its place. *(D1)*
+- **FR-3 — Timeline-only; workspace untouched.** The strip is applied **only** at the `EmailListItem` (timeline) call-site. `EmailMessageItem` (the `/email` workspace) renders `SafeEmailHtml` with the **full** thread and MUST NOT strip. The shared `SafeEmailHtml`/`sanitizeEmailHtml` default behavior is **no strip**; stripping is **opt-in** (e.g. a `stripQuotes` prop on `SafeEmailHtml`, or a separate exported transform the timeline call-site applies — mechanism = Architect, **OQ-QS-2**). *(D2)*
+- **FR-4 — Ordered detection heuristic.** Quote-boundary detection follows the D3 order, stopping at the first match: `.gmail_quote` → `blockquote[type="cite"]` → Outlook (`#appendonsend` OR a `border-top`-separated `<div>` after a "From:" block) → `.yahoo_quoted` → first top-level `<blockquote>` → text `On … wrote:` / `… wrote:` attribution. *(D3)*
+- **FR-5 — Remove boundary subtree + preceding attribution line.** On a match, remove the boundary element/subtree AND the immediately-preceding attribution line ("On … wrote:") when present. Everything from the boundary to end-of-body is discarded. *(D3)*
+- **FR-6 — Strip from the FIRST/outermost boundary.** When multiple or nested quote levels exist, cut at the **earliest/outermost** boundary (highest in the DOM / earliest in document order) so no quoted level survives. *(D3, US-2; parity with `toTimelineBody` "earliest quote-boundary" rule)*
+- **FR-7 — Post-sanitize transform.** The strip runs on the output of `sanitizeEmailHtml(...)` (already-sanitized string or its parsed DOM), never on raw `body_html`. It does not modify the DOMPurify config or its hooks. *(D4)*
+- **FR-8 — Empty/near-empty fallback → render full.** If, after stripping, the remaining content is empty or below the "near-empty" threshold (OQ-QS-1), render the **full unstripped** sanitized content instead of the stripped result. The bubble is never blank because of stripping. *(D5)*
+- **FR-9 — No-boundary passthrough.** If no boundary matches (a fresh email with no quote), the sanitized content is rendered **unchanged** (identical to EMAIL-HTML-RENDER-001 output). *(D3 fallthrough, US-4)*
+- **FR-10 — Attribution-without-blockquote.** A bare attribution line ("On … wrote:") with **no** following quote element still triggers the **text-fallback** boundary (D3 step 6): the attribution line and everything after it are removed. An attribution line with no meaningful text after it collapses into the D5 fallback if that would empty the bubble. *(D3, edge case)*
+- **FR-11 — Empty/degenerate quote markers.** Quote markers that are present but **empty** (e.g. an empty `<blockquote>` or a `.gmail_quote` with no content) are removed like any boundary; if their removal changes nothing visible, the render is effectively unchanged (no crash, no empty bubble). *(edge case)*
+- **FR-12 — Outbound and plain-text paths untouched.** Matrix **M3** (outbound → `linkifyToHtml(body_text)`) and **M2** (inbound text-only → `linkifyToHtml(body_text)`) are **not** modified; they already show quote-stripped/only-new text. This feature adds nothing to and removes nothing from the text paths. *(scope guard)*
+
+### Non-functional requirements
+
+- **NFR-SEC-1 — XSS pipeline unaffected (PRIMARY).** The strip is **post-sanitize** (D4/FR-7). `sanitizeEmailHtml.ts` (DOMPurify config, `afterSanitizeAttributes` hook, forced `target/rel`, `javascript:`/`data:` blocking, remote-image neutralize, form/script stripping) is **byte-for-behavior unchanged**. No path re-introduces raw email HTML into the DOM. Removing nodes from an already-sanitized tree cannot *add* capability; if the transform ever fails it must **not** fall back to raw (unsanitized) HTML — only to the **full sanitized** content (D5).
+- **NFR-SEC-2 — Fail-safe.** If the strip transform throws or cannot parse, it returns the **full sanitized** content (never raw, never empty, never a crash of the timeline) — same defensive posture as `sanitizeEmailHtml` (returns `''`) and `toTimelineBody` (never throws).
+- **NFR-CORRECT-1 — Cross-client detection correctness.** Detection must correctly identify the boundary for the verified Gmail shape (2599: `.gmail_quote` + `<blockquote>` + "On … wrote:") and degrade sensibly for Apple Mail / Outlook / Yahoo shapes per the D3 order, **without** false-positive stripping of a legitimate `<blockquote>` a sender used as an actual quotation in the NEW message body. (Trade-off between over- and under-stripping is a detection-tuning concern for the SpecWriter/TestCases; the ordered heuristic + top-level-only `<blockquote>` rule in D3 is the guardrail.)
+- **NFR-CORRECT-2 — Signature handled by omission.** The transform removes only the quoted-history subtree (and its attribution line); an author **signature** that sits **outside** that subtree is naturally preserved. This feature does NOT add HTML signature-stripping (mirrors `toTimelineBody`, which keeps the signature). If a signature is embedded *inside* the quoted subtree it goes with the quote (acceptable — it belongs to prior messages).
+- **NFR-PERF-1 — No perf regression.** The strip runs **once per message**, folded into the existing per-message sanitize memo in `SafeEmailHtml` (memo key `(messageId ?? hash(html), allowImages)`), NOT on every scroll/re-render. It must not add a second full HTML parse when it can operate on the DOM the shadow render already builds (mechanism = Architect). A long timeline with several large HTML threads must not visibly jank (inherits EMAIL-HTML-RENDER-001 NFR-PERF-1).
+- **NFR-COMPAT-1 — Workspace backwards-compat.** `/email` (`EmailMessageItem`) render output is **identical** to today for every email (D2/FR-3). No visual or behavioral change in the full-thread reader.
+- **NFR-COMPAT-2 — Idempotent transform.** Applying the strip twice yields the same result as applying it once (stripping already-stripped content is a no-op). Important because the sanitize memo may re-run on `allowImages` toggle.
+- **NFR-COMPAT-3 — No new dependency.** Detection/removal uses the DOM already available in the shadow render (or a lightweight parse of the sanitized string) and standard selectors/regex — **no new npm package**.
+
+### Edge cases (explicitly in scope to handle)
+
+- **EC-1 — No quote boundary found.** Render the full sanitized content unchanged (FR-9). Identical to EMAIL-HTML-RENDER-001 today.
+- **EC-2 — Multiple / nested quote levels.** Strip from the FIRST/outermost boundary; no inner level survives (FR-6).
+- **EC-3 — Email is ALL quote (bare forward / no new text).** D5 fallback: render the FULL unstripped sanitized content; never an empty bubble (FR-8).
+- **EC-4 — Attribution line with NO following blockquote.** Text-fallback boundary still fires; attribution + trailing content removed (FR-10); collapses to D5 if that empties the bubble.
+- **EC-5 — Quote markers present but empty.** Removed like any boundary; no crash, no empty bubble (FR-11).
+- **EC-6 — Legitimate `<blockquote>` in the NEW message.** Risk of over-stripping a quotation the sender wrote in their new reply. Ordered heuristic prefers client-specific markers (`.gmail_quote`, `blockquote[type="cite"]`, `.yahoo_quoted`) before the generic "first top-level `<blockquote>`"; tuning/verification is a SpecWriter/TestCases concern (NFR-CORRECT-1). Flagged **OQ-QS-3**.
+- **EC-7 — Interaction with "Show images" (FR-5 of parent).** After stripping, remote images that lived **inside** the quoted history are gone. The timeline's `REMOTE_IMG_RE.test(email.body_html)` gate (`EmailListItem` l.56) currently probes the **raw** `body_html`, so the **"Show images"** button could appear yet reveal nothing (all remote images were in the stripped quote). The "Show images" control itself is **unaffected** in mechanics, but the probe SHOULD be evaluated against the **stripped** HTML so the button reflects what's actually visible. Routed **OQ-QS-4**.
+- **EC-8 — Outbound / plain-text.** Untouched (FR-12); already only-new via `toTimelineBody`.
+- **EC-9 — `allowImages` toggle re-render.** When the agent clicks "Show images", `SafeEmailHtml` re-sanitizes with `allowImages:true`; the strip must re-apply deterministically and idempotently so the reply stays stripped and images inside the *kept* reply reveal (NFR-COMPAT-2).
+
+### In scope
+
+- Post-sanitize quote-strip transform for the **inbound-HTML timeline bubble** (`EmailListItem` M1): ordered detection (FR-4), boundary+attribution removal (FR-5), first/outermost cut (FR-6), empty→full fallback (FR-8), no-boundary passthrough (FR-9), text-fallback attribution (FR-10), empty-marker handling (FR-11); opt-in wiring so the **workspace stays full** (FR-3); memoized/idempotent/no-new-dep implementation (NFRs).
+
+### Out of scope
+
+- Any **expander / collapse / "Show quoted text"** UI (explicitly rejected — D1).
+- Stripping quotes in the **`/email` workspace** (`EmailMessageItem`) — it keeps the full thread (D2).
+- Changing the **outbound** or **inbound-plain-text** render paths (already quote-stripped via `toTimelineBody`).
+- HTML **signature** stripping (only *quoted history* is removed; signature outside the quote is kept — NFR-CORRECT-2).
+- Any **DOMPurify / sanitizer** config change (D4); any CSP/iframe rearchitecture.
+- Any **backend / query / migration** change (`body_html` already surfaced by EMAIL-HTML-RENDER-001 FR-8; D6).
+- Server-side quote-collapsing of `body_html` (this is a client render transform).
+- Persisting a per-email/per-sender "show full thread" preference.
+
+### Acceptance criteria
+
+- **AC-1 (D1/FR-1/FR-2):** At `/pulse/timeline/2599`, an inbound reply that carried an `On … wrote:` + `.gmail_quote`/`<blockquote>` history renders showing **only the new reply**; the quoted history is **absent** and there is **no** expand/"Show quoted text" control anywhere in the bubble.
+- **AC-2 (D2/FR-3/NFR-COMPAT-1):** Opening the **same** message in the `/email` workspace still shows the **full** quoted thread, unchanged from before this feature.
+- **AC-3 (D3/FR-4/FR-5):** For a Gmail-shaped email, both the `.gmail_quote`/`<blockquote>` subtree **and** the immediately-preceding "On … wrote:" attribution line are removed; nothing from the boundary downward remains.
+- **AC-4 (FR-6/EC-2):** A 3-deep nested reply thread strips at the outermost boundary — zero quoted levels remain in the bubble.
+- **AC-5 (D5/FR-8/EC-3):** A bare-forward / all-quote inbound email renders the **FULL** sanitized content (not blank); the bubble is never empty due to stripping.
+- **AC-6 (FR-9/EC-1):** A fresh inbound HTML email with no quote renders **byte-identically** to EMAIL-HTML-RENDER-001 output (transform is a no-op).
+- **AC-7 (FR-10/EC-4):** An inbound email with an "On … wrote:" line but no `<blockquote>` after it has that line (and trailing content) removed; if that empties the body, the full content is shown (D5).
+- **AC-8 (D4/FR-7/NFR-SEC-1):** `frontend/src/lib/sanitizeEmailHtml.ts` is unchanged; the malicious-sample test from EMAIL-HTML-RENDER-001 (AC-2 there: `<script>`, `onerror`, `<form>`, `javascript:` link) still passes with quote-stripping active — no XSS regression, and a forced strip-transform failure falls back to **full sanitized** (never raw) content.
+- **AC-9 (NFR-PERF-1):** Stripping is memoized per message (folded into the existing sanitize memo), not re-run on scroll; a long timeline with several large HTML threads scrolls without visible jank.
+- **AC-10 (NFR-COMPAT-2/EC-9):** Clicking "Show images" on a stripped inbound HTML bubble keeps the reply stripped (idempotent) and reveals only images within the kept reply.
+- **AC-11 (FR-12/EC-8):** Outbound and inbound-plain-text bubbles are unchanged (still only-new via `body_text`).
+- **AC-12 (NFR-COMPAT-3):** No new npm dependency was added.
+
+### Involved modules
+
+- **Frontend (only):**
+  - `frontend/src/components/pulse/EmailListItem.tsx` — the **timeline** call-site (matrix M1, l.107–137). Opt into stripping here (e.g. pass `stripQuotes` to `SafeEmailHtml`, or apply an exported transform). Also the `showImagesButton` probe on raw `body_html` (l.56) is the EC-7 touch-point (OQ-QS-4).
+  - `frontend/src/components/email/SafeEmailHtml.tsx` and/or `frontend/src/lib/sanitizeEmailHtml.ts` — where the **post-sanitize** strip is invoked. If added to `SafeEmailHtml`, it MUST be **opt-in** and default-off so the workspace is unaffected; the sanitize **memo** (l.106–112) is the natural home for the once-per-message strip. A **new** pure helper (e.g. `frontend/src/lib/stripEmailQuote.ts`) is the likely home for the detection/removal logic (Architect's call).
+  - `frontend/src/components/email/EmailMessageItem.tsx` — the **workspace** reader (l.110–112). **MUST NOT** strip (D2); assert it stays on the non-stripping path.
+- **Reused unchanged:** DOMPurify config (`sanitizeEmailHtml.ts` core), `linkifyToHtml`, `toTimelineBody` (the plain-text stripper it mirrors), all EMAIL-HTML-RENDER-001 / EMAIL-TIMELINE-001 backend and OAuth/sync/send paths. **No backend file changes. No migration.**
+
+### Affected integrations
+
+- **Gmail / Google / Twilio / Zenbooker / Front / Stripe / VAPI:** **none.** Pure frontend render transform on already-synced `body_html`.
+
+### Protected parts (must NOT break)
+
+- **XSS pipeline** — `frontend/src/lib/sanitizeEmailHtml.ts` DOMPurify config + hook, forced link `target/rel`, `javascript:`/`data:` blocking, remote-image neutralize, form/script stripping — **unchanged** (D4/NFR-SEC-1). Strip is strictly post-sanitize.
+- **`/email` workspace full-thread render** (`EmailMessageItem`) — must keep showing complete quoted history (D2/NFR-COMPAT-1).
+- **Outbound + inbound-plain-text** timeline render (matrix M2/M3) and **`toTimelineBody`** server-side quote-strip of `body_text` — untouched (FR-12).
+- **"Show images" gate** mechanics (EMAIL-HTML-RENDER-001 FR-5) — control still works; only its *probe target* may move to the stripped HTML (EC-7/OQ-QS-4).
+- **Per-message sanitize memo / no-jank perf** (EMAIL-HTML-RENDER-001 NFR-PERF-1) — must not regress (NFR-PERF-1).
+- **Multi-tenant company scoping** on timeline reads — unchanged (frontend-only, no query change).
+- **No new dependency; no migration; no backend change** (D6/NFR-COMPAT-3).
+
+### Open questions routed to the Architect / SpecWriter
+
+- **OQ-QS-1 — "Near-empty" threshold for D5.** Define the precise cutoff at which a post-strip bubble is "empty or near-empty" and must fall back to the full render. Candidates: zero rendered text after trim; visible text length below **N** chars (mirror `toTimelineBody`'s spirit — it treats a fully-stripped body as empty and falls back); or "no element with non-whitespace text content remains." Architect to fix N / the rule.
+- **OQ-QS-2 — Strip mechanism & seam.** Decide: a `stripQuotes?: boolean` prop on `SafeEmailHtml` that runs the transform inside the sanitize memo, VS. a standalone exported helper (`stripEmailQuote(sanitizedHtml)` or `(shadowRoot)`) that only the `EmailListItem` call-site invokes. Either MUST keep the workspace on the non-stripping path and run once-per-message (perf). String-level (re-parse sanitized HTML) vs. DOM-level (operate on the shadow subtree the render already builds) — pick for correctness + no double-parse.
+- **OQ-QS-3 — Over-strip guard for a genuine top-level `<blockquote>`.** How aggressively to treat the generic "first top-level `<blockquote>`" (D3 step 5) when a sender legitimately quoted text in their **new** message. Confirm the ordered heuristic (client-specific markers first) is sufficient, or add a guard (e.g. only cut a top-level `<blockquote>` when preceded by an attribution line, or when it is the trailing block).
+- **OQ-QS-4 — "Show images" probe vs. stripped HTML.** The `showImagesButton` gate (`EmailListItem` l.56) tests **raw** `body_html`; after stripping, remote images may only exist in the removed quote, so the button could show but reveal nothing. Decide whether to re-point the probe at the **stripped** HTML (recommended) so the affordance matches what's visible.
+- **OQ-QS-5 — Outlook `border-top`-after-"From:" detection precision.** The D3 Outlook heuristic (a `<div>` with a `border-top` separator following a "From:" block) is the least deterministic branch. Since 2599 is Gmail (no `appendonsend`/Outlook), confirm how much Outlook precision v1 must guarantee vs. defer, and how to detect the separator on the **sanitized** DOM (inline `style` border vs. class).
+
+### Notes / lessons applied
+
+- Verify against the **real prod-DB copy** (the **2599** thread) and in a **real browser**, not only mocked Jest (LIST-PAGINATION-001 / created_by-FK lessons): confirm the timeline bubble shows only the new reply, the `/email` workspace still shows the full thread, the all-quote fallback renders full (never blank), and the malicious-sample sanitizer test still passes with stripping active — before any deploy. **Prod deploy is owner-consent-gated (standing rule).**
+- Mirrors the **precedent** already in the codebase: `toTimelineBody` (`emailTimelineBody.js`) cuts at the **earliest** quote boundary, **keeps the signature**, and **falls back rather than blanking** when the whole body is a quote — this HTML strip is the DOM analogue of that plain-text behavior, aligning M1 with M2/M3.

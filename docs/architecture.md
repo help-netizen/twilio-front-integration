@@ -4104,3 +4104,77 @@ Ordered, concrete change points (column already exists — mig 079 l.90 `body_ht
 - **OQ-HR-A (base-sheet contents inside the shadow root).** OQ-3 mandates a *minimal* injected reset so bare-HTML emails stay legible; the SpecWriter should pin the exact rule set (font/`color: inherit`, link color bridged from `--blanc-info`, `img{max-width:100%}`, `table`/`pre` wrapping) and confirm it does not fight typical marketing-email CSS. Recommendation: keep it to ~6–8 declarations; do **not** import app Tailwind into the shadow.
 - **OQ-HR-B (HTML quote-collapse — future).** Per OQ-2 v1 renders `body_html` raw/full. If Product later wants parity with the quote-stripped text preview, decide client-side (fragile DOM heuristics) vs server-side (a new `body_html`-stripping pass). Out of scope for v1; flagged for EC-8.
 - **OQ-HR-C (DOMPurify not pinned in `package.json`).** DOMPurify 3.2.7 is resolved in `package-lock.json` (l.7773) and already imported by `EmailMessageItem`, but it is **not an explicit `dependencies` entry** in `frontend/package.json` (it's transitively/hoisted-installed). This satisfies "no NEW dependency," but a fresh `npm install` could drop it. **Recommendation:** the Implementer should add `"dompurify": "3.2.7"` (+ `@types/dompurify` if needed) as an explicit dependency in the same PR — a one-line hardening, still "no new package," that removes a latent build risk. Confirm with the SpecWriter.
+
+---
+
+## Архитектурное решение для фичи EMAIL-QUOTE-STRIP-001 — strip quoted thread history from inbound-HTML emails in the Pulse timeline (timeline-only) (2026-07-06)
+
+Strip the quoted-thread subtree ENTIRELY from **inbound** `body_html` in the Pulse timeline bubble (`EmailListItem`, render-matrix M1) so the bubble shows **only the new reply**. The strip runs **AFTER** DOMPurify (D4), is **opt-in per call-site** so the `/email` workspace keeps the full thread (D2), and is the **DOM analogue of `toTimelineBody`** (`backend/src/services/email/emailTimelineBody.js`) — cut at the earliest boundary, keep the signature, **fall back rather than blank** (D5). This **RESOLVES the parent feature's OQ-HR-B** (line 4105, "HTML quote-collapse — future"). Binding customer decisions D1–D6 (requirements §EMAIL-QUOTE-STRIP-001) are inputs, not re-litigated. **Frontend-only; NO backend, NO migration, NO new dependency.**
+
+### Existing functionality (reused / extended, NOT duplicated)
+
+- **`sanitizeEmailHtml(html, { allowImages })`** in `frontend/src/lib/sanitizeEmailHtml.ts` — **REUSED UNCHANGED** (D4/FR-7/AC-8). The strip is a strictly-downstream, separate module; **no** config/hook/`FORBID_TAGS` edit. Confirmed the DOMPurify defaults **preserve** the attributes our detectors need — `class` (`gmail_quote`, `yahoo_quoted`), `id` (`appendonsend`), `type` (`blockquote[type="cite"]`), and inline `style` (Outlook `border-top`) all survive the sanitize pass, so detection on the sanitized string is sound.
+- **`toTimelineBody`** (`emailTimelineBody.js`) — **REUSED as the behavioral precedent only** (not called from the frontend). Its philosophy is mirrored: `findCutIndex` = earliest boundary (→ FR-6 outermost cut); `recoverSignature` / signature-kept = NFR-CORRECT-2; the "whole body was a quote → fall back, never blank" tail (l.306–312) = D5/FR-8; `try/catch` never-throws (l.313) = NFR-SEC-2 fail-safe.
+- **`SafeEmailHtml`** (`frontend/src/components/email/SafeEmailHtml.tsx`) — **EXTENDED, not forked.** The strip folds into its existing per-message sanitize **memo** (l.106–112); a new opt-in prop gates it. Default behavior (workspace) is byte-for-byte unchanged.
+- **`EmailListItem`** (`frontend/src/components/pulse/EmailListItem.tsx`) — **EXTENDED.** The M1 branch (l.107–137) opts into stripping; the remote-image probe (l.56) is re-pointed (OQ-QS-4).
+- **`linkifyToHtml`** (M2/M3 text paths) — **UNTOUCHED** (FR-12); those paths already show only-new via `toTimelineBody`.
+
+### The seam — OQ-QS-2 (DECIDED): new pure module + opt-in prop on the shared component
+
+**Decision: a new pure module `frontend/src/lib/stripEmailQuote.ts` exporting `stripEmailQuote(sanitizedHtml: string): string`, wired into `SafeEmailHtml` behind a new opt-in prop.** Rationale:
+
+- **Pure string→string, DOM-level (NOT string regex).** `stripEmailQuote` parses the **already-sanitized** string via `new DOMParser().parseFromString(html, 'text/html')` (or a detached `<template>`), locates the boundary, removes the boundary subtree + preceding attribution line, and re-serializes (`body.innerHTML`). DOM traversal — never fragile string/regex splicing of tag soup (which the requirements explicitly warn against). Keeps the module unit-testable in isolation and **SSR-safe-enough for a jsdom headless test** (the verify script runs it under jsdom; `DOMParser` is provided by jsdom — no browser-only global, no React).
+- **Wired into `SafeEmailHtml` via a new prop `stripQuotedHistory?: boolean` (default `false`).** When `true`, `stripEmailQuote(...)` is applied to the sanitized string **inside** the existing `useMemo` (l.106–112), *after* `sanitizeEmailHtml(...)` and *before* the shadow `innerHTML` is set (l.136). The **memo key gains the flag** → `[memoKey, allowImages, stripQuotedHistory]`, so strip runs **once per (message, images-state)** — no second full parse per scroll/re-render (NFR-PERF-1/AC-9). Applying strip inside the memo (vs. mutating the built shadow subtree post-render) avoids a second traversal and keeps the wholesale-`innerHTML` re-set model intact.
+- **Opt-in keeps the workspace full (D2/FR-3).** `EmailListItem` passes `stripQuotedHistory` (M1 render). `EmailMessageItem` does **NOT** pass it → default `false` → full thread, output identical to today (NFR-COMPAT-1/AC-2). The shared component's default is non-stripping.
+
+Rejected: a `EmailListItem`-only helper that mutates the shadow root after render (would re-traverse on every images toggle, and duplicate the memo's job); a change inside `sanitizeEmailHtml` (violates D4 — the sanitizer must stay the single XSS authority, strip is downstream).
+
+### Ordered detection + the over-strip guard (D3 / FR-4/5/6 · OQ-QS-3)
+
+`stripEmailQuote` finds the **earliest/outermost** boundary (document order, top-level preferred) and discards it plus everything after it. Markers are split by confidence; **HIGH-confidence markers strip directly, LOW-confidence markers strip only when corroborated** (OQ-QS-3). Bias is explicit: **prefer UNDER-strip (keep content) over OVER-strip (lose the new reply).**
+
+1. **`.gmail_quote`** — HIGH (primary for the prod-verified 2599 thread). Strip directly.
+2. **`blockquote[type="cite"]`** (Apple Mail) — HIGH. Strip directly.
+3. **Outlook**: `#appendonsend` — HIGH, strip directly. OR a `<div>` bearing an inline-`style` `border-top` that **immediately follows a "From:" header block** — **CONSERVATIVE** (OQ-QS-5): strip **only** on that clear structural shape (a `border-top`-styled `<div>` whose preceding text matches a `From:`/`Sent:`/`To:` header run). Absent that structure → do not cut. 2599 is Gmail (no `appendonsend`/Outlook), so v1 guarantees only this narrow, high-precision Outlook case and **deliberately under-strips** the rest.
+4. **`.yahoo_quoted`** — HIGH. Strip directly.
+5. **First top-level `<blockquote>`** — **LOW / GUARDED.** A genuine top-level `<blockquote>` can be legitimate NEW content (a fresh message quoting a paragraph). Strip it **only if corroborated**: it is **immediately preceded by an attribution line** (`On … wrote:` / `… wrote:` text in the sibling above it) **OR** it is the **trailing block** (nothing but whitespace/empty nodes follows it to end-of-body). A mid-body `<blockquote>` with real content after it is treated as an in-message quotation and **kept**.
+6. **Text fallback `On … wrote:` / `… wrote:`** — **LOW / GUARDED.** Fires only on the **attribution shape** (must match the `On …/… wrote:` regex family, mirroring `RE_ON_WROTE`/`RE_ON_START`+`RE_WROTE_END` in `emailTimelineBody.js`, incl. the 1–2-line hard-wrap tolerance). On match, the attribution line **and everything after it** are removed (FR-10). A bare `wrote:` without the `On …` shape does **not** cut.
+
+**Attribution-line removal (FR-5):** on any element-boundary match (1–5), also remove the **immediately-preceding** attribution line (`On … wrote:`) when present as the boundary's prior sibling / a small preceding text node.
+
+### Near-empty threshold — D5 / OQ-QS-1 (DECIDED)
+
+After a candidate strip, compute the remaining **visible text** = the stripped `body`'s `textContent`, with whitespace **and zero-width chars** (`​`‌`‍`﻿`) removed, then trimmed. **Fall back to the FULL sanitized HTML when BOTH hold:**
+
+1. that normalized visible-text length is **< 2 characters** (i.e. empty or a single stray glyph), **AND**
+2. **no meaningful media element remains** — no `<img>` (with a live `src` **or** a neutralized `data-blanc-src`, so a to-be-revealed image still counts as content), and no other embedded visual (`<table>`/`<picture>`) carrying the reply.
+
+If either condition fails (there **is** ≥2 chars of text, or there **is** a kept image/media), keep the stripped result. This mirrors `toTimelineBody`'s "stripping emptied the body → fall back, never blank" (l.306–312) while guarding the rare all-quote/bare-forward case (US-3/EC-3/AC-5) without discarding a legit image-only reply. Rule is stated as an exact predicate so the SpecWriter/TestCases can assert it directly.
+
+### Image-probe repoint — OQ-QS-4 (DECIDED)
+
+Today `EmailListItem` gates "Show images" on `REMOTE_IMG_RE.test(email.body_html)` (raw, l.56). After stripping, remote images that lived **inside** the quoted history are gone, so the button could appear yet reveal nothing (EC-7). **Repoint the probe at the STRIPPED, to-be-rendered HTML**, not raw `body_html`. Implementation: `stripEmailQuote` is a pure exported fn, so `EmailListItem` computes the stripped **display HTML** once (memoized on `email.id`) via `stripEmailQuote(sanitizeEmailHtml(email.body_html))`, and drives the `showImagesButton` probe off **that** string. Because the neutralized markers (`data-blanc-src`, and remote `src` when `allowImages:false`) still match a "has a remote/cid image" test, the probe accurately reflects images in the **kept** reply. (Precise probe placement — a small shared helper vs. inline memo — is a mechanical SpecWriter/Implementer detail; the **contract** is: probe the post-strip HTML.)
+
+### Idempotency, fail-safe, purity (NFRs)
+
+- **Idempotent (NFR-COMPAT-2/AC-10).** Running `stripEmailQuote` on already-stripped output is a **no-op**: the boundary markers were removed, so no detector matches on the second pass → input returned unchanged. Matters because the sanitize memo re-runs on the `allowImages` toggle (EC-9) — the reply stays stripped, only images inside the kept reply reveal.
+- **Fail-safe (NFR-SEC-1/2/AC-8).** The whole transform is wrapped `try/catch`; on **any** parse/serialize error it returns the **input string unchanged** (the FULL sanitized HTML) — **never raw, never empty, never throws** (same posture as `sanitizeEmailHtml`→`''` and `toTimelineBody`→trimmed input). Because the input is already DOMPurify-sanitized, returning it on failure cannot re-admit XSS; removing nodes from a sanitized tree can only *reduce* capability (NFR-SEC-1).
+- **Pure / SSR-safe-enough.** No React, no app singletons, no network; only `DOMParser` + DOM traversal + `XMLSerializer`/`innerHTML`. jsdom supplies these, so the verify script can exercise it headless against the real 2599 body.
+
+### Exact change points
+
+- **NEW** `frontend/src/lib/stripEmailQuote.ts` — pure `stripEmailQuote(sanitizedHtml: string): string`: `DOMParser` parse → ordered/guarded boundary detection (D3 + OQ-QS-3 guard) → remove boundary subtree + preceding attribution → D5 near-empty check (return full on fallback) → re-serialize; `try/catch` → return input on any error. Idempotent.
+- **CHANGE (FE)** `frontend/src/components/email/SafeEmailHtml.tsx` — add `stripQuotedHistory?: boolean` (default `false`) to `SafeEmailHtmlProps`; inside the `useMemo` (l.106–112) apply `stripEmailQuote` to the sanitized string when the flag is set; extend the memo dep array to `[memoKey, allowImages, stripQuotedHistory]`. No other change; shadow render (l.114–137) untouched.
+- **CHANGE (FE)** `frontend/src/components/pulse/EmailListItem.tsx` — pass `stripQuotedHistory` on the M1 `<SafeEmailHtml>` (l.117–122); re-point the `showImagesButton` probe (l.56) at the **stripped** display HTML (OQ-QS-4) instead of raw `email.body_html`.
+- **UNCHANGED (asserted):** `frontend/src/components/email/EmailMessageItem.tsx` — does **NOT** pass `stripQuotedHistory` → full thread (D2/FR-3/AC-2). **`frontend/src/lib/sanitizeEmailHtml.ts` — NOT modified** (D4/AC-8). `frontend/src/lib/linkifyText.ts` and the M2/M3 text paths — untouched (FR-12/AC-11).
+- **Migration: NO.** **No backend.** **No new npm dependency** (AC-12) — uses built-in `DOMParser`. **Protected files untouched:** `src/server.js`, `frontend/src/lib/authedFetch.ts`, `frontend/src/hooks/useRealtimeEvents.ts`, `backend/db/` schema.
+
+### Middleware / tenancy
+
+- **No new API route/endpoint, no query change.** `body_html` already flows to the timeline item via EMAIL-HTML-RENDER-001 (its `getTimelineEmailByContact`, already `authenticate` + `requireCompanyAccess`, `company_id` via `req.companyFilter?.company_id`). This is a pure client render transform on already-scoped data — **no new cross-tenant surface** (multi-tenant scoping unchanged).
+
+### Residual open questions for the SpecWriter
+
+- **OQ-QS-A (attribution-line DOM shape).** `stripEmailQuote` matches the "immediately-preceding attribution line" on the **sanitized** DOM, where the `On … wrote:` text may be a bare text node, a `<div>`, or wrapped (Gmail commonly wraps it in a `<div dir="ltr">` just above `.gmail_quote`). SpecWriter to pin exactly which preceding-sibling shapes count (recommend: the boundary's prior element/text sibling whose `textContent` matches the attribution regex, tolerant of a 1–2-line wrap per `emailTimelineBody.js`). Bias: if unsure, leave the attribution line in rather than over-reach into real content.
+- **OQ-QS-B (serialize fidelity of a surviving author `<style>`).** `sanitizeEmailHtml` re-admits `<style>` (`ADD_TAGS`), and the shadow render prepends `BASE_SHEET`. Confirm `stripEmailQuote`'s parse→serialize round-trip **preserves a kept top-of-body `<style>`** (it should — `DOMParser` keeps `<style>` in `<head>`/`<body>`; serialize from `body.innerHTML` must not drop a body-level `<style>`). TestCases: assert a styled email's kept-reply styling is intact post-strip. Minor; the base sheet still yields legibility if a `<style>` were lost.
+- **OQ-QS-C (Outlook precision deferral — confirm).** Per OQ-QS-5, v1 guarantees only the narrow `#appendonsend` + `border-top`-after-`From:` Outlook cases and otherwise under-strips. Confirm with Product that broader Outlook coverage is explicitly deferred (2599 is Gmail; no prod Outlook sample to tune against).

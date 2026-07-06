@@ -6346,3 +6346,201 @@ WAVE 4 (verify + release-gate):
 **Test-vehicle constraint (закодирован явно, из agent 04):** фронт **не имеет** test-runner; `jsdom`/`dompurify` **НЕ установлены**; TS-ESM-модули **нельзя** `require` в node-env root jest; root jest **исключает** `/.claude/worktrees/`. Поэтому: (1) security/linkify-матрица гоняется через **standalone `scripts/verify-email-html-render-001.js`** — `jsdom` как **dev-only root devDependency** (never bundled → не «shipped package») + frontend `dompurify` (пин TASK-EHR-003) + `createDOMPurify(window)` + **CJS-порт** конфига с **build-time parity-ассертом** (TC-EHR-B03), т.к. `.ts` нельзя `require`; (2) backend-plumbing → существующий **node-env root jest**, запуск из **реального repo-root** (не из worktree); (3) render/shadow-isolation/network-beacon/layout/no-jank/workspace-parity → **MANUAL-BROWSER** (TASK-EHR-012, deploy-окно / dev на prod-copy). **Fallback:** если dev-only `jsdom` отклонён/недоступен — вся security-матрица уходит в manual-browser, автоматизируется только pure-string linkify; отметить в PR как strictly-weaker.
 
 **Миграций НЕТ** (колонка `body_html TEXT` из mig 079; max migration не меняется — TC-EHR-B05). **Нет нового shipped-пакета** (только уже-locked `dompurify` пин; `jsdom` = dev/verify-only). **Нет нового API-route/endpoint/middleware** (реюз `GET /api/pulse/timeline*`, `authenticate`+`requireCompanyAccess`+`pulse.view`, `company_id` via `req.companyFilter?.company_id`). **P0-гейты, красный на любом блокирует релиз:** headless security-матрица (каждый hostile-payload стрипнут/нейтрализован), её sabotage negative-control (pass-through → RED), linkify escape-first (no-injection), backend company+contact scoping unchanged (S9/AC-8 — leak=P0), и manual-проход 3044 на shadow-isolation + no-beacon + no-jank (AC-1/AC-3/AC-4). Back-compat: аддитивное `body_html` (старые клиенты fallback на `body_text`); ровно ОДИН DOMPurify-конфиг после рефактора (AC-6). Прод-деплой — только с явного «да» владельца (standing rule).
+
+---
+
+## EMAIL-QUOTE-STRIP-001: strip quoted thread history from inbound-HTML emails in the Pulse timeline (timeline-only) (2026-07-06)
+
+**Feature:** inbound email in the Pulse timeline bubble (`EmailListItem`, render-matrix **M1**) shows **only the new reply** — the quoted-thread subtree (`On … wrote:` + `.gmail_quote`/`<blockquote>`/…) is stripped from `body_html` **on the client, after DOMPurify**, so the M1 render finally matches the plain-text M2/M3 paths (already quote-stripped server-side by `toTimelineBody`). Achieved by a **new pure DOM transform** `stripEmailQuote(sanitizedHtml): string` wired into `SafeEmailHtml` behind an **opt-in prop** (default off) so the `/email` workspace (`EmailMessageItem`) keeps the **full** thread. **FRONTEND-ONLY. NO backend. NO migration. NO new endpoint/route/middleware. NO new npm dependency (built-in `DOMParser`). NO DOMPurify/sanitizer change.** Depends on & resolves the residual OQ-HR-B/OQ-2 of EMAIL-HTML-RENDER-001 (master `62260f4`).
+**Status:** planned (ready for Implementer)
+**Related docs:**
+- Requirements: `Docs/requirements.md#EMAIL-QUOTE-STRIP-001` (D1–D6, l.3378)
+- Architecture: `Docs/architecture.md#EMAIL-QUOTE-STRIP-001` (seam OQ-QS-2, detection OQ-QS-3, near-empty OQ-QS-1, image-probe OQ-QS-4, Outlook OQ-QS-5, l.4110)
+- Spec: `Docs/specs/EMAIL-QUOTE-STRIP-001.md` (S1–S20, decision table rows 1–6, near-empty D5 predicate, attribution OQ-QS-A, serialize OQ-QS-B, Outlook OQ-QS-C, AC-1…AC-14)
+- Test cases: `Docs/test-cases/EMAIL-QUOTE-STRIP-001.md` (49: TC-EQS-D01…D06/G01…G03/N01…N05/A01…A05/NE01…NE02/I01…I02/S01…S02/X01…X02/F01…F02/PR01…PR02 headless, B01…B05 build, M01…M05 manual, SAB, P01; TC-R-1…6 regression)
+
+**Сквозной инвариант (все задачи):**
+- **Защищённые файлы — НЕ ТРОГАТЬ:** `backend/src/server.js` (core middleware), `frontend/src/lib/authedFetch.ts` (auth wrapper), `frontend/src/hooks/useRealtimeEvents.ts` (SSE hooks).
+- **UNCHANGED — ассертить пустой diff / grep-negative:** `frontend/src/lib/sanitizeEmailHtml.ts` (единственный DOMPurify-authority — D4/AC-8/TC-EQS-B03), `frontend/src/components/email/EmailMessageItem.tsx` (НЕ передаёт `stripQuotedHistory` → full thread — D2/AC-2/TC-EQS-B02), `frontend/src/lib/linkifyText.ts` + M2/M3 text-пути (FR-12/AC-11), **весь backend** (`emailTimelineBody.js`/`toTimelineBody` = только behavioral precedent, НЕ вызывается из фронта).
+- **НЕТ миграции** — `body_html` уже всплывает на timeline-item через EMAIL-HTML-RENDER-001 (`getTimelineEmailByContact`, `WHERE company_id = $1 AND contact_id = $2 AND on_timeline = true`); max migration НЕ меняется (TC-EQS-B04).
+- **НЕТ нового API-route/endpoint/middleware/query/type.** Чистый client-render-transform на уже company- + contact-scoped данных → **никакой новой cross-tenant поверхности**, никакого нового 401/403/cross-tenant кейса (TC-R-6). `company_id` уже через `req.companyFilter?.company_id` в существующем ридере.
+- **НЕТ новой npm-зависимости** (built-in `DOMParser`); `jsdom` — **dev/verify-only** через `NODE_PATH=<scratchpad>/node_modules` (уже `jsdom@29.1.1` из EMAIL-HTML-RENDER-001), **никогда** в `package.json`, никогда не бандлится (AC-12/TC-EQS-B04).
+- **Bias: UNDER-strip > OVER-strip.** Потерять новый ответ — единственный по-настоящему вредный отказ; показать чуть истории — безвредно. Negative-кейсы (mid-body `<blockquote>` KEPT, bare-`wrote:` no-cut, non-attribution sibling KEPT, stray `border-top` no-cut) так же load-bearing, как позитивные strip'ы.
+- **Fail-safe / near-empty / idempotent — НИКОГДА не blank, никогда не raw, никогда не throw наружу:** любой throw → вернуть **input** (уже sanitized) неизменным; near-empty кандидат → вернуть **FULL** input; `strip(strip(x)) === strip(x)`.
+- **Build-gate = прод `docker compose build app` (`tsc -b`, строже `--noEmit` по `noUnusedLocals`).** Worktree локально фронт НЕ собирает; финальный build-гейт — на проде (frontend-build-command lesson).
+
+---
+
+### TASK-EQS-001: Frontend — `frontend/src/lib/stripEmailQuote.ts` (NEW, чистый DOM-transform, без зависимостей)
+
+**Цель:** создать чистый (без React, без app-singletons, без сети) модуль `stripEmailQuote(sanitizedHtml: string): string` — DOM-analogue `toTimelineBody`: парсит **уже-санитизированную** строку через `new DOMParser().parseFromString(html, 'text/html')`, находит **earliest/outermost** quote-boundary по упорядоченной таблице детекторов, удаляет boundary-subtree **плюс** непосредственно-предшествующую attribution-строку (OQ-QS-A), применяет over-strip-guard и near-empty-predicate, ре-сериализует `document.body.innerHTML`. **DOM-traversal — НИКОГДА string/regex-splicing tag-soup.** Контракт 1 спеки.
+
+**Файлы, которые можно менять:**
+- `frontend/src/lib/stripEmailQuote.ts` (создать новый)
+
+**Файлы, которые трогать нельзя:**
+- `frontend/src/lib/sanitizeEmailHtml.ts` — единственный DOMPurify-authority; strip строго downstream, НЕ трогает конфиг/хук (D4/AC-8)
+- `frontend/src/components/email/SafeEmailHtml.tsx` — его wiring = TASK-EQS-002 (эта задача только создаёт lib, не трогает call-site)
+- всё из сквозного инварианта (защищённые файлы, backend, `linkifyText.ts`)
+
+**Ожидаемый результат:**
+- Экспортирует `stripEmailQuote(sanitizedHtml: string): string`; вход — **выход `sanitizeEmailHtml(...)`** (уже DOMPurify-sanitized, НЕ raw `body_html`); может быть `''`.
+- **Упорядоченная детекция (таблица, first-match, HIGH strip-directly / LOW strip-only-if-corroborated):** (1) `.gmail_quote` HIGH → (2) `blockquote[type="cite"]` HIGH → (3a) `#appendonsend` HIGH / (3b) `<div>` c inline-`style` `border-top` **сразу после** `From:`/`Sent:`/`To:`-header-run — CONSERVATIVE, только на этой точной форме → (4) `.yahoo_quoted` HIGH → (5) первый **top-level** `<blockquote>` LOW/GUARDED (strip только если (a) непосредственно предшествует attribution-строка **ИЛИ** (b) это trailing-блок — после него до конца body лишь whitespace/пустые ноды) → (6) text-fallback `On … wrote:` LOW/GUARDED (только на attribution-shape; удалить attribution-ноду и всё после неё до конца body).
+- **Earliest/outermost cut (FR-6):** при нескольких совпадениях режем по **highest-in-DOM / earliest-in-document-order** boundary; детекторы 1–4 берут **outermost** matching ancestor при вложенности → **один** cut уносит все уровни (S5/AC-4).
+- **Attribution-line removal (OQ-QS-A):** на element-boundary (строки 1–5) перед удалением subtree инспектировать **единственный** непосредственно-предшествующий sibling (пропуская whitespace-only/empty text-ноды); удалить его **iff** `textContent.trim()` матчит attribution-shape — single-line `/^\s*On\s.+\swrote:\s*$/` (mirror `RE_ON_WROTE` `emailTimelineBody.js` l.36–40) **или** 1–2-строчный hard-wrap (`/^\s*On\s.+$/` начало + `/wrote:\s*$/` конец, в одной ноде или split через 2 sibling-ноды без blank-разрыва). Sibling может быть bare-text-нодой, `<div>` (вкл. `<div dir="ltr" class="gmail_attr">`), `<p>`, `<span>`. **Не матчит → оставить**, НЕ идти выше, НЕ лезть в реальный контент.
+- **Over-strip guard (row 5):** mid-body top-level `<blockquote>` с **реальным контентом после** и **без** attribution перед → **KEEP** (in-message quotation, S6/AC-6/EC-6).
+- **Near-empty fallback (D5):** после кандидат-strip вернуть **FULL input неизменным iff ОБА:** (1) `normVisibleText < 2` — `textContent` со снятыми whitespace **и** zero-width (`​`ZWSP `‌`ZWNJ `‍`ZWJ `﻿`BOM) + trim; **И** (2) НЕТ meaningful media — ни `<img>` с живым `src` **или** `data-blanc-src`, ни `<table>`, ни `<picture>`. Иначе — **keep stripped** (image-only reply НЕ теряется, S12/AC-14).
+- **No-boundary passthrough (FR-9):** ни один детектор не сматчил → вернуть input **byte-identical** (чистый no-op, S8/AC-6).
+- **Serialize fidelity (OQ-QS-B):** body-level `<style>`, предшествующий quote (стилит kept-reply), **переживает** parse→serialize (сериализация из `document.body.innerHTML`, `DOMParser` держит body-level `<style>`); transform НЕ дропает/hoist/reorder его. `<style>` **внутри** удалённого subtree уходит с quote.
+- **Fail-safe (NFR-SEC-2):** весь body в `try/catch` → на **любой** throw вернуть **`sanitizedHtml` неизменным** — никогда raw, никогда `''`, никогда throw наружу.
+- **Idempotent (NFR-COMPAT-2):** `stripEmailQuote(stripEmailQuote(x)) === stripEmailQuote(x)`. **Детерминизм:** для данной строки вывод стабилен (даёт caller-side memo). **Empty:** `stripEmailQuote('') === ''`.
+- **Pure / SSR-safe-enough:** только `DOMParser` + DOM-traversal + `innerHTML`; jsdom их даёт → verify-скрипт гоняет headless.
+
+**Проверка (acceptance):** headless-матрица TASK-EQS-004 (`detect`/`guard`/`nearempty`/`attribution`/`nested`/`idempotent`/`style`/`xss`/`failsafe`/`probe`) зелёная + `parity` + `sab`. TC-EQS-D01…D06, G01…G03, N01…N05, A01…A05, NE01…NE02, I01…I02, S01…S02, X01…X02, F01…F02; AC-1/AC-3/AC-4/AC-5/AC-6/AC-7/AC-8/AC-10/AC-13/AC-14. `docker compose build app` зелёный (TASK-EQS-005 гейт).
+
+**Зависимости:** нет. **Параллельность: WAVE 1** (foundation — гейт для W2).
+
+**Статус:** done
+
+---
+
+### TASK-EQS-002: Frontend — `frontend/src/components/email/SafeEmailHtml.tsx` (EDIT, opt-in prop `stripQuotedHistory`, внутри memo)
+
+**Цель:** добавить opt-in `stripQuotedHistory?: boolean` (default `false`) на `SafeEmailHtmlProps`; применить `stripEmailQuote(...)` к санитизированной строке **ПОСЛЕ** `sanitizeEmailHtml(...)` и **ДО** возврата из memo, **ВНУТРИ** существующего `useMemo` (l.106–112); расширить memo-key до `[memoKey, allowImages, stripQuotedHistory]`. Контракт 2 спеки. Дефолт (workspace) — байт-в-байт как сегодня.
+
+**Файлы, которые можно менять:**
+- `frontend/src/components/email/SafeEmailHtml.tsx`
+
+**Файлы, которые трогать нельзя:**
+- `frontend/src/lib/stripEmailQuote.ts` — только импортировать (создан в TASK-EQS-001, сигнатуру не менять)
+- `frontend/src/lib/sanitizeEmailHtml.ts` — НЕ трогать (D4/AC-8)
+- `frontend/src/components/pulse/EmailListItem.tsx` — его call-site = TASK-EQS-003
+- shadow-attach / `BASE_SHEET` / wholesale-`innerHTML`-re-set (l.114–137) — **не трогать** (только memo редактируется)
+- всё из сквозного инварианта
+
+**Ожидаемый результат:**
+- Новый проп `stripQuotedHistory?: boolean` (default `false`) на `SafeEmailHtmlProps`.
+- Внутри `useMemo` (l.106–112): при `stripQuotedHistory === true` вернуть `stripEmailQuote(sanitizeEmailHtml(html, { allowImages }))`; при `false` — вернуть `sanitizeEmailHtml(html, { allowImages })` неизменно (сегодняшнее поведение).
+- Memo dep-array: `[memoKey, allowImages]` → **`[memoKey, allowImages, stripQuotedHistory]`** → strip гоняется **once per (message, images-state)**, НЕ на каждый scroll/re-render (NFR-PERF-1/AC-9).
+- Всё остальное (host `<div>` cage, shadow attach, base sheet, wholesale re-set l.114–137) — **без изменений**.
+- Дефолт сохраняет workspace (D2/FR-3): без пропа вывод byte-for-byte как сегодня (NFR-COMPAT-1/AC-2).
+
+**Проверка (acceptance):** TC-EQS-B01 (dep-array содержит флаг; strip после sanitize внутри memo; проп с default `false`), TC-EQS-B05 (`tsc -b` зелёный с новым пропом); AC-9/AC-2. Manual: TASK-EQS-005 (no-jank, workspace-full).
+
+**Зависимости:** **после TASK-EQS-001** (импортирует `stripEmailQuote`). **Параллельность: WAVE 2** — ∥ TASK-EQS-004 (verify-скрипт; DISJOINT файлы, оба ждут 001).
+
+**Статус:** done
+
+---
+
+### TASK-EQS-003: Frontend — `frontend/src/components/pulse/EmailListItem.tsx` (EDIT, M1 передаёт флаг + repoint image-probe)
+
+**Цель:** передать `stripQuotedHistory` (всегда `true`) на M1 `<SafeEmailHtml>` (l.117–122); **repoint** "Show images"-probe (l.56) на **stripped display HTML** = `stripEmailQuote(sanitizeEmailHtml(email.body_html || '', { allowImages: false }))`, вычисленный один раз и **memoized на `email.id`** (OQ-QS-4), вместо raw `email.body_html` — чтобы кнопка отражала kept-reply.
+
+**Файлы, которые можно менять:**
+- `frontend/src/components/pulse/EmailListItem.tsx`
+
+**Файлы, которые трогать нельзя:**
+- `frontend/src/components/email/SafeEmailHtml.tsx` — проп добавлен в TASK-EQS-002 (здесь только передать)
+- `frontend/src/lib/stripEmailQuote.ts`, `frontend/src/lib/sanitizeEmailHtml.ts` — только импортировать
+- eyebrow/subject/timestamp chrome, `max-w-[75%]` bubble-cage, "Show images"-механика кнопки, `hasBody`/M4 empty-guard — **не трогать** (TC-R-5)
+- всё из сквозного инварианта
+
+**Ожидаемый результат:**
+- M1 `<SafeEmailHtml>` (l.117–122) получает `stripQuotedHistory` (константа `true` на этом call-site — M1 = inbound-HTML timeline). Outbound НЕ достигает M1 (`renderHtml` гейтит `!isOutgoing && body_html`) → M2/M3 структурно нетронуты, `stripEmailQuote` для них НЕ вызывается (FR-12/AC-11-scope/TC-R-4).
+- `showImagesButton`-probe (l.56): вместо `REMOTE_IMG_RE.test(email.body_html || '')` → `REMOTE_IMG_RE.test(strippedDisplayHtml)`, где `strippedDisplayHtml = stripEmailQuote(sanitizeEmailHtml(email.body_html || '', { allowImages: false }))`, вычислен через `useMemo` на `[email.id]` (НЕ пересчитывается на scroll/render). Нейтрализованные маркеры (`data-blanc-src`, remote `src` при `allowImages:false`) всё ещё матчат `REMOTE_IMG_RE` → probe отражает kept-reply: кнопка появляется, только если blockable-картинка в **kept**-ответе (variant A hidden / variant B shown, S17/AC-11).
+- `renderHtml`/`hasBody`/`hasText`-логика и остальной chrome — без изменений.
+
+**Проверка (acceptance):** TC-EQS-B02 (`stripQuotedHistory` передан на M1; probe тестит stripped HTML memoized на `email.id`, НЕ raw; `EmailMessageItem` grep-negative), TC-EQS-PR01/PR02 (probe-строка headless), TC-EQS-B05 (build); AC-1/AC-11. Manual: TASK-EQS-005 (M01 only-new, M04 probe/beacon).
+
+**Зависимости:** **после TASK-EQS-001 + TASK-EQS-002** (импортирует `stripEmailQuote`; передаёт проп, добавленный в 002). **Параллельность: WAVE 3.**
+
+**Статус:** done
+
+---
+
+### TASK-EQS-004: Verify — `scripts/verify-email-quote-strip-001.js` (NEW, Node+jsdom headless-матрица + parity + sabotage) — ВСЯ автоматизированная коверка фичи
+
+**Цель:** единственный автоматизированный vehicle фичи — standalone Node-скрипт (jsdom через `NODE_PATH`), держащий **verbatim CJS-порт** `stripEmailQuote` + **PARITY**-гард против `.ts` + headless detect/guard/nearempty/attribution/nested/idempotent/style/xss/failsafe/probe-матрицу + **SABOTAGE** (pass-through обязан краснить 4 client-кейса). Клон структуры `scripts/verify-email-html-render-001.js`. **Backend в фиче НЕТ → backend jest НЕ нужен.**
+
+**Файлы, которые можно менять:**
+- `scripts/verify-email-quote-strip-001.js` (создать новый)
+- (опц.) `scripts/fixtures/email-quote-strip/` — sanitized 2599-excerpt для S1-кейса (по прецеденту `lsa-3044.html`; НЕ raw PII)
+
+**Файлы, которые трогать нельзя:**
+- `frontend/src/lib/stripEmailQuote.ts` — verify **читает** его (parity), НЕ редактирует
+- `scripts/verify-email-html-render-001.js` — родитель-шаблон, клонировать структуру, НЕ мутировать
+- любой `package.json` — jsdom остаётся scratchpad-only (`NODE_PATH`), НЕ добавлять dep (AC-12)
+- всё из сквозного инварианта
+
+**Ожидаемый результат:**
+- `#!/usr/bin/env node`, `'use strict'`; секции `--section=detect|guard|nearempty|attribution|nested|idempotent|style|xss|failsafe|probe|parity|sab|all`; exit 0 только когда ноль FAIL (`process.exit(fail>0?1:0)`). Assert-kit (`check`/`eq`/`record`/`class CheckError`) verbatim из родителя.
+- **DOM-инъекция (load-bearing — `stripEmailQuote` зовёт `new DOMParser()`, НЕ Node-global):** `const { JSDOM } = require('jsdom'); const { window } = new JSDOM(''); global.DOMParser = window.DOMParser;` (или передать конструктор в порт). jsdom резолвится через `NODE_PATH=<scratchpad>/node_modules` (`jsdom@29.1.1` уже есть). Не грузится → печать NODE_PATH-remedy + `process.exit(2)`.
+- **CJS-порт + PARITY (TC-EQS-P01):** порт держит те же упорядоченные детекторы, attribution-регексы, near-empty-predicate, guard, fail-safe. `parity` `fs.readFileSync`-ит `frontend/src/lib/stripEmailQuote.ts` и `check(...)`-ит load-bearing биты — ordered-selector-литералы (`'.gmail_quote'`, `'blockquote[type="cite"]'`, `'#appendonsend'`, `'.yahoo_quoted'`, top-level `blockquote`-scan), attribution-family (`/^\s*On\s.+\swrote:\s*$/`, `/^\s*On\s.+$/`, `/wrote:\s*$/`), near-empty-rule (`< 2` + `img[src|data-blanc-src]`/`table`/`picture` + zero-width set `​‌‍﻿`), guard-wording, fail-safe (`try`…`catch`…`return sanitizedHtml`). Дроп любого из `.ts` → parity **FAIL** (mirrors родительский `runParity()`). *(Если Implementer заведёт TS/ESM-loader и импортит реальный `.ts` — `parity` ассертит THAT import резолвится в реальный модуль; выбрать одно, дефолт — порт+parity.)*
+- **Ассерты структурные** (re-parse output в jsdom-fragment + `querySelector`/`querySelectorAll`/`textContent`), не brittle-string.
+- **Фикстуры** (crafted, per spec-shapes, НЕ raw PII): `GMAIL`/`APPLE`/`YAHOO`/`OUTLOOK`/`NESTED`/`MIDBLOCK`/`TRAILBLOCK`/`NOQUOTE`/`ALLQUOTE`/`ATTRONLY`/`IMGONLY`/`TEXTFALLBACK`/`STYLED`/`XSSQUOTE` (последний — выход родительского ported-`sanitizeEmailHtml` на hostile-blob + trailing `.gmail_quote`; реюз родительского sanitizer-порта или минимальный `src`↔`data-blanc-src` stand-in для `idempotent`/`probe`).
+- **SABOTAGE (`sab`, TC-EQS-SAB):** гонять `detect`-ассерты против `stripEmailQuote = html => html` (pass-through) → harness **обязан** записать FAIL на Gmail/Apple/Yahoo/Outlook (quote выжил), затем restore → зелёно. Если pass-through НЕ краснит — детектор сломан, все PASS вакуумны.
+- Покрывает headless-часть: detect ×6, guard ×3, nearempty ×5, attribution ×5, nested ×2, idempotent ×2, style ×2, xss ×2, failsafe ×2, probe ×2 + `sab` + `parity`.
+
+**Проверка (acceptance):** зелёный `--section=all` (`NODE_PATH=<scratchpad>/node_modules node scripts/verify-email-quote-strip-001.js --section=all`) + зелёный `parity` + `sab` краснит-pass-through-then-restore. **Красный на detect/guard/nearempty/failsafe/xss/sab/parity блокирует релиз.** TC-EQS-D01…D06, G01…G03, N01…N05, A01…A05, NE01…NE02, I01…I02, S01…S02, X01…X02, F01…F02, PR01…PR02, SAB, P01.
+
+**Зависимости:** **после TASK-EQS-001** (гоняет реальный `.ts` через порт+parity). **Параллельность: WAVE 2** — ∥ TASK-EQS-002 (SafeEmailHtml vs verify-скрипт; DISJOINT, оба ждут 001). *(Заметка: `xss`/`idempotent`/`probe`-фикстуры используют родительский sanitizer-порт из `verify-email-html-render-001.js` — он уже существует, не блокирует.)*
+
+**Статус:** done
+
+---
+
+### TASK-EQS-005: Verify (manual-browser release-gate) — only-new / workspace-full / all-quote-not-blank / probe-beacon / no-jank на prod-copy
+
+**Цель:** релиз-гейт для истин, которые headless-строка **не может** ассертить: shadow-DOM render stripped-2599-reply, `/email` workspace всё ещё full-thread, all-quote → full (не blank) в живом UI, "Show images" отражает kept-reply + no-beacon для stripped-quote-картинок, no-jank на длинном таймлайне, hostile EMAIL-HTML sample всё ещё санитизируется при активном strip. Ручной прогон на **реальной prod-DB-копии** в реальном браузере (`/pulse/timeline/2599` + `/email`). **Прод-деплой — только с явного «да» владельца** (standing rule).
+
+**Файлы, которые можно менять:**
+- нет product-файлов (чисто верификационный ручной чек-лист; результаты — в отчёт задачи/PR)
+
+**Файлы, которые трогать нельзя:**
+- всё (observation-only; правки по итогам — только через открытие вопроса)
+
+**Ожидаемый результат (ручной чек-лист, каждый = manual TC):**
+- **TC-EQS-M01 (P0, S1/AC-1/D1):** на `/pulse/timeline/2599` inbound Gmail-reply-бабл (нёс `On … wrote:` + `.gmail_quote`) показывает **только новый ответ**; quoted-история **отсутствует**; **НЕТ** expand/ellipsis/"Show quoted text" affordance нигде (D1); ссылки в kept-reply открываются в новой вкладке (`rel="noopener noreferrer"` в shadow-DOM жив); ноль console-error. Wall-of-history бабл ушёл.
+- **TC-EQS-M02 (P0, S15/AC-2/D2):** **тот же** 2599-месседж в `/email` workspace (`EmailMessageItem`) всё ещё показывает **полный** тред, byte-for-byte как до фичи (флаг НЕ передан → `stripEmailQuote` не гоняется). Критичная регрессия: timeline strips, workspace — нет.
+- **TC-EQS-M03 (P1, S10/S11/AC-5/D5):** all-quote/bare-forward inbound-письмо рендерит **полный** sanitized-контент (D5 near-empty fallback сработал) — **не** blank/near-blank бабл. Подтверждает fallback в живом рендере, не только в string-check.
+- **TC-EQS-M04 (P1, S16/S17/AC-10/AC-11/OQ-QS-4, devtools Network):** на stripped-2599-бабле, чей kept-reply имеет remote-картинку — кнопка появляется, НИ одного запроса до клика; клик "Show images" → грузится только kept-reply-картинка, история остаётся ушедшей. Отдельно: где remote-картинка была **только** в (удалённом) quote — кнопка **НЕ** появляется, no-beacon для stripped-away картинок.
+- **TC-EQS-M05 (P1, S7/S18/AC-9/AC-8/NFR-PERF-1, + опц. perf-trace):** на таймлайне из нескольких больших HTML-reply-тредов — scroll вверх/вниз + toggle "Show images" на одном → нет видимого jank/reflow-storm; strip гоняется **once per (message, images-state)** (в sanitize-memo, dep содержит флаг — не per-scroll; подтвердить `console.count`/React Profiler). Отдельно: EMAIL-HTML-RENDER-001 hostile-sample (+ appended `.gmail_quote`) inbound при активном strip — полностью нейтрализован (нет script-exec, `on*`, `<form>`/`<iframe>`, `javascript:`/`data:`-hrefs nulled, tracking-pixels не fetched) **при** stripped quote — ровно родительский AC-2 posture.
+
+**Проверка (acceptance):** все 5 manual-TC пройдены на prod-copy в реальном браузере. **Ship-bar = зелёная headless-матрица (TASK-EQS-004) И этот ручной проход**, зелёный на prod-copy в deploy-окне. Прод-деплой owner-consent-gated.
+
+**Зависимости:** **после TASK-EQS-003** (нужен собранный UI: M1 передаёт флаг + repointed probe) **и** практически после TASK-EQS-004 (headless-зелёный — предусловие ручного прохода). **Параллельность: WAVE 4** (release-gate; в deploy-окне).
+
+**Статус:** pending
+
+---
+
+### Порядок выполнения и параллелизм (EMAIL-QUOTE-STRIP-001)
+
+```
+WAVE 1 (foundation — гейт для всего):
+  TASK-EQS-001 (frontend/src/lib/stripEmailQuote.ts)   ← нет dep; чистый DOM-transform
+
+WAVE 2 (∥ — DISJOINT файлы, оба ждут 001):
+  TASK-EQS-002 (SafeEmailHtml.tsx — opt-in prop внутри memo)          ─┐
+  TASK-EQS-004 (scripts/verify-email-quote-strip-001.js — порт+parity+matrix+sab)  ─┘
+      ← 002 ∥ 004: SafeEmailHtml (call-site wiring) vs verify-скрипт (читает .ts). Файл-disjoint.
+
+WAVE 3 (consumer):
+  TASK-EQS-003 (EmailListItem.tsx — M1 флаг + repoint probe)   ← нужны 001 (strip) + 002 (проп)
+
+WAVE 4 (manual release-gate):
+  TASK-EQS-005 (manual-browser на prod-copy)   ← после 003 (собранный UI) + 004 (headless-зелёный)
+```
+
+**Граф зависимостей:** **001 → {002 ∥ 004} → 003 → 005**.
+
+**Параллелизм-резюме:**
+- **WAVE 1** — единственная задача **TASK-EQS-001** (`stripEmailQuote.ts`) — гейт: и call-site (002), и verify (004) её потребляют.
+- **WAVE 2** — **{002 ∥ 004}** истинно параллельны (DISJOINT: `SafeEmailHtml.tsx` vs `scripts/verify-email-quote-strip-001.js`), оба зависят только от 001. 004 читает `.ts` для parity (не мутирует его); родительский sanitizer-порт для `xss`/`idempotent`/`probe`-фикстур уже существует в `verify-email-html-render-001.js`.
+- **WAVE 3** — **TASK-EQS-003** (`EmailListItem`) — consumer-гейт: импортирует `stripEmailQuote` (001) **и** передаёт проп, добавленный в `SafeEmailHtml` (002).
+- **WAVE 4** — **верификационная задача = TASK-EQS-004** (собственная: Node+jsdom headless detect/guard/nearempty/attribution/nested/idempotent/style/xss/failsafe/probe-матрица + config-parity + sabotage — **вся автоматизированная коверка фичи**). **Ручной release-gate = TASK-EQS-005** (only-new render / workspace-full регрессия / all-quote-not-blank / probe+no-beacon / no-jank / hostile-sanitize на **prod-DB-копии** в реальном браузере — то, что headless-строка не докажет; house-lesson LIST-PAGINATION-001 / created_by-FK / PULSE-PERF-001).
+
+**Test-vehicle constraint (закодирован явно, из agent 04):** фронт **не имеет** test-runner; `jsdom`/`vitest`/`@jest-environment jsdom` **НЕ установлены**; `stripEmailQuote.ts` — TS-ESM (нельзя `require` в node-env). Поэтому вся автоматизированная коверка = **ОДИН `scripts/verify-email-quote-strip-001.js`**: Node + **dev-only `jsdom` из scratchpad через `NODE_PATH=<scratchpad>/node_modules`** (`jsdom@29.1.1` уже есть) + `global.DOMParser = new JSDOM('').window.DOMParser` + **CJS-порт** `stripEmailQuote` с **parity-ассертом** (TC-EQS-P01, читает `.ts`) + **SABOTAGE** (TC-EQS-SAB, pass-through краснит). **Backend в фиче НЕТ → backend jest НЕ нужен.** НЕ добавлять `@jest-environment jsdom` (env absent), НЕ добавлять jsdom/vitest в `package.json` (shipped-dep — AC-12 запрещает).
+
+**Миграций НЕТ** (`body_html` уже на timeline-item из EMAIL-HTML-RENDER-001; max migration не меняется — TC-EQS-B04). **Нет нового shipped-пакета** (built-in `DOMParser`; `jsdom` = dev/verify-only). **Нет нового API-route/endpoint/middleware/query/type** (чистый client-render-transform на уже company- + contact-scoped `body_html`; `authenticate`+`requireCompanyAccess` timeline-read неизменён; `company_id` via `req.companyFilter?.company_id` — TC-R-6). **P0-гейты, красный на любом блокирует релиз:** headless detect-матрица (каждый client-boundary найден+cut), over-strip guard (mid-body KEPT vs trailing/attributed stripped), near-empty (all-quote→FULL, image-only→KEPT), fail-safe (throw→input), XSS-neutrality (strip только удаляет — `on*`/`<script>` не могут появиться), sabotage negative-control (pass-through → RED), parity (порт === shipped `.ts`), **и** manual-проход 2599 (only-new render + workspace-full регрессия + all-quote-not-blank + probe/beacon + no-jank + hostile-sanitize). Back-compat: `EmailMessageItem` без пропа = full thread byte-for-byte (D2/AC-2); `sanitizeEmailHtml.ts` пустой diff (D4/AC-8); idempotent + fail-safe + near-empty никогда не blank/raw/throw. Прод-деплой — только с явного «да» владельца (standing rule).

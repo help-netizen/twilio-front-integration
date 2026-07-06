@@ -10,17 +10,24 @@
  *   M4 no body              → nothing.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Mail } from 'lucide-react';
 import type { EmailTimelineItem } from '../../types/pulse';
 import { useAuth } from '../../auth/AuthProvider';
 import SafeEmailHtml from '../email/SafeEmailHtml';
 import { linkifyToHtml } from '../../lib/linkifyText';
+import { sanitizeEmailHtml } from '../../lib/sanitizeEmailHtml';
+import { stripEmailQuote } from '../../lib/stripEmailQuote';
 
-// Cheap inline probe: does this HTML reference a *remote* (blockable) image?
-// Matches an <img> whose src starts with http(s):, protocol-relative //, or cid:.
-// If none, there's nothing to gate, so we skip the "Show images" affordance.
-const REMOTE_IMG_RE = /<img[^>]+\bsrc\s*=\s*["']?\s*(https?:|\/\/|cid:)/i;
+// Cheap inline probe (EMAIL-QUOTE-STRIP-001 OQ-QS-4): does the KEPT (stripped)
+// reply carry a *blockable* remote image? We run this against the SAME display
+// HTML the M1 bubble renders — `stripEmailQuote(sanitizeEmailHtml(..., {allowImages:false}))`
+// — so `sanitizeEmailHtml` has already neutralized every remote/cid <img> into a
+// `data-blanc-src` marker (and stripped `srcset`/`background`). Testing for
+// `data-blanc-src` therefore means "a remote image survives IN THE KEPT REPLY"
+// (images that lived only in the removed quote don't count). If none, there is
+// nothing to reveal, so we skip the "Show images" affordance.
+const BLOCKED_IMG_RE = /\bdata-blanc-src\s*=/i;
 
 const formatTime = (dateStr: string, tz: string): string => {
     const d = new Date(dateStr);
@@ -51,9 +58,19 @@ export function EmailListItem({ email }: EmailListItemProps) {
     // either the HTML (M1) or linkified text (M2/M3). This extends the old
     // text-only check so an inbound HTML-only email still shows a body.
     const hasBody = renderHtml || hasText;
-    // Only offer the gate when there are actually blockable remote images left
-    // to reveal AND they're still hidden.
-    const showImagesButton = renderHtml && !allowImages && REMOTE_IMG_RE.test(email.body_html || '');
+    // Display HTML for the probe (OQ-QS-4): the SAME sanitize+strip the M1 bubble
+    // shows (SafeEmailHtml does its own pass internally; this lightweight copy only
+    // decides button visibility). Memoized on email.id so it isn't recomputed per
+    // scroll/re-render. allowImages is fixed false here: we only need to know
+    // whether the KEPT reply has a blockable image, independent of the toggle.
+    const displayHtml = useMemo(
+        () => stripEmailQuote(sanitizeEmailHtml(email.body_html ?? '')),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [email.id],
+    );
+    // Only offer the gate when the kept reply actually has a blockable remote image
+    // left to reveal (data-blanc-src survives sanitize) AND it's still hidden.
+    const showImagesButton = renderHtml && !allowImages && BLOCKED_IMG_RE.test(displayHtml);
     // Inbound sender: name preferred for the eyebrow; the raw address is shown
     // next to it (many senders — e.g. Google Local Services relays — carry a
     // generic display name, so the address is the identifying part).
@@ -117,6 +134,7 @@ export function EmailListItem({ email }: EmailListItemProps) {
                         <SafeEmailHtml
                             html={email.body_html || ''}
                             allowImages={allowImages}
+                            stripQuotedHistory
                             messageId={email.id}
                             className="text-sm leading-relaxed"
                         />
